@@ -13,16 +13,18 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 pybaseball.cache.enable()
 
-_CACHE_TTL = int(os.getenv("CACHE_TTL_SECONDS", "3600"))
+# Historical seasons never change; current season updates throughout the day.
+_TTL_HISTORICAL = int(os.getenv("CACHE_TTL_HISTORICAL", str(24 * 3600)))  # 24 h
+_TTL_CURRENT    = int(os.getenv("CACHE_TTL_CURRENT",    str(30 * 60)))    # 30 min
 
 # ---------------------------------------------------------------------------
-# Simple in-memory TTL cache keyed by (function_name, *args)
+# Simple in-memory TTL cache keyed by string key
 # ---------------------------------------------------------------------------
 
 _store: dict = {}
 
 
-def _cached(key: str, fn, ttl: int = _CACHE_TTL):
+def _cached(key: str, fn, ttl: int = _TTL_CURRENT):
     entry = _store.get(key)
     if entry and (time.monotonic() - entry["ts"]) < ttl:
         return entry["value"]
@@ -31,20 +33,15 @@ def _cached(key: str, fn, ttl: int = _CACHE_TTL):
     return result
 
 
-def _batting_bref(year: int) -> pd.DataFrame:
-    return _cached(f"batting_bref_{year}", lambda: pybaseball.batting_stats_bref(year))
-
-
-def _bwar_bat_all() -> pd.DataFrame:
-    return _cached("bwar_bat_all", lambda: pybaseball.bwar_bat(return_all=True))
-
-
-def _pitching_bref(year: int) -> pd.DataFrame:
-    return _cached(f"pitching_bref_{year}", lambda: pybaseball.pitching_stats_bref(year))
-
-
-def _bwar_pitch_all() -> pd.DataFrame:
-    return _cached("bwar_pitch_all", lambda: pybaseball.bwar_pitch(return_all=True))
+def _fetch_with_retry(fn, retries: int = 2, delay: float = 3.0):
+    """Call fn(), retrying up to `retries` times on failure."""
+    for attempt in range(retries + 1):
+        try:
+            return fn()
+        except Exception:
+            if attempt == retries:
+                raise
+            time.sleep(delay)
 
 
 # ---------------------------------------------------------------------------
@@ -53,6 +50,34 @@ def _bwar_pitch_all() -> pd.DataFrame:
 
 def _current_year() -> int:
     return datetime.date.today().year
+
+
+def _batting_bref(year: int) -> pd.DataFrame:
+    ttl = _TTL_CURRENT if year == _current_year() else _TTL_HISTORICAL
+    return _cached(
+        f"batting_bref_{year}",
+        lambda: _fetch_with_retry(lambda: pybaseball.batting_stats_bref(year)),
+        ttl=ttl,
+    )
+
+
+def _bwar_bat_all() -> pd.DataFrame:
+    return _cached("bwar_bat_all", lambda: pybaseball.bwar_bat(return_all=True),
+                   ttl=_TTL_CURRENT)
+
+
+def _pitching_bref(year: int) -> pd.DataFrame:
+    ttl = _TTL_CURRENT if year == _current_year() else _TTL_HISTORICAL
+    return _cached(
+        f"pitching_bref_{year}",
+        lambda: _fetch_with_retry(lambda: pybaseball.pitching_stats_bref(year)),
+        ttl=ttl,
+    )
+
+
+def _bwar_pitch_all() -> pd.DataFrame:
+    return _cached("bwar_pitch_all", lambda: pybaseball.bwar_pitch(return_all=True),
+                   ttl=_TTL_CURRENT)
 
 
 def _ip_to_decimal(ip) -> float:
