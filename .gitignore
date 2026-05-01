@@ -1,0 +1,24 @@
+# Virtual environments
+venv/
+.venv/
+
+# Environment variables
+.env
+.env.*
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# pybaseball local cache
+.pybaseball/
+
+# IDE and tooling
+.claude/
+.vscode/
+.idea/
+
+# OS
+.DS_Store
