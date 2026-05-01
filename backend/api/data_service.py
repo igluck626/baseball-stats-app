@@ -251,50 +251,114 @@ def get_current_stats(player_id: int) -> Optional[dict]:
 
 
 def get_career_stats(player_id: int) -> Optional[dict]:
-    """Return season-by-season stats for a player's career."""
+    """Return season-by-season batting stats and WAR for a player's career."""
     war_df = _bwar_bat_all()
-    player_df = (
+    player_war = (
         war_df[war_df["mlb_ID"] == float(player_id)]
-        .sort_values("year_ID")
+        .sort_values(["year_ID", "stint_ID"])
         .copy()
     )
 
-    if player_df.empty:
+    if player_war.empty:
         return None
 
+    # Pre-fetch bref data for every career season (cached after first call)
+    career_years = sorted(int(y) for y in player_war["year_ID"].dropna().unique())
+    bref_by_year: dict = {}
+    for y in career_years:
+        try:
+            bref_by_year[y] = _batting_bref(y)
+        except Exception:
+            pass
+
     seasons = []
-    for _, r in player_df.iterrows():
-        seasons.append({
-            "year":           int(r["year_ID"]),
-            "team":           str(r["team_ID"]),
-            "league":         str(r["lg_ID"]),
-            "G":              _safe(r["G"]),
-            "PA":             _safe(r["PA"]),
-            "WAR":            _safe(r["WAR"]),
-            "WAR_off":        _safe(r["WAR_off"]),
-            "WAR_def":        _safe(r["WAR_def"]),
-            "WAA":            _safe(r["WAA"]),
-            "OPS_plus":       _safe(r["OPS_plus"]),
-            "runs_bat":       _safe(r["runs_bat"]),
-            "runs_baserunning": _safe(r["runs_br"]),
-            "runs_defense":   _safe(r["runs_defense"]),
-            "runs_above_avg": _safe(r["runs_above_avg"]),
-            "runs_above_rep": _safe(r["runs_above_rep"]),
+    for year_id, group in player_war.groupby("year_ID"):
+        year = int(year_id)
+
+        # Sum WAR components across stints; OPS_plus weighted by PA
+        total_pa = group["PA"].sum()
+        ops_plus_vals = group["OPS_plus"].dropna()
+        ops_plus = (
+            float((group["OPS_plus"] * group["PA"]).sum() / total_pa)
+            if total_pa > 0 and not ops_plus_vals.empty
+            else None
+        )
+
+        entry: dict = {
+            "year":           year,
+            "team":           str(group.iloc[-1]["team_ID"]),
+            "league":         str(group.iloc[-1]["lg_ID"]),
+            "WAR":            round(float(group["WAR"].sum()), 2),
+            "WAR_off":        round(float(group["WAR_off"].sum()), 2),
+            "WAR_def":        round(float(group["WAR_def"].sum()), 2),
+            "WAA":            round(float(group["WAA"].sum()), 2),
+            "OPS_plus":       round(ops_plus, 1) if ops_plus is not None else None,
+            "runs_above_avg": round(float(group["runs_above_avg"].sum()), 2),
+            "runs_above_rep": round(float(group["runs_above_rep"].sum()), 2),
+        }
+
+        # Merge standard stats from bref — one combined row per player-year
+        # (bref already merges multi-team seasons into a single row)
+        bref_df = bref_by_year.get(year)
+        if bref_df is not None and not bref_df.empty:
+            player_bref = bref_df[bref_df["mlbID"] == player_id]
+            if not player_bref.empty:
+                br = player_bref.iloc[0]
+                entry["team"] = str(br["Tm"])  # use bref combined team string
+                entry.update({
+                    "G":       _safe(br["G"]),
+                    "PA":      _safe(br["PA"]),
+                    "AB":      _safe(br["AB"]),
+                    "R":       _safe(br["R"]),
+                    "H":       _safe(br["H"]),
+                    "doubles": _safe(br["2B"]),
+                    "triples": _safe(br["3B"]),
+                    "HR":      _safe(br["HR"]),
+                    "RBI":     _safe(br["RBI"]),
+                    "BB":      _safe(br["BB"]),
+                    "SO":      _safe(br["SO"]),
+                    "SB":      _safe(br["SB"]),
+                    "CS":      _safe(br["CS"]),
+                    "BA":      _safe(br["BA"]),
+                    "OBP":     _safe(br["OBP"]),
+                    "SLG":     _safe(br["SLG"]),
+                    "OPS":     _safe(br["OPS"]),
+                    **_batting_derived(br),
+                })
+
+        seasons.append(entry)
+
+    # Career totals: WAR from bwar_bat, counting stats summed from bref
+    batters = player_war[player_war["pitcher"] == "N"]
+    war_totals = batters if not batters.empty else player_war
+
+    bref_rows = []
+    for bref_df in bref_by_year.values():
+        if bref_df is not None and not bref_df.empty:
+            rows = bref_df[bref_df["mlbID"] == player_id]
+            if not rows.empty:
+                bref_rows.append(rows.iloc[0])
+
+    career_totals: dict = {
+        "seasons": len(seasons),
+        "WAR":     round(float(war_totals["WAR"].sum()), 1),
+        "WAR_off": round(float(war_totals["WAR_off"].sum()), 1),
+        "WAR_def": round(float(war_totals["WAR_def"].sum()), 1),
+    }
+    if bref_rows:
+        t = pd.DataFrame(bref_rows)
+        career_totals.update({
+            "G":   int(t["G"].sum()),
+            "H":   int(t["H"].sum()),
+            "HR":  int(t["HR"].sum()),
+            "RBI": int(t["RBI"].sum()),
         })
 
-    batters = player_df[player_df["pitcher"] == "N"]
-    totals_df = batters if not batters.empty else player_df
-
     return {
-        "player_id":  player_id,
-        "name":       str(player_df.iloc[0]["name_common"]),
-        "seasons":    seasons,
-        "career_totals": {
-            "seasons":   len(seasons),
-            "WAR":       round(float(totals_df["WAR"].sum()), 1),
-            "WAR_off":   round(float(totals_df["WAR_off"].sum()), 1),
-            "WAR_def":   round(float(totals_df["WAR_def"].sum()), 1),
-        },
+        "player_id": player_id,
+        "name":      str(player_war.iloc[0]["name_common"]),
+        "seasons":   seasons,
+        "career_totals": career_totals,
     }
 
 
