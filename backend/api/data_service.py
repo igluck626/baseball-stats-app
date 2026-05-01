@@ -83,6 +83,43 @@ def _safe(val):
     return val
 
 
+def _batting_derived(r) -> dict:
+    """Compute derived batting stats from a batting_stats_bref row."""
+    def _f(col):
+        v = r[col]
+        return float(v) if pd.notna(v) else 0.0
+
+    pa  = _f("PA");  ab  = _f("AB");  h   = _f("H")
+    hr  = _f("HR");  bb  = _f("BB");  ibb = _f("IBB")
+    hbp = _f("HBP"); so  = _f("SO");  sf  = _f("SF")
+    doubles = _f("2B"); triples = _f("3B")
+    ba  = _f("BA");  slg = _f("SLG")
+
+    babip_denom = ab - so - hr + sf
+    babip = round((h - hr) / babip_denom, 3) if babip_denom > 0 else None
+
+    iso = round(slg - ba, 3) if slg and ba else None
+
+    bb_pct = round(bb / pa, 3) if pa > 0 else None
+    k_pct  = round(so / pa, 3) if pa > 0 else None
+
+    # wOBA using standard linear weights (2022-24 era approximation).
+    # Denominator excludes IBB and SH; uses unintentional BB only.
+    singles = h - doubles - triples - hr
+    woba_num = (0.69 * (bb - ibb) + 0.72 * hbp + 0.89 * singles
+                + 1.27 * doubles + 1.62 * triples + 2.10 * hr)
+    woba_den = ab + (bb - ibb) + sf + hbp
+    woba = round(woba_num / woba_den, 3) if woba_den > 0 else None
+
+    return {
+        "BABIP": babip,
+        "ISO":   iso,
+        "BB_pct": bb_pct,
+        "K_pct":  k_pct,
+        "wOBA":  woba,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -191,6 +228,7 @@ def get_current_stats(player_id: int) -> Optional[dict]:
             "OBP":     _safe(r["OBP"]),
             "SLG":     _safe(r["SLG"]),
             "OPS":     _safe(r["OPS"]),
+            **_batting_derived(r),
         }
 
     if not adv_row.empty:
