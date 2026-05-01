@@ -1,6 +1,6 @@
 [build]
 builder = "nixpacks"
-buildCommand = "cd backend && pip install -r requirements.txt"
+buildCommand = "pip install -r requirements.txt"
 watchPatterns = ["backend/**"]
 
 [deploy]
