@@ -17,6 +17,21 @@ pybaseball.cache.enable()
 _TTL_HISTORICAL = int(os.getenv("CACHE_TTL_HISTORICAL", str(24 * 3600)))  # 24 h
 _TTL_CURRENT    = int(os.getenv("CACHE_TTL_CURRENT",    str(30 * 60)))    # 30 min
 
+# bwar_bat uses Baseball Reference franchise codes; map to full display names
+# so team names are consistent whether or not the bref standard-stats merge succeeds.
+_TEAM_DISPLAY: dict[str, str] = {
+    "ARI": "Arizona",       "ATL": "Atlanta",        "BAL": "Baltimore",
+    "BOS": "Boston",        "CHC": "Chicago",        "CHW": "Chicago",
+    "CIN": "Cincinnati",    "CLE": "Cleveland",      "COL": "Colorado",
+    "DET": "Detroit",       "HOU": "Houston",        "KCR": "Kansas City",
+    "LAA": "Los Angeles",   "LAD": "Los Angeles",    "MIA": "Miami",
+    "MIL": "Milwaukee",     "MIN": "Minnesota",      "NYM": "New York",
+    "NYY": "New York",      "OAK": "Oakland",        "PHI": "Philadelphia",
+    "PIT": "Pittsburgh",    "SDP": "San Diego",      "SEA": "Seattle",
+    "SFG": "San Francisco", "STL": "St. Louis",      "TBR": "Tampa Bay",
+    "TEX": "Texas",         "TOR": "Toronto",        "WSN": "Washington",
+}
+
 # ---------------------------------------------------------------------------
 # Simple in-memory TTL cache keyed by string key
 # ---------------------------------------------------------------------------
@@ -287,7 +302,10 @@ def get_career_stats(player_id: int) -> Optional[dict]:
     if player_war.empty:
         return None
 
-    # Pre-fetch bref data for every career season (cached after first call)
+    # Pre-fetch bref data for every career season (cached after first call).
+    # A short delay between requests prevents Baseball Reference from
+    # rate-limiting rapid sequential fetches on a cold Railway container.
+    current = _current_year()
     career_years = sorted(int(y) for y in player_war["year_ID"].dropna().unique())
     bref_by_year: dict = {}
     for y in career_years:
@@ -295,6 +313,8 @@ def get_career_stats(player_id: int) -> Optional[dict]:
             bref_by_year[y] = _batting_bref(y)
         except Exception:
             pass
+        if y != current and y != career_years[-1]:
+            time.sleep(0.3)
 
     seasons = []
     for year_id, group in player_war.groupby("year_ID"):
@@ -309,10 +329,11 @@ def get_career_stats(player_id: int) -> Optional[dict]:
             else None
         )
 
+        raw_team = str(group.iloc[-1]["team_ID"])
         entry: dict = {
-            "year":           year,
-            "team":           str(group.iloc[-1]["team_ID"]),
-            "league":         str(group.iloc[-1]["lg_ID"]),
+            "year":   year,
+            "team":   _TEAM_DISPLAY.get(raw_team, raw_team),
+            "league": str(group.iloc[-1]["lg_ID"]),
             "WAR":            round(float(group["WAR"].sum()), 2),
             "WAR_off":        round(float(group["WAR_off"].sum()), 2),
             "WAR_def":        round(float(group["WAR_def"].sum()), 2),
