@@ -16,6 +16,11 @@ PORT = int(os.getenv("PORT", "8000"))
 app = FastAPI(title="Baseball Stats API", version="0.1.0")
 
 
+@app.get("/")
+def root():
+    return {"status": "ok", "version": "0.1.0"}
+
+
 @app.get("/players/search")
 def search_players(name: str = Query(..., min_length=2, description="Player name")):
     results = data_service.search_player(name)
