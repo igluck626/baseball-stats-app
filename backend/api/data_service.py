@@ -2,6 +2,7 @@
 
 import datetime
 import os
+import sys
 import time
 from typing import Optional
 
@@ -10,6 +11,15 @@ import pybaseball
 from dotenv import load_dotenv
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+
+# Allow `from database import ...` whether running from /app/api (Docker)
+# or backend/api (local venv).
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from database import connection, crud
+from database.models import PlayerSeason as _PlayerSeason
+
+_PS_COLUMNS = [c.key for c in _PlayerSeason.__table__.columns if c.key != "player_id"]
 
 pybaseball.cache.enable()
 
@@ -160,6 +170,11 @@ def _batting_derived(r) -> dict:
     }
 
 
+def _db_row_to_season(row) -> dict:
+    """Convert a PlayerSeason ORM row to the season dict used by career endpoints."""
+    return {k: getattr(row, k) for k in _PS_COLUMNS}
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -291,7 +306,12 @@ def get_current_stats(player_id: int) -> Optional[dict]:
 
 
 def get_career_stats(player_id: int) -> Optional[dict]:
-    """Return season-by-season batting stats and WAR for a player's career."""
+    """Return season-by-season batting stats and WAR for a player's career.
+
+    Historical seasons (year < current) are stored in PostgreSQL after first
+    fetch so subsequent calls skip the Baseball Reference requests entirely.
+    """
+    current = _current_year()
     war_df = _bwar_bat_all()
     player_war = (
         war_df[war_df["mlb_ID"] == float(player_id)]
@@ -302,25 +322,44 @@ def get_career_stats(player_id: int) -> Optional[dict]:
     if player_war.empty:
         return None
 
-    # Pre-fetch bref data for every career season (cached after first call).
-    # A short delay between requests prevents Baseball Reference from
-    # rate-limiting rapid sequential fetches on a cold Railway container.
-    current = _current_year()
     career_years = sorted(int(y) for y in player_war["year_ID"].dropna().unique())
+
+    # Pull already-stored historical seasons from PostgreSQL.
+    db_seasons: dict[int, dict] = {}
+    if connection.db_available():
+        try:
+            with connection.get_session() as db:
+                for row in crud.get_player_seasons(db, player_id):
+                    db_seasons[row.year] = _db_row_to_season(row)
+        except Exception:
+            pass
+
+    # Only fetch from Baseball Reference for years not yet in DB, plus the
+    # current season (which is never stored and always re-fetched).
+    years_to_fetch = [
+        y for y in career_years
+        if y == current or (y < current and y not in db_seasons)
+    ]
     bref_by_year: dict = {}
-    for y in career_years:
+    for i, y in enumerate(sorted(years_to_fetch)):
         try:
             bref_by_year[y] = _batting_bref(y)
         except Exception:
             pass
-        if y != current and y != career_years[-1]:
+        if i < len(years_to_fetch) - 1:
             time.sleep(0.3)
 
-    seasons = []
+    seasons: list[dict] = []
+    new_historical: list[dict] = []  # newly fetched historical seasons to persist
+
     for year_id, group in player_war.groupby("year_ID"):
         year = int(year_id)
 
-        # Sum WAR components across stints; OPS_plus weighted by PA
+        # Historical season already in DB — use it directly, no bref merge needed.
+        if year < current and year in db_seasons:
+            seasons.append(db_seasons[year])
+            continue
+
         total_pa = group["PA"].sum()
         ops_plus_vals = group["OPS_plus"].dropna()
         ops_plus = (
@@ -331,9 +370,9 @@ def get_career_stats(player_id: int) -> Optional[dict]:
 
         raw_team = str(group.iloc[-1]["team_ID"])
         entry: dict = {
-            "year":   year,
-            "team":   _TEAM_DISPLAY.get(raw_team, raw_team),
-            "league": str(group.iloc[-1]["lg_ID"]),
+            "year":           year,
+            "team":           _TEAM_DISPLAY.get(raw_team, raw_team),
+            "league":         str(group.iloc[-1]["lg_ID"]),
             "WAR":            round(float(group["WAR"].sum()), 2),
             "WAR_off":        round(float(group["WAR_off"].sum()), 2),
             "WAR_def":        round(float(group["WAR_def"].sum()), 2),
@@ -343,14 +382,12 @@ def get_career_stats(player_id: int) -> Optional[dict]:
             "runs_above_rep": round(float(group["runs_above_rep"].sum()), 2),
         }
 
-        # Merge standard stats from bref — one combined row per player-year
-        # (bref already merges multi-team seasons into a single row)
         bref_df = bref_by_year.get(year)
         if bref_df is not None and not bref_df.empty:
             player_bref = bref_df[bref_df["mlbID"] == player_id]
             if not player_bref.empty:
                 br = player_bref.iloc[0]
-                entry["team"] = str(br["Tm"])  # use bref combined team string
+                entry["team"] = str(br["Tm"])
                 entry.update({
                     "G":       _safe(br["G"]),
                     "PA":      _safe(br["PA"]),
@@ -373,17 +410,20 @@ def get_career_stats(player_id: int) -> Optional[dict]:
                 })
 
         seasons.append(entry)
+        if year < current:
+            new_historical.append(entry)
 
-    # Career totals: WAR from bwar_bat, counting stats summed from bref
+    # Persist newly fetched historical seasons to PostgreSQL.
+    if new_historical and connection.db_available():
+        try:
+            with connection.get_session() as db:
+                crud.save_player_seasons(db, player_id, new_historical)
+        except Exception:
+            pass
+
+    # Career totals: WAR from bwar_bat, counting stats summed across all seasons.
     batters = player_war[player_war["pitcher"] == "N"]
     war_totals = batters if not batters.empty else player_war
-
-    bref_rows = []
-    for bref_df in bref_by_year.values():
-        if bref_df is not None and not bref_df.empty:
-            rows = bref_df[bref_df["mlbID"] == player_id]
-            if not rows.empty:
-                bref_rows.append(rows.iloc[0])
 
     career_totals: dict = {
         "seasons": len(seasons),
@@ -391,13 +431,13 @@ def get_career_stats(player_id: int) -> Optional[dict]:
         "WAR_off": round(float(war_totals["WAR_off"].sum()), 1),
         "WAR_def": round(float(war_totals["WAR_def"].sum()), 1),
     }
-    if bref_rows:
-        t = pd.DataFrame(bref_rows)
+    seasons_with_counting = [s for s in seasons if s.get("H") is not None]
+    if seasons_with_counting:
         career_totals.update({
-            "G":   int(t["G"].sum()),
-            "H":   int(t["H"].sum()),
-            "HR":  int(t["HR"].sum()),
-            "RBI": int(t["RBI"].sum()),
+            "G":   int(sum(s.get("G") or 0 for s in seasons_with_counting)),
+            "H":   int(sum(s.get("H") or 0 for s in seasons_with_counting)),
+            "HR":  int(sum(s.get("HR") or 0 for s in seasons_with_counting)),
+            "RBI": int(sum(s.get("RBI") or 0 for s in seasons_with_counting)),
         })
 
     return {
@@ -465,6 +505,11 @@ def get_current_pitching_stats(player_id: int) -> Optional[dict]:
         }
 
     return result
+
+
+def init_db() -> None:
+    """Create database tables if they don't exist. Called once on startup."""
+    connection.init_db()
 
 
 def get_career_pitching_stats(player_id: int) -> Optional[dict]:

@@ -1,6 +1,7 @@
 """Baseball stats API."""
 
 import os
+from contextlib import asynccontextmanager
 
 import uvicorn
 from dotenv import load_dotenv
@@ -13,7 +14,14 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8000"))
 
-app = FastAPI(title="Baseball Stats API", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    data_service.init_db()
+    yield
+
+
+app = FastAPI(title="Baseball Stats API", version="0.1.0", lifespan=lifespan)
 
 
 @app.get("/")
