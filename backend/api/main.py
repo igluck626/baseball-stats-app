@@ -159,6 +159,11 @@ def career_pitching(player_id: int):
 # Admin endpoints
 # ---------------------------------------------------------------------------
 
+@app.get("/admin/env-check")
+def env_check():
+    return {"DATABASE_URL_set": bool(os.getenv("DATABASE_URL"))}
+
+
 @app.post("/admin/bulk-load")
 def start_bulk_load():
     with _bulk_lock:
