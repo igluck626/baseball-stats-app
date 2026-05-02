@@ -20,8 +20,9 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 from database import connection, crud                       # noqa: E402
 from database.models import PitcherSeason, PlayerSeason     # noqa: E402
 
-# scripts/ holds the Lahman loader; expose it for the /admin/lahman-load endpoint
+# scripts/ holds the Lahman loader and WAR backfill; expose them for /admin endpoints
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+import backfill_war                                         # noqa: E402
 import lahman_load                                          # noqa: E402
 
 HOST = os.getenv("HOST", "0.0.0.0")
@@ -164,6 +165,46 @@ def _run_lahman_load() -> None:
         with _lahman_lock:
             _lahman_state["running"]  = False
             _lahman_state["last_run"] = datetime.datetime.utcnow().isoformat() + "Z"
+
+
+# ---------------------------------------------------------------------------
+# WAR-backfill state (shared between background thread and status endpoint)
+# ---------------------------------------------------------------------------
+# Phases: "bridge" → "batting_lookup" → "batting" → "pitching_lookup" → "pitching" → "done"
+_war_state: dict = {
+    "running":  False,
+    "phase":    None,
+    "batting_total":    0,
+    "batting_updated":  0,
+    "batting_no_match": 0,
+    "pitching_total":    0,
+    "pitching_updated":  0,
+    "pitching_no_match": 0,
+    "error":    None,
+    "last_run": None,
+}
+_war_lock = threading.Lock()
+
+
+def _run_backfill_war() -> None:
+    """Background thread: run the WAR backfill, reporting progress to _war_state."""
+    with _war_lock:
+        _war_state.update(
+            running=True, phase=None,
+            batting_total=0, batting_updated=0, batting_no_match=0,
+            pitching_total=0, pitching_updated=0, pitching_no_match=0,
+            error=None,
+        )
+
+    try:
+        backfill_war.run(state=_war_state, lock=_war_lock)
+    except Exception as exc:
+        with _war_lock:
+            _war_state["error"] = str(exc)
+    finally:
+        with _war_lock:
+            _war_state["running"]  = False
+            _war_state["last_run"] = datetime.datetime.utcnow().isoformat() + "Z"
 
 
 # ---------------------------------------------------------------------------
@@ -457,6 +498,26 @@ def bulk_load_status():
         "pitchers_in_db": pitchers_in_db,
         **state,
     }
+
+
+@app.post("/admin/backfill-war")
+def start_backfill_war():
+    with _war_lock:
+        if _war_state["running"]:
+            return {"status": "already_running", **_war_state}
+
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+
+    t = threading.Thread(target=_run_backfill_war, daemon=True)
+    t.start()
+    return {"status": "started"}
+
+
+@app.get("/admin/backfill-war/status")
+def backfill_war_status():
+    with _war_lock:
+        return dict(_war_state)
 
 
 @app.post("/admin/lahman-load")
