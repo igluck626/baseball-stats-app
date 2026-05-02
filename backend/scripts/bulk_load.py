@@ -8,6 +8,7 @@ Requires DATABASE_URL to be set in the environment or backend/.env.
 Safe to re-run — players with any seasons already in the database are skipped.
 """
 
+import argparse
 import logging
 import os
 import sys
@@ -39,7 +40,21 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="Bulk-load historical batting stats into PostgreSQL.")
+    p.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Stop after processing N players (useful for testing).",
+    )
+    return p.parse_args()
+
+
 def main() -> None:
+    args = parse_args()
+
     if not connection.db_available():
         sys.exit("ERROR: DATABASE_URL is not set. Export it and re-run.")
 
@@ -71,7 +86,11 @@ def main() -> None:
     )
 
     to_process = [pid for pid in all_ids if pid not in already_loaded]
-    log.info(f"{len(to_process)} players queued for processing")
+    if args.limit is not None:
+        to_process = to_process[: args.limit]
+        log.info(f"--limit {args.limit}: processing first {len(to_process)} players")
+    else:
+        log.info(f"{len(to_process)} players queued for processing")
 
     if not to_process:
         log.info("Nothing to do.")
