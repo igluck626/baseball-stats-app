@@ -233,14 +233,12 @@ def get_current_stats(player_id: int) -> Optional[dict]:
 
     year = _current_year()
     with connection.get_session() as db:
-        rows = [r for r in crud.get_player_seasons(db, player_id) if r.year == year]
+        season_rows = [r for r in crud.get_player_seasons(db, player_id) if r.year == year]
+        if not season_rows:
+            return None
+        season = _db_row_to_season(season_rows[0])
         player = crud.get_player(db, player_id)
-
-    if not rows:
-        return None
-
-    season = _db_row_to_season(rows[0])
-    name = player.name if player else None
+        name = player.name if player else None
 
     standard = {
         "name":    name,
@@ -293,12 +291,11 @@ def get_career_stats(player_id: int) -> Optional[dict]:
 
     with connection.get_session() as db:
         rows = crud.get_player_seasons(db, player_id)
+        if not rows:
+            return None
+        seasons = [_db_row_to_season(r) for r in sorted(rows, key=lambda r: r.year)]
         player = crud.get_player(db, player_id)
-
-    if not rows:
-        return None
-
-    seasons = [_db_row_to_season(r) for r in sorted(rows, key=lambda r: r.year)]
+        name = player.name if player else None
 
     seasons_with_counting = [s for s in seasons if s.get("H") is not None]
     career_totals: dict = {
@@ -317,7 +314,7 @@ def get_career_stats(player_id: int) -> Optional[dict]:
 
     return {
         "player_id":     player_id,
-        "name":          player.name if player else None,
+        "name":          name,
         "seasons":       seasons,
         "career_totals": career_totals,
     }
@@ -330,14 +327,12 @@ def get_current_pitching_stats(player_id: int) -> Optional[dict]:
 
     year = _current_year()
     with connection.get_session() as db:
-        rows = [r for r in crud.get_pitcher_seasons(db, player_id) if r.year == year]
+        season_rows = [r for r in crud.get_pitcher_seasons(db, player_id) if r.year == year]
+        if not season_rows:
+            return None
+        season = _db_pitcher_row_to_season(season_rows[0])
         pitcher = crud.get_pitcher(db, player_id)
-
-    if not rows:
-        return None
-
-    season = _db_pitcher_row_to_season(rows[0])
-    name = pitcher.name if pitcher else None
+        name = pitcher.name if pitcher else None
 
     standard = {
         "name":  name,
@@ -381,16 +376,15 @@ def get_career_pitching_stats(player_id: int) -> Optional[dict]:
 
     with connection.get_session() as db:
         rows = crud.get_pitcher_seasons(db, player_id)
+        if not rows:
+            return None
+        seasons = [_db_pitcher_row_to_season(r) for r in sorted(rows, key=lambda r: r.year)]
         pitcher = crud.get_pitcher(db, player_id)
-
-    if not rows:
-        return None
-
-    seasons = [_db_pitcher_row_to_season(r) for r in sorted(rows, key=lambda r: r.year)]
+        name = pitcher.name if pitcher else None
 
     return {
         "player_id":     player_id,
-        "name":          pitcher.name if pitcher else None,
+        "name":          name,
         "seasons":       seasons,
         "career_totals": {
             "seasons": len(seasons),
