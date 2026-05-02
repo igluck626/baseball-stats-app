@@ -182,9 +182,31 @@ def _db_row_to_season(row) -> dict:
 def search_player(name: str) -> list[dict]:
     """Look up players by name. Accepts 'Last', 'First Last', or 'First Last Jr'.
 
-    Tries the Chadwick Bureau lookup table first; falls back to searching
-    bwar_bat by name for players missing from that table (e.g. Yordan Alvarez).
+    Queries the PostgreSQL players table first (fast). Falls back to the
+    Chadwick Bureau lookup and bwar_bat if the DB has no results (e.g. player
+    not yet loaded, or DB unavailable). Results from the fallback are persisted
+    to the players table for future queries.
     """
+    # 1. Try the database first.
+    if connection.db_available():
+        try:
+            with connection.get_session() as db:
+                rows = crud.search_players_by_name(db, name)
+                if rows:
+                    return [
+                        {
+                            "player_id":      r.player_id,
+                            "name":           r.name,
+                            "bbref_id":       r.bbref_id,
+                            "mlb_debut":      r.mlb_debut,
+                            "mlb_last_season": r.mlb_last_season,
+                        }
+                        for r in rows
+                    ]
+        except Exception:
+            pass
+
+    # 2. Fall back to pybaseball (Chadwick Bureau + bwar_bat).
     parts = name.strip().split()
     last = parts[-1]
     first = parts[0] if len(parts) >= 2 else None
@@ -208,15 +230,15 @@ def search_player(name: str) -> list[dict]:
             pid = int(row["key_mlbam"])
             seen_ids.add(pid)
             out.append({
-                "player_id": pid,
-                "name": f"{str(row['name_first']).title()} {str(row['name_last']).title()}",
-                "bbref_id": row["key_bbref"],
-                "mlb_debut": _safe(row["mlb_played_first"]),
+                "player_id":      pid,
+                "name":           f"{str(row['name_first']).title()} {str(row['name_last']).title()}",
+                "bbref_id":       row["key_bbref"],
+                "mlb_debut":      _safe(row["mlb_played_first"]),
                 "mlb_last_season": _safe(row["mlb_played_last"]),
             })
 
-    # Fallback: search bwar_bat by name to catch players absent from lookup table.
-    # Require every part to be present so "yordan alvarez" doesn't match "R.J. Alvarez".
+    # bwar_bat fallback for players absent from the Chadwick table (e.g. Yordan Alvarez).
+    # Require every significant word to match so "yordan alvarez" ≠ "R.J. Alvarez".
     war_df = _bwar_bat_all()
     significant = [p for p in parts if len(p) > 2]
     if significant:
@@ -233,12 +255,21 @@ def search_player(name: str) -> list[dict]:
             seen_ids.add(pid)
             years = group["year_ID"].dropna()
             out.append({
-                "player_id": pid,
-                "name": str(group.iloc[-1]["name_common"]),
-                "bbref_id": None,
-                "mlb_debut": int(years.min()) if not years.empty else None,
+                "player_id":      pid,
+                "name":           str(group.iloc[-1]["name_common"]),
+                "bbref_id":       None,
+                "mlb_debut":      int(years.min()) if not years.empty else None,
                 "mlb_last_season": int(years.max()) if not years.empty else None,
             })
+
+    # 3. Persist fallback results so the same search is fast next time.
+    if out and connection.db_available():
+        try:
+            with connection.get_session() as db:
+                for player in out:
+                    crud.save_player(db, player)
+        except Exception:
+            pass
 
     return out
 
@@ -439,6 +470,20 @@ def get_career_stats(player_id: int) -> Optional[dict]:
             "HR":  int(sum(s.get("HR") or 0 for s in seasons_with_counting)),
             "RBI": int(sum(s.get("RBI") or 0 for s in seasons_with_counting)),
         })
+
+    # Persist basic player info so future name searches are served from DB.
+    if connection.db_available():
+        try:
+            with connection.get_session() as db:
+                crud.save_player(db, {
+                    "player_id":      player_id,
+                    "name":           str(player_war.iloc[0]["name_common"]),
+                    "bbref_id":       None,
+                    "mlb_debut":      min(s["year"] for s in seasons) if seasons else None,
+                    "mlb_last_season": max(s["year"] for s in seasons) if seasons else None,
+                })
+        except Exception:
+            pass
 
     return {
         "player_id": player_id,

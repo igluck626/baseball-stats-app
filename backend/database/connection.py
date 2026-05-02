@@ -38,7 +38,11 @@ def get_session():
 
 
 def init_db() -> None:
-    """Create tables if they don't exist."""
-    from .models import Base
+    """Create tables and indexes if they don't exist."""
+    from .models import Base, Player
     if _engine is not None:
         Base.metadata.create_all(_engine)
+        # create_all only runs on missing tables; create indexes explicitly so
+        # they are added to already-existing deployments too.
+        for idx in Player.__table__.indexes:
+            idx.create(bind=_engine, checkfirst=True)

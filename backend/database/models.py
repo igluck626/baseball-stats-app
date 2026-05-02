@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Float, Integer, String
+from sqlalchemy import Column, Float, Index, Integer, String
 from sqlalchemy.orm import DeclarativeBase
 
 
@@ -8,6 +8,7 @@ class Base(DeclarativeBase):
 
 class Player(Base):
     __tablename__ = "players"
+    __table_args__ = (Index("ix_players_name", "name"),)
 
     player_id       = Column(Integer, primary_key=True)
     name            = Column(String, nullable=False)
