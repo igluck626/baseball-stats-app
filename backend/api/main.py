@@ -25,6 +25,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 import backfill_war                                         # noqa: E402
 import lahman_load                                          # noqa: E402
 import nightly_update                                       # noqa: E402
+import reset_db                                             # noqa: E402
 
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8000"))
@@ -437,6 +438,14 @@ def career_pitching(player_id: int):
 @app.get("/admin/env-check")
 def env_check():
     return {"DATABASE_URL_set": bool(os.getenv("DATABASE_URL"))}
+
+
+@app.post("/admin/reset-db")
+def admin_reset_db():
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    deleted = reset_db.clear_all()
+    return {"status": "done", "deleted": deleted}
 
 
 @app.post("/admin/bulk-load")

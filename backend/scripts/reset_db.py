@@ -53,19 +53,35 @@ def _safe_target() -> str:
     return f"{host}/{db}"
 
 
+def clear_all() -> dict[str, int]:
+    """Delete every row from the four stats tables. Returns {table_name: rows_deleted}.
+
+    Used by both the CLI script and the POST /admin/reset-db endpoint, so there
+    is exactly one place that knows how to wipe the data.
+    """
+    deleted: dict[str, int] = {}
+    with connection.get_session() as db:
+        for name, model in TABLES:
+            n = db.query(model).delete(synchronize_session=False)
+            deleted[name] = n
+    return deleted
+
+
 def main() -> None:
     if not connection.db_available():
         sys.exit("ERROR: DATABASE_URL is not set. Export it and re-run.")
 
     log.info(f"Target database: {_safe_target()}")
 
-    deleted: dict[str, int] = {}
+    # CLI variant: also log the before-count for visibility.
     with connection.get_session() as db:
-        for name, model in TABLES:
-            before = db.query(model).count()
-            n = db.query(model).delete(synchronize_session=False)
-            deleted[name] = n
-            log.info(f"  {name:<20}  rows before: {before:>9,}  deleted: {n:>9,}")
+        before = {name: db.query(model).count() for name, model in TABLES}
+    for name, _ in TABLES:
+        log.info(f"  {name:<20}  rows before: {before[name]:>9,}")
+
+    deleted = clear_all()
+    for name, _ in TABLES:
+        log.info(f"  {name:<20}  deleted:     {deleted[name]:>9,}")
 
     bar = "=" * 52
     print(f"\n{bar}")
