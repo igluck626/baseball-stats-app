@@ -15,71 +15,102 @@ import data_service
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 # database imports work after data_service is imported (it adds backend/ to sys.path)
-from database import connection, crud    # noqa: E402
-from database.models import PlayerSeason # noqa: E402
+from database import connection, crud                       # noqa: E402
+from database.models import PitcherSeason, PlayerSeason     # noqa: E402
 
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8000"))
 
 # ---------------------------------------------------------------------------
-# Bulk-load state (shared between the background thread and status endpoint)
+# Bulk-load state (shared between background thread and status endpoint)
 # ---------------------------------------------------------------------------
 _bulk_state: dict = {
-    "running": False,
-    "loaded":  0,
-    "skipped": 0,
-    "failed":  0,
-    "total":   0,
-    "error":   None,
+    "running":  False,
+    "phase":    None,        # "batters" | "pitchers" | None
+    "loaded":   0,
+    "skipped":  0,
+    "failed":   0,
+    "total":    0,
+    "error":    None,
 }
 _bulk_lock = threading.Lock()
 
 
-def _run_bulk_load() -> None:
-    """Background thread: populate DB with historical stats for all players."""
+def _bulk_load_phase(
+    bwar_fetch,                # callable -> DataFrame with mlb_ID + year_ID
+    existing_table,            # SQLAlchemy model
+    fetch_and_save,            # callable(player_id) -> name|None
+    phase_name: str,
+) -> None:
+    """One phase of the bulk load (batters or pitchers).
+
+    Resets the per-phase counters in _bulk_state, fetches the WAR DataFrame
+    for the given phase, computes the player IDs to load (since 1990, not yet
+    in the DB), and processes them sequentially with a 2-second pause between
+    players to avoid Baseball Reference rate-limiting.
+    """
     with _bulk_lock:
         _bulk_state.update(
-            running=True, loaded=0, skipped=0, failed=0, total=0, error=None
+            phase=phase_name, loaded=0, skipped=0, failed=0, total=0
+        )
+
+    bwar = bwar_fetch()
+    recent = bwar[bwar["year_ID"] >= 1990]
+    all_ids: list[int] = sorted(
+        int(pid) for pid in recent["mlb_ID"].dropna().unique() if pid > 0
+    )
+
+    with connection.get_session() as db:
+        rows = db.query(existing_table.player_id).distinct().all()
+    already_loaded = {r.player_id for r in rows}
+
+    to_process = [pid for pid in all_ids if pid not in already_loaded]
+
+    with _bulk_lock:
+        _bulk_state["total"] = len(to_process)
+
+    for player_id in to_process:
+        try:
+            name = fetch_and_save(player_id)
+            with _bulk_lock:
+                if name is not None:
+                    _bulk_state["loaded"] += 1
+                else:
+                    _bulk_state["skipped"] += 1
+        except Exception:
+            with _bulk_lock:
+                _bulk_state["failed"] += 1
+        time.sleep(2.0)
+
+
+def _run_bulk_load() -> None:
+    """Background thread: bulk-load batters then pitchers."""
+    with _bulk_lock:
+        _bulk_state.update(
+            running=True, phase=None, loaded=0, skipped=0,
+            failed=0, total=0, error=None,
         )
 
     try:
-        bwar = data_service._bwar_bat_all()
-        recent = bwar[bwar["year_ID"] >= 1990]
-        all_ids: list[int] = sorted(
-            int(pid) for pid in recent["mlb_ID"].dropna().unique() if pid > 0
+        _bulk_load_phase(
+            data_service._bwar_bat_all,
+            PlayerSeason,
+            data_service.fetch_and_save_batting_career,
+            "batters",
         )
-
-        with connection.get_session() as db:
-            rows = db.query(PlayerSeason.player_id).distinct().all()
-        already_loaded = {r.player_id for r in rows}
-
-        to_process = [pid for pid in all_ids if pid not in already_loaded]
-
-        with _bulk_lock:
-            _bulk_state["total"] = len(to_process)
-
-        current_year = data_service._current_year()
-
-        for player_id in to_process:
-            try:
-                result = data_service.get_career_stats(player_id)
-                with _bulk_lock:
-                    if result is not None:
-                        _bulk_state["loaded"] += 1
-                    else:
-                        _bulk_state["skipped"] += 1
-            except Exception:
-                with _bulk_lock:
-                    _bulk_state["failed"] += 1
-
-            time.sleep(2.0)
-
+        _bulk_load_phase(
+            data_service._bwar_pitch_all,
+            PitcherSeason,
+            data_service.fetch_and_save_pitching_career,
+            "pitchers",
+        )
     except Exception as exc:
         with _bulk_lock:
             _bulk_state["error"] = str(exc)
     finally:
         with _bulk_lock:
             _bulk_state["running"] = False
+            _bulk_state["phase"]   = None
 
 
 # ---------------------------------------------------------------------------
@@ -87,20 +118,21 @@ def _run_bulk_load() -> None:
 # ---------------------------------------------------------------------------
 _nightly_state: dict = {
     "running":  False,
+    "phase":    None,        # "batters" | "pitchers" | None
     "updated":  0,
     "skipped":  0,
     "failed":   0,
     "total":    0,
     "error":    None,
-    "last_run": None,   # ISO-8601 UTC timestamp of the last completed run
+    "last_run": None,        # ISO-8601 UTC timestamp of the last completed run
 }
 _nightly_lock = threading.Lock()
 
 
-def _build_nightly_entry(player_id: int, bref_df, bwar_current, current_year: int):
+def _build_nightly_batter_entry(player_id: int, bref_df, bwar_current, current_year: int):
     """Build a player_seasons dict for the current year, or None if no data."""
     player_bref = bref_df[bref_df["mlbID"] == player_id]
-    player_war  = (
+    player_war = (
         bwar_current[bwar_current["mlb_ID"] == float(player_id)]
         .sort_values("stint_ID")
     )
@@ -158,47 +190,100 @@ def _build_nightly_entry(player_id: int, bref_df, bwar_current, current_year: in
     return entry
 
 
-def _run_nightly_update() -> None:
-    """Background thread: refresh current-season stats for every player in the DB."""
+def _build_nightly_pitcher_entry(player_id: int, bref_df, bwar_current, current_year: int):
+    """Build a pitcher_seasons dict for the current year, or None if no data."""
+    player_bref = bref_df[bref_df["mlbID"] == str(player_id)]
+    player_war = (
+        bwar_current[bwar_current["mlb_ID"] == float(player_id)]
+        .sort_values("stint_ID")
+        if "stint_ID" in bwar_current.columns
+        else bwar_current[bwar_current["mlb_ID"] == float(player_id)]
+    )
+
+    if player_bref.empty and player_war.empty:
+        return None
+
+    return data_service._build_pitcher_season_entry(
+        player_id, current_year, player_war, bref_df,
+    )
+
+
+def _nightly_phase(
+    fetch_bref,
+    fetch_bwar_all,
+    get_ids,
+    save_seasons,
+    build_entry,
+    phase_name: str,
+    current_year: int,
+) -> None:
+    """One phase of the nightly update (batters or pitchers)."""
     with _nightly_lock:
         _nightly_state.update(
-            running=True, updated=0, skipped=0, failed=0, total=0, error=None
+            phase=phase_name, updated=0, skipped=0, failed=0, total=0
+        )
+
+    bref_df      = fetch_bref(current_year)
+    bwar_df      = fetch_bwar_all()
+    bwar_current = bwar_df[bwar_df["year_ID"] == current_year]
+
+    with connection.get_session() as db:
+        ids: list[int] = get_ids(db)
+
+    with _nightly_lock:
+        _nightly_state["total"] = len(ids)
+
+    for player_id in ids:
+        try:
+            entry = build_entry(player_id, bref_df, bwar_current, current_year)
+            if entry is None:
+                with _nightly_lock:
+                    _nightly_state["skipped"] += 1
+                continue
+            with connection.get_session() as db:
+                save_seasons(db, player_id, [entry])
+            with _nightly_lock:
+                _nightly_state["updated"] += 1
+        except Exception:
+            with _nightly_lock:
+                _nightly_state["failed"] += 1
+
+
+def _run_nightly_update() -> None:
+    """Background thread: refresh current-season stats for batters and pitchers."""
+    with _nightly_lock:
+        _nightly_state.update(
+            running=True, phase=None, updated=0, skipped=0,
+            failed=0, total=0, error=None,
         )
 
     try:
         current_year = data_service._current_year()
-        bref_df      = data_service._batting_bref(current_year)
-        bwar_df      = data_service._bwar_bat_all()
-        bwar_current = bwar_df[bwar_df["year_ID"] == current_year]
-
-        with connection.get_session() as db:
-            rows = db.query(PlayerSeason.player_id).distinct().all()
-        player_ids: list[int] = [r.player_id for r in rows]
-
-        with _nightly_lock:
-            _nightly_state["total"] = len(player_ids)
-
-        for player_id in player_ids:
-            try:
-                entry = _build_nightly_entry(player_id, bref_df, bwar_current, current_year)
-                if entry is None:
-                    with _nightly_lock:
-                        _nightly_state["skipped"] += 1
-                    continue
-                with connection.get_session() as db:
-                    crud.save_player_seasons(db, player_id, [entry])
-                with _nightly_lock:
-                    _nightly_state["updated"] += 1
-            except Exception:
-                with _nightly_lock:
-                    _nightly_state["failed"] += 1
-
+        _nightly_phase(
+            data_service._batting_bref,
+            data_service._bwar_bat_all,
+            crud.get_all_player_ids,
+            crud.save_player_seasons,
+            _build_nightly_batter_entry,
+            "batters",
+            current_year,
+        )
+        _nightly_phase(
+            data_service._pitching_bref,
+            data_service._bwar_pitch_all,
+            crud.get_all_pitcher_ids,
+            crud.save_pitcher_seasons,
+            _build_nightly_pitcher_entry,
+            "pitchers",
+            current_year,
+        )
     except Exception as exc:
         with _nightly_lock:
             _nightly_state["error"] = str(exc)
     finally:
         with _nightly_lock:
             _nightly_state["running"]  = False
+            _nightly_state["phase"]    = None
             _nightly_state["last_run"] = datetime.datetime.utcnow().isoformat() + "Z"
 
 
@@ -301,18 +386,24 @@ def start_bulk_load():
 
 @app.get("/admin/bulk-load/status")
 def bulk_load_status():
-    players_in_db = 0
+    batters_in_db = 0
+    pitchers_in_db = 0
     if connection.db_available():
         try:
             with connection.get_session() as db:
-                players_in_db = db.query(PlayerSeason.player_id).distinct().count()
+                batters_in_db  = db.query(PlayerSeason.player_id).distinct().count()
+                pitchers_in_db = db.query(PitcherSeason.player_id).distinct().count()
         except Exception:
             pass
 
     with _bulk_lock:
         state = dict(_bulk_state)
 
-    return {"players_in_db": players_in_db, **state}
+    return {
+        "batters_in_db":  batters_in_db,
+        "pitchers_in_db": pitchers_in_db,
+        **state,
+    }
 
 
 @app.post("/admin/nightly-update")
