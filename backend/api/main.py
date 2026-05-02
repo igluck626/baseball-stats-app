@@ -10,6 +10,8 @@ import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
 
+import sys
+
 import data_service
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
@@ -17,6 +19,10 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 # database imports work after data_service is imported (it adds backend/ to sys.path)
 from database import connection, crud                       # noqa: E402
 from database.models import PitcherSeason, PlayerSeason     # noqa: E402
+
+# scripts/ holds the Lahman loader; expose it for the /admin/lahman-load endpoint
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+import lahman_load                                          # noqa: E402
 
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8000"))
@@ -111,6 +117,53 @@ def _run_bulk_load() -> None:
         with _bulk_lock:
             _bulk_state["running"] = False
             _bulk_state["phase"]   = None
+
+
+# ---------------------------------------------------------------------------
+# Lahman-load state (shared between background thread and status endpoint)
+# ---------------------------------------------------------------------------
+# Phases: "bridge" → "snapshot" → "batting" → "pitching" → "people" → "done"
+_lahman_state: dict = {
+    "running":  False,
+    "phase":    None,
+    "batting_loaded":           0,
+    "batting_rows_total":       0,
+    "batting_skipped_existing": 0,
+    "batting_skipped_no_id":    0,
+    "pitching_loaded":          0,
+    "pitching_rows_total":      0,
+    "pitching_skipped_existing": 0,
+    "pitching_skipped_no_id":   0,
+    "players_written":  0,
+    "pitchers_written": 0,
+    "error":    None,
+    "last_run": None,        # ISO-8601 UTC timestamp of the last completed run
+}
+_lahman_lock = threading.Lock()
+
+
+def _run_lahman_load() -> None:
+    """Background thread: run the Lahman loader, reporting progress to _lahman_state."""
+    with _lahman_lock:
+        _lahman_state.update(
+            running=True, phase=None,
+            batting_loaded=0, batting_rows_total=0,
+            batting_skipped_existing=0, batting_skipped_no_id=0,
+            pitching_loaded=0, pitching_rows_total=0,
+            pitching_skipped_existing=0, pitching_skipped_no_id=0,
+            players_written=0, pitchers_written=0,
+            error=None,
+        )
+
+    try:
+        lahman_load.run(state=_lahman_state, lock=_lahman_lock)
+    except Exception as exc:
+        with _lahman_lock:
+            _lahman_state["error"] = str(exc)
+    finally:
+        with _lahman_lock:
+            _lahman_state["running"]  = False
+            _lahman_state["last_run"] = datetime.datetime.utcnow().isoformat() + "Z"
 
 
 # ---------------------------------------------------------------------------
@@ -404,6 +457,26 @@ def bulk_load_status():
         "pitchers_in_db": pitchers_in_db,
         **state,
     }
+
+
+@app.post("/admin/lahman-load")
+def start_lahman_load():
+    with _lahman_lock:
+        if _lahman_state["running"]:
+            return {"status": "already_running", **_lahman_state}
+
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+
+    t = threading.Thread(target=_run_lahman_load, daemon=True)
+    t.start()
+    return {"status": "started"}
+
+
+@app.get("/admin/lahman-load/status")
+def lahman_load_status():
+    with _lahman_lock:
+        return dict(_lahman_state)
 
 
 @app.post("/admin/nightly-update")

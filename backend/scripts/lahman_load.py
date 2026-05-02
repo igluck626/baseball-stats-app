@@ -16,7 +16,9 @@ import csv
 import logging
 import os
 import sys
+import threading
 from collections import defaultdict
+from typing import Optional
 
 # ---------------------------------------------------------------------------
 # Path setup — allow imports from backend/api and backend/database
@@ -36,6 +38,7 @@ PEOPLE_CSV     = os.path.join(LAHMAN_DIR, "People.csv")
 CHADWICK_CSV   = os.path.join(LAHMAN_DIR, "chadwick_mlb.csv")
 
 CUTOFF_YEAR = 2008  # load Lahman data only for years STRICTLY less than this
+_SAVE_BATCH = 200    # players per DB transaction during the save loops
 
 logging.basicConfig(
     level=logging.INFO,
@@ -43,6 +46,24 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 log = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Optional shared-state plumbing
+# ---------------------------------------------------------------------------
+# When run() is invoked from a background thread (e.g. main.py's
+# /admin/lahman-load endpoint), the caller passes a state dict + lock so the
+# status endpoint can read live progress. Standalone runs pass nothing and
+# only log to stdout.
+
+def _set_state(state: Optional[dict], lock: Optional[threading.Lock], **kwargs) -> None:
+    if state is None:
+        return
+    if lock is not None:
+        with lock:
+            state.update(kwargs)
+    else:
+        state.update(kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -264,8 +285,17 @@ def _read_pitching_aggregated() -> dict[tuple[str, int], dict]:
 # Loaders
 # ---------------------------------------------------------------------------
 
-def _load_batting(bridge: dict[str, int], existing_keys: set[tuple[int, int]]) -> tuple[int, int, int]:
-    """Aggregate Lahman batting and upsert pre-2008 seasons. Returns (saved, skipped_existing, skipped_no_id)."""
+def _load_batting(
+    bridge: dict[str, int],
+    existing_keys: set[tuple[int, int]],
+    state: Optional[dict] = None,
+    lock: Optional[threading.Lock] = None,
+) -> tuple[int, int, int]:
+    """Aggregate Lahman batting and upsert pre-2008 seasons.
+
+    Returns (saved, skipped_existing, skipped_no_id).
+    """
+    _set_state(state, lock, phase="batting")
     log.info(f"Reading {BATTING_CSV} ...")
     aggregated = _read_batting_aggregated()
     log.info(f"  {len(aggregated):,} (player, year) entries pre-{CUTOFF_YEAR}")
@@ -310,19 +340,40 @@ def _load_batting(bridge: dict[str, int], existing_keys: set[tuple[int, int]]) -
         }
         by_player_id[mlbam].append(season)
 
+    total_rows = sum(len(v) for v in by_player_id.values())
+    log.info(f"  saving {total_rows:,} batting rows for {len(by_player_id):,} batters ...")
+    _set_state(
+        state, lock,
+        batting_rows_total=total_rows,
+        batting_skipped_existing=skipped_existing,
+        batting_skipped_no_id=skipped_no_id,
+    )
+
     saved = 0
-    log.info(f"  saving {sum(len(v) for v in by_player_id.values()):,} batting rows for {len(by_player_id):,} batters ...")
-    with connection.get_session() as db:
-        for mlbam, seasons in by_player_id.items():
-            crud.save_player_seasons(db, mlbam, seasons)
-            saved += len(seasons)
+    pids = list(by_player_id.keys())
+    for chunk_start in range(0, len(pids), _SAVE_BATCH):
+        chunk = pids[chunk_start:chunk_start + _SAVE_BATCH]
+        with connection.get_session() as db:
+            for mlbam in chunk:
+                crud.save_player_seasons(db, mlbam, by_player_id[mlbam])
+                saved += len(by_player_id[mlbam])
+        _set_state(state, lock, batting_loaded=saved)
 
     log.info(f"  batting: saved {saved:,}, skipped (no Chadwick id): {skipped_no_id:,}, skipped (already in DB): {skipped_existing:,}")
     return saved, skipped_existing, skipped_no_id
 
 
-def _load_pitching(bridge: dict[str, int], existing_keys: set[tuple[int, int]]) -> tuple[int, int, int]:
-    """Aggregate Lahman pitching and upsert pre-2008 seasons. Returns (saved, skipped_existing, skipped_no_id)."""
+def _load_pitching(
+    bridge: dict[str, int],
+    existing_keys: set[tuple[int, int]],
+    state: Optional[dict] = None,
+    lock: Optional[threading.Lock] = None,
+) -> tuple[int, int, int]:
+    """Aggregate Lahman pitching and upsert pre-2008 seasons.
+
+    Returns (saved, skipped_existing, skipped_no_id).
+    """
+    _set_state(state, lock, phase="pitching")
     log.info(f"Reading {PITCHING_CSV} ...")
     aggregated = _read_pitching_aggregated()
     log.info(f"  {len(aggregated):,} (pitcher, year) entries pre-{CUTOFF_YEAR}")
@@ -365,12 +416,24 @@ def _load_pitching(bridge: dict[str, int], existing_keys: set[tuple[int, int]]) 
         }
         by_player_id[mlbam].append(season)
 
+    total_rows = sum(len(v) for v in by_player_id.values())
+    log.info(f"  saving {total_rows:,} pitching rows for {len(by_player_id):,} pitchers ...")
+    _set_state(
+        state, lock,
+        pitching_rows_total=total_rows,
+        pitching_skipped_existing=skipped_existing,
+        pitching_skipped_no_id=skipped_no_id,
+    )
+
     saved = 0
-    log.info(f"  saving {sum(len(v) for v in by_player_id.values()):,} pitching rows for {len(by_player_id):,} pitchers ...")
-    with connection.get_session() as db:
-        for mlbam, seasons in by_player_id.items():
-            crud.save_pitcher_seasons(db, mlbam, seasons)
-            saved += len(seasons)
+    pids = list(by_player_id.keys())
+    for chunk_start in range(0, len(pids), _SAVE_BATCH):
+        chunk = pids[chunk_start:chunk_start + _SAVE_BATCH]
+        with connection.get_session() as db:
+            for mlbam in chunk:
+                crud.save_pitcher_seasons(db, mlbam, by_player_id[mlbam])
+                saved += len(by_player_id[mlbam])
+        _set_state(state, lock, pitching_loaded=saved)
 
     log.info(f"  pitching: saved {saved:,}, skipped (no Chadwick id): {skipped_no_id:,}, skipped (already in DB): {skipped_existing:,}")
     return saved, skipped_existing, skipped_no_id
@@ -384,12 +447,15 @@ def _load_people_info(
     bridge: dict[str, int],
     batter_ids: set[int],
     pitcher_ids: set[int],
+    state: Optional[dict] = None,
+    lock: Optional[threading.Lock] = None,
 ) -> tuple[int, int]:
     """Populate the players/pitchers tables with bio info from Lahman People.csv.
 
     Only writes rows whose mlbam IDs appear in batter_ids / pitcher_ids
     (i.e. players who actually have stats loaded in this run or already in DB).
     """
+    _set_state(state, lock, phase="people")
     log.info(f"Reading {PEOPLE_CSV} ...")
 
     by_mlbam: dict[int, dict] = {}
@@ -424,14 +490,20 @@ def _load_people_info(
 
     batters_written = 0
     pitchers_written = 0
-    with connection.get_session() as db:
-        for mlbam, info in by_mlbam.items():
-            if mlbam in batter_ids:
-                crud.save_player(db, info)
-                batters_written += 1
-            if mlbam in pitcher_ids:
-                crud.save_pitcher(db, info)
-                pitchers_written += 1
+    items = list(by_mlbam.items())
+    for chunk_start in range(0, len(items), _SAVE_BATCH):
+        chunk = items[chunk_start:chunk_start + _SAVE_BATCH]
+        with connection.get_session() as db:
+            for mlbam, info in chunk:
+                if mlbam in batter_ids:
+                    crud.save_player(db, info)
+                    batters_written += 1
+                if mlbam in pitcher_ids:
+                    crud.save_pitcher(db, info)
+                    pitchers_written += 1
+        _set_state(state, lock,
+                   players_written=batters_written,
+                   pitchers_written=pitchers_written)
 
     log.info(f"  people: wrote {batters_written:,} player rows, {pitchers_written:,} pitcher rows")
     return batters_written, pitchers_written
@@ -446,8 +518,16 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def run() -> None:
-    """Importable entry point so bulk_load.py can call this as Phase 0."""
+def run(
+    state: Optional[dict] = None,
+    lock: Optional[threading.Lock] = None,
+) -> None:
+    """Run the full Lahman load.
+
+    If `state` and `lock` are provided, progress is written to the dict so a
+    status endpoint can read it from another thread. Without them the loader
+    runs standalone and only logs to stdout.
+    """
     if not connection.db_available():
         sys.exit("ERROR: DATABASE_URL is not set. Export it and re-run.")
     connection.init_db()
@@ -456,10 +536,12 @@ def run() -> None:
     log.info("Lahman load — pre-{} historical stats".format(CUTOFF_YEAR))
     log.info("=" * 52)
 
+    _set_state(state, lock, phase="bridge")
     log.info(f"Loading Chadwick bridge from {CHADWICK_CSV} ...")
     bridge = _load_chadwick_bridge()
     log.info(f"  {len(bridge):,} bbref→mlbam mappings")
 
+    _set_state(state, lock, phase="snapshot")
     log.info("Snapshotting existing (player_id, year) keys to skip ...")
     with connection.get_session() as db:
         bat_existing = {
@@ -472,15 +554,17 @@ def run() -> None:
         }
     log.info(f"  player_seasons: {len(bat_existing):,} rows, pitcher_seasons: {len(pit_existing):,} rows")
 
-    bat_saved, bat_skipped, bat_no_id = _load_batting(bridge, bat_existing)
-    pit_saved, pit_skipped, pit_no_id = _load_pitching(bridge, pit_existing)
+    bat_saved, bat_skipped, bat_no_id = _load_batting(bridge, bat_existing, state, lock)
+    pit_saved, pit_skipped, pit_no_id = _load_pitching(bridge, pit_existing, state, lock)
 
     # Pull final ID sets so we only write people rows for players we actually have stats for
     with connection.get_session() as db:
         batter_ids  = set(crud.get_all_player_ids(db))
         pitcher_ids = set(crud.get_all_pitcher_ids(db))
 
-    p_batters, p_pitchers = _load_people_info(bridge, batter_ids, pitcher_ids)
+    p_batters, p_pitchers = _load_people_info(bridge, batter_ids, pitcher_ids, state, lock)
+
+    _set_state(state, lock, phase="done")
 
     bar = "=" * 52
     print(f"\n{bar}")
