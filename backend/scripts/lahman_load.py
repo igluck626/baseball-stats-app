@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
 """Load Lahman historical batting/pitching stats into PostgreSQL.
 
-Lahman data covers 1871–2021. We only load years < 2008, since
-Baseball Reference (via pybaseball) provides richer data from 2008 onward.
+Lahman is the canonical source for every completed season. We load every
+year STRICTLY less than the current year — pybaseball handles the in-flight
+season via nightly_update.py. After each season ends, Lahman is re-released
+with the just-completed year and this loader picks it up on the next run.
 
 Joins Lahman.playerID → Chadwick key_bbref → key_mlbam (our player_id).
-Players whose Chadwick row lacks a key_mlbam are skipped (~81 players,
-all obscure 19th-century guys).
+Players whose Chadwick row lacks a key_mlbam are skipped (a small tail of
+obscure 19th-century guys with no MLBAM ID assigned).
 
 Idempotent: rows already in the database are skipped.
 """
 
 import argparse
 import csv
+import datetime
 import logging
 import os
 import sys
@@ -37,7 +40,10 @@ PITCHING_CSV   = os.path.join(LAHMAN_DIR, "Pitching.csv")
 PEOPLE_CSV     = os.path.join(LAHMAN_DIR, "People.csv")
 CHADWICK_CSV   = os.path.join(LAHMAN_DIR, "chadwick_mlb.csv")
 
-CUTOFF_YEAR = 2008  # load Lahman data only for years STRICTLY less than this
+# Load Lahman data only for years STRICTLY less than this — i.e. every
+# completed season. Pybaseball owns the current season; after it ends, Lahman
+# is re-released with the new year and the cutoff naturally rolls forward.
+CUTOFF_YEAR = datetime.date.today().year
 _SAVE_BATCH = 200    # players per DB transaction during the save loops
 
 logging.basicConfig(

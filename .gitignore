@@ -23,5 +23,11 @@ __pycache__/
 # OS
 .DS_Store
 
-# Raw Chadwick register (70 MB) — only the trimmed chadwick_mlb.csv is committed
-backend/data/lahman/chadwick_people.csv
+# Lahman data: only the CSVs the loader actually reads + the trimmed Chadwick
+# bridge are committed. Everything else (raw Chadwick register, aux Lahman
+# tables like Fielding/Salaries/HallOfFame, readme files) stays local.
+backend/data/lahman/*
+!backend/data/lahman/Batting.csv
+!backend/data/lahman/Pitching.csv
+!backend/data/lahman/People.csv
+!backend/data/lahman/chadwick_mlb.csv

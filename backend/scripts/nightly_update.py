@@ -8,6 +8,15 @@ the current-year row in player_seasons for every player in the database.
 
 Phase 2 (pitchers): fetches pitching_stats_bref + bwar_pitch once and upserts
 the current-year row in pitcher_seasons for every pitcher in the database.
+
+Seasonal workflow
+-----------------
+Pybaseball is the source of truth ONLY for the in-flight current season.
+After each season ends (typically late October), the Lahman archive is
+re-released with the just-completed year. Re-running lahman_load.py
+permanently overwrites the pybaseball-sourced current-season rows with
+canonical Lahman numbers; the cutoff in lahman_load.py is "current year"
+so the rollover is automatic on the next run after Lahman publishes.
 """
 
 import logging

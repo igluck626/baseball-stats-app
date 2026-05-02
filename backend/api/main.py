@@ -3,7 +3,6 @@
 import datetime
 import os
 import threading
-import time
 from contextlib import asynccontextmanager
 
 import uvicorn
@@ -20,10 +19,12 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 from database import connection, crud                       # noqa: E402
 from database.models import PitcherSeason, PlayerSeason     # noqa: E402
 
-# scripts/ holds the Lahman loader and WAR backfill; expose them for /admin endpoints
+# scripts/ holds the Lahman loader, WAR backfill, and nightly update logic;
+# expose them so /admin endpoints can drive the same pipeline as the CLI.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 import backfill_war                                         # noqa: E402
 import lahman_load                                          # noqa: E402
+import nightly_update                                       # noqa: E402
 
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8000"))
@@ -31,93 +32,67 @@ PORT = int(os.getenv("PORT", "8000"))
 # ---------------------------------------------------------------------------
 # Bulk-load state (shared between background thread and status endpoint)
 # ---------------------------------------------------------------------------
+# Top-level "phase" tracks where we are in the three-step pipeline:
+#   "lahman"          → Phase 0: Lahman archive (every completed season)
+#   "war_backfill"    → Phase 1: bwar_bat / bwar_pitch fills WAR / OPS+ / etc.
+#   "current_season"  → Phase 2: pybaseball pulls the in-flight season
+#   "done"
+# The nested "lahman" / "war" dicts get the live progress from the sub-runners.
 _bulk_state: dict = {
     "running":  False,
-    "phase":    None,        # "batters" | "pitchers" | None
-    "loaded":   0,
-    "skipped":  0,
-    "failed":   0,
-    "total":    0,
+    "phase":    None,
+    "lahman":   {},
+    "war":      {},
+    "current":  {},
     "error":    None,
+    "last_run": None,
 }
 _bulk_lock = threading.Lock()
 
 
-def _bulk_load_phase(
-    bwar_fetch,                # callable -> DataFrame with mlb_ID + year_ID
-    existing_table,            # SQLAlchemy model
-    fetch_and_save,            # callable(player_id) -> name|None
-    phase_name: str,
-) -> None:
-    """One phase of the bulk load (batters or pitchers).
-
-    Resets the per-phase counters in _bulk_state, fetches the WAR DataFrame
-    for the given phase, computes the player IDs to load (since 1990, not yet
-    in the DB), and processes them sequentially with a 2-second pause between
-    players to avoid Baseball Reference rate-limiting.
-    """
-    with _bulk_lock:
-        _bulk_state.update(
-            phase=phase_name, loaded=0, skipped=0, failed=0, total=0
-        )
-
-    bwar = bwar_fetch()
-    recent = bwar[bwar["year_ID"] >= 1990]
-    all_ids: list[int] = sorted(
-        int(pid) for pid in recent["mlb_ID"].dropna().unique() if pid > 0
-    )
-
-    with connection.get_session() as db:
-        rows = db.query(existing_table.player_id).distinct().all()
-    already_loaded = {r.player_id for r in rows}
-
-    to_process = [pid for pid in all_ids if pid not in already_loaded]
-
-    with _bulk_lock:
-        _bulk_state["total"] = len(to_process)
-
-    for player_id in to_process:
-        try:
-            name = fetch_and_save(player_id)
-            with _bulk_lock:
-                if name is not None:
-                    _bulk_state["loaded"] += 1
-                else:
-                    _bulk_state["skipped"] += 1
-        except Exception:
-            with _bulk_lock:
-                _bulk_state["failed"] += 1
-        time.sleep(2.0)
-
-
 def _run_bulk_load() -> None:
-    """Background thread: bulk-load batters then pitchers."""
+    """Background thread: Lahman → WAR backfill → current-season fetch."""
     with _bulk_lock:
         _bulk_state.update(
-            running=True, phase=None, loaded=0, skipped=0,
-            failed=0, total=0, error=None,
+            running=True, phase=None,
+            lahman={}, war={}, current={},
+            error=None,
         )
 
     try:
-        _bulk_load_phase(
-            data_service._bwar_bat_all,
-            PlayerSeason,
-            data_service.fetch_and_save_batting_career,
-            "batters",
-        )
-        _bulk_load_phase(
-            data_service._bwar_pitch_all,
-            PitcherSeason,
-            data_service.fetch_and_save_pitching_career,
-            "pitchers",
-        )
+        with _bulk_lock:
+            _bulk_state["phase"] = "lahman"
+        lahman_load.run(state=_bulk_state["lahman"], lock=_bulk_lock)
+
+        with _bulk_lock:
+            _bulk_state["phase"] = "war_backfill"
+        backfill_war.run(state=_bulk_state["war"], lock=_bulk_lock)
+
+        with _bulk_lock:
+            _bulk_state["phase"] = "current_season"
+        current_year = data_service._current_year()
+        bat_u, bat_s, bat_f = nightly_update._update_batters(current_year)
+        pit_u, pit_s, pit_f = nightly_update._update_pitchers(current_year)
+        with _bulk_lock:
+            _bulk_state["current"] = {
+                "year":              current_year,
+                "batters_updated":   bat_u,
+                "batters_skipped":   bat_s,
+                "batters_failed":    len(bat_f),
+                "pitchers_updated":  pit_u,
+                "pitchers_skipped":  pit_s,
+                "pitchers_failed":   len(pit_f),
+            }
+
+        with _bulk_lock:
+            _bulk_state["phase"] = "done"
     except Exception as exc:
         with _bulk_lock:
             _bulk_state["error"] = str(exc)
     finally:
         with _bulk_lock:
-            _bulk_state["running"] = False
-            _bulk_state["phase"]   = None
+            _bulk_state["running"]  = False
+            _bulk_state["last_run"] = datetime.datetime.utcnow().isoformat() + "Z"
 
 
 # ---------------------------------------------------------------------------
