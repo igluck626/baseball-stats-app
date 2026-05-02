@@ -22,10 +22,12 @@ import time
 # ---------------------------------------------------------------------------
 _SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 _BACKEND_DIR = os.path.dirname(_SCRIPTS_DIR)
+sys.path.insert(0, _SCRIPTS_DIR)
 sys.path.insert(0, os.path.join(_BACKEND_DIR, "api"))
 sys.path.insert(0, _BACKEND_DIR)
 
 import data_service                                       # noqa: E402
+import lahman_load                                        # noqa: E402
 from database import connection                           # noqa: E402
 from database.models import PitcherSeason, PlayerSeason   # noqa: E402
 
@@ -160,6 +162,15 @@ def main() -> None:
         sys.exit("ERROR: DATABASE_URL is not set. Export it and re-run.")
 
     connection.init_db()
+
+    # --------------------------- Lahman (pre-2008) ---------------------------
+    log.info("=" * 52)
+    log.info("Phase 0: Lahman historical (pre-2008) — local CSVs, no rate limit")
+    log.info("=" * 52)
+    try:
+        lahman_load.run()
+    except Exception as exc:
+        log.error(f"Lahman load failed: {exc}  — continuing with bref phases")
 
     # --------------------------- batters ---------------------------
     log.info("=" * 52)

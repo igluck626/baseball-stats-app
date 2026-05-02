@@ -22,3 +22,6 @@ __pycache__/
 
 # OS
 .DS_Store
+
+# Raw Chadwick register (70 MB) — only the trimmed chadwick_mlb.csv is committed
+backend/data/lahman/chadwick_people.csv
