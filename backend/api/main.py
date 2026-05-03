@@ -17,7 +17,11 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 # database imports work after data_service is imported (it adds backend/ to sys.path)
 from database import connection, crud                       # noqa: E402
-from database.models import PitcherSeason, PlayerSeason     # noqa: E402
+from database.models import (                                # noqa: E402
+    PitcherSeason, PlayerAllstar, PlayerAward, PlayerFielding,
+    PlayerPostseasonBatting, PlayerPostseasonPitching,
+    PlayerSeason, TeamSeason,
+)
 
 # scripts/ holds the Lahman loader, WAR backfill, and nightly update logic;
 # expose them so /admin endpoints can drive the same pipeline as the CLI.
@@ -432,6 +436,78 @@ def career_pitching(player_id: int):
 
 
 # ---------------------------------------------------------------------------
+# Fielding, awards, postseason
+# ---------------------------------------------------------------------------
+
+@app.get("/players/{player_id}/fielding")
+def player_fielding(player_id: int):
+    rows = data_service.get_fielding(player_id)
+    if not rows:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No fielding data found for player_id {player_id}",
+        )
+    return {"player_id": player_id, "fielding": rows}
+
+
+@app.get("/players/{player_id}/awards")
+def player_awards(player_id: int):
+    awards  = data_service.get_awards(player_id)
+    allstar = data_service.get_allstar(player_id)
+    if not awards and not allstar:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No awards or All-Star appearances found for player_id {player_id}",
+        )
+    return {"player_id": player_id, "awards": awards, "allstar": allstar}
+
+
+@app.get("/players/{player_id}/postseason/batting")
+def player_postseason_batting(player_id: int):
+    rows = data_service.get_postseason_batting(player_id)
+    if not rows:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No postseason batting found for player_id {player_id}",
+        )
+    return {"player_id": player_id, "postseason": rows}
+
+
+@app.get("/players/{player_id}/postseason/pitching")
+def player_postseason_pitching(player_id: int):
+    rows = data_service.get_postseason_pitching(player_id)
+    if not rows:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No postseason pitching found for player_id {player_id}",
+        )
+    return {"player_id": player_id, "postseason": rows}
+
+
+# ---------------------------------------------------------------------------
+# Teams
+# ---------------------------------------------------------------------------
+
+@app.get("/teams/standings")
+def team_standings(year: int = Query(..., description="Season year, e.g. 2024")):
+    rows = data_service.get_team_standings(year)
+    if not rows:
+        raise HTTPException(status_code=404, detail=f"No team data for year {year}")
+    return {"year": year, "standings": rows}
+
+
+@app.get("/teams/{team_id}/history")
+def team_history(team_id: str):
+    rows = data_service.get_team_history(team_id)
+    if not rows:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No franchise history found for team_id {team_id!r}",
+        )
+    return {"team_id": team_id, "history": rows}
+
+
+# ---------------------------------------------------------------------------
 # Admin endpoints
 # ---------------------------------------------------------------------------
 
@@ -464,24 +540,29 @@ def start_bulk_load():
 
 @app.get("/admin/bulk-load/status")
 def bulk_load_status():
-    batters_in_db = 0
-    pitchers_in_db = 0
+    counts: dict[str, int] = {}
     if connection.db_available():
         try:
             with connection.get_session() as db:
-                batters_in_db  = db.query(PlayerSeason.player_id).distinct().count()
-                pitchers_in_db = db.query(PitcherSeason.player_id).distinct().count()
+                counts = {
+                    "player_seasons":             db.query(PlayerSeason).count(),
+                    "pitcher_seasons":            db.query(PitcherSeason).count(),
+                    "player_fielding":            db.query(PlayerFielding).count(),
+                    "player_awards":              db.query(PlayerAward).count(),
+                    "player_allstar":             db.query(PlayerAllstar).count(),
+                    "player_postseason_batting":  db.query(PlayerPostseasonBatting).count(),
+                    "player_postseason_pitching": db.query(PlayerPostseasonPitching).count(),
+                    "team_seasons":               db.query(TeamSeason).count(),
+                    "batters_in_db":              db.query(PlayerSeason.player_id).distinct().count(),
+                    "pitchers_in_db":             db.query(PitcherSeason.player_id).distinct().count(),
+                }
         except Exception:
             pass
 
     with _bulk_lock:
         state = dict(_bulk_state)
 
-    return {
-        "batters_in_db":  batters_in_db,
-        "pitchers_in_db": pitchers_in_db,
-        **state,
-    }
+    return {"counts": counts, **state}
 
 
 @app.post("/admin/backfill-war")

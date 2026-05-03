@@ -23,15 +23,26 @@ sys.path.insert(0, os.path.join(_BACKEND_DIR, "api"))
 sys.path.insert(0, _BACKEND_DIR)
 
 from database import connection                                      # noqa: E402
-from database.models import Pitcher, PitcherSeason, Player, PlayerSeason   # noqa: E402
+from database.models import (                                          # noqa: E402
+    Pitcher, PitcherSeason, Player,
+    PlayerAllstar, PlayerAward, PlayerFielding,
+    PlayerPostseasonBatting, PlayerPostseasonPitching,
+    PlayerSeason, TeamSeason,
+)
 
-# Order: season tables before parent tables — even though there's no FK
-# constraint today, this matches the conceptual ownership.
+# Order: child/data tables before parent player/pitcher tables — no FK
+# constraints today but this matches the conceptual ownership.
 TABLES = [
-    ("player_seasons",  PlayerSeason),
-    ("pitcher_seasons", PitcherSeason),
-    ("players",         Player),
-    ("pitchers",        Pitcher),
+    ("player_seasons",             PlayerSeason),
+    ("pitcher_seasons",            PitcherSeason),
+    ("player_fielding",            PlayerFielding),
+    ("player_awards",              PlayerAward),
+    ("player_allstar",             PlayerAllstar),
+    ("player_postseason_batting",  PlayerPostseasonBatting),
+    ("player_postseason_pitching", PlayerPostseasonPitching),
+    ("team_seasons",               TeamSeason),
+    ("players",                    Player),
+    ("pitchers",                   Pitcher),
 ]
 
 logging.basicConfig(

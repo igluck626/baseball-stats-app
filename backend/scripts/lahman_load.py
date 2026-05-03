@@ -32,13 +32,21 @@ sys.path.insert(0, os.path.join(_BACKEND_DIR, "api"))
 sys.path.insert(0, _BACKEND_DIR)
 
 from database import connection, crud                                     # noqa: E402
-from database.models import PitcherSeason, PlayerSeason                   # noqa: E402
+from database.models import (                                              # noqa: E402
+    PitcherSeason, PlayerFielding, PlayerSeason, TeamSeason,
+)
 
-LAHMAN_DIR     = os.path.join(_BACKEND_DIR, "data", "lahman")
-BATTING_CSV    = os.path.join(LAHMAN_DIR, "Batting.csv")
-PITCHING_CSV   = os.path.join(LAHMAN_DIR, "Pitching.csv")
-PEOPLE_CSV     = os.path.join(LAHMAN_DIR, "People.csv")
-CHADWICK_CSV   = os.path.join(LAHMAN_DIR, "chadwick_mlb.csv")
+LAHMAN_DIR              = os.path.join(_BACKEND_DIR, "data", "lahman")
+BATTING_CSV             = os.path.join(LAHMAN_DIR, "Batting.csv")
+PITCHING_CSV            = os.path.join(LAHMAN_DIR, "Pitching.csv")
+PEOPLE_CSV              = os.path.join(LAHMAN_DIR, "People.csv")
+CHADWICK_CSV            = os.path.join(LAHMAN_DIR, "chadwick_mlb.csv")
+FIELDING_CSV            = os.path.join(LAHMAN_DIR, "Fielding.csv")
+AWARDS_CSV              = os.path.join(LAHMAN_DIR, "AwardsPlayers.csv")
+ALLSTAR_CSV             = os.path.join(LAHMAN_DIR, "AllstarFull.csv")
+BATTING_POST_CSV        = os.path.join(LAHMAN_DIR, "BattingPost.csv")
+PITCHING_POST_CSV       = os.path.join(LAHMAN_DIR, "PitchingPost.csv")
+TEAMS_CSV               = os.path.join(LAHMAN_DIR, "Teams.csv")
 
 # Load Lahman data only for years STRICTLY less than this — i.e. every
 # completed season. Pybaseball owns the current season; after it ends, Lahman
@@ -483,8 +491,14 @@ def _load_people_info(
                 continue
 
             # Lahman's debut/finalGame are date strings like "1914-07-11"
-            debut_year = _i_or_none((row.get("debut") or "")[:4])
-            last_year  = _i_or_none((row.get("finalGame") or "")[:4])
+            debut      = (row.get("debut") or "").strip() or None
+            final_game = (row.get("finalGame") or "").strip() or None
+            debut_year = _i_or_none(debut[:4]) if debut else None
+            last_year  = _i_or_none(final_game[:4]) if final_game else None
+
+            def _str_or_none(v):
+                v = (v or "").strip()
+                return v or None
 
             by_mlbam[mlbam] = {
                 "player_id":       mlbam,
@@ -492,6 +506,18 @@ def _load_people_info(
                 "bbref_id":        bbref,
                 "mlb_debut":       debut_year,
                 "mlb_last_season": last_year,
+                "bats":            _str_or_none(row.get("bats")),
+                "throws":          _str_or_none(row.get("throws")),
+                "height":          _i_or_none(row.get("height")),
+                "weight":          _i_or_none(row.get("weight")),
+                "birth_year":      _i_or_none(row.get("birthYear")),
+                "birth_month":     _i_or_none(row.get("birthMonth")),
+                "birth_day":       _i_or_none(row.get("birthDay")),
+                "birth_city":      _str_or_none(row.get("birthCity")),
+                "birth_state":     _str_or_none(row.get("birthState")),
+                "birth_country":   _str_or_none(row.get("birthCountry")),
+                "debut":           debut,
+                "final_game":      final_game,
             }
 
     batters_written = 0
@@ -502,10 +528,13 @@ def _load_people_info(
         with connection.get_session() as db:
             for mlbam, info in chunk:
                 if mlbam in batter_ids:
+                    # Player.position is filled in by _compute_primary_positions
+                    # after fielding has been loaded.
                     crud.save_player(db, info)
                     batters_written += 1
                 if mlbam in pitcher_ids:
-                    crud.save_pitcher(db, info)
+                    # Pitcher.position is always "P".
+                    crud.save_pitcher(db, {**info, "position": "P"})
                     pitchers_written += 1
         _set_state(state, lock,
                    players_written=batters_written,
@@ -516,11 +545,435 @@ def _load_people_info(
 
 
 # ---------------------------------------------------------------------------
+# Fielding (Fielding.csv) — aggregate stints per (player, year, position)
+# ---------------------------------------------------------------------------
+
+def _load_fielding(
+    bridge: dict[str, int],
+    state: Optional[dict] = None,
+    lock: Optional[threading.Lock] = None,
+) -> int:
+    _set_state(state, lock, phase="fielding")
+    log.info(f"Reading {FIELDING_CSV} ...")
+
+    # Aggregate counting stats across stints per (player, year, position)
+    by_key: dict[tuple[str, int, str], dict] = {}
+    with open(FIELDING_CSV, newline="") as fh:
+        for row in csv.DictReader(fh):
+            year = int(row["yearID"])
+            if year >= CUTOFF_YEAR:
+                continue
+            pos = row.get("POS") or ""
+            if not pos:
+                continue
+            key = (row["playerID"], year, pos)
+            agg = by_key.setdefault(key, {
+                "stint": 0, "teamID": "",
+                "G": 0, "GS": 0, "InnOuts": 0, "PO": 0, "A": 0, "E": 0, "DP": 0,
+            })
+            stint = _i(row.get("stint"))
+            agg["G"]       += _i(row["G"])
+            agg["GS"]      += _i(row["GS"])
+            agg["InnOuts"] += _i(row["InnOuts"])
+            agg["PO"]      += _i(row["PO"])
+            agg["A"]       += _i(row["A"])
+            agg["E"]       += _i(row["E"])
+            agg["DP"]      += _i(row["DP"])
+            if stint >= agg["stint"]:
+                agg["stint"]  = stint
+                agg["teamID"] = row["teamID"]
+
+    # Build rows keyed by mlbam player_id
+    by_player: dict[int, list[dict]] = defaultdict(list)
+    skipped_no_id = 0
+    for (lahman_id, year, pos), agg in by_key.items():
+        mlbam = bridge.get(lahman_id)
+        if mlbam is None:
+            skipped_no_id += 1
+            continue
+        po, a, e = agg["PO"], agg["A"], agg["E"]
+        chances  = po + a + e
+        innings  = agg["InnOuts"] / 3 if agg["InnOuts"] > 0 else 0.0
+        by_player[mlbam].append({
+            "year":         year,
+            "position":     pos,
+            "team":         agg["teamID"] or None,
+            "G":            agg["G"],
+            "GS":           agg["GS"],
+            "innings_outs": agg["InnOuts"],
+            "PO":           po,
+            "A":            a,
+            "E":            e,
+            "DP":           agg["DP"],
+            "fielding_pct": round((po + a) / chances, 3) if chances > 0 else None,
+            "RF_per9":      round((po + a) * 9 / innings, 2) if innings > 0 else None,
+        })
+
+    total_rows = sum(len(v) for v in by_player.values())
+    log.info(f"  saving {total_rows:,} fielding rows for {len(by_player):,} players ...")
+    _set_state(state, lock, fielding_rows_total=total_rows,
+               fielding_skipped_no_id=skipped_no_id)
+
+    saved = 0
+    pids = list(by_player.keys())
+    for chunk_start in range(0, len(pids), _SAVE_BATCH):
+        chunk = pids[chunk_start:chunk_start + _SAVE_BATCH]
+        with connection.get_session() as db:
+            for mlbam in chunk:
+                crud.save_player_fielding(db, mlbam, by_player[mlbam])
+                saved += len(by_player[mlbam])
+        _set_state(state, lock, fielding_loaded=saved)
+
+    log.info(f"  fielding: saved {saved:,}, skipped (no Chadwick id): {skipped_no_id:,}")
+    return saved
+
+
+def _compute_primary_positions(
+    state: Optional[dict] = None,
+    lock: Optional[threading.Lock] = None,
+) -> int:
+    """For every Player row, set position to whichever non-pitcher fielding
+    position the player accumulated the most games at. Falls back to "P" if
+    they only ever pitched. Pitcher.position is set to "P" at people-load
+    time so this only updates Player rows.
+    """
+    _set_state(state, lock, phase="primary_positions")
+    log.info("Computing primary fielding position per Player ...")
+
+    from sqlalchemy import func
+    with connection.get_session() as db:
+        rows = (
+            db.query(
+                PlayerFielding.player_id,
+                PlayerFielding.position,
+                func.sum(PlayerFielding.G).label("g"),
+            )
+            .group_by(PlayerFielding.player_id, PlayerFielding.position)
+            .all()
+        )
+
+    positions_by_player: dict[int, dict[str, int]] = defaultdict(dict)
+    for r in rows:
+        positions_by_player[r.player_id][r.position] = int(r.g or 0)
+
+    # Decide each player's primary: prefer non-P, otherwise P (player never
+    # appears in the field except as pitcher).
+    primary: dict[int, str] = {}
+    for pid, by_pos in positions_by_player.items():
+        non_p = {p: g for p, g in by_pos.items() if p != "P"}
+        primary[pid] = max(non_p, key=non_p.get) if non_p else "P"
+
+    updated = 0
+    items = list(primary.items())
+    for chunk_start in range(0, len(items), _SAVE_BATCH):
+        chunk = items[chunk_start:chunk_start + _SAVE_BATCH]
+        with connection.get_session() as db:
+            for pid, pos in chunk:
+                p = crud.get_player(db, pid)
+                if p is not None:
+                    p.position = pos
+                    updated += 1
+        _set_state(state, lock, positions_set=updated)
+
+    log.info(f"  positions set on {updated:,} player rows")
+    return updated
+
+
+# ---------------------------------------------------------------------------
+# Awards (AwardsPlayers.csv) and All-Star (AllstarFull.csv)
+# ---------------------------------------------------------------------------
+
+def _load_awards(
+    bridge: dict[str, int],
+    state: Optional[dict] = None,
+    lock: Optional[threading.Lock] = None,
+) -> int:
+    _set_state(state, lock, phase="awards")
+    log.info(f"Reading {AWARDS_CSV} ...")
+
+    rows: list[dict] = []
+    skipped_no_id = 0
+    with open(AWARDS_CSV, newline="") as fh:
+        for row in csv.DictReader(fh):
+            year = int(row["yearID"])
+            if year >= CUTOFF_YEAR:
+                continue
+            mlbam = bridge.get(row["playerID"])
+            if mlbam is None:
+                skipped_no_id += 1
+                continue
+            rows.append({
+                "player_id":  mlbam,
+                "year":       year,
+                "award_name": row["awardID"],
+                "league":     row.get("lgID") or "",
+                "tie":        (row.get("tie") or "").strip() or None,
+                "notes":      (row.get("notes") or "").strip() or None,
+            })
+
+    log.info(f"  saving {len(rows):,} award rows ...")
+    _set_state(state, lock, awards_rows_total=len(rows),
+               awards_skipped_no_id=skipped_no_id)
+
+    saved = 0
+    BATCH = 5000
+    for chunk_start in range(0, len(rows), BATCH):
+        chunk = rows[chunk_start:chunk_start + BATCH]
+        with connection.get_session() as db:
+            crud.save_player_awards(db, chunk)
+            saved += len(chunk)
+        _set_state(state, lock, awards_loaded=saved)
+
+    log.info(f"  awards: saved {saved:,}, skipped (no Chadwick id): {skipped_no_id:,}")
+    return saved
+
+
+def _load_allstar(
+    bridge: dict[str, int],
+    state: Optional[dict] = None,
+    lock: Optional[threading.Lock] = None,
+) -> int:
+    _set_state(state, lock, phase="allstar")
+    log.info(f"Reading {ALLSTAR_CSV} ...")
+
+    rows: list[dict] = []
+    skipped_no_id = 0
+    with open(ALLSTAR_CSV, newline="") as fh:
+        for row in csv.DictReader(fh):
+            year = int(row["yearID"])
+            if year >= CUTOFF_YEAR:
+                continue
+            mlbam = bridge.get(row["playerID"])
+            if mlbam is None:
+                skipped_no_id += 1
+                continue
+            rows.append({
+                "player_id":    mlbam,
+                "year":         year,
+                "game_num":     _i(row.get("gameNum")),
+                "team":         row.get("teamID") or None,
+                "league":       row.get("lgID") or None,
+                "GP":           _i_or_none(row.get("GP")),
+                "starting_pos": _i_or_none(row.get("startingPos")),
+            })
+
+    log.info(f"  saving {len(rows):,} all-star rows ...")
+    _set_state(state, lock, allstar_rows_total=len(rows),
+               allstar_skipped_no_id=skipped_no_id)
+
+    saved = 0
+    BATCH = 5000
+    for chunk_start in range(0, len(rows), BATCH):
+        chunk = rows[chunk_start:chunk_start + BATCH]
+        with connection.get_session() as db:
+            crud.save_player_allstar(db, chunk)
+            saved += len(chunk)
+        _set_state(state, lock, allstar_loaded=saved)
+
+    log.info(f"  allstar: saved {saved:,}, skipped (no Chadwick id): {skipped_no_id:,}")
+    return saved
+
+
+# ---------------------------------------------------------------------------
+# Postseason batting & pitching
+# ---------------------------------------------------------------------------
+
+def _load_postseason_batting(
+    bridge: dict[str, int],
+    state: Optional[dict] = None,
+    lock: Optional[threading.Lock] = None,
+) -> int:
+    _set_state(state, lock, phase="postseason_batting")
+    log.info(f"Reading {BATTING_POST_CSV} ...")
+
+    rows: list[dict] = []
+    skipped_no_id = 0
+    with open(BATTING_POST_CSV, newline="") as fh:
+        for row in csv.DictReader(fh):
+            year = int(row["yearID"])
+            if year >= CUTOFF_YEAR:
+                continue
+            mlbam = bridge.get(row["playerID"])
+            if mlbam is None:
+                skipped_no_id += 1
+                continue
+
+            ab = _i(row["AB"]); h = _i(row["H"])
+            doubles = _i(row["2B"]); triples = _i(row["3B"]); hr = _i(row["HR"])
+            bb = _i(row["BB"]); hbp = _f(row.get("HBP")); sf = _f(row.get("SF"))
+            ba  = round(h / ab, 3) if ab > 0 else None
+            obp_den = ab + bb + hbp + sf
+            obp = round((h + bb + hbp) / obp_den, 3) if obp_den > 0 else None
+            slg = round((h + doubles + 2 * triples + 3 * hr) / ab, 3) if ab > 0 else None
+            ops = round(obp + slg, 3) if (obp is not None and slg is not None) else None
+
+            rows.append({
+                "player_id": mlbam,
+                "year":      year,
+                "round":     row["round"],
+                "team":      row.get("teamID") or None,
+                "league":    row.get("lgID") or None,
+                "G":         _i(row["G"]),
+                "AB":        ab,
+                "R":         _i(row["R"]),
+                "H":         h,
+                "doubles":   doubles,
+                "triples":   triples,
+                "HR":        hr,
+                "RBI":       _i_or_none(row.get("RBI")),
+                "BB":        bb,
+                "SO":        _i_or_none(row.get("SO")),
+                "SB":        _i_or_none(row.get("SB")),
+                "CS":        _i_or_none(row.get("CS")),
+                "BA":        ba,
+                "OBP":       obp,
+                "SLG":       slg,
+                "OPS":       ops,
+            })
+
+    log.info(f"  saving {len(rows):,} postseason batting rows ...")
+    _set_state(state, lock, postseason_batting_rows_total=len(rows),
+               postseason_batting_skipped_no_id=skipped_no_id)
+
+    saved = 0
+    BATCH = 5000
+    for chunk_start in range(0, len(rows), BATCH):
+        chunk = rows[chunk_start:chunk_start + BATCH]
+        with connection.get_session() as db:
+            crud.save_player_postseason_batting(db, chunk)
+            saved += len(chunk)
+        _set_state(state, lock, postseason_batting_loaded=saved)
+
+    log.info(f"  postseason batting: saved {saved:,}, skipped (no Chadwick id): {skipped_no_id:,}")
+    return saved
+
+
+def _load_postseason_pitching(
+    bridge: dict[str, int],
+    state: Optional[dict] = None,
+    lock: Optional[threading.Lock] = None,
+) -> int:
+    _set_state(state, lock, phase="postseason_pitching")
+    log.info(f"Reading {PITCHING_POST_CSV} ...")
+
+    rows: list[dict] = []
+    skipped_no_id = 0
+    with open(PITCHING_POST_CSV, newline="") as fh:
+        for row in csv.DictReader(fh):
+            year = int(row["yearID"])
+            if year >= CUTOFF_YEAR:
+                continue
+            mlbam = bridge.get(row["playerID"])
+            if mlbam is None:
+                skipped_no_id += 1
+                continue
+
+            ipouts = _i(row["IPouts"])
+            ip = round(ipouts / 3, 1) if ipouts > 0 else None
+            ip_dec = ipouts / 3 if ipouts > 0 else 0.0
+            h  = _i(row["H"])
+            bb = _i(row["BB"])
+            whip = round((bb + h) / ip_dec, 2) if ip_dec > 0 else None
+
+            rows.append({
+                "player_id": mlbam,
+                "year":      year,
+                "round":     row["round"],
+                "team":      row.get("teamID") or None,
+                "league":    row.get("lgID") or None,
+                "W":         _i(row["W"]),
+                "L":         _i(row["L"]),
+                "G":         _i(row["G"]),
+                "GS":        _i(row["GS"]),
+                "SV":        _i_or_none(row.get("SV")),
+                "IP":        ip,
+                "H":         h,
+                "ER":        _i(row["ER"]),
+                "HR":        _i(row["HR"]),
+                "BB":        bb,
+                "SO":        _i(row["SO"]),
+                "ERA":       _f(row["ERA"]) if row.get("ERA") else None,
+                "WHIP":      whip,
+            })
+
+    log.info(f"  saving {len(rows):,} postseason pitching rows ...")
+    _set_state(state, lock, postseason_pitching_rows_total=len(rows),
+               postseason_pitching_skipped_no_id=skipped_no_id)
+
+    saved = 0
+    BATCH = 5000
+    for chunk_start in range(0, len(rows), BATCH):
+        chunk = rows[chunk_start:chunk_start + BATCH]
+        with connection.get_session() as db:
+            crud.save_player_postseason_pitching(db, chunk)
+            saved += len(chunk)
+        _set_state(state, lock, postseason_pitching_loaded=saved)
+
+    log.info(f"  postseason pitching: saved {saved:,}, skipped (no Chadwick id): {skipped_no_id:,}")
+    return saved
+
+
+# ---------------------------------------------------------------------------
+# Team standings (Teams.csv)
+# ---------------------------------------------------------------------------
+
+def _load_teams(
+    state: Optional[dict] = None,
+    lock: Optional[threading.Lock] = None,
+) -> int:
+    _set_state(state, lock, phase="teams")
+    log.info(f"Reading {TEAMS_CSV} ...")
+
+    rows: list[dict] = []
+    with open(TEAMS_CSV, newline="") as fh:
+        for row in csv.DictReader(fh):
+            year = int(row["yearID"])
+            if year >= CUTOFF_YEAR:
+                continue
+            w = _i(row["W"]); l = _i(row["L"])
+            win_pct = round(w / (w + l), 3) if (w + l) > 0 else None
+            rows.append({
+                "year":         year,
+                "team_id":      row["teamID"],
+                "franch_id":    row.get("franchID") or row["teamID"],
+                "team_name":    row.get("name") or None,
+                "league":       row.get("lgID") or None,
+                "division":     row.get("divID") or None,
+                "rank":         _i_or_none(row.get("Rank")),
+                "G":            _i(row["G"]),
+                "W":            w,
+                "L":            l,
+                "win_pct":      win_pct,
+                "runs_scored":  _i(row["R"]),
+                "runs_allowed": _i(row["RA"]),
+                "HR":           _i(row["HR"]),
+                "ERA":          _f(row["ERA"]) if row.get("ERA") else None,
+                "attendance":   _i_or_none(row.get("attendance")),
+                "park_name":    row.get("park") or None,
+            })
+
+    log.info(f"  saving {len(rows):,} team-season rows ...")
+    _set_state(state, lock, teams_rows_total=len(rows))
+
+    saved = 0
+    BATCH = 1000
+    for chunk_start in range(0, len(rows), BATCH):
+        chunk = rows[chunk_start:chunk_start + BATCH]
+        with connection.get_session() as db:
+            crud.save_team_seasons(db, chunk)
+            saved += len(chunk)
+        _set_state(state, lock, teams_loaded=saved)
+
+    log.info(f"  teams: saved {saved:,}")
+    return saved
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Load Lahman pre-2008 stats into PostgreSQL.")
+    p = argparse.ArgumentParser(description="Load Lahman historical stats into PostgreSQL.")
     return p.parse_args()
 
 
@@ -570,15 +1023,30 @@ def run(
 
     p_batters, p_pitchers = _load_people_info(bridge, batter_ids, pitcher_ids, state, lock)
 
+    fielding_saved   = _load_fielding(bridge, state, lock)
+    positions_set    = _compute_primary_positions(state, lock)
+    awards_saved     = _load_awards(bridge, state, lock)
+    allstar_saved    = _load_allstar(bridge, state, lock)
+    post_bat_saved   = _load_postseason_batting(bridge, state, lock)
+    post_pit_saved   = _load_postseason_pitching(bridge, state, lock)
+    teams_saved      = _load_teams(state, lock)
+
     _set_state(state, lock, phase="done")
 
     bar = "=" * 52
     print(f"\n{bar}")
     print("Lahman load complete")
-    print(f"  Batting rows  saved: {bat_saved:>7,}   skipped existing: {bat_skipped:>6,}   no chadwick id: {bat_no_id:>5,}")
-    print(f"  Pitching rows saved: {pit_saved:>7,}   skipped existing: {pit_skipped:>6,}   no chadwick id: {pit_no_id:>5,}")
-    print(f"  Player rows written : {p_batters:>7,}")
-    print(f"  Pitcher rows written: {p_pitchers:>7,}")
+    print(f"  Batting rows           saved: {bat_saved:>7,}   skipped existing: {bat_skipped:>6,}   no chadwick id: {bat_no_id:>5,}")
+    print(f"  Pitching rows          saved: {pit_saved:>7,}   skipped existing: {pit_skipped:>6,}   no chadwick id: {pit_no_id:>5,}")
+    print(f"  Player rows written          : {p_batters:>7,}")
+    print(f"  Pitcher rows written         : {p_pitchers:>7,}")
+    print(f"  Fielding rows saved          : {fielding_saved:>7,}")
+    print(f"  Primary positions set        : {positions_set:>7,}")
+    print(f"  Award rows saved             : {awards_saved:>7,}")
+    print(f"  All-Star rows saved          : {allstar_saved:>7,}")
+    print(f"  Postseason batting saved     : {post_bat_saved:>7,}")
+    print(f"  Postseason pitching saved    : {post_pit_saved:>7,}")
+    print(f"  Team-season rows saved       : {teams_saved:>7,}")
     print(bar)
 
 

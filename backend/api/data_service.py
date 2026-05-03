@@ -31,6 +31,28 @@ from database.models import PlayerSeason as _PlayerSeason
 _PS_COLUMNS       = [c.key for c in _PlayerSeason.__table__.columns  if c.key != "player_id"]
 _PS_PITCH_COLUMNS = [c.key for c in _PitcherSeason.__table__.columns if c.key != "player_id"]
 
+# Bio fields exposed by search results and batting/pitching stats responses.
+_BIO_COLUMNS = [
+    "position", "bats", "throws", "height", "weight",
+    "birth_year", "birth_month", "birth_day",
+    "birth_city", "birth_state", "birth_country",
+    "debut", "final_game",
+]
+
+
+def _bio_dict(row) -> dict:
+    """Pull bio fields off a Player/Pitcher ORM row. Adds a derived ISO
+    `birthdate` ("YYYY-MM-DD") when all three birth-* parts are present."""
+    if row is None:
+        return {}
+    out = {k: getattr(row, k, None) for k in _BIO_COLUMNS}
+    y, m, d = out.get("birth_year"), out.get("birth_month"), out.get("birth_day")
+    if y and m and d:
+        out["birthdate"] = f"{int(y):04d}-{int(m):02d}-{int(d):02d}"
+    else:
+        out["birthdate"] = None
+    return out
+
 pybaseball.cache.enable()
 
 # Historical seasons never change; current season updates throughout the day.
@@ -210,6 +232,7 @@ def search_player(name: str) -> list[dict]:
                     "bbref_id":        r.bbref_id,
                     "mlb_debut":       r.mlb_debut,
                     "mlb_last_season": r.mlb_last_season,
+                    **_bio_dict(r),
                 }
             # Players (batters) take priority for two-way players.
             for r in crud.search_players_by_name(db, name):
@@ -219,6 +242,7 @@ def search_player(name: str) -> list[dict]:
                     "bbref_id":        r.bbref_id,
                     "mlb_debut":       r.mlb_debut,
                     "mlb_last_season": r.mlb_last_season,
+                    **_bio_dict(r),
                 }
     except Exception:
         return []
@@ -239,6 +263,7 @@ def get_current_stats(player_id: int) -> Optional[dict]:
         season = _db_row_to_season(season_rows[0])
         player = crud.get_player(db, player_id)
         name = player.name if player else None
+        bio = _bio_dict(player)
 
     standard = {
         "name":    name,
@@ -279,6 +304,7 @@ def get_current_stats(player_id: int) -> Optional[dict]:
     return {
         "player_id": player_id,
         "season":    year,
+        "bio":       bio,
         "standard":  standard,
         "advanced":  advanced,
     }
@@ -296,6 +322,7 @@ def get_career_stats(player_id: int) -> Optional[dict]:
         seasons = [_db_row_to_season(r) for r in sorted(rows, key=lambda r: r.year)]
         player = crud.get_player(db, player_id)
         name = player.name if player else None
+        bio = _bio_dict(player)
 
     seasons_with_counting = [s for s in seasons if s.get("H") is not None]
     career_totals: dict = {
@@ -315,6 +342,7 @@ def get_career_stats(player_id: int) -> Optional[dict]:
     return {
         "player_id":     player_id,
         "name":          name,
+        "bio":           bio,
         "seasons":       seasons,
         "career_totals": career_totals,
     }
@@ -381,10 +409,12 @@ def get_career_pitching_stats(player_id: int) -> Optional[dict]:
         seasons = [_db_pitcher_row_to_season(r) for r in sorted(rows, key=lambda r: r.year)]
         pitcher = crud.get_pitcher(db, player_id)
         name = pitcher.name if pitcher else None
+        bio = _bio_dict(pitcher)
 
     return {
         "player_id":     player_id,
         "name":          name,
+        "bio":           bio,
         "seasons":       seasons,
         "career_totals": {
             "seasons": len(seasons),
@@ -396,6 +426,80 @@ def get_career_pitching_stats(player_id: int) -> Optional[dict]:
             "L":       int(sum(s.get("L")  or 0 for s in seasons)),
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# Fielding / awards / postseason / teams — DB-only reads
+# ---------------------------------------------------------------------------
+
+def _row_to_dict(row, exclude=("player_id",)) -> dict:
+    """Materialize a SQLAlchemy ORM row into a plain dict (call inside session)."""
+    return {
+        c.key: getattr(row, c.key)
+        for c in row.__table__.columns
+        if c.key not in exclude
+    }
+
+
+def get_fielding(player_id: int) -> list[dict]:
+    if not connection.db_available():
+        return []
+    with connection.get_session() as db:
+        rows = crud.get_player_fielding(db, player_id)
+        return [_row_to_dict(r) for r in rows]
+
+
+def get_awards(player_id: int) -> list[dict]:
+    if not connection.db_available():
+        return []
+    with connection.get_session() as db:
+        rows = crud.get_player_awards(db, player_id)
+        return [_row_to_dict(r) for r in rows]
+
+
+def get_allstar(player_id: int) -> list[dict]:
+    if not connection.db_available():
+        return []
+    with connection.get_session() as db:
+        rows = crud.get_player_allstar(db, player_id)
+        return [_row_to_dict(r) for r in rows]
+
+
+def get_postseason_batting(player_id: int) -> list[dict]:
+    if not connection.db_available():
+        return []
+    with connection.get_session() as db:
+        rows = crud.get_player_postseason_batting(db, player_id)
+        return [_row_to_dict(r) for r in rows]
+
+
+def get_postseason_pitching(player_id: int) -> list[dict]:
+    if not connection.db_available():
+        return []
+    with connection.get_session() as db:
+        rows = crud.get_player_postseason_pitching(db, player_id)
+        return [_row_to_dict(r) for r in rows]
+
+
+def get_team_standings(year: int) -> list[dict]:
+    if not connection.db_available():
+        return []
+    with connection.get_session() as db:
+        rows = crud.get_team_standings(db, year)
+        return [_row_to_dict(r, exclude=()) for r in rows]
+
+
+def get_team_history(team_id: str) -> list[dict]:
+    """Return year-by-year record for a franchise. Resolves teamID → franchID
+    so relocations (e.g. MON → WSN) appear in one continuous history."""
+    if not connection.db_available():
+        return []
+    with connection.get_session() as db:
+        franch_id = crud.get_team_franchise(db, team_id)
+        if franch_id is None:
+            return []
+        rows = crud.get_team_history_by_franchise(db, franch_id)
+        return [_row_to_dict(r, exclude=()) for r in rows]
 
 
 # ---------------------------------------------------------------------------
