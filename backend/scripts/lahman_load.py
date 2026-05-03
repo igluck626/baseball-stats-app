@@ -18,6 +18,7 @@ import csv
 import datetime
 import logging
 import os
+import re
 import sys
 import threading
 from collections import defaultdict
@@ -104,6 +105,52 @@ def _i_or_none(v):
     return int(float(v))
 
 
+# Defensive parsers for CSVs known to contain malformed cells (the AllstarFull
+# data has rows where a numeric column appears as e.g. "9;9", which crashes
+# float()). Take the first leading numeric token; fall back to the empty/None
+# behavior of the strict parsers above.
+_NUM_RE = re.compile(r"-?\d+(?:\.\d+)?")
+
+
+def _clean_num(v) -> Optional[str]:
+    """Extract the first leading numeric token from a possibly-dirty cell.
+
+    Examples:
+        "9;9"   → "9"
+        "9.5"   → "9.5"
+        "9 4 5" → "9"
+        "abc9"  → None
+        ""      → None
+    """
+    if v is None:
+        return None
+    s = str(v).strip()
+    if not s:
+        return None
+    m = _NUM_RE.match(s)
+    return m.group(0) if m else None
+
+
+def _i_safe(v) -> int:
+    n = _clean_num(v)
+    return int(float(n)) if n is not None else 0
+
+
+def _f_safe(v) -> float:
+    n = _clean_num(v)
+    return float(n) if n is not None else 0.0
+
+
+def _i_or_none_safe(v):
+    n = _clean_num(v)
+    return int(float(n)) if n is not None else None
+
+
+def _f_or_none_safe(v):
+    n = _clean_num(v)
+    return float(n) if n is not None else None
+
+
 # ---------------------------------------------------------------------------
 # Chadwick bbref → mlbam bridge
 # ---------------------------------------------------------------------------
@@ -111,7 +158,7 @@ def _i_or_none(v):
 def _load_chadwick_bridge() -> dict[str, int]:
     """key_bbref → key_mlbam dict, loaded from the trimmed Chadwick file."""
     bridge: dict[str, int] = {}
-    with open(CHADWICK_CSV, newline="") as fh:
+    with open(CHADWICK_CSV, newline="", encoding="utf-8-sig") as fh:
         for row in csv.DictReader(fh):
             bbref = row["key_bbref"]
             mlbam = row["key_mlbam"]
@@ -208,7 +255,7 @@ def _pitching_derived(ipouts: float, h: float, hr: float, bb: float, hbp: float,
 def _read_batting_aggregated() -> dict[tuple[str, int], dict]:
     """Returns {(playerID, yearID): aggregated_stats_dict} for years < CUTOFF_YEAR."""
     by_key: dict[tuple[str, int], dict] = {}
-    with open(BATTING_CSV, newline="") as fh:
+    with open(BATTING_CSV, newline="", encoding="utf-8-sig") as fh:
         for row in csv.DictReader(fh):
             year = int(row["yearID"])
             if year >= CUTOFF_YEAR:
@@ -255,7 +302,7 @@ def _read_batting_aggregated() -> dict[tuple[str, int], dict]:
 def _read_pitching_aggregated() -> dict[tuple[str, int], dict]:
     """Returns {(playerID, yearID): aggregated_stats_dict} for years < CUTOFF_YEAR."""
     by_key: dict[tuple[str, int], dict] = {}
-    with open(PITCHING_CSV, newline="") as fh:
+    with open(PITCHING_CSV, newline="", encoding="utf-8-sig") as fh:
         for row in csv.DictReader(fh):
             year = int(row["yearID"])
             if year >= CUTOFF_YEAR:
@@ -473,7 +520,7 @@ def _load_people_info(
     log.info(f"Reading {PEOPLE_CSV} ...")
 
     by_mlbam: dict[int, dict] = {}
-    with open(PEOPLE_CSV, newline="") as fh:
+    with open(PEOPLE_CSV, newline="", encoding="utf-8-sig") as fh:
         for row in csv.DictReader(fh):
             bbref = row.get("bbrefID")
             if not bbref:
@@ -558,7 +605,7 @@ def _load_fielding(
 
     # Aggregate counting stats across stints per (player, year, position)
     by_key: dict[tuple[str, int, str], dict] = {}
-    with open(FIELDING_CSV, newline="") as fh:
+    with open(FIELDING_CSV, newline="", encoding="utf-8-sig") as fh:
         for row in csv.DictReader(fh):
             year = int(row["yearID"])
             if year >= CUTOFF_YEAR:
@@ -693,7 +740,7 @@ def _load_awards(
 
     rows: list[dict] = []
     skipped_no_id = 0
-    with open(AWARDS_CSV, newline="") as fh:
+    with open(AWARDS_CSV, newline="", encoding="utf-8-sig") as fh:
         for row in csv.DictReader(fh):
             year = int(row["yearID"])
             if year >= CUTOFF_YEAR:
@@ -738,7 +785,7 @@ def _load_allstar(
 
     rows: list[dict] = []
     skipped_no_id = 0
-    with open(ALLSTAR_CSV, newline="") as fh:
+    with open(ALLSTAR_CSV, newline="", encoding="utf-8-sig") as fh:
         for row in csv.DictReader(fh):
             year = int(row["yearID"])
             if year >= CUTOFF_YEAR:
@@ -750,11 +797,11 @@ def _load_allstar(
             rows.append({
                 "player_id":    mlbam,
                 "year":         year,
-                "game_num":     _i(row.get("gameNum")),
+                "game_num":     _i_safe(row.get("gameNum")),
                 "team":         row.get("teamID") or None,
                 "league":       row.get("lgID") or None,
-                "GP":           _i_or_none(row.get("GP")),
-                "starting_pos": _i_or_none(row.get("startingPos")),
+                "GP":           _i_or_none_safe(row.get("GP")),
+                "starting_pos": _i_or_none_safe(row.get("startingPos")),
             })
 
     log.info(f"  saving {len(rows):,} all-star rows ...")
@@ -788,7 +835,7 @@ def _load_postseason_batting(
 
     rows: list[dict] = []
     skipped_no_id = 0
-    with open(BATTING_POST_CSV, newline="") as fh:
+    with open(BATTING_POST_CSV, newline="", encoding="utf-8-sig") as fh:
         for row in csv.DictReader(fh):
             year = int(row["yearID"])
             if year >= CUTOFF_YEAR:
@@ -798,9 +845,9 @@ def _load_postseason_batting(
                 skipped_no_id += 1
                 continue
 
-            ab = _i(row["AB"]); h = _i(row["H"])
-            doubles = _i(row["2B"]); triples = _i(row["3B"]); hr = _i(row["HR"])
-            bb = _i(row["BB"]); hbp = _f(row.get("HBP")); sf = _f(row.get("SF"))
+            ab = _i_safe(row["AB"]); h = _i_safe(row["H"])
+            doubles = _i_safe(row["2B"]); triples = _i_safe(row["3B"]); hr = _i_safe(row["HR"])
+            bb = _i_safe(row["BB"]); hbp = _f_safe(row.get("HBP")); sf = _f_safe(row.get("SF"))
             ba  = round(h / ab, 3) if ab > 0 else None
             obp_den = ab + bb + hbp + sf
             obp = round((h + bb + hbp) / obp_den, 3) if obp_den > 0 else None
@@ -813,18 +860,18 @@ def _load_postseason_batting(
                 "round":     row["round"],
                 "team":      row.get("teamID") or None,
                 "league":    row.get("lgID") or None,
-                "G":         _i(row["G"]),
+                "G":         _i_safe(row["G"]),
                 "AB":        ab,
-                "R":         _i(row["R"]),
+                "R":         _i_safe(row["R"]),
                 "H":         h,
                 "doubles":   doubles,
                 "triples":   triples,
                 "HR":        hr,
-                "RBI":       _i_or_none(row.get("RBI")),
+                "RBI":       _i_or_none_safe(row.get("RBI")),
                 "BB":        bb,
-                "SO":        _i_or_none(row.get("SO")),
-                "SB":        _i_or_none(row.get("SB")),
-                "CS":        _i_or_none(row.get("CS")),
+                "SO":        _i_or_none_safe(row.get("SO")),
+                "SB":        _i_or_none_safe(row.get("SB")),
+                "CS":        _i_or_none_safe(row.get("CS")),
                 "BA":        ba,
                 "OBP":       obp,
                 "SLG":       slg,
@@ -858,7 +905,7 @@ def _load_postseason_pitching(
 
     rows: list[dict] = []
     skipped_no_id = 0
-    with open(PITCHING_POST_CSV, newline="") as fh:
+    with open(PITCHING_POST_CSV, newline="", encoding="utf-8-sig") as fh:
         for row in csv.DictReader(fh):
             year = int(row["yearID"])
             if year >= CUTOFF_YEAR:
@@ -868,11 +915,11 @@ def _load_postseason_pitching(
                 skipped_no_id += 1
                 continue
 
-            ipouts = _i(row["IPouts"])
+            ipouts = _i_safe(row["IPouts"])
             ip = round(ipouts / 3, 1) if ipouts > 0 else None
             ip_dec = ipouts / 3 if ipouts > 0 else 0.0
-            h  = _i(row["H"])
-            bb = _i(row["BB"])
+            h  = _i_safe(row["H"])
+            bb = _i_safe(row["BB"])
             whip = round((bb + h) / ip_dec, 2) if ip_dec > 0 else None
 
             rows.append({
@@ -881,18 +928,18 @@ def _load_postseason_pitching(
                 "round":     row["round"],
                 "team":      row.get("teamID") or None,
                 "league":    row.get("lgID") or None,
-                "W":         _i(row["W"]),
-                "L":         _i(row["L"]),
-                "G":         _i(row["G"]),
-                "GS":        _i(row["GS"]),
-                "SV":        _i_or_none(row.get("SV")),
+                "W":         _i_safe(row["W"]),
+                "L":         _i_safe(row["L"]),
+                "G":         _i_safe(row["G"]),
+                "GS":        _i_safe(row["GS"]),
+                "SV":        _i_or_none_safe(row.get("SV")),
                 "IP":        ip,
                 "H":         h,
-                "ER":        _i(row["ER"]),
-                "HR":        _i(row["HR"]),
+                "ER":        _i_safe(row["ER"]),
+                "HR":        _i_safe(row["HR"]),
                 "BB":        bb,
-                "SO":        _i(row["SO"]),
-                "ERA":       _f(row["ERA"]) if row.get("ERA") else None,
+                "SO":        _i_safe(row["SO"]),
+                "ERA":       _f_or_none_safe(row.get("ERA")),
                 "WHIP":      whip,
             })
 
@@ -925,12 +972,12 @@ def _load_teams(
     log.info(f"Reading {TEAMS_CSV} ...")
 
     rows: list[dict] = []
-    with open(TEAMS_CSV, newline="") as fh:
+    with open(TEAMS_CSV, newline="", encoding="utf-8-sig") as fh:
         for row in csv.DictReader(fh):
             year = int(row["yearID"])
             if year >= CUTOFF_YEAR:
                 continue
-            w = _i(row["W"]); l = _i(row["L"])
+            w = _i_safe(row["W"]); l = _i_safe(row["L"])
             win_pct = round(w / (w + l), 3) if (w + l) > 0 else None
             rows.append({
                 "year":         year,
@@ -939,16 +986,16 @@ def _load_teams(
                 "team_name":    row.get("name") or None,
                 "league":       row.get("lgID") or None,
                 "division":     row.get("divID") or None,
-                "rank":         _i_or_none(row.get("Rank")),
-                "G":            _i(row["G"]),
+                "rank":         _i_or_none_safe(row.get("Rank")),
+                "G":            _i_safe(row["G"]),
                 "W":            w,
                 "L":            l,
                 "win_pct":      win_pct,
-                "runs_scored":  _i(row["R"]),
-                "runs_allowed": _i(row["RA"]),
-                "HR":           _i(row["HR"]),
-                "ERA":          _f(row["ERA"]) if row.get("ERA") else None,
-                "attendance":   _i_or_none(row.get("attendance")),
+                "runs_scored":  _i_safe(row["R"]),
+                "runs_allowed": _i_safe(row["RA"]),
+                "HR":           _i_safe(row["HR"]),
+                "ERA":          _f_or_none_safe(row.get("ERA")),
+                "attendance":   _i_or_none_safe(row.get("attendance")),
                 "park_name":    row.get("park") or None,
             })
 
