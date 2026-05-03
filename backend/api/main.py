@@ -524,6 +524,16 @@ def admin_reset_db():
     return {"status": "done", "deleted": deleted}
 
 
+@app.post("/admin/migrate")
+def admin_migrate():
+    """Run the schema migration: create missing tables/indexes and add any
+    missing bio columns to existing players/pitchers tables. Idempotent."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    summary = connection.init_db()
+    return {"status": "done", **summary}
+
+
 @app.post("/admin/bulk-load")
 def start_bulk_load():
     with _bulk_lock:
