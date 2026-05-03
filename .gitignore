@@ -24,10 +24,16 @@ __pycache__/
 .DS_Store
 
 # Lahman data: only the CSVs the loader actually reads + the trimmed Chadwick
-# bridge are committed. Everything else (raw Chadwick register, aux Lahman
-# tables like Fielding/Salaries/HallOfFame, readme files) stays local.
+# bridge are committed. Other aux Lahman tables (Salaries, HallOfFame, etc.)
+# and the raw Chadwick register stay local.
 backend/data/lahman/*
 !backend/data/lahman/Batting.csv
 !backend/data/lahman/Pitching.csv
 !backend/data/lahman/People.csv
 !backend/data/lahman/chadwick_mlb.csv
+!backend/data/lahman/Fielding.csv
+!backend/data/lahman/AwardsPlayers.csv
+!backend/data/lahman/AllstarFull.csv
+!backend/data/lahman/BattingPost.csv
+!backend/data/lahman/PitchingPost.csv
+!backend/data/lahman/Teams.csv
