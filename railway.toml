@@ -3,8 +3,3 @@ builder = "dockerfile"
 
 [deploy]
 restartPolicyType = "on_failure"
-
-[[crons]]
-name = "nightly-update"
-schedule = "0 4 * * *"
-command = "curl -fsSX POST https://$RAILWAY_PUBLIC_DOMAIN/admin/nightly-update"
