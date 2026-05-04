@@ -74,6 +74,12 @@ class PlayerSeason(Base):
     BB_pct         = Column(Float)
     K_pct          = Column(Float)
     wOBA           = Column(Float)
+    # Extended counting stats from Lahman / bref:
+    IBB            = Column(Integer)   # intentional walks
+    HBP            = Column(Integer)   # hit by pitch
+    SF             = Column(Integer)   # sacrifice flies
+    SH             = Column(Integer)   # sacrifice hits
+    GIDP           = Column(Integer)   # grounded into double plays
 
 
 class Pitcher(Base):
@@ -128,6 +134,23 @@ class PitcherSeason(Base):
     K_per9         = Column(Float)
     BB_per9        = Column(Float)
     HR_per9        = Column(Float)
+    # Extended counting stats from Lahman / bref:
+    CG             = Column(Integer)   # complete games
+    SHO            = Column(Integer)   # shutouts
+    SV             = Column(Integer)   # saves
+    H              = Column(Integer)   # hits allowed
+    ER             = Column(Integer)   # earned runs
+    R              = Column(Integer)   # total runs (incl. unearned)
+    BAOpp          = Column(Float)     # opponent batting average
+    IBB            = Column(Integer)   # intentional walks issued
+    WP             = Column(Integer)   # wild pitches
+    HBP            = Column(Integer)   # hit by pitch
+    BK             = Column(Integer)   # balks
+    BFP            = Column(Integer)   # batters faced
+    GF             = Column(Integer)   # games finished
+    SH             = Column(Integer)   # sacrifice hits allowed
+    SF             = Column(Integer)   # sacrifice flies allowed
+    GIDP           = Column(Integer)   # double plays induced
 
 
 # ---------------------------------------------------------------------------

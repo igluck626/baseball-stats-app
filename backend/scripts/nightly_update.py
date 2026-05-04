@@ -109,6 +109,15 @@ def _build_current_batter_entry(player_id: int, bref_df, bwar_current, current_y
             "OBP":     data_service._safe(br["OBP"]),
             "SLG":     data_service._safe(br["SLG"]),
             "OPS":     data_service._safe(br["OPS"]),
+            # Extended counting stats. bref calls GIDP "GDP" — fall back if
+            # the column name differs by pybaseball version.
+            "IBB":     data_service._safe_col(br, "IBB"),
+            "HBP":     data_service._safe_col(br, "HBP"),
+            "SH":      data_service._safe_col(br, "SH"),
+            "SF":      data_service._safe_col(br, "SF"),
+            "GIDP":    data_service._safe_col(br, "GIDP")
+                       if "GIDP" in br.index
+                       else data_service._safe_col(br, "GDP"),
             **data_service._batting_derived(br),
         })
 

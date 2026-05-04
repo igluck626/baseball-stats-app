@@ -270,25 +270,27 @@ def _read_batting_aggregated() -> dict[tuple[str, int], dict]:
                 "G": 0, "AB": 0, "R": 0, "H": 0, "2B": 0, "3B": 0, "HR": 0,
                 "RBI": 0.0, "SB": 0.0, "CS": 0.0, "BB": 0, "SO": 0.0,
                 "IBB": 0.0, "HBP": 0.0, "SH": 0.0, "SF": 0.0,
+                "GIDP": 0.0,
             })
 
             # Sum counting stats
-            agg["G"]   += _i(row["G"])
-            agg["AB"]  += _i(row["AB"])
-            agg["R"]   += _i(row["R"])
-            agg["H"]   += _i(row["H"])
-            agg["2B"]  += _i(row["2B"])
-            agg["3B"]  += _i(row["3B"])
-            agg["HR"]  += _i(row["HR"])
-            agg["RBI"] += _f(row["RBI"])
-            agg["SB"]  += _f(row["SB"])
-            agg["CS"]  += _f(row["CS"])
-            agg["BB"]  += _i(row["BB"])
-            agg["SO"]  += _f(row["SO"])
-            agg["IBB"] += _f(row["IBB"])
-            agg["HBP"] += _f(row["HBP"])
-            agg["SH"]  += _f(row["SH"])
-            agg["SF"]  += _f(row["SF"])
+            agg["G"]    += _i(row["G"])
+            agg["AB"]   += _i(row["AB"])
+            agg["R"]    += _i(row["R"])
+            agg["H"]    += _i(row["H"])
+            agg["2B"]   += _i(row["2B"])
+            agg["3B"]   += _i(row["3B"])
+            agg["HR"]   += _i(row["HR"])
+            agg["RBI"]  += _f(row["RBI"])
+            agg["SB"]   += _f(row["SB"])
+            agg["CS"]   += _f(row["CS"])
+            agg["BB"]   += _i(row["BB"])
+            agg["SO"]   += _f(row["SO"])
+            agg["IBB"]  += _f(row["IBB"])
+            agg["HBP"]  += _f(row["HBP"])
+            agg["SH"]   += _f(row["SH"])
+            agg["SF"]   += _f(row["SF"])
+            agg["GIDP"] += _f(row.get("GIDP"))
 
             # Latest stint's team is the player's "final" team that year
             if stint >= agg["stint"]:
@@ -314,25 +316,44 @@ def _read_pitching_aggregated() -> dict[tuple[str, int], dict]:
                 "stint":  0,
                 "teamID": "",
                 "lgID":   "",
-                "W": 0, "L": 0, "G": 0, "GS": 0, "IPouts": 0,
-                "H": 0, "ER": 0, "HR": 0, "BB": 0, "SO": 0,
+                "W": 0, "L": 0, "G": 0, "GS": 0,
+                "CG": 0, "SHO": 0, "SV": 0,
+                "IPouts": 0,
+                "H": 0, "ER": 0, "R": 0, "HR": 0,
+                "BB": 0, "SO": 0,
                 "ERA_num": 0.0,    # ER * 9 (numerator for combined ERA)
+                "IBB": 0.0,
+                "WP": 0,
                 "BFP": 0.0,
                 "HBP": 0.0,
+                "BK": 0,
+                "GF": 0,
+                "SH": 0.0, "SF": 0.0, "GIDP": 0.0,
             })
 
             agg["W"]      += _i(row["W"])
             agg["L"]      += _i(row["L"])
             agg["G"]      += _i(row["G"])
             agg["GS"]     += _i(row["GS"])
+            agg["CG"]     += _i(row.get("CG"))
+            agg["SHO"]    += _i(row.get("SHO"))
+            agg["SV"]     += _i(row.get("SV"))
             agg["IPouts"] += _i(row["IPouts"])
             agg["H"]      += _i(row["H"])
             agg["ER"]     += _i(row["ER"])
+            agg["R"]      += _i(row.get("R"))
             agg["HR"]     += _i(row["HR"])
             agg["BB"]     += _i(row["BB"])
             agg["SO"]     += _i(row["SO"])
+            agg["IBB"]    += _f(row.get("IBB"))
+            agg["WP"]     += _i(row.get("WP"))
             agg["BFP"]    += _f(row["BFP"])
             agg["HBP"]    += _f(row["HBP"])
+            agg["BK"]     += _i(row.get("BK"))
+            agg["GF"]     += _i(row.get("GF"))
+            agg["SH"]     += _f(row.get("SH"))
+            agg["SF"]     += _f(row.get("SF"))
+            agg["GIDP"]   += _f(row.get("GIDP"))
 
             if stint >= agg["stint"]:
                 agg["stint"]  = stint
@@ -397,6 +418,11 @@ def _load_batting(
             "CS":      int(agg["CS"]),
             "BB":      agg["BB"],
             "SO":      int(agg["SO"]),
+            "IBB":     int(agg["IBB"]),
+            "HBP":     int(agg["HBP"]),
+            "SH":      int(agg["SH"]),
+            "SF":      int(agg["SF"]),
+            "GIDP":    int(agg["GIDP"]),
             **derived,
         }
         by_player_id[mlbam].append(season)
@@ -461,6 +487,10 @@ def _load_pitching(
         ip_dec = agg["IPouts"] / 3 if agg["IPouts"] > 0 else 0.0
         era = round(agg["ER"] * 9 / ip_dec, 2) if ip_dec > 0 else None
 
+        # BAOpp = H / (BFP - BB - HBP - SH - SF) — recompute for multi-stint
+        ab_faced = agg["BFP"] - agg["BB"] - agg["HBP"] - agg["SH"] - agg["SF"]
+        baopp = round(agg["H"] / ab_faced, 3) if ab_faced > 0 else None
+
         season = {
             "year":    year,
             "team":    agg["teamID"] or None,
@@ -469,10 +499,26 @@ def _load_pitching(
             "L":       agg["L"],
             "G":       agg["G"],
             "GS":      agg["GS"],
-            "SO":      agg["SO"],
-            "BB":      agg["BB"],
+            "CG":      agg["CG"],
+            "SHO":     agg["SHO"],
+            "SV":      agg["SV"],
+            "GF":      agg["GF"],
+            "H":       agg["H"],
+            "ER":      agg["ER"],
+            "R":       agg["R"],
             "HR":      agg["HR"],
+            "BB":      agg["BB"],
+            "IBB":     int(agg["IBB"]),
+            "SO":      agg["SO"],
+            "HBP":     int(agg["HBP"]),
+            "WP":      agg["WP"],
+            "BK":      agg["BK"],
+            "BFP":     int(agg["BFP"]),
+            "SH":      int(agg["SH"]),
+            "SF":      int(agg["SF"]),
+            "GIDP":    int(agg["GIDP"]),
             "ERA":     era,
+            "BAOpp":   baopp,
             **derived,
         }
         by_player_id[mlbam].append(season)

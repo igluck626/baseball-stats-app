@@ -62,6 +62,35 @@ _TEAM_SEASONS_NEW_COLUMNS: list[tuple[str, str]] = [
     ("last_updated", "TIMESTAMP"),
 ]
 
+# Extended counting stats added to player_seasons / pitcher_seasons in the
+# stat-coverage expansion. Listed here so existing prod tables get them via
+# ALTER TABLE on the next init_db() (lifespan / /admin/migrate / bulk-load).
+_PLAYER_SEASONS_NEW_COLUMNS: list[tuple[str, str]] = [
+    ("IBB",  "INTEGER"),
+    ("HBP",  "INTEGER"),
+    ("SF",   "INTEGER"),
+    ("SH",   "INTEGER"),
+    ("GIDP", "INTEGER"),
+]
+_PITCHER_SEASONS_NEW_COLUMNS: list[tuple[str, str]] = [
+    ("CG",    "INTEGER"),
+    ("SHO",   "INTEGER"),
+    ("SV",    "INTEGER"),
+    ("H",     "INTEGER"),
+    ("ER",    "INTEGER"),
+    ("R",     "INTEGER"),
+    ("BAOpp", "FLOAT"),
+    ("IBB",   "INTEGER"),
+    ("WP",    "INTEGER"),
+    ("HBP",   "INTEGER"),
+    ("BK",    "INTEGER"),
+    ("BFP",   "INTEGER"),
+    ("GF",    "INTEGER"),
+    ("SH",    "INTEGER"),
+    ("SF",    "INTEGER"),
+    ("GIDP",  "INTEGER"),
+]
+
 
 def _add_missing_columns(table_name: str, columns: list[tuple[str, str]]) -> list[str]:
     """ALTER TABLE ADD COLUMN for any of the given columns not yet present.
@@ -122,15 +151,19 @@ def init_db() -> dict:
     after = set(inspect(_engine).get_table_names())
     summary["tables_created"] = sorted(after - before)
 
-    # 2. ALTER TABLE for any missing bio columns on the (now-confirmed-to-exist)
-    #    players + pitchers tables, plus last_updated on team_seasons.
+    # 2. ALTER TABLE for any missing columns added in earlier expansions.
     for tbl_name in ("players", "pitchers"):
         added = _add_missing_columns(tbl_name, _BIO_COLUMNS)
         if added:
             summary["columns_added"][tbl_name] = added
-    added = _add_missing_columns("team_seasons", _TEAM_SEASONS_NEW_COLUMNS)
-    if added:
-        summary["columns_added"]["team_seasons"] = added
+    for tbl_name, cols in (
+        ("team_seasons",    _TEAM_SEASONS_NEW_COLUMNS),
+        ("player_seasons",  _PLAYER_SEASONS_NEW_COLUMNS),
+        ("pitcher_seasons", _PITCHER_SEASONS_NEW_COLUMNS),
+    ):
+        added = _add_missing_columns(tbl_name, cols)
+        if added:
+            summary["columns_added"][tbl_name] = added
 
     # 3. Indexes on tables that were already present in older deployments.
     #    create_all only adds indexes for newly-created tables, so explicit

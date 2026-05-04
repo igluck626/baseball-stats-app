@@ -164,6 +164,17 @@ def _safe(val):
     return val
 
 
+def _safe_col(row, col: str):
+    """row[col] via _safe(), but None if col is missing from the Series.
+
+    Used when reading bref/bwar fields that may not exist in older / partial
+    pybaseball responses (e.g. SH / SF / GIDP / SHO depending on year).
+    """
+    if col not in row.index:
+        return None
+    return _safe(row[col])
+
+
 def _batting_derived(r) -> dict:
     """Compute derived batting stats from a batting_stats_bref row."""
     def _f(col):
@@ -278,9 +289,14 @@ def get_current_stats(player_id: int) -> Optional[dict]:
         "HR":      season.get("HR"),
         "RBI":     season.get("RBI"),
         "BB":      season.get("BB"),
+        "IBB":     season.get("IBB"),
+        "HBP":     season.get("HBP"),
         "SO":      season.get("SO"),
         "SB":      season.get("SB"),
         "CS":      season.get("CS"),
+        "SH":      season.get("SH"),
+        "SF":      season.get("SF"),
+        "GIDP":    season.get("GIDP"),
         "BA":      season.get("BA"),
         "OBP":     season.get("OBP"),
         "SLG":     season.get("SLG"),
@@ -367,15 +383,31 @@ def get_current_pitching_stats(player_id: int) -> Optional[dict]:
         "team":  season.get("team"),
         "G":     season.get("G"),
         "GS":    season.get("GS"),
+        "CG":    season.get("CG"),
+        "SHO":   season.get("SHO"),
+        "GF":    season.get("GF"),
         "W":     season.get("W"),
         "L":     season.get("L"),
+        "SV":    season.get("SV"),
         "IP":    season.get("IP"),
-        "SO":    season.get("SO"),
-        "BB":    season.get("BB"),
+        "BFP":   season.get("BFP"),
+        "H":     season.get("H"),
+        "R":     season.get("R"),
+        "ER":    season.get("ER"),
         "HR":    season.get("HR"),
+        "BB":    season.get("BB"),
+        "IBB":   season.get("IBB"),
+        "SO":    season.get("SO"),
+        "HBP":   season.get("HBP"),
+        "WP":    season.get("WP"),
+        "BK":    season.get("BK"),
+        "SH":    season.get("SH"),
+        "SF":    season.get("SF"),
+        "GIDP":  season.get("GIDP"),
         "ERA":   season.get("ERA"),
         "WHIP":  season.get("WHIP"),
         "FIP":   season.get("FIP"),
+        "BAOpp": season.get("BAOpp"),
         "BABIP": season.get("BABIP"),
         "K_per9":  season.get("K_per9"),
         "BB_per9": season.get("BB_per9"),
@@ -587,6 +619,24 @@ def _build_pitcher_season_entry(
                 "K_per9":  k_per9,
                 "BB_per9": bb_per9,
                 "HR_per9": hr_per9,
+                # Extended counting stats from bref. Most are present; SH/SF/
+                # GIDP/SHO can be missing in older years — _safe_col handles it.
+                "CG":    _safe_col(br, "CG"),
+                "SHO":   _safe_col(br, "SHO"),
+                "SV":    _safe_col(br, "SV"),
+                "H":     int(h),
+                "ER":    int(_sum("ER")) if "ER" in br.index else None,
+                "R":     int(_sum("R"))  if "R"  in br.index else None,
+                "BAOpp": _safe_col(br, "BAopp") or _safe_col(br, "BAOpp"),
+                "IBB":   int(_sum("IBB")) if "IBB" in br.index else None,
+                "WP":    int(_sum("WP"))  if "WP"  in br.index else None,
+                "HBP":   int(hbp),
+                "BK":    int(_sum("BK"))  if "BK"  in br.index else None,
+                "BFP":   int(bf) if bf else None,
+                "GF":    int(_sum("GF"))  if "GF"  in br.index else None,
+                "SH":    _safe_col(br, "SH"),
+                "SF":    _safe_col(br, "SF"),
+                "GIDP":  _safe_col(br, "GIDP") if "GIDP" in br.index else _safe_col(br, "GDP"),
             })
 
     return entry
