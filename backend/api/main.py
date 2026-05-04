@@ -559,23 +559,88 @@ def admin_migrate():
     return {"status": "done", **summary}
 
 
+@app.post("/admin/rename-columns")
+def admin_rename_columns():
+    """One-time fix for the case-folding bug — renames lowercase columns
+    (created by the earlier unquoted ALTER TABLE) back to their proper-case
+    names (e.g. ibb→IBB, baopp→BAOpp). Idempotent."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    summary = connection.rename_lowercase_columns()
+    return {"status": "done", **summary}
+
+
+_EXPECTED_NEW_COLUMNS_BY_TABLE = {
+    "player_seasons":  lambda: [c[0] for c in connection._PLAYER_SEASONS_NEW_COLUMNS],
+    "pitcher_seasons": lambda: [c[0] for c in connection._PITCHER_SEASONS_NEW_COLUMNS],
+    "team_seasons":    lambda: [c[0] for c in connection._TEAM_SEASONS_NEW_COLUMNS],
+    "players":         lambda: [c[0] for c in connection._BIO_COLUMNS],
+    "pitchers":        lambda: [c[0] for c in connection._BIO_COLUMNS],
+}
+
+
+def _check_table(table: str, engine) -> dict:
+    """Return three views of a table's columns: raw SQL, inspector, and the
+    migration's expected-new list. Lets us spot case-folding and other
+    metadata-vs-truth mismatches."""
+    dialect = engine.dialect.name
+    if dialect == "postgresql":
+        sql = _sa_text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = :t ORDER BY column_name"
+        )
+    elif dialect == "sqlite":
+        sql = _sa_text(
+            "SELECT name AS column_name FROM pragma_table_info(:t) "
+            "ORDER BY name"
+        )
+    else:
+        return {"error": f"Unsupported dialect: {dialect}"}
+
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(sql, {"t": table}).fetchall()
+        raw_columns = [r[0] for r in rows]
+    except Exception as exc:
+        return {"error": f"raw query failed: {exc}"}
+
+    try:
+        inspector_columns = sorted(
+            c["name"] for c in _sa_inspect(engine).get_columns(table)
+        )
+        inspector_error = None
+    except Exception as exc:
+        inspector_columns = []
+        inspector_error = str(exc)
+
+    expected_new = _EXPECTED_NEW_COLUMNS_BY_TABLE.get(table, lambda: [])()
+    raw_lower = {x.lower() for x in raw_columns}
+
+    return {
+        "raw_columns":           raw_columns,
+        "raw_columns_lower":     sorted(raw_lower),
+        "raw_count":             len(raw_columns),
+        "inspector_columns":     inspector_columns,
+        "inspector_error":       inspector_error,
+        "expected_new_columns":  expected_new,
+        "missing_per_inspector": [c for c in expected_new if c not in inspector_columns],
+        "missing_per_raw":       [c for c in expected_new if c not in raw_columns],
+        "missing_per_raw_lower": [c for c in expected_new if c.lower() not in raw_lower],
+    }
+
+
 @app.get("/admin/db-check")
 def admin_db_check(
-    table: str = Query("player_seasons", description="Table name to inspect"),
+    table: str | None = Query(
+        None,
+        description="Single table to inspect. Default returns both player_seasons and pitcher_seasons.",
+    ),
 ):
-    """Diagnostic: dump actual columns in a table directly from the live DB.
-
-    Returns three views so we can spot mismatches between what the migration
-    *thinks* is there vs what's actually committed:
-      • raw_columns       — `SELECT column_name FROM information_schema.columns`
-                            (Postgres) or `pragma_table_info` (SQLite)
-      • inspector_columns — what `sqlalchemy.inspect(engine).get_columns()` sees
-                            — this is what _add_missing_columns relies on
-      • raw_columns_lower — lowercase view, useful for catching case-folding
-                            issues (Postgres folds unquoted identifiers).
-    Plus the resolved DB host (no credentials) so we can confirm we're
-    connected to the database we think we are.
-    """
+    """Diagnostic: dump column lists for player_seasons and pitcher_seasons
+    (or one specified table) directly from the live DB. Returns parallel
+    raw-SQL, inspector, and expected-new views so case-folding mismatches
+    are obvious. Also returns the resolved DB host (no credentials) so we
+    can confirm we're connected to the right database."""
     if not connection.db_available():
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
 
@@ -591,63 +656,21 @@ def admin_db_check(
     engine = connection._engine
     dialect = engine.dialect.name
 
-    # Raw query — go through the real SQL surface, not SQLAlchemy's metadata.
-    if dialect == "postgresql":
-        sql = _sa_text(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_name = :t ORDER BY column_name"
-        )
-    elif dialect == "sqlite":
-        # information_schema is Postgres-only; PRAGMA equivalent for SQLite.
-        sql = _sa_text(
-            "SELECT name AS column_name FROM pragma_table_info(:t) "
-            "ORDER BY name"
-        )
-    else:
-        raise HTTPException(500, f"Unsupported dialect: {dialect}")
-
-    try:
-        with engine.connect() as conn:
-            rows = conn.execute(sql, {"t": table}).fetchall()
-        raw_columns = [r[0] for r in rows]
-    except Exception as exc:
-        raise HTTPException(500, f"raw query failed: {exc}")
-
-    # Inspector view — what _add_missing_columns sees. Force a fresh inspector
-    # so we don't read a cached snapshot.
-    try:
-        inspector_columns = sorted(
-            c["name"] for c in _sa_inspect(engine).get_columns(table)
-        )
-    except Exception as exc:
-        inspector_columns = []
-        inspector_error   = str(exc)
-    else:
-        inspector_error   = None
-
-    # Migration's expected new columns for this table — lets you compare what
-    # the migration *should* be adding against what's actually in the DB.
-    expected_new_columns = {
-        "player_seasons":  [c[0] for c in connection._PLAYER_SEASONS_NEW_COLUMNS],
-        "pitcher_seasons": [c[0] for c in connection._PITCHER_SEASONS_NEW_COLUMNS],
-        "team_seasons":    [c[0] for c in connection._TEAM_SEASONS_NEW_COLUMNS],
-        "players":         [c[0] for c in connection._BIO_COLUMNS],
-        "pitchers":        [c[0] for c in connection._BIO_COLUMNS],
-    }.get(table, [])
+    if table is not None:
+        return {
+            "database_host": host_info,
+            "dialect":       dialect,
+            "table":         table,
+            **_check_table(table, engine),
+        }
 
     return {
-        "database_host":         host_info,
-        "dialect":                dialect,
-        "table":                  table,
-        "raw_columns":            raw_columns,
-        "raw_columns_lower":      sorted({c.lower() for c in raw_columns}),
-        "raw_count":              len(raw_columns),
-        "inspector_columns":      inspector_columns,
-        "inspector_error":        inspector_error,
-        "expected_new_columns":   expected_new_columns,
-        "missing_per_inspector":  [c for c in expected_new_columns if c not in inspector_columns],
-        "missing_per_raw":        [c for c in expected_new_columns if c not in raw_columns],
-        "missing_per_raw_lower":  [c for c in expected_new_columns if c.lower() not in {x.lower() for x in raw_columns}],
+        "database_host": host_info,
+        "dialect":       dialect,
+        "tables": {
+            "player_seasons":  _check_table("player_seasons",  engine),
+            "pitcher_seasons": _check_table("pitcher_seasons", engine),
+        },
     }
 
 

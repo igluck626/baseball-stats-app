@@ -95,32 +95,145 @@ _PITCHER_SEASONS_NEW_COLUMNS: list[tuple[str, str]] = [
 def _add_missing_columns(table_name: str, columns: list[tuple[str, str]]) -> list[str]:
     """ALTER TABLE ADD COLUMN for any of the given columns not yet present.
 
+    Identifiers are double-quoted so Postgres preserves their exact case (it
+    folds unquoted identifiers to lowercase, which produced the case-mismatch
+    bug between buggy lowercase columns and the SQLAlchemy model's quoted
+    names). The existence check is case-INSENSITIVE so we don't try to add
+    "IBB" when a buggy lowercase "ibb" is already present — the rename
+    migration handles those.
+
     Postgres uses ADD COLUMN IF NOT EXISTS (safe under concurrent migrations).
-    Other dialects (SQLite for local tests) check the inspector and skip rather
-    than relying on dialect-specific syntax. Returns the list of column names
-    added in this call.
+    Other dialects (SQLite for local tests) just rely on the case-insensitive
+    pre-check. Returns the list of column names actually added.
     """
     inspector = inspect(_engine)
     if table_name not in inspector.get_table_names():
         return []
-    existing = {c["name"] for c in inspector.get_columns(table_name)}
+    existing_names = {c["name"] for c in inspector.get_columns(table_name)}
+    existing_lower = {n.lower() for n in existing_names}
     dialect = _engine.dialect.name
 
     added: list[str] = []
     with _engine.begin() as conn:
         for col_name, col_type in columns:
-            if col_name in existing:
+            if col_name.lower() in existing_lower:
                 continue
             if dialect == "postgresql":
                 conn.execute(text(
-                    f'ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS {col_name} {col_type}'
+                    f'ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS "{col_name}" {col_type}'
                 ))
             else:
                 conn.execute(text(
-                    f'ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type}'
+                    f'ALTER TABLE {table_name} ADD COLUMN "{col_name}" {col_type}'
                 ))
             added.append(col_name)
     return added
+
+
+# ---------------------------------------------------------------------------
+# One-time rename migration: fix the case-folding bug
+# ---------------------------------------------------------------------------
+# Earlier _add_missing_columns versions emitted unquoted ALTER TABLE
+# statements, so Postgres folded the new columns to lowercase. The
+# SQLAlchemy models expect proper case (e.g. "IBB"). This rename brings
+# the physical schema back in line with the ORM.
+_LOWERCASE_TO_PROPER_RENAMES: dict[str, list[tuple[str, str]]] = {
+    "player_seasons": [
+        ("ibb",  "IBB"),
+        ("hbp",  "HBP"),
+        ("sf",   "SF"),
+        ("sh",   "SH"),
+        ("gidp", "GIDP"),
+    ],
+    "pitcher_seasons": [
+        ("cg",    "CG"),
+        ("sho",   "SHO"),
+        ("sv",    "SV"),
+        ("h",     "H"),
+        ("er",    "ER"),
+        ("r",     "R"),
+        ("baopp", "BAOpp"),
+        ("ibb",   "IBB"),
+        ("wp",    "WP"),
+        ("hbp",   "HBP"),
+        ("bk",    "BK"),
+        ("bfp",   "BFP"),
+        ("gf",    "GF"),
+        ("sh",    "SH"),
+        ("sf",    "SF"),
+        ("gidp",  "GIDP"),
+    ],
+}
+
+
+def rename_lowercase_columns() -> dict:
+    """One-time fix: rename lowercase columns (created by the buggy unquoted
+    ALTER) back to the proper case that the SQLAlchemy model expects.
+
+    Idempotent and safe to re-run:
+      • If the lowercase column is gone, skip (already renamed).
+      • If both lowercase and proper-case columns exist, skip (manual review
+        — shouldn't happen but worth flagging).
+      • If only the lowercase column exists, RENAME COLUMN it.
+
+    Returns {table → list of "old→new"} for what actually changed, plus a
+    parallel "skipped" map explaining the no-ops.
+    """
+    summary: dict = {
+        "renamed":           {},
+        "skipped":           {},
+        "skipped_no_engine": False,
+    }
+    if _engine is None:
+        summary["skipped_no_engine"] = True
+        return summary
+
+    inspector = inspect(_engine)
+    dialect = _engine.dialect.name
+
+    for table_name, renames in _LOWERCASE_TO_PROPER_RENAMES.items():
+        if table_name not in inspector.get_table_names():
+            summary["skipped"].setdefault(table_name, []).append(
+                f"(table {table_name!r} does not exist)"
+            )
+            continue
+        existing = {c["name"] for c in inspector.get_columns(table_name)}
+        renamed: list[str] = []
+        skipped: list[str] = []
+
+        with _engine.begin() as conn:
+            for old, new in renames:
+                old_present = old in existing
+                new_present = new in existing
+                if not old_present and not new_present:
+                    skipped.append(f"{old}→{new} (neither column exists)")
+                    continue
+                if not old_present and new_present:
+                    skipped.append(f"{old}→{new} (already proper case)")
+                    continue
+                if old_present and new_present:
+                    skipped.append(
+                        f"{old}→{new} (BOTH exist — manual review needed)"
+                    )
+                    continue
+                # old_present and not new_present → safe to rename
+                if dialect == "postgresql":
+                    conn.execute(text(
+                        f'ALTER TABLE {table_name} RENAME COLUMN {old} TO "{new}"'
+                    ))
+                else:
+                    # SQLite: 3.25+ supports RENAME COLUMN; quoting works the same.
+                    conn.execute(text(
+                        f'ALTER TABLE {table_name} RENAME COLUMN {old} TO "{new}"'
+                    ))
+                renamed.append(f"{old}→{new}")
+
+        if renamed:
+            summary["renamed"][table_name] = renamed
+        if skipped:
+            summary["skipped"][table_name] = skipped
+
+    return summary
 
 
 def init_db() -> dict:
