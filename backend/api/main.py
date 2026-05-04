@@ -1,23 +1,13 @@
 """Baseball stats API."""
 
 import datetime
-import logging
 import os
 import threading
-import time
 from contextlib import asynccontextmanager
 
-import schedule
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
-    datefmt="%Y-%m-%dT%H:%M:%S%z",
-)
-log = logging.getLogger("nightly-scheduler")
 
 import sys
 
@@ -375,66 +365,9 @@ def _run_nightly_update() -> None:
 # App startup
 # ---------------------------------------------------------------------------
 
-def _scheduled_nightly_trigger() -> None:
-    """schedule callback: kick off nightly update in its own thread.
-
-    The actual work runs in a separate daemon thread so the scheduler loop
-    isn't blocked for the duration of the update (which can take several
-    minutes). If a previous run is still in flight, this skip-and-logs.
-    """
-    with _nightly_lock:
-        already_running = _nightly_state["running"]
-
-    if already_running:
-        log.warning("Scheduled nightly update fired but previous run is still in flight — skipping")
-        return
-
-    log.info("Scheduled nightly update firing (4:00 UTC)")
-    threading.Thread(target=_nightly_with_completion_log, daemon=True,
-                     name="nightly-update").start()
-
-
-def _nightly_with_completion_log() -> None:
-    """Wrap _run_nightly_update to log when it finishes."""
-    started = datetime.datetime.utcnow()
-    try:
-        _run_nightly_update()
-    finally:
-        elapsed = (datetime.datetime.utcnow() - started).total_seconds()
-        with _nightly_lock:
-            err = _nightly_state.get("error")
-        if err:
-            log.error(f"Scheduled nightly update FAILED after {elapsed:.0f}s: {err}")
-        else:
-            log.info(f"Scheduled nightly update completed in {elapsed:.0f}s")
-
-
-def _scheduler_loop() -> None:
-    """Daemon-thread loop: register the nightly job and tick every 60s.
-
-    The schedule library matches by local clock; we run UTC explicitly via the
-    `at(..., "UTC")` argument so the job fires at 04:00 UTC regardless of the
-    container's TZ setting.
-    """
-    schedule.every().day.at("04:00", "UTC").do(_scheduled_nightly_trigger)
-    log.info("Nightly update scheduler started — runs daily at 04:00 UTC")
-    while True:
-        try:
-            schedule.run_pending()
-        except Exception as exc:
-            log.error(f"Scheduler tick raised: {exc}")
-        time.sleep(60)
-
-
-def _start_scheduler() -> None:
-    threading.Thread(target=_scheduler_loop, daemon=True,
-                     name="nightly-scheduler").start()
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     data_service.init_db()
-    _start_scheduler()
     yield
 
 
