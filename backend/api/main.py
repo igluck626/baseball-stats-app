@@ -4,10 +4,12 @@ import datetime
 import os
 import threading
 from contextlib import asynccontextmanager
+from urllib.parse import urlparse
 
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
+from sqlalchemy import inspect as _sa_inspect, text as _sa_text
 
 import sys
 
@@ -555,6 +557,98 @@ def admin_migrate():
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
     summary = connection.init_db()
     return {"status": "done", **summary}
+
+
+@app.get("/admin/db-check")
+def admin_db_check(
+    table: str = Query("player_seasons", description="Table name to inspect"),
+):
+    """Diagnostic: dump actual columns in a table directly from the live DB.
+
+    Returns three views so we can spot mismatches between what the migration
+    *thinks* is there vs what's actually committed:
+      • raw_columns       — `SELECT column_name FROM information_schema.columns`
+                            (Postgres) or `pragma_table_info` (SQLite)
+      • inspector_columns — what `sqlalchemy.inspect(engine).get_columns()` sees
+                            — this is what _add_missing_columns relies on
+      • raw_columns_lower — lowercase view, useful for catching case-folding
+                            issues (Postgres folds unquoted identifiers).
+    Plus the resolved DB host (no credentials) so we can confirm we're
+    connected to the database we think we are.
+    """
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+
+    db_url = os.getenv("DATABASE_URL", "")
+    if db_url.startswith("postgres://"):
+        db_url = db_url.replace("postgres://", "postgresql://", 1)
+    parsed = urlparse(db_url)
+    host_info = (
+        f"{parsed.hostname or '?'}:{parsed.port or '?'}"
+        f"/{(parsed.path or '').lstrip('/') or '?'}"
+    )
+
+    engine = connection._engine
+    dialect = engine.dialect.name
+
+    # Raw query — go through the real SQL surface, not SQLAlchemy's metadata.
+    if dialect == "postgresql":
+        sql = _sa_text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = :t ORDER BY column_name"
+        )
+    elif dialect == "sqlite":
+        # information_schema is Postgres-only; PRAGMA equivalent for SQLite.
+        sql = _sa_text(
+            "SELECT name AS column_name FROM pragma_table_info(:t) "
+            "ORDER BY name"
+        )
+    else:
+        raise HTTPException(500, f"Unsupported dialect: {dialect}")
+
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(sql, {"t": table}).fetchall()
+        raw_columns = [r[0] for r in rows]
+    except Exception as exc:
+        raise HTTPException(500, f"raw query failed: {exc}")
+
+    # Inspector view — what _add_missing_columns sees. Force a fresh inspector
+    # so we don't read a cached snapshot.
+    try:
+        inspector_columns = sorted(
+            c["name"] for c in _sa_inspect(engine).get_columns(table)
+        )
+    except Exception as exc:
+        inspector_columns = []
+        inspector_error   = str(exc)
+    else:
+        inspector_error   = None
+
+    # Migration's expected new columns for this table — lets you compare what
+    # the migration *should* be adding against what's actually in the DB.
+    expected_new_columns = {
+        "player_seasons":  [c[0] for c in connection._PLAYER_SEASONS_NEW_COLUMNS],
+        "pitcher_seasons": [c[0] for c in connection._PITCHER_SEASONS_NEW_COLUMNS],
+        "team_seasons":    [c[0] for c in connection._TEAM_SEASONS_NEW_COLUMNS],
+        "players":         [c[0] for c in connection._BIO_COLUMNS],
+        "pitchers":        [c[0] for c in connection._BIO_COLUMNS],
+    }.get(table, [])
+
+    return {
+        "database_host":         host_info,
+        "dialect":                dialect,
+        "table":                  table,
+        "raw_columns":            raw_columns,
+        "raw_columns_lower":      sorted({c.lower() for c in raw_columns}),
+        "raw_count":              len(raw_columns),
+        "inspector_columns":      inspector_columns,
+        "inspector_error":        inspector_error,
+        "expected_new_columns":   expected_new_columns,
+        "missing_per_inspector":  [c for c in expected_new_columns if c not in inspector_columns],
+        "missing_per_raw":        [c for c in expected_new_columns if c not in raw_columns],
+        "missing_per_raw_lower":  [c for c in expected_new_columns if c.lower() not in {x.lower() for x in raw_columns}],
+    }
 
 
 @app.post("/admin/bulk-load")
