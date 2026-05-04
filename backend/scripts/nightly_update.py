@@ -9,6 +9,9 @@ the current-year row in player_seasons for every player in the database.
 Phase 2 (pitchers): fetches pitching_stats_bref + bwar_pitch once and upserts
 the current-year row in pitcher_seasons for every pitcher in the database.
 
+Phase 3 (standings): fetches pybaseball.standings() and upserts the
+current-season row in team_seasons for each team.
+
 Seasonal workflow
 -----------------
 Pybaseball is the source of truth ONLY for the in-flight current season.
@@ -21,6 +24,7 @@ so the rollover is automatic on the next run after Lahman publishes.
 
 import logging
 import os
+import re
 import sys
 
 # ---------------------------------------------------------------------------
@@ -31,8 +35,12 @@ _BACKEND_DIR = os.path.dirname(_SCRIPTS_DIR)
 sys.path.insert(0, os.path.join(_BACKEND_DIR, "api"))
 sys.path.insert(0, _BACKEND_DIR)
 
+import pybaseball                                     # noqa: E402
+from sqlalchemy import func as _sql_func              # noqa: E402
+
 import data_service                                   # noqa: E402
 from database import connection, crud                 # noqa: E402
+from database.models import TeamSeason                # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -196,6 +204,110 @@ def _update_pitchers(current_year: int) -> tuple[int, int, list[int]]:
 
 
 # ---------------------------------------------------------------------------
+# Standings (TeamSeason)
+# ---------------------------------------------------------------------------
+# pybaseball.standings() returns 6 dataframes for years >= 1969 (one per
+# division), in the order AL East / AL Central / AL West / NL East / NL Central
+# / NL West. Each row has a team-name column ("Tm") sometimes annotated with
+# trailing markers like "(W)" or "(WC)" for division winners / wild cards.
+# We strip those, look the cleaned name up against the team-name → team_id map
+# already in team_seasons (built from the historical Lahman load), and upsert.
+_STANDINGS_LAYOUT: list[tuple[str, str]] = [
+    ("AL", "E"), ("AL", "C"), ("AL", "W"),
+    ("NL", "E"), ("NL", "C"), ("NL", "W"),
+]
+_NAME_MARKER_RE = re.compile(r"\s*\([^)]*\)\s*$")
+
+
+def _build_team_name_map() -> dict[str, tuple[str, str]]:
+    """Build {team_name → (team_id, franch_id)} from team_seasons. Most-recent
+    year wins so relocated franchises map to their current name."""
+    mapping: dict[str, tuple[str, str]] = {}
+    with connection.get_session() as db:
+        rows = (
+            db.query(TeamSeason.team_name, TeamSeason.team_id, TeamSeason.franch_id, TeamSeason.year)
+              .order_by(TeamSeason.year.desc())
+              .all()
+        )
+        for r in rows:
+            if r.team_name and r.team_name not in mapping:
+                mapping[r.team_name] = (r.team_id, r.franch_id)
+    return mapping
+
+
+def _update_standings(current_year: int) -> tuple[int, int]:
+    """Refresh current-season standings via pybaseball. Upserts into
+    team_seasons. Returns (teams_updated, lookup_failures).
+    """
+    log.info(f"Fetching pybaseball.standings({current_year}) ...")
+    try:
+        divisions = pybaseball.standings(current_year)
+    except Exception as exc:
+        log.error(f"standings fetch failed: {exc}")
+        return 0, 0
+
+    name_to_team = _build_team_name_map()
+    if not name_to_team:
+        log.warning("team_seasons is empty — cannot map team names; skipping standings refresh")
+        return 0, 0
+
+    rows_to_save: list[dict] = []
+    failed_lookups: list[str] = []
+
+    for div_idx, df in enumerate(divisions):
+        if div_idx >= len(_STANDINGS_LAYOUT):
+            continue
+        if df is None or df.empty or len(df.columns) == 0:
+            continue
+        league, division = _STANDINGS_LAYOUT[div_idx]
+        name_col = "Tm" if "Tm" in df.columns else df.columns[0]
+
+        for rank_idx, row in enumerate(df.itertuples(index=False), 1):
+            row_dict = row._asdict()
+            raw_name = str(row_dict.get(name_col) or "").strip()
+            clean_name = _NAME_MARKER_RE.sub("", raw_name).strip()
+            if not clean_name:
+                continue
+
+            entry = name_to_team.get(clean_name)
+            if entry is None:
+                failed_lookups.append(clean_name)
+                continue
+            team_id, franch_id = entry
+
+            try:
+                w = int(row_dict.get("W") or 0)
+                l = int(row_dict.get("L") or 0)
+            except (TypeError, ValueError):
+                w = l = 0
+            win_pct = round(w / (w + l), 3) if (w + l) > 0 else None
+
+            rows_to_save.append({
+                "year":      current_year,
+                "team_id":   team_id,
+                "franch_id": franch_id,
+                "team_name": clean_name,
+                "league":    league,
+                "division":  division,
+                "rank":      rank_idx,
+                "G":         w + l,
+                "W":         w,
+                "L":         l,
+                "win_pct":   win_pct,
+            })
+
+    if rows_to_save:
+        with connection.get_session() as db:
+            crud.save_team_seasons(db, rows_to_save)
+
+    log.info(f"standings: updated {len(rows_to_save)} teams, {len(failed_lookups)} unmatched names")
+    if failed_lookups:
+        log.warning(f"unmatched team names: {failed_lookups}")
+
+    return len(rows_to_save), len(failed_lookups)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -217,11 +329,19 @@ def main() -> None:
     pit_updated, pit_skipped, pit_failed = _update_pitchers(current_year)
 
     log.info("=" * 52)
+    log.info("Phase 3: standings")
+    log.info("=" * 52)
+    standings_updated, standings_failed = _update_standings(current_year)
+
+    log.info("=" * 52)
     log.info(
-        f"Batters  — updated: {bat_updated}, skipped: {bat_skipped}, failed: {len(bat_failed)}"
+        f"Batters   — updated: {bat_updated}, skipped: {bat_skipped}, failed: {len(bat_failed)}"
     )
     log.info(
-        f"Pitchers — updated: {pit_updated}, skipped: {pit_skipped}, failed: {len(pit_failed)}"
+        f"Pitchers  — updated: {pit_updated}, skipped: {pit_skipped}, failed: {len(pit_failed)}"
+    )
+    log.info(
+        f"Standings — updated: {standings_updated}, unmatched names: {standings_failed}"
     )
     if bat_failed:
         log.error(f"Failed batter IDs: {bat_failed}")

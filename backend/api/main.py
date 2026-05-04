@@ -191,14 +191,16 @@ def _run_backfill_war() -> None:
 # Nightly-update state (shared between background thread and status endpoint)
 # ---------------------------------------------------------------------------
 _nightly_state: dict = {
-    "running":  False,
-    "phase":    None,        # "batters" | "pitchers" | None
-    "updated":  0,
-    "skipped":  0,
-    "failed":   0,
-    "total":    0,
-    "error":    None,
-    "last_run": None,        # ISO-8601 UTC timestamp of the last completed run
+    "running":            False,
+    "phase":              None,   # "batters" | "pitchers" | "standings" | None
+    "updated":            0,
+    "skipped":            0,
+    "failed":             0,
+    "total":              0,
+    "standings_updated":  0,
+    "standings_failed":   0,
+    "error":              None,
+    "last_run":           None,   # ISO-8601 UTC timestamp of last completed run
 }
 _nightly_lock = threading.Lock()
 
@@ -324,11 +326,13 @@ def _nightly_phase(
 
 
 def _run_nightly_update() -> None:
-    """Background thread: refresh current-season stats for batters and pitchers."""
+    """Background thread: refresh current-season stats for batters, pitchers, and standings."""
     with _nightly_lock:
         _nightly_state.update(
             running=True, phase=None, updated=0, skipped=0,
-            failed=0, total=0, error=None,
+            failed=0, total=0,
+            standings_updated=0, standings_failed=0,
+            error=None,
         )
 
     try:
@@ -351,6 +355,12 @@ def _run_nightly_update() -> None:
             "pitchers",
             current_year,
         )
+        with _nightly_lock:
+            _nightly_state["phase"] = "standings"
+        s_updated, s_failed = nightly_update._update_standings(current_year)
+        with _nightly_lock:
+            _nightly_state["standings_updated"] = s_updated
+            _nightly_state["standings_failed"]  = s_failed
     except Exception as exc:
         with _nightly_lock:
             _nightly_state["error"] = str(exc)
@@ -493,7 +503,13 @@ def team_standings(year: int = Query(..., description="Season year, e.g. 2024"))
     rows = data_service.get_team_standings(year)
     if not rows:
         raise HTTPException(status_code=404, detail=f"No team data for year {year}")
-    return {"year": year, "standings": rows}
+
+    # Latest last_updated across the rows. ISO-8601 + Z so it's unambiguous in
+    # the response. None if no row carries a timestamp (older Lahman-only data).
+    timestamps = [r.get("last_updated") for r in rows if r.get("last_updated") is not None]
+    last_updated = max(timestamps).isoformat() + "Z" if timestamps else None
+
+    return {"year": year, "last_updated": last_updated, "standings": rows}
 
 
 @app.get("/teams/{team_id}/history")

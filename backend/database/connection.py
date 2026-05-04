@@ -58,8 +58,13 @@ _BIO_COLUMNS: list[tuple[str, str]] = [
 ]
 
 
-def _add_missing_columns(table_name: str) -> list[str]:
-    """ALTER TABLE ADD COLUMN for any bio columns not yet present.
+_TEAM_SEASONS_NEW_COLUMNS: list[tuple[str, str]] = [
+    ("last_updated", "TIMESTAMP"),
+]
+
+
+def _add_missing_columns(table_name: str, columns: list[tuple[str, str]]) -> list[str]:
+    """ALTER TABLE ADD COLUMN for any of the given columns not yet present.
 
     Postgres uses ADD COLUMN IF NOT EXISTS (safe under concurrent migrations).
     Other dialects (SQLite for local tests) check the inspector and skip rather
@@ -74,7 +79,7 @@ def _add_missing_columns(table_name: str) -> list[str]:
 
     added: list[str] = []
     with _engine.begin() as conn:
-        for col_name, col_type in _BIO_COLUMNS:
+        for col_name, col_type in columns:
             if col_name in existing:
                 continue
             if dialect == "postgresql":
@@ -118,11 +123,14 @@ def init_db() -> dict:
     summary["tables_created"] = sorted(after - before)
 
     # 2. ALTER TABLE for any missing bio columns on the (now-confirmed-to-exist)
-    #    players + pitchers tables.
+    #    players + pitchers tables, plus last_updated on team_seasons.
     for tbl_name in ("players", "pitchers"):
-        added = _add_missing_columns(tbl_name)
+        added = _add_missing_columns(tbl_name, _BIO_COLUMNS)
         if added:
             summary["columns_added"][tbl_name] = added
+    added = _add_missing_columns("team_seasons", _TEAM_SEASONS_NEW_COLUMNS)
+    if added:
+        summary["columns_added"]["team_seasons"] = added
 
     # 3. Indexes on tables that were already present in older deployments.
     #    create_all only adds indexes for newly-created tables, so explicit

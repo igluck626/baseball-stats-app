@@ -1,3 +1,5 @@
+import datetime
+
 from sqlalchemy.orm import Session
 
 from .models import (
@@ -215,5 +217,8 @@ def get_team_franchise(db: Session, team_id: str) -> str | None:
 
 
 def save_team_seasons(db: Session, rows: list[dict]) -> None:
+    """Upsert team-season rows. Stamps last_updated=utcnow() on every row so
+    the standings endpoint can show "data as of X"."""
+    now = datetime.datetime.utcnow()
     for r in rows:
-        db.merge(TeamSeason(**r))
+        db.merge(TeamSeason(last_updated=now, **r))

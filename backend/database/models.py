@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Float, Index, Integer, String
+from sqlalchemy import Column, DateTime, Float, Index, Integer, String
 from sqlalchemy.orm import DeclarativeBase
 
 
@@ -266,3 +266,7 @@ class TeamSeason(Base):
     ERA          = Column(Float)
     attendance   = Column(Integer)
     park_name    = Column(String)
+    # Set to utcnow() on every save_team_seasons() call so the standings
+    # endpoint can surface "data last updated at X" without depending on
+    # in-memory state surviving restarts.
+    last_updated = Column(DateTime)
