@@ -21,7 +21,7 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 from database import connection, crud                       # noqa: E402
 from database.models import (                                # noqa: E402
     PitcherSeason, PlayerAllstar, PlayerAward, PlayerFielding,
-    PlayerPostseasonBatting, PlayerPostseasonPitching,
+    PlayerHof, PlayerPostseasonBatting, PlayerPostseasonPitching,
     PlayerSeason, TeamSeason,
 )
 
@@ -503,6 +503,32 @@ def player_postseason_pitching(player_id: int):
     return {"player_id": player_id, "postseason": rows}
 
 
+@app.get("/players/{player_id}/headshot")
+def player_headshot(player_id: int):
+    """Return MLB Stats API headshot URL plus a generic-silhouette fallback.
+    The primary URL automatically falls back server-side if MLB doesn't have
+    a portrait for this player_id, so the fallback is rarely needed in
+    practice — included for completeness."""
+    return {
+        "player_id":    player_id,
+        "headshot_url": data_service._headshot_url(player_id),
+        "fallback_url": data_service._HEADSHOT_FALLBACK_URL,
+    }
+
+
+@app.get("/players/{player_id}/hof")
+def player_hof(player_id: int):
+    """Hall of Fame summary + full voting history. is_hof is True if any
+    ballot row has inducted=True; hof_year is the year of that ballot."""
+    result = data_service.get_hof(player_id)
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No Hall of Fame ballot history found for player_id {player_id}",
+        )
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Teams
 # ---------------------------------------------------------------------------
@@ -702,6 +728,7 @@ def bulk_load_status():
                     "player_allstar":             db.query(PlayerAllstar).count(),
                     "player_postseason_batting":  db.query(PlayerPostseasonBatting).count(),
                     "player_postseason_pitching": db.query(PlayerPostseasonPitching).count(),
+                    "player_hof":                 db.query(PlayerHof).count(),
                     "team_seasons":               db.query(TeamSeason).count(),
                     "batters_in_db":              db.query(PlayerSeason.player_id).distinct().count(),
                     "pitchers_in_db":             db.query(PitcherSeason.player_id).distinct().count(),

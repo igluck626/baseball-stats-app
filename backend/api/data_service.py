@@ -39,18 +39,53 @@ _BIO_COLUMNS = [
     "debut", "final_game",
 ]
 
+# MLB Stats API headshot URL pattern. Same image space for batters & pitchers.
+_HEADSHOT_BASE = (
+    "https://img.mlbstatic.com/mlb-photos/image/upload/"
+    "d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people"
+)
+_HEADSHOT_FALLBACK_URL = f"{_HEADSHOT_BASE}/generic/headshot/67/current"
 
-def _bio_dict(row) -> dict:
-    """Pull bio fields off a Player/Pitcher ORM row. Adds a derived ISO
-    `birthdate` ("YYYY-MM-DD") when all three birth-* parts are present."""
+
+def _headshot_url(player_id: int) -> str:
+    """MLB Stats API headshot URL for a given mlbam player_id. The URL pattern
+    redirects to a generic silhouette automatically if the player doesn't
+    have a portrait, so this never 404s in practice."""
+    return f"{_HEADSHOT_BASE}/{player_id}/headshot/67/current"
+
+
+def _hof_summary(db, player_id: int) -> tuple[bool, Optional[int]]:
+    """Look up (is_hof, hof_year). is_hof = any inducted=True row, hof_year =
+    that row's year. Returns (False, None) when the player has no HOF entry."""
+    rows = crud.get_player_hof(db, player_id)
+    inducted = next((h for h in rows if h.inducted), None)
+    return (inducted is not None, inducted.year_inducted if inducted else None)
+
+
+def _bio_dict(row, db=None) -> dict:
+    """Pull bio fields off a Player/Pitcher ORM row, plus headshot URL and
+    (when a session is provided) HOF status. The session is required for
+    is_hof / hof_year — without it those fields are False / None.
+
+    Callers always have a session in scope (search_player and the four
+    get_*_stats functions all build the dict inside the with-block), so HOF
+    fields are always populated in practice.
+    """
     if row is None:
         return {}
     out = {k: getattr(row, k, None) for k in _BIO_COLUMNS}
     y, m, d = out.get("birth_year"), out.get("birth_month"), out.get("birth_day")
-    if y and m and d:
-        out["birthdate"] = f"{int(y):04d}-{int(m):02d}-{int(d):02d}"
+    out["birthdate"] = (
+        f"{int(y):04d}-{int(m):02d}-{int(d):02d}" if (y and m and d) else None
+    )
+    out["headshot_url"] = _headshot_url(row.player_id)
+    if db is not None:
+        is_hof, hof_year = _hof_summary(db, row.player_id)
+        out["is_hof"]   = is_hof
+        out["hof_year"] = hof_year
     else:
-        out["birthdate"] = None
+        out["is_hof"]   = False
+        out["hof_year"] = None
     return out
 
 pybaseball.cache.enable()
@@ -243,7 +278,7 @@ def search_player(name: str) -> list[dict]:
                     "bbref_id":        r.bbref_id,
                     "mlb_debut":       r.mlb_debut,
                     "mlb_last_season": r.mlb_last_season,
-                    **_bio_dict(r),
+                    **_bio_dict(r, db),
                 }
             # Players (batters) take priority for two-way players.
             for r in crud.search_players_by_name(db, name):
@@ -253,7 +288,7 @@ def search_player(name: str) -> list[dict]:
                     "bbref_id":        r.bbref_id,
                     "mlb_debut":       r.mlb_debut,
                     "mlb_last_season": r.mlb_last_season,
-                    **_bio_dict(r),
+                    **_bio_dict(r, db),
                 }
     except Exception:
         return []
@@ -274,7 +309,7 @@ def get_current_stats(player_id: int) -> Optional[dict]:
         season = _db_row_to_season(season_rows[0])
         player = crud.get_player(db, player_id)
         name = player.name if player else None
-        bio = _bio_dict(player)
+        bio = _bio_dict(player, db)
 
     standard = {
         "name":    name,
@@ -338,7 +373,7 @@ def get_career_stats(player_id: int) -> Optional[dict]:
         seasons = [_db_row_to_season(r) for r in sorted(rows, key=lambda r: r.year)]
         player = crud.get_player(db, player_id)
         name = player.name if player else None
-        bio = _bio_dict(player)
+        bio = _bio_dict(player, db)
 
     seasons_with_counting = [s for s in seasons if s.get("H") is not None]
     career_totals: dict = {
@@ -377,6 +412,7 @@ def get_current_pitching_stats(player_id: int) -> Optional[dict]:
         season = _db_pitcher_row_to_season(season_rows[0])
         pitcher = crud.get_pitcher(db, player_id)
         name = pitcher.name if pitcher else None
+        bio = _bio_dict(pitcher, db)
 
     standard = {
         "name":  name,
@@ -424,6 +460,7 @@ def get_current_pitching_stats(player_id: int) -> Optional[dict]:
     return {
         "player_id": player_id,
         "season":    year,
+        "bio":       bio,
         "standard":  standard,
         "advanced":  advanced,
     }
@@ -441,7 +478,7 @@ def get_career_pitching_stats(player_id: int) -> Optional[dict]:
         seasons = [_db_pitcher_row_to_season(r) for r in sorted(rows, key=lambda r: r.year)]
         pitcher = crud.get_pitcher(db, player_id)
         name = pitcher.name if pitcher else None
-        bio = _bio_dict(pitcher)
+        bio = _bio_dict(pitcher, db)
 
     return {
         "player_id":     player_id,
@@ -511,6 +548,25 @@ def get_postseason_pitching(player_id: int) -> list[dict]:
     with connection.get_session() as db:
         rows = crud.get_player_postseason_pitching(db, player_id)
         return [_row_to_dict(r) for r in rows]
+
+
+def get_hof(player_id: int) -> Optional[dict]:
+    """Return Hall of Fame summary + full voting history for a player.
+    None if there are no HOF ballot rows for them."""
+    if not connection.db_available():
+        return None
+    with connection.get_session() as db:
+        rows = crud.get_player_hof(db, player_id)
+        if not rows:
+            return None
+        history = [_row_to_dict(r) for r in rows]
+        is_hof, hof_year = _hof_summary(db, player_id)
+    return {
+        "player_id":       player_id,
+        "is_hof":          is_hof,
+        "hof_year":        hof_year,
+        "voting_history":  history,
+    }
 
 
 def get_team_standings(year: int) -> list[dict]:

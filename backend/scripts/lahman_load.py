@@ -48,6 +48,7 @@ ALLSTAR_CSV             = os.path.join(LAHMAN_DIR, "AllstarFull.csv")
 BATTING_POST_CSV        = os.path.join(LAHMAN_DIR, "BattingPost.csv")
 PITCHING_POST_CSV       = os.path.join(LAHMAN_DIR, "PitchingPost.csv")
 TEAMS_CSV               = os.path.join(LAHMAN_DIR, "Teams.csv")
+HOF_CSV                 = os.path.join(LAHMAN_DIR, "HallOfFame.csv")
 
 # Load Lahman data only for years STRICTLY less than this — i.e. every
 # completed season. Pybaseball owns the current season; after it ends, Lahman
@@ -1062,6 +1063,59 @@ def _load_teams(
 
 
 # ---------------------------------------------------------------------------
+# Hall of Fame (HallOfFame.csv)
+# ---------------------------------------------------------------------------
+
+def _load_hof(
+    bridge: dict[str, int],
+    state: Optional[dict] = None,
+    lock: Optional[threading.Lock] = None,
+) -> int:
+    """Load every Hall of Fame ballot row keyed by mlbam player_id. Stores the
+    full voting history (one row per player+year+voting-body); the API
+    surfaces is_hof / hof_year by checking for any inducted=True row."""
+    _set_state(state, lock, phase="hof")
+    log.info(f"Reading {HOF_CSV} ...")
+
+    rows: list[dict] = []
+    skipped_no_id = 0
+    with open(HOF_CSV, newline="", encoding="utf-8-sig") as fh:
+        for row in csv.DictReader(fh):
+            mlbam = bridge.get(row["playerID"])
+            if mlbam is None:
+                # Many HOF entries are managers / executives / pioneers without
+                # an MLBAM player ID. Expected; just count and skip.
+                skipped_no_id += 1
+                continue
+            inducted_raw = (row.get("inducted") or "").strip().upper()
+            inducted = True if inducted_raw == "Y" else False if inducted_raw == "N" else None
+            rows.append({
+                "player_id":     mlbam,
+                "year_inducted": int(row["yearid"]),
+                "voted_by":      (row.get("votedBy") or "").strip() or "",
+                "category":      (row.get("category") or "").strip() or None,
+                "needed":        _i_or_none(row.get("needed")),
+                "votes":         _i_or_none(row.get("votes")),
+                "inducted":      inducted,
+            })
+
+    log.info(f"  saving {len(rows):,} HOF ballot rows ...")
+    _set_state(state, lock, hof_rows_total=len(rows), hof_skipped_no_id=skipped_no_id)
+
+    saved = 0
+    BATCH = 5000
+    for chunk_start in range(0, len(rows), BATCH):
+        chunk = rows[chunk_start:chunk_start + BATCH]
+        with connection.get_session() as db:
+            crud.save_player_hof(db, chunk)
+            saved += len(chunk)
+        _set_state(state, lock, hof_loaded=saved)
+
+    log.info(f"  hof: saved {saved:,}, skipped (no Chadwick id): {skipped_no_id:,}")
+    return saved
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -1123,6 +1177,7 @@ def run(
     post_bat_saved   = _load_postseason_batting(bridge, state, lock)
     post_pit_saved   = _load_postseason_pitching(bridge, state, lock)
     teams_saved      = _load_teams(state, lock)
+    hof_saved        = _load_hof(bridge, state, lock)
 
     _set_state(state, lock, phase="done")
 
@@ -1140,6 +1195,7 @@ def run(
     print(f"  Postseason batting saved     : {post_bat_saved:>7,}")
     print(f"  Postseason pitching saved    : {post_pit_saved:>7,}")
     print(f"  Team-season rows saved       : {teams_saved:>7,}")
+    print(f"  Hall of Fame ballots saved   : {hof_saved:>7,}")
     print(bar)
 
 

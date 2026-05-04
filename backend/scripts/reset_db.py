@@ -25,7 +25,7 @@ sys.path.insert(0, _BACKEND_DIR)
 from database import connection                                      # noqa: E402
 from database.models import (                                          # noqa: E402
     Pitcher, PitcherSeason, Player,
-    PlayerAllstar, PlayerAward, PlayerFielding,
+    PlayerAllstar, PlayerAward, PlayerFielding, PlayerHof,
     PlayerPostseasonBatting, PlayerPostseasonPitching,
     PlayerSeason, TeamSeason,
 )
@@ -40,6 +40,7 @@ TABLES = [
     ("player_allstar",             PlayerAllstar),
     ("player_postseason_batting",  PlayerPostseasonBatting),
     ("player_postseason_pitching", PlayerPostseasonPitching),
+    ("player_hof",                 PlayerHof),
     ("team_seasons",               TeamSeason),
     ("players",                    Player),
     ("pitchers",                   Pitcher),

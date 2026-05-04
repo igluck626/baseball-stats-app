@@ -9,6 +9,7 @@ from .models import (
     PlayerAllstar,
     PlayerAward,
     PlayerFielding,
+    PlayerHof,
     PlayerPostseasonBatting,
     PlayerPostseasonPitching,
     PlayerSeason,
@@ -180,6 +181,24 @@ def get_player_postseason_pitching(db: Session, player_id: int) -> list[PlayerPo
 def save_player_postseason_pitching(db: Session, rows: list[dict]) -> None:
     for r in rows:
         db.merge(PlayerPostseasonPitching(**r))
+
+
+# ---------------------------------------------------------------------------
+# Hall of Fame
+# ---------------------------------------------------------------------------
+
+def get_player_hof(db: Session, player_id: int) -> list[PlayerHof]:
+    return (
+        db.query(PlayerHof)
+        .filter(PlayerHof.player_id == player_id)
+        .order_by(PlayerHof.year_inducted, PlayerHof.voted_by)
+        .all()
+    )
+
+
+def save_player_hof(db: Session, rows: list[dict]) -> None:
+    for r in rows:
+        db.merge(PlayerHof(**r))
 
 
 # ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, Float, Index, Integer, String
+from sqlalchemy import Boolean, Column, DateTime, Float, Index, Integer, String
 from sqlalchemy.orm import DeclarativeBase
 
 
@@ -264,6 +264,21 @@ class PlayerPostseasonPitching(Base):
 # Team standings — keyed by (year, team_id). franch_id is indexed because
 # /teams/{team_id}/history queries by franchise to follow relocations.
 # ---------------------------------------------------------------------------
+
+class PlayerHof(Base):
+    __tablename__ = "player_hof"
+
+    # Same player can appear on multiple ballots in different years and from
+    # different voting bodies (BBWAA / Veterans / Special Election), so the PK
+    # spans all three.
+    player_id      = Column(Integer, primary_key=True)
+    year_inducted  = Column(Integer, primary_key=True)
+    voted_by       = Column(String,  primary_key=True)
+    category       = Column(String)
+    needed         = Column(Integer)
+    votes          = Column(Integer)
+    inducted       = Column(Boolean)
+
 
 class TeamSeason(Base):
     __tablename__ = "team_seasons"

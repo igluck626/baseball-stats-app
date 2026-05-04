@@ -37,3 +37,4 @@ backend/data/lahman/*
 !backend/data/lahman/BattingPost.csv
 !backend/data/lahman/PitchingPost.csv
 !backend/data/lahman/Teams.csv
+!backend/data/lahman/HallOfFame.csv
