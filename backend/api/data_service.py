@@ -266,16 +266,87 @@ def _db_pitcher_row_to_season(row) -> dict:
 # Public API — DB-only reads
 # ---------------------------------------------------------------------------
 
-def _latest_team(db, player_id: int, *, pitcher: bool) -> Optional[str]:
-    """Team from the player's most recent *_seasons row, or None if there
-    are no rows. Uses pitcher_seasons when `pitcher=True`, else player_seasons.
-    Two-way players are handled by the caller (which prefers the batter side)."""
+# Reverse maps for resolving the messy `team` column to a stable Lahman-style
+# code. The DB stores three different shapes depending on which loader wrote
+# the row:
+#   • Lahman → raw teamID, e.g. "NYA", "BOS", "SLN"
+#   • nightly bref override → bref Tm, e.g. "NYY", "STL"
+#   • nightly bwar (no bref) → city via _TEAM_DISPLAY, e.g. "New York"
+# The first two are already 2–3 char uppercase codes and pass through. The
+# third needs a reverse lookup, sometimes with the league to disambiguate
+# two-team cities (NYY vs NYM, LAN vs LAA, CHA vs CHN).
+_CITY_TO_CODE: dict[str, str] = {
+    "Arizona":       "ARI",
+    "Atlanta":       "ATL",
+    "Baltimore":     "BAL",
+    "Boston":        "BOS",
+    "Cincinnati":    "CIN",
+    "Cleveland":     "CLE",
+    "Colorado":      "COL",
+    "Detroit":       "DET",
+    "Houston":       "HOU",
+    "Kansas City":   "KCA",
+    "Miami":         "MIA",
+    "Milwaukee":     "MIL",
+    "Minnesota":     "MIN",
+    "Oakland":       "OAK",
+    "Philadelphia":  "PHI",
+    "Pittsburgh":    "PIT",
+    "San Diego":     "SDN",
+    "San Francisco": "SFN",
+    "Seattle":       "SEA",
+    "St. Louis":     "SLN",
+    "Tampa Bay":     "TBA",
+    "Texas":         "TEX",
+    "Toronto":       "TOR",
+    "Washington":    "WAS",
+}
+
+_CITY_LEAGUE_TO_CODE: dict[tuple[str, str], str] = {
+    ("Chicago",     "AL"): "CHA",
+    ("Chicago",     "NL"): "CHN",
+    ("Los Angeles", "AL"): "LAA",
+    ("Los Angeles", "NL"): "LAN",
+    ("New York",    "AL"): "NYA",
+    ("New York",    "NL"): "NYN",
+}
+
+
+def _resolve_team_code(team: Optional[str], league: Optional[str]) -> Optional[str]:
+    """Normalize a team-column value to a Lahman-style code.
+
+    Returns None when input is empty. Returns the value unchanged when it
+    already looks like a code (uppercase letters/digits, ≤4 chars). For
+    city display values, falls back to (city, league) → code, then plain
+    city → code. Returns None if none of those resolve."""
+    if not team:
+        return None
+
+    short = len(team) <= 4 and team.replace(".", "").isalnum() and team.upper() == team
+    if short:
+        return team
+
+    if league:
+        code = _CITY_LEAGUE_TO_CODE.get((team, league))
+        if code:
+            return code
+
+    return _CITY_TO_CODE.get(team)
+
+
+def _latest_team_info(
+    db, player_id: int, *, pitcher: bool,
+) -> tuple[Optional[str], Optional[str]]:
+    """(team_display, team_code) from the player's most recent *_seasons row.
+    `team_display` is the raw value as stored; `team_code` is normalized to
+    a 2-3 char abbreviation suitable for client-side lookup. Returns
+    (None, None) when the player has no season rows."""
     rows = (crud.get_pitcher_seasons(db, player_id) if pitcher
             else crud.get_player_seasons(db, player_id))
     if not rows:
-        return None
+        return None, None
     latest = max(rows, key=lambda r: r.year or 0)
-    return latest.team
+    return latest.team, _resolve_team_code(latest.team, latest.league)
 
 
 def search_player(name: str) -> list[dict]:
@@ -291,24 +362,28 @@ def search_player(name: str) -> list[dict]:
     try:
         with connection.get_session() as db:
             for r in crud.search_pitchers_by_name(db, name):
+                team_display, team_code = _latest_team_info(db, r.player_id, pitcher=True)
                 by_id[r.player_id] = {
                     "player_id":       r.player_id,
                     "name":            r.name,
                     "bbref_id":        r.bbref_id,
                     "mlb_debut":       r.mlb_debut,
                     "mlb_last_season": r.mlb_last_season,
-                    "current_team":    _latest_team(db, r.player_id, pitcher=True),
+                    "current_team":    team_display,
+                    "team_code":       team_code,
                     **_bio_dict(r, db),
                 }
             # Players (batters) take priority for two-way players.
             for r in crud.search_players_by_name(db, name):
+                team_display, team_code = _latest_team_info(db, r.player_id, pitcher=False)
                 by_id[r.player_id] = {
                     "player_id":       r.player_id,
                     "name":            r.name,
                     "bbref_id":        r.bbref_id,
                     "mlb_debut":       r.mlb_debut,
                     "mlb_last_season": r.mlb_last_season,
-                    "current_team":    _latest_team(db, r.player_id, pitcher=False),
+                    "current_team":    team_display,
+                    "team_code":       team_code,
                     **_bio_dict(r, db),
                 }
     except Exception:
