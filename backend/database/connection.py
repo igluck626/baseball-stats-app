@@ -254,7 +254,9 @@ def init_db() -> dict:
         summary["skipped_no_engine"] = True
         return summary
 
-    from .models import Base, Pitcher, Player, TeamSeason
+    from .models import (
+        Base, BattingGameLog, Pitcher, PitchingGameLog, Player, TeamSeason,
+    )
 
     # 1. Create missing tables. create_all already does checkfirst=True; we
     #    snapshot table names before/after to report what was actually created.
@@ -281,7 +283,7 @@ def init_db() -> dict:
     # 3. Indexes on tables that were already present in older deployments.
     #    create_all only adds indexes for newly-created tables, so explicit
     #    create-with-checkfirst is needed for the rest.
-    for tbl in (Player, Pitcher, TeamSeason):
+    for tbl in (Player, Pitcher, TeamSeason, BattingGameLog, PitchingGameLog):
         for idx in tbl.__table__.indexes:
             idx.create(bind=_engine, checkfirst=True)
             summary["indexes_created"].append(idx.name)

@@ -12,6 +12,11 @@ the current-year row in pitcher_seasons for every pitcher in the database.
 Phase 3 (standings): fetches pybaseball.standings() and upserts the
 current-season row in team_seasons for each team.
 
+Phase 4 (game logs): for every active roster player (mlb_last_season =
+current year), pulls per-game stats from the MLB Stats API and upserts
+into batting_gamelogs / pitching_gamelogs. Idempotent — yesterday's games
+are the only new rows; older games are upserted as no-ops.
+
 Seasonal workflow
 -----------------
 Pybaseball is the source of truth ONLY for the in-flight current season.
@@ -40,7 +45,9 @@ from sqlalchemy import func as _sql_func              # noqa: E402
 
 import data_service                                   # noqa: E402
 from database import connection, crud                 # noqa: E402
-from database.models import TeamSeason                # noqa: E402
+from database.models import Pitcher, Player, TeamSeason   # noqa: E402
+
+import time as _time                                  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -317,6 +324,58 @@ def _update_standings(current_year: int) -> tuple[int, int]:
 
 
 # ---------------------------------------------------------------------------
+# Game logs (batting + pitching)
+# ---------------------------------------------------------------------------
+# Per-call MLB Stats API fetch lands all of yesterday's games in the upsert,
+# and is a no-op for already-stored older games (merge by composite PK).
+# We pace the calls to avoid tripping rate limits.
+
+_GAMELOG_SLEEP_SECONDS = 0.1
+
+
+def _active_player_ids(model, current_year: int) -> list[int]:
+    """All players whose mlb_last_season is the current year — i.e. on a
+    current MLB roster."""
+    with connection.get_session() as db:
+        rows = (
+            db.query(model.player_id)
+            .filter(model.mlb_last_season == current_year)
+            .all()
+        )
+    return [r.player_id for r in rows]
+
+
+def _update_gamelogs(current_year: int) -> tuple[int, int, int, int]:
+    """Refresh batting + pitching gamelogs for every active roster player.
+    Returns (bat_games_saved, pit_games_saved, bat_failed, pit_failed)."""
+    bat_ids = _active_player_ids(Player,  current_year)
+    pit_ids = _active_player_ids(Pitcher, current_year)
+    log.info(f"  active batters: {len(bat_ids)}, active pitchers: {len(pit_ids)}")
+
+    bat_saved = 0
+    bat_failed = 0
+    for pid in bat_ids:
+        try:
+            bat_saved += data_service.fetch_and_save_batting_gamelogs(pid, current_year)
+        except Exception as exc:
+            bat_failed += 1
+            log.error(f"  batting gamelog failed for {pid}: {exc}")
+        _time.sleep(_GAMELOG_SLEEP_SECONDS)
+
+    pit_saved = 0
+    pit_failed = 0
+    for pid in pit_ids:
+        try:
+            pit_saved += data_service.fetch_and_save_pitching_gamelogs(pid, current_year)
+        except Exception as exc:
+            pit_failed += 1
+            log.error(f"  pitching gamelog failed for {pid}: {exc}")
+        _time.sleep(_GAMELOG_SLEEP_SECONDS)
+
+    return bat_saved, pit_saved, bat_failed, pit_failed
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -343,6 +402,11 @@ def main() -> None:
     standings_updated, standings_failed = _update_standings(current_year)
 
     log.info("=" * 52)
+    log.info("Phase 4: game logs (active rosters only)")
+    log.info("=" * 52)
+    bat_gl_saved, pit_gl_saved, bat_gl_failed, pit_gl_failed = _update_gamelogs(current_year)
+
+    log.info("=" * 52)
     log.info(
         f"Batters   — updated: {bat_updated}, skipped: {bat_skipped}, failed: {len(bat_failed)}"
     )
@@ -351,6 +415,10 @@ def main() -> None:
     )
     log.info(
         f"Standings — updated: {standings_updated}, unmatched names: {standings_failed}"
+    )
+    log.info(
+        f"Game logs — batting rows saved: {bat_gl_saved}, pitching rows saved: {pit_gl_saved}, "
+        f"batting failures: {bat_gl_failed}, pitching failures: {pit_gl_failed}"
     )
     if bat_failed:
         log.error(f"Failed batter IDs: {bat_failed}")

@@ -3,6 +3,7 @@
 import datetime
 import os
 import threading
+import time
 from contextlib import asynccontextmanager
 from urllib.parse import urlparse
 
@@ -20,7 +21,8 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 # database imports work after data_service is imported (it adds backend/ to sys.path)
 from database import connection, crud                       # noqa: E402
 from database.models import (                                # noqa: E402
-    PitcherSeason, PlayerAllstar, PlayerAward, PlayerFielding,
+    BattingGameLog, PitcherSeason, PitchingGameLog,
+    PlayerAllstar, PlayerAward, PlayerFielding,
     PlayerHof, PlayerPostseasonBatting, PlayerPostseasonPitching,
     PlayerSeason, TeamSeason,
 )
@@ -187,6 +189,97 @@ def _run_backfill_war() -> None:
         with _war_lock:
             _war_state["running"]  = False
             _war_state["last_run"] = datetime.datetime.utcnow().isoformat() + "Z"
+
+
+# ---------------------------------------------------------------------------
+# Game-log historical bulk load
+# ---------------------------------------------------------------------------
+_gamelog_state: dict = {
+    "running":         False,
+    "current_season":  None,
+    "current_player":  None,
+    "players_done":    0,
+    "players_total":   0,
+    "games_saved":     0,
+    "failed_players":  [],
+    "error":           None,
+    "last_run":        None,
+}
+_gamelog_lock = threading.Lock()
+_GAMELOG_LOAD_SLEEP = 0.1  # pace MLB Stats API to avoid rate limits
+
+
+def _run_gamelog_load(seasons: list[int], player_ids: list[int] | None) -> None:
+    """Background runner: fetch and save batting + pitching gamelogs for the
+    given (player_ids × seasons) cross-product. If player_ids is None,
+    targets all current-roster players from players + pitchers tables."""
+    with _gamelog_lock:
+        _gamelog_state.update(
+            running=True, current_season=None, current_player=None,
+            players_done=0, players_total=0, games_saved=0,
+            failed_players=[], error=None,
+        )
+
+    try:
+        # Resolve target players. We track which IDs are batters vs pitchers
+        # so we don't waste calls on the wrong group.
+        with connection.get_session() as db:
+            if player_ids is None:
+                current_year = data_service._current_year()
+                bat_ids = {
+                    r.player_id for r in db.query(PlayerSeason.player_id)
+                    .filter(PlayerSeason.year == current_year).distinct().all()
+                }
+                pit_ids = {
+                    r.player_id for r in db.query(PitcherSeason.player_id)
+                    .filter(PitcherSeason.year == current_year).distinct().all()
+                }
+            else:
+                # Caller-provided list — fetch both groups for each (the
+                # wrong-group call returns 0 games, no harm).
+                bat_ids = set(player_ids)
+                pit_ids = set(player_ids)
+
+        all_ids = sorted(bat_ids | pit_ids)
+        with _gamelog_lock:
+            _gamelog_state["players_total"] = len(all_ids) * len(seasons)
+
+        for season in seasons:
+            with _gamelog_lock:
+                _gamelog_state["current_season"] = season
+
+            for pid in all_ids:
+                with _gamelog_lock:
+                    _gamelog_state["current_player"] = pid
+
+                try:
+                    if pid in bat_ids:
+                        n = data_service.fetch_and_save_batting_gamelogs(pid, season)
+                        with _gamelog_lock:
+                            _gamelog_state["games_saved"] += n
+                    if pid in pit_ids:
+                        n = data_service.fetch_and_save_pitching_gamelogs(pid, season)
+                        with _gamelog_lock:
+                            _gamelog_state["games_saved"] += n
+                except Exception as exc:
+                    with _gamelog_lock:
+                        _gamelog_state["failed_players"].append(
+                            {"player_id": pid, "season": season, "error": str(exc)[:200]}
+                        )
+
+                with _gamelog_lock:
+                    _gamelog_state["players_done"] += 1
+                time.sleep(_GAMELOG_LOAD_SLEEP)
+
+    except Exception as exc:
+        with _gamelog_lock:
+            _gamelog_state["error"] = str(exc)
+    finally:
+        with _gamelog_lock:
+            _gamelog_state["running"]         = False
+            _gamelog_state["current_season"]  = None
+            _gamelog_state["current_player"]  = None
+            _gamelog_state["last_run"]        = datetime.datetime.utcnow().isoformat() + "Z"
 
 
 # ---------------------------------------------------------------------------
@@ -503,6 +596,44 @@ def player_postseason_pitching(player_id: int):
     return {"player_id": player_id, "postseason": rows}
 
 
+@app.get("/players/{player_id}/gamelogs/batting")
+def player_gamelogs_batting(
+    player_id: int,
+    season: int | None = Query(None, description="Defaults to current year"),
+    last_n:  int | None = Query(None, description="If set, return only the most recent N games"),
+):
+    """Per-game batting log for a player. Returns games in reverse chrono
+    order plus a `splits` block with rolling-window aggregates (last 5 / 10
+    / 15 / 30 / season). Auto-fetches from the MLB Stats API on cache miss
+    for the requested season."""
+    response = data_service.get_batting_gamelog_response(
+        player_id, season=season, last_n=last_n,
+    )
+    if not response:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No batting gamelogs found for player_id {player_id}, season {season}",
+        )
+    return response
+
+
+@app.get("/players/{player_id}/gamelogs/pitching")
+def player_gamelogs_pitching(
+    player_id: int,
+    season: int | None = Query(None, description="Defaults to current year"),
+    last_n:  int | None = Query(None, description="If set, return only the most recent N games"),
+):
+    response = data_service.get_pitching_gamelog_response(
+        player_id, season=season, last_n=last_n,
+    )
+    if not response:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No pitching gamelogs found for player_id {player_id}, season {season}",
+        )
+    return response
+
+
 @app.get("/players/{player_id}/headshot")
 def player_headshot(player_id: int):
     """Return MLB Stats API headshot URL plus a generic-silhouette fallback.
@@ -740,6 +871,53 @@ def bulk_load_status():
         state = dict(_bulk_state)
 
     return {"counts": counts, **state}
+
+
+@app.post("/admin/gamelog-load")
+def start_gamelog_load(payload: dict | None = None):
+    """Historical gamelog bulk load. Body:
+        {"seasons": [2008, ..., 2025], "player_ids": null}
+
+    `player_ids: null` targets all current-roster players (those with rows in
+    player_seasons / pitcher_seasons for the current year). Runs in a
+    background thread; poll GET /admin/gamelog-load/status for progress."""
+    with _gamelog_lock:
+        if _gamelog_state["running"]:
+            return {"status": "already_running", **_gamelog_state}
+
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+
+    body = payload or {}
+    seasons    = body.get("seasons")
+    player_ids = body.get("player_ids")
+    if not isinstance(seasons, list) or not seasons:
+        raise HTTPException(status_code=400, detail="`seasons` must be a non-empty list of integers")
+    try:
+        seasons = [int(s) for s in seasons]
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="`seasons` entries must be integers")
+    if player_ids is not None:
+        if not isinstance(player_ids, list):
+            raise HTTPException(status_code=400, detail="`player_ids` must be a list or null")
+        try:
+            player_ids = [int(p) for p in player_ids]
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="`player_ids` entries must be integers")
+
+    t = threading.Thread(
+        target=_run_gamelog_load, args=(seasons, player_ids), daemon=True,
+        name="gamelog-load",
+    )
+    t.start()
+    return {"status": "started", "seasons": seasons,
+            "player_ids": "all_active" if player_ids is None else f"{len(player_ids)} players"}
+
+
+@app.get("/admin/gamelog-load/status")
+def gamelog_load_status():
+    with _gamelog_lock:
+        return dict(_gamelog_state)
 
 
 @app.post("/admin/backfill-war")

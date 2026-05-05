@@ -9,14 +9,21 @@ They are used by bulk_load.py and nightly_update.py only.
 """
 
 import datetime
+import json
+import logging
 import os
 import sys
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from typing import Optional
 
 import pandas as pd
 import pybaseball
 from dotenv import load_dotenv
+
+log = logging.getLogger(__name__)
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
@@ -566,6 +573,379 @@ def get_hof(player_id: int) -> Optional[dict]:
         "is_hof":          is_hof,
         "hof_year":        hof_year,
         "voting_history":  history,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Game logs — MLB Stats API ingest + per-window splits
+# ---------------------------------------------------------------------------
+
+_MLB_STATS_API = "https://statsapi.mlb.com/api/v1"
+_MLB_HTTP_TIMEOUT = 30
+
+
+def _mlb_get_json(path: str, params: dict) -> dict:
+    """GET https://statsapi.mlb.com/api/v1/{path}?... and return parsed JSON.
+    Uses urllib (stdlib) — no `requests` dependency."""
+    qs  = urllib.parse.urlencode(params)
+    url = f"{_MLB_STATS_API}/{path.lstrip('/')}?{qs}"
+    req = urllib.request.Request(url, headers={"User-Agent": "baseball-stats-app/1.0"})
+    with urllib.request.urlopen(req, timeout=_MLB_HTTP_TIMEOUT) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _to_int(v) -> Optional[int]:
+    """Defensive int parse; returns None for blank / non-numeric."""
+    if v is None or v == "":
+        return None
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        try:
+            return int(float(v))
+        except (TypeError, ValueError):
+            return None
+
+
+def _ip_str_to_decimal(v) -> Optional[float]:
+    """Convert IP from MLB API string ('6.1' = 6⅓) to decimal innings."""
+    if v is None or v == "":
+        return None
+    try:
+        s = str(v)
+        whole, _, frac = s.partition(".")
+        outs = int(frac[:1]) if frac and frac[:1].isdigit() else 0
+        return round((int(whole) if whole else 0) + outs / 3, 3)
+    except Exception:
+        return None
+
+
+def _opponent_label(opp: dict) -> Optional[str]:
+    """Pick the most-iOS-friendly opponent label from the API's opponent block."""
+    if not opp:
+        return None
+    for k in ("abbreviation", "teamCode", "fileCode", "shortName", "teamName", "name"):
+        v = opp.get(k)
+        if v:
+            return str(v)
+    return None
+
+
+def _parse_batting_split(split: dict) -> Optional[dict]:
+    """One MLB Stats API gameLog split → batting_gamelogs row dict, or None
+    if the split doesn't carry the required keys (gamePk + date)."""
+    stat = split.get("stat") or {}
+    game = split.get("game") or {}
+    opp  = split.get("opponent") or {}
+    team = split.get("team") or {}
+
+    game_pk = game.get("gamePk") or split.get("gamePk")
+    date_raw = (
+        split.get("date")
+        or game.get("officialDate")
+        or game.get("gameDate")
+    )
+    if game_pk is None or not date_raw:
+        return None
+    try:
+        game_date = datetime.date.fromisoformat(str(date_raw)[:10])
+    except ValueError:
+        return None
+
+    # W/L/T from the convenience flags MLB ships at the split level.
+    if   split.get("isWin"):  result = "W"
+    elif split.get("isLoss"): result = "L"
+    elif split.get("isTie"):  result = "T"
+    else:                      result = None
+
+    return {
+        "game_id":    str(game_pk),
+        "game_date":  game_date,
+        "season":     _to_int(split.get("season")) or game_date.year,
+        "opponent":   _opponent_label(opp),
+        "home_away":  "H" if split.get("isHome") else "A",
+        "result":     result,
+        "team_score": _to_int(team.get("score")),
+        "opp_score":  _to_int(opp.get("score")),
+        "AB":         _to_int(stat.get("atBats")),
+        "R":          _to_int(stat.get("runs")),
+        "H":          _to_int(stat.get("hits")),
+        "doubles":    _to_int(stat.get("doubles")),
+        "triples":    _to_int(stat.get("triples")),
+        "HR":         _to_int(stat.get("homeRuns")),
+        "RBI":        _to_int(stat.get("rbi")),
+        "BB":         _to_int(stat.get("baseOnBalls")),
+        "SO":         _to_int(stat.get("strikeOuts")),
+        "SB":         _to_int(stat.get("stolenBases")),
+        "HBP":        _to_int(stat.get("hitByPitch")),
+        "SF":         _to_int(stat.get("sacFlies")),
+        "LOB":        _to_int(stat.get("leftOnBase")),
+    }
+
+
+def _parse_pitching_split(split: dict) -> Optional[dict]:
+    stat = split.get("stat") or {}
+    game = split.get("game") or {}
+    opp  = split.get("opponent") or {}
+
+    game_pk = game.get("gamePk") or split.get("gamePk")
+    date_raw = (
+        split.get("date")
+        or game.get("officialDate")
+        or game.get("gameDate")
+    )
+    if game_pk is None or not date_raw:
+        return None
+    try:
+        game_date = datetime.date.fromisoformat(str(date_raw)[:10])
+    except ValueError:
+        return None
+
+    # Decision priority: saves > holds > blown saves > wins > losses > ND.
+    # (The save/hold flags only fire for relievers who got the credit.)
+    if   _to_int(stat.get("saves")):      result = "S"
+    elif _to_int(stat.get("holds")):      result = "H"
+    elif _to_int(stat.get("blownSaves")): result = "BS"
+    elif _to_int(stat.get("wins")):       result = "W"
+    elif _to_int(stat.get("losses")):     result = "L"
+    else:                                  result = "ND"
+
+    return {
+        "game_id":   str(game_pk),
+        "game_date": game_date,
+        "season":    _to_int(split.get("season")) or game_date.year,
+        "opponent":  _opponent_label(opp),
+        "home_away": "H" if split.get("isHome") else "A",
+        "result":    result,
+        "IP":        _ip_str_to_decimal(stat.get("inningsPitched")),
+        "H":         _to_int(stat.get("hits")),
+        "R":         _to_int(stat.get("runs")),
+        "ER":        _to_int(stat.get("earnedRuns")),
+        "BB":        _to_int(stat.get("baseOnBalls")),
+        "SO":        _to_int(stat.get("strikeOuts")),
+        "HR":        _to_int(stat.get("homeRuns")),
+        "HBP":       _to_int(stat.get("hitByPitch")),
+        "WP":        _to_int(stat.get("wildPitches")),
+        "pitches":   _to_int(stat.get("numberOfPitches")) or _to_int(stat.get("pitchesThrown")),
+        "strikes":   _to_int(stat.get("strikes")),
+    }
+
+
+def _fetch_mlb_gamelog(player_id: int, season: int, group: str) -> list[dict]:
+    """Hit /people/{id}/stats?stats=gameLog — return list of split dicts."""
+    payload = _mlb_get_json(
+        f"people/{player_id}/stats",
+        {
+            "stats":    "gameLog",
+            "season":   season,
+            "group":    group,            # "hitting" | "pitching"
+            "gameType": "R",
+        },
+    )
+    out: list[dict] = []
+    for stats_block in payload.get("stats") or []:
+        out.extend(stats_block.get("splits") or [])
+    return out
+
+
+def fetch_and_save_batting_gamelogs(player_id: int, season: int) -> int:
+    """Pull batting gamelog from MLB Stats API; upsert into batting_gamelogs.
+    Returns the number of game rows written (de-duplicated by game_id)."""
+    if not connection.db_available():
+        return 0
+    splits = _fetch_mlb_gamelog(player_id, season, "hitting")
+    rows: dict[str, dict] = {}
+    for s in splits:
+        parsed = _parse_batting_split(s)
+        if parsed is None:
+            continue
+        rows[parsed["game_id"]] = parsed
+    if not rows:
+        return 0
+    with connection.get_session() as db:
+        crud.save_batting_gamelogs(db, player_id, list(rows.values()))
+    return len(rows)
+
+
+def fetch_and_save_pitching_gamelogs(player_id: int, season: int) -> int:
+    if not connection.db_available():
+        return 0
+    splits = _fetch_mlb_gamelog(player_id, season, "pitching")
+    rows: dict[str, dict] = {}
+    for s in splits:
+        parsed = _parse_pitching_split(s)
+        if parsed is None:
+            continue
+        rows[parsed["game_id"]] = parsed
+    if not rows:
+        return 0
+    with connection.get_session() as db:
+        crud.save_pitching_gamelogs(db, player_id, list(rows.values()))
+    return len(rows)
+
+
+# ---------------------------------------------------------------------------
+# Splits (last 5 / 10 / 15 / 30 / season)
+# ---------------------------------------------------------------------------
+
+def _aggregate_batting_window(games: list[dict]) -> dict:
+    if not games:
+        return {"G": 0, "AB": 0, "R": 0, "H": 0, "HR": 0, "RBI": 0, "BB": 0,
+                "SO": 0, "BA": None, "OBP": None, "SLG": None, "OPS": None}
+    s = {k: sum((g.get(k) or 0) for g in games) for k in
+         ("AB", "R", "H", "doubles", "triples", "HR", "RBI", "BB", "SO", "HBP", "SF")}
+    ab, h, hr, bb, hbp, sf = s["AB"], s["H"], s["HR"], s["BB"], s["HBP"], s["SF"]
+    doubles, triples = s["doubles"], s["triples"]
+    singles = h - doubles - triples - hr
+
+    ba  = round(h / ab, 3) if ab > 0 else None
+    obp_den = ab + bb + hbp + sf
+    obp = round((h + bb + hbp) / obp_den, 3) if obp_den > 0 else None
+    slg = round((singles + 2 * doubles + 3 * triples + 4 * hr) / ab, 3) if ab > 0 else None
+    ops = round(obp + slg, 3) if (obp is not None and slg is not None) else None
+
+    return {
+        "G":   len(games),
+        "AB":  ab, "R": s["R"], "H": h, "HR": hr, "RBI": s["RBI"],
+        "BB":  bb, "SO": s["SO"],
+        "BA":  ba, "OBP": obp, "SLG": slg, "OPS": ops,
+    }
+
+
+def _aggregate_pitching_window(games: list[dict]) -> dict:
+    if not games:
+        return {"G": 0, "IP": 0.0, "H": 0, "R": 0, "ER": 0, "BB": 0, "SO": 0,
+                "HR": 0, "ERA": None, "WHIP": None, "K_per9": None, "BB_per9": None}
+    ip_dec = round(sum((g.get("IP") or 0.0) for g in games), 3)
+    s = {k: sum((g.get(k) or 0) for g in games) for k in
+         ("H", "R", "ER", "BB", "SO", "HR")}
+
+    era     = round(s["ER"] * 9 / ip_dec, 2) if ip_dec > 0 else None
+    whip    = round((s["BB"] + s["H"]) / ip_dec, 2) if ip_dec > 0 else None
+    k_per9  = round(s["SO"] * 9 / ip_dec, 2) if ip_dec > 0 else None
+    bb_per9 = round(s["BB"] * 9 / ip_dec, 2) if ip_dec > 0 else None
+
+    return {
+        "G":  len(games),
+        "IP": ip_dec,
+        "H":  s["H"], "R": s["R"], "ER": s["ER"],
+        "BB": s["BB"], "SO": s["SO"], "HR": s["HR"],
+        "ERA": era, "WHIP": whip, "K_per9": k_per9, "BB_per9": bb_per9,
+    }
+
+
+def _gamelog_row_to_dict(row, columns_to_exclude=("player_id",)) -> dict:
+    """Materialize a gamelog row to a JSON-friendly dict (dates → ISO strings)."""
+    out = {}
+    for c in row.__table__.columns:
+        if c.key in columns_to_exclude:
+            continue
+        v = getattr(row, c.key)
+        if isinstance(v, datetime.date):
+            v = v.isoformat()
+        out[c.key] = v
+    return out
+
+
+def _build_batting_splits(games: list[dict]) -> dict:
+    """games are dicts (already in reverse-chrono order, season-filtered)."""
+    return {
+        "last_5":  _aggregate_batting_window(games[:5]),
+        "last_10": _aggregate_batting_window(games[:10]),
+        "last_15": _aggregate_batting_window(games[:15]),
+        "last_30": _aggregate_batting_window(games[:30]),
+        "season":  _aggregate_batting_window(games),
+    }
+
+
+def _build_pitching_splits(games: list[dict]) -> dict:
+    return {
+        "last_5":  _aggregate_pitching_window(games[:5]),
+        "last_10": _aggregate_pitching_window(games[:10]),
+        "last_15": _aggregate_pitching_window(games[:15]),
+        "last_30": _aggregate_pitching_window(games[:30]),
+        "season":  _aggregate_pitching_window(games),
+    }
+
+
+def get_batting_gamelog_response(
+    player_id: int,
+    season: Optional[int] = None,
+    last_n: Optional[int] = None,
+) -> Optional[dict]:
+    """Read batting gamelogs from DB (auto-fetching from MLB Stats API on
+    cache miss). Returns reverse-chrono game list + splits block. None if no
+    games found even after fetch attempt."""
+    if not connection.db_available():
+        return None
+    if season is None:
+        season = _current_year()
+
+    with connection.get_session() as db:
+        rows  = crud.get_batting_gamelogs(db, player_id, season=season)
+        games = [_gamelog_row_to_dict(r) for r in rows]
+
+    if not games:
+        try:
+            fetch_and_save_batting_gamelogs(player_id, season)
+        except Exception as exc:
+            log.warning("MLB API batting gamelog fetch failed (%s, %s): %s",
+                        player_id, season, exc)
+        with connection.get_session() as db:
+            rows  = crud.get_batting_gamelogs(db, player_id, season=season)
+            games = [_gamelog_row_to_dict(r) for r in rows]
+
+    if not games:
+        return None
+
+    splits = _build_batting_splits(games)
+    if last_n:
+        games = games[:last_n]
+
+    return {
+        "player_id": player_id,
+        "season":    season,
+        "games":     games,
+        "splits":    splits,
+    }
+
+
+def get_pitching_gamelog_response(
+    player_id: int,
+    season: Optional[int] = None,
+    last_n: Optional[int] = None,
+) -> Optional[dict]:
+    if not connection.db_available():
+        return None
+    if season is None:
+        season = _current_year()
+
+    with connection.get_session() as db:
+        rows  = crud.get_pitching_gamelogs(db, player_id, season=season)
+        games = [_gamelog_row_to_dict(r) for r in rows]
+
+    if not games:
+        try:
+            fetch_and_save_pitching_gamelogs(player_id, season)
+        except Exception as exc:
+            log.warning("MLB API pitching gamelog fetch failed (%s, %s): %s",
+                        player_id, season, exc)
+        with connection.get_session() as db:
+            rows  = crud.get_pitching_gamelogs(db, player_id, season=season)
+            games = [_gamelog_row_to_dict(r) for r in rows]
+
+    if not games:
+        return None
+
+    splits = _build_pitching_splits(games)
+    if last_n:
+        games = games[:last_n]
+
+    return {
+        "player_id": player_id,
+        "season":    season,
+        "games":     games,
+        "splits":    splits,
     }
 
 

@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, DateTime, Float, Index, Integer, String
+from sqlalchemy import Boolean, Column, Date, DateTime, Float, Index, Integer, String
 from sqlalchemy.orm import DeclarativeBase
 
 
@@ -264,6 +264,65 @@ class PlayerPostseasonPitching(Base):
 # Team standings — keyed by (year, team_id). franch_id is indexed because
 # /teams/{team_id}/history queries by franchise to follow relocations.
 # ---------------------------------------------------------------------------
+
+class BattingGameLog(Base):
+    __tablename__ = "batting_gamelogs"
+    __table_args__ = (
+        Index("ix_batting_gamelogs_player_season", "player_id", "season"),
+        Index("ix_batting_gamelogs_date",          "game_date"),
+    )
+
+    player_id   = Column(Integer, primary_key=True)
+    game_id     = Column(String,  primary_key=True)
+    game_date   = Column(Date)
+    season      = Column(Integer)
+    opponent    = Column(String)
+    home_away   = Column(String)    # "H" / "A"
+    result      = Column(String)    # "W" / "L" / "T"
+    team_score  = Column(Integer)
+    opp_score   = Column(Integer)
+    AB          = Column(Integer)
+    R           = Column(Integer)
+    H           = Column(Integer)
+    doubles     = Column(Integer)
+    triples     = Column(Integer)
+    HR          = Column(Integer)
+    RBI         = Column(Integer)
+    BB          = Column(Integer)
+    SO          = Column(Integer)
+    SB          = Column(Integer)
+    HBP         = Column(Integer)
+    SF          = Column(Integer)
+    LOB         = Column(Integer)
+
+
+class PitchingGameLog(Base):
+    __tablename__ = "pitching_gamelogs"
+    __table_args__ = (
+        Index("ix_pitching_gamelogs_player_season", "player_id", "season"),
+        Index("ix_pitching_gamelogs_date",          "game_date"),
+    )
+
+    player_id   = Column(Integer, primary_key=True)
+    game_id     = Column(String,  primary_key=True)
+    game_date   = Column(Date)
+    season      = Column(Integer)
+    opponent    = Column(String)
+    home_away   = Column(String)
+    # "W" / "L" / "ND" / "S" / "H" / "BS" — derived from the per-game stat flags
+    result      = Column(String)
+    IP          = Column(Float)     # decimal innings (6.1 IP → 6.333)
+    H           = Column(Integer)
+    R           = Column(Integer)
+    ER          = Column(Integer)
+    BB          = Column(Integer)
+    SO          = Column(Integer)
+    HR          = Column(Integer)
+    HBP         = Column(Integer)
+    WP          = Column(Integer)
+    pitches     = Column(Integer)
+    strikes     = Column(Integer)
+
 
 class PlayerHof(Base):
     __tablename__ = "player_hof"

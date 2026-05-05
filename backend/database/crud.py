@@ -3,8 +3,10 @@ import datetime
 from sqlalchemy.orm import Session
 
 from .models import (
+    BattingGameLog,
     Pitcher,
     PitcherSeason,
+    PitchingGameLog,
     Player,
     PlayerAllstar,
     PlayerAward,
@@ -199,6 +201,60 @@ def get_player_hof(db: Session, player_id: int) -> list[PlayerHof]:
 def save_player_hof(db: Session, rows: list[dict]) -> None:
     for r in rows:
         db.merge(PlayerHof(**r))
+
+
+# ---------------------------------------------------------------------------
+# Game logs (batting + pitching)
+# ---------------------------------------------------------------------------
+
+def get_batting_gamelogs(
+    db: Session,
+    player_id: int,
+    season: int | None = None,
+    last_n: int | None = None,
+) -> list[BattingGameLog]:
+    q = (
+        db.query(BattingGameLog)
+        .filter(BattingGameLog.player_id == player_id)
+        .order_by(BattingGameLog.game_date.desc())
+    )
+    if season is not None:
+        q = q.filter(BattingGameLog.season == season)
+    if last_n is not None:
+        q = q.limit(last_n)
+    return q.all()
+
+
+def save_batting_gamelogs(db: Session, player_id: int, games: list[dict]) -> None:
+    for g in games:
+        # Allow callers to pass dicts that already contain player_id; trust the
+        # arg over the dict to keep things consistent.
+        merged = {**g, "player_id": player_id}
+        db.merge(BattingGameLog(**merged))
+
+
+def get_pitching_gamelogs(
+    db: Session,
+    player_id: int,
+    season: int | None = None,
+    last_n: int | None = None,
+) -> list[PitchingGameLog]:
+    q = (
+        db.query(PitchingGameLog)
+        .filter(PitchingGameLog.player_id == player_id)
+        .order_by(PitchingGameLog.game_date.desc())
+    )
+    if season is not None:
+        q = q.filter(PitchingGameLog.season == season)
+    if last_n is not None:
+        q = q.limit(last_n)
+    return q.all()
+
+
+def save_pitching_gamelogs(db: Session, player_id: int, games: list[dict]) -> None:
+    for g in games:
+        merged = {**g, "player_id": player_id}
+        db.merge(PitchingGameLog(**merged))
 
 
 # ---------------------------------------------------------------------------
