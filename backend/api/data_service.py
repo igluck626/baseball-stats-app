@@ -266,6 +266,18 @@ def _db_pitcher_row_to_season(row) -> dict:
 # Public API — DB-only reads
 # ---------------------------------------------------------------------------
 
+def _latest_team(db, player_id: int, *, pitcher: bool) -> Optional[str]:
+    """Team from the player's most recent *_seasons row, or None if there
+    are no rows. Uses pitcher_seasons when `pitcher=True`, else player_seasons.
+    Two-way players are handled by the caller (which prefers the batter side)."""
+    rows = (crud.get_pitcher_seasons(db, player_id) if pitcher
+            else crud.get_player_seasons(db, player_id))
+    if not rows:
+        return None
+    latest = max(rows, key=lambda r: r.year or 0)
+    return latest.team
+
+
 def search_player(name: str) -> list[dict]:
     """Look up players by name in the database (both batters and pitchers).
 
@@ -285,6 +297,7 @@ def search_player(name: str) -> list[dict]:
                     "bbref_id":        r.bbref_id,
                     "mlb_debut":       r.mlb_debut,
                     "mlb_last_season": r.mlb_last_season,
+                    "current_team":    _latest_team(db, r.player_id, pitcher=True),
                     **_bio_dict(r, db),
                 }
             # Players (batters) take priority for two-way players.
@@ -295,6 +308,7 @@ def search_player(name: str) -> list[dict]:
                     "bbref_id":        r.bbref_id,
                     "mlb_debut":       r.mlb_debut,
                     "mlb_last_season": r.mlb_last_season,
+                    "current_team":    _latest_team(db, r.player_id, pitcher=False),
                     **_bio_dict(r, db),
                 }
     except Exception:
