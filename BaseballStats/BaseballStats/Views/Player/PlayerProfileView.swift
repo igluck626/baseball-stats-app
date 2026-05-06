@@ -329,6 +329,7 @@ struct PlayerProfileView: View {
         if viewModel.isLoadingCurrentBatting && viewModel.currentBatting == nil {
             loadingCard
         } else if let stats = viewModel.currentBatting {
+            // 5×2 grid: row 1 rate stats, row 2 counting stats.
             statsGridCard(
                 title: "\(String(stats.season)) Season",
                 subtitle: currentSeasonTeamName,
@@ -336,12 +337,13 @@ struct PlayerProfileView: View {
                     ("AVG", format3(stats.standard?.BA)),
                     ("OBP", format3(stats.standard?.OBP)),
                     ("SLG", format3(stats.standard?.SLG)),
-                    ("HR",  formatCount(stats.standard?.HR)),
-                    ("RBI", formatCount(stats.standard?.RBI)),
-                    ("SB",  formatCount(stats.standard?.SB)),
                     ("OPS", format3(stats.standard?.OPS)),
                     ("WAR", formatWAR(stats.advanced?.WAR)),
                     ("AB",  formatCount(stats.standard?.AB)),
+                    ("H",   formatCount(stats.standard?.H)),
+                    ("HR",  formatCount(stats.standard?.HR)),
+                    ("RBI", formatCount(stats.standard?.RBI)),
+                    ("SB",  formatCount(stats.standard?.SB)),
                 ],
                 style: .current
             )
@@ -357,19 +359,23 @@ struct PlayerProfileView: View {
         if viewModel.isLoadingCurrentPitching && viewModel.currentPitching == nil {
             loadingCard
         } else if let stats = viewModel.currentPitching {
+            // 5×2 grid: row 1 rate stats, row 2 counting stats. CG/SV
+            // dropped here — they're noise for modern starters; kept
+            // only on the career card where the totals matter.
             statsGridCard(
                 title: "\(String(stats.season)) Season",
                 subtitle: currentSeasonTeamName,
                 items: [
                     ("ERA",  format2(stats.standard?.ERA)),
                     ("WHIP", format2(stats.standard?.WHIP)),
-                    ("W-L",  formatWL(stats.standard?.W, stats.standard?.L)),
-                    ("SO",   formatCount(stats.standard?.SO)),
-                    ("IP",   formatIP(stats.standard?.IP)),
-                    ("WAR",  formatWAR(stats.advanced?.WAR)),
                     ("FIP",  format2(stats.standard?.FIP)),
                     ("K/9",  format2(stats.standard?.K_per9)),
-                    ("BB/9", format2(stats.standard?.BB_per9)),
+                    ("WAR",  formatWAR(stats.advanced?.WAR)),
+                    ("W-L",  formatWL(stats.standard?.W, stats.standard?.L)),
+                    ("G",    formatCount(stats.standard?.G)),
+                    ("IP",   formatIP(stats.standard?.IP)),
+                    ("SO",   formatCount(stats.standard?.SO)),
+                    ("BB",   formatCount(stats.standard?.BB)),
                 ],
                 style: .current
             )
@@ -401,6 +407,9 @@ struct PlayerProfileView: View {
             // the totals payload.
             let agg = BattingCareerAgg.compute(seasons: seasons)
             let totals = career.career_totals
+            // 5×2 grid mirrors the current-season layout: row 1 rate
+            // stats, row 2 counting stats. Career rates derive from the
+            // BattingCareerAgg (career_totals omits AVG/OBP/SLG/AB/H).
             statsGridCard(
                 title: "Career",
                 subtitle: nil,
@@ -408,12 +417,13 @@ struct PlayerProfileView: View {
                     ("AVG", format3(agg.avg)),
                     ("OBP", format3(agg.obp)),
                     ("SLG", format3(agg.slg)),
+                    ("OPS", format3(agg.ops)),
+                    ("WAR", formatWAR(totals?.WAR)),
+                    ("AB",  formatCount(agg.ab)),
+                    ("H",   formatCount(agg.h)),
                     ("HR",  formatCount(totals?.HR)),
                     ("RBI", formatCount(totals?.RBI)),
                     ("SB",  formatCount(agg.sb)),
-                    ("G",   formatCount(totals?.G)),
-                    ("WAR", formatWAR(totals?.WAR)),
-                    ("AB",  formatCount(agg.ab)),
                 ]
             )
         }
@@ -427,24 +437,29 @@ struct PlayerProfileView: View {
             loadingCard
         } else if let career = viewModel.careerPitching,
                   let seasons = career.seasons, !seasons.isEmpty {
-            // career_totals has IP / SO / W / L / WAR but no ER, GS, SV.
-            // ERA needs IP-weighted aggregation across seasons (which
-            // collapses to sum(ER)*9/sum(IP) since totals are linear).
+            // career_totals carries IP/SO/W/L/WAR; ERA, WHIP, FIP, K/9,
+            // CG, SV come from the seasons-level aggregate (totals
+            // doesn't ship them, and ERA is IP-weighted which equals
+            // sum(ER)*9/sum(IP) for linear sums).
             let agg = PitchingCareerAgg.compute(seasons: seasons)
             let totals = career.career_totals
+            // Career keeps CG (and surfaces BB) — useful for historical
+            // context on starters and durable pitchers. SV is dropped
+            // since it's already implicit in W-L for relievers.
             statsGridCard(
                 title: "Career",
                 subtitle: nil,
                 items: [
                     ("ERA",  format2(agg.era)),
                     ("WHIP", format2(agg.whip)),
-                    ("W-L",  formatWL(totals?.W, totals?.L)),
-                    ("SO",   formatCount(totals?.SO)),
-                    ("IP",   formatIP(totals?.IP)),
+                    ("FIP",  format2(agg.fip)),
+                    ("K/9",  format2(agg.kPer9)),
                     ("WAR",  formatWAR(totals?.WAR)),
-                    ("G",    formatCount(agg.g)),
-                    ("GS",   formatCount(agg.gs)),
-                    ("SV",   formatCount(agg.sv)),
+                    ("W-L",  formatWL(totals?.W, totals?.L)),
+                    ("IP",   formatIP(totals?.IP)),
+                    ("SO",   formatCount(totals?.SO)),
+                    ("BB",   formatCount(totals?.BB)),
+                    ("CG",   formatCount(agg.cg)),
                 ]
             )
         }
@@ -545,17 +560,17 @@ struct PlayerProfileView: View {
         case standard  // .ultraThinMaterial (matches bio card)
     }
 
-    /// Card with title (+ optional subtitle on the right) and a 3-column
-    /// LazyVGrid of stat blocks. The first three items render at .title2
-    /// to draw the eye to the headline rate stats (AVG/OBP/SLG or
-    /// ERA/WHIP/W-L) — remaining stats use .title3 for visual hierarchy.
+    /// Card with title (+ optional subtitle on the right) and a 5×2 grid
+    /// of stat blocks. Caller passes exactly 10 items in row-major order;
+    /// the layout never scrolls — at iPhone widths each column gets
+    /// ~70pt, comfortable for 4–5 char monospaced .callout values.
     private func statsGridCard(
         title: String,
         subtitle: String?,
         items: [(String, String)],
         style: CardStyle = .standard
     ) -> some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 10) {
             HStack(spacing: 8) {
                 if style == .current {
                     // Small colored bar — visual indicator that this is
@@ -572,23 +587,33 @@ struct PlayerProfileView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            LazyVGrid(
-                columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 3),
-                spacing: 18
-            ) {
-                ForEach(items.indices, id: \.self) { i in
-                    StatBlock(
-                        label: items[i].0,
-                        value: items[i].1,
-                        prominent: i < 3
-                    )
-                }
-            }
+            statsTwoRows(items: items)
         }
-        .padding(20)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
         .frame(maxWidth: .infinity)
         .background(cardBackground(style))
         .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 2)
+    }
+
+    /// 5-column row × 2 rows. Each column uses .frame(maxWidth: .infinity)
+    /// inside StatBlock, so the row evenly splits whatever horizontal
+    /// space is available.
+    private func statsTwoRows(items: [(String, String)]) -> some View {
+        let row1 = Array(items.prefix(5))
+        let row2 = Array(items.dropFirst(5).prefix(5))
+        return VStack(spacing: 8) {
+            statsRow(items: row1)
+            statsRow(items: row2)
+        }
+    }
+
+    private func statsRow(items: [(String, String)]) -> some View {
+        HStack(spacing: 0) {
+            ForEach(items.indices, id: \.self) { i in
+                StatBlock(label: items[i].0, value: items[i].1)
+            }
+        }
     }
 
     /// Background fill for a stats grid card. @ViewBuilder so the two
@@ -736,20 +761,20 @@ struct PlayerProfileView: View {
 private struct StatBlock: View {
     let label: String
     let value: String
-    /// Larger value font (title2 vs title3) — used for the first row
-    /// of each grid card to surface the headline rate stats.
-    var prominent: Bool = false
 
     var body: some View {
         VStack(spacing: 2) {
             Text(value)
-                .font((prominent ? Font.title2 : Font.title3).weight(.semibold))
+                .font(.callout.weight(.semibold))
                 .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
             Text(label)
-                .font(.caption2.weight(.bold))
+                .font(.system(size: 9, weight: .bold))
                 .foregroundStyle(.secondary)
-                .tracking(0.8)
+                .tracking(0.6)
         }
+        .padding(.vertical, 4)
         .frame(maxWidth: .infinity)
     }
 }
@@ -1089,6 +1114,12 @@ private struct BattingCareerAgg {
         return Double(tb) / Double(ab)
     }
 
+    /// OPS = OBP + SLG. nil only when neither side resolved (no ABs).
+    var ops: Double? {
+        guard let obp, let slg else { return nil }
+        return obp + slg
+    }
+
     static func compute(seasons: [CareerSeason]) -> BattingCareerAgg {
         BattingCareerAgg(
             ab:  seasons.reduce(0) { $0 + ($1.AB ?? 0) },
@@ -1113,8 +1144,12 @@ private struct PitchingCareerAgg {
     let er: Int
     let h: Int
     let bb: Int
+    let so: Int
+    let hr: Int
+    let hbp: Int
     let g: Int
     let gs: Int
+    let cg: Int
     let sv: Int
 
     var era: Double? {
@@ -1125,15 +1160,31 @@ private struct PitchingCareerAgg {
         ip > 0 ? Double(bb + h) / ip : nil
     }
 
+    /// K/9 — strikeouts per nine innings.
+    var kPer9: Double? {
+        ip > 0 ? Double(so) * 9.0 / ip : nil
+    }
+
+    /// FIP — fielding-independent pitching. Constant 3.10 matches the
+    /// backend's `_fip` helper in data_service.py.
+    var fip: Double? {
+        guard ip > 0 else { return nil }
+        return (13.0 * Double(hr) + 3.0 * Double(bb + hbp) - 2.0 * Double(so)) / ip + 3.10
+    }
+
     static func compute(seasons: [PitcherCareerSeason]) -> PitchingCareerAgg {
         PitchingCareerAgg(
-            ip: seasons.reduce(0.0) { $0 + ($1.IP ?? 0) },
-            er: seasons.reduce(0)   { $0 + ($1.ER ?? 0) },
-            h:  seasons.reduce(0)   { $0 + ($1.H  ?? 0) },
-            bb: seasons.reduce(0)   { $0 + ($1.BB ?? 0) },
-            g:  seasons.reduce(0)   { $0 + ($1.G  ?? 0) },
-            gs: seasons.reduce(0)   { $0 + ($1.GS ?? 0) },
-            sv: seasons.reduce(0)   { $0 + ($1.SV ?? 0) }
+            ip:  seasons.reduce(0.0) { $0 + ($1.IP  ?? 0) },
+            er:  seasons.reduce(0)   { $0 + ($1.ER  ?? 0) },
+            h:   seasons.reduce(0)   { $0 + ($1.H   ?? 0) },
+            bb:  seasons.reduce(0)   { $0 + ($1.BB  ?? 0) },
+            so:  seasons.reduce(0)   { $0 + ($1.SO  ?? 0) },
+            hr:  seasons.reduce(0)   { $0 + ($1.HR  ?? 0) },
+            hbp: seasons.reduce(0)   { $0 + ($1.HBP ?? 0) },
+            g:   seasons.reduce(0)   { $0 + ($1.G   ?? 0) },
+            gs:  seasons.reduce(0)   { $0 + ($1.GS  ?? 0) },
+            cg:  seasons.reduce(0)   { $0 + ($1.CG  ?? 0) },
+            sv:  seasons.reduce(0)   { $0 + ($1.SV  ?? 0) }
         )
     }
 }
