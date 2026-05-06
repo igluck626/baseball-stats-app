@@ -38,10 +38,16 @@ struct StandingsView: View {
                 backgroundGradient
                 content
             }
+            // Title sits on the inner content so SwiftUI tracks the
+            // ScrollView for the large-title collapse animation. Without
+            // an explicit display mode, the system can fall back to
+            // inline when the toolbar background is forced visible.
             .navigationTitle("Standings")
             .navigationBarTitleDisplayMode(.large)
+            // Material applies when content scrolls under the bar; we
+            // intentionally don't pin it to .visible here because that
+            // collapses the large-title space at the top of the view.
             .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     yearMenu
@@ -203,17 +209,19 @@ private struct DivisionCard: View {
     }
 }
 
+/// Numeric column widths. The team column is flexible (takes whatever
+/// space remains) so long names like "Cleveland Guardians" don't have
+/// to truncate — they shrink slightly via `minimumScaleFactor` if the
+/// row gets tight, but otherwise display in full.
 private enum StandingsLayout {
-    static let team:  CGFloat = 130
-    static let cell:  CGFloat = 44
-    static let gb:    CGFloat = 48
+    static let cell: CGFloat = 44
+    static let gb:   CGFloat = 48
 }
 
 private struct DivisionHeaderRow: View {
     var body: some View {
         HStack(spacing: 0) {
-            Text("Team").frame(width: StandingsLayout.team, alignment: .leading)
-            Spacer(minLength: 4)
+            Text("Team").frame(maxWidth: .infinity, alignment: .leading)
             Text("W").frame(width: StandingsLayout.cell, alignment: .trailing)
             Text("L").frame(width: StandingsLayout.cell, alignment: .trailing)
             Text("PCT").frame(width: StandingsLayout.cell, alignment: .trailing)
@@ -242,11 +250,12 @@ private struct TeamRow: View {
                 }
                 Text(team.team_name ?? "—")
                     .lineLimit(1)
-                    .truncationMode(.tail)
+                    // Shrink to 85% of the natural size before
+                    // truncating — keeps "Cleveland Guardians" /
+                    // "Philadelphia Phillies" readable in tight rows.
+                    .minimumScaleFactor(0.85)
             }
-            .frame(width: StandingsLayout.team, alignment: .leading)
-
-            Spacer(minLength: 4)
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             Text(formatInt(team.W))
                 .frame(width: StandingsLayout.cell, alignment: .trailing)

@@ -157,10 +157,11 @@ struct PlayerProfileView: View {
             .accessibilityLabel("Hall of Fame")
     }
 
-    /// "RF · New York Yankees" — same logic as the search row.
+    /// "RF · New York Yankees" — same logic as the search row, both
+    /// surfaces share the resolver in Components/TeamNames.swift.
     private var headerSubtitle: String? {
         let pos  = nonEmpty(player.position)
-        let team = nonEmpty(player.teamCode).flatMap(PlayerSearchResultRow.teamFullName(for:))
+        let team = nonEmpty(player.teamCode).flatMap(teamFullName(for:))
         switch (pos, team) {
         case let (p?, t?): return "\(p) · \(t)"
         case let (p?, nil): return p
@@ -300,177 +301,307 @@ struct PlayerProfileView: View {
         }
     }
 
+    /// Three stacked cards: current season → career → bio. Each card
+    /// renders independently — bio is always available (data lives on
+    /// the search result), current/career follow their own load state.
     @ViewBuilder
     private var battingOverview: some View {
-        VStack(spacing: 16) {
-            if viewModel.isLoadingCurrentBatting && viewModel.currentBatting == nil {
-                loadingCard
-            } else if let stats = viewModel.currentBatting {
-                battingCurrentStatsCard(stats)
-                battingWARBreakdownCard(stats.advanced)
-            } else if let error = viewModel.error {
-                errorCard(error)
-            } else {
-                noStatsCard("No current season batting stats")
-            }
+        VStack(spacing: 20) {
+            battingCurrentSeasonCard
+            battingCareerCard
+            bioCard
         }
     }
 
     @ViewBuilder
     private var pitchingOverview: some View {
-        VStack(spacing: 16) {
-            if viewModel.isLoadingCurrentPitching && viewModel.currentPitching == nil {
-                loadingCard
-            } else if let stats = viewModel.currentPitching {
-                pitchingCurrentStatsCard(stats)
-                pitchingAdvancedCard(stats.advanced)
-            } else if let error = viewModel.error {
-                errorCard(error)
-            } else {
-                noStatsCard("No current season pitching stats")
-            }
+        VStack(spacing: 20) {
+            pitchingCurrentSeasonCard
+            pitchingCareerCard
+            bioCard
         }
     }
 
-    // MARK: - Batting cards
+    // MARK: - Current season cards (3×3 grids)
 
-    private func battingCurrentStatsCard(_ stats: PlayerCurrentStats) -> some View {
-        VStack(spacing: 14) {
-            HStack {
-                Text("\(String(stats.season)) Season")
-                    .font(.headline)
-                Spacer()
-                if let team = nonEmpty(stats.standard?.team) {
-                    Text(team)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+    @ViewBuilder
+    private var battingCurrentSeasonCard: some View {
+        if viewModel.isLoadingCurrentBatting && viewModel.currentBatting == nil {
+            loadingCard
+        } else if let stats = viewModel.currentBatting {
+            statsGridCard(
+                title: "\(String(stats.season)) Season",
+                subtitle: currentSeasonTeamName,
+                items: [
+                    ("AVG", format3(stats.standard?.BA)),
+                    ("OBP", format3(stats.standard?.OBP)),
+                    ("SLG", format3(stats.standard?.SLG)),
+                    ("HR",  formatCount(stats.standard?.HR)),
+                    ("RBI", formatCount(stats.standard?.RBI)),
+                    ("SB",  formatCount(stats.standard?.SB)),
+                    ("OPS", format3(stats.standard?.OPS)),
+                    ("WAR", formatWAR(stats.advanced?.WAR)),
+                    ("AB",  formatCount(stats.standard?.AB)),
+                ],
+                style: .current
+            )
+        } else if let error = viewModel.error {
+            errorCard(error)
+        } else {
+            noStatsCard("No current season batting stats")
+        }
+    }
+
+    @ViewBuilder
+    private var pitchingCurrentSeasonCard: some View {
+        if viewModel.isLoadingCurrentPitching && viewModel.currentPitching == nil {
+            loadingCard
+        } else if let stats = viewModel.currentPitching {
+            statsGridCard(
+                title: "\(String(stats.season)) Season",
+                subtitle: currentSeasonTeamName,
+                items: [
+                    ("ERA",  format2(stats.standard?.ERA)),
+                    ("WHIP", format2(stats.standard?.WHIP)),
+                    ("W-L",  formatWL(stats.standard?.W, stats.standard?.L)),
+                    ("SO",   formatCount(stats.standard?.SO)),
+                    ("IP",   formatIP(stats.standard?.IP)),
+                    ("WAR",  formatWAR(stats.advanced?.WAR)),
+                    ("FIP",  format2(stats.standard?.FIP)),
+                    ("K/9",  format2(stats.standard?.K_per9)),
+                    ("BB/9", format2(stats.standard?.BB_per9)),
+                ],
+                style: .current
+            )
+        } else if let error = viewModel.error {
+            errorCard(error)
+        } else {
+            noStatsCard("No current season pitching stats")
+        }
+    }
+
+    /// Full team name for the season-card subtitle, resolved from the
+    /// player's normalized `teamCode`. Prefer this over `stats.standard
+    /// ?.team` because the latter can be a raw Lahman code or a
+    /// city-only display string depending on which loader wrote the row.
+    private var currentSeasonTeamName: String? {
+        nonEmpty(player.teamCode).flatMap(teamFullName(for:))
+    }
+
+    // MARK: - Career cards (3×3 grids with derived rates)
+
+    @ViewBuilder
+    private var battingCareerCard: some View {
+        if viewModel.isLoadingCareerBatting && viewModel.careerBatting == nil {
+            loadingCard
+        } else if let career = viewModel.careerBatting,
+                  let seasons = career.seasons, !seasons.isEmpty {
+            // career_totals omits AB, SB, AVG, OBP, SLG — derive from
+            // the seasons array. HR / RBI / G / WAR come straight off
+            // the totals payload.
+            let agg = BattingCareerAgg.compute(seasons: seasons)
+            let totals = career.career_totals
+            statsGridCard(
+                title: "Career",
+                subtitle: nil,
+                items: [
+                    ("AVG", format3(agg.avg)),
+                    ("OBP", format3(agg.obp)),
+                    ("SLG", format3(agg.slg)),
+                    ("HR",  formatCount(totals?.HR)),
+                    ("RBI", formatCount(totals?.RBI)),
+                    ("SB",  formatCount(agg.sb)),
+                    ("G",   formatCount(totals?.G)),
+                    ("WAR", formatWAR(totals?.WAR)),
+                    ("AB",  formatCount(agg.ab)),
+                ]
+            )
+        }
+        // No empty state — career card is suppressed if there's no career
+        // data; current-season + bio cards still carry the screen.
+    }
+
+    @ViewBuilder
+    private var pitchingCareerCard: some View {
+        if viewModel.isLoadingCareerPitching && viewModel.careerPitching == nil {
+            loadingCard
+        } else if let career = viewModel.careerPitching,
+                  let seasons = career.seasons, !seasons.isEmpty {
+            // career_totals has IP / SO / W / L / WAR but no ER, GS, SV.
+            // ERA needs IP-weighted aggregation across seasons (which
+            // collapses to sum(ER)*9/sum(IP) since totals are linear).
+            let agg = PitchingCareerAgg.compute(seasons: seasons)
+            let totals = career.career_totals
+            statsGridCard(
+                title: "Career",
+                subtitle: nil,
+                items: [
+                    ("ERA",  format2(agg.era)),
+                    ("WHIP", format2(agg.whip)),
+                    ("W-L",  formatWL(totals?.W, totals?.L)),
+                    ("SO",   formatCount(totals?.SO)),
+                    ("IP",   formatIP(totals?.IP)),
+                    ("WAR",  formatWAR(totals?.WAR)),
+                    ("G",    formatCount(agg.g)),
+                    ("GS",   formatCount(agg.gs)),
+                    ("SV",   formatCount(agg.sv)),
+                ]
+            )
+        }
+    }
+
+    // MARK: - Bio card
+
+    /// Always present — data comes from the PlayerSearchResult passed
+    /// into the view, no network call required.
+    private var bioCard: some View {
+        let rows = bioRows
+        return VStack(alignment: .leading, spacing: 12) {
+            Text("Player Info")
+                .font(.headline)
+            VStack(spacing: 0) {
+                ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
+                    BioInfoRow(label: row.0, value: row.1)
+                    if index != rows.indices.last {
+                        Divider().opacity(0.4)
+                    }
                 }
             }
-
-            // Hero WAR
-            heroStat(value: formatWAR(stats.advanced?.WAR), label: "WAR")
-
-            Divider()
-
-            HStack(spacing: 0) {
-                StatBlock(label: "AVG", value: format3(stats.standard?.BA))
-                StatBlock(label: "OBP", value: format3(stats.standard?.OBP))
-                StatBlock(label: "SLG", value: format3(stats.standard?.SLG))
-            }
-
-            HStack(spacing: 0) {
-                StatBlock(label: "HR",  value: formatInt(stats.standard?.HR))
-                StatBlock(label: "RBI", value: formatInt(stats.standard?.RBI))
-                StatBlock(label: "SB",  value: formatInt(stats.standard?.SB))
-            }
         }
         .padding(20)
         .frame(maxWidth: .infinity)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20))
+        .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 2)
     }
 
-    private func battingWARBreakdownCard(_ advanced: BattingAdvancedStats?) -> some View {
-        let off = advanced?.WAR_off ?? 0
-        let def = advanced?.WAR_def ?? 0
-        let total = max(abs(off) + abs(def), 0.001)
-
-        return VStack(alignment: .leading, spacing: 14) {
-            Text("WAR Breakdown")
-                .font(.headline)
-
-            warBar(label: "Offense", value: advanced?.WAR_off, fraction: abs(off) / total, tint: .blue)
-            warBar(label: "Defense", value: advanced?.WAR_def, fraction: abs(def) / total, tint: .green)
+    /// Rows to render in the bio card. Each entry is conditionally
+    /// included based on whether the underlying data is present, so
+    /// missing fields don't leave dangling labels with "—" values.
+    private var bioRows: [(String, String)] {
+        var rows: [(String, String)] = []
+        if let pos = nonEmpty(player.position) {
+            rows.append(("Position", pos))
         }
-        .padding(20)
-        .frame(maxWidth: .infinity)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20))
+        if let bt = batsThrowsLabel {
+            rows.append(("Bats / Throws", bt))
+        }
+        if let dob = formatLongDate(player.birthdate) {
+            rows.append(("Date of Birth", dob))
+        }
+        if let place = placeOfBirth {
+            rows.append(("Place of Birth", place))
+        }
+        if let h = formatHeight(player.height) {
+            rows.append(("Height", h))
+        }
+        if let w = formatWeight(player.weight) {
+            rows.append(("Weight", w))
+        }
+        if let debut = formatLongDate(player.debut) {
+            rows.append(("MLB Debut", debut))
+        }
+        if viewModel.isRetired,
+           let final = formatLongDate(player.final_game) {
+            rows.append(("Final Game", final))
+        }
+        return rows
     }
 
-    // MARK: - Pitching cards
-
-    private func pitchingCurrentStatsCard(_ stats: PitcherCurrentStats) -> some View {
-        VStack(spacing: 14) {
-            HStack {
-                Text("\(String(stats.season)) Season")
-                    .font(.headline)
-                Spacer()
-                if let team = nonEmpty(stats.standard?.team) {
-                    Text(team)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            // Hero ERA
-            heroStat(value: format2(stats.standard?.ERA), label: "ERA")
-
-            Divider()
-
-            HStack(spacing: 0) {
-                StatBlock(label: "W-L", value: formatWL(stats.standard?.W, stats.standard?.L))
-                StatBlock(label: "IP",  value: formatIP(stats.standard?.IP))
-                StatBlock(label: "SO",  value: formatInt(stats.standard?.SO))
-            }
-
-            HStack(spacing: 0) {
-                StatBlock(label: "WHIP", value: format2(stats.standard?.WHIP))
-                StatBlock(label: "FIP",  value: format2(stats.standard?.FIP))
-                StatBlock(label: "K/9",  value: format2(stats.standard?.K_per9))
-            }
-        }
-        .padding(20)
-        .frame(maxWidth: .infinity)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20))
+    /// "R / R" or "L / —" — uses an em-dash for either side that's
+    /// missing, returns nil only when both are missing.
+    private var batsThrowsLabel: String? {
+        let b = nonEmpty(player.bats)
+        let t = nonEmpty(player.throwingArm)
+        guard b != nil || t != nil else { return nil }
+        return "\(b ?? "—") / \(t ?? "—")"
     }
 
-    /// Pitching equivalent of the WAR Breakdown card. Pitching WAR isn't
-    /// split into off/def, so this card surfaces the headline advanced
-    /// metrics (WAR, WAA, ERA+) instead.
-    private func pitchingAdvancedCard(_ advanced: PitcherAdvancedStats?) -> some View {
-        VStack(spacing: 14) {
-            Text("Advanced")
-                .font(.headline)
-                .frame(maxWidth: .infinity, alignment: .leading)
+    /// "Linden, NJ" for US-born, "Oshu, Japan" for international (state
+    /// is skipped per spec when birth_country isn't USA).
+    private var placeOfBirth: String? {
+        let city = nonEmpty(player.birth_city)
+        let state = nonEmpty(player.birth_state)
+        let country = nonEmpty(player.birth_country)
 
-            HStack(spacing: 0) {
-                StatBlock(label: "WAR",  value: formatWAR(advanced?.WAR))
-                StatBlock(label: "WAA",  value: formatWAR(advanced?.WAA))
-                // ERA+ is a rate stat that's conventionally shown as a
-                // rounded integer (100 = league average).
-                StatBlock(label: "ERA+", value: formatRoundedInt(advanced?.ERA_plus))
-            }
+        var parts: [String] = []
+        if let city { parts.append(city) }
+        if country == "USA" {
+            if let state { parts.append(state) }
+        } else if let country {
+            parts.append(country)
+        } else if let state {
+            parts.append(state)
         }
-        .padding(20)
-        .frame(maxWidth: .infinity)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20))
+        return parts.isEmpty ? nil : parts.joined(separator: ", ")
     }
 
     // MARK: - Shared overview helpers
 
-    private func heroStat(value: String, label: String) -> some View {
-        VStack(spacing: 0) {
-            Text(value)
-                .font(.system(size: 56, weight: .bold, design: .rounded))
-                .monospacedDigit()
-            Text(label)
-                .font(.caption2.weight(.bold))
-                .foregroundStyle(.secondary)
-                .tracking(1.2)
-        }
-        .padding(.vertical, 4)
+    /// Visual treatment for `statsGridCard`. The current-season card gets
+    /// a brighter, accented look; career cards use the standard
+    /// material treatment shared with the bio card.
+    enum CardStyle {
+        case current   // Translucent white background + accent title bar
+        case standard  // .ultraThinMaterial (matches bio card)
     }
 
-    private func warBar(label: String, value: Double?, fraction: Double, tint: Color) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(label).font(.subheadline)
+    /// Card with title (+ optional subtitle on the right) and a 3-column
+    /// LazyVGrid of stat blocks. The first three items render at .title2
+    /// to draw the eye to the headline rate stats (AVG/OBP/SLG or
+    /// ERA/WHIP/W-L) — remaining stats use .title3 for visual hierarchy.
+    private func statsGridCard(
+        title: String,
+        subtitle: String?,
+        items: [(String, String)],
+        style: CardStyle = .standard
+    ) -> some View {
+        VStack(spacing: 16) {
+            HStack(spacing: 8) {
+                if style == .current {
+                    // Small colored bar — visual indicator that this is
+                    // the headline (current-season) card.
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(Color.accentColor)
+                        .frame(width: 4, height: 20)
+                }
+                Text(title).font(.headline)
                 Spacer()
-                Text(formatWAR(value))
-                    .font(.subheadline.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
             }
-            ProgressView(value: max(0, min(1, fraction)))
-                .tint(tint)
+            LazyVGrid(
+                columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 3),
+                spacing: 18
+            ) {
+                ForEach(items.indices, id: \.self) { i in
+                    StatBlock(
+                        label: items[i].0,
+                        value: items[i].1,
+                        prominent: i < 3
+                    )
+                }
+            }
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity)
+        .background(cardBackground(style))
+        .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 2)
+    }
+
+    /// Background fill for a stats grid card. @ViewBuilder so the two
+    /// branches can return different concrete types (filled white vs.
+    /// material-filled rounded rect).
+    @ViewBuilder
+    private func cardBackground(_ style: CardStyle) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 20)
+        switch style {
+        case .current:
+            shape.fill(Color.white.opacity(0.8))
+        case .standard:
+            shape.fill(.ultraThinMaterial)
         }
     }
 
@@ -605,11 +736,14 @@ struct PlayerProfileView: View {
 private struct StatBlock: View {
     let label: String
     let value: String
+    /// Larger value font (title2 vs title3) — used for the first row
+    /// of each grid card to surface the headline rate stats.
+    var prominent: Bool = false
 
     var body: some View {
         VStack(spacing: 2) {
             Text(value)
-                .font(.title2.weight(.semibold))
+                .font((prominent ? Font.title2 : Font.title3).weight(.semibold))
                 .monospacedDigit()
             Text(label)
                 .font(.caption2.weight(.bold))
@@ -828,12 +962,20 @@ private func formatInt(_ value: Int?) -> String {
     return String(value)
 }
 
-/// Doubles displayed as a rounded integer — used for ERA+ and similar
-/// integer-conventioned ratings.
-private func formatRoundedInt(_ value: Double?) -> String {
+/// Counting-stat display with thousands separators ("1,682"). Used for
+/// career totals like career hits, career HRs, etc. — anything that can
+/// realistically reach four digits over a long career. Cached
+/// NumberFormatter so we don't allocate one per cell render.
+private func formatCount(_ value: Int?) -> String {
     guard let value else { return "—" }
-    return String(Int(value.rounded()))
+    return countFormatter.string(from: NSNumber(value: value)) ?? String(value)
 }
+
+private let countFormatter: NumberFormatter = {
+    let f = NumberFormatter()
+    f.numberStyle = .decimal
+    return f
+}()
 
 private func formatWAR(_ value: Double?) -> String {
     guard let value else { return "—" }
@@ -857,6 +999,143 @@ private func formatWL(_ w: Int?, _ l: Int?) -> String {
 private func nonEmpty(_ s: String?) -> String? {
     guard let s, !s.isEmpty else { return nil }
     return s
+}
+
+/// "76" inches → "6'4\"". Uses straight quotes (foot/inch marks).
+/// Returns nil for nil or non-positive values so the bio row can be
+/// skipped entirely.
+private func formatHeight(_ inches: Int?) -> String? {
+    guard let inches, inches > 0 else { return nil }
+    let feet = inches / 12
+    let remaining = inches % 12
+    return "\(feet)'\(remaining)\""
+}
+
+private func formatWeight(_ lbs: Int?) -> String? {
+    guard let lbs, lbs > 0 else { return nil }
+    return "\(lbs) lbs"
+}
+
+/// "1994-07-05" → "July 5, 1994". UTC + en_US_POSIX so the formatter
+/// is locale- and timezone-stable across devices. Returns nil for
+/// missing input or unparseable strings.
+private func formatLongDate(_ iso: String?) -> String? {
+    guard let iso = nonEmpty(iso) else { return nil }
+    let input = DateFormatter()
+    input.dateFormat = "yyyy-MM-dd"
+    input.timeZone = TimeZone(identifier: "UTC")
+    input.locale = Locale(identifier: "en_US_POSIX")
+    guard let date = input.date(from: iso) else { return iso }
+
+    let output = DateFormatter()
+    output.dateFormat = "MMMM d, yyyy"
+    output.timeZone = TimeZone(identifier: "UTC")
+    return output.string(from: date)
+}
+
+// MARK: - Bio row
+
+/// Single label/value row inside the Player Info card. Label sits left
+/// in secondary color, value right-aligned in primary with .medium
+/// weight for readability.
+private struct BioInfoRow: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        HStack {
+            Text(label)
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 12)
+            Text(value)
+                .font(.subheadline.weight(.semibold))
+                .multilineTextAlignment(.trailing)
+        }
+        .padding(.vertical, 10)
+    }
+}
+
+// MARK: - Career aggregation
+
+/// Career batting aggregates derived from the seasons array. The
+/// backend's `career_totals` payload omits AB / SB / AVG / OBP / SLG,
+/// so we sum on-device. Mirrors the same formulas used elsewhere in
+/// the app (matches `WindowSnapshot.computeBatting` in GameLogsView).
+private struct BattingCareerAgg {
+    let ab: Int
+    let h: Int
+    let bb: Int
+    let hbp: Int
+    let sf: Int
+    let dbl: Int
+    let trp: Int
+    let hr: Int
+    let sb: Int
+
+    var avg: Double? {
+        ab > 0 ? Double(h) / Double(ab) : nil
+    }
+
+    var obp: Double? {
+        let den = ab + bb + hbp + sf
+        return den > 0 ? Double(h + bb + hbp) / Double(den) : nil
+    }
+
+    var slg: Double? {
+        guard ab > 0 else { return nil }
+        let singles = h - dbl - trp - hr
+        let tb = singles + 2 * dbl + 3 * trp + 4 * hr
+        return Double(tb) / Double(ab)
+    }
+
+    static func compute(seasons: [CareerSeason]) -> BattingCareerAgg {
+        BattingCareerAgg(
+            ab:  seasons.reduce(0) { $0 + ($1.AB ?? 0) },
+            h:   seasons.reduce(0) { $0 + ($1.H ?? 0) },
+            bb:  seasons.reduce(0) { $0 + ($1.BB ?? 0) },
+            hbp: seasons.reduce(0) { $0 + ($1.HBP ?? 0) },
+            sf:  seasons.reduce(0) { $0 + ($1.SF ?? 0) },
+            dbl: seasons.reduce(0) { $0 + ($1.doubles ?? 0) },
+            trp: seasons.reduce(0) { $0 + ($1.triples ?? 0) },
+            hr:  seasons.reduce(0) { $0 + ($1.HR ?? 0) },
+            sb:  seasons.reduce(0) { $0 + ($1.SB ?? 0) }
+        )
+    }
+}
+
+/// Career pitching aggregates — `career_totals` carries IP/SO/W/L/WAR
+/// but not ER/GS/SV/G, so we sum from seasons. ERA is computed as the
+/// IP-weighted equivalent: sum(ER)*9 / sum(IP), which is exactly the
+/// rate over the entire career.
+private struct PitchingCareerAgg {
+    let ip: Double
+    let er: Int
+    let h: Int
+    let bb: Int
+    let g: Int
+    let gs: Int
+    let sv: Int
+
+    var era: Double? {
+        ip > 0 ? Double(er) * 9.0 / ip : nil
+    }
+
+    var whip: Double? {
+        ip > 0 ? Double(bb + h) / ip : nil
+    }
+
+    static func compute(seasons: [PitcherCareerSeason]) -> PitchingCareerAgg {
+        PitchingCareerAgg(
+            ip: seasons.reduce(0.0) { $0 + ($1.IP ?? 0) },
+            er: seasons.reduce(0)   { $0 + ($1.ER ?? 0) },
+            h:  seasons.reduce(0)   { $0 + ($1.H  ?? 0) },
+            bb: seasons.reduce(0)   { $0 + ($1.BB ?? 0) },
+            g:  seasons.reduce(0)   { $0 + ($1.G  ?? 0) },
+            gs: seasons.reduce(0)   { $0 + ($1.GS ?? 0) },
+            sv: seasons.reduce(0)   { $0 + ($1.SV ?? 0) }
+        )
+    }
 }
 
 #Preview {

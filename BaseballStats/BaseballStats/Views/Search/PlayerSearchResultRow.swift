@@ -102,9 +102,11 @@ struct PlayerSearchResultRow: View {
     /// whichever single piece is available, or nil if neither is. We use
     /// `teamCode` (server-normalized) rather than `currentTeam` (raw) so
     /// the lookup is reliable regardless of which loader wrote the row.
+    /// Resolution lives in Components/TeamNames.swift and is shared
+    /// with the player profile views.
     private var positionLine: String? {
         let pos = player.position?.nonEmpty
-        let team = player.teamCode?.nonEmpty.flatMap(Self.teamFullName(for:))
+        let team = player.teamCode?.nonEmpty.flatMap(teamFullName(for:))
         switch (pos, team) {
         case let (p?, t?): return "\(p) · \(t)"
         case let (p?, nil): return p
@@ -124,88 +126,6 @@ struct PlayerSearchResultRow: View {
         default:
             return nil
         }
-    }
-
-    // MARK: - Team-code lookup
-
-    /// Maps the team codes the backend can return to full display names.
-    /// The DB stores three families of codes depending on which loader
-    /// wrote the row:
-    ///   • Lahman teamID — "NYA", "BOS", "SLN", "CHA"
-    ///   • Baseball-Reference Tm — "NYY", "BOS", "STL", "CHW"
-    ///   • _TEAM_DISPLAY city-only — "New York", "Boston", "St. Louis"
-    /// City-only entries can't be disambiguated to a single franchise (NYY
-    /// vs NYM both → "New York"), so we leave those untouched and accept
-    /// the city-only display.
-    private static let teamCodeToFullName: [String: String] = [
-        // Lahman codes (modern era)
-        "ARI": "Arizona Diamondbacks",
-        "ATL": "Atlanta Braves",
-        "BAL": "Baltimore Orioles",
-        "BOS": "Boston Red Sox",
-        "CHA": "Chicago White Sox",
-        "CHN": "Chicago Cubs",
-        "CIN": "Cincinnati Reds",
-        "CLE": "Cleveland Guardians",
-        "COL": "Colorado Rockies",
-        "DET": "Detroit Tigers",
-        "HOU": "Houston Astros",
-        "KCA": "Kansas City Royals",
-        "LAA": "Los Angeles Angels",
-        "ANA": "Los Angeles Angels",
-        "LAN": "Los Angeles Dodgers",
-        "MIA": "Miami Marlins",
-        "FLO": "Miami Marlins",
-        "MIL": "Milwaukee Brewers",
-        "MIN": "Minnesota Twins",
-        "NYA": "New York Yankees",
-        "NYN": "New York Mets",
-        "OAK": "Oakland Athletics",
-        "PHI": "Philadelphia Phillies",
-        "PIT": "Pittsburgh Pirates",
-        "SDN": "San Diego Padres",
-        "SEA": "Seattle Mariners",
-        "SFN": "San Francisco Giants",
-        "SLN": "St. Louis Cardinals",
-        "TBA": "Tampa Bay Rays",
-        "TEX": "Texas Rangers",
-        "TOR": "Toronto Blue Jays",
-        "WAS": "Washington Nationals",
-        "MON": "Montreal Expos",
-        "BRO": "Brooklyn Dodgers",
-        "WS1": "Washington Senators",
-
-        // Baseball-Reference codes (overlaps Lahman where letters match)
-        "NYY": "New York Yankees",
-        "NYM": "New York Mets",
-        "CHW": "Chicago White Sox",
-        "CHC": "Chicago Cubs",
-        "KCR": "Kansas City Royals",
-        "LAD": "Los Angeles Dodgers",
-        "SDP": "San Diego Padres",
-        "SFG": "San Francisco Giants",
-        "STL": "St. Louis Cardinals",
-        "TBR": "Tampa Bay Rays",
-        "WSN": "Washington Nationals",
-    ]
-
-    /// Returns the full team name for a code, or nil when the code isn't
-    /// recognized and looks like a code (e.g. obscure 19th-century Lahman
-    /// codes like "LS3"). Strings that don't look like codes pass through
-    /// unchanged so callers can still display unrecognized city values.
-    static func teamFullName(for code: String) -> String? {
-        if let resolved = teamCodeToFullName[code] {
-            return resolved
-        }
-        // Looks like a code — uppercase letters/digits, ≤3 chars — but we
-        // don't recognize it. Hide rather than show a meaningless token.
-        if code.count <= 3,
-           code.allSatisfy({ $0.isUppercase || $0.isNumber }) {
-            return nil
-        }
-        // Doesn't look like a code — pass through (e.g. "New York" from a
-        // row stored via _TEAM_DISPLAY before team_code was added).
-        return code
     }
 }
 
