@@ -46,7 +46,9 @@ from sqlalchemy import func as _sql_func              # noqa: E402
 
 import data_service                                   # noqa: E402
 from database import connection, crud                 # noqa: E402
-from database.models import Pitcher, Player, TeamSeason   # noqa: E402
+from database.models import (                          # noqa: E402
+    PitcherSeason, PlayerSeason, TeamSeason,
+)
 
 import time as _time                                  # noqa: E402
 
@@ -408,49 +410,88 @@ def _update_standings(current_year: int) -> tuple[int, int]:
 # and is a no-op for already-stored older games (merge by composite PK).
 # We pace the calls to avoid tripping rate limits.
 
-_GAMELOG_SLEEP_SECONDS = 0.1
+_GAMELOG_SLEEP_SECONDS = 0.2
+_GAMELOG_LOG_EVERY    = 50
 
 
-def _active_player_ids(model, current_year: int) -> list[int]:
-    """All players whose mlb_last_season is the current year — i.e. on a
-    current MLB roster."""
+def _ids_with_current_season(season_model, current_year: int) -> list[int]:
+    """Distinct player_ids that have a row in the given seasons table for
+    the current year. Reflects "actually played this season" (since the
+    row was just written by phases 1/2), which is more precise than
+    Player.mlb_last_season — the latter counts roster entries that may
+    not have appeared in any games yet."""
     with connection.get_session() as db:
         rows = (
-            db.query(model.player_id)
-            .filter(model.mlb_last_season == current_year)
+            db.query(season_model.player_id)
+            .filter(season_model.year == current_year)
+            .distinct()
             .all()
         )
     return [r.player_id for r in rows]
 
 
-def _update_gamelogs(current_year: int) -> tuple[int, int, int, int]:
-    """Refresh batting + pitching gamelogs for every active roster player.
-    Returns (bat_games_saved, pit_games_saved, bat_failed, pit_failed)."""
-    bat_ids = _active_player_ids(Player,  current_year)
-    pit_ids = _active_player_ids(Pitcher, current_year)
-    log.info(f"  active batters: {len(bat_ids)}, active pitchers: {len(pit_ids)}")
+def _update_gamelogs(current_year: int) -> dict:
+    """Refresh per-game logs for every player with a current-season row.
 
-    bat_saved = 0
-    bat_failed = 0
-    for pid in bat_ids:
+    Hits MLB Stats API once per player via data_service.fetch_and_save_*
+    (idempotent upsert), with a 0.2s sleep between calls to stay under
+    rate limits. Returns counts the API status endpoint surfaces:
+        batters_processed   — batters whose fetch+save didn't throw
+        pitchers_processed  — pitchers whose fetch+save didn't throw
+        batter_games_saved  — total batting game rows upserted
+        pitcher_games_saved — total pitching game rows upserted
+        batters_failed      — batters whose call threw
+        pitchers_failed     — pitchers whose call threw
+    """
+    bat_ids = _ids_with_current_season(PlayerSeason,  current_year)
+    pit_ids = _ids_with_current_season(PitcherSeason, current_year)
+    log.info(
+        f"  active batters: {len(bat_ids)}, active pitchers: {len(pit_ids)} "
+        f"(delay {_GAMELOG_SLEEP_SECONDS}s between players)"
+    )
+
+    bat_processed = 0
+    bat_saved     = 0
+    bat_failed    = 0
+    for i, pid in enumerate(bat_ids, 1):
         try:
             bat_saved += data_service.fetch_and_save_batting_gamelogs(pid, current_year)
+            bat_processed += 1
         except Exception as exc:
             bat_failed += 1
             log.error(f"  batting gamelog failed for {pid}: {exc}")
         _time.sleep(_GAMELOG_SLEEP_SECONDS)
+        if i % _GAMELOG_LOG_EVERY == 0 or i == len(bat_ids):
+            log.info(
+                f"  batting gamelogs: {i}/{len(bat_ids)} "
+                f"(processed={bat_processed}, failed={bat_failed}, rows={bat_saved})"
+            )
 
-    pit_saved = 0
-    pit_failed = 0
-    for pid in pit_ids:
+    pit_processed = 0
+    pit_saved     = 0
+    pit_failed    = 0
+    for i, pid in enumerate(pit_ids, 1):
         try:
             pit_saved += data_service.fetch_and_save_pitching_gamelogs(pid, current_year)
+            pit_processed += 1
         except Exception as exc:
             pit_failed += 1
             log.error(f"  pitching gamelog failed for {pid}: {exc}")
         _time.sleep(_GAMELOG_SLEEP_SECONDS)
+        if i % _GAMELOG_LOG_EVERY == 0 or i == len(pit_ids):
+            log.info(
+                f"  pitching gamelogs: {i}/{len(pit_ids)} "
+                f"(processed={pit_processed}, failed={pit_failed}, rows={pit_saved})"
+            )
 
-    return bat_saved, pit_saved, bat_failed, pit_failed
+    return {
+        "batters_processed":   bat_processed,
+        "pitchers_processed":  pit_processed,
+        "batter_games_saved":  bat_saved,
+        "pitcher_games_saved": pit_saved,
+        "batters_failed":      bat_failed,
+        "pitchers_failed":     pit_failed,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -482,7 +523,7 @@ def main() -> None:
     log.info("=" * 52)
     log.info("Phase 4: game logs (active rosters only)")
     log.info("=" * 52)
-    bat_gl_saved, pit_gl_saved, bat_gl_failed, pit_gl_failed = _update_gamelogs(current_year)
+    gl = _update_gamelogs(current_year)
 
     log.info("=" * 52)
     log.info(
@@ -495,8 +536,10 @@ def main() -> None:
         f"Standings — updated: {standings_updated}, unmatched names: {standings_failed}"
     )
     log.info(
-        f"Game logs — batting rows saved: {bat_gl_saved}, pitching rows saved: {pit_gl_saved}, "
-        f"batting failures: {bat_gl_failed}, pitching failures: {pit_gl_failed}"
+        f"Game logs — batters processed: {gl['batters_processed']} "
+        f"(rows: {gl['batter_games_saved']}, failed: {gl['batters_failed']}); "
+        f"pitchers processed: {gl['pitchers_processed']} "
+        f"(rows: {gl['pitcher_games_saved']}, failed: {gl['pitchers_failed']})"
     )
     if bat_failed:
         log.error(f"Failed batter IDs: {bat_failed}")

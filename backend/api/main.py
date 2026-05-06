@@ -291,17 +291,20 @@ def _run_gamelog_load(seasons: list[int], player_ids: list[int] | None) -> None:
 # Nightly-update state (shared between background thread and status endpoint)
 # ---------------------------------------------------------------------------
 _nightly_state: dict = {
-    "running":            False,
-    "phase":              None,   # "batters" | "pitchers" | "standings" | None
-    "updated":            0,
-    "skipped":            0,
-    "failed":             0,
-    "total":              0,
-    "standings_updated":  0,
-    "standings_failed":   0,
-    "error":              None,
-    "last_run":           None,   # ISO-8601 UTC timestamp of last completed run
-    "last_started":       None,   # ISO-8601 UTC timestamp of when current run began
+    "running":                  False,
+    "phase":                    None,   # "batters" | "pitchers" | "standings" | "gamelogs" | None
+    "updated":                  0,
+    "skipped":                  0,
+    "failed":                   0,
+    "total":                    0,
+    "standings_updated":        0,
+    "standings_failed":         0,
+    "gamelog_batters_updated":  0,      # batters whose gamelog fetch+save succeeded
+    "gamelog_pitchers_updated": 0,
+    "gamelog_failed":           0,      # combined batter + pitcher failures
+    "error":                    None,
+    "last_run":                 None,   # ISO-8601 UTC timestamp of last completed run
+    "last_started":             None,   # ISO-8601 UTC timestamp of when current run began
 }
 _nightly_lock = threading.Lock()
 
@@ -451,6 +454,8 @@ def _run_nightly_update() -> None:
             running=True, phase=None, updated=0, skipped=0,
             failed=0, total=0,
             standings_updated=0, standings_failed=0,
+            gamelog_batters_updated=0, gamelog_pitchers_updated=0,
+            gamelog_failed=0,
             error=None,
         )
 
@@ -500,6 +505,26 @@ def _run_nightly_update() -> None:
             _nightly_state["standings_updated"] = s_updated
             _nightly_state["standings_failed"]  = s_failed
         log.info(f"[nightly] standings phase done: updated={s_updated} failed={s_failed}")
+
+        with _nightly_lock:
+            _nightly_state["phase"] = "gamelogs"
+        log.info("[nightly] starting gamelogs phase")
+        gl = nightly_update._update_gamelogs(current_year)
+        with _nightly_lock:
+            _nightly_state["gamelog_batters_updated"]  = gl["batters_processed"]
+            _nightly_state["gamelog_pitchers_updated"] = gl["pitchers_processed"]
+            _nightly_state["gamelog_failed"] = (
+                gl["batters_failed"] + gl["pitchers_failed"]
+            )
+        log.info(
+            f"[nightly] gamelogs phase done: "
+            f"batters_processed={gl['batters_processed']} "
+            f"pitchers_processed={gl['pitchers_processed']} "
+            f"batter_rows={gl['batter_games_saved']} "
+            f"pitcher_rows={gl['pitcher_games_saved']} "
+            f"batters_failed={gl['batters_failed']} "
+            f"pitchers_failed={gl['pitchers_failed']}"
+        )
     except Exception as exc:
         # Log the full traceback so silent thread crashes are visible in
         # Railway's log stream. The previous handler stored only str(exc),
