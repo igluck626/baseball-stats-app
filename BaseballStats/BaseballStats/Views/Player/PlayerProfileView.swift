@@ -1007,10 +1007,34 @@ private func formatWAR(_ value: Double?) -> String {
     return String(format: "%.1f", value)
 }
 
-/// Innings pitched — one decimal (e.g. "182.1" = 182⅓ innings).
+/// Innings pitched in baseball notation. Backend stores IP as a true
+/// decimal (e.g. 1576.667 = 1576⅔ innings); we round the fractional
+/// third to .0/.1/.2 and stitch on thousands separators for the
+/// integer part. Examples:
+///   1576.667 → "1,576.2"
+///   37.333   → "37.1"
+///   323.0    → "323.0"
+///
+/// Threshold logic — each frac maps to the *nearest* of {0, ⅓, ⅔}:
+///   frac < 0.17  → .0   (closer to 0/3 than 1/3)
+///   frac < 0.5   → .1   (closer to 1/3 than 2/3)
+///   else         → .2   (closer to 2/3 than the next whole inning)
 private func formatIP(_ value: Double?) -> String {
     guard let value else { return "—" }
-    return String(format: "%.1f", value)
+    let whole = Int(value)
+    let frac = value - Double(whole)
+
+    let suffix: String
+    if frac < 0.17 {
+        suffix = ".0"
+    } else if frac < 0.5 {
+        suffix = ".1"
+    } else {
+        suffix = ".2"
+    }
+
+    let wholeStr = countFormatter.string(from: NSNumber(value: whole)) ?? String(whole)
+    return wholeStr + suffix
 }
 
 /// "12-8" — formats wins–losses as a single combined cell. Either side

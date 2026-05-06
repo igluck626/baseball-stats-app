@@ -857,7 +857,33 @@ private func format3(_ value: Double?) -> String {
     return s
 }
 
+/// Innings pitched in baseball notation — same logic as
+/// PlayerProfileView's formatIP so per-game / monthly / season IP
+/// renders consistently across the app. Decimal input (e.g. 1.667)
+/// maps to ".0" / ".1" / ".2" by nearest third. Per-game / monthly
+/// values here stay well below 1000 so the thousands-separator
+/// branch is effectively a no-op, but using the same formatter
+/// keeps formatting identical to the season cards.
 private func formatIP(_ value: Double?) -> String {
     guard let value else { return "—" }
-    return String(format: "%.1f", value)
+    let whole = Int(value)
+    let frac = value - Double(whole)
+
+    let suffix: String
+    if frac < 0.17 {
+        suffix = ".0"
+    } else if frac < 0.5 {
+        suffix = ".1"
+    } else {
+        suffix = ".2"
+    }
+
+    let wholeStr = ipWholeFormatter.string(from: NSNumber(value: whole)) ?? String(whole)
+    return wholeStr + suffix
 }
+
+private let ipWholeFormatter: NumberFormatter = {
+    let f = NumberFormatter()
+    f.numberStyle = .decimal
+    return f
+}()
