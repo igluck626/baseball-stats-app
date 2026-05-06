@@ -518,8 +518,12 @@ def get_current_pitching_stats(player_id: int) -> Optional[dict]:
         "CG":    season.get("CG"),
         "SHO":   season.get("SHO"),
         "GF":    season.get("GF"),
-        "W":     season.get("W"),
-        "L":     season.get("L"),
+        # Coerce None → 0 here so the iOS client doesn't have to decide
+        # whether "no W/L" means "no record" (rare) or "0 record"
+        # (common — relievers, fresh callups). Either way 0 is the
+        # right display.
+        "W":     season.get("W") or 0,
+        "L":     season.get("L") or 0,
         "SV":    season.get("SV"),
         "IP":    season.get("IP"),
         "BFP":   season.get("BFP"),
@@ -1129,8 +1133,12 @@ def _build_pitcher_season_entry(
 
             entry["team"] = str(br["Tm"])
             entry.update({
-                "W":     _safe(br["W"]),
-                "L":     _safe(br["L"]),
+                # W/L: coerce NaN → 0 at write time so we don't store
+                # nulls for relievers / fresh callups whose bref row
+                # has the column but no value yet. Lahman always
+                # writes 0; this lines nightly up with that.
+                "W":     int(_safe(br["W"]) or 0),
+                "L":     int(_safe(br["L"]) or 0),
                 "G":     _safe(br["G"]),
                 "GS":    _safe(br["GS"]),
                 "IP":    _safe(br["IP"]),
