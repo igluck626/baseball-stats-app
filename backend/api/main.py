@@ -1,9 +1,11 @@
 """Baseball stats API."""
 
 import datetime
+import logging
 import os
 import threading
 import time
+import traceback
 from contextlib import asynccontextmanager
 from urllib.parse import urlparse
 
@@ -15,6 +17,9 @@ from sqlalchemy import inspect as _sa_inspect, text as _sa_text
 import sys
 
 import data_service
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+log = logging.getLogger(__name__)
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
@@ -296,8 +301,16 @@ _nightly_state: dict = {
     "standings_failed":   0,
     "error":              None,
     "last_run":           None,   # ISO-8601 UTC timestamp of last completed run
+    "last_started":       None,   # ISO-8601 UTC timestamp of when current run began
 }
 _nightly_lock = threading.Lock()
+
+# Auto-reset the running flag if it's been set this long without
+# completion. Threshold is generous — a cold-cache full run including
+# pybaseball fetches and 30k+ DB upserts is typically <30 min, so
+# anything past 3h is almost certainly a SIGKILL'd thread that never
+# reached the finally block.
+_NIGHTLY_STALE_AFTER = datetime.timedelta(hours=3)
 
 
 def _build_nightly_batter_entry(player_id: int, bref_df, bwar_current, current_year: int):
@@ -429,6 +442,10 @@ def _nightly_phase(
 
 def _run_nightly_update() -> None:
     """Background thread: refresh current-season stats for batters, pitchers, and standings."""
+    pid = os.getpid()
+    tid = threading.get_ident()
+    log.info(f"[nightly] thread entry pid={pid} tid={tid}")
+
     with _nightly_lock:
         _nightly_state.update(
             running=True, phase=None, updated=0, skipped=0,
@@ -439,6 +456,7 @@ def _run_nightly_update() -> None:
 
     try:
         current_year = data_service._current_year()
+        log.info(f"[nightly] starting batters phase, year={current_year}")
         _nightly_phase(
             data_service._batting_bref,
             data_service._bwar_bat_all,
@@ -448,6 +466,15 @@ def _run_nightly_update() -> None:
             "batters",
             current_year,
         )
+        log.info(
+            f"[nightly] batters phase done: "
+            f"updated={_nightly_state['updated']} "
+            f"skipped={_nightly_state['skipped']} "
+            f"failed={_nightly_state['failed']} "
+            f"total={_nightly_state['total']}"
+        )
+
+        log.info("[nightly] starting pitchers phase")
         _nightly_phase(
             data_service._pitching_bref,
             data_service._bwar_pitch_all,
@@ -457,20 +484,36 @@ def _run_nightly_update() -> None:
             "pitchers",
             current_year,
         )
+        log.info(
+            f"[nightly] pitchers phase done: "
+            f"updated={_nightly_state['updated']} "
+            f"skipped={_nightly_state['skipped']} "
+            f"failed={_nightly_state['failed']} "
+            f"total={_nightly_state['total']}"
+        )
+
         with _nightly_lock:
             _nightly_state["phase"] = "standings"
+        log.info("[nightly] starting standings phase")
         s_updated, s_failed = nightly_update._update_standings(current_year)
         with _nightly_lock:
             _nightly_state["standings_updated"] = s_updated
             _nightly_state["standings_failed"]  = s_failed
+        log.info(f"[nightly] standings phase done: updated={s_updated} failed={s_failed}")
     except Exception as exc:
+        # Log the full traceback so silent thread crashes are visible in
+        # Railway's log stream. The previous handler stored only str(exc),
+        # which loses the stack frame of the actual failure.
+        tb = traceback.format_exc()
+        log.error(f"[nightly] FAILED pid={pid} tid={tid}: {exc}\n{tb}")
         with _nightly_lock:
-            _nightly_state["error"] = str(exc)
+            _nightly_state["error"] = f"{exc}\n{tb}"
     finally:
         with _nightly_lock:
             _nightly_state["running"]  = False
             _nightly_state["phase"]    = None
             _nightly_state["last_run"] = datetime.datetime.utcnow().isoformat() + "Z"
+        log.info(f"[nightly] thread exit pid={pid} tid={tid} state={_nightly_state}")
 
 
 # ---------------------------------------------------------------------------
@@ -960,24 +1003,93 @@ def lahman_load_status():
         return dict(_lahman_state)
 
 
+def _is_stale_running() -> tuple[bool, str | None]:
+    """If running=True but last_started is older than the stale
+    threshold, return (True, last_started). The caller can then auto-
+    reset the flag and proceed. Falls open on parse errors — better to
+    accept a fresh run than block on garbage state."""
+    last = _nightly_state.get("last_started")
+    if not last:
+        return False, None
+    try:
+        # last_started is "YYYY-MM-DDTHH:MM:SS.ffffffZ" — strip Z and parse
+        started = datetime.datetime.fromisoformat(last.rstrip("Z"))
+    except (ValueError, AttributeError):
+        return True, last
+    age = datetime.datetime.utcnow() - started
+    return age > _NIGHTLY_STALE_AFTER, last
+
+
 @app.post("/admin/nightly-update")
 def start_nightly_update():
-    with _nightly_lock:
-        if _nightly_state["running"]:
-            return {"status": "already_running", **_nightly_state}
-
     if not connection.db_available():
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
 
-    t = threading.Thread(target=_run_nightly_update, daemon=True)
+    # Atomic claim: check-and-set inside the lock so two simultaneous
+    # POSTs can't both pass the running check and spawn duplicate
+    # threads. Previously the lock was released between the check and
+    # the t.start(), creating a TOCTOU window.
+    with _nightly_lock:
+        if _nightly_state["running"]:
+            stale, last_started = _is_stale_running()
+            if stale:
+                # Worker likely SIGKILL'd (OOM, redeploy) before its
+                # finally block could clear the flag. Auto-reset and
+                # proceed — three hours is well past any legitimate run.
+                log.warning(
+                    f"[nightly] auto-resetting stale lock — "
+                    f"last_started={last_started}, threshold={_NIGHTLY_STALE_AFTER}"
+                )
+                _nightly_state["error"] = (
+                    f"auto-reset: previous run claimed at {last_started} "
+                    f"never completed (stale)"
+                )
+                _nightly_state["running"] = False
+            else:
+                log.info(f"[nightly] POST rejected — already running: {_nightly_state}")
+                return {"status": "already_running", **_nightly_state}
+
+        # Claim the run.
+        now_iso = datetime.datetime.utcnow().isoformat() + "Z"
+        _nightly_state["running"] = True
+        _nightly_state["last_started"] = now_iso
+        # Don't blow away an auto-reset error message — it'd be useful
+        # in the response when the user POSTs after a stale run.
+        if not _nightly_state.get("error", "").startswith("auto-reset:"):
+            _nightly_state["error"] = None
+
+    log.info(f"[nightly] POST accepted pid={os.getpid()} started={now_iso} — spawning worker thread")
+    t = threading.Thread(target=_run_nightly_update, daemon=True, name="nightly-update")
     t.start()
-    return {"status": "started"}
+    return {"status": "started", "last_started": now_iso}
+
+
+@app.post("/admin/nightly-update/reset")
+def reset_nightly_update():
+    """Force-clear the running flag regardless of state.
+
+    Use when a previous run was SIGKILL'd and the auto-reset threshold
+    (3h) is too long to wait. Doesn't kill any actually-running thread
+    — just clears the flag — so calling this while a real run is in
+    progress will allow a duplicate thread to start. Use deliberately."""
+    with _nightly_lock:
+        prior = dict(_nightly_state)
+        _nightly_state["running"] = False
+        _nightly_state["phase"] = None
+        _nightly_state["error"] = "manual reset"
+    log.warning(f"[nightly] manual reset, prior state: {prior}")
+    return {"status": "reset", "prior_state": prior}
 
 
 @app.get("/admin/nightly-update/status")
 def nightly_update_status():
     with _nightly_lock:
         state = dict(_nightly_state)
+    # Log every status call so we can correlate with thread lifecycle
+    # in Railway's stream — particularly useful for diagnosing the
+    # "last_run stays null" symptom (which indicates the worker died
+    # before reaching the finally block, e.g. on OOM).
+    log.info(f"[nightly] GET status pid={os.getpid()}: {state}")
     return state
 
 
