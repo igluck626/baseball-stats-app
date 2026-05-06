@@ -339,11 +339,11 @@ struct PlayerProfileView: View {
                     ("SLG", format3(stats.standard?.SLG)),
                     ("OPS", format3(stats.standard?.OPS)),
                     ("WAR", formatWAR(stats.advanced?.WAR)),
-                    ("AB",  formatCount(stats.standard?.AB)),
-                    ("H",   formatCount(stats.standard?.H)),
+                    ("G",   formatCount(stats.standard?.G)),
                     ("HR",  formatCount(stats.standard?.HR)),
                     ("RBI", formatCount(stats.standard?.RBI)),
                     ("SB",  formatCount(stats.standard?.SB)),
+                    ("PA",  formatCount(stats.standard?.PA)),
                 ],
                 style: .current
             )
@@ -359,9 +359,9 @@ struct PlayerProfileView: View {
         if viewModel.isLoadingCurrentPitching && viewModel.currentPitching == nil {
             loadingCard
         } else if let stats = viewModel.currentPitching {
-            // 5×2 grid: row 1 rate stats, row 2 counting stats. CG/SV
-            // dropped here — they're noise for modern starters; kept
-            // only on the career card where the totals matter.
+            // 5×2 grid: row 1 rate stats, row 2 mixed (W-L, GS, IP,
+            // SO, BB/9). GS replaces total G — for pitchers, starts is
+            // the more meaningful workload signal.
             statsGridCard(
                 title: "\(String(stats.season)) Season",
                 subtitle: currentSeasonTeamName,
@@ -372,10 +372,10 @@ struct PlayerProfileView: View {
                     ("K/9",  format2(stats.standard?.K_per9)),
                     ("WAR",  formatWAR(stats.advanced?.WAR)),
                     ("W-L",  formatWL(stats.standard?.W, stats.standard?.L)),
-                    ("G",    formatCount(stats.standard?.G)),
+                    ("GS",   formatCount(stats.standard?.GS)),
                     ("IP",   formatIP(stats.standard?.IP)),
                     ("SO",   formatCount(stats.standard?.SO)),
-                    ("BB",   formatCount(stats.standard?.BB)),
+                    ("BB/9", format2(stats.standard?.BB_per9)),
                 ],
                 style: .current
             )
@@ -409,7 +409,9 @@ struct PlayerProfileView: View {
             let totals = career.career_totals
             // 5×2 grid mirrors the current-season layout: row 1 rate
             // stats, row 2 counting stats. Career rates derive from the
-            // BattingCareerAgg (career_totals omits AVG/OBP/SLG/AB/H).
+            // BattingCareerAgg (career_totals omits AVG/OBP/SLG/PA).
+            // PA is summed across seasons in the agg; G comes from
+            // career_totals which is already a sum.
             statsGridCard(
                 title: "Career",
                 subtitle: nil,
@@ -419,11 +421,11 @@ struct PlayerProfileView: View {
                     ("SLG", format3(agg.slg)),
                     ("OPS", format3(agg.ops)),
                     ("WAR", formatWAR(totals?.WAR)),
-                    ("AB",  formatCount(agg.ab)),
-                    ("H",   formatCount(agg.h)),
+                    ("G",   formatCount(totals?.G)),
                     ("HR",  formatCount(totals?.HR)),
                     ("RBI", formatCount(totals?.RBI)),
                     ("SB",  formatCount(agg.sb)),
+                    ("PA",  formatCount(agg.pa)),
                 ]
             )
         }
@@ -443,9 +445,10 @@ struct PlayerProfileView: View {
             // sum(ER)*9/sum(IP) for linear sums).
             let agg = PitchingCareerAgg.compute(seasons: seasons)
             let totals = career.career_totals
-            // Career keeps CG (and surfaces BB) — useful for historical
-            // context on starters and durable pitchers. SV is dropped
-            // since it's already implicit in W-L for relievers.
+            // Career mirrors current-season layout exactly so users see
+            // a direct comparison cell-by-cell. GS and BB/9 come from
+            // PitchingCareerAgg (career_totals doesn't ship either —
+            // BB/9 needs IP-weighting which collapses to bb*9/sum(IP)).
             statsGridCard(
                 title: "Career",
                 subtitle: nil,
@@ -456,10 +459,10 @@ struct PlayerProfileView: View {
                     ("K/9",  format2(agg.kPer9)),
                     ("WAR",  formatWAR(totals?.WAR)),
                     ("W-L",  formatWL(totals?.W, totals?.L)),
+                    ("GS",   formatCount(agg.totalGS)),
                     ("IP",   formatIP(totals?.IP)),
                     ("SO",   formatCount(totals?.SO)),
-                    ("BB",   formatCount(totals?.BB)),
-                    ("CG",   formatCount(agg.cg)),
+                    ("BB/9", format2(agg.careerBB9)),
                 ]
             )
         }
@@ -1112,6 +1115,9 @@ private struct BioInfoRow: View {
 /// so we sum on-device. Mirrors the same formulas used elsewhere in
 /// the app (matches `WindowSnapshot.computeBatting` in GameLogsView).
 private struct BattingCareerAgg {
+    /// Career plate appearances — summed from seasons because
+    /// CareerTotals doesn't ship a PA total.
+    let pa: Int
     let ab: Int
     let h: Int
     let bb: Int
@@ -1146,6 +1152,7 @@ private struct BattingCareerAgg {
 
     static func compute(seasons: [CareerSeason]) -> BattingCareerAgg {
         BattingCareerAgg(
+            pa:  seasons.reduce(0) { $0 + ($1.PA ?? 0) },
             ab:  seasons.reduce(0) { $0 + ($1.AB ?? 0) },
             h:   seasons.reduce(0) { $0 + ($1.H ?? 0) },
             bb:  seasons.reduce(0) { $0 + ($1.BB ?? 0) },
@@ -1188,6 +1195,18 @@ private struct PitchingCareerAgg {
     var kPer9: Double? {
         ip > 0 ? Double(so) * 9.0 / ip : nil
     }
+
+    /// Career BB/9 — career walks per nine innings. PitcherCareerTotals
+    /// ships BB but not BB/9 (that needs IP-weighting, which for linear
+    /// totals is just bb*9/ip).
+    var careerBB9: Double? {
+        ip > 0 ? Double(bb) * 9.0 / ip : nil
+    }
+
+    /// Career games started. Same value as the stored `gs` field —
+    /// surfaced under a more explicit name for the career grid call
+    /// site.
+    var totalGS: Int { gs }
 
     /// FIP — fielding-independent pitching. Constant 3.10 matches the
     /// backend's `_fip` helper in data_service.py.
