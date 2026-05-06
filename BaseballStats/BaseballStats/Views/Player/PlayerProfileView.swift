@@ -1040,12 +1040,13 @@ private func formatIP(_ value: Double?) -> String {
     return wholeStr + suffix
 }
 
-/// "12-8" — formats wins–losses as a single combined cell. Either side
-/// missing renders as "—" on that side.
+/// "12-8" — formats wins–losses as a single combined cell. Treats nil
+/// as 0 on either side so a reliever with 0-1 (where the backend may
+/// surface W as null instead of 0) renders as "0-1", not "—-1". Only
+/// shows "—" when both sides are nil, i.e. no record data at all.
 private func formatWL(_ w: Int?, _ l: Int?) -> String {
-    let wStr = w.map(String.init) ?? "—"
-    let lStr = l.map(String.init) ?? "—"
-    return "\(wStr)-\(lStr)"
+    guard w != nil || l != nil else { return "—" }
+    return "\(w ?? 0)-\(l ?? 0)"
 }
 
 private func nonEmpty(_ s: String?) -> String? {
