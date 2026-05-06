@@ -1054,8 +1054,11 @@ def start_nightly_update():
         _nightly_state["running"] = True
         _nightly_state["last_started"] = now_iso
         # Don't blow away an auto-reset error message — it'd be useful
-        # in the response when the user POSTs after a stale run.
-        if not _nightly_state.get("error", "").startswith("auto-reset:"):
+        # in the response when the user POSTs after a stale run. dict.get
+        # with a default doesn't help here because the key IS present
+        # with a None value; coerce to "" before calling startswith.
+        error_val = _nightly_state.get("error") or ""
+        if not error_val.startswith("auto-reset:"):
             _nightly_state["error"] = None
 
     log.info(f"[nightly] POST accepted pid={os.getpid()} started={now_iso} — spawning worker thread")
