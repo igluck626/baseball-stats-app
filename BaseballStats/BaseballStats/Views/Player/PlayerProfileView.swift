@@ -359,9 +359,13 @@ struct PlayerProfileView: View {
         if viewModel.isLoadingCurrentPitching && viewModel.currentPitching == nil {
             loadingCard
         } else if let stats = viewModel.currentPitching {
-            // 5×2 grid: row 1 rate stats, row 2 mixed (W-L, GS, IP,
-            // SO, BB/9). GS replaces total G — for pitchers, starts is
-            // the more meaningful workload signal.
+            // 5×2 grid: row 1 rate stats, row 2 mixed (W-L, role-
+            // dependent cell, IP, SO, BB/9). For starters we surface
+            // GS (their primary workload signal); for relievers we
+            // surface SV instead — GS is always 0 for them and SV is
+            // the metric that actually matters.
+            let gs = stats.standard?.GS ?? 0
+            let isStarter = gs > 0
             statsGridCard(
                 title: "\(String(stats.season)) Season",
                 subtitle: currentSeasonTeamName,
@@ -372,7 +376,9 @@ struct PlayerProfileView: View {
                     ("K/9",  format2(stats.standard?.K_per9)),
                     ("WAR",  formatWAR(stats.advanced?.WAR)),
                     ("W-L",  formatWL(stats.standard?.W, stats.standard?.L)),
-                    ("GS",   formatCount(stats.standard?.GS)),
+                    isStarter
+                        ? ("GS", formatCount(stats.standard?.GS))
+                        : ("SV", formatCount(stats.standard?.SV)),
                     ("IP",   formatIP(stats.standard?.IP)),
                     ("SO",   formatCount(stats.standard?.SO)),
                     ("BB/9", format2(stats.standard?.BB_per9)),
