@@ -181,38 +181,32 @@ struct GameLogsView: View {
         }
     }
 
-    /// Custom row — text field on the left, live-computed stats on the
-    /// right. Tap anywhere outside the field to select; press return on
-    /// the field to also select. Always selects (no toggle-off — the
-    /// text field is the control for adjusting N).
+    /// Custom row — label sits in the Window column (full label width
+    /// so it never wraps), the number input occupies the G column slot
+    /// (the typed N is itself the games-count for this row), and the
+    /// remaining stats fill the trailing 4 cells. When the field is
+    /// empty all four show "—" (computed snapshot returns `.empty`).
     private var customSplitRow: some View {
         let n = Int(customInput) ?? 0
         let snapshot = customSnapshot(n: n)
         let isSelected = selectedRow == .custom
         return HStack(spacing: 0) {
-            HStack(spacing: 6) {
-                Text("Custom")
-                    .fontWeight(isSelected ? .semibold : .regular)
-                TextField("# games", text: $customInput)
-                    .keyboardType(.numberPad)
-                    .multilineTextAlignment(.center)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 72)
-                    .onSubmit {
-                        selectedRow = .custom
-                    }
-            }
-            .frame(width: SplitsLayout.label, alignment: .leading)
+            Text("Custom")
+                .fontWeight(isSelected ? .semibold : .regular)
+                .lineLimit(1)
+                .fixedSize()
+                .frame(width: SplitsLayout.label, alignment: .leading)
             Spacer(minLength: 4)
-            statCells(snapshot)
+            customGCell(isSelected: isSelected)
+            statCellsExcludingG(snapshot)
         }
         .font(.subheadline)
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
         .background(isSelected ? Color.accentColor.opacity(0.18) : Color.clear)
         .contentShape(Rectangle())
-        // Tap on the row chrome (not the field) selects without dismissing
-        // the keyboard.
+        // Tap on the row chrome (not the field) selects without
+        // dismissing the keyboard.
         .onTapGesture {
             withAnimation(.easeInOut(duration: 0.15)) {
                 selectedRow = .custom
@@ -220,9 +214,36 @@ struct GameLogsView: View {
         }
     }
 
+    /// TextField rendered to look like a tappable cell — borderless,
+    /// soft systemGray6 background, right-aligned monospaced digits so
+    /// it lines up visually with the integer G values in the rows above.
+    private func customGCell(isSelected: Bool) -> some View {
+        TextField("#", text: $customInput)
+            .keyboardType(.numberPad)
+            .multilineTextAlignment(.trailing)
+            .textFieldStyle(.plain)
+            .monospacedDigit()
+            .lineLimit(1)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .frame(width: SplitsLayout.g, alignment: .trailing)
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(Color(.systemGray6))
+            )
+            .onSubmit { selectedRow = .custom }
+    }
+
     @ViewBuilder
     private func statCells(_ s: WindowSnapshot) -> some View {
         Text(formatInt(s.g)).frame(width: SplitsLayout.g, alignment: .trailing).monospacedDigit()
+        statCellsExcludingG(s)
+    }
+
+    /// Just the four post-G stat cells — used by the Custom row, whose
+    /// G slot is replaced by the TextField rather than a Text value.
+    @ViewBuilder
+    private func statCellsExcludingG(_ s: WindowSnapshot) -> some View {
         if isPitcher {
             Text(format2(s.era)).frame(width: SplitsLayout.cell, alignment: .trailing).monospacedDigit()
             Text(formatInt(s.so)).frame(width: SplitsLayout.cell, alignment: .trailing).monospacedDigit()
@@ -472,7 +493,10 @@ private struct MonthGroup: Identifiable {
 
 private enum SplitsLayout {
     static let label: CGFloat = 110
-    static let g:     CGFloat = 36
+    /// Bumped from 36 → 44 so the Custom row's TextField has room to
+    /// sit in the G column without crowding. All rows + header use
+    /// this width, so column alignment stays consistent.
+    static let g:     CGFloat = 44
     static let cell:  CGFloat = 50
 }
 
