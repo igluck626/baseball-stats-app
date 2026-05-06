@@ -451,37 +451,4 @@ struct GameLogWindow: Codable {
     let BB_per9: Double?
 }
 
-// MARK: - Standings
-
-/// Response from `GET /teams/standings?year=...`.
-struct StandingsResponse: Codable {
-    let year: Int
-    let last_updated: String?   // ISO-8601 + "Z", or nil for older years
-    let standings: [TeamStanding]?
-}
-
-/// One team's record for a single season. Maps to the `team_seasons` table.
-struct TeamStanding: Codable, Identifiable, Hashable {
-    let year: Int?
-    let team_id: String?
-    let franch_id: String?
-    let team_name: String?
-    let league: String?
-    let division: String?
-    let rank: Int?
-    let G: Int?
-    let W: Int?
-    let L: Int?
-    let win_pct: Double?
-    let runs_scored: Int?
-    let runs_allowed: Int?
-    let HR: Int?
-    let ERA: Double?
-    let attendance: Int?
-    let park_name: String?
-    let last_updated: String?
-
-    /// Composite id (year + team_id) — a franchise can appear in many years
-    /// and many franchises play in one year, so neither alone is unique.
-    var id: String { "\(year ?? 0)-\(team_id ?? "?")" }
-}
+// Standings models moved to Models/Standings.swift.

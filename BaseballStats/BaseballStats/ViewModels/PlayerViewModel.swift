@@ -42,24 +42,83 @@ final class PlayerViewModel: ObservableObject {
 
     // MARK: - Role detection
 
-    /// True if any batting endpoint returned data. Checks both current
-    /// (active batter) and career (retired batter).
+    /// Average PA-per-season threshold for "true batter" status. Rate
+    /// rather than total because pre-DH NL pitchers (deGrom: 423 PA over
+    /// 8 NL seasons = 53 PA/season) easily clear any reasonable absolute
+    /// PA bar but show up correctly here. 250 PA/season is comfortably
+    /// below everyday-player rates (Ohtani 497, Ruth 483, Trout ~500)
+    /// and well above any pitcher hitting in their own at-bats (~50–80).
+    private static let batterPAPerSeasonThreshold = 250
+
+    /// IP threshold for "true pitcher" status. 50 IP filters out position
+    /// players who pitched a single mop-up inning in a blowout.
+    private static let pitcherIPThreshold: Double = 50
+
+    /// "True batter" — has batting career stats AND a per-season PA rate
+    /// at or above the everyday-player threshold. Seasons with zero PA
+    /// don't dilute the rate (denominator counts only seasons with
+    /// PA > 0), so deGrom's 2020/2022+ shutout years aren't averaged in.
     var isBatter: Bool {
+        guard careerBatting != nil else { return false }
+        let counting = seasonsWithPA
+        guard counting > 0 else { return false }
+        return careerPA / counting >= Self.batterPAPerSeasonThreshold
+    }
+
+    /// "True pitcher" — has pitching career stats AND >= 50 career IP.
+    var isPitcher: Bool {
+        guard careerPitching != nil else { return false }
+        return careerIP >= Self.pitcherIPThreshold
+    }
+
+    /// Player is retired iff we know their last season AND it's strictly
+    /// before the current year. Unknown last_season is treated as active
+    /// (rookies whose row hasn't landed yet).
+    var isRetired: Bool {
+        guard let last = player.mlb_last_season else { return false }
+        let currentYear = Calendar.current.component(.year, from: Date())
+        return last < currentYear
+    }
+
+    /// Both thresholds met — Ohtani, Babe Ruth. UI surfaces a role toggle.
+    var isTwoWay: Bool { isBatter && isPitcher }
+
+    /// Whether any batting data is loaded — used by the View's fallback
+    /// branch when neither threshold is met (e.g. rookies, sub-threshold
+    /// careers, or before career data has loaded). Don't conflate with
+    /// `isBatter`, which is the threshold-gated definition.
+    var hasAnyBatting: Bool {
         if currentBatting != nil { return true }
         if let seasons = careerBatting?.seasons, !seasons.isEmpty { return true }
         return false
     }
 
-    /// True if any pitching endpoint returned data.
-    var isPitcher: Bool {
+    var hasAnyPitching: Bool {
         if currentPitching != nil { return true }
         if let seasons = careerPitching?.seasons, !seasons.isEmpty { return true }
         return false
     }
 
-    /// True if the player has both batting and pitching data — i.e. a
-    /// two-way player like Ohtani. UI uses this to surface a role toggle.
-    var isTwoWay: Bool { isBatter && isPitcher }
+    /// Career PA, summed across the seasons array. Returns 0 when nothing
+    /// is loaded or every season is missing PA.
+    private var careerPA: Int {
+        (careerBatting?.seasons ?? []).reduce(0) { $0 + ($1.PA ?? 0) }
+    }
+
+    /// Number of batting seasons with PA > 0 — the denominator for the
+    /// PA-per-season rate. Seasons where the player didn't bat at all
+    /// (pitchers in DH-era leagues, or skipped years) are excluded so
+    /// they don't drag the average toward false negatives.
+    private var seasonsWithPA: Int {
+        (careerBatting?.seasons ?? []).filter { ($0.PA ?? 0) > 0 }.count
+    }
+
+    /// Career IP from the totals payload. The pitcher career_totals
+    /// always carries IP when seasons exist, so no per-season fallback
+    /// is needed here.
+    private var careerIP: Double {
+        careerPitching?.career_totals?.IP ?? 0
+    }
 
     // MARK: - Loading
 

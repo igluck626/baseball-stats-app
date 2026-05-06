@@ -107,16 +107,24 @@ final class APIClient {
         return try await getOptional(url)
     }
 
-    /// `GET /players/{id}/gamelogs/batting?season=...`. Backend defaults
-    /// `season` to the current year when omitted. Returns nil on 404.
-    func getPlayerGameLogs(playerId: Int, season: Int? = nil) async throws -> GameLogResponse? {
-        var query: [URLQueryItem] = []
-        if let season {
-            query.append(URLQueryItem(name: "season", value: String(season)))
-        }
+    /// `GET /players/{id}/gamelogs/batting?season=...`. Returns nil on
+    /// 404 (no batting logs cached for that season). The backend
+    /// auto-fetches from the MLB Stats API on cache miss, so the first
+    /// call for a given (player, season) can be slow.
+    func getBattingGameLogs(playerId: Int, season: Int) async throws -> GameLogResponse? {
         let url = try buildURL(
             path: "/players/\(playerId)/gamelogs/batting",
-            query: query
+            query: [URLQueryItem(name: "season", value: String(season))]
+        )
+        return try await getOptional(url)
+    }
+
+    /// `GET /players/{id}/gamelogs/pitching?season=...`. Returns nil on
+    /// 404. Same auto-fetch caveat as `getBattingGameLogs`.
+    func getPitchingGameLogs(playerId: Int, season: Int) async throws -> GameLogResponse? {
+        let url = try buildURL(
+            path: "/players/\(playerId)/gamelogs/pitching",
+            query: [URLQueryItem(name: "season", value: String(season))]
         )
         return try await getOptional(url)
     }

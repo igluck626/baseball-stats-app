@@ -17,8 +17,11 @@ import SwiftUI
 struct PlayerProfileView: View {
     let player: PlayerSearchResult
     @StateObject private var viewModel: PlayerViewModel
-    @State private var selectedTab: Tab = .overview
-    @State private var selectedRole: Role = .batting
+    @State private var selectedTab: Tab
+    /// nil until the user explicitly toggles. While nil, the picker
+    /// reflects `defaultRole`, which depends on the loaded VM data
+    /// (two-way → batting; pitcher with batting history → pitching).
+    @State private var selectedRole: Role?
 
     enum Tab: String, CaseIterable, Identifiable {
         case overview  = "Overview"
@@ -35,7 +38,13 @@ struct PlayerProfileView: View {
 
     init(player: PlayerSearchResult) {
         self.player = player
-        _viewModel = StateObject(wrappedValue: PlayerViewModel(player: player))
+        let vm = PlayerViewModel(player: player)
+        _viewModel = StateObject(wrappedValue: vm)
+        // Retired players land on Career; active players on Overview.
+        // `isRetired` only depends on player.mlb_last_season, so it's
+        // valid here even before any network data has loaded.
+        _selectedTab = State(initialValue: vm.isRetired ? .career : .overview)
+        _selectedRole = State(initialValue: nil)
     }
 
     var body: some View {
@@ -43,7 +52,7 @@ struct PlayerProfileView: View {
             VStack(spacing: 0) {
                 header
                 VStack(spacing: 16) {
-                    if viewModel.isTwoWay {
+                    if showsRoleSelector {
                         roleSelector
                     }
                     tabSelector
@@ -181,8 +190,41 @@ struct PlayerProfileView: View {
 
     // MARK: - Selectors
 
+    /// Show the Batting/Pitching toggle whenever a pitcher has any
+    /// batting history at all, not just for true two-way players. This
+    /// lets users see the historical batting line for, say, a deadball-
+    /// era pitcher who hit a few home runs.
+    private var showsRoleSelector: Bool {
+        viewModel.isPitcher && viewModel.hasAnyBatting
+    }
+
+    /// The role to surface before any explicit toggle by the user.
+    /// Two-way players default to batting (the marquee role); pure
+    /// pitchers with batting history default to pitching (their primary
+    /// role). Anything else lands on batting.
+    private var defaultRole: Role {
+        if viewModel.isTwoWay { return .batting }
+        if viewModel.isPitcher { return .pitching }
+        return .batting
+    }
+
+    /// What the picker currently reflects — user choice if they've
+    /// touched the toggle, otherwise the default.
+    private var effectiveRole: Role {
+        selectedRole ?? defaultRole
+    }
+
+    /// Two-way binding for the picker that reads `effectiveRole` and
+    /// writes through to `selectedRole` on user toggle.
+    private var roleBinding: Binding<Role> {
+        Binding(
+            get: { effectiveRole },
+            set: { selectedRole = $0 }
+        )
+    }
+
     private var roleSelector: some View {
-        Picker("Role", selection: $selectedRole) {
+        Picker("Role", selection: roleBinding) {
             ForEach(Role.allCases) { role in
                 Text(role.rawValue).tag(role)
             }
@@ -190,27 +232,45 @@ struct PlayerProfileView: View {
         .pickerStyle(.segmented)
     }
 
+    /// Tabs to expose for this player. Retired players don't get Overview
+    /// — there's no current season to discuss. `selectedTab` is
+    /// initialized to `.career` for retired players in `init`, and the
+    /// `onAppear` below is a safety net in case that invariant ever
+    /// drifts (e.g. via state restoration).
+    private var availableTabs: [Tab] {
+        viewModel.isRetired ? [.career, .gameLogs] : [.overview, .career, .gameLogs]
+    }
+
     private var tabSelector: some View {
         Picker("Section", selection: $selectedTab) {
-            ForEach(Tab.allCases) { tab in
+            ForEach(availableTabs) { tab in
                 Text(tab.rawValue).tag(tab)
             }
         }
         .pickerStyle(.segmented)
+        .onAppear {
+            if !availableTabs.contains(selectedTab) {
+                selectedTab = availableTabs.first ?? .career
+            }
+        }
     }
 
     // MARK: - Tab routing
 
-    /// Decides which role's content to show. For two-way players, follows
-    /// the role picker. For single-role players, the player's actual role
-    /// wins regardless of any stale `selectedRole` state. Defaults to
-    /// batting before any data has loaded so the loading state has a
-    /// consistent visual.
+    /// Decides which role's content to show.
+    /// 1. Toggle visible (pitcher with any batting history) → follow
+    ///    the picker (which itself defaults via `defaultRole`).
+    /// 2. Threshold batter only → batting.
+    /// 3. Sub-threshold fallback → whichever side has data, batting
+    ///    otherwise.
     private var showingBatting: Bool {
-        if viewModel.isTwoWay {
-            return selectedRole == .batting
+        if showsRoleSelector {
+            return effectiveRole == .batting
         }
-        if viewModel.isPitcher && !viewModel.isBatter {
+        if viewModel.isBatter && !viewModel.isPitcher {
+            return true
+        }
+        if !viewModel.hasAnyBatting && viewModel.hasAnyPitching {
             return false
         }
         return true
@@ -226,7 +286,7 @@ struct PlayerProfileView: View {
             }
         }
         .animation(.easeInOut(duration: 0.18), value: selectedTab)
-        .animation(.easeInOut(duration: 0.18), value: selectedRole)
+        .animation(.easeInOut(duration: 0.18), value: effectiveRole)
     }
 
     // MARK: - Overview
@@ -531,21 +591,12 @@ struct PlayerProfileView: View {
 
     // MARK: - Game Logs
 
+    /// `.id(showingBatting)` so flipping the role toggle recreates the
+    /// inner GameLogsView (and its @StateObject VM) with the new role,
+    /// rather than leaving stale data on screen until the next refresh.
     private var gameLogsTab: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "list.bullet.rectangle.portrait")
-                .font(.system(size: 40))
-                .foregroundStyle(.secondary)
-            Text("Game logs coming soon")
-                .font(.headline)
-            Text("Per-game logs and rolling 5/10/15/30 splits will land here.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-        }
-        .padding(28)
-        .frame(maxWidth: .infinity)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20))
+        GameLogsView(playerId: player.player_id, isPitcher: !showingBatting)
+            .id(showingBatting)
     }
 }
 
