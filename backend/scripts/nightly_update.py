@@ -27,6 +27,7 @@ canonical Lahman numbers; the cutoff in lahman_load.py is "current year"
 so the rollover is automatic on the next run after Lahman publishes.
 """
 
+import gc
 import logging
 import os
 import re
@@ -131,33 +132,80 @@ def _build_current_batter_entry(player_id: int, bref_df, bwar_current, current_y
     return entry
 
 
+_BATCH_SIZE = 100
+
+
 def _update_batters(current_year: int) -> tuple[int, int, list[int]]:
     log.info("Fetching batting_stats_bref for current season...")
     bref_df = data_service._batting_bref(current_year)
 
     log.info("Fetching bwar_bat...")
     bwar_df = data_service._bwar_bat_all()
-    bwar_current = bwar_df[bwar_df["year_ID"] == current_year]
+    # Copy out only the current-year slice (~750 rows). The full
+    # bwar_bat archive is hundreds of MB; holding it across a 22k-player
+    # iteration was the dominant memory pressure that triggered OOM
+    # kills on Railway. .copy() detaches the slice from the parent so
+    # the parent can actually be released.
+    bwar_current = bwar_df[bwar_df["year_ID"] == current_year].copy()
+    del bwar_df
+    # data_service caches the parent DataFrame; evict so the GC can
+    # actually reclaim it. Cost is one re-fetch on the next request
+    # (~30s), worth it for the memory headroom during this run.
+    data_service._store.pop("bwar_bat_all", None)
+    gc.collect()
 
     with connection.get_session() as db:
         player_ids = crud.get_all_player_ids(db)
-    log.info(f"{len(player_ids)} batters in database")
+    log.info(f"{len(player_ids)} batters in database (batch size: {_BATCH_SIZE})")
 
     updated = 0
     skipped = 0
     failed: list[int] = []
-    for player_id in player_ids:
-        try:
-            entry = _build_current_batter_entry(player_id, bref_df, bwar_current, current_year)
-            if entry is None:
-                skipped += 1
-                continue
+
+    # Batch-process: build entries for 100 players, flush them all in
+    # one DB session, then drop intermediates and gc.collect before the
+    # next batch. Caps peak working-set size regardless of input length.
+    for start in range(0, len(player_ids), _BATCH_SIZE):
+        batch_ids = player_ids[start:start + _BATCH_SIZE]
+        batch_entries: list[tuple[int, dict]] = []
+
+        for player_id in batch_ids:
+            try:
+                entry = _build_current_batter_entry(
+                    player_id, bref_df, bwar_current, current_year
+                )
+                if entry is None:
+                    skipped += 1
+                    continue
+                batch_entries.append((player_id, entry))
+            except Exception as exc:
+                log.error(f"batter {player_id} FAILED: {exc}")
+                failed.append(player_id)
+
+        if batch_entries:
             with connection.get_session() as db:
-                crud.save_player_seasons(db, player_id, [entry])
-            updated += 1
-        except Exception as exc:
-            log.error(f"batter {player_id} FAILED: {exc}")
-            failed.append(player_id)
+                for pid, entry in batch_entries:
+                    crud.save_player_seasons(db, pid, [entry])
+            updated += len(batch_entries)
+
+        # Free intermediate state before the next batch.
+        del batch_entries
+        del batch_ids
+        gc.collect()
+
+        # Progress logging every 10 batches (~1k players).
+        batch_num = start // _BATCH_SIZE + 1
+        if batch_num % 10 == 0 or start + _BATCH_SIZE >= len(player_ids):
+            log.info(
+                f"  batters batch {batch_num}: "
+                f"processed={min(start + _BATCH_SIZE, len(player_ids))}/{len(player_ids)}, "
+                f"updated={updated}, skipped={skipped}, failed={len(failed)}"
+            )
+
+    # Done with this phase's bwar slice — drop it before phase 2 starts
+    # accumulating its own dataframes.
+    del bwar_current
+    gc.collect()
 
     return updated, skipped, failed
 
@@ -194,27 +242,57 @@ def _update_pitchers(current_year: int) -> tuple[int, int, list[int]]:
 
     log.info("Fetching bwar_pitch...")
     bwar_df = data_service._bwar_pitch_all()
-    bwar_current = bwar_df[bwar_df["year_ID"] == current_year]
+    # Same memory pattern as batters — slice + detach + evict cache.
+    bwar_current = bwar_df[bwar_df["year_ID"] == current_year].copy()
+    del bwar_df
+    data_service._store.pop("bwar_pitch_all", None)
+    gc.collect()
 
     with connection.get_session() as db:
         pitcher_ids = crud.get_all_pitcher_ids(db)
-    log.info(f"{len(pitcher_ids)} pitchers in database")
+    log.info(f"{len(pitcher_ids)} pitchers in database (batch size: {_BATCH_SIZE})")
 
     updated = 0
     skipped = 0
     failed: list[int] = []
-    for player_id in pitcher_ids:
-        try:
-            entry = _build_current_pitcher_entry(player_id, bref_df, bwar_current, current_year)
-            if entry is None:
-                skipped += 1
-                continue
+
+    for start in range(0, len(pitcher_ids), _BATCH_SIZE):
+        batch_ids = pitcher_ids[start:start + _BATCH_SIZE]
+        batch_entries: list[tuple[int, dict]] = []
+
+        for player_id in batch_ids:
+            try:
+                entry = _build_current_pitcher_entry(
+                    player_id, bref_df, bwar_current, current_year
+                )
+                if entry is None:
+                    skipped += 1
+                    continue
+                batch_entries.append((player_id, entry))
+            except Exception as exc:
+                log.error(f"pitcher {player_id} FAILED: {exc}")
+                failed.append(player_id)
+
+        if batch_entries:
             with connection.get_session() as db:
-                crud.save_pitcher_seasons(db, player_id, [entry])
-            updated += 1
-        except Exception as exc:
-            log.error(f"pitcher {player_id} FAILED: {exc}")
-            failed.append(player_id)
+                for pid, entry in batch_entries:
+                    crud.save_pitcher_seasons(db, pid, [entry])
+            updated += len(batch_entries)
+
+        del batch_entries
+        del batch_ids
+        gc.collect()
+
+        batch_num = start // _BATCH_SIZE + 1
+        if batch_num % 10 == 0 or start + _BATCH_SIZE >= len(pitcher_ids):
+            log.info(
+                f"  pitchers batch {batch_num}: "
+                f"processed={min(start + _BATCH_SIZE, len(pitcher_ids))}/{len(pitcher_ids)}, "
+                f"updated={updated}, skipped={skipped}, failed={len(failed)}"
+            )
+
+    del bwar_current
+    gc.collect()
 
     return updated, skipped, failed
 
