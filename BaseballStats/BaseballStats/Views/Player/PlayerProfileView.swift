@@ -48,35 +48,46 @@ struct PlayerProfileView: View {
     }
 
     var body: some View {
-        // .id(selectedTab) on the ScrollView forces SwiftUI to create a
-        // fresh ScrollView instance every time the tab changes. The
-        // new instance always starts at scroll offset 0, so the header
-        // is fully visible at its natural size and position on every
-        // tab. Simpler and more reliable than a ScrollViewReader +
-        // scrollTo dance, which depended on layout timing.
-        ScrollView {
-            VStack(spacing: 0) {
-                header
-                VStack(spacing: 16) {
-                    if showsRoleSelector {
-                        roleSelector
+        // ScrollViewReader + non-animated scrollTo on tab change. The
+        // previous .id(selectedTab) approach caused a white flash
+        // because SwiftUI destroyed and rebuilt the entire ScrollView
+        // each tab swap. Instant (no-animation) scrollTo lands the
+        // scroll-position reset in the same frame as the tab content
+        // swap, so the header stays put and there's no flash.
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(spacing: 0) {
+                    header.id("top")
+                    VStack(spacing: 16) {
+                        if showsRoleSelector {
+                            roleSelector
+                        }
+                        tabSelector
+                        tabContent
                     }
-                    tabSelector
-                    tabContent
+                    .padding(.horizontal, 16)
+                    .padding(.top, 16)
+                    .padding(.bottom, 32)
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, 16)
-                .padding(.bottom, 32)
+            }
+            .ignoresSafeArea(edges: .top)
+            // Hide the default scroll content background and pin our
+            // own systemBackground so any brief flash during a tab
+            // swap blends in instead of showing as white.
+            .scrollContentBackground(.hidden)
+            .background(Color(.systemBackground))
+            .navigationBarTitleDisplayMode(.inline)
+            // Transparent toolbar so the header bleeds under the back chevron.
+            .toolbarBackground(.hidden, for: .navigationBar)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .task { await viewModel.loadData() }
+            .onChange(of: selectedTab) { _, _ in
+                // No animation — withAnimation here would interpolate
+                // the scroll offset over time and re-introduce the
+                // mid-transition layout glitches we're fixing.
+                proxy.scrollTo("top", anchor: .top)
             }
         }
-        .id(selectedTab)
-        .ignoresSafeArea(edges: .top)
-        .background(Color(.systemBackground))
-        .navigationBarTitleDisplayMode(.inline)
-        // Transparent toolbar so the header bleeds under the back chevron.
-        .toolbarBackground(.hidden, for: .navigationBar)
-        .toolbarColorScheme(.dark, for: .navigationBar)
-        .task { await viewModel.loadData() }
     }
 
     // MARK: - Header
@@ -269,7 +280,14 @@ struct PlayerProfileView: View {
     private var tabSelector: some View {
         Picker("Section", selection: $selectedTab) {
             ForEach(availableTabs) { tab in
-                Text(tab.rawValue).tag(tab)
+                // .frame(maxWidth: .infinity) on each label forces the
+                // segmented picker to give every segment the same
+                // width — without it, segments size to their label's
+                // intrinsic width and "Career" / "Game Logs" end up
+                // visibly different sizes.
+                Text(tab.rawValue)
+                    .frame(maxWidth: .infinity)
+                    .tag(tab)
             }
         }
         .pickerStyle(.segmented)
@@ -314,10 +332,11 @@ struct PlayerProfileView: View {
             case .gameLogs: gameLogsTab
             }
         }
-        // No animation on selectedTab — the .id(selectedTab) on the
-        // ScrollView swaps the entire instance, no height
-        // interpolation needed. Role toggles stay animated since they
-        // change content within the same tab.
+        // No animation on selectedTab — the body's onChange does an
+        // instant scrollTo("top") on tab change, so animating content
+        // height here would interpolate against an already-resetting
+        // scroll offset. Role toggles stay animated since they change
+        // content within the same tab.
         .animation(.easeInOut(duration: 0.18), value: effectiveRole)
     }
 
@@ -729,7 +748,7 @@ struct PlayerProfileView: View {
             loadingCard
         } else if let career = viewModel.careerBatting,
                   let seasons = career.seasons, !seasons.isEmpty {
-            battingCareerTable(seasons: seasons, totals: career.career_totals)
+            battingCareerTable(seasons: seasons)
         } else {
             noStatsCard("No batting career stats")
         }
@@ -747,23 +766,35 @@ struct PlayerProfileView: View {
         }
     }
 
-    private func battingCareerTable(seasons: [CareerSeason], totals: CareerTotals?) -> some View {
+    private func battingCareerTable(seasons: [CareerSeason]) -> some View {
         let sorted = seasons.sorted { ($0.year ?? 0) > ($1.year ?? 0) }
-        return VStack(spacing: 0) {
-            BattingCareerHeaderRow()
-            Divider()
-            ForEach(Array(sorted.enumerated()), id: \.offset) { index, season in
-                BattingCareerSeasonRow(season: season)
-                if index != sorted.indices.last {
-                    Divider().opacity(0.4)
-                }
-            }
-            if let totals {
+        let agg = BattingCareerAgg.compute(seasons: seasons)
+        return ScrollView(.horizontal, showsIndicators: false) {
+            VStack(spacing: 0) {
+                BattingCareerHeaderRow()
                 Divider()
-                BattingCareerTotalsRow(totals: totals)
+                ForEach(Array(sorted.enumerated()), id: \.offset) { index, season in
+                    BattingCareerSeasonRow(
+                        season: season,
+                        birthYear:  player.birth_year,
+                        birthMonth: player.birth_month,
+                        birthDay:   player.birth_day,
+                        alternate:  !index.isMultiple(of: 2)
+                    )
+                    if index != sorted.indices.last {
+                        Divider().opacity(0.4)
+                    }
+                }
+                Divider()
+                BattingCareerTotalsRow(agg: agg)
             }
         }
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+        // Background + clip on the ScrollView itself so the rounded
+        // card "windows" the scrollable content — corners stay visible
+        // at every scroll offset, content slides underneath.
+        .frame(maxWidth: .infinity)
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 
     private func pitchingCareerTable(seasons: [PitcherCareerSeason], totals: PitcherCareerTotals?) -> some View {
@@ -782,6 +813,7 @@ struct PlayerProfileView: View {
                 PitchingCareerTotalsRow(totals: totals)
             }
         }
+        .frame(maxWidth: .infinity)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
     }
 
@@ -821,91 +853,196 @@ private struct StatBlock: View {
 
 // MARK: - Batting career table
 
-// Column widths sized for batting career totals (4-digit games/RBI,
-// 3-digit HR, signed 3-character WAR like "-1.2"). Header and data rows
-// share these constants so columns line up.
+// Column widths for the full Baseball Reference batting layout —
+// 28 columns totaling ~902pt. Wider than the screen, so the table
+// wraps in a horizontal ScrollView and the user swipes to see the
+// trailing stats. Per-season counting stats stay under 1000, so the
+// narrow widths (28-32pt) accommodate them comfortably; career totals
+// (4,000+ hits, 1,500+ games) commafy via formatCount and use
+// minimumScaleFactor in the totals row to shrink to fit.
 private enum BattingCareerColumn {
-    static let year: CGFloat = 56
-    static let team: CGFloat = 60
-    static let games: CGFloat = 50
-    static let avg: CGFloat = 56
-    static let hr: CGFloat = 44
-    static let rbi: CGFloat = 56
-    static let war: CGFloat = 52
+    static let year:    CGFloat = 44
+    static let age:     CGFloat = 32
+    static let team:    CGFloat = 36
+    static let war:     CGFloat = 36
+    static let g:       CGFloat = 30
+    static let pa:      CGFloat = 32
+    static let ab:      CGFloat = 32
+    static let r:       CGFloat = 28
+    static let h:       CGFloat = 28
+    static let doubles: CGFloat = 28
+    static let triples: CGFloat = 28
+    static let hr:      CGFloat = 28
+    static let rbi:     CGFloat = 32
+    static let sb:      CGFloat = 28
+    static let cs:      CGFloat = 28
+    static let bb:      CGFloat = 28
+    static let so:      CGFloat = 32
+    static let ba:      CGFloat = 36
+    static let obp:     CGFloat = 36
+    static let slg:     CGFloat = 36
+    static let ops:     CGFloat = 40
+    static let opsPlus: CGFloat = 36
+    static let tb:      CGFloat = 32
+    static let gidp:    CGFloat = 36
+    static let hbp:     CGFloat = 32
+    static let sh:      CGFloat = 28
+    static let sf:      CGFloat = 28
+    static let ibb:     CGFloat = 32
 }
 
 private struct BattingCareerHeaderRow: View {
     var body: some View {
         HStack(spacing: 0) {
-            Text("Year").frame(width: BattingCareerColumn.year, alignment: .leading)
-            Text("Team").frame(width: BattingCareerColumn.team, alignment: .leading)
-            Spacer(minLength: 4)
-            Text("G").frame(width: BattingCareerColumn.games, alignment: .trailing)
-            Text("AVG").frame(width: BattingCareerColumn.avg, alignment: .trailing)
-            Text("HR").frame(width: BattingCareerColumn.hr, alignment: .trailing)
-            Text("RBI").frame(width: BattingCareerColumn.rbi, alignment: .trailing)
-            Text("WAR").frame(width: BattingCareerColumn.war, alignment: .trailing)
+            Text("Year").frame(width: BattingCareerColumn.year,    alignment: .leading)
+            Text("Age") .frame(width: BattingCareerColumn.age,     alignment: .trailing)
+            Text("Team").frame(width: BattingCareerColumn.team,    alignment: .leading)
+            Text("WAR") .frame(width: BattingCareerColumn.war,     alignment: .trailing)
+            Text("G")   .frame(width: BattingCareerColumn.g,       alignment: .trailing)
+            Text("PA")  .frame(width: BattingCareerColumn.pa,      alignment: .trailing)
+            Text("AB")  .frame(width: BattingCareerColumn.ab,      alignment: .trailing)
+            Text("R")   .frame(width: BattingCareerColumn.r,       alignment: .trailing)
+            Text("H")   .frame(width: BattingCareerColumn.h,       alignment: .trailing)
+            Text("2B")  .frame(width: BattingCareerColumn.doubles, alignment: .trailing)
+            Text("3B")  .frame(width: BattingCareerColumn.triples, alignment: .trailing)
+            Text("HR")  .frame(width: BattingCareerColumn.hr,      alignment: .trailing)
+            Text("RBI") .frame(width: BattingCareerColumn.rbi,     alignment: .trailing)
+            Text("SB")  .frame(width: BattingCareerColumn.sb,      alignment: .trailing)
+            Text("CS")  .frame(width: BattingCareerColumn.cs,      alignment: .trailing)
+            Text("BB")  .frame(width: BattingCareerColumn.bb,      alignment: .trailing)
+            Text("SO")  .frame(width: BattingCareerColumn.so,      alignment: .trailing)
+            Text("BA")  .frame(width: BattingCareerColumn.ba,      alignment: .trailing)
+            Text("OBP") .frame(width: BattingCareerColumn.obp,     alignment: .trailing)
+            Text("SLG") .frame(width: BattingCareerColumn.slg,     alignment: .trailing)
+            Text("OPS") .frame(width: BattingCareerColumn.ops,     alignment: .trailing)
+            Text("OPS+").frame(width: BattingCareerColumn.opsPlus, alignment: .trailing)
+            Text("TB")  .frame(width: BattingCareerColumn.tb,      alignment: .trailing)
+            Text("GIDP").frame(width: BattingCareerColumn.gidp,    alignment: .trailing)
+            Text("HBP") .frame(width: BattingCareerColumn.hbp,     alignment: .trailing)
+            Text("SH")  .frame(width: BattingCareerColumn.sh,      alignment: .trailing)
+            Text("SF")  .frame(width: BattingCareerColumn.sf,      alignment: .trailing)
+            Text("IBB") .frame(width: BattingCareerColumn.ibb,     alignment: .trailing)
         }
-        .font(.caption.weight(.semibold))
+        .font(.system(size: 11, weight: .semibold))
         .foregroundStyle(.secondary)
         .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .frame(height: 28)
     }
 }
 
 private struct BattingCareerSeasonRow: View {
     let season: CareerSeason
+    /// Birth date components — passed in so we can compute Age the way
+    /// Baseball Reference does (age on June 30 of the season). nil
+    /// month/day fall back to a simple year-subtraction.
+    let birthYear:  Int?
+    let birthMonth: Int?
+    let birthDay:   Int?
+    let alternate:  Bool
+
     var body: some View {
         HStack(spacing: 0) {
             Text(formatYear(season.year))
                 .frame(width: BattingCareerColumn.year, alignment: .leading)
-            // Raw season.team — no lookup. Backend stores Lahman codes for
-            // most rows; current-season rows can carry a city which will
-            // truncate.
+            Text(formatAge(seasonYear: season.year,
+                           birthYear: birthYear,
+                           birthMonth: birthMonth,
+                           birthDay: birthDay))
+                .frame(width: BattingCareerColumn.age, alignment: .trailing)
+                .monospacedDigit()
+            // Raw season.team — Lahman codes for historical seasons,
+            // possibly a city name from the nightly bwar path for the
+            // current year. Truncate if it doesn't fit 36pt.
             Text(season.team ?? "—")
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .frame(width: BattingCareerColumn.team, alignment: .leading)
-            Spacer(minLength: 4)
-            Text(formatInt(season.G)).frame(width: BattingCareerColumn.games, alignment: .trailing).monospacedDigit()
-            Text(format3(season.BA)).frame(width: BattingCareerColumn.avg, alignment: .trailing).monospacedDigit()
-            Text(formatInt(season.HR)).frame(width: BattingCareerColumn.hr, alignment: .trailing).monospacedDigit()
-            Text(formatInt(season.RBI)).frame(width: BattingCareerColumn.rbi, alignment: .trailing).monospacedDigit()
-            Text(formatWAR(season.WAR)).frame(width: BattingCareerColumn.war, alignment: .trailing).monospacedDigit()
+            Text(formatWAR(season.WAR))
+                .frame(width: BattingCareerColumn.war, alignment: .trailing)
+                .monospacedDigit()
+            Text(formatInt(season.G))      .frame(width: BattingCareerColumn.g,       alignment: .trailing).monospacedDigit()
+            Text(formatInt(season.PA))     .frame(width: BattingCareerColumn.pa,      alignment: .trailing).monospacedDigit()
+            Text(formatInt(season.AB))     .frame(width: BattingCareerColumn.ab,      alignment: .trailing).monospacedDigit()
+            Text(formatInt(season.R))      .frame(width: BattingCareerColumn.r,       alignment: .trailing).monospacedDigit()
+            Text(formatInt(season.H))      .frame(width: BattingCareerColumn.h,       alignment: .trailing).monospacedDigit()
+            Text(formatInt(season.doubles)).frame(width: BattingCareerColumn.doubles, alignment: .trailing).monospacedDigit()
+            Text(formatInt(season.triples)).frame(width: BattingCareerColumn.triples, alignment: .trailing).monospacedDigit()
+            Text(formatInt(season.HR))     .frame(width: BattingCareerColumn.hr,      alignment: .trailing).monospacedDigit()
+            Text(formatInt(season.RBI))    .frame(width: BattingCareerColumn.rbi,     alignment: .trailing).monospacedDigit()
+            Text(formatInt(season.SB))     .frame(width: BattingCareerColumn.sb,      alignment: .trailing).monospacedDigit()
+            Text(formatInt(season.CS))     .frame(width: BattingCareerColumn.cs,      alignment: .trailing).monospacedDigit()
+            Text(formatInt(season.BB))     .frame(width: BattingCareerColumn.bb,      alignment: .trailing).monospacedDigit()
+            Text(formatInt(season.SO))     .frame(width: BattingCareerColumn.so,      alignment: .trailing).monospacedDigit()
+            Text(format3(season.BA))       .frame(width: BattingCareerColumn.ba,      alignment: .trailing).monospacedDigit()
+            Text(format3(season.OBP))      .frame(width: BattingCareerColumn.obp,     alignment: .trailing).monospacedDigit()
+            Text(format3(season.SLG))      .frame(width: BattingCareerColumn.slg,     alignment: .trailing).monospacedDigit()
+            Text(format3(season.OPS))      .frame(width: BattingCareerColumn.ops,     alignment: .trailing).monospacedDigit()
+            Text(formatRoundedInt(season.OPS_plus))
+                .frame(width: BattingCareerColumn.opsPlus, alignment: .trailing).monospacedDigit()
+            // TB derived per-season — backend doesn't ship it.
+            Text(formatInt(seasonTB(season))).frame(width: BattingCareerColumn.tb,    alignment: .trailing).monospacedDigit()
+            Text(formatInt(season.GIDP))   .frame(width: BattingCareerColumn.gidp,    alignment: .trailing).monospacedDigit()
+            Text(formatInt(season.HBP))    .frame(width: BattingCareerColumn.hbp,     alignment: .trailing).monospacedDigit()
+            Text(formatInt(season.SH))     .frame(width: BattingCareerColumn.sh,      alignment: .trailing).monospacedDigit()
+            Text(formatInt(season.SF))     .frame(width: BattingCareerColumn.sf,      alignment: .trailing).monospacedDigit()
+            Text(formatInt(season.IBB))    .frame(width: BattingCareerColumn.ibb,     alignment: .trailing).monospacedDigit()
         }
-        .font(.caption)
+        .font(.system(size: 11))
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .frame(height: 28)
+        .background(alternate ? Color(.systemGray6).opacity(0.5) : Color.clear)
     }
 }
 
 private struct BattingCareerTotalsRow: View {
-    let totals: CareerTotals
+    let agg: BattingCareerAgg
+
     var body: some View {
         HStack(spacing: 0) {
             Text("Career").frame(width: BattingCareerColumn.year, alignment: .leading)
-            Spacer(minLength: 4)
-            Text(formatInt(totals.G))
-                .frame(width: BattingCareerColumn.games, alignment: .trailing)
-                .monospacedDigit().lineLimit(1)
-            // Career batting average isn't part of the totals payload —
-            // it'd need to be derived from the seasons array. Punted.
-            Text("—")
-                .frame(width: BattingCareerColumn.avg, alignment: .trailing)
-                .foregroundStyle(.tertiary)
-            Text(formatInt(totals.HR))
-                .frame(width: BattingCareerColumn.hr, alignment: .trailing)
-                .monospacedDigit().lineLimit(1)
-            Text(formatInt(totals.RBI))
-                .frame(width: BattingCareerColumn.rbi, alignment: .trailing)
-                .monospacedDigit().lineLimit(1)
-            Text(formatWAR(totals.WAR))
+            // Age + Team blank for the totals row.
+            Color.clear.frame(width: BattingCareerColumn.age)
+            Color.clear.frame(width: BattingCareerColumn.team)
+            Text(formatWAR(agg.war))
                 .frame(width: BattingCareerColumn.war, alignment: .trailing)
-                .monospacedDigit().lineLimit(1)
+                .monospacedDigit()
+            Text(formatCount(agg.g))   .frame(width: BattingCareerColumn.g,       alignment: .trailing).monospacedDigit()
+            Text(formatCount(agg.pa))  .frame(width: BattingCareerColumn.pa,      alignment: .trailing).monospacedDigit()
+            Text(formatCount(agg.ab))  .frame(width: BattingCareerColumn.ab,      alignment: .trailing).monospacedDigit()
+            Text(formatCount(agg.r))   .frame(width: BattingCareerColumn.r,       alignment: .trailing).monospacedDigit()
+            Text(formatCount(agg.h))   .frame(width: BattingCareerColumn.h,       alignment: .trailing).monospacedDigit()
+            Text(formatCount(agg.dbl)) .frame(width: BattingCareerColumn.doubles, alignment: .trailing).monospacedDigit()
+            Text(formatCount(agg.trp)) .frame(width: BattingCareerColumn.triples, alignment: .trailing).monospacedDigit()
+            Text(formatCount(agg.hr))  .frame(width: BattingCareerColumn.hr,      alignment: .trailing).monospacedDigit()
+            Text(formatCount(agg.rbi)) .frame(width: BattingCareerColumn.rbi,     alignment: .trailing).monospacedDigit()
+            Text(formatCount(agg.sb))  .frame(width: BattingCareerColumn.sb,      alignment: .trailing).monospacedDigit()
+            Text(formatCount(agg.cs))  .frame(width: BattingCareerColumn.cs,      alignment: .trailing).monospacedDigit()
+            Text(formatCount(agg.bb))  .frame(width: BattingCareerColumn.bb,      alignment: .trailing).monospacedDigit()
+            Text(formatCount(agg.so))  .frame(width: BattingCareerColumn.so,      alignment: .trailing).monospacedDigit()
+            Text(format3(agg.avg))     .frame(width: BattingCareerColumn.ba,      alignment: .trailing).monospacedDigit()
+            Text(format3(agg.obp))     .frame(width: BattingCareerColumn.obp,     alignment: .trailing).monospacedDigit()
+            Text(format3(agg.slg))     .frame(width: BattingCareerColumn.slg,     alignment: .trailing).monospacedDigit()
+            Text(format3(agg.ops))     .frame(width: BattingCareerColumn.ops,     alignment: .trailing).monospacedDigit()
+            // OPS+ isn't summable across seasons, leave blank for career row.
+            Text("—").frame(width: BattingCareerColumn.opsPlus, alignment: .trailing)
+                .foregroundStyle(.tertiary)
+            Text(formatCount(agg.tb))  .frame(width: BattingCareerColumn.tb,      alignment: .trailing).monospacedDigit()
+            Text(formatCount(agg.gidp)).frame(width: BattingCareerColumn.gidp,    alignment: .trailing).monospacedDigit()
+            Text(formatCount(agg.hbp)) .frame(width: BattingCareerColumn.hbp,     alignment: .trailing).monospacedDigit()
+            Text(formatCount(agg.sh))  .frame(width: BattingCareerColumn.sh,      alignment: .trailing).monospacedDigit()
+            Text(formatCount(agg.sf))  .frame(width: BattingCareerColumn.sf,      alignment: .trailing).monospacedDigit()
+            Text(formatCount(agg.ibb)) .frame(width: BattingCareerColumn.ibb,     alignment: .trailing).monospacedDigit()
         }
-        .font(.caption.weight(.semibold))
+        .font(.system(size: 11, weight: .semibold))
+        // Career counting stats can hit 4-5 digits + commas (~30pt) and
+        // exceed the per-season column widths; lineLimit + scale-factor
+        // keeps every cell on one line.
+        .lineLimit(1)
+        .minimumScaleFactor(0.7)
         .padding(.horizontal, 12)
-        .padding(.vertical, 12)
+        .frame(height: 28)
+        .background(Color(.systemGray5).opacity(0.7))
+        .overlay(alignment: .top) { Divider() }
     }
 }
 
@@ -1025,6 +1162,42 @@ private func format2(_ value: Double?) -> String {
 private func formatInt(_ value: Int?) -> String {
     guard let value else { return "—" }
     return String(value)
+}
+
+/// Doubles displayed as a rounded integer — used for OPS+ and similar
+/// integer-conventioned ratings (100 = league average).
+private func formatRoundedInt(_ value: Double?) -> String {
+    guard let value else { return "—" }
+    return String(Int(value.rounded()))
+}
+
+/// Age for a given season, using Baseball Reference convention: a
+/// player's age is their age on June 30 of that season. If month/day
+/// aren't known we fall back to a simple year subtraction.
+private func formatAge(seasonYear: Int?, birthYear: Int?, birthMonth: Int?, birthDay: Int?) -> String {
+    guard let y = seasonYear, let by = birthYear, by > 0 else { return "—" }
+    var age = y - by
+    if let m = birthMonth, let d = birthDay {
+        // If born on/after July 1, the player hasn't turned `y - by`
+        // by June 30, so subtract one.
+        if m > 6 || (m == 6 && d > 30) {
+            age -= 1
+        }
+    }
+    return String(age)
+}
+
+/// Per-season total bases — the backend doesn't ship TB directly so
+/// we derive it the same way Baseball Reference does:
+///   TB = 1·1B + 2·2B + 3·3B + 4·HR, simplified to h + 2B + 2·3B + 3·HR
+/// since 1B = h − 2B − 3B − HR. Returns nil when H is missing (older
+/// Lahman seasons sometimes lack any batting counting stats).
+private func seasonTB(_ s: CareerSeason) -> Int? {
+    guard let h = s.H else { return nil }
+    let dbl = s.doubles ?? 0
+    let trp = s.triples ?? 0
+    let hr  = s.HR ?? 0
+    return h + dbl + 2 * trp + 3 * hr
 }
 
 /// Counting-stat display with thousands separators ("1,682"). Used for
@@ -1165,6 +1338,16 @@ private struct BattingCareerAgg {
     let trp: Int
     let hr: Int
     let sb: Int
+    // Additional sums used by the full-detail career table totals row.
+    let g:    Int
+    let r:    Int
+    let rbi:  Int
+    let cs:   Int
+    let so:   Int
+    let gidp: Int
+    let sh:   Int
+    let ibb:  Int
+    let war:  Double
 
     var avg: Double? {
         ab > 0 ? Double(h) / Double(ab) : nil
@@ -1188,18 +1371,33 @@ private struct BattingCareerAgg {
         return obp + slg
     }
 
+    /// Career total bases. h + 2B + 2*3B + 3*HR is the closed form of
+    /// 1*singles + 2*2B + 3*3B + 4*HR with `singles = h - 2B - 3B - HR`.
+    var tb: Int {
+        h + dbl + 2 * trp + 3 * hr
+    }
+
     static func compute(seasons: [CareerSeason]) -> BattingCareerAgg {
         BattingCareerAgg(
-            pa:  seasons.reduce(0) { $0 + ($1.PA ?? 0) },
-            ab:  seasons.reduce(0) { $0 + ($1.AB ?? 0) },
-            h:   seasons.reduce(0) { $0 + ($1.H ?? 0) },
-            bb:  seasons.reduce(0) { $0 + ($1.BB ?? 0) },
-            hbp: seasons.reduce(0) { $0 + ($1.HBP ?? 0) },
-            sf:  seasons.reduce(0) { $0 + ($1.SF ?? 0) },
-            dbl: seasons.reduce(0) { $0 + ($1.doubles ?? 0) },
-            trp: seasons.reduce(0) { $0 + ($1.triples ?? 0) },
-            hr:  seasons.reduce(0) { $0 + ($1.HR ?? 0) },
-            sb:  seasons.reduce(0) { $0 + ($1.SB ?? 0) }
+            pa:   seasons.reduce(0) { $0 + ($1.PA ?? 0) },
+            ab:   seasons.reduce(0) { $0 + ($1.AB ?? 0) },
+            h:    seasons.reduce(0) { $0 + ($1.H ?? 0) },
+            bb:   seasons.reduce(0) { $0 + ($1.BB ?? 0) },
+            hbp:  seasons.reduce(0) { $0 + ($1.HBP ?? 0) },
+            sf:   seasons.reduce(0) { $0 + ($1.SF ?? 0) },
+            dbl:  seasons.reduce(0) { $0 + ($1.doubles ?? 0) },
+            trp:  seasons.reduce(0) { $0 + ($1.triples ?? 0) },
+            hr:   seasons.reduce(0) { $0 + ($1.HR ?? 0) },
+            sb:   seasons.reduce(0) { $0 + ($1.SB ?? 0) },
+            g:    seasons.reduce(0) { $0 + ($1.G ?? 0) },
+            r:    seasons.reduce(0) { $0 + ($1.R ?? 0) },
+            rbi:  seasons.reduce(0) { $0 + ($1.RBI ?? 0) },
+            cs:   seasons.reduce(0) { $0 + ($1.CS ?? 0) },
+            so:   seasons.reduce(0) { $0 + ($1.SO ?? 0) },
+            gidp: seasons.reduce(0) { $0 + ($1.GIDP ?? 0) },
+            sh:   seasons.reduce(0) { $0 + ($1.SH ?? 0) },
+            ibb:  seasons.reduce(0) { $0 + ($1.IBB ?? 0) },
+            war:  seasons.reduce(0.0) { $0 + ($1.WAR ?? 0) }
         )
     }
 }

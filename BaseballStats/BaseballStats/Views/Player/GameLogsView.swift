@@ -125,6 +125,12 @@ struct GameLogsView: View {
             Divider().opacity(0.5)
             customSplitRow
         }
+        // Stretch to parent width so the card aligns left/right with
+        // Overview cards (which also use .frame(maxWidth: .infinity)
+        // before their material background). Without this, the card
+        // sizes to its intrinsic content and can drift narrower or
+        // wider than the surrounding cards.
+        .frame(maxWidth: .infinity)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
     }
 
@@ -336,6 +342,8 @@ struct GameLogsView: View {
                 )
             }
         }
+        // Stretch to parent width — same reasoning as splitsTable.
+        .frame(maxWidth: .infinity)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
     }
 
@@ -495,13 +503,19 @@ private struct MonthGroup: Identifiable {
 
 // MARK: - Splits column widths
 
+// Trimmed so the row's intrinsic width fits inside the page's 16pt
+// padding (≈337pt of usable content area on a 393pt iPhone after
+// accounting for 12pt × 2 internal row padding). Previous values
+// (label 110, g 44, cell 50) summed to 382pt and forced the
+// .ultraThinMaterial card to grow past the parent — visually breaking
+// alignment with the Overview cards.
+//
+// Total intrinsic: 80 + 4 (spacer) + 40 + 44×4 = 300pt
+// Plus 24pt internal padding = 324pt → fits 337pt with slack.
 private enum SplitsLayout {
-    static let label: CGFloat = 110
-    /// Bumped from 36 → 44 so the Custom row's TextField has room to
-    /// sit in the G column without crowding. All rows + header use
-    /// this width, so column alignment stays consistent.
-    static let g:     CGFloat = 44
-    static let cell:  CGFloat = 50
+    static let label: CGFloat = 80
+    static let g:     CGFloat = 40
+    static let cell:  CGFloat = 44
 }
 
 // MARK: - Window snapshot
@@ -602,18 +616,47 @@ private struct WindowSnapshot {
 
 // MARK: - Game table headers and rows
 
+// Column widths for the batting game table. Trimmed from the
+// previous values so the row total + 12pt internal padding fits
+// comfortably inside the parent's 337pt content area on iPhone.
+// Total intrinsic: 48 + 56 + 4 (spacer) + 26 + 24 + 26 + 32 + 26 + 44 = 286pt
+// Plus 24pt internal padding = 310pt → fits 337pt with slack.
+private enum BattingGameColumn {
+    static let date: CGFloat = 48
+    static let opp:  CGFloat = 56
+    static let ab:   CGFloat = 26
+    static let h:    CGFloat = 24
+    static let hr:   CGFloat = 26
+    static let rbi:  CGFloat = 32
+    static let bb:   CGFloat = 26
+    static let avg:  CGFloat = 44
+}
+
+// Same intent for pitching. Total intrinsic: 48+56+4+36+24+26+26+26+44 = 290pt
+// Plus 24pt padding = 314pt → fits 337pt.
+private enum PitchingGameColumn {
+    static let date: CGFloat = 48
+    static let opp:  CGFloat = 56
+    static let ip:   CGFloat = 36
+    static let h:    CGFloat = 24
+    static let er:   CGFloat = 26
+    static let bb:   CGFloat = 26
+    static let so:   CGFloat = 26
+    static let era:  CGFloat = 44
+}
+
 private struct BattingGameTableHeader: View {
     var body: some View {
         HStack(spacing: 0) {
-            Text("Date").frame(width: 52, alignment: .leading)
-            Text("Opp").frame(width: 64, alignment: .leading)
+            Text("Date").frame(width: BattingGameColumn.date, alignment: .leading)
+            Text("Opp").frame(width: BattingGameColumn.opp, alignment: .leading)
             Spacer(minLength: 4)
-            Text("AB").frame(width: 30, alignment: .trailing)
-            Text("H").frame(width: 28, alignment: .trailing)
-            Text("HR").frame(width: 30, alignment: .trailing)
-            Text("RBI").frame(width: 36, alignment: .trailing)
-            Text("BB").frame(width: 30, alignment: .trailing)
-            Text("AVG").frame(width: 50, alignment: .trailing)
+            Text("AB").frame(width: BattingGameColumn.ab, alignment: .trailing)
+            Text("H").frame(width: BattingGameColumn.h, alignment: .trailing)
+            Text("HR").frame(width: BattingGameColumn.hr, alignment: .trailing)
+            Text("RBI").frame(width: BattingGameColumn.rbi, alignment: .trailing)
+            Text("BB").frame(width: BattingGameColumn.bb, alignment: .trailing)
+            Text("AVG").frame(width: BattingGameColumn.avg, alignment: .trailing)
         }
         .font(.caption.weight(.semibold))
         .foregroundStyle(.secondary)
@@ -628,17 +671,17 @@ private struct BattingGameRow: View {
     var body: some View {
         HStack(spacing: 0) {
             Text(formatGameDate(game.game_date))
-                .frame(width: 52, alignment: .leading)
+                .frame(width: BattingGameColumn.date, alignment: .leading)
                 .monospacedDigit()
             opponentLabel(game)
-                .frame(width: 64, alignment: .leading)
+                .frame(width: BattingGameColumn.opp, alignment: .leading)
             Spacer(minLength: 4)
-            Text(formatInt(game.AB)).frame(width: 30, alignment: .trailing).monospacedDigit()
-            Text(formatInt(game.H)).frame(width: 28, alignment: .trailing).monospacedDigit()
-            Text(formatInt(game.HR)).frame(width: 30, alignment: .trailing).monospacedDigit()
-            Text(formatInt(game.RBI)).frame(width: 36, alignment: .trailing).monospacedDigit()
-            Text(formatInt(game.BB)).frame(width: 30, alignment: .trailing).monospacedDigit()
-            Text(format3(perGameAVG(game))).frame(width: 50, alignment: .trailing).monospacedDigit()
+            Text(formatInt(game.AB)).frame(width: BattingGameColumn.ab, alignment: .trailing).monospacedDigit()
+            Text(formatInt(game.H)).frame(width: BattingGameColumn.h, alignment: .trailing).monospacedDigit()
+            Text(formatInt(game.HR)).frame(width: BattingGameColumn.hr, alignment: .trailing).monospacedDigit()
+            Text(formatInt(game.RBI)).frame(width: BattingGameColumn.rbi, alignment: .trailing).monospacedDigit()
+            Text(formatInt(game.BB)).frame(width: BattingGameColumn.bb, alignment: .trailing).monospacedDigit()
+            Text(format3(perGameAVG(game))).frame(width: BattingGameColumn.avg, alignment: .trailing).monospacedDigit()
         }
         .font(.caption)
         .padding(.horizontal, 12)
@@ -657,18 +700,18 @@ private struct BattingMonthTotalsRow: View {
     var body: some View {
         HStack(spacing: 0) {
             Text(monthShortName(group.month))
-                .frame(width: 52, alignment: .leading)
+                .frame(width: BattingGameColumn.date, alignment: .leading)
             Text("")
-                .frame(width: 64, alignment: .leading)
+                .frame(width: BattingGameColumn.opp, alignment: .leading)
             Spacer(minLength: 4)
-            Text(formatInt(group.monthlyTotals.ab)).frame(width: 30, alignment: .trailing).monospacedDigit()
-            Text(formatInt(group.monthlyTotals.h)).frame(width: 28, alignment: .trailing).monospacedDigit()
-            Text(formatInt(group.monthlyTotals.hr)).frame(width: 30, alignment: .trailing).monospacedDigit()
-            Text(formatInt(group.monthlyTotals.rbi)).frame(width: 36, alignment: .trailing).monospacedDigit()
-            Text(formatInt(group.monthlyTotals.bb)).frame(width: 30, alignment: .trailing).monospacedDigit()
+            Text(formatInt(group.monthlyTotals.ab)).frame(width: BattingGameColumn.ab, alignment: .trailing).monospacedDigit()
+            Text(formatInt(group.monthlyTotals.h)).frame(width: BattingGameColumn.h, alignment: .trailing).monospacedDigit()
+            Text(formatInt(group.monthlyTotals.hr)).frame(width: BattingGameColumn.hr, alignment: .trailing).monospacedDigit()
+            Text(formatInt(group.monthlyTotals.rbi)).frame(width: BattingGameColumn.rbi, alignment: .trailing).monospacedDigit()
+            Text(formatInt(group.monthlyTotals.bb)).frame(width: BattingGameColumn.bb, alignment: .trailing).monospacedDigit()
             // Season AVG through end of this month (cumulative).
             Text(format3(group.throughMonth.avg))
-                .frame(width: 50, alignment: .trailing)
+                .frame(width: BattingGameColumn.avg, alignment: .trailing)
                 .monospacedDigit()
         }
         .font(.caption.weight(.semibold))
@@ -684,15 +727,15 @@ private struct BattingMonthTotalsRow: View {
 private struct PitchingGameTableHeader: View {
     var body: some View {
         HStack(spacing: 0) {
-            Text("Date").frame(width: 52, alignment: .leading)
-            Text("Opp").frame(width: 64, alignment: .leading)
+            Text("Date").frame(width: PitchingGameColumn.date, alignment: .leading)
+            Text("Opp").frame(width: PitchingGameColumn.opp, alignment: .leading)
             Spacer(minLength: 4)
-            Text("IP").frame(width: 38, alignment: .trailing)
-            Text("H").frame(width: 28, alignment: .trailing)
-            Text("ER").frame(width: 30, alignment: .trailing)
-            Text("BB").frame(width: 30, alignment: .trailing)
-            Text("SO").frame(width: 30, alignment: .trailing)
-            Text("ERA").frame(width: 50, alignment: .trailing)
+            Text("IP").frame(width: PitchingGameColumn.ip, alignment: .trailing)
+            Text("H").frame(width: PitchingGameColumn.h, alignment: .trailing)
+            Text("ER").frame(width: PitchingGameColumn.er, alignment: .trailing)
+            Text("BB").frame(width: PitchingGameColumn.bb, alignment: .trailing)
+            Text("SO").frame(width: PitchingGameColumn.so, alignment: .trailing)
+            Text("ERA").frame(width: PitchingGameColumn.era, alignment: .trailing)
         }
         .font(.caption.weight(.semibold))
         .foregroundStyle(.secondary)
@@ -707,17 +750,17 @@ private struct PitchingGameRow: View {
     var body: some View {
         HStack(spacing: 0) {
             Text(formatGameDate(game.game_date))
-                .frame(width: 52, alignment: .leading)
+                .frame(width: PitchingGameColumn.date, alignment: .leading)
                 .monospacedDigit()
             opponentLabel(game)
-                .frame(width: 64, alignment: .leading)
+                .frame(width: PitchingGameColumn.opp, alignment: .leading)
             Spacer(minLength: 4)
-            Text(formatIP(game.IP)).frame(width: 38, alignment: .trailing).monospacedDigit()
-            Text(formatInt(game.H)).frame(width: 28, alignment: .trailing).monospacedDigit()
-            Text(formatInt(game.ER)).frame(width: 30, alignment: .trailing).monospacedDigit()
-            Text(formatInt(game.BB)).frame(width: 30, alignment: .trailing).monospacedDigit()
-            Text(formatInt(game.SO)).frame(width: 30, alignment: .trailing).monospacedDigit()
-            Text(format2(perGameERA(game))).frame(width: 50, alignment: .trailing).monospacedDigit()
+            Text(formatIP(game.IP)).frame(width: PitchingGameColumn.ip, alignment: .trailing).monospacedDigit()
+            Text(formatInt(game.H)).frame(width: PitchingGameColumn.h, alignment: .trailing).monospacedDigit()
+            Text(formatInt(game.ER)).frame(width: PitchingGameColumn.er, alignment: .trailing).monospacedDigit()
+            Text(formatInt(game.BB)).frame(width: PitchingGameColumn.bb, alignment: .trailing).monospacedDigit()
+            Text(formatInt(game.SO)).frame(width: PitchingGameColumn.so, alignment: .trailing).monospacedDigit()
+            Text(format2(perGameERA(game))).frame(width: PitchingGameColumn.era, alignment: .trailing).monospacedDigit()
         }
         .font(.caption)
         .padding(.horizontal, 12)
@@ -736,18 +779,18 @@ private struct PitchingMonthTotalsRow: View {
     var body: some View {
         HStack(spacing: 0) {
             Text(monthShortName(group.month))
-                .frame(width: 52, alignment: .leading)
+                .frame(width: PitchingGameColumn.date, alignment: .leading)
             Text("")
-                .frame(width: 64, alignment: .leading)
+                .frame(width: PitchingGameColumn.opp, alignment: .leading)
             Spacer(minLength: 4)
-            Text(formatIP(group.monthlyTotals.ip)).frame(width: 38, alignment: .trailing).monospacedDigit()
-            Text(formatInt(group.monthlyTotals.h)).frame(width: 28, alignment: .trailing).monospacedDigit()
-            Text(formatInt(group.monthlyTotals.er)).frame(width: 30, alignment: .trailing).monospacedDigit()
-            Text(formatInt(group.monthlyTotals.bb)).frame(width: 30, alignment: .trailing).monospacedDigit()
-            Text(formatInt(group.monthlyTotals.so)).frame(width: 30, alignment: .trailing).monospacedDigit()
+            Text(formatIP(group.monthlyTotals.ip)).frame(width: PitchingGameColumn.ip, alignment: .trailing).monospacedDigit()
+            Text(formatInt(group.monthlyTotals.h)).frame(width: PitchingGameColumn.h, alignment: .trailing).monospacedDigit()
+            Text(formatInt(group.monthlyTotals.er)).frame(width: PitchingGameColumn.er, alignment: .trailing).monospacedDigit()
+            Text(formatInt(group.monthlyTotals.bb)).frame(width: PitchingGameColumn.bb, alignment: .trailing).monospacedDigit()
+            Text(formatInt(group.monthlyTotals.so)).frame(width: PitchingGameColumn.so, alignment: .trailing).monospacedDigit()
             // Season ERA through end of this month (cumulative).
             Text(format2(group.throughMonth.era))
-                .frame(width: 50, alignment: .trailing)
+                .frame(width: PitchingGameColumn.era, alignment: .trailing)
                 .monospacedDigit()
         }
         .font(.caption.weight(.semibold))
