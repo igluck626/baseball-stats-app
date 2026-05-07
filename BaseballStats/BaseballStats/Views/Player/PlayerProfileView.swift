@@ -861,37 +861,38 @@ private struct StatBlock: View {
 // (4,000+ hits, 1,500+ games) commafy via formatCount and use
 // minimumScaleFactor in the totals row to shrink to fit.
 private enum BattingCareerColumn {
-    static let year:    CGFloat = 44
-    static let age:     CGFloat = 32
+    static let year:    CGFloat = 36
+    static let age:     CGFloat = 28
     /// Visual gap between the right-aligned Age cell and the
     /// left-aligned Team cell so values don't run together.
-    static let ageTeamGap: CGFloat = 10
+    static let ageTeamGap: CGFloat = 6
     static let team:    CGFloat = 36
     static let war:     CGFloat = 36
     static let g:       CGFloat = 30
-    static let pa:      CGFloat = 32
-    static let ab:      CGFloat = 32
-    static let r:       CGFloat = 28
-    static let h:       CGFloat = 28
+    // PA / AB widened — career totals can exceed 1,000 with commas.
+    static let pa:      CGFloat = 36
+    static let ab:      CGFloat = 36
+    static let r:       CGFloat = 30
+    static let h:       CGFloat = 30
     static let doubles: CGFloat = 28
-    static let triples: CGFloat = 28
+    static let triples: CGFloat = 26
     static let hr:      CGFloat = 28
     static let rbi:     CGFloat = 32
     static let sb:      CGFloat = 28
-    static let cs:      CGFloat = 28
-    static let bb:      CGFloat = 28
+    static let cs:      CGFloat = 26
+    static let bb:      CGFloat = 30
     static let so:      CGFloat = 32
     static let ba:      CGFloat = 36
     static let obp:     CGFloat = 36
     static let slg:     CGFloat = 36
     static let ops:     CGFloat = 40
     static let opsPlus: CGFloat = 36
-    static let tb:      CGFloat = 32
-    static let gidp:    CGFloat = 36
-    static let hbp:     CGFloat = 32
-    static let sh:      CGFloat = 28
-    static let sf:      CGFloat = 28
-    static let ibb:     CGFloat = 32
+    static let tb:      CGFloat = 34
+    static let gidp:    CGFloat = 32
+    static let hbp:     CGFloat = 28
+    static let sh:      CGFloat = 26
+    static let sf:      CGFloat = 26
+    static let ibb:     CGFloat = 30
 }
 
 private struct BattingCareerHeaderRow: View {
@@ -1054,8 +1055,10 @@ private struct BattingCareerTotalsRow: View {
             Text(formatCount(agg.ibb)) .frame(width: BattingCareerColumn.ibb,     alignment: .trailing).monospacedDigit()
         }
         // Slightly smaller font + tighter scale factor than the data
-        // rows, so 4-digit totals like "4256" or "2558" still fit.
-        .font(.system(size: 10, weight: .semibold))
+        // rows, so 4-digit comma'd totals like "12,228" still fit
+        // narrow columns. Half-point reduction is just enough to
+        // accommodate the comma without further width changes.
+        .font(.system(size: 9.5, weight: .semibold))
         .lineLimit(1)
         .minimumScaleFactor(0.6)
         .padding(.horizontal, 12)
