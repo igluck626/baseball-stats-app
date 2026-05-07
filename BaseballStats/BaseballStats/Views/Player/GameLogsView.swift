@@ -145,9 +145,9 @@ struct GameLogsView: View {
                 Text("OPS").frame(width: SplitsLayout.cell, alignment: .trailing)
             }
         }
-        .font(.caption.weight(.bold))
+        .font(.caption.weight(.semibold))
         .foregroundStyle(.secondary)
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 12)
         .padding(.vertical, 10)
     }
 
@@ -162,8 +162,8 @@ struct GameLogsView: View {
             Spacer(minLength: 4)
             statCells(snapshot)
         }
-        .font(.subheadline)
-        .padding(.horizontal, 14)
+        .font(.caption)
+        .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .background(isSelected ? Color.accentColor.opacity(0.18) : Color.clear)
         .contentShape(Rectangle())
@@ -200,8 +200,8 @@ struct GameLogsView: View {
             customGCell(isSelected: isSelected)
             statCellsExcludingG(snapshot)
         }
-        .font(.subheadline)
-        .padding(.horizontal, 14)
+        .font(.caption)
+        .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(isSelected ? Color.accentColor.opacity(0.18) : Color.clear)
         .contentShape(Rectangle())
@@ -222,6 +222,10 @@ struct GameLogsView: View {
             .keyboardType(.numberPad)
             .multilineTextAlignment(.trailing)
             .textFieldStyle(.plain)
+            // Pin the field to .subheadline so the parent's .caption
+            // doesn't shrink the input area below comfortable tap size
+            // while still keeping the row at the table's font cadence.
+            .font(.subheadline)
             .monospacedDigit()
             .lineLimit(1)
             .padding(.horizontal, 6)
@@ -611,7 +615,7 @@ private struct BattingGameTableHeader: View {
             Text("BB").frame(width: 30, alignment: .trailing)
             Text("AVG").frame(width: 50, alignment: .trailing)
         }
-        .font(.caption.weight(.bold))
+        .font(.caption.weight(.semibold))
         .foregroundStyle(.secondary)
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -690,7 +694,7 @@ private struct PitchingGameTableHeader: View {
             Text("SO").frame(width: 30, alignment: .trailing)
             Text("ERA").frame(width: 50, alignment: .trailing)
         }
-        .font(.caption.weight(.bold))
+        .font(.caption.weight(.semibold))
         .foregroundStyle(.secondary)
         .padding(.horizontal, 12)
         .padding(.vertical, 8)

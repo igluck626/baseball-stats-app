@@ -48,6 +48,12 @@ struct PlayerProfileView: View {
     }
 
     var body: some View {
+        // .id(selectedTab) on the ScrollView forces SwiftUI to create a
+        // fresh ScrollView instance every time the tab changes. The
+        // new instance always starts at scroll offset 0, so the header
+        // is fully visible at its natural size and position on every
+        // tab. Simpler and more reliable than a ScrollViewReader +
+        // scrollTo dance, which depended on layout timing.
         ScrollView {
             VStack(spacing: 0) {
                 header
@@ -63,6 +69,7 @@ struct PlayerProfileView: View {
                 .padding(.bottom, 32)
             }
         }
+        .id(selectedTab)
         .ignoresSafeArea(edges: .top)
         .background(Color(.systemBackground))
         .navigationBarTitleDisplayMode(.inline)
@@ -74,11 +81,25 @@ struct PlayerProfileView: View {
 
     // MARK: - Header
 
+    /// Hero header height. Pinned at 320pt — the white content panel
+    /// below always starts at exactly this Y offset on every tab.
+    private static let headerHeight: CGFloat = 320
+
     private var header: some View {
         ZStack(alignment: .bottomLeading) {
+            // Pin the AsyncImage to an explicit width+height BEFORE
+            // .clipped() so the scaledToFill crop area is identical
+            // every time the view re-renders. Without an explicit width
+            // the frame can resolve differently depending on
+            // surrounding layout (parent ScrollView content size,
+            // sibling content height, etc.), changing how much of the
+            // image gets cropped — which read as the header "zooming"
+            // between tabs.
             headshot
-                .frame(height: 360)
-                .frame(maxWidth: .infinity)
+                .frame(
+                    width: UIScreen.main.bounds.width,
+                    height: Self.headerHeight
+                )
                 .clipped()
 
             // Fade from clear in the upper half down to near-black at the
@@ -88,7 +109,10 @@ struct PlayerProfileView: View {
                 startPoint: UnitPoint(x: 0.5, y: 0.45),
                 endPoint:   .bottom
             )
-            .frame(height: 360)
+            .frame(
+                width: UIScreen.main.bounds.width,
+                height: Self.headerHeight
+            )
             .allowsHitTesting(false)
 
             VStack(alignment: .leading, spacing: 6) {
@@ -249,6 +273,10 @@ struct PlayerProfileView: View {
             }
         }
         .pickerStyle(.segmented)
+        // Breathing room between the segmented control and the first
+        // card below it. Stacks with the parent VStack(spacing: 16)
+        // for a total ~24pt gap.
+        .padding(.bottom, 8)
         .onAppear {
             if !availableTabs.contains(selectedTab) {
                 selectedTab = availableTabs.first ?? .career
@@ -286,7 +314,10 @@ struct PlayerProfileView: View {
             case .gameLogs: gameLogsTab
             }
         }
-        .animation(.easeInOut(duration: 0.18), value: selectedTab)
+        // No animation on selectedTab — the .id(selectedTab) on the
+        // ScrollView swaps the entire instance, no height
+        // interpolation needed. Role toggles stay animated since they
+        // change content within the same tab.
         .animation(.easeInOut(duration: 0.18), value: effectiveRole)
     }
 
@@ -815,9 +846,9 @@ private struct BattingCareerHeaderRow: View {
             Text("RBI").frame(width: BattingCareerColumn.rbi, alignment: .trailing)
             Text("WAR").frame(width: BattingCareerColumn.war, alignment: .trailing)
         }
-        .font(.caption.weight(.bold))
+        .font(.caption.weight(.semibold))
         .foregroundStyle(.secondary)
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 12)
         .padding(.vertical, 10)
     }
 }
@@ -842,8 +873,8 @@ private struct BattingCareerSeasonRow: View {
             Text(formatInt(season.RBI)).frame(width: BattingCareerColumn.rbi, alignment: .trailing).monospacedDigit()
             Text(formatWAR(season.WAR)).frame(width: BattingCareerColumn.war, alignment: .trailing).monospacedDigit()
         }
-        .font(.subheadline)
-        .padding(.horizontal, 14)
+        .font(.caption)
+        .padding(.horizontal, 12)
         .padding(.vertical, 8)
     }
 }
@@ -872,8 +903,8 @@ private struct BattingCareerTotalsRow: View {
                 .frame(width: BattingCareerColumn.war, alignment: .trailing)
                 .monospacedDigit().lineLimit(1)
         }
-        .font(.subheadline.weight(.semibold))
-        .padding(.horizontal, 14)
+        .font(.caption.weight(.semibold))
+        .padding(.horizontal, 12)
         .padding(.vertical, 12)
     }
 }
@@ -902,9 +933,9 @@ private struct PitchingCareerHeaderRow: View {
             Text("SO").frame(width: PitchingCareerColumn.so, alignment: .trailing)
             Text("WAR").frame(width: PitchingCareerColumn.war, alignment: .trailing)
         }
-        .font(.caption.weight(.bold))
+        .font(.caption.weight(.semibold))
         .foregroundStyle(.secondary)
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 12)
         .padding(.vertical, 10)
     }
 }
@@ -933,8 +964,8 @@ private struct PitchingCareerSeasonRow: View {
                 .frame(width: PitchingCareerColumn.war, alignment: .trailing)
                 .monospacedDigit()
         }
-        .font(.subheadline)
-        .padding(.horizontal, 14)
+        .font(.caption)
+        .padding(.horizontal, 12)
         .padding(.vertical, 8)
     }
 }
@@ -960,8 +991,8 @@ private struct PitchingCareerTotalsRow: View {
                 .frame(width: PitchingCareerColumn.war, alignment: .trailing)
                 .monospacedDigit().lineLimit(1)
         }
-        .font(.subheadline.weight(.semibold))
-        .padding(.horizontal, 14)
+        .font(.caption.weight(.semibold))
+        .padding(.horizontal, 12)
         .padding(.vertical, 12)
     }
 }
