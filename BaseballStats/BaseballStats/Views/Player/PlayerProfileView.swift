@@ -863,6 +863,9 @@ private struct StatBlock: View {
 private enum BattingCareerColumn {
     static let year:    CGFloat = 44
     static let age:     CGFloat = 32
+    /// Visual gap between the right-aligned Age cell and the
+    /// left-aligned Team cell so values don't run together.
+    static let ageTeamGap: CGFloat = 10
     static let team:    CGFloat = 36
     static let war:     CGFloat = 36
     static let g:       CGFloat = 30
@@ -896,6 +899,10 @@ private struct BattingCareerHeaderRow: View {
         HStack(spacing: 0) {
             Text("Year").frame(width: BattingCareerColumn.year,    alignment: .leading)
             Text("Age") .frame(width: BattingCareerColumn.age,     alignment: .trailing)
+            // 4pt gap so the right-aligned Age cell doesn't touch the
+            // left-aligned Team cell (otherwise "34LAA" reads as one
+            // value).
+            Color.clear.frame(width: BattingCareerColumn.ageTeamGap)
             Text("Team").frame(width: BattingCareerColumn.team,    alignment: .leading)
             Text("WAR") .frame(width: BattingCareerColumn.war,     alignment: .trailing)
             Text("G")   .frame(width: BattingCareerColumn.g,       alignment: .trailing)
@@ -950,6 +957,9 @@ private struct BattingCareerSeasonRow: View {
                            birthDay: birthDay))
                 .frame(width: BattingCareerColumn.age, alignment: .trailing)
                 .monospacedDigit()
+            // Spacer between Age (right-aligned) and Team (left-aligned)
+            // so the values don't visually merge.
+            Color.clear.frame(width: BattingCareerColumn.ageTeamGap)
             // Raw season.team — Lahman codes for historical seasons,
             // possibly a city name from the nightly bwar path for the
             // current year. Truncate if it doesn't fit 36pt.
@@ -960,19 +970,22 @@ private struct BattingCareerSeasonRow: View {
             Text(formatWAR(season.WAR))
                 .frame(width: BattingCareerColumn.war, alignment: .trailing)
                 .monospacedDigit()
-            Text(formatInt(season.G))      .frame(width: BattingCareerColumn.g,       alignment: .trailing).monospacedDigit()
-            Text(formatInt(season.PA))     .frame(width: BattingCareerColumn.pa,      alignment: .trailing).monospacedDigit()
-            Text(formatInt(season.AB))     .frame(width: BattingCareerColumn.ab,      alignment: .trailing).monospacedDigit()
-            Text(formatInt(season.R))      .frame(width: BattingCareerColumn.r,       alignment: .trailing).monospacedDigit()
-            Text(formatInt(season.H))      .frame(width: BattingCareerColumn.h,       alignment: .trailing).monospacedDigit()
-            Text(formatInt(season.doubles)).frame(width: BattingCareerColumn.doubles, alignment: .trailing).monospacedDigit()
-            Text(formatInt(season.triples)).frame(width: BattingCareerColumn.triples, alignment: .trailing).monospacedDigit()
-            Text(formatInt(season.HR))     .frame(width: BattingCareerColumn.hr,      alignment: .trailing).monospacedDigit()
-            Text(formatInt(season.RBI))    .frame(width: BattingCareerColumn.rbi,     alignment: .trailing).monospacedDigit()
-            Text(formatInt(season.SB))     .frame(width: BattingCareerColumn.sb,      alignment: .trailing).monospacedDigit()
-            Text(formatInt(season.CS))     .frame(width: BattingCareerColumn.cs,      alignment: .trailing).monospacedDigit()
-            Text(formatInt(season.BB))     .frame(width: BattingCareerColumn.bb,      alignment: .trailing).monospacedDigit()
-            Text(formatInt(season.SO))     .frame(width: BattingCareerColumn.so,      alignment: .trailing).monospacedDigit()
+            // formatCount adds thousands separators when values hit
+            // 1,000+ (rare per-season but happens for old PA/AB and
+            // future-proofs the layout).
+            Text(formatCount(season.G))      .frame(width: BattingCareerColumn.g,       alignment: .trailing).monospacedDigit()
+            Text(formatCount(season.PA))     .frame(width: BattingCareerColumn.pa,      alignment: .trailing).monospacedDigit()
+            Text(formatCount(season.AB))     .frame(width: BattingCareerColumn.ab,      alignment: .trailing).monospacedDigit()
+            Text(formatCount(season.R))      .frame(width: BattingCareerColumn.r,       alignment: .trailing).monospacedDigit()
+            Text(formatCount(season.H))      .frame(width: BattingCareerColumn.h,       alignment: .trailing).monospacedDigit()
+            Text(formatCount(season.doubles)).frame(width: BattingCareerColumn.doubles, alignment: .trailing).monospacedDigit()
+            Text(formatCount(season.triples)).frame(width: BattingCareerColumn.triples, alignment: .trailing).monospacedDigit()
+            Text(formatCount(season.HR))     .frame(width: BattingCareerColumn.hr,      alignment: .trailing).monospacedDigit()
+            Text(formatCount(season.RBI))    .frame(width: BattingCareerColumn.rbi,     alignment: .trailing).monospacedDigit()
+            Text(formatCount(season.SB))     .frame(width: BattingCareerColumn.sb,      alignment: .trailing).monospacedDigit()
+            Text(formatCount(season.CS))     .frame(width: BattingCareerColumn.cs,      alignment: .trailing).monospacedDigit()
+            Text(formatCount(season.BB))     .frame(width: BattingCareerColumn.bb,      alignment: .trailing).monospacedDigit()
+            Text(formatCount(season.SO))     .frame(width: BattingCareerColumn.so,      alignment: .trailing).monospacedDigit()
             Text(format3(season.BA))       .frame(width: BattingCareerColumn.ba,      alignment: .trailing).monospacedDigit()
             Text(format3(season.OBP))      .frame(width: BattingCareerColumn.obp,     alignment: .trailing).monospacedDigit()
             Text(format3(season.SLG))      .frame(width: BattingCareerColumn.slg,     alignment: .trailing).monospacedDigit()
@@ -980,12 +993,12 @@ private struct BattingCareerSeasonRow: View {
             Text(formatRoundedInt(season.OPS_plus))
                 .frame(width: BattingCareerColumn.opsPlus, alignment: .trailing).monospacedDigit()
             // TB derived per-season — backend doesn't ship it.
-            Text(formatInt(seasonTB(season))).frame(width: BattingCareerColumn.tb,    alignment: .trailing).monospacedDigit()
-            Text(formatInt(season.GIDP))   .frame(width: BattingCareerColumn.gidp,    alignment: .trailing).monospacedDigit()
-            Text(formatInt(season.HBP))    .frame(width: BattingCareerColumn.hbp,     alignment: .trailing).monospacedDigit()
-            Text(formatInt(season.SH))     .frame(width: BattingCareerColumn.sh,      alignment: .trailing).monospacedDigit()
-            Text(formatInt(season.SF))     .frame(width: BattingCareerColumn.sf,      alignment: .trailing).monospacedDigit()
-            Text(formatInt(season.IBB))    .frame(width: BattingCareerColumn.ibb,     alignment: .trailing).monospacedDigit()
+            Text(formatCount(seasonTB(season))).frame(width: BattingCareerColumn.tb,    alignment: .trailing).monospacedDigit()
+            Text(formatCount(season.GIDP))   .frame(width: BattingCareerColumn.gidp,    alignment: .trailing).monospacedDigit()
+            Text(formatCount(season.HBP))    .frame(width: BattingCareerColumn.hbp,     alignment: .trailing).monospacedDigit()
+            Text(formatCount(season.SH))     .frame(width: BattingCareerColumn.sh,      alignment: .trailing).monospacedDigit()
+            Text(formatCount(season.SF))     .frame(width: BattingCareerColumn.sf,      alignment: .trailing).monospacedDigit()
+            Text(formatCount(season.IBB))    .frame(width: BattingCareerColumn.ibb,     alignment: .trailing).monospacedDigit()
         }
         .font(.system(size: 11))
         .padding(.horizontal, 12)
@@ -1000,12 +1013,19 @@ private struct BattingCareerTotalsRow: View {
     var body: some View {
         HStack(spacing: 0) {
             Text("Career").frame(width: BattingCareerColumn.year, alignment: .leading)
-            // Age + Team blank for the totals row.
+            // Age + Team blank for the totals row. Same spacer between
+            // them as the header / data rows so column boundaries line up.
             Color.clear.frame(width: BattingCareerColumn.age)
+            Color.clear.frame(width: BattingCareerColumn.ageTeamGap)
             Color.clear.frame(width: BattingCareerColumn.team)
             Text(formatWAR(agg.war))
                 .frame(width: BattingCareerColumn.war, alignment: .trailing)
                 .monospacedDigit()
+            // formatCount adds thousands separators ("12,228" instead
+            // of "12228") — readability matters more than width here
+            // since the user is scrolling horizontally already, and
+            // the smaller font + minimumScaleFactor below handle any
+            // residual overflow.
             Text(formatCount(agg.g))   .frame(width: BattingCareerColumn.g,       alignment: .trailing).monospacedDigit()
             Text(formatCount(agg.pa))  .frame(width: BattingCareerColumn.pa,      alignment: .trailing).monospacedDigit()
             Text(formatCount(agg.ab))  .frame(width: BattingCareerColumn.ab,      alignment: .trailing).monospacedDigit()
@@ -1033,12 +1053,11 @@ private struct BattingCareerTotalsRow: View {
             Text(formatCount(agg.sf))  .frame(width: BattingCareerColumn.sf,      alignment: .trailing).monospacedDigit()
             Text(formatCount(agg.ibb)) .frame(width: BattingCareerColumn.ibb,     alignment: .trailing).monospacedDigit()
         }
-        .font(.system(size: 11, weight: .semibold))
-        // Career counting stats can hit 4-5 digits + commas (~30pt) and
-        // exceed the per-season column widths; lineLimit + scale-factor
-        // keeps every cell on one line.
+        // Slightly smaller font + tighter scale factor than the data
+        // rows, so 4-digit totals like "4256" or "2558" still fit.
+        .font(.system(size: 10, weight: .semibold))
         .lineLimit(1)
-        .minimumScaleFactor(0.7)
+        .minimumScaleFactor(0.6)
         .padding(.horizontal, 12)
         .frame(height: 28)
         .background(Color(.systemGray5).opacity(0.7))
