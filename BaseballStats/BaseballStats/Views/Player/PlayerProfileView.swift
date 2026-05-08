@@ -896,6 +896,35 @@ private let lahmanToDisplay: [String: String] = [
     "Cincinnati Reds":      "CIN",
     "St. Louis Cardinals":  "STL",
     "Pittsburgh Pirates":   "PIT",
+    // City-only values — emitted by the nightly bwar path when bref
+    // data isn't available (`_TEAM_DISPLAY` ships just the city).
+    // Single-team cities map directly. Two-team cities ("Los Angeles",
+    // "New York", "Chicago") are intentionally NOT in this dict;
+    // displayTeamCode handles them via the league switch instead.
+    "Texas":         "TEX",
+    "Houston":       "HOU",
+    "Seattle":       "SEA",
+    "Boston":        "BOS",
+    "Detroit":       "DET",
+    "Minnesota":     "MIN",
+    "Cleveland":     "CLE",
+    "Baltimore":     "BAL",
+    "Oakland":       "OAK",
+    "Toronto":       "TOR",
+    "Tampa Bay":     "TB",
+    "Kansas City":   "KC",
+    "Atlanta":       "ATL",
+    "Philadelphia":  "PHI",
+    "Milwaukee":     "MIL",
+    "Cincinnati":    "CIN",
+    "Pittsburgh":    "PIT",
+    "Colorado":      "COL",
+    "Arizona":       "ARI",
+    "Miami":         "MIA",
+    "Washington":    "WSH",
+    "San Francisco": "SF",
+    "San Diego":     "SD",
+    "St. Louis":     "STL",
 ]
 
 /// Resolve any of the team-column shapes (Lahman code, bref code,
@@ -1258,7 +1287,10 @@ private struct PitchingCareerSeasonRow: View {
                 .monospacedDigit()
                 .padding(.horizontal, 2)
             Color.clear.frame(width: PitchingCareerColumn.ageTeamGap)
-            Text(season.team ?? "—")
+            // Same team-code resolver as the batting table — handles
+            // Lahman codes, bref codes, full team names, and ambiguous
+            // city-only values via the league field.
+            Text(displayTeamCode(season.team, league: season.league))
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .frame(width: PitchingCareerColumn.team, alignment: .leading)
