@@ -101,18 +101,22 @@ struct PlayerProfileView: View {
     /// cards below.
     private var header: some View {
         HStack(alignment: .center, spacing: 16) {
+            // Rounded portrait rect (90×110) instead of a circle —
+            // MLB headshots ship with a built-in grey background, so
+            // scaledToFit on a circle exposes that grey as an ugly
+            // rectangular border. scaledToFill on a portrait rect
+            // matches the source aspect ratio: face and hat fill the
+            // frame with no grey background visible.
             AsyncImage(url: player.largeHeadshotURL) { image in
                 image
                     .resizable()
-                    .scaledToFit()
+                    .scaledToFill()
             } placeholder: {
-                Circle().fill(Color.gray.opacity(0.2))
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.gray.opacity(0.15))
             }
-            .frame(width: 120, height: 120)
-            .clipShape(Circle())
-            .overlay(
-                Circle().stroke(Color.gray.opacity(0.2), lineWidth: 1)
-            )
+            .frame(width: 90, height: 110)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(player.name)
