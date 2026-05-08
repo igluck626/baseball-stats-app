@@ -815,7 +815,8 @@ private enum BattingCareerColumn {
     /// Visual gap between the right-aligned Age cell and the
     /// left-aligned Team cell so values don't run together.
     static let ageTeamGap: CGFloat = 8
-    static let team:    CGFloat = 38
+    /// Bumped to 44pt — was 38, which clipped the "Team" header text.
+    static let team:    CGFloat = 44
     static let war:     CGFloat = 40
     static let g:       CGFloat = 32
     static let pa:      CGFloat = 40
@@ -897,9 +898,36 @@ private let lahmanToDisplay: [String: String] = [
     "Pittsburgh Pirates":   "PIT",
 ]
 
+/// Resolve any of the team-column shapes (Lahman code, bref code,
+/// full team name, city-only value) to a 2–3 char display code.
+///
+/// Order of resolution:
+///   1. Empty/nil → "—"
+///   2. Already short (≤3 chars) → dict lookup, then raw passthrough
+///      (lets unknown historical codes like "BSN" still display).
+///   3. Exact match against the full-name dict → mapped code.
+///   4. Substring match — try `raw.contains(key) || key.contains(raw)`.
+///      Catches city-only values like "Los Angeles" matching the
+///      "Los Angeles Angels" / "Los Angeles Dodgers" keys. Note: this
+///      is ambiguous for two-team cities — the first iteration win
+///      depends on dict-iteration order. See caveat in the comments.
+///   5. Last resort: first 3 chars uppercased.
 private func displayTeamCode(_ raw: String?) -> String {
-    guard let raw, !raw.isEmpty else { return "—" }
-    return lahmanToDisplay[raw] ?? raw
+    guard let raw = raw, !raw.isEmpty else { return "—" }
+
+    if raw.count <= 3 {
+        return lahmanToDisplay[raw] ?? raw
+    }
+
+    if let code = lahmanToDisplay[raw] { return code }
+
+    for (key, value) in lahmanToDisplay {
+        if raw.contains(key) || key.contains(raw) {
+            return value
+        }
+    }
+
+    return String(raw.prefix(3)).uppercased()
 }
 
 // MARK: - Frozen section (Year, Age, Team)
@@ -929,7 +957,11 @@ private struct BattingCareerFrozenSeasonRow: View {
     let alternate:  Bool
 
     var body: some View {
-        HStack(spacing: 0) {
+        // TEMPORARY: log the raw team value the backend is sending so
+        // we can match it to a dict key. Remove once team-code mapping
+        // is fully reliable.
+        let _ = print("DEBUG team for \(season.year ?? 0): '\(season.team ?? "nil")'")
+        return HStack(spacing: 0) {
             Text(formatYear(season.year))
                 .frame(width: BattingCareerColumn.year, alignment: .leading)
                 .padding(.horizontal, 2)
