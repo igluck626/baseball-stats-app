@@ -92,9 +92,9 @@ struct PlayerProfileView: View {
 
     // MARK: - Header
 
-    /// Hero header height. Pinned at 260pt — the white content panel
+    /// Hero header height. Pinned at 280pt — the white content panel
     /// below always starts at exactly this Y offset on every tab.
-    private static let headerHeight: CGFloat = 260
+    private static let headerHeight: CGFloat = 280
 
     private var header: some View {
         ZStack(alignment: .bottomLeading) {
@@ -106,10 +106,17 @@ struct PlayerProfileView: View {
             // sibling content height, etc.), changing how much of the
             // image gets cropped — which read as the header "zooming"
             // between tabs.
+            // alignment: .top anchors the scaledToFill image to the
+            // top of the frame, so for typical MLB headshots (which
+            // are framed with the head/hat near the top) we crop the
+            // chest/shoulders off the bottom instead of cropping
+            // equally from both edges. .clipped() trims any overflow
+            // that scaledToFill produces.
             headshot
                 .frame(
                     width: UIScreen.main.bounds.width,
-                    height: Self.headerHeight
+                    height: Self.headerHeight,
+                    alignment: .top
                 )
                 .clipped()
 
