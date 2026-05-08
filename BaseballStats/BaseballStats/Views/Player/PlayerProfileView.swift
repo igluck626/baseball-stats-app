@@ -741,12 +741,15 @@ struct PlayerProfileView: View {
     private func pitchingCareerTable(seasons: [PitcherCareerSeason]) -> some View {
         let sorted = seasons.sorted { ($0.year ?? 0) > ($1.year ?? 0) }
         let agg = PitchingCareerAgg.compute(seasons: seasons)
-        return ScrollView(.horizontal, showsIndicators: false) {
+        return HStack(spacing: 0) {
+            // Frozen section — Year, Age, Team. Matches the batting
+            // table's split-pane structure: stays put while WAR/W/L/…
+            // scroll horizontally to the right.
             VStack(spacing: 0) {
-                PitchingCareerHeaderRow()
+                PitchingCareerFrozenHeader()
                 Divider()
                 ForEach(Array(sorted.enumerated()), id: \.offset) { index, season in
-                    PitchingCareerSeasonRow(
+                    PitchingCareerFrozenSeasonRow(
                         season: season,
                         birthYear:  player.birth_year,
                         birthMonth: player.birth_month,
@@ -758,7 +761,29 @@ struct PlayerProfileView: View {
                     }
                 }
                 Divider()
-                PitchingCareerTotalsRow(agg: agg)
+                PitchingCareerFrozenTotalsRow()
+            }
+            .background(.ultraThinMaterial)
+            .shadow(color: .black.opacity(0.08), radius: 4, x: 2, y: 0)
+            .zIndex(1)
+
+            // Scrollable section — WAR through SO/BB (31 columns).
+            ScrollView(.horizontal, showsIndicators: false) {
+                VStack(spacing: 0) {
+                    PitchingCareerScrollableHeader()
+                    Divider()
+                    ForEach(Array(sorted.enumerated()), id: \.offset) { index, season in
+                        PitchingCareerScrollableSeasonRow(
+                            season: season,
+                            alternate: !index.isMultiple(of: 2)
+                        )
+                        if index != sorted.indices.last {
+                            Divider().opacity(0.4)
+                        }
+                    }
+                    Divider()
+                    PitchingCareerScrollableTotalsRow(agg: agg)
+                }
             }
         }
         .frame(maxWidth: .infinity)
@@ -1187,7 +1212,9 @@ private enum PitchingCareerColumn {
     static let age:        CGFloat = 26
     /// Visual gap between right-aligned Age and left-aligned Team.
     static let ageTeamGap: CGFloat = 8
-    static let team:       CGFloat = 38
+    /// Bumped to 44pt — was 38, which clipped the "Team" header text.
+    /// Matches the batting career table's frozen-section width.
+    static let team:       CGFloat = 44
     static let war:        CGFloat = 38
     static let w:          CGFloat = 26
     static let l:          CGFloat = 26
@@ -1221,13 +1248,82 @@ private enum PitchingCareerColumn {
     static let soBB:       CGFloat = 36
 }
 
-private struct PitchingCareerHeaderRow: View {
+// MARK: - Frozen section (Year, Age, Team)
+
+private struct PitchingCareerFrozenHeader: View {
     var body: some View {
         HStack(spacing: 0) {
-            Text("Year")  .frame(width: PitchingCareerColumn.year,    alignment: .leading) .padding(.horizontal, 2)
-            Text("Age")   .frame(width: PitchingCareerColumn.age,     alignment: .trailing).padding(.horizontal, 2)
+            Text("Year").frame(width: PitchingCareerColumn.year,    alignment: .leading) .padding(.horizontal, 2)
+            Text("Age") .frame(width: PitchingCareerColumn.age,     alignment: .trailing).padding(.horizontal, 2)
             Color.clear.frame(width: PitchingCareerColumn.ageTeamGap)
-            Text("Team")  .frame(width: PitchingCareerColumn.team,    alignment: .leading) .padding(.horizontal, 2)
+            Text("Team").frame(width: PitchingCareerColumn.team,    alignment: .leading) .padding(.horizontal, 2)
+        }
+        .font(.system(size: 11, weight: .semibold))
+        .foregroundStyle(.secondary)
+        .padding(.leading, 12)
+        .frame(height: 28)
+    }
+}
+
+private struct PitchingCareerFrozenSeasonRow: View {
+    let season: PitcherCareerSeason
+    let birthYear:  Int?
+    let birthMonth: Int?
+    let birthDay:   Int?
+    let alternate:  Bool
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Text(formatYear(season.year))
+                .frame(width: PitchingCareerColumn.year, alignment: .leading)
+                .padding(.horizontal, 2)
+            Text(formatAge(seasonYear: season.year,
+                           birthYear: birthYear,
+                           birthMonth: birthMonth,
+                           birthDay: birthDay))
+                .frame(width: PitchingCareerColumn.age, alignment: .trailing)
+                .monospacedDigit()
+                .padding(.horizontal, 2)
+            Color.clear.frame(width: PitchingCareerColumn.ageTeamGap)
+            Text(displayTeamCode(season.team, league: season.league))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(width: PitchingCareerColumn.team, alignment: .leading)
+                .padding(.horizontal, 2)
+        }
+        .font(.system(size: 11))
+        .padding(.leading, 12)
+        .frame(height: 28)
+        .background(alternate ? Color(.systemGray6).opacity(0.5) : Color.clear)
+    }
+}
+
+private struct PitchingCareerFrozenTotalsRow: View {
+    var body: some View {
+        HStack(spacing: 0) {
+            Text("Career").frame(width: PitchingCareerColumn.year, alignment: .leading)
+                .padding(.horizontal, 2)
+            Color.clear.frame(width: PitchingCareerColumn.age)
+                .padding(.horizontal, 2)
+            Color.clear.frame(width: PitchingCareerColumn.ageTeamGap)
+            Color.clear.frame(width: PitchingCareerColumn.team)
+                .padding(.horizontal, 2)
+        }
+        .font(.system(size: 9.5, weight: .semibold))
+        .lineLimit(1)
+        .minimumScaleFactor(0.6)
+        .padding(.leading, 12)
+        .frame(height: 28)
+        .background(Color(.systemGray5).opacity(0.7))
+        .overlay(alignment: .top) { Divider() }
+    }
+}
+
+// MARK: - Scrollable section (WAR through SO/BB)
+
+private struct PitchingCareerScrollableHeader: View {
+    var body: some View {
+        HStack(spacing: 0) {
             Text("WAR")   .frame(width: PitchingCareerColumn.war,     alignment: .trailing).padding(.horizontal, 2)
             Text("W")     .frame(width: PitchingCareerColumn.w,       alignment: .trailing).padding(.horizontal, 2)
             Text("L")     .frame(width: PitchingCareerColumn.l,       alignment: .trailing).padding(.horizontal, 2)
@@ -1262,39 +1358,17 @@ private struct PitchingCareerHeaderRow: View {
         }
         .font(.system(size: 11, weight: .semibold))
         .foregroundStyle(.secondary)
-        .padding(.horizontal, 12)
+        .padding(.trailing, 12)
         .frame(height: 28)
     }
 }
 
-private struct PitchingCareerSeasonRow: View {
+private struct PitchingCareerScrollableSeasonRow: View {
     let season: PitcherCareerSeason
-    let birthYear:  Int?
-    let birthMonth: Int?
-    let birthDay:   Int?
-    let alternate:  Bool
+    let alternate: Bool
 
     var body: some View {
         HStack(spacing: 0) {
-            Text(formatYear(season.year))
-                .frame(width: PitchingCareerColumn.year, alignment: .leading)
-                .padding(.horizontal, 2)
-            Text(formatAge(seasonYear: season.year,
-                           birthYear: birthYear,
-                           birthMonth: birthMonth,
-                           birthDay: birthDay))
-                .frame(width: PitchingCareerColumn.age, alignment: .trailing)
-                .monospacedDigit()
-                .padding(.horizontal, 2)
-            Color.clear.frame(width: PitchingCareerColumn.ageTeamGap)
-            // Same team-code resolver as the batting table — handles
-            // Lahman codes, bref codes, full team names, and ambiguous
-            // city-only values via the league field.
-            Text(displayTeamCode(season.team, league: season.league))
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(width: PitchingCareerColumn.team, alignment: .leading)
-                .padding(.horizontal, 2)
             Text(formatWAR(season.WAR))
                 .frame(width: PitchingCareerColumn.war, alignment: .trailing)
                 .monospacedDigit().padding(.horizontal, 2)
@@ -1336,25 +1410,16 @@ private struct PitchingCareerSeasonRow: View {
                 .frame(width: PitchingCareerColumn.soBB,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
         }
         .font(.system(size: 11))
-        .padding(.horizontal, 12)
+        .padding(.trailing, 12)
         .frame(height: 28)
         .background(alternate ? Color(.systemGray6).opacity(0.5) : Color.clear)
     }
 }
 
-private struct PitchingCareerTotalsRow: View {
+private struct PitchingCareerScrollableTotalsRow: View {
     let agg: PitchingCareerAgg
     var body: some View {
         HStack(spacing: 0) {
-            Text("Career").frame(width: PitchingCareerColumn.year, alignment: .leading)
-                .padding(.horizontal, 2)
-            // Age + Team blank, with the gap spacer in between so column
-            // boundaries line up with header / data rows.
-            Color.clear.frame(width: PitchingCareerColumn.age)
-                .padding(.horizontal, 2)
-            Color.clear.frame(width: PitchingCareerColumn.ageTeamGap)
-            Color.clear.frame(width: PitchingCareerColumn.team)
-                .padding(.horizontal, 2)
             Text(formatWAR(agg.war))
                 .frame(width: PitchingCareerColumn.war, alignment: .trailing)
                 .monospacedDigit().padding(.horizontal, 2)
@@ -1396,7 +1461,7 @@ private struct PitchingCareerTotalsRow: View {
         .font(.system(size: 9.5, weight: .semibold))
         .lineLimit(1)
         .minimumScaleFactor(0.6)
-        .padding(.horizontal, 12)
+        .padding(.trailing, 12)
         .frame(height: 28)
         .background(Color(.systemGray5).opacity(0.7))
         .overlay(alignment: .top) { Divider() }
