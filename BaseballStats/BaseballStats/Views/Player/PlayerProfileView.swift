@@ -70,16 +70,18 @@ struct PlayerProfileView: View {
                     .padding(.bottom, 32)
                 }
             }
-            .ignoresSafeArea(edges: .top)
             // Hide the default scroll content background and pin our
-            // own systemBackground so any brief flash during a tab
-            // swap blends in instead of showing as white.
+            // own systemGroupedBackground so the page reads as a
+            // single grouped surface (subtle gray) with the
+            // ultraThinMaterial cards sitting on top.
             .scrollContentBackground(.hidden)
-            .background(Color(.systemBackground))
+            .background(Color(.systemGroupedBackground))
             .navigationBarTitleDisplayMode(.inline)
-            // Transparent toolbar so the header bleeds under the back chevron.
-            .toolbarBackground(.hidden, for: .navigationBar)
-            .toolbarColorScheme(.dark, for: .navigationBar)
+            // Material nav-bar matches the rest of the app's chrome.
+            // No more transparent / dark-scheme overrides — the
+            // header is no longer a cinematic photo, so the system
+            // back chevron renders against the standard nav surface.
+            .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
             .task { await viewModel.loadData() }
             .onChange(of: selectedTab) { _, _ in
                 // No animation — withAnimation here would interpolate
@@ -92,111 +94,57 @@ struct PlayerProfileView: View {
 
     // MARK: - Header
 
-    /// Hero header height. Pinned at 280pt — the white content panel
-    /// below always starts at exactly this Y offset on every tab.
-    private static let headerHeight: CGFloat = 280
-
+    /// Card-style header — a horizontal layout with a circular
+    /// headshot on the left and identity text on the right. Replaces
+    /// the previous full-bleed cinematic photo. Sits in the same 16pt
+    /// page padding as the rest of the content so it aligns with the
+    /// cards below.
     private var header: some View {
-        ZStack(alignment: .bottomLeading) {
-            // Pin the AsyncImage to an explicit width+height BEFORE
-            // .clipped() so the scaledToFill crop area is identical
-            // every time the view re-renders. Without an explicit width
-            // the frame can resolve differently depending on
-            // surrounding layout (parent ScrollView content size,
-            // sibling content height, etc.), changing how much of the
-            // image gets cropped — which read as the header "zooming"
-            // between tabs.
-            // alignment: .top anchors the scaledToFill image to the
-            // top of the frame, so for typical MLB headshots (which
-            // are framed with the head/hat near the top) we crop the
-            // chest/shoulders off the bottom instead of cropping
-            // equally from both edges. .clipped() trims any overflow
-            // that scaledToFill produces.
-            headshot
-                .frame(
-                    width: UIScreen.main.bounds.width,
-                    height: Self.headerHeight,
-                    alignment: .top
-                )
-                .clipped()
-
-            // Fade from clear in the upper half down to near-black at the
-            // bottom so the player name reads cleanly over any image.
-            LinearGradient(
-                colors: [.clear, .black.opacity(0.85)],
-                startPoint: UnitPoint(x: 0.5, y: 0.45),
-                endPoint:   .bottom
+        HStack(alignment: .center, spacing: 16) {
+            AsyncImage(url: player.largeHeadshotURL) { image in
+                image.resizable().scaledToFill()
+            } placeholder: {
+                Circle().fill(Color.gray.opacity(0.3))
+            }
+            .frame(width: 100, height: 100)
+            .clipShape(Circle())
+            .overlay(
+                Circle().stroke(Color.gray.opacity(0.2), lineWidth: 1)
             )
-            .frame(
-                width: UIScreen.main.bounds.width,
-                height: Self.headerHeight
-            )
-            .allowsHitTesting(false)
 
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(player.name)
-                        .font(.largeTitle.bold())
-                        .foregroundStyle(.white)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.6)
-
-                    if player.is_hof == true {
-                        hofBadge
-                    }
-                }
+            VStack(alignment: .leading, spacing: 4) {
+                Text(player.name)
+                    .font(.title2.weight(.bold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
 
                 if let subtitle = headerSubtitle {
                     Text(subtitle)
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(.white.opacity(0.9))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
 
                 if let detail = headerDetail {
                     Text(detail)
                         .font(.caption)
-                        .foregroundStyle(.white.opacity(0.75))
+                        .foregroundStyle(.secondary)
+                }
+
+                if player.is_hof == true {
+                    Text("⭐ Hall of Fame")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.yellow)
                 }
             }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 24)
-        }
-    }
 
-    private var headshot: some View {
-        AsyncImage(url: player.largeHeadshotURL) { phase in
-            switch phase {
-            case .success(let image):
-                image.resizable().scaledToFill()
-            case .empty:
-                LinearGradient(
-                    colors: [Color(.systemGray3), Color(.systemGray5)],
-                    startPoint: .top, endPoint: .bottom
-                )
-            case .failure:
-                Color(.systemGray4)
-                    .overlay(
-                        Image(systemName: "person.fill")
-                            .font(.system(size: 100))
-                            .foregroundStyle(.white.opacity(0.4))
-                    )
-            @unknown default:
-                Color(.systemGray4)
-            }
+            Spacer(minLength: 0)
         }
-    }
-
-    private var hofBadge: some View {
-        Text("HOF")
-            .font(.caption.weight(.bold))
-            .foregroundStyle(.white)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(
-                Capsule().fill(Color(red: 0.8, green: 0.1, blue: 0.1).gradient)
-            )
-            .accessibilityLabel("Hall of Fame")
+        .padding(16)
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
     }
 
     /// "RF · New York Yankees" — same logic as the search row, both
