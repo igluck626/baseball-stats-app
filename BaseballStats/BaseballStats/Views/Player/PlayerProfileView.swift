@@ -760,7 +760,7 @@ struct PlayerProfileView: View {
             loadingCard
         } else if let career = viewModel.careerPitching,
                   let seasons = career.seasons, !seasons.isEmpty {
-            pitchingCareerTable(seasons: seasons, totals: career.career_totals)
+            pitchingCareerTable(seasons: seasons)
         } else {
             noStatsCard("No pitching career stats")
         }
@@ -797,24 +797,32 @@ struct PlayerProfileView: View {
         .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 
-    private func pitchingCareerTable(seasons: [PitcherCareerSeason], totals: PitcherCareerTotals?) -> some View {
+    private func pitchingCareerTable(seasons: [PitcherCareerSeason]) -> some View {
         let sorted = seasons.sorted { ($0.year ?? 0) > ($1.year ?? 0) }
-        return VStack(spacing: 0) {
-            PitchingCareerHeaderRow()
-            Divider()
-            ForEach(Array(sorted.enumerated()), id: \.offset) { index, season in
-                PitchingCareerSeasonRow(season: season)
-                if index != sorted.indices.last {
-                    Divider().opacity(0.4)
-                }
-            }
-            if let totals {
+        let agg = PitchingCareerAgg.compute(seasons: seasons)
+        return ScrollView(.horizontal, showsIndicators: false) {
+            VStack(spacing: 0) {
+                PitchingCareerHeaderRow()
                 Divider()
-                PitchingCareerTotalsRow(totals: totals)
+                ForEach(Array(sorted.enumerated()), id: \.offset) { index, season in
+                    PitchingCareerSeasonRow(
+                        season: season,
+                        birthYear:  player.birth_year,
+                        birthMonth: player.birth_month,
+                        birthDay:   player.birth_day,
+                        alternate:  !index.isMultiple(of: 2)
+                    )
+                    if index != sorted.indices.last {
+                        Divider().opacity(0.4)
+                    }
+                }
+                Divider()
+                PitchingCareerTotalsRow(agg: agg)
             }
         }
         .frame(maxWidth: .infinity)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 
     // MARK: - Game Logs
@@ -1081,87 +1089,223 @@ private struct BattingCareerTotalsRow: View {
 
 // Pitching column layout — W-L combined into one cell, no AVG, ERA shown
 // to two decimals.
+// 34-column Baseball Reference pitching layout. Total intrinsic width
+// ~1,096pt; wraps in a horizontal ScrollView.
 private enum PitchingCareerColumn {
-    static let year: CGFloat = 56
-    static let team: CGFloat = 50
-    static let wl: CGFloat = 60
-    static let era: CGFloat = 56
-    static let so: CGFloat = 56
-    static let war: CGFloat = 52
+    static let year:       CGFloat = 38
+    static let age:        CGFloat = 26
+    /// Visual gap between right-aligned Age and left-aligned Team.
+    static let ageTeamGap: CGFloat = 8
+    static let team:       CGFloat = 38
+    static let war:        CGFloat = 38
+    static let w:          CGFloat = 26
+    static let l:          CGFloat = 26
+    static let wlPct:      CGFloat = 36
+    static let era:        CGFloat = 38
+    static let g:          CGFloat = 30
+    static let gs:         CGFloat = 30
+    static let gf:         CGFloat = 30
+    static let cg:         CGFloat = 28
+    static let sho:        CGFloat = 30
+    static let sv:         CGFloat = 28
+    static let ip:         CGFloat = 40
+    static let h:          CGFloat = 30
+    static let r:          CGFloat = 28
+    static let er:         CGFloat = 28
+    static let hr:         CGFloat = 28
+    static let bb:         CGFloat = 30
+    static let ibb:        CGFloat = 30
+    static let so:         CGFloat = 32
+    static let hbp:        CGFloat = 30
+    static let bk:         CGFloat = 26
+    static let wp:         CGFloat = 28
+    static let bf:         CGFloat = 34
+    static let eraPlus:    CGFloat = 36
+    static let fip:        CGFloat = 36
+    static let whip:       CGFloat = 38
+    static let hPer9:      CGFloat = 34
+    static let hrPer9:     CGFloat = 34
+    static let bbPer9:     CGFloat = 34
+    static let soPer9:     CGFloat = 34
+    static let soBB:       CGFloat = 36
 }
 
 private struct PitchingCareerHeaderRow: View {
     var body: some View {
         HStack(spacing: 0) {
-            Text("Year").frame(width: PitchingCareerColumn.year, alignment: .leading)
-            Text("Team").frame(width: PitchingCareerColumn.team, alignment: .leading)
-            Spacer(minLength: 4)
-            Text("W-L").frame(width: PitchingCareerColumn.wl, alignment: .trailing)
-            Text("ERA").frame(width: PitchingCareerColumn.era, alignment: .trailing)
-            Text("SO").frame(width: PitchingCareerColumn.so, alignment: .trailing)
-            Text("WAR").frame(width: PitchingCareerColumn.war, alignment: .trailing)
+            Text("Year")  .frame(width: PitchingCareerColumn.year,    alignment: .leading) .padding(.horizontal, 2)
+            Text("Age")   .frame(width: PitchingCareerColumn.age,     alignment: .trailing).padding(.horizontal, 2)
+            Color.clear.frame(width: PitchingCareerColumn.ageTeamGap)
+            Text("Team")  .frame(width: PitchingCareerColumn.team,    alignment: .leading) .padding(.horizontal, 2)
+            Text("WAR")   .frame(width: PitchingCareerColumn.war,     alignment: .trailing).padding(.horizontal, 2)
+            Text("W")     .frame(width: PitchingCareerColumn.w,       alignment: .trailing).padding(.horizontal, 2)
+            Text("L")     .frame(width: PitchingCareerColumn.l,       alignment: .trailing).padding(.horizontal, 2)
+            Text("W-L%")  .frame(width: PitchingCareerColumn.wlPct,   alignment: .trailing).padding(.horizontal, 2)
+            Text("ERA")   .frame(width: PitchingCareerColumn.era,     alignment: .trailing).padding(.horizontal, 2)
+            Text("G")     .frame(width: PitchingCareerColumn.g,       alignment: .trailing).padding(.horizontal, 2)
+            Text("GS")    .frame(width: PitchingCareerColumn.gs,      alignment: .trailing).padding(.horizontal, 2)
+            Text("GF")    .frame(width: PitchingCareerColumn.gf,      alignment: .trailing).padding(.horizontal, 2)
+            Text("CG")    .frame(width: PitchingCareerColumn.cg,      alignment: .trailing).padding(.horizontal, 2)
+            Text("SHO")   .frame(width: PitchingCareerColumn.sho,     alignment: .trailing).padding(.horizontal, 2)
+            Text("SV")    .frame(width: PitchingCareerColumn.sv,      alignment: .trailing).padding(.horizontal, 2)
+            Text("IP")    .frame(width: PitchingCareerColumn.ip,      alignment: .trailing).padding(.horizontal, 2)
+            Text("H")     .frame(width: PitchingCareerColumn.h,       alignment: .trailing).padding(.horizontal, 2)
+            Text("R")     .frame(width: PitchingCareerColumn.r,       alignment: .trailing).padding(.horizontal, 2)
+            Text("ER")    .frame(width: PitchingCareerColumn.er,      alignment: .trailing).padding(.horizontal, 2)
+            Text("HR")    .frame(width: PitchingCareerColumn.hr,      alignment: .trailing).padding(.horizontal, 2)
+            Text("BB")    .frame(width: PitchingCareerColumn.bb,      alignment: .trailing).padding(.horizontal, 2)
+            Text("IBB")   .frame(width: PitchingCareerColumn.ibb,     alignment: .trailing).padding(.horizontal, 2)
+            Text("SO")    .frame(width: PitchingCareerColumn.so,      alignment: .trailing).padding(.horizontal, 2)
+            Text("HBP")   .frame(width: PitchingCareerColumn.hbp,     alignment: .trailing).padding(.horizontal, 2)
+            Text("BK")    .frame(width: PitchingCareerColumn.bk,      alignment: .trailing).padding(.horizontal, 2)
+            Text("WP")    .frame(width: PitchingCareerColumn.wp,      alignment: .trailing).padding(.horizontal, 2)
+            Text("BF")    .frame(width: PitchingCareerColumn.bf,      alignment: .trailing).padding(.horizontal, 2)
+            Text("ERA+")  .frame(width: PitchingCareerColumn.eraPlus, alignment: .trailing).padding(.horizontal, 2)
+            Text("FIP")   .frame(width: PitchingCareerColumn.fip,     alignment: .trailing).padding(.horizontal, 2)
+            Text("WHIP")  .frame(width: PitchingCareerColumn.whip,    alignment: .trailing).padding(.horizontal, 2)
+            Text("H/9")   .frame(width: PitchingCareerColumn.hPer9,   alignment: .trailing).padding(.horizontal, 2)
+            Text("HR/9")  .frame(width: PitchingCareerColumn.hrPer9,  alignment: .trailing).padding(.horizontal, 2)
+            Text("BB/9")  .frame(width: PitchingCareerColumn.bbPer9,  alignment: .trailing).padding(.horizontal, 2)
+            Text("SO/9")  .frame(width: PitchingCareerColumn.soPer9,  alignment: .trailing).padding(.horizontal, 2)
+            Text("SO/BB") .frame(width: PitchingCareerColumn.soBB,    alignment: .trailing).padding(.horizontal, 2)
         }
-        .font(.caption.weight(.semibold))
+        .font(.system(size: 11, weight: .semibold))
         .foregroundStyle(.secondary)
         .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .frame(height: 28)
     }
 }
 
 private struct PitchingCareerSeasonRow: View {
     let season: PitcherCareerSeason
+    let birthYear:  Int?
+    let birthMonth: Int?
+    let birthDay:   Int?
+    let alternate:  Bool
+
     var body: some View {
         HStack(spacing: 0) {
             Text(formatYear(season.year))
                 .frame(width: PitchingCareerColumn.year, alignment: .leading)
+                .padding(.horizontal, 2)
+            Text(formatAge(seasonYear: season.year,
+                           birthYear: birthYear,
+                           birthMonth: birthMonth,
+                           birthDay: birthDay))
+                .frame(width: PitchingCareerColumn.age, alignment: .trailing)
+                .monospacedDigit()
+                .padding(.horizontal, 2)
+            Color.clear.frame(width: PitchingCareerColumn.ageTeamGap)
             Text(season.team ?? "—")
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .frame(width: PitchingCareerColumn.team, alignment: .leading)
-            Spacer(minLength: 4)
-            Text(formatWL(season.W, season.L))
-                .frame(width: PitchingCareerColumn.wl, alignment: .trailing)
-                .monospacedDigit()
-            Text(format2(season.ERA))
-                .frame(width: PitchingCareerColumn.era, alignment: .trailing)
-                .monospacedDigit()
-            Text(formatInt(season.SO))
-                .frame(width: PitchingCareerColumn.so, alignment: .trailing)
-                .monospacedDigit()
+                .padding(.horizontal, 2)
             Text(formatWAR(season.WAR))
                 .frame(width: PitchingCareerColumn.war, alignment: .trailing)
-                .monospacedDigit()
+                .monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(season.W))   .frame(width: PitchingCareerColumn.w,    alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(season.L))   .frame(width: PitchingCareerColumn.l,    alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatWinPct(w: season.W, l: season.L))
+                .frame(width: PitchingCareerColumn.wlPct, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(format2(season.ERA))     .frame(width: PitchingCareerColumn.era,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(season.G))   .frame(width: PitchingCareerColumn.g,    alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(season.GS))  .frame(width: PitchingCareerColumn.gs,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(season.GF))  .frame(width: PitchingCareerColumn.gf,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(season.CG))  .frame(width: PitchingCareerColumn.cg,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(season.SHO)) .frame(width: PitchingCareerColumn.sho,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(season.SV))  .frame(width: PitchingCareerColumn.sv,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatIP(season.IP))     .frame(width: PitchingCareerColumn.ip,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(season.H))   .frame(width: PitchingCareerColumn.h,    alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(season.R))   .frame(width: PitchingCareerColumn.r,    alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(season.ER))  .frame(width: PitchingCareerColumn.er,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(season.HR))  .frame(width: PitchingCareerColumn.hr,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(season.BB))  .frame(width: PitchingCareerColumn.bb,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(season.IBB)) .frame(width: PitchingCareerColumn.ibb,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(season.SO))  .frame(width: PitchingCareerColumn.so,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(season.HBP)) .frame(width: PitchingCareerColumn.hbp,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(season.BK))  .frame(width: PitchingCareerColumn.bk,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(season.WP))  .frame(width: PitchingCareerColumn.wp,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(season.BFP)) .frame(width: PitchingCareerColumn.bf,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatRoundedInt(season.ERA_plus))
+                .frame(width: PitchingCareerColumn.eraPlus, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(format2(season.FIP))     .frame(width: PitchingCareerColumn.fip,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(format2(season.WHIP))    .frame(width: PitchingCareerColumn.whip, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            // H/9 isn't stored — derive on-device. The HR/9, BB/9, SO/9
+            // values are stored on the season and used directly.
+            Text(format2(perNine(season.H, ip: season.IP)))
+                .frame(width: PitchingCareerColumn.hPer9,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(format2(season.HR_per9)) .frame(width: PitchingCareerColumn.hrPer9, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(format2(season.BB_per9)) .frame(width: PitchingCareerColumn.bbPer9, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(format2(season.K_per9))  .frame(width: PitchingCareerColumn.soPer9, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(format2(soBBRatio(so: season.SO, bb: season.BB)))
+                .frame(width: PitchingCareerColumn.soBB,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
         }
-        .font(.caption)
+        .font(.system(size: 11))
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .frame(height: 28)
+        .background(alternate ? Color(.systemGray6).opacity(0.5) : Color.clear)
     }
 }
 
 private struct PitchingCareerTotalsRow: View {
-    let totals: PitcherCareerTotals
+    let agg: PitchingCareerAgg
     var body: some View {
         HStack(spacing: 0) {
             Text("Career").frame(width: PitchingCareerColumn.year, alignment: .leading)
-            Spacer(minLength: 4)
-            Text(formatWL(totals.W, totals.L))
-                .frame(width: PitchingCareerColumn.wl, alignment: .trailing)
-                .monospacedDigit().lineLimit(1)
-            // Career ERA isn't in the totals payload (needs IP-weighted
-            // aggregation across seasons) — punted.
-            Text("—")
-                .frame(width: PitchingCareerColumn.era, alignment: .trailing)
-                .foregroundStyle(.tertiary)
-            Text(formatInt(totals.SO))
-                .frame(width: PitchingCareerColumn.so, alignment: .trailing)
-                .monospacedDigit().lineLimit(1)
-            Text(formatWAR(totals.WAR))
+                .padding(.horizontal, 2)
+            // Age + Team blank, with the gap spacer in between so column
+            // boundaries line up with header / data rows.
+            Color.clear.frame(width: PitchingCareerColumn.age)
+                .padding(.horizontal, 2)
+            Color.clear.frame(width: PitchingCareerColumn.ageTeamGap)
+            Color.clear.frame(width: PitchingCareerColumn.team)
+                .padding(.horizontal, 2)
+            Text(formatWAR(agg.war))
                 .frame(width: PitchingCareerColumn.war, alignment: .trailing)
-                .monospacedDigit().lineLimit(1)
+                .monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(agg.w))    .frame(width: PitchingCareerColumn.w,    alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(agg.l))    .frame(width: PitchingCareerColumn.l,    alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatWinPctValue(agg.winPct))
+                .frame(width: PitchingCareerColumn.wlPct, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(format2(agg.era))      .frame(width: PitchingCareerColumn.era,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(agg.g))    .frame(width: PitchingCareerColumn.g,    alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(agg.gs))   .frame(width: PitchingCareerColumn.gs,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(agg.gf))   .frame(width: PitchingCareerColumn.gf,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(agg.cg))   .frame(width: PitchingCareerColumn.cg,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(agg.sho))  .frame(width: PitchingCareerColumn.sho,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(agg.sv))   .frame(width: PitchingCareerColumn.sv,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatIP(agg.ip))      .frame(width: PitchingCareerColumn.ip,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(agg.h))    .frame(width: PitchingCareerColumn.h,    alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(agg.r))    .frame(width: PitchingCareerColumn.r,    alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(agg.er))   .frame(width: PitchingCareerColumn.er,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(agg.hr))   .frame(width: PitchingCareerColumn.hr,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(agg.bb))   .frame(width: PitchingCareerColumn.bb,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(agg.ibb))  .frame(width: PitchingCareerColumn.ibb,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(agg.so))   .frame(width: PitchingCareerColumn.so,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(agg.hbp))  .frame(width: PitchingCareerColumn.hbp,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(agg.bk))   .frame(width: PitchingCareerColumn.bk,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(agg.wp))   .frame(width: PitchingCareerColumn.wp,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(agg.bf))   .frame(width: PitchingCareerColumn.bf,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            // ERA+ and FIP aren't summable — leave blank.
+            Text("—").frame(width: PitchingCareerColumn.eraPlus, alignment: .trailing)
+                .foregroundStyle(.tertiary).padding(.horizontal, 2)
+            Text("—").frame(width: PitchingCareerColumn.fip, alignment: .trailing)
+                .foregroundStyle(.tertiary).padding(.horizontal, 2)
+            Text(format2(agg.whip))     .frame(width: PitchingCareerColumn.whip, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(format2(agg.hPer9))    .frame(width: PitchingCareerColumn.hPer9,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(format2(agg.hrPer9))   .frame(width: PitchingCareerColumn.hrPer9, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(format2(agg.careerBB9)).frame(width: PitchingCareerColumn.bbPer9, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(format2(agg.kPer9))    .frame(width: PitchingCareerColumn.soPer9, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(format2(agg.soBB))     .frame(width: PitchingCareerColumn.soBB,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
         }
-        .font(.caption.weight(.semibold))
+        .font(.system(size: 9.5, weight: .semibold))
+        .lineLimit(1)
+        .minimumScaleFactor(0.6)
         .padding(.horizontal, 12)
-        .padding(.vertical, 12)
+        .frame(height: 28)
+        .background(Color(.systemGray5).opacity(0.7))
+        .overlay(alignment: .top) { Divider() }
     }
 }
 
@@ -1229,6 +1373,39 @@ private func seasonTB(_ s: CareerSeason) -> Int? {
     let trp = s.triples ?? 0
     let hr  = s.HR ?? 0
     return h + dbl + 2 * trp + 3 * hr
+}
+
+/// Per-nine rate (e.g. H/9, HR/9) — generic helper for stats not
+/// stored on the season row directly.
+private func perNine(_ stat: Int?, ip: Double?) -> Double? {
+    guard let stat = stat, let ip = ip, ip > 0 else { return nil }
+    return Double(stat) * 9.0 / ip
+}
+
+/// Strikeout-to-walk ratio. nil when BB is 0 (would otherwise divide
+/// by zero or render as a misleading "infinite" rate).
+private func soBBRatio(so: Int?, bb: Int?) -> Double? {
+    guard let so = so, let bb = bb, bb > 0 else { return nil }
+    return Double(so) / Double(bb)
+}
+
+/// W-L percentage formatted as ".620" (3 decimals, leading zero
+/// stripped). "—" when both wins and losses are missing or zero
+/// (no decisions recorded).
+private func formatWinPct(w: Int?, l: Int?) -> String {
+    guard let w = w, let l = l, (w + l) > 0 else { return "—" }
+    return formatWinPctValue(Double(w) / Double(w + l))
+}
+
+/// Same as formatWinPct but takes an already-computed Double — used by
+/// the career totals row where the agg derives the value once and
+/// passes it in.
+private func formatWinPctValue(_ value: Double?) -> String {
+    guard let value else { return "—" }
+    let s = String(format: "%.3f", value)
+    if s.hasPrefix("0.")  { return String(s.dropFirst()) }
+    if s.hasPrefix("-0.") { return "-" + String(s.dropFirst(2)) }
+    return s
 }
 
 /// Counting-stat display with thousands separators ("1,682"). Used for
@@ -1441,14 +1618,24 @@ private struct PitchingCareerAgg {
     let ip: Double
     let er: Int
     let h: Int
+    let r: Int
     let bb: Int
+    let ibb: Int
     let so: Int
     let hr: Int
     let hbp: Int
+    let bk: Int
+    let wp: Int
+    let bf: Int
     let g: Int
     let gs: Int
+    let gf: Int
     let cg: Int
+    let sho: Int
     let sv: Int
+    let w: Int
+    let l: Int
+    let war: Double
 
     var era: Double? {
         ip > 0 ? Double(er) * 9.0 / ip : nil
@@ -1470,6 +1657,26 @@ private struct PitchingCareerAgg {
         ip > 0 ? Double(bb) * 9.0 / ip : nil
     }
 
+    var hPer9: Double? {
+        ip > 0 ? Double(h) * 9.0 / ip : nil
+    }
+
+    var hrPer9: Double? {
+        ip > 0 ? Double(hr) * 9.0 / ip : nil
+    }
+
+    /// SO / BB — strikeout-to-walk ratio. nil when BB == 0 (would
+    /// divide by zero or render as a misleading "infinite" rate).
+    var soBB: Double? {
+        bb > 0 ? Double(so) / Double(bb) : nil
+    }
+
+    /// W-L percentage. nil when both W and L are 0 (no decisions).
+    var winPct: Double? {
+        let total = w + l
+        return total > 0 ? Double(w) / Double(total) : nil
+    }
+
     /// Career games started. Same value as the stored `gs` field —
     /// surfaced under a more explicit name for the career grid call
     /// site.
@@ -1487,14 +1694,24 @@ private struct PitchingCareerAgg {
             ip:  seasons.reduce(0.0) { $0 + ($1.IP  ?? 0) },
             er:  seasons.reduce(0)   { $0 + ($1.ER  ?? 0) },
             h:   seasons.reduce(0)   { $0 + ($1.H   ?? 0) },
+            r:   seasons.reduce(0)   { $0 + ($1.R   ?? 0) },
             bb:  seasons.reduce(0)   { $0 + ($1.BB  ?? 0) },
+            ibb: seasons.reduce(0)   { $0 + ($1.IBB ?? 0) },
             so:  seasons.reduce(0)   { $0 + ($1.SO  ?? 0) },
             hr:  seasons.reduce(0)   { $0 + ($1.HR  ?? 0) },
             hbp: seasons.reduce(0)   { $0 + ($1.HBP ?? 0) },
+            bk:  seasons.reduce(0)   { $0 + ($1.BK  ?? 0) },
+            wp:  seasons.reduce(0)   { $0 + ($1.WP  ?? 0) },
+            bf:  seasons.reduce(0)   { $0 + ($1.BFP ?? 0) },
             g:   seasons.reduce(0)   { $0 + ($1.G   ?? 0) },
             gs:  seasons.reduce(0)   { $0 + ($1.GS  ?? 0) },
+            gf:  seasons.reduce(0)   { $0 + ($1.GF  ?? 0) },
             cg:  seasons.reduce(0)   { $0 + ($1.CG  ?? 0) },
-            sv:  seasons.reduce(0)   { $0 + ($1.SV  ?? 0) }
+            sho: seasons.reduce(0)   { $0 + ($1.SHO ?? 0) },
+            sv:  seasons.reduce(0)   { $0 + ($1.SV  ?? 0) },
+            w:   seasons.reduce(0)   { $0 + ($1.W   ?? 0) },
+            l:   seasons.reduce(0)   { $0 + ($1.L   ?? 0) },
+            war: seasons.reduce(0.0) { $0 + ($1.WAR ?? 0) }
         )
     }
 }
