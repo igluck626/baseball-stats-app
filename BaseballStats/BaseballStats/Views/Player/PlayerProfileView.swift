@@ -906,13 +906,14 @@ private let lahmanToDisplay: [String: String] = [
 ///   2. Already short (≤3 chars) → dict lookup, then raw passthrough
 ///      (lets unknown historical codes like "BSN" still display).
 ///   3. Exact match against the full-name dict → mapped code.
-///   4. Substring match — try `raw.contains(key) || key.contains(raw)`.
-///      Catches city-only values like "Los Angeles" matching the
-///      "Los Angeles Angels" / "Los Angeles Dodgers" keys. Note: this
-///      is ambiguous for two-team cities — the first iteration win
-///      depends on dict-iteration order. See caveat in the comments.
-///   5. Last resort: first 3 chars uppercased.
-private func displayTeamCode(_ raw: String?) -> String {
+///   4. League-aware disambiguation for ambiguous two-team cities
+///      ("Los Angeles", "New York", "Chicago") — picks LAA vs LAD
+///      etc. based on the league field on the season.
+///   5. Substring match — `raw.contains(key) || key.contains(raw)`.
+///      Catches the ambiguous-city case when no league info is
+///      available; first iteration wins (dict-order dependent).
+///   6. Last resort: first 3 chars uppercased.
+private func displayTeamCode(_ raw: String?, league: String? = nil) -> String {
     guard let raw = raw, !raw.isEmpty else { return "—" }
 
     if raw.count <= 3 {
@@ -920,6 +921,18 @@ private func displayTeamCode(_ raw: String?) -> String {
     }
 
     if let code = lahmanToDisplay[raw] { return code }
+
+    // Two-team cities — disambiguate via the league field before
+    // falling through to the (non-deterministic) substring match.
+    switch (raw, league) {
+    case ("Los Angeles", "AL"): return "LAA"
+    case ("Los Angeles", "NL"): return "LAD"
+    case ("New York",    "AL"): return "NYY"
+    case ("New York",    "NL"): return "NYM"
+    case ("Chicago",     "AL"): return "CWS"
+    case ("Chicago",     "NL"): return "CHC"
+    default: break
+    }
 
     for (key, value) in lahmanToDisplay {
         if raw.contains(key) || key.contains(raw) {
@@ -957,11 +970,7 @@ private struct BattingCareerFrozenSeasonRow: View {
     let alternate:  Bool
 
     var body: some View {
-        // TEMPORARY: log the raw team value the backend is sending so
-        // we can match it to a dict key. Remove once team-code mapping
-        // is fully reliable.
-        let _ = print("DEBUG team for \(season.year ?? 0): '\(season.team ?? "nil")'")
-        return HStack(spacing: 0) {
+        HStack(spacing: 0) {
             Text(formatYear(season.year))
                 .frame(width: BattingCareerColumn.year, alignment: .leading)
                 .padding(.horizontal, 2)
@@ -973,9 +982,11 @@ private struct BattingCareerFrozenSeasonRow: View {
                 .monospacedDigit()
                 .padding(.horizontal, 2)
             Color.clear.frame(width: BattingCareerColumn.ageTeamGap)
-            // Lahman → modern code lookup; anything outside the dict
-            // (already-modern codes, ancient teams) passes through.
-            Text(displayTeamCode(season.team))
+            // Lahman → modern code lookup with league disambiguation
+            // for two-team cities ("Los Angeles" + AL → "LAA" vs +NL
+            // → "LAD"). Anything outside the dict (already-modern
+            // codes, ancient teams) passes through.
+            Text(displayTeamCode(season.team, league: season.league))
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .frame(width: BattingCareerColumn.team, alignment: .leading)
