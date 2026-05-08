@@ -688,12 +688,15 @@ struct PlayerProfileView: View {
     private func battingCareerTable(seasons: [CareerSeason]) -> some View {
         let sorted = seasons.sorted { ($0.year ?? 0) > ($1.year ?? 0) }
         let agg = BattingCareerAgg.compute(seasons: seasons)
-        return ScrollView(.horizontal, showsIndicators: false) {
+        return HStack(spacing: 0) {
+            // Frozen section — Year, Age, Team. Stays put while the
+            // stat columns to the right scroll horizontally. Subtle
+            // shadow on the right edge separates it from the scroller.
             VStack(spacing: 0) {
-                BattingCareerHeaderRow()
+                BattingCareerFrozenHeader()
                 Divider()
                 ForEach(Array(sorted.enumerated()), id: \.offset) { index, season in
-                    BattingCareerSeasonRow(
+                    BattingCareerFrozenSeasonRow(
                         season: season,
                         birthYear:  player.birth_year,
                         birthMonth: player.birth_month,
@@ -705,12 +708,31 @@ struct PlayerProfileView: View {
                     }
                 }
                 Divider()
-                BattingCareerTotalsRow(agg: agg)
+                BattingCareerFrozenTotalsRow()
+            }
+            .background(.ultraThinMaterial)
+            .shadow(color: .black.opacity(0.08), radius: 4, x: 2, y: 0)
+            .zIndex(1)
+
+            // Scrollable section — WAR through IBB (25 columns).
+            ScrollView(.horizontal, showsIndicators: false) {
+                VStack(spacing: 0) {
+                    BattingCareerScrollableHeader()
+                    Divider()
+                    ForEach(Array(sorted.enumerated()), id: \.offset) { index, season in
+                        BattingCareerScrollableSeasonRow(
+                            season: season,
+                            alternate: !index.isMultiple(of: 2)
+                        )
+                        if index != sorted.indices.last {
+                            Divider().opacity(0.4)
+                        }
+                    }
+                    Divider()
+                    BattingCareerScrollableTotalsRow(agg: agg)
+                }
             }
         }
-        // Background + clip on the ScrollView itself so the rounded
-        // card "windows" the scrollable content — corners stay visible
-        // at every scroll offset, content slides underneath.
         .frame(maxWidth: .infinity)
         .background(.ultraThinMaterial)
         .clipShape(RoundedRectangle(cornerRadius: 16))
@@ -821,10 +843,32 @@ private enum BattingCareerColumn {
     static let ibb:     CGFloat = 32
 }
 
-private struct BattingCareerHeaderRow: View {
+// Lahman → modern display code. Lahman's archive uses team_ids that
+// don't always match the abbreviations users expect ("LAN" for the
+// Dodgers, "NYA" for the Yankees, etc.). Anything not in the dict
+// falls through to the raw value, so already-modern codes ("BOS",
+// "NYY") pass through unchanged.
+private let lahmanToDisplay: [String: String] = [
+    "LAN": "LAD", "NYA": "NYY", "NYN": "NYM", "SLN": "STL",
+    "CHN": "CHC", "CHA": "CWS", "KCA": "KC",  "SDN": "SD",
+    "SFN": "SF",  "TBA": "TB",  "MIA": "MIA", "FLO": "FLA",
+    "MON": "MON", "WAS": "WSH", "ANA": "LAA", "CAL": "CAL",
+    "ML4": "MIL", "MIL": "MIL", "HOU": "HOU", "ATL": "ATL",
+    "CIN": "CIN", "PIT": "PIT", "PHI": "PHI", "MIN": "MIN",
+    "CLE": "CLE", "DET": "DET", "BAL": "BAL", "BOS": "BOS",
+    "SEA": "SEA", "OAK": "OAK", "TEX": "TEX", "TOR": "TOR",
+    "COL": "COL", "ARI": "ARI", "ATH": "ATH",
+]
+
+private func displayTeamCode(_ raw: String?) -> String {
+    guard let raw, !raw.isEmpty else { return "—" }
+    return lahmanToDisplay[raw] ?? raw
+}
+
+// MARK: - Frozen section (Year, Age, Team)
+
+private struct BattingCareerFrozenHeader: View {
     var body: some View {
-        // Each cell uses .padding(.horizontal, 2) for ~4pt between
-        // adjacent columns (2pt right of one + 2pt left of next).
         HStack(spacing: 0) {
             Text("Year").frame(width: BattingCareerColumn.year,    alignment: .leading) .padding(.horizontal, 2)
             Text("Age") .frame(width: BattingCareerColumn.age,     alignment: .trailing).padding(.horizontal, 2)
@@ -832,6 +876,75 @@ private struct BattingCareerHeaderRow: View {
             // left-aligned Team don't touch ("34LAA" → "34   LAA").
             Color.clear.frame(width: BattingCareerColumn.ageTeamGap)
             Text("Team").frame(width: BattingCareerColumn.team,    alignment: .leading) .padding(.horizontal, 2)
+        }
+        .font(.system(size: 11, weight: .semibold))
+        .foregroundStyle(.secondary)
+        .padding(.leading, 12)
+        .frame(height: 28)
+    }
+}
+
+private struct BattingCareerFrozenSeasonRow: View {
+    let season: CareerSeason
+    let birthYear:  Int?
+    let birthMonth: Int?
+    let birthDay:   Int?
+    let alternate:  Bool
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Text(formatYear(season.year))
+                .frame(width: BattingCareerColumn.year, alignment: .leading)
+                .padding(.horizontal, 2)
+            Text(formatAge(seasonYear: season.year,
+                           birthYear: birthYear,
+                           birthMonth: birthMonth,
+                           birthDay: birthDay))
+                .frame(width: BattingCareerColumn.age, alignment: .trailing)
+                .monospacedDigit()
+                .padding(.horizontal, 2)
+            Color.clear.frame(width: BattingCareerColumn.ageTeamGap)
+            // Lahman → modern code lookup; anything outside the dict
+            // (already-modern codes, ancient teams) passes through.
+            Text(displayTeamCode(season.team))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(width: BattingCareerColumn.team, alignment: .leading)
+                .padding(.horizontal, 2)
+        }
+        .font(.system(size: 11))
+        .padding(.leading, 12)
+        .frame(height: 28)
+        .background(alternate ? Color(.systemGray6).opacity(0.5) : Color.clear)
+    }
+}
+
+private struct BattingCareerFrozenTotalsRow: View {
+    var body: some View {
+        HStack(spacing: 0) {
+            Text("Career").frame(width: BattingCareerColumn.year, alignment: .leading)
+                .padding(.horizontal, 2)
+            Color.clear.frame(width: BattingCareerColumn.age)
+                .padding(.horizontal, 2)
+            Color.clear.frame(width: BattingCareerColumn.ageTeamGap)
+            Color.clear.frame(width: BattingCareerColumn.team)
+                .padding(.horizontal, 2)
+        }
+        .font(.system(size: 9.5, weight: .semibold))
+        .lineLimit(1)
+        .minimumScaleFactor(0.6)
+        .padding(.leading, 12)
+        .frame(height: 28)
+        .background(Color(.systemGray5).opacity(0.7))
+        .overlay(alignment: .top) { Divider() }
+    }
+}
+
+// MARK: - Scrollable section (WAR through IBB)
+
+private struct BattingCareerScrollableHeader: View {
+    var body: some View {
+        HStack(spacing: 0) {
             Text("WAR") .frame(width: BattingCareerColumn.war,     alignment: .trailing).padding(.horizontal, 2)
             Text("G")   .frame(width: BattingCareerColumn.g,       alignment: .trailing).padding(.horizontal, 2)
             Text("PA")  .frame(width: BattingCareerColumn.pa,      alignment: .trailing).padding(.horizontal, 2)
@@ -860,51 +973,21 @@ private struct BattingCareerHeaderRow: View {
         }
         .font(.system(size: 11, weight: .semibold))
         .foregroundStyle(.secondary)
-        .padding(.horizontal, 12)
+        .padding(.trailing, 12)
         .frame(height: 28)
     }
 }
 
-private struct BattingCareerSeasonRow: View {
+private struct BattingCareerScrollableSeasonRow: View {
     let season: CareerSeason
-    /// Birth date components — passed in so we can compute Age the way
-    /// Baseball Reference does (age on June 30 of the season). nil
-    /// month/day fall back to a simple year-subtraction.
-    let birthYear:  Int?
-    let birthMonth: Int?
-    let birthDay:   Int?
-    let alternate:  Bool
+    let alternate: Bool
 
     var body: some View {
         HStack(spacing: 0) {
-            Text(formatYear(season.year))
-                .frame(width: BattingCareerColumn.year, alignment: .leading)
-                .padding(.horizontal, 2)
-            Text(formatAge(seasonYear: season.year,
-                           birthYear: birthYear,
-                           birthMonth: birthMonth,
-                           birthDay: birthDay))
-                .frame(width: BattingCareerColumn.age, alignment: .trailing)
-                .monospacedDigit()
-                .padding(.horizontal, 2)
-            // Spacer between Age (right-aligned) and Team (left-aligned)
-            // so the values don't visually merge.
-            Color.clear.frame(width: BattingCareerColumn.ageTeamGap)
-            // Raw season.team — Lahman codes for historical seasons,
-            // possibly a city name from the nightly bwar path for the
-            // current year. Truncate if it doesn't fit.
-            Text(season.team ?? "—")
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(width: BattingCareerColumn.team, alignment: .leading)
-                .padding(.horizontal, 2)
             Text(formatWAR(season.WAR))
                 .frame(width: BattingCareerColumn.war, alignment: .trailing)
                 .monospacedDigit()
                 .padding(.horizontal, 2)
-            // formatCount adds thousands separators when values hit
-            // 1,000+ (rare per-season but happens for old PA/AB and
-            // future-proofs the layout).
             Text(formatCount(season.G))      .frame(width: BattingCareerColumn.g,       alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             Text(formatCount(season.PA))     .frame(width: BattingCareerColumn.pa,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             Text(formatCount(season.AB))     .frame(width: BattingCareerColumn.ab,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
@@ -924,7 +1007,6 @@ private struct BattingCareerSeasonRow: View {
             Text(format3(season.OPS))        .frame(width: BattingCareerColumn.ops,     alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             Text(formatRoundedInt(season.OPS_plus))
                 .frame(width: BattingCareerColumn.opsPlus, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            // TB derived per-season — backend doesn't ship it.
             Text(formatCount(seasonTB(season))).frame(width: BattingCareerColumn.tb,    alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             Text(formatCount(season.GIDP))   .frame(width: BattingCareerColumn.gidp,    alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             Text(formatCount(season.HBP))    .frame(width: BattingCareerColumn.hbp,     alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
@@ -933,35 +1015,21 @@ private struct BattingCareerSeasonRow: View {
             Text(formatCount(season.IBB))    .frame(width: BattingCareerColumn.ibb,     alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
         }
         .font(.system(size: 11))
-        .padding(.horizontal, 12)
+        .padding(.trailing, 12)
         .frame(height: 28)
         .background(alternate ? Color(.systemGray6).opacity(0.5) : Color.clear)
     }
 }
 
-private struct BattingCareerTotalsRow: View {
+private struct BattingCareerScrollableTotalsRow: View {
     let agg: BattingCareerAgg
 
     var body: some View {
         HStack(spacing: 0) {
-            Text("Career").frame(width: BattingCareerColumn.year, alignment: .leading)
-                .padding(.horizontal, 2)
-            // Age + Team blank for the totals row. Same spacer between
-            // them as the header / data rows so column boundaries line up.
-            Color.clear.frame(width: BattingCareerColumn.age)
-                .padding(.horizontal, 2)
-            Color.clear.frame(width: BattingCareerColumn.ageTeamGap)
-            Color.clear.frame(width: BattingCareerColumn.team)
-                .padding(.horizontal, 2)
             Text(formatWAR(agg.war))
                 .frame(width: BattingCareerColumn.war, alignment: .trailing)
                 .monospacedDigit()
                 .padding(.horizontal, 2)
-            // formatCount adds thousands separators ("12,228" instead
-            // of "12228") — readability matters more than width here
-            // since the user is scrolling horizontally already, and
-            // the smaller font + minimumScaleFactor below handle any
-            // residual overflow.
             Text(formatCount(agg.g))   .frame(width: BattingCareerColumn.g,       alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             Text(formatCount(agg.pa))  .frame(width: BattingCareerColumn.pa,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             Text(formatCount(agg.ab))  .frame(width: BattingCareerColumn.ab,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
@@ -979,7 +1047,6 @@ private struct BattingCareerTotalsRow: View {
             Text(format3(agg.obp))     .frame(width: BattingCareerColumn.obp,     alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             Text(format3(agg.slg))     .frame(width: BattingCareerColumn.slg,     alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             Text(format3(agg.ops))     .frame(width: BattingCareerColumn.ops,     alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            // OPS+ isn't summable across seasons, leave blank for career row.
             Text("—").frame(width: BattingCareerColumn.opsPlus, alignment: .trailing)
                 .foregroundStyle(.tertiary)
                 .padding(.horizontal, 2)
@@ -990,14 +1057,10 @@ private struct BattingCareerTotalsRow: View {
             Text(formatCount(agg.sf))  .frame(width: BattingCareerColumn.sf,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             Text(formatCount(agg.ibb)) .frame(width: BattingCareerColumn.ibb,     alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
         }
-        // Slightly smaller font + tighter scale factor than the data
-        // rows, so 4-digit comma'd totals like "12,228" still fit
-        // narrow columns. Half-point reduction is just enough to
-        // accommodate the comma without further width changes.
         .font(.system(size: 9.5, weight: .semibold))
         .lineLimit(1)
         .minimumScaleFactor(0.6)
-        .padding(.horizontal, 12)
+        .padding(.trailing, 12)
         .frame(height: 28)
         .background(Color(.systemGray5).opacity(0.7))
         .overlay(alignment: .top) { Divider() }
