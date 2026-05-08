@@ -154,13 +154,11 @@ struct PlayerProfileView: View {
                 if let place = placeOfBirth {
                     HeaderBioRow(label: "Place of Birth", value: place)
                 }
-                // Height / Weight combined onto a single inline line
-                // since both are short — saves a row vs separate
-                // entries and reads naturally.
-                if let hw = heightWeightLine {
-                    Text(hw)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                if let h = formatHeight(player.height) {
+                    HeaderBioRow(label: "Height", value: h)
+                }
+                if let w = formatWeight(player.weight) {
+                    HeaderBioRow(label: "Weight", value: w)
                 }
                 if let debut = formatLongDate(player.debut) {
                     HeaderBioRow(label: "MLB Debut", value: debut)
@@ -180,15 +178,6 @@ struct PlayerProfileView: View {
         .padding(.top, 8)
     }
 
-    /// "Height: 6'2\" · Weight: 235 lbs" — both on one line, both
-    /// rendered together in secondary color since the labels are
-    /// inline rather than label/value-split.
-    private var heightWeightLine: String? {
-        var parts: [String] = []
-        if let h = formatHeight(player.height) { parts.append("Height: \(h)") }
-        if let w = formatWeight(player.weight) { parts.append("Weight: \(w)") }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
-    }
 
     /// "RF · New York Yankees" — same logic as the search row, both
     /// surfaces share the resolver in Components/TeamNames.swift.
