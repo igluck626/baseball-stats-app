@@ -102,11 +102,13 @@ struct PlayerProfileView: View {
     private var header: some View {
         HStack(alignment: .center, spacing: 16) {
             AsyncImage(url: player.largeHeadshotURL) { image in
-                image.resizable().scaledToFill()
+                image
+                    .resizable()
+                    .scaledToFit()
             } placeholder: {
-                Circle().fill(Color.gray.opacity(0.3))
+                Circle().fill(Color.gray.opacity(0.2))
             }
-            .frame(width: 100, height: 100)
+            .frame(width: 120, height: 120)
             .clipShape(Circle())
             .overlay(
                 Circle().stroke(Color.gray.opacity(0.2), lineWidth: 1)
