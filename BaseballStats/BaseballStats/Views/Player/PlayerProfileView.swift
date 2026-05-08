@@ -843,12 +843,15 @@ private enum BattingCareerColumn {
     static let ibb:     CGFloat = 32
 }
 
-// Lahman → modern display code. Lahman's archive uses team_ids that
-// don't always match the abbreviations users expect ("LAN" for the
-// Dodgers, "NYA" for the Yankees, etc.). Anything not in the dict
-// falls through to the raw value, so already-modern codes ("BOS",
-// "NYY") pass through unchanged.
+// Lahman / nightly-update → modern display code. Three input shapes
+// land in the team column depending on which loader wrote the row:
+//   • Lahman team_id   ("LAN", "NYA", "SLN")             — historical
+//   • Baseball-Reference Tm ("NYY", "STL")                — most current
+//   • Full team name ("Los Angeles Angels")               — fallback path
+// Anything not in the dict falls through to the raw value, so
+// already-modern codes ("BOS", "NYY") pass through unchanged.
 private let lahmanToDisplay: [String: String] = [
+    // Lahman team_id codes
     "LAN": "LAD", "NYA": "NYY", "NYN": "NYM", "SLN": "STL",
     "CHN": "CHC", "CHA": "CWS", "KCA": "KC",  "SDN": "SD",
     "SFN": "SF",  "TBA": "TB",  "MIA": "MIA", "FLO": "FLA",
@@ -858,6 +861,40 @@ private let lahmanToDisplay: [String: String] = [
     "CLE": "CLE", "DET": "DET", "BAL": "BAL", "BOS": "BOS",
     "SEA": "SEA", "OAK": "OAK", "TEX": "TEX", "TOR": "TOR",
     "COL": "COL", "ARI": "ARI", "ATH": "ATH",
+    // Full team names — happen for current-year rows when the nightly
+    // update lands them via the bref override path with the long name
+    // instead of the abbreviation.
+    "Los Angeles Angels":   "LAA",
+    "Los Angeles Dodgers":  "LAD",
+    "New York Yankees":     "NYY",
+    "New York Mets":        "NYM",
+    "Chicago Cubs":         "CHC",
+    "Chicago White Sox":    "CWS",
+    "San Francisco Giants": "SF",
+    "San Diego Padres":     "SD",
+    "Tampa Bay Rays":       "TB",
+    "Kansas City Royals":   "KC",
+    "Washington Nationals": "WSH",
+    "Arizona Diamondbacks": "ARI",
+    "Colorado Rockies":     "COL",
+    "Miami Marlins":        "MIA",
+    "Atlanta Braves":       "ATL",
+    "Houston Astros":       "HOU",
+    "Seattle Mariners":     "SEA",
+    "Texas Rangers":        "TEX",
+    "Toronto Blue Jays":    "TOR",
+    "Minnesota Twins":      "MIN",
+    "Cleveland Guardians":  "CLE",
+    "Detroit Tigers":       "DET",
+    "Baltimore Orioles":    "BAL",
+    "Boston Red Sox":       "BOS",
+    "Oakland Athletics":    "OAK",
+    "Athletics":            "ATH",
+    "Philadelphia Phillies":"PHI",
+    "Milwaukee Brewers":    "MIL",
+    "Cincinnati Reds":      "CIN",
+    "St. Louis Cardinals":  "STL",
+    "Pittsburgh Pirates":   "PIT",
 ]
 
 private func displayTeamCode(_ raw: String?) -> String {
