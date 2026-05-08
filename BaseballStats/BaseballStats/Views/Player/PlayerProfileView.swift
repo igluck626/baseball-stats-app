@@ -512,14 +512,11 @@ struct PlayerProfileView: View {
     /// Rows to render in the bio card. Each entry is conditionally
     /// included based on whether the underlying data is present, so
     /// missing fields don't leave dangling labels with "—" values.
+    /// Position and Bats/Throws are intentionally omitted — they
+    /// already appear in the player header at the top of the screen,
+    /// so re-listing them here would be redundant.
     private var bioRows: [(String, String)] {
         var rows: [(String, String)] = []
-        if let pos = nonEmpty(player.position) {
-            rows.append(("Position", pos))
-        }
-        if let bt = batsThrowsLabel {
-            rows.append(("Bats / Throws", bt))
-        }
         if let dob = formatLongDate(player.birthdate) {
             rows.append(("Date of Birth", dob))
         }
@@ -540,15 +537,6 @@ struct PlayerProfileView: View {
             rows.append(("Final Game", final))
         }
         return rows
-    }
-
-    /// "R / R" or "L / —" — uses an em-dash for either side that's
-    /// missing, returns nil only when both are missing.
-    private var batsThrowsLabel: String? {
-        let b = nonEmpty(player.bats)
-        let t = nonEmpty(player.throwingArm)
-        guard b != nil || t != nil else { return nil }
-        return "\(b ?? "—") / \(t ?? "—")"
     }
 
     /// "Linden, NJ" for US-born, "Oshu, Japan" for international (state
