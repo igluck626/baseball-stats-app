@@ -53,7 +53,7 @@ struct PlayerSearchResultRow: View {
     // MARK: - Subviews
 
     private var headshot: some View {
-        AsyncImage(url: URL(string: player.headshot_url ?? "")) { phase in
+        AsyncImage(url: player.largeHeadshotURL) { phase in
             switch phase {
             case .success(let image):
                 image

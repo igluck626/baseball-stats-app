@@ -72,6 +72,21 @@ struct PlayerSearchResult: Codable, Identifiable, Hashable {
     }
 }
 
+extension PlayerSearchResult {
+    /// Higher-resolution headshot URL. The backend emits the URL with
+    /// width=213 (the MLB Stats API default for thumbnail use). Swap
+    /// in `w_640` for the player profile header — the source image
+    /// pipeline supports any width and the larger size renders much
+    /// sharper at retina densities. Returns nil for missing/empty
+    /// fields and falls back to the raw URL if the pattern isn't
+    /// found (defensive for future backend URL format changes).
+    var largeHeadshotURL: URL? {
+        guard let raw = headshot_url, !raw.isEmpty else { return nil }
+        let upgraded = raw.replacingOccurrences(of: "w_213", with: "w_640")
+        return URL(string: upgraded)
+    }
+}
+
 // MARK: - Bio
 
 /// The `bio` block returned inside player current/career stats responses.

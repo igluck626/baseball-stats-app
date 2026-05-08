@@ -92,9 +92,9 @@ struct PlayerProfileView: View {
 
     // MARK: - Header
 
-    /// Hero header height. Pinned at 320pt — the white content panel
+    /// Hero header height. Pinned at 260pt — the white content panel
     /// below always starts at exactly this Y offset on every tab.
-    private static let headerHeight: CGFloat = 320
+    private static let headerHeight: CGFloat = 260
 
     private var header: some View {
         ZStack(alignment: .bottomLeading) {
@@ -158,7 +158,7 @@ struct PlayerProfileView: View {
     }
 
     private var headshot: some View {
-        AsyncImage(url: URL(string: player.headshot_url ?? "")) { phase in
+        AsyncImage(url: player.largeHeadshotURL) { phase in
             switch phase {
             case .success(let image):
                 image.resizable().scaledToFill()
