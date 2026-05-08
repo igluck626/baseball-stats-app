@@ -94,19 +94,18 @@ struct PlayerProfileView: View {
 
     // MARK: - Header
 
-    /// Card-style header — a horizontal layout with a circular
-    /// headshot on the left and identity text on the right. Replaces
-    /// the previous full-bleed cinematic photo. Sits in the same 16pt
-    /// page padding as the rest of the content so it aligns with the
-    /// cards below.
+    /// Card-style header — headshot on the left, identity + bio on
+    /// the right. Sits in the same 16pt page padding as the cards
+    /// below so the left/right edges align. HStack alignment is
+    /// `.top` so the photo anchors to the upper-left of the card and
+    /// the bio rows flow down beside it (the right column ends up
+    /// taller than the photo).
     private var header: some View {
-        HStack(alignment: .center, spacing: 16) {
-            // Rounded portrait rect (90×110) instead of a circle —
-            // MLB headshots ship with a built-in grey background, so
-            // scaledToFit on a circle exposes that grey as an ugly
-            // rectangular border. scaledToFill on a portrait rect
-            // matches the source aspect ratio: face and hat fill the
-            // frame with no grey background visible.
+        HStack(alignment: .top, spacing: 16) {
+            // Rounded portrait rect (90×110) — MLB headshots ship with
+            // a built-in grey background, so scaledToFill on a portrait
+            // rect matches the source aspect ratio: face and hat fill
+            // the frame with no grey backdrop visible.
             AsyncImage(url: player.largeHeadshotURL) { image in
                 image
                     .resizable()
@@ -142,6 +141,34 @@ struct PlayerProfileView: View {
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.yellow)
                 }
+
+                // Divider separates the identity rows above from the
+                // bio rows below. Was its own .ultraThinMaterial card
+                // before this turn — folded in here so the header
+                // contains all the static player info.
+                Divider().padding(.vertical, 4)
+
+                if let dob = formatLongDate(player.birthdate) {
+                    HeaderBioRow(label: "Date of Birth", value: dob)
+                }
+                if let place = placeOfBirth {
+                    HeaderBioRow(label: "Place of Birth", value: place)
+                }
+                // Height / Weight combined onto a single inline line
+                // since both are short — saves a row vs separate
+                // entries and reads naturally.
+                if let hw = heightWeightLine {
+                    Text(hw)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if let debut = formatLongDate(player.debut) {
+                    HeaderBioRow(label: "MLB Debut", value: debut)
+                }
+                if viewModel.isRetired,
+                   let final = formatLongDate(player.final_game) {
+                    HeaderBioRow(label: "Final Game", value: final)
+                }
             }
 
             Spacer(minLength: 0)
@@ -151,6 +178,16 @@ struct PlayerProfileView: View {
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .padding(.horizontal, 16)
         .padding(.top, 8)
+    }
+
+    /// "Height: 6'2\" · Weight: 235 lbs" — both on one line, both
+    /// rendered together in secondary color since the labels are
+    /// inline rather than label/value-split.
+    private var heightWeightLine: String? {
+        var parts: [String] = []
+        if let h = formatHeight(player.height) { parts.append("Height: \(h)") }
+        if let w = formatWeight(player.weight) { parts.append("Weight: \(w)") }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     /// "RF · New York Yankees" — same logic as the search row, both
@@ -312,15 +349,14 @@ struct PlayerProfileView: View {
         }
     }
 
-    /// Three stacked cards: current season → career → bio. Each card
-    /// renders independently — bio is always available (data lives on
-    /// the search result), current/career follow their own load state.
+    /// Two stacked cards: current season → career. Bio data now lives
+    /// in the header card at the top of the page, so we no longer
+    /// render a separate Player Info card here.
     @ViewBuilder
     private var battingOverview: some View {
         VStack(spacing: 20) {
             battingCurrentSeasonCard
             battingCareerCard
-            bioCard
         }
     }
 
@@ -329,7 +365,6 @@ struct PlayerProfileView: View {
         VStack(spacing: 20) {
             pitchingCurrentSeasonCard
             pitchingCareerCard
-            bioCard
         }
     }
 
@@ -483,60 +518,6 @@ struct PlayerProfileView: View {
                 ]
             )
         }
-    }
-
-    // MARK: - Bio card
-
-    /// Always present — data comes from the PlayerSearchResult passed
-    /// into the view, no network call required.
-    private var bioCard: some View {
-        let rows = bioRows
-        return VStack(alignment: .leading, spacing: 12) {
-            Text("Player Info")
-                .font(.headline)
-            VStack(spacing: 0) {
-                ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
-                    BioInfoRow(label: row.0, value: row.1)
-                    if index != rows.indices.last {
-                        Divider().opacity(0.4)
-                    }
-                }
-            }
-        }
-        .padding(20)
-        .frame(maxWidth: .infinity)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20))
-        .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 2)
-    }
-
-    /// Rows to render in the bio card. Each entry is conditionally
-    /// included based on whether the underlying data is present, so
-    /// missing fields don't leave dangling labels with "—" values.
-    /// Position and Bats/Throws are intentionally omitted — they
-    /// already appear in the player header at the top of the screen,
-    /// so re-listing them here would be redundant.
-    private var bioRows: [(String, String)] {
-        var rows: [(String, String)] = []
-        if let dob = formatLongDate(player.birthdate) {
-            rows.append(("Date of Birth", dob))
-        }
-        if let place = placeOfBirth {
-            rows.append(("Place of Birth", place))
-        }
-        if let h = formatHeight(player.height) {
-            rows.append(("Height", h))
-        }
-        if let w = formatWeight(player.weight) {
-            rows.append(("Weight", w))
-        }
-        if let debut = formatLongDate(player.debut) {
-            rows.append(("MLB Debut", debut))
-        }
-        if viewModel.isRetired,
-           let final = formatLongDate(player.final_game) {
-            rows.append(("Final Game", final))
-        }
-        return rows
     }
 
     /// "Linden, NJ" for US-born, "Oshu, Japan" for international (state
@@ -1453,26 +1434,22 @@ private func formatLongDate(_ iso: String?) -> String? {
     return output.string(from: date)
 }
 
-// MARK: - Bio row
+// MARK: - Header bio row
 
-/// Single label/value row inside the Player Info card. Label sits left
-/// in secondary color, value right-aligned in primary with .medium
-/// weight for readability.
-private struct BioInfoRow: View {
+/// Compact label/value row inside the player header card. Label sits
+/// left in secondary color, value right-aligned in primary. .caption
+/// throughout — denser than the previous standalone Player Info card.
+private struct HeaderBioRow: View {
     let label: String
     let value: String
 
     var body: some View {
-        HStack {
-            Text(label)
-                .font(.footnote.weight(.medium))
-                .foregroundStyle(.secondary)
-            Spacer(minLength: 12)
+        HStack(spacing: 8) {
+            Text(label).foregroundStyle(.secondary)
+            Spacer(minLength: 8)
             Text(value)
-                .font(.subheadline.weight(.semibold))
-                .multilineTextAlignment(.trailing)
         }
-        .padding(.vertical, 10)
+        .font(.caption)
     }
 }
 
