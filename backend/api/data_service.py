@@ -32,6 +32,8 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 # or backend/api (local venv).
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from sqlalchemy import and_, or_
+
 from database import connection, crud
 from database.models import PitcherSeason as _PitcherSeason
 from database.models import PlayerSeason as _PlayerSeason
@@ -1112,49 +1114,90 @@ _LEADERBOARD_PITCHING: dict[str, tuple[str, str, Optional[str]]] = {
     "SHO":  ("SHO",  "desc", None),
 }
 
-# Canonical team key (Lahman code) → all stored variants seen in the
-# season tables across history. Storage today is exclusively Lahman
-# codes ("NYA", "LAN", "FLO", …), confirmed against live leaderboards
-# — no bref codes, no full names — so the filter is straightforward
-# `IN (variants)`.
-_TEAM_FILTER_VARIANTS: dict[str, list[str]] = {
-    "ARI": ["ARI"],
-    "ATL": ["ATL"],
-    "BAL": ["BAL"],
-    "BOS": ["BOS"],
-    "CHA": ["CHA"],                  # Chicago White Sox
-    "CHN": ["CHN"],                  # Chicago Cubs
-    "CIN": ["CIN"],
-    "CLE": ["CLE"],                  # Indians → Guardians, same code
-    "COL": ["COL"],
-    "DET": ["DET"],
-    "HOU": ["HOU"],
-    "KCA": ["KCA"],                  # Kansas City Royals
-    "LAA": ["LAA", "ANA", "CAL"],    # California / Anaheim / LA Angels
-    "LAN": ["LAN", "BRO"],           # LA Dodgers (+ Brooklyn historical)
-    "MIA": ["MIA", "FLO"],           # Florida → Miami
-    "MIL": ["MIL", "ML4"],
-    "MIN": ["MIN"],
-    "NYA": ["NYA"],                  # Yankees
-    "NYN": ["NYN"],                  # Mets
-    "OAK": ["OAK", "ATH"],           # Athletics (2025+ rebrand stores "ATH")
-    "PHI": ["PHI"],
-    "PIT": ["PIT"],
-    "SDN": ["SDN"],
-    "SFN": ["SFN"],
-    "SEA": ["SEA"],
-    "SLN": ["SLN"],
-    "TBA": ["TBA"],
-    "TEX": ["TEX"],
-    "TOR": ["TOR"],
-    "WAS": ["WAS", "MON"],           # Montreal Expos → Washington
+# Canonical team key (Lahman code) → matcher that picks up every
+# stored variant for that franchise across the loaders.
+#
+# Storage in player_seasons / pitcher_seasons varies by source:
+#   • Lahman load (historical) → Lahman codes ("NYA", "LAN", "FLO", …)
+#   • Nightly bref/pybaseball (current season) → city display names
+#     ("New York", "Boston", "Atlanta") with the league column set
+#     so two-team cities can be disambiguated.
+# The leaderboard filter must accept both.
+#
+# `codes`        — exact-match codes (Lahman + any historical aliases).
+# `cities`       — unambiguous city display names; matched directly.
+# `city_league`  — (city, league) pairs for two-team cities ("Chicago",
+#                  "Los Angeles", "New York") where the team column
+#                  alone can't disambiguate AL vs NL.
+_TEAM_FILTER_MATCHERS: dict[str, dict] = {
+    "ARI": {"codes": ["ARI"],          "cities": ["Arizona"]},
+    "ATL": {"codes": ["ATL"],          "cities": ["Atlanta"]},
+    "BAL": {"codes": ["BAL"],          "cities": ["Baltimore"]},
+    "BOS": {"codes": ["BOS"],          "cities": ["Boston"]},
+    "CHA": {"codes": ["CHA"],          "city_league": [("Chicago",     "AL")]},
+    "CHN": {"codes": ["CHN"],          "city_league": [("Chicago",     "NL")]},
+    "CIN": {"codes": ["CIN"],          "cities": ["Cincinnati"]},
+    "CLE": {"codes": ["CLE"],          "cities": ["Cleveland"]},
+    "COL": {"codes": ["COL"],          "cities": ["Colorado"]},
+    "DET": {"codes": ["DET"],          "cities": ["Detroit"]},
+    "HOU": {"codes": ["HOU"],          "cities": ["Houston"]},
+    "KCA": {"codes": ["KCA"],          "cities": ["Kansas City"]},
+    "LAA": {"codes": ["LAA", "ANA", "CAL"], "city_league": [("Los Angeles", "AL")]},
+    "LAN": {"codes": ["LAN", "BRO"],   "city_league": [("Los Angeles", "NL")]},
+    "MIA": {"codes": ["MIA", "FLO"],   "cities": ["Miami"]},
+    "MIL": {"codes": ["MIL", "ML4"],   "cities": ["Milwaukee"]},
+    "MIN": {"codes": ["MIN"],          "cities": ["Minnesota"]},
+    "NYA": {"codes": ["NYA"],          "city_league": [("New York",    "AL")]},
+    "NYN": {"codes": ["NYN"],          "city_league": [("New York",    "NL")]},
+    "OAK": {"codes": ["OAK", "ATH"],   "cities": ["Oakland", "Athletics"]},
+    "PHI": {"codes": ["PHI"],          "cities": ["Philadelphia"]},
+    "PIT": {"codes": ["PIT"],          "cities": ["Pittsburgh"]},
+    "SDN": {"codes": ["SDN"],          "cities": ["San Diego"]},
+    "SFN": {"codes": ["SFN"],          "cities": ["San Francisco"]},
+    "SEA": {"codes": ["SEA"],          "cities": ["Seattle"]},
+    "SLN": {"codes": ["SLN"],          "cities": ["St. Louis"]},
+    "TBA": {"codes": ["TBA"],          "cities": ["Tampa Bay"]},
+    "TEX": {"codes": ["TEX"],          "cities": ["Texas"]},
+    "TOR": {"codes": ["TOR"],          "cities": ["Toronto"]},
+    "WAS": {"codes": ["WAS", "MON"],   "cities": ["Washington"]},
 }
+
+# Backwards-compat alias the route still references for whitelist
+# membership; iterating its keys is identical to iterating the matcher
+# dict's keys so `team in _TEAM_FILTER_VARIANTS` still validates.
+_TEAM_FILTER_VARIANTS = _TEAM_FILTER_MATCHERS
+
+
+def _team_filter_clause(table, team: str):
+    """Build an OR clause that matches every storage variant for a
+    franchise. Returns `None` when the team key is unknown so the
+    caller can fall back to a plain equality (or treat it as a no-op
+    filter — current callers raise 400 before this is reached)."""
+    matcher = _TEAM_FILTER_MATCHERS.get(team)
+    if matcher is None:
+        return None
+    clauses = []
+    if matcher.get("codes"):
+        clauses.append(table.team.in_(matcher["codes"]))
+    if matcher.get("cities"):
+        clauses.append(table.team.in_(matcher["cities"]))
+    for city, league_code in matcher.get("city_league", []):
+        clauses.append(and_(table.team == city, table.league == league_code))
+    return or_(*clauses) if clauses else None
 
 # MLB's standard rate-stat qualifiers, applied to completed seasons
 # (3.1 PA per team game and 1.0 IP per team game over a 162-game schedule).
 _QUALIFIER_PA_PER_GAME = 3.1
 _QUALIFIER_IP_PER_GAME = 1.0
 _FULL_SEASON_GAMES     = 162
+
+# Single-team-filter qualifier — flat low minimums when the leaderboard
+# is scoped to one franchise. The MLB-wide qualifier doesn't make sense
+# for a 4–5 starter rotation, and would wipe out every result early in
+# the season. These thresholds only filter out single-AB pinch hits and
+# one-inning relief outings, not actual rotation arms or everyday bats.
+_TEAM_FILTER_MIN_PA = 10
+_TEAM_FILTER_MIN_IP = 3.0
 
 
 def _qualifier_thresholds(db, year: int) -> tuple[int, float]:
@@ -1208,7 +1251,10 @@ def get_leaderboard(
     Rate stats (AVG/OBP/SLG/OPS/ERA/WHIP) require a pro-rated PA/IP
     minimum based on the season's max games played, so mid-season
     leaderboards populate while completed-season leaderboards stay at
-    the standard 502 PA / 162 IP qualifiers.
+    the standard 502 PA / 162 IP qualifiers. When `team` is supplied
+    the qualifier drops to flat low minimums (10 PA / 3 IP) — a single
+    franchise has too few rotation arms / starting bats to enforce
+    MLB-wide qualifying rules.
 
     Returns a response dict shaped like:
       {
@@ -1237,7 +1283,14 @@ def get_leaderboard(
     order_by = column.asc() if direction == "asc" else column.desc()
 
     with connection.get_session() as db:
-        min_pa, min_ip = _qualifier_thresholds(db, year)
+        # MLB-wide pro-rated qualifier for the cross-team leaderboard.
+        # When the user has narrowed to a single franchise, fall back
+        # to flat low minimums — a single team's pitching staff or
+        # starting lineup is too small to clear the league-wide bar.
+        if team:
+            min_pa, min_ip = _TEAM_FILTER_MIN_PA, _TEAM_FILTER_MIN_IP
+        else:
+            min_pa, min_ip = _qualifier_thresholds(db, year)
 
         q = (
             db.query(table)
@@ -1247,8 +1300,9 @@ def get_leaderboard(
         if league:
             q = q.filter(table.league == league)
         if team:
-            variants = _TEAM_FILTER_VARIANTS.get(team, [team])
-            q = q.filter(table.team.in_(variants))
+            clause = _team_filter_clause(table, team)
+            if clause is not None:
+                q = q.filter(clause)
         # Rate-stat eligibility — needs enough volume to be meaningful.
         # PA lives on player_seasons only; IP on both. The catalog only
         # uses "PA" for batter rate stats, so the column lookup is safe.
