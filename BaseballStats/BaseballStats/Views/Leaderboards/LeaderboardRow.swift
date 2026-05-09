@@ -29,20 +29,21 @@ struct LeaderboardRow: View {
             headshot
 
             // Name + team stack flexes to fill the leftover row width.
-            // HOF status is rendered as a small inline star next to the
-            // name (not a wide capsule) so it can't crowd either the
-            // name or the team-name line below.
+            // The name's .frame(maxWidth: .infinity) is load-bearing —
+            // without it the inner HStack hugs the text's intrinsic
+            // width, so SwiftUI never offers a constrained width and
+            // .minimumScaleFactor never kicks in. With the explicit
+            // flex, long names ("Vladimir Guerrero Jr.") shrink down
+            // to 75% before any truncation happens.
             VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 5) {
+                HStack(spacing: 6) {
                     Text(entry.player.name)
                         .font(.title3.weight(.semibold))
                         .lineLimit(1)
                         .minimumScaleFactor(0.75)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     if entry.player.is_hof == true {
-                        Image(systemName: "star.fill")
-                            .font(.caption2)
-                            .foregroundStyle(LeaderboardRow.baseballRed)
-                            .accessibilityLabel("Hall of Fame")
+                        hofBadge
                     }
                 }
                 if let teamLine {
@@ -99,9 +100,22 @@ struct LeaderboardRow: View {
         .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
-    /// HOF tint — same red as the search-row HOF capsule, so the visual
-    /// language stays consistent across the two screens even though the
-    /// shape differs (capsule on search, inline star here).
+    /// Compact HOF capsule, identical to the one in
+    /// PlayerSearchResultRow so the indicator reads the same on every
+    /// list screen. Self-explanatory text — "HOF" vs an icon the user
+    /// has to learn.
+    private var hofBadge: some View {
+        Text("HOF")
+            .font(.caption2.weight(.bold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(LeaderboardRow.baseballRed.gradient))
+            .accessibilityLabel("Hall of Fame")
+    }
+
+    /// Same red as the search-row HOF badge, kept on a static so the
+    /// shape can be referenced from `hofBadge` without re-allocating.
     private static let baseballRed = Color(red: 0.8, green: 0.1, blue: 0.1)
 
     // MARK: - Derived display strings
