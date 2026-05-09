@@ -494,14 +494,9 @@ struct GameLogsView: View {
             }
         }
 
-        var cumulative: [GameLog] = []
         var out: [MonthGroup] = []
         for bucket in buckets {
             let bucketGames = bucket.games.map { $0.game }
-            cumulative.append(contentsOf: bucketGames)
-            let through: WindowSnapshot = isPitcher
-                ? .computePitching(games: cumulative)
-                : .computeBatting(games: cumulative)
             let monthly: WindowSnapshot = isPitcher
                 ? .computePitching(games: bucketGames)
                 : .computeBatting(games: bucketGames)
@@ -509,8 +504,7 @@ struct GameLogsView: View {
                 year: bucket.year,
                 month: bucket.month,
                 games: bucket.games.reversed(),  // reverse-chrono within month
-                monthlyTotals: monthly,
-                throughMonth: through
+                monthlyTotals: monthly
             ))
         }
         return out.reversed()
@@ -555,11 +549,10 @@ private struct MonthGroup: Identifiable {
     /// the season-to-date AVG (batters) or ERA (pitchers) through that
     /// individual game.
     let games: [GameWithCumulative]
-    /// Stats summed over just this month's games.
+    /// Stats summed over just this month's games — including AVG/OBP/SLG/
+    /// OPS (batters) or ERA (pitchers) computed from this month's
+    /// counting stats. Drives the monthly totals row.
     let monthlyTotals: WindowSnapshot
-    /// Season-to-date stats through the end of this month — used for the
-    /// running AVG / ERA cell in the totals row.
-    let throughMonth: WindowSnapshot
 
     var id: String { "\(year)-\(month)" }
 }
@@ -977,11 +970,12 @@ private struct BattingScrollableMonthTotalsRow: View {
             Text(formatInt(m.bb))     .frame(width: BattingGameColumn.bb,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             Text(formatInt(m.so))     .frame(width: BattingGameColumn.so,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             Text(formatInt(m.sb))     .frame(width: BattingGameColumn.sb,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            // Cumulative-through-end-of-month rates.
-            Text(format3(group.throughMonth.avg)).frame(width: BattingGameColumn.avg, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(format3(group.throughMonth.obp)).frame(width: BattingGameColumn.obp, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(format3(group.throughMonth.slg)).frame(width: BattingGameColumn.slg, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(format3(group.throughMonth.ops)).frame(width: BattingGameColumn.ops, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            // Rates computed from this month's counting stats only — not
+            // season-to-date through the month.
+            Text(format3(m.avg)).frame(width: BattingGameColumn.avg, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(format3(m.obp)).frame(width: BattingGameColumn.obp, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(format3(m.slg)).frame(width: BattingGameColumn.slg, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(format3(m.ops)).frame(width: BattingGameColumn.ops, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
         }
         .font(.caption.weight(.semibold))
         .padding(.trailing, 12)
@@ -1175,7 +1169,8 @@ private struct PitchingScrollableMonthTotalsRow: View {
             Text(formatInt(m.so))    .frame(width: PitchingGameColumn.so,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             Text(formatInt(m.hr))    .frame(width: PitchingGameColumn.hr,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             Text(formatInt(m.hbp))   .frame(width: PitchingGameColumn.hbp, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(format2(group.throughMonth.era))
+            // ERA from this month's ER × 9 / IP only — not cumulative.
+            Text(format2(m.era))
                 .frame(width: PitchingGameColumn.era, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
         }
         .font(.caption.weight(.semibold))
