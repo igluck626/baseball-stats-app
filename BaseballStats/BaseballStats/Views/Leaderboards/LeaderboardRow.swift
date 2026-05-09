@@ -2,10 +2,9 @@
 //  LeaderboardRow.swift
 //  BaseballStats
 //
-//  One ranked row in the leaderboards list. Mirrors PlayerSearchResultRow's
-//  chrome (60×60 circular headshot, name + team subline, trailing chevron)
-//  with two leaderboard-specific additions: a leading rank number and a
-//  trailing stat value.
+//  One ranked row in the leaderboards list. Mirrors the player profile
+//  header's portrait headshot style (rounded rectangle, no chrome) with
+//  a leading rank cell and a trailing stat value.
 //
 
 import SwiftUI
@@ -29,26 +28,29 @@ struct LeaderboardRow: View {
             rankCell
             headshot
 
-            // Name + team/HOF stack flexes to fill the leftover row
-            // width — the previous Spacer between this stack and the
-            // trailing value cell was eating the slack and forcing the
-            // name + team to truncate.
+            // Name + team stack flexes to fill the leftover row width.
+            // HOF status is rendered as a small inline star next to the
+            // name (not a wide capsule) so it can't crowd either the
+            // name or the team-name line below.
             VStack(alignment: .leading, spacing: 2) {
-                Text(entry.player.name)
-                    .font(.title3.weight(.semibold))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.9)
-
-                HStack(spacing: 6) {
-                    if let teamLine {
-                        Text(teamLine)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
+                HStack(spacing: 5) {
+                    Text(entry.player.name)
+                        .font(.title3.weight(.semibold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
                     if entry.player.is_hof == true {
-                        hofBadge
+                        Image(systemName: "star.fill")
+                            .font(.caption2)
+                            .foregroundStyle(LeaderboardRow.baseballRed)
+                            .accessibilityLabel("Hall of Fame")
                     }
+                }
+                if let teamLine {
+                    Text(teamLine)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -74,50 +76,32 @@ struct LeaderboardRow: View {
             .monospacedDigit()
             .foregroundStyle(.secondary)
             // Fixed width keeps the headshot column aligned across
-            // single/double-digit ranks.
-            .frame(width: 24, alignment: .trailing)
+            // single/double-digit ranks. Tightened from 24→22pt to
+            // give the name/team stack a few more points of slack.
+            .frame(width: 22, alignment: .trailing)
     }
 
+    /// Plain portrait-rounded-rect headshot — no circular clip, no gray
+    /// material backdrop. Matches the player profile header card's
+    /// styling. MLB headshots ship as well-composed head-and-shoulders
+    /// portraits with their own backdrop; forcing them into a circle
+    /// over a frosted material was double-framing the image.
     private var headshot: some View {
-        AsyncImage(url: entry.player.largeHeadshotURL) { phase in
-            switch phase {
-            case .success(let image):
-                // scaledToFit on a circle clip preserves the full
-                // headshot — MLB's source image is already a portrait
-                // crop with breathing room, so .fill was over-cropping
-                // the head/shoulders. .fit keeps the silhouette intact
-                // even at the bumped size.
-                image.resizable().scaledToFit()
-            case .empty, .failure:
-                placeholderSilhouette
-            @unknown default:
-                placeholderSilhouette
-            }
+        AsyncImage(url: entry.player.largeHeadshotURL) { image in
+            image
+                .resizable()
+                .scaledToFill()
+        } placeholder: {
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color.gray.opacity(0.15))
         }
-        .frame(width: 68, height: 68)
-        .background(Circle().fill(.ultraThinMaterial))
-        .clipShape(Circle())
-        .overlay(Circle().strokeBorder(.quaternary, lineWidth: 0.5))
+        .frame(width: 50, height: 60)
+        .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
-    private var placeholderSilhouette: some View {
-        Image(systemName: "person.crop.circle.fill")
-            .resizable()
-            .scaledToFit()
-            .foregroundStyle(.tertiary)
-    }
-
-    private var hofBadge: some View {
-        Text("HOF")
-            .font(.caption2.weight(.bold))
-            .foregroundStyle(.white)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(Capsule().fill(LeaderboardRow.baseballRed.gradient))
-            .accessibilityLabel("Hall of Fame")
-    }
-
-    /// Same red as the search-row HOF badge.
+    /// HOF tint — same red as the search-row HOF capsule, so the visual
+    /// language stays consistent across the two screens even though the
+    /// shape differs (capsule on search, inline star here).
     private static let baseballRed = Color(red: 0.8, green: 0.1, blue: 0.1)
 
     // MARK: - Derived display strings
