@@ -158,7 +158,8 @@ private extension String {
             birthdate: "1992-04-26",
             headshot_url: nil,
             is_hof: false,
-            hof_year: nil
+            hof_year: nil,
+            is_pitcher: nil
         ))
         PlayerSearchResultRow(player: .init(
             player_id: 110849,
@@ -180,7 +181,8 @@ private extension String {
             birthdate: "1895-02-06",
             headshot_url: nil,
             is_hof: true,
-            hof_year: 1936
+            hof_year: 1936,
+            is_pitcher: nil
         ))
     }
     .listStyle(.insetGrouped)

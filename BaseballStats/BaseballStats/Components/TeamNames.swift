@@ -44,7 +44,10 @@ let mlbTeamFullName: [String: String] = [
     "MIN": "Minnesota Twins",
     "NYA": "New York Yankees",
     "NYN": "New York Mets",
-    "OAK": "Oakland Athletics",
+    // 2025 rebrand — the team dropped the city qualifier and goes by
+    // just "Athletics". Same Lahman code for historical continuity.
+    "OAK": "Athletics",
+    "ATH": "Athletics",
     "PHI": "Philadelphia Phillies",
     "PIT": "Pittsburgh Pirates",
     "SDN": "San Diego Padres",

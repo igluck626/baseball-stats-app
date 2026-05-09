@@ -293,6 +293,10 @@ _CITY_TO_CODE: dict[str, str] = {
     "Milwaukee":     "MIL",
     "Minnesota":     "MIN",
     "Oakland":       "OAK",
+    # 2025 rebrand — bref / pybaseball write the bare team name with no
+    # city prefix once the team relocated. Same franchise as OAK so the
+    # downstream lookups stay consistent.
+    "Athletics":     "OAK",
     "Philadelphia":  "PHI",
     "Pittsburgh":    "PIT",
     "San Diego":     "SDN",
@@ -1332,6 +1336,11 @@ def get_leaderboard(
 
             team_code = _resolve_team_code(season_row.team, season_row.league)
             value = getattr(season_row, column_name)
+            # is_pitcher hint lets the iOS profile screen pick the
+            # right default role tab without having to wait for the
+            # four parallel current/career fetches to resolve. A young
+            # pitcher with sub-50 IP would otherwise look like a non-
+            # pitcher to the threshold-based detection on the client.
             leaders.append({
                 "rank":  rank,
                 "value": value,
@@ -1343,6 +1352,7 @@ def get_leaderboard(
                     "mlb_last_season": player_row.mlb_last_season,
                     "current_team":    season_row.team,
                     "team_code":       team_code,
+                    "is_pitcher":      not is_batter,
                     **_bio_dict(player_row, db),
                 },
             })

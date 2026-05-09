@@ -56,6 +56,12 @@ struct PlayerSearchResult: Codable, Identifiable, Hashable {
     let headshot_url: String?
     let is_hof: Bool?
     let hof_year: Int?
+    /// Set by the leaderboard endpoint per `player_type` so the
+    /// profile screen can pick the right default role tab without
+    /// waiting for the four parallel current/career fetches. Nil for
+    /// search-result rows (where role is still inferred client-side
+    /// from the fetched career thresholds).
+    let is_pitcher: Bool?
 
     var id: Int { player_id }
 
@@ -69,6 +75,7 @@ struct PlayerSearchResult: Codable, Identifiable, Hashable {
         case birth_year, birth_month, birth_day
         case birth_city, birth_state, birth_country
         case debut, final_game, birthdate, headshot_url, is_hof, hof_year
+        case is_pitcher
     }
 }
 

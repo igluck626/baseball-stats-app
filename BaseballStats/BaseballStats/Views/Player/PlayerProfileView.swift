@@ -234,15 +234,28 @@ struct PlayerProfileView: View {
     /// batting history at all, not just for true two-way players. This
     /// lets users see the historical batting line for, say, a deadball-
     /// era pitcher who hit a few home runs.
+    ///
+    /// `viewModel.isPitcher` is threshold-based and only flips on once
+    /// the career fetch resolves with ≥50 IP — the leaderboard hint
+    /// covers the gap so the toggle doesn't briefly hide while the
+    /// pitcher's profile is loading from a Pitching board tap.
     private var showsRoleSelector: Bool {
-        viewModel.isPitcher && viewModel.hasAnyBatting
+        let isPitcherEntry = player.is_pitcher == true
+        return (viewModel.isPitcher || isPitcherEntry) && viewModel.hasAnyBatting
     }
 
     /// The role to surface before any explicit toggle by the user.
-    /// Two-way players default to batting (the marquee role); pure
-    /// pitchers with batting history default to pitching (their primary
-    /// role). Anything else lands on batting.
+    /// Priority:
+    ///   1. The leaderboard's `is_pitcher` hint — if the user tapped a
+    ///      pitcher row, default to pitching even before fetches land.
+    ///      Without this, sub-50-IP arms (rookies, mid-season callups)
+    ///      open on the batting tab while career data is loading.
+    ///   2. Two-way players → batting (the marquee role).
+    ///   3. Pure pitchers (threshold-detected) → pitching.
+    ///   4. Otherwise → batting.
     private var defaultRole: Role {
+        if player.is_pitcher == true { return .pitching }
+        if player.is_pitcher == false { return .batting }
         if viewModel.isTwoWay { return .batting }
         if viewModel.isPitcher { return .pitching }
         return .batting
@@ -311,12 +324,17 @@ struct PlayerProfileView: View {
     /// Decides which role's content to show.
     /// 1. Toggle visible (pitcher with any batting history) → follow
     ///    the picker (which itself defaults via `defaultRole`).
-    /// 2. Threshold batter only → batting.
-    /// 3. Sub-threshold fallback → whichever side has data, batting
+    /// 2. Leaderboard says this is a pitcher → pitching, even when
+    ///    career thresholds haven't yet flipped `viewModel.isPitcher`.
+    /// 3. Threshold batter only → batting.
+    /// 4. Sub-threshold fallback → whichever side has data, batting
     ///    otherwise.
     private var showingBatting: Bool {
         if showsRoleSelector {
             return effectiveRole == .batting
+        }
+        if player.is_pitcher == true {
+            return false
         }
         if viewModel.isBatter && !viewModel.isPitcher {
             return true
@@ -2178,7 +2196,8 @@ private struct PitchingCareerAgg {
             birthdate: "1994-07-05",
             headshot_url: "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/660271/headshot/67/current",
             is_hof: false,
-            hof_year: nil
+            hof_year: nil,
+            is_pitcher: nil
         ))
     }
 }
