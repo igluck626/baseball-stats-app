@@ -62,6 +62,15 @@ _TEAM_SEASONS_NEW_COLUMNS: list[tuple[str, str]] = [
     ("last_updated", "TIMESTAMP"),
 ]
 
+# Columns added to batting_gamelogs after the table's initial creation. The
+# MLB Stats API exposes both, but the original schema didn't store them; the
+# iOS game-logs table needs them for the IBB/CS columns and for cumulative
+# OBP (which uses HBP/SF, already on the table).
+_BATTING_GAMELOGS_NEW_COLUMNS: list[tuple[str, str]] = [
+    ("IBB", "INTEGER"),
+    ("CS",  "INTEGER"),
+]
+
 # Extended counting stats added to player_seasons / pitcher_seasons in the
 # stat-coverage expansion. Listed here so existing prod tables get them via
 # ALTER TABLE on the next init_db() (lifespan / /admin/migrate / bulk-load).
@@ -272,9 +281,10 @@ def init_db() -> dict:
         if added:
             summary["columns_added"][tbl_name] = added
     for tbl_name, cols in (
-        ("team_seasons",    _TEAM_SEASONS_NEW_COLUMNS),
-        ("player_seasons",  _PLAYER_SEASONS_NEW_COLUMNS),
-        ("pitcher_seasons", _PITCHER_SEASONS_NEW_COLUMNS),
+        ("team_seasons",      _TEAM_SEASONS_NEW_COLUMNS),
+        ("player_seasons",    _PLAYER_SEASONS_NEW_COLUMNS),
+        ("pitcher_seasons",   _PITCHER_SEASONS_NEW_COLUMNS),
+        ("batting_gamelogs",  _BATTING_GAMELOGS_NEW_COLUMNS),
     ):
         added = _add_missing_columns(tbl_name, cols)
         if added:

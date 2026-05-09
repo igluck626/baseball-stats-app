@@ -414,8 +414,10 @@ struct GameLog: Codable, Identifiable, Hashable {
     let HR: Int?
     let RBI: Int?
     let BB: Int?
+    let IBB: Int?
     let SO: Int?
     let SB: Int?
+    let CS: Int?
     let HBP: Int?
     let SF: Int?
     let LOB: Int?

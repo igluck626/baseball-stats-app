@@ -370,55 +370,36 @@ struct GameLogsView: View {
         }
     }
 
+    @ViewBuilder
     private func flatGameTable(games: [GameLog]) -> some View {
-        VStack(spacing: 0) {
-            if isPitcher { PitchingGameTableHeader() } else { BattingGameTableHeader() }
-            Divider()
-            ForEach(Array(games.enumerated()), id: \.offset) { index, game in
-                // Filtered windows (Last N / Custom) are a subset, not a
-                // chronological prefix of the season — a cumulative rate
-                // through that game would be misleading. Pass nil so the
-                // AVG/ERA column renders "—".
-                gameRow(game: game, alternate: !index.isMultiple(of: 2), cumulativeRate: nil)
-                if index != games.indices.last { Divider().opacity(0.25) }
-            }
-        }
-    }
-
-    private func monthGroupedTable(allGames: [GameLog]) -> some View {
-        let groups = monthGroups(allGames: allGames)
-        return VStack(spacing: 0) {
-            if isPitcher { PitchingGameTableHeader() } else { BattingGameTableHeader() }
-            Divider()
-            ForEach(groups) { group in
-                MonthHeaderCapsule(label: monthFullName(group.month, year: group.year))
-                ForEach(Array(group.games.enumerated()), id: \.offset) { index, gc in
-                    gameRow(
-                        game: gc.game,
-                        alternate: !index.isMultiple(of: 2),
-                        cumulativeRate: gc.cumulativeRate
-                    )
-                    if index != group.games.indices.last {
-                        Divider().opacity(0.25)
-                    }
-                }
-                if isPitcher {
-                    PitchingMonthTotalsRow(group: group)
-                } else {
-                    BattingMonthTotalsRow(group: group)
-                }
-                // Stronger separator after each month's totals row.
-                Divider()
-            }
+        // Filtered windows (Last N / Custom) are a subset, not a
+        // chronological prefix of the season — a cumulative rate through
+        // that game would be misleading. Pass `.empty` / nil so the rate
+        // columns render "—".
+        if isPitcher {
+            PitchingGameLogTable(
+                rows: games.enumerated().map { index, game in
+                    GameWithCumulative(game: game, battingRates: .empty, cumulativeERA: nil)
+                },
+                groups: nil
+            )
+        } else {
+            BattingGameLogTable(
+                rows: games.enumerated().map { index, game in
+                    GameWithCumulative(game: game, battingRates: .empty, cumulativeERA: nil)
+                },
+                groups: nil
+            )
         }
     }
 
     @ViewBuilder
-    private func gameRow(game: GameLog, alternate: Bool, cumulativeRate: Double?) -> some View {
+    private func monthGroupedTable(allGames: [GameLog]) -> some View {
+        let groups = monthGroups(allGames: allGames)
         if isPitcher {
-            PitchingGameRow(game: game, alternate: alternate, cumulativeERA: cumulativeRate)
+            PitchingGameLogTable(rows: nil, groups: groups)
         } else {
-            BattingGameRow(game: game, alternate: alternate, cumulativeAVG: cumulativeRate)
+            BattingGameLogTable(rows: nil, groups: groups)
         }
     }
 
@@ -448,27 +429,59 @@ struct GameLogsView: View {
         let chrono = Array(allGames.reversed())
 
         // Walk chronologically once, accumulating the rate-stat
-        // numerator/denominator and emitting each game's cumulative
-        // rate. Baseball Reference's game logs show the rate stat as
-        // "season-to-date through this game", which is what this loop
-        // computes — not the per-game H/AB or ER*9/IP.
-        var sumAB = 0
-        var sumH  = 0
-        var sumIP = 0.0
-        var sumER = 0
+        // numerator/denominator components and emitting each game's
+        // cumulative rate(s). Baseball Reference's game logs show the
+        // rate stats (AVG/OBP/SLG/OPS, ERA) as "season-to-date through
+        // this game", which is what this loop computes — not the
+        // per-game H/AB or ER*9/IP.
+        //
+        // For batters we track the four standard slash-line components
+        // and derive AVG/OBP/SLG/OPS from running totals. For pitchers
+        // we just need cumulative ERA (ER × 9 / IP).
+        var sumAB  = 0
+        var sumH   = 0
+        var sumDbl = 0
+        var sumTrp = 0
+        var sumHR  = 0
+        var sumBB  = 0
+        var sumHBP = 0
+        var sumSF  = 0
+        var sumIP  = 0.0
+        var sumER  = 0
         var chronoWithCumulative: [GameWithCumulative] = []
         for g in chrono {
-            let rate: Double?
             if isPitcher {
                 sumIP += g.IP ?? 0
                 sumER += g.ER ?? 0
-                rate = sumIP > 0 ? Double(sumER) * 9.0 / sumIP : nil
+                let era: Double? = sumIP > 0 ? Double(sumER) * 9.0 / sumIP : nil
+                chronoWithCumulative.append(GameWithCumulative(
+                    game: g, battingRates: .empty, cumulativeERA: era
+                ))
             } else {
-                sumAB += g.AB ?? 0
-                sumH  += g.H  ?? 0
-                rate = sumAB > 0 ? Double(sumH) / Double(sumAB) : nil
+                sumAB  += g.AB ?? 0
+                sumH   += g.H  ?? 0
+                sumDbl += g.doubles ?? 0
+                sumTrp += g.triples ?? 0
+                sumHR  += g.HR ?? 0
+                sumBB  += g.BB ?? 0
+                sumHBP += g.HBP ?? 0
+                sumSF  += g.SF ?? 0
+
+                let singles = sumH - sumDbl - sumTrp - sumHR
+                let avg: Double? = sumAB > 0 ? Double(sumH) / Double(sumAB) : nil
+                let obpDen = sumAB + sumBB + sumHBP + sumSF
+                let obp: Double? = obpDen > 0
+                    ? Double(sumH + sumBB + sumHBP) / Double(obpDen) : nil
+                let slg: Double? = sumAB > 0
+                    ? Double(singles + 2 * sumDbl + 3 * sumTrp + 4 * sumHR) / Double(sumAB)
+                    : nil
+                let ops: Double? = (obp != nil && slg != nil) ? (obp! + slg!) : nil
+                chronoWithCumulative.append(GameWithCumulative(
+                    game: g,
+                    battingRates: CumulativeBattingRates(avg: avg, obp: obp, slg: slg, ops: ops),
+                    cumulativeERA: nil
+                ))
             }
-            chronoWithCumulative.append(GameWithCumulative(game: g, cumulativeRate: rate))
         }
 
         var buckets: [(year: Int, month: Int, games: [GameWithCumulative])] = []
@@ -539,12 +552,24 @@ private struct MonthGroup: Identifiable {
     var id: String { "\(year)-\(month)" }
 }
 
-/// One row of the games table — the raw game alongside the cumulative
-/// rate stat (AVG for batters, ERA for pitchers) through that game.
-/// `nil` means "not applicable" (filtered subset views) and renders "—".
+/// Cumulative batting rate stats through a single game. Each value is
+/// the full season-to-date rate up to and including that game — what
+/// Baseball Reference and MLB.com show in their game-log rate columns.
+private struct CumulativeBattingRates {
+    let avg: Double?
+    let obp: Double?
+    let slg: Double?
+    let ops: Double?
+    static let empty = CumulativeBattingRates(avg: nil, obp: nil, slg: nil, ops: nil)
+}
+
+/// One row of the games table — the raw game paired with the cumulative
+/// rate stats through that game. Filtered subset views (Last N / Custom)
+/// pass the `.empty` rates / `nil` ERA so the rate columns render "—".
 private struct GameWithCumulative {
     let game: GameLog
-    let cumulativeRate: Double?
+    let battingRates: CumulativeBattingRates
+    let cumulativeERA: Double?
 }
 
 // MARK: - Splits column widths
@@ -573,36 +598,50 @@ private struct WindowSnapshot {
     var g: Int?
     // Batting
     var ab: Int?
+    var r: Int?
     var h: Int?
+    var doubles: Int?
+    var triples: Int?
+    var tb: Int?
     var hr: Int?
     var rbi: Int?
     var bb: Int?
+    var ibb: Int?
+    var so: Int?
+    var sb: Int?
+    var cs: Int?
     var avg: Double?
+    var obp: Double?
+    var slg: Double?
     var ops: Double?
     // Pitching
     var ip: Double?
     var er: Int?
-    var so: Int?
+    var hbp: Int?
     var era: Double?
     var whip: Double?
     var kPer9: Double?
 
     static let empty = WindowSnapshot()
 
-    /// Adapter from the API's GameLogWindow.
+    /// Adapter from the API's GameLogWindow. The backend currently
+    /// surfaces a subset of batting fields per window; the rest stay nil.
     static func from(_ window: GameLogWindow?) -> WindowSnapshot {
         WindowSnapshot(
             g: window?.G,
             ab: window?.AB,
+            r: window?.R,
             h: window?.H,
             hr: window?.HR,
             rbi: window?.RBI,
             bb: window?.BB,
+            so: window?.SO,
             avg: window?.BA,
+            obp: window?.OBP,
+            slg: window?.SLG,
             ops: window?.OPS,
             ip: window?.IP,
             er: window?.ER,
-            so: window?.SO,
             era: window?.ERA,
             whip: window?.WHIP,
             kPer9: window?.K_per9
@@ -616,25 +655,33 @@ private struct WindowSnapshot {
         guard !games.isEmpty else { return .empty }
         let g = games.count
         let ab  = games.reduce(0) { $0 + ($1.AB ?? 0) }
+        let r   = games.reduce(0) { $0 + ($1.R ?? 0) }
         let h   = games.reduce(0) { $0 + ($1.H ?? 0) }
         let dbl = games.reduce(0) { $0 + ($1.doubles ?? 0) }
         let trp = games.reduce(0) { $0 + ($1.triples ?? 0) }
         let hr  = games.reduce(0) { $0 + ($1.HR ?? 0) }
         let rbi = games.reduce(0) { $0 + ($1.RBI ?? 0) }
         let bb  = games.reduce(0) { $0 + ($1.BB ?? 0) }
+        let ibb = games.reduce(0) { $0 + ($1.IBB ?? 0) }
+        let so  = games.reduce(0) { $0 + ($1.SO ?? 0) }
+        let sb  = games.reduce(0) { $0 + ($1.SB ?? 0) }
+        let cs  = games.reduce(0) { $0 + ($1.CS ?? 0) }
         let hbp = games.reduce(0) { $0 + ($1.HBP ?? 0) }
         let sf  = games.reduce(0) { $0 + ($1.SF ?? 0) }
 
         let singles = h - dbl - trp - hr
+        let tb = singles + 2 * dbl + 3 * trp + 4 * hr
         let avg: Double? = ab > 0 ? Double(h) / Double(ab) : nil
         let obpDen = ab + bb + hbp + sf
         let obp: Double? = obpDen > 0 ? Double(h + bb + hbp) / Double(obpDen) : nil
-        let slg: Double? = ab > 0
-            ? Double(singles + 2 * dbl + 3 * trp + 4 * hr) / Double(ab) : nil
+        let slg: Double? = ab > 0 ? Double(tb) / Double(ab) : nil
         let ops: Double? = (obp != nil && slg != nil) ? (obp! + slg!) : nil
 
         return WindowSnapshot(
-            g: g, ab: ab, h: h, hr: hr, rbi: rbi, bb: bb, avg: avg, ops: ops
+            g: g,
+            ab: ab, r: r, h: h, doubles: dbl, triples: trp, tb: tb,
+            hr: hr, rbi: rbi, bb: bb, ibb: ibb, so: so, sb: sb, cs: cs,
+            avg: avg, obp: obp, slg: slg, ops: ops
         )
     }
 
@@ -644,78 +691,211 @@ private struct WindowSnapshot {
         let g  = games.count
         let ip = games.reduce(0.0) { $0 + ($1.IP ?? 0) }
         let h  = games.reduce(0)   { $0 + ($1.H  ?? 0) }
+        let r  = games.reduce(0)   { $0 + ($1.R  ?? 0) }
         let er = games.reduce(0)   { $0 + ($1.ER ?? 0) }
         let bb = games.reduce(0)   { $0 + ($1.BB ?? 0) }
         let so = games.reduce(0)   { $0 + ($1.SO ?? 0) }
+        let hr = games.reduce(0)   { $0 + ($1.HR ?? 0) }
+        let hbp = games.reduce(0)  { $0 + ($1.HBP ?? 0) }
 
         let era:    Double? = ip > 0 ? Double(er) * 9 / ip : nil
         let whip:   Double? = ip > 0 ? Double(bb + h) / ip : nil
         let kPer9:  Double? = ip > 0 ? Double(so) * 9 / ip : nil
 
         return WindowSnapshot(
-            g: g, h: h, bb: bb,
-            ip: ip, er: er, so: so,
+            g: g,
+            r: r, h: h, hr: hr, bb: bb, so: so,
+            ip: ip, er: er, hbp: hbp,
             era: era, whip: whip, kPer9: kPer9
         )
     }
 }
 
-// MARK: - Game table headers and rows
+// MARK: - Game table layout
 
-// Column widths for the batting game table. Trimmed from the
-// previous values so the row total + 12pt internal padding fits
-// comfortably inside the parent's 337pt content area on iPhone.
-// Total intrinsic: 48 + 56 + 4 (spacer) + 26 + 24 + 26 + 32 + 26 + 44 = 286pt
-// Plus 24pt internal padding = 310pt → fits 337pt with slack.
+// Frozen-pane layout: Date / Opp / Result on the left stay put; the
+// remaining counting + rate columns scroll horizontally. Mirrors the
+// career table's split-pane structure in PlayerProfileView.
+//
+// Column widths for the batting game table. Total scrollable intrinsic
+// (with 4pt padding either side per cell) = 24+24+24+28+24+24+26+30+
+// 26+30+26+26+26 + 4 rates × 44 = ~514pt → wider than screen, so the
+// scroller actually scrolls.
 private enum BattingGameColumn {
-    static let date: CGFloat = 48
-    static let opp:  CGFloat = 56
-    static let ab:   CGFloat = 26
-    static let h:    CGFloat = 24
-    static let hr:   CGFloat = 26
-    static let rbi:  CGFloat = 32
-    static let bb:   CGFloat = 26
-    static let avg:  CGFloat = 44
+    static let date:   CGFloat = 48
+    static let opp:    CGFloat = 56
+    static let result: CGFloat = 36
+    static let ab:     CGFloat = 26
+    static let r:      CGFloat = 24
+    static let h:      CGFloat = 24
+    static let tb:     CGFloat = 28
+    static let dbl:    CGFloat = 26
+    static let trp:    CGFloat = 26
+    static let hr:     CGFloat = 26
+    static let rbi:    CGFloat = 30
+    static let bb:     CGFloat = 26
+    static let ibb:    CGFloat = 30
+    static let so:     CGFloat = 26
+    static let sb:     CGFloat = 26
+    static let cs:     CGFloat = 26
+    static let avg:    CGFloat = 44
+    static let obp:    CGFloat = 44
+    static let slg:    CGFloat = 44
+    static let ops:    CGFloat = 44
 }
 
-// Same intent for pitching. Total intrinsic: 48+56+4+36+24+26+26+26+44 = 290pt
-// Plus 24pt padding = 314pt → fits 337pt.
 private enum PitchingGameColumn {
-    static let date: CGFloat = 48
-    static let opp:  CGFloat = 56
-    static let ip:   CGFloat = 36
-    static let h:    CGFloat = 24
-    static let er:   CGFloat = 26
-    static let bb:   CGFloat = 26
-    static let so:   CGFloat = 26
-    static let era:  CGFloat = 44
+    static let date:   CGFloat = 48
+    static let opp:    CGFloat = 56
+    static let result: CGFloat = 36
+    static let ip:     CGFloat = 36
+    static let h:      CGFloat = 24
+    static let r:      CGFloat = 24
+    static let er:     CGFloat = 26
+    static let bb:     CGFloat = 26
+    static let so:     CGFloat = 26
+    static let hr:     CGFloat = 26
+    static let hbp:    CGFloat = 30
+    static let era:    CGFloat = 44
 }
 
-private struct BattingGameTableHeader: View {
+// MARK: - Batting game-log table
+
+/// Batting game-log table — frozen Date/Opp/Result on the left, the
+/// counting and rate columns scrolling horizontally on the right. Drives
+/// either a flat list (when `rows` is set, used for Last N / Custom) or
+/// the season-grouped layout (when `groups` is set). Exactly one input
+/// is non-nil — the caller picks based on the active filter row.
+private struct BattingGameLogTable: View {
+    let rows: [GameWithCumulative]?
+    let groups: [MonthGroup]?
+
     var body: some View {
         HStack(spacing: 0) {
-            Text("Date").frame(width: BattingGameColumn.date, alignment: .leading)
-            Text("Opp").frame(width: BattingGameColumn.opp, alignment: .leading)
-            Spacer(minLength: 4)
-            Text("AB").frame(width: BattingGameColumn.ab, alignment: .trailing)
-            Text("H").frame(width: BattingGameColumn.h, alignment: .trailing)
-            Text("HR").frame(width: BattingGameColumn.hr, alignment: .trailing)
-            Text("RBI").frame(width: BattingGameColumn.rbi, alignment: .trailing)
-            Text("BB").frame(width: BattingGameColumn.bb, alignment: .trailing)
-            Text("AVG").frame(width: BattingGameColumn.avg, alignment: .trailing)
+            // Frozen pane.
+            VStack(spacing: 0) {
+                BattingFrozenHeader()
+                Divider()
+                if let groups {
+                    ForEach(groups) { group in
+                        // Month header capsule must occupy the same row
+                        // in both panes so the scrollable side aligns.
+                        MonthHeaderCapsule(label: monthFullName(group.month, year: group.year))
+                        ForEach(Array(group.games.enumerated()), id: \.offset) { idx, gc in
+                            BattingFrozenGameRow(game: gc.game, alternate: !idx.isMultiple(of: 2))
+                            if idx != group.games.indices.last { Divider().opacity(0.25) }
+                        }
+                        BattingFrozenMonthTotalsRow(group: group)
+                        Divider()
+                    }
+                }
+                if let rows {
+                    ForEach(Array(rows.enumerated()), id: \.offset) { idx, gc in
+                        BattingFrozenGameRow(game: gc.game, alternate: !idx.isMultiple(of: 2))
+                        if idx != rows.indices.last { Divider().opacity(0.25) }
+                    }
+                }
+            }
+            .background(.ultraThinMaterial)
+            .shadow(color: .black.opacity(0.08), radius: 4, x: 2, y: 0)
+            .zIndex(1)
+
+            // Scrollable pane.
+            ScrollView(.horizontal, showsIndicators: false) {
+                VStack(spacing: 0) {
+                    BattingScrollableHeader()
+                    Divider()
+                    if let groups {
+                        ForEach(groups) { group in
+                            MonthHeaderSpacer()
+                            ForEach(Array(group.games.enumerated()), id: \.offset) { idx, gc in
+                                BattingScrollableGameRow(
+                                    game: gc.game,
+                                    rates: gc.battingRates,
+                                    alternate: !idx.isMultiple(of: 2)
+                                )
+                                if idx != group.games.indices.last { Divider().opacity(0.25) }
+                            }
+                            BattingScrollableMonthTotalsRow(group: group)
+                            Divider()
+                        }
+                    }
+                    if let rows {
+                        ForEach(Array(rows.enumerated()), id: \.offset) { idx, gc in
+                            BattingScrollableGameRow(
+                                game: gc.game,
+                                rates: gc.battingRates,
+                                alternate: !idx.isMultiple(of: 2)
+                            )
+                            if idx != rows.indices.last { Divider().opacity(0.25) }
+                        }
+                    }
+                }
+            }
         }
-        .font(.caption.weight(.semibold))
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
     }
 }
 
-private struct BattingGameRow: View {
+/// Empty spacer matching the height of `MonthHeaderCapsule` so the
+/// scrollable side keeps row alignment with the frozen pane.
+private struct MonthHeaderSpacer: View {
+    var body: some View {
+        Color.clear
+            .frame(height: monthCapsuleRowHeight)
+    }
+}
+
+/// Approximate height of `MonthHeaderCapsule`. The capsule's content has
+/// 5pt vertical padding plus an 8pt outer padding around the row, on a
+/// .subheadline line of about 22pt — so the row stretches to ~48pt.
+private let monthCapsuleRowHeight: CGFloat = 48
+
+private struct BattingFrozenHeader: View {
+    var body: some View {
+        HStack(spacing: 0) {
+            Text("Date")  .frame(width: BattingGameColumn.date,   alignment: .leading)
+            Text("Opp")   .frame(width: BattingGameColumn.opp,    alignment: .leading)
+            Text("Result").frame(width: BattingGameColumn.result, alignment: .center)
+        }
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(.secondary)
+        .padding(.leading, 12)
+        .padding(.vertical, 8)
+        .frame(height: 32)
+    }
+}
+
+private struct BattingScrollableHeader: View {
+    var body: some View {
+        HStack(spacing: 0) {
+            Text("AB") .frame(width: BattingGameColumn.ab,  alignment: .trailing).padding(.horizontal, 2)
+            Text("R")  .frame(width: BattingGameColumn.r,   alignment: .trailing).padding(.horizontal, 2)
+            Text("H")  .frame(width: BattingGameColumn.h,   alignment: .trailing).padding(.horizontal, 2)
+            Text("TB") .frame(width: BattingGameColumn.tb,  alignment: .trailing).padding(.horizontal, 2)
+            Text("2B") .frame(width: BattingGameColumn.dbl, alignment: .trailing).padding(.horizontal, 2)
+            Text("3B") .frame(width: BattingGameColumn.trp, alignment: .trailing).padding(.horizontal, 2)
+            Text("HR") .frame(width: BattingGameColumn.hr,  alignment: .trailing).padding(.horizontal, 2)
+            Text("RBI").frame(width: BattingGameColumn.rbi, alignment: .trailing).padding(.horizontal, 2)
+            Text("BB") .frame(width: BattingGameColumn.bb,  alignment: .trailing).padding(.horizontal, 2)
+            Text("IBB").frame(width: BattingGameColumn.ibb, alignment: .trailing).padding(.horizontal, 2)
+            Text("SO") .frame(width: BattingGameColumn.so,  alignment: .trailing).padding(.horizontal, 2)
+            Text("SB") .frame(width: BattingGameColumn.sb,  alignment: .trailing).padding(.horizontal, 2)
+            Text("CS") .frame(width: BattingGameColumn.cs,  alignment: .trailing).padding(.horizontal, 2)
+            Text("AVG").frame(width: BattingGameColumn.avg, alignment: .trailing).padding(.horizontal, 2)
+            Text("OBP").frame(width: BattingGameColumn.obp, alignment: .trailing).padding(.horizontal, 2)
+            Text("SLG").frame(width: BattingGameColumn.slg, alignment: .trailing).padding(.horizontal, 2)
+            Text("OPS").frame(width: BattingGameColumn.ops, alignment: .trailing).padding(.horizontal, 2)
+        }
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(.secondary)
+        .padding(.trailing, 12)
+        .frame(height: 32)
+    }
+}
+
+private struct BattingFrozenGameRow: View {
     let game: GameLog
     let alternate: Bool
-    /// Season-to-date AVG through this game. `nil` = subset view, render "—".
-    let cumulativeAVG: Double?
     var body: some View {
         HStack(spacing: 0) {
             Text(formatGameDate(game.game_date))
@@ -723,22 +903,50 @@ private struct BattingGameRow: View {
                 .monospacedDigit()
             opponentLabel(game)
                 .frame(width: BattingGameColumn.opp, alignment: .leading)
-            Spacer(minLength: 4)
-            Text(formatInt(game.AB)).frame(width: BattingGameColumn.ab, alignment: .trailing).monospacedDigit()
-            Text(formatInt(game.H)).frame(width: BattingGameColumn.h, alignment: .trailing).monospacedDigit()
-            Text(formatInt(game.HR)).frame(width: BattingGameColumn.hr, alignment: .trailing).monospacedDigit()
-            Text(formatInt(game.RBI)).frame(width: BattingGameColumn.rbi, alignment: .trailing).monospacedDigit()
-            Text(formatInt(game.BB)).frame(width: BattingGameColumn.bb, alignment: .trailing).monospacedDigit()
-            Text(format3(cumulativeAVG)).frame(width: BattingGameColumn.avg, alignment: .trailing).monospacedDigit()
+            Text(formatResult(game.result))
+                .frame(width: BattingGameColumn.result, alignment: .center)
         }
         .font(.caption)
-        .padding(.horizontal, 12)
+        .padding(.leading, 12)
         .padding(.vertical, 7)
+        .frame(height: 30)
         .background(alternate ? Color(.systemGray6).opacity(0.5) : Color.clear)
     }
 }
 
-private struct BattingMonthTotalsRow: View {
+private struct BattingScrollableGameRow: View {
+    let game: GameLog
+    let rates: CumulativeBattingRates
+    let alternate: Bool
+    var body: some View {
+        HStack(spacing: 0) {
+            Text(formatInt(game.AB))                                              .frame(width: BattingGameColumn.ab,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(game.R))                                               .frame(width: BattingGameColumn.r,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(game.H))                                               .frame(width: BattingGameColumn.h,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(perGameTB(game)))                                      .frame(width: BattingGameColumn.tb,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(game.doubles))                                         .frame(width: BattingGameColumn.dbl, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(game.triples))                                         .frame(width: BattingGameColumn.trp, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(game.HR))                                              .frame(width: BattingGameColumn.hr,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(game.RBI))                                             .frame(width: BattingGameColumn.rbi, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(game.BB))                                              .frame(width: BattingGameColumn.bb,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(game.IBB))                                             .frame(width: BattingGameColumn.ibb, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(game.SO))                                              .frame(width: BattingGameColumn.so,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(game.SB))                                              .frame(width: BattingGameColumn.sb,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(game.CS))                                              .frame(width: BattingGameColumn.cs,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(format3(rates.avg))                                              .frame(width: BattingGameColumn.avg, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(format3(rates.obp))                                              .frame(width: BattingGameColumn.obp, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(format3(rates.slg))                                              .frame(width: BattingGameColumn.slg, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(format3(rates.ops))                                              .frame(width: BattingGameColumn.ops, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+        }
+        .font(.caption)
+        .padding(.trailing, 12)
+        .padding(.vertical, 7)
+        .frame(height: 30)
+        .background(alternate ? Color(.systemGray6).opacity(0.5) : Color.clear)
+    }
+}
+
+private struct BattingFrozenMonthTotalsRow: View {
     let group: MonthGroup
     var body: some View {
         HStack(spacing: 0) {
@@ -746,52 +954,159 @@ private struct BattingMonthTotalsRow: View {
                 .frame(width: BattingGameColumn.date, alignment: .leading)
             Text("")
                 .frame(width: BattingGameColumn.opp, alignment: .leading)
-            Spacer(minLength: 4)
-            Text(formatInt(group.monthlyTotals.ab)).frame(width: BattingGameColumn.ab, alignment: .trailing).monospacedDigit()
-            Text(formatInt(group.monthlyTotals.h)).frame(width: BattingGameColumn.h, alignment: .trailing).monospacedDigit()
-            Text(formatInt(group.monthlyTotals.hr)).frame(width: BattingGameColumn.hr, alignment: .trailing).monospacedDigit()
-            Text(formatInt(group.monthlyTotals.rbi)).frame(width: BattingGameColumn.rbi, alignment: .trailing).monospacedDigit()
-            Text(formatInt(group.monthlyTotals.bb)).frame(width: BattingGameColumn.bb, alignment: .trailing).monospacedDigit()
-            // Season AVG through end of this month (cumulative).
-            Text(format3(group.throughMonth.avg))
-                .frame(width: BattingGameColumn.avg, alignment: .trailing)
-                .monospacedDigit()
+            Text("")
+                .frame(width: BattingGameColumn.result, alignment: .center)
         }
         .font(.caption.weight(.semibold))
-        .padding(.horizontal, 12)
+        .padding(.leading, 12)
         .padding(.vertical, 8)
+        .frame(height: 32)
         .background(Color(.systemGray5).opacity(0.7))
-        // Top border to visually separate the totals row from the
-        // month's game rows above.
         .overlay(alignment: .top) { Divider() }
     }
 }
 
-private struct PitchingGameTableHeader: View {
+private struct BattingScrollableMonthTotalsRow: View {
+    let group: MonthGroup
     var body: some View {
+        let m = group.monthlyTotals
         HStack(spacing: 0) {
-            Text("Date").frame(width: PitchingGameColumn.date, alignment: .leading)
-            Text("Opp").frame(width: PitchingGameColumn.opp, alignment: .leading)
-            Spacer(minLength: 4)
-            Text("IP").frame(width: PitchingGameColumn.ip, alignment: .trailing)
-            Text("H").frame(width: PitchingGameColumn.h, alignment: .trailing)
-            Text("ER").frame(width: PitchingGameColumn.er, alignment: .trailing)
-            Text("BB").frame(width: PitchingGameColumn.bb, alignment: .trailing)
-            Text("SO").frame(width: PitchingGameColumn.so, alignment: .trailing)
-            Text("ERA").frame(width: PitchingGameColumn.era, alignment: .trailing)
+            Text(formatInt(m.ab))   .frame(width: BattingGameColumn.ab,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(m.r))    .frame(width: BattingGameColumn.r,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(m.h))    .frame(width: BattingGameColumn.h,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(m.tb))   .frame(width: BattingGameColumn.tb,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(m.doubles)).frame(width: BattingGameColumn.dbl, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(m.triples)).frame(width: BattingGameColumn.trp, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(m.hr))   .frame(width: BattingGameColumn.hr,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(m.rbi))  .frame(width: BattingGameColumn.rbi, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(m.bb))   .frame(width: BattingGameColumn.bb,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(m.ibb))  .frame(width: BattingGameColumn.ibb, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(m.so))   .frame(width: BattingGameColumn.so,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(m.sb))   .frame(width: BattingGameColumn.sb,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(m.cs))   .frame(width: BattingGameColumn.cs,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            // Cumulative-through-end-of-month rates.
+            Text(format3(group.throughMonth.avg)).frame(width: BattingGameColumn.avg, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(format3(group.throughMonth.obp)).frame(width: BattingGameColumn.obp, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(format3(group.throughMonth.slg)).frame(width: BattingGameColumn.slg, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(format3(group.throughMonth.ops)).frame(width: BattingGameColumn.ops, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
         }
         .font(.caption.weight(.semibold))
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 12)
+        .padding(.trailing, 12)
         .padding(.vertical, 8)
+        .frame(height: 32)
+        .background(Color(.systemGray5).opacity(0.7))
+        .overlay(alignment: .top) { Divider() }
     }
 }
 
-private struct PitchingGameRow: View {
+// MARK: - Pitching game-log table
+
+/// Pitching equivalent of `BattingGameLogTable`. Same frozen + scrollable
+/// split-pane structure; columns differ.
+private struct PitchingGameLogTable: View {
+    let rows: [GameWithCumulative]?
+    let groups: [MonthGroup]?
+
+    var body: some View {
+        HStack(spacing: 0) {
+            VStack(spacing: 0) {
+                PitchingFrozenHeader()
+                Divider()
+                if let groups {
+                    ForEach(groups) { group in
+                        MonthHeaderCapsule(label: monthFullName(group.month, year: group.year))
+                        ForEach(Array(group.games.enumerated()), id: \.offset) { idx, gc in
+                            PitchingFrozenGameRow(game: gc.game, alternate: !idx.isMultiple(of: 2))
+                            if idx != group.games.indices.last { Divider().opacity(0.25) }
+                        }
+                        PitchingFrozenMonthTotalsRow(group: group)
+                        Divider()
+                    }
+                }
+                if let rows {
+                    ForEach(Array(rows.enumerated()), id: \.offset) { idx, gc in
+                        PitchingFrozenGameRow(game: gc.game, alternate: !idx.isMultiple(of: 2))
+                        if idx != rows.indices.last { Divider().opacity(0.25) }
+                    }
+                }
+            }
+            .background(.ultraThinMaterial)
+            .shadow(color: .black.opacity(0.08), radius: 4, x: 2, y: 0)
+            .zIndex(1)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                VStack(spacing: 0) {
+                    PitchingScrollableHeader()
+                    Divider()
+                    if let groups {
+                        ForEach(groups) { group in
+                            MonthHeaderSpacer()
+                            ForEach(Array(group.games.enumerated()), id: \.offset) { idx, gc in
+                                PitchingScrollableGameRow(
+                                    game: gc.game,
+                                    cumulativeERA: gc.cumulativeERA,
+                                    alternate: !idx.isMultiple(of: 2)
+                                )
+                                if idx != group.games.indices.last { Divider().opacity(0.25) }
+                            }
+                            PitchingScrollableMonthTotalsRow(group: group)
+                            Divider()
+                        }
+                    }
+                    if let rows {
+                        ForEach(Array(rows.enumerated()), id: \.offset) { idx, gc in
+                            PitchingScrollableGameRow(
+                                game: gc.game,
+                                cumulativeERA: gc.cumulativeERA,
+                                alternate: !idx.isMultiple(of: 2)
+                            )
+                            if idx != rows.indices.last { Divider().opacity(0.25) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct PitchingFrozenHeader: View {
+    var body: some View {
+        HStack(spacing: 0) {
+            Text("Date")  .frame(width: PitchingGameColumn.date,   alignment: .leading)
+            Text("Opp")   .frame(width: PitchingGameColumn.opp,    alignment: .leading)
+            Text("Result").frame(width: PitchingGameColumn.result, alignment: .center)
+        }
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(.secondary)
+        .padding(.leading, 12)
+        .padding(.vertical, 8)
+        .frame(height: 32)
+    }
+}
+
+private struct PitchingScrollableHeader: View {
+    var body: some View {
+        HStack(spacing: 0) {
+            Text("IP") .frame(width: PitchingGameColumn.ip,  alignment: .trailing).padding(.horizontal, 2)
+            Text("H")  .frame(width: PitchingGameColumn.h,   alignment: .trailing).padding(.horizontal, 2)
+            Text("R")  .frame(width: PitchingGameColumn.r,   alignment: .trailing).padding(.horizontal, 2)
+            Text("ER") .frame(width: PitchingGameColumn.er,  alignment: .trailing).padding(.horizontal, 2)
+            Text("BB") .frame(width: PitchingGameColumn.bb,  alignment: .trailing).padding(.horizontal, 2)
+            Text("SO") .frame(width: PitchingGameColumn.so,  alignment: .trailing).padding(.horizontal, 2)
+            Text("HR") .frame(width: PitchingGameColumn.hr,  alignment: .trailing).padding(.horizontal, 2)
+            Text("HBP").frame(width: PitchingGameColumn.hbp, alignment: .trailing).padding(.horizontal, 2)
+            Text("ERA").frame(width: PitchingGameColumn.era, alignment: .trailing).padding(.horizontal, 2)
+        }
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(.secondary)
+        .padding(.trailing, 12)
+        .frame(height: 32)
+    }
+}
+
+private struct PitchingFrozenGameRow: View {
     let game: GameLog
     let alternate: Bool
-    /// Season-to-date ERA through this game. `nil` = subset view, render "—".
-    let cumulativeERA: Double?
     var body: some View {
         HStack(spacing: 0) {
             Text(formatGameDate(game.game_date))
@@ -799,22 +1114,42 @@ private struct PitchingGameRow: View {
                 .monospacedDigit()
             opponentLabel(game)
                 .frame(width: PitchingGameColumn.opp, alignment: .leading)
-            Spacer(minLength: 4)
-            Text(formatIP(game.IP)).frame(width: PitchingGameColumn.ip, alignment: .trailing).monospacedDigit()
-            Text(formatInt(game.H)).frame(width: PitchingGameColumn.h, alignment: .trailing).monospacedDigit()
-            Text(formatInt(game.ER)).frame(width: PitchingGameColumn.er, alignment: .trailing).monospacedDigit()
-            Text(formatInt(game.BB)).frame(width: PitchingGameColumn.bb, alignment: .trailing).monospacedDigit()
-            Text(formatInt(game.SO)).frame(width: PitchingGameColumn.so, alignment: .trailing).monospacedDigit()
-            Text(format2(cumulativeERA)).frame(width: PitchingGameColumn.era, alignment: .trailing).monospacedDigit()
+            Text(formatResult(game.result))
+                .frame(width: PitchingGameColumn.result, alignment: .center)
         }
         .font(.caption)
-        .padding(.horizontal, 12)
+        .padding(.leading, 12)
         .padding(.vertical, 7)
+        .frame(height: 30)
         .background(alternate ? Color(.systemGray6).opacity(0.5) : Color.clear)
     }
 }
 
-private struct PitchingMonthTotalsRow: View {
+private struct PitchingScrollableGameRow: View {
+    let game: GameLog
+    let cumulativeERA: Double?
+    let alternate: Bool
+    var body: some View {
+        HStack(spacing: 0) {
+            Text(formatIP(game.IP)) .frame(width: PitchingGameColumn.ip,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(game.H)) .frame(width: PitchingGameColumn.h,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(game.R)) .frame(width: PitchingGameColumn.r,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(game.ER)).frame(width: PitchingGameColumn.er,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(game.BB)).frame(width: PitchingGameColumn.bb,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(game.SO)).frame(width: PitchingGameColumn.so,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(game.HR)).frame(width: PitchingGameColumn.hr,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(game.HBP)).frame(width: PitchingGameColumn.hbp, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(format2(cumulativeERA)).frame(width: PitchingGameColumn.era, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+        }
+        .font(.caption)
+        .padding(.trailing, 12)
+        .padding(.vertical, 7)
+        .frame(height: 30)
+        .background(alternate ? Color(.systemGray6).opacity(0.5) : Color.clear)
+    }
+}
+
+private struct PitchingFrozenMonthTotalsRow: View {
     let group: MonthGroup
     var body: some View {
         HStack(spacing: 0) {
@@ -822,20 +1157,38 @@ private struct PitchingMonthTotalsRow: View {
                 .frame(width: PitchingGameColumn.date, alignment: .leading)
             Text("")
                 .frame(width: PitchingGameColumn.opp, alignment: .leading)
-            Spacer(minLength: 4)
-            Text(formatIP(group.monthlyTotals.ip)).frame(width: PitchingGameColumn.ip, alignment: .trailing).monospacedDigit()
-            Text(formatInt(group.monthlyTotals.h)).frame(width: PitchingGameColumn.h, alignment: .trailing).monospacedDigit()
-            Text(formatInt(group.monthlyTotals.er)).frame(width: PitchingGameColumn.er, alignment: .trailing).monospacedDigit()
-            Text(formatInt(group.monthlyTotals.bb)).frame(width: PitchingGameColumn.bb, alignment: .trailing).monospacedDigit()
-            Text(formatInt(group.monthlyTotals.so)).frame(width: PitchingGameColumn.so, alignment: .trailing).monospacedDigit()
-            // Season ERA through end of this month (cumulative).
-            Text(format2(group.throughMonth.era))
-                .frame(width: PitchingGameColumn.era, alignment: .trailing)
-                .monospacedDigit()
+            Text("")
+                .frame(width: PitchingGameColumn.result, alignment: .center)
         }
         .font(.caption.weight(.semibold))
-        .padding(.horizontal, 12)
+        .padding(.leading, 12)
         .padding(.vertical, 8)
+        .frame(height: 32)
+        .background(Color(.systemGray5).opacity(0.7))
+        .overlay(alignment: .top) { Divider() }
+    }
+}
+
+private struct PitchingScrollableMonthTotalsRow: View {
+    let group: MonthGroup
+    var body: some View {
+        let m = group.monthlyTotals
+        HStack(spacing: 0) {
+            Text(formatIP(m.ip))     .frame(width: PitchingGameColumn.ip,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(m.h))     .frame(width: PitchingGameColumn.h,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(m.r))     .frame(width: PitchingGameColumn.r,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(m.er))    .frame(width: PitchingGameColumn.er,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(m.bb))    .frame(width: PitchingGameColumn.bb,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(m.so))    .frame(width: PitchingGameColumn.so,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(m.hr))    .frame(width: PitchingGameColumn.hr,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(m.hbp))   .frame(width: PitchingGameColumn.hbp, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(format2(group.throughMonth.era))
+                .frame(width: PitchingGameColumn.era, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+        }
+        .font(.caption.weight(.semibold))
+        .padding(.trailing, 12)
+        .padding(.vertical, 8)
+        .frame(height: 32)
         .background(Color(.systemGray5).opacity(0.7))
         .overlay(alignment: .top) { Divider() }
     }
@@ -953,6 +1306,25 @@ private func monthShortName(_ m: Int) -> String {
 private func formatInt(_ value: Int?) -> String {
     guard let value else { return "—" }
     return String(value)
+}
+
+/// Per-game total bases. TB = singles + 2·2B + 3·3B + 4·HR, expressed
+/// in available stats as H + 2B + 2·3B + 3·HR. Returns nil when H is
+/// missing — better to render "—" than a wrong zero.
+private func perGameTB(_ g: GameLog) -> Int? {
+    guard let h = g.H else { return nil }
+    let dbl = g.doubles ?? 0
+    let trp = g.triples ?? 0
+    let hr  = g.HR ?? 0
+    return h + dbl + 2 * trp + 3 * hr
+}
+
+/// Game-result column rendering. The backend ships the raw decision
+/// flags ("W" / "L" / "T" for batters; "W" / "L" / "S" / "H" / "BS" /
+/// "ND" for pitchers) — pass through unchanged, fall back to "—".
+private func formatResult(_ result: String?) -> String {
+    guard let r = result, !r.isEmpty else { return "—" }
+    return r
 }
 
 private func format2(_ value: Double?) -> String {
