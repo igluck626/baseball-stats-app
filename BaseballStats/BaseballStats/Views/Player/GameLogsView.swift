@@ -517,22 +517,34 @@ struct GameLogsView: View {
     }
 }
 
-// MARK: - Month header capsule
+// MARK: - Month section label
 
-private struct MonthHeaderCapsule: View {
+/// Lightweight per-month section divider — plain muted text, no capsule
+/// or background. The section label only renders in the frozen pane;
+/// the scrollable pane uses an equally-tall spacer (`MonthSectionSpacer`)
+/// so rows below stay aligned across the two sides.
+private struct MonthSectionLabel: View {
     let label: String
     var body: some View {
         Text(label)
-            .font(.subheadline.weight(.semibold))
-            .foregroundStyle(.primary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 5)
-            .background(Capsule().fill(Color(.systemGray4)))
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .padding(.leading, 12)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(height: monthSectionLabelHeight)
     }
 }
+
+/// Empty spacer that occupies the same row height as `MonthSectionLabel`
+/// so the scrollable pane's per-month sections start at the same Y as
+/// the frozen pane's.
+private struct MonthSectionSpacer: View {
+    var body: some View {
+        Color.clear.frame(height: monthSectionLabelHeight)
+    }
+}
+
+private let monthSectionLabelHeight: CGFloat = 26
 
 // MARK: - Month group model
 
@@ -759,11 +771,15 @@ private enum PitchingGameColumn {
 
 // MARK: - Batting game-log table
 
-/// Batting game-log table — frozen Date/Opp/Result on the left, the
-/// counting and rate columns scrolling horizontally on the right. Drives
-/// either a flat list (when `rows` is set, used for Last N / Custom) or
-/// the season-grouped layout (when `groups` is set). Exactly one input
-/// is non-nil — the caller picks based on the active filter row.
+/// Batting game-log table — frozen Date/Opp on the left, the counting
+/// and rate columns scrolling horizontally on the right. Drives either
+/// a flat list (when `rows` is set, used for Last N / Custom) or the
+/// season-grouped layout (when `groups` is set). Exactly one input is
+/// non-nil — the caller picks based on the active filter row.
+///
+/// Section layout (groups mode): every month gets its own column-header
+/// row above its games so the user always sees what column they're
+/// looking at without scrolling back to the top.
 private struct BattingGameLogTable: View {
     let rows: [GameWithCumulative]?
     let groups: [MonthGroup]?
@@ -772,22 +788,22 @@ private struct BattingGameLogTable: View {
         HStack(spacing: 0) {
             // Frozen pane.
             VStack(spacing: 0) {
-                BattingFrozenHeader()
-                Divider()
                 if let groups {
-                    ForEach(groups) { group in
-                        // Month header capsule must occupy the same row
-                        // in both panes so the scrollable side aligns.
-                        MonthHeaderCapsule(label: monthFullName(group.month, year: group.year))
+                    ForEach(Array(groups.enumerated()), id: \.element.id) { gIdx, group in
+                        if gIdx > 0 { Divider() }
+                        MonthSectionLabel(label: monthFullName(group.month, year: group.year))
+                        BattingFrozenHeader()
+                        Divider()
                         ForEach(Array(group.games.enumerated()), id: \.offset) { idx, gc in
                             BattingFrozenGameRow(game: gc.game, alternate: !idx.isMultiple(of: 2))
                             if idx != group.games.indices.last { Divider().opacity(0.25) }
                         }
                         BattingFrozenMonthTotalsRow(group: group)
-                        Divider()
                     }
                 }
                 if let rows {
+                    BattingFrozenHeader()
+                    Divider()
                     ForEach(Array(rows.enumerated()), id: \.offset) { idx, gc in
                         BattingFrozenGameRow(game: gc.game, alternate: !idx.isMultiple(of: 2))
                         if idx != rows.indices.last { Divider().opacity(0.25) }
@@ -798,14 +814,16 @@ private struct BattingGameLogTable: View {
             .shadow(color: .black.opacity(0.08), radius: 4, x: 2, y: 0)
             .zIndex(1)
 
-            // Scrollable pane.
+            // Scrollable pane — must mirror the frozen pane row-for-row
+            // so heights line up across both sides.
             ScrollView(.horizontal, showsIndicators: false) {
                 VStack(spacing: 0) {
-                    BattingScrollableHeader()
-                    Divider()
                     if let groups {
-                        ForEach(groups) { group in
-                            MonthHeaderSpacer()
+                        ForEach(Array(groups.enumerated()), id: \.element.id) { gIdx, group in
+                            if gIdx > 0 { Divider() }
+                            MonthSectionSpacer()
+                            BattingScrollableHeader()
+                            Divider()
                             ForEach(Array(group.games.enumerated()), id: \.offset) { idx, gc in
                                 BattingScrollableGameRow(
                                     game: gc.game,
@@ -815,10 +833,11 @@ private struct BattingGameLogTable: View {
                                 if idx != group.games.indices.last { Divider().opacity(0.25) }
                             }
                             BattingScrollableMonthTotalsRow(group: group)
-                            Divider()
                         }
                     }
                     if let rows {
+                        BattingScrollableHeader()
+                        Divider()
                         ForEach(Array(rows.enumerated()), id: \.offset) { idx, gc in
                             BattingScrollableGameRow(
                                 game: gc.game,
@@ -833,20 +852,6 @@ private struct BattingGameLogTable: View {
         }
     }
 }
-
-/// Empty spacer matching the height of `MonthHeaderCapsule` so the
-/// scrollable side keeps row alignment with the frozen pane.
-private struct MonthHeaderSpacer: View {
-    var body: some View {
-        Color.clear
-            .frame(height: monthCapsuleRowHeight)
-    }
-}
-
-/// Approximate height of `MonthHeaderCapsule`. The capsule's content has
-/// 5pt vertical padding plus an 8pt outer padding around the row, on a
-/// .subheadline line of about 22pt — so the row stretches to ~48pt.
-private let monthCapsuleRowHeight: CGFloat = 48
 
 private struct BattingFrozenHeader: View {
     var body: some View {
@@ -884,6 +889,7 @@ private struct BattingScrollableHeader: View {
         .font(.caption.weight(.semibold))
         .foregroundStyle(.secondary)
         .padding(.trailing, 12)
+        .padding(.vertical, 8)
         .frame(height: 32)
     }
 }
@@ -988,8 +994,8 @@ private struct BattingScrollableMonthTotalsRow: View {
 
 // MARK: - Pitching game-log table
 
-/// Pitching equivalent of `BattingGameLogTable`. Same frozen + scrollable
-/// split-pane structure; columns differ.
+/// Pitching equivalent of `BattingGameLogTable`. Same per-month
+/// section-label + repeated-column-header pattern as batting.
 private struct PitchingGameLogTable: View {
     let rows: [GameWithCumulative]?
     let groups: [MonthGroup]?
@@ -997,20 +1003,22 @@ private struct PitchingGameLogTable: View {
     var body: some View {
         HStack(spacing: 0) {
             VStack(spacing: 0) {
-                PitchingFrozenHeader()
-                Divider()
                 if let groups {
-                    ForEach(groups) { group in
-                        MonthHeaderCapsule(label: monthFullName(group.month, year: group.year))
+                    ForEach(Array(groups.enumerated()), id: \.element.id) { gIdx, group in
+                        if gIdx > 0 { Divider() }
+                        MonthSectionLabel(label: monthFullName(group.month, year: group.year))
+                        PitchingFrozenHeader()
+                        Divider()
                         ForEach(Array(group.games.enumerated()), id: \.offset) { idx, gc in
                             PitchingFrozenGameRow(game: gc.game, alternate: !idx.isMultiple(of: 2))
                             if idx != group.games.indices.last { Divider().opacity(0.25) }
                         }
                         PitchingFrozenMonthTotalsRow(group: group)
-                        Divider()
                     }
                 }
                 if let rows {
+                    PitchingFrozenHeader()
+                    Divider()
                     ForEach(Array(rows.enumerated()), id: \.offset) { idx, gc in
                         PitchingFrozenGameRow(game: gc.game, alternate: !idx.isMultiple(of: 2))
                         if idx != rows.indices.last { Divider().opacity(0.25) }
@@ -1023,11 +1031,12 @@ private struct PitchingGameLogTable: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 VStack(spacing: 0) {
-                    PitchingScrollableHeader()
-                    Divider()
                     if let groups {
-                        ForEach(groups) { group in
-                            MonthHeaderSpacer()
+                        ForEach(Array(groups.enumerated()), id: \.element.id) { gIdx, group in
+                            if gIdx > 0 { Divider() }
+                            MonthSectionSpacer()
+                            PitchingScrollableHeader()
+                            Divider()
                             ForEach(Array(group.games.enumerated()), id: \.offset) { idx, gc in
                                 PitchingScrollableGameRow(
                                     game: gc.game,
@@ -1037,10 +1046,11 @@ private struct PitchingGameLogTable: View {
                                 if idx != group.games.indices.last { Divider().opacity(0.25) }
                             }
                             PitchingScrollableMonthTotalsRow(group: group)
-                            Divider()
                         }
                     }
                     if let rows {
+                        PitchingScrollableHeader()
+                        Divider()
                         ForEach(Array(rows.enumerated()), id: \.offset) { idx, gc in
                             PitchingScrollableGameRow(
                                 game: gc.game,
@@ -1086,6 +1096,7 @@ private struct PitchingScrollableHeader: View {
         .font(.caption.weight(.semibold))
         .foregroundStyle(.secondary)
         .padding(.trailing, 12)
+        .padding(.vertical, 8)
         .frame(height: 32)
     }
 }
