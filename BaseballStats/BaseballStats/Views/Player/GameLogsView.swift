@@ -106,131 +106,188 @@ struct GameLogsView: View {
 
     // MARK: - Splits table
 
-    /// Five fixed windows (Last 5/10/15/30, Season) + a Custom row with a
+    /// Five fixed splits (Last 5/10/15/30, Season) + a Custom row with a
     /// number field. Tapping a row filters the games table below; tapping
     /// the Custom row applies the typed N (live as you type).
+    ///
+    /// Layout mirrors the games table: the split label is frozen on the
+    /// left while the stat columns scroll horizontally on the right. Rate
+    /// stats (AVG/OBP/SLG/OPS, ERA) come from each window's own counting
+    /// stats — never cumulative season figures.
     private var splitsTable: some View {
-        VStack(spacing: 0) {
-            splitsHeader
-            Divider()
-            splitsBodyRow(.last(5))
-            Divider().opacity(0.5)
-            splitsBodyRow(.last(10))
-            Divider().opacity(0.5)
-            splitsBodyRow(.last(15))
-            Divider().opacity(0.5)
-            splitsBodyRow(.last(30))
-            Divider().opacity(0.5)
-            splitsBodyRow(.season)
-            Divider().opacity(0.5)
-            customSplitRow
+        let rows = splitRows
+        return HStack(spacing: 0) {
+            // Frozen pane — split label only.
+            VStack(spacing: 0) {
+                splitsFrozenHeader
+                Divider()
+                ForEach(Array(rows.enumerated()), id: \.offset) { idx, row in
+                    splitsFrozenLabelRow(row)
+                    if idx != rows.indices.last { Divider().opacity(0.5) }
+                }
+            }
+            .background(.ultraThinMaterial)
+            .shadow(color: .black.opacity(0.08), radius: 4, x: 2, y: 0)
+            .zIndex(1)
+
+            // Scrollable pane — counting + rate stats.
+            ScrollView(.horizontal, showsIndicators: false) {
+                VStack(spacing: 0) {
+                    splitsScrollableHeader
+                    Divider()
+                    ForEach(Array(rows.enumerated()), id: \.offset) { idx, row in
+                        splitsScrollableStatRow(row)
+                        if idx != rows.indices.last { Divider().opacity(0.5) }
+                    }
+                }
+            }
         }
-        // Stretch to parent width so the card aligns left/right with
+        // Stretch to parent width so the card aligns left/right with the
         // Overview cards (which also use .frame(maxWidth: .infinity)
-        // before their material background). Without this, the card
-        // sizes to its intrinsic content and can drift narrower or
-        // wider than the surrounding cards.
+        // before their material background).
         .frame(maxWidth: .infinity)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
     }
 
-    private var splitsHeader: some View {
+    /// Order in which split rows are rendered.
+    private var splitRows: [SplitRow] {
+        [.last(5), .last(10), .last(15), .last(30), .season, .custom]
+    }
+
+    private var splitsFrozenHeader: some View {
         HStack(spacing: 0) {
-            Text("Window").frame(width: SplitsLayout.label, alignment: .leading)
-            Spacer(minLength: 4)
-            Text("G").frame(width: SplitsLayout.g, alignment: .trailing)
+            Text("Splits")
+                .frame(width: SplitsLayout.label, alignment: .leading)
+        }
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(.secondary)
+        .padding(.leading, 12)
+        .frame(height: SplitsLayout.rowHeight)
+    }
+
+    @ViewBuilder
+    private var splitsScrollableHeader: some View {
+        HStack(spacing: 0) {
             if isPitcher {
-                Text("ERA").frame(width: SplitsLayout.cell, alignment: .trailing)
-                Text("SO").frame(width: SplitsLayout.cell, alignment: .trailing)
-                Text("WHIP").frame(width: SplitsLayout.cell, alignment: .trailing)
-                Text("K/9").frame(width: SplitsLayout.cell, alignment: .trailing)
+                splitsHeaderCell("G",   width: SplitsLayout.g)
+                splitsHeaderCell("IP",  width: SplitsLayout.ip)
+                splitsHeaderCell("H",   width: SplitsLayout.h)
+                splitsHeaderCell("R",   width: SplitsLayout.r)
+                splitsHeaderCell("ER",  width: SplitsLayout.er)
+                splitsHeaderCell("BB",  width: SplitsLayout.bb)
+                splitsHeaderCell("SO",  width: SplitsLayout.so)
+                splitsHeaderCell("HR",  width: SplitsLayout.hr)
+                splitsHeaderCell("ERA", width: SplitsLayout.era)
             } else {
-                Text("AVG").frame(width: SplitsLayout.cell, alignment: .trailing)
-                Text("HR").frame(width: SplitsLayout.cell, alignment: .trailing)
-                Text("RBI").frame(width: SplitsLayout.cell, alignment: .trailing)
-                Text("OPS").frame(width: SplitsLayout.cell, alignment: .trailing)
+                splitsHeaderCell("G",   width: SplitsLayout.g)
+                splitsHeaderCell("AB",  width: SplitsLayout.ab)
+                splitsHeaderCell("H",   width: SplitsLayout.h)
+                splitsHeaderCell("HR",  width: SplitsLayout.hr)
+                splitsHeaderCell("RBI", width: SplitsLayout.rbi)
+                splitsHeaderCell("BB",  width: SplitsLayout.bb)
+                splitsHeaderCell("SO",  width: SplitsLayout.so)
+                splitsHeaderCell("SB",  width: SplitsLayout.sb)
+                splitsHeaderCell("AVG", width: SplitsLayout.rate)
+                splitsHeaderCell("OBP", width: SplitsLayout.rate)
+                splitsHeaderCell("SLG", width: SplitsLayout.rate)
+                splitsHeaderCell("OPS", width: SplitsLayout.rate)
             }
         }
         .font(.caption.weight(.semibold))
         .foregroundStyle(.secondary)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.trailing, 12)
+        .frame(height: SplitsLayout.rowHeight)
     }
 
-    /// One row of the splits table for a fixed window or the season.
-    private func splitsBodyRow(_ row: SplitRow) -> some View {
-        let snapshot = snapshot(for: row)
+    private func splitsHeaderCell(_ label: String, width: CGFloat) -> some View {
+        Text(label)
+            .frame(width: width, alignment: .trailing)
+            .padding(.horizontal, 2)
+    }
+
+    /// Frozen-side label cell for one split row. Selectable; the matching
+    /// scrollable side picks up the same selection background so the row
+    /// reads as one continuous tap target across both panes.
+    private func splitsFrozenLabelRow(_ row: SplitRow) -> some View {
         let isSelected = selectedRow == row
         return HStack(spacing: 0) {
             Text(row.label)
-                .frame(width: SplitsLayout.label, alignment: .leading)
-                .fontWeight(isSelected ? .semibold : .regular)
-            Spacer(minLength: 4)
-            statCells(snapshot)
-        }
-        .font(.caption)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(isSelected ? Color.accentColor.opacity(0.18) : Color.clear)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            withAnimation(.easeInOut(duration: 0.15)) {
-                // Tapping an already-active Last N row clears the
-                // filter back to Season. Season itself is the default
-                // — tapping it just stays put.
-                if case .last = row, selectedRow == row {
-                    selectedRow = .season
-                } else {
-                    selectedRow = row
-                }
-            }
-        }
-    }
-
-    /// Custom row — label sits in the Window column (full label width
-    /// so it never wraps), the number input occupies the G column slot
-    /// (the typed N is itself the games-count for this row), and the
-    /// remaining stats fill the trailing 4 cells. When the field is
-    /// empty all four show "—" (computed snapshot returns `.empty`).
-    private var customSplitRow: some View {
-        let n = Int(customInput) ?? 0
-        let snapshot = customSnapshot(n: n)
-        let isSelected = selectedRow == .custom
-        return HStack(spacing: 0) {
-            Text("Custom")
                 .fontWeight(isSelected ? .semibold : .regular)
                 .lineLimit(1)
                 .fixedSize()
                 .frame(width: SplitsLayout.label, alignment: .leading)
-            Spacer(minLength: 4)
-            customGCell(isSelected: isSelected)
-            statCellsExcludingG(snapshot)
         }
         .font(.caption)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.leading, 12)
+        .frame(height: SplitsLayout.rowHeight)
         .background(isSelected ? Color.accentColor.opacity(0.18) : Color.clear)
         .contentShape(Rectangle())
-        // Tap on the row chrome (not the field) selects without
-        // dismissing the keyboard.
-        .onTapGesture {
-            withAnimation(.easeInOut(duration: 0.15)) {
-                selectedRow = .custom
+        .onTapGesture { handleSplitTap(row) }
+    }
+
+    /// Scrollable-side stat cells for one split row.
+    @ViewBuilder
+    private func splitsScrollableStatRow(_ row: SplitRow) -> some View {
+        let snapshot = snapshot(for: row)
+        let isSelected = selectedRow == row
+        HStack(spacing: 0) {
+            // For Custom, the G slot is a TextField the user types into.
+            if row == .custom {
+                customGCell()
+            } else {
+                statCell(formatInt(snapshot.g), width: SplitsLayout.g)
             }
+            scrollableStatCellsAfterG(snapshot)
         }
+        .font(.caption)
+        .padding(.trailing, 12)
+        .frame(height: SplitsLayout.rowHeight)
+        .background(isSelected ? Color.accentColor.opacity(0.18) : Color.clear)
+        .contentShape(Rectangle())
+        .onTapGesture { handleSplitTap(row) }
+    }
+
+    @ViewBuilder
+    private func scrollableStatCellsAfterG(_ s: WindowSnapshot) -> some View {
+        if isPitcher {
+            statCell(formatIP(s.ip),    width: SplitsLayout.ip)
+            statCell(formatInt(s.h),    width: SplitsLayout.h)
+            statCell(formatInt(s.r),    width: SplitsLayout.r)
+            statCell(formatInt(s.er),   width: SplitsLayout.er)
+            statCell(formatInt(s.bb),   width: SplitsLayout.bb)
+            statCell(formatInt(s.so),   width: SplitsLayout.so)
+            statCell(formatInt(s.hr),   width: SplitsLayout.hr)
+            statCell(format2(s.era),    width: SplitsLayout.era)
+        } else {
+            statCell(formatInt(s.ab),   width: SplitsLayout.ab)
+            statCell(formatInt(s.h),    width: SplitsLayout.h)
+            statCell(formatInt(s.hr),   width: SplitsLayout.hr)
+            statCell(formatInt(s.rbi),  width: SplitsLayout.rbi)
+            statCell(formatInt(s.bb),   width: SplitsLayout.bb)
+            statCell(formatInt(s.so),   width: SplitsLayout.so)
+            statCell(formatInt(s.sb),   width: SplitsLayout.sb)
+            statCell(format3(s.avg),    width: SplitsLayout.rate)
+            statCell(format3(s.obp),    width: SplitsLayout.rate)
+            statCell(format3(s.slg),    width: SplitsLayout.rate)
+            statCell(format3(s.ops),    width: SplitsLayout.rate)
+        }
+    }
+
+    private func statCell(_ text: String, width: CGFloat) -> some View {
+        Text(text)
+            .frame(width: width, alignment: .trailing)
+            .monospacedDigit()
+            .padding(.horizontal, 2)
     }
 
     /// TextField rendered to look like a tappable cell — borderless,
     /// soft systemGray6 background, right-aligned monospaced digits so
     /// it lines up visually with the integer G values in the rows above.
-    private func customGCell(isSelected: Bool) -> some View {
+    private func customGCell() -> some View {
         TextField("#", text: $customInput)
             .keyboardType(.numberPad)
             .multilineTextAlignment(.trailing)
             .textFieldStyle(.plain)
-            // Pin the field to .subheadline so the parent's .caption
-            // doesn't shrink the input area below comfortable tap size
-            // while still keeping the row at the table's font cadence.
             .font(.subheadline)
             .monospacedDigit()
             .lineLimit(1)
@@ -244,33 +301,20 @@ struct GameLogsView: View {
             .onSubmit { selectedRow = .custom }
     }
 
-    @ViewBuilder
-    private func statCells(_ s: WindowSnapshot) -> some View {
-        Text(formatInt(s.g)).frame(width: SplitsLayout.g, alignment: .trailing).monospacedDigit()
-        statCellsExcludingG(s)
-    }
-
-    /// Just the four post-G stat cells — used by the Custom row, whose
-    /// G slot is replaced by the TextField rather than a Text value.
-    @ViewBuilder
-    private func statCellsExcludingG(_ s: WindowSnapshot) -> some View {
-        if isPitcher {
-            Text(format2(s.era)).frame(width: SplitsLayout.cell, alignment: .trailing).monospacedDigit()
-            Text(formatInt(s.so)).frame(width: SplitsLayout.cell, alignment: .trailing).monospacedDigit()
-            Text(format2(s.whip)).frame(width: SplitsLayout.cell, alignment: .trailing).monospacedDigit()
-            Text(format2(s.kPer9)).frame(width: SplitsLayout.cell, alignment: .trailing).monospacedDigit()
-        } else {
-            Text(format3(s.avg)).frame(width: SplitsLayout.cell, alignment: .trailing).monospacedDigit()
-            Text(formatInt(s.hr)).frame(width: SplitsLayout.cell, alignment: .trailing).monospacedDigit()
-            Text(formatInt(s.rbi)).frame(width: SplitsLayout.cell, alignment: .trailing).monospacedDigit()
-            Text(format3(s.ops)).frame(width: SplitsLayout.cell, alignment: .trailing).monospacedDigit()
+    /// Tap behaviour: tapping an already-active Last-N row clears back
+    /// to Season; tapping any other row selects it.
+    private func handleSplitTap(_ row: SplitRow) {
+        withAnimation(.easeInOut(duration: 0.15)) {
+            if case .last = row, selectedRow == row {
+                selectedRow = .season
+            } else {
+                selectedRow = row
+            }
         }
     }
 
     /// Pulls the right `GameLogWindow` off the API response for fixed
     /// rows, then funnels into a uniform `WindowSnapshot` for display.
-    /// API doesn't carry per-window WAR, so the pitcher column shows
-    /// K/9 instead.
     private func snapshot(for row: SplitRow) -> WindowSnapshot {
         switch row {
         case .last(let n): return .from(apiWindow(forLastN: n))
@@ -579,19 +623,36 @@ private struct GameWithCumulative {
 
 // MARK: - Splits column widths
 
-// Trimmed so the row's intrinsic width fits inside the page's 16pt
-// padding (≈337pt of usable content area on a 393pt iPhone after
-// accounting for 12pt × 2 internal row padding). Previous values
-// (label 110, g 44, cell 50) summed to 382pt and forced the
-// .ultraThinMaterial card to grow past the parent — visually breaking
-// alignment with the Overview cards.
+// Frozen pane = label only; everything else scrolls horizontally to the
+// right. Same header/cell pattern as the games table (career-table
+// style frozen + scrollable split).
 //
-// Total intrinsic: 80 + 4 (spacer) + 40 + 44×4 = 300pt
-// Plus 24pt internal padding = 324pt → fits 337pt with slack.
+// Batting scrollable intrinsic (with 4pt h-padding per cell):
+//   G 36 + AB 30 + H 26 + HR 26 + RBI 32 + BB 26 + SO 26 + SB 26 +
+//   AVG 44 + OBP 44 + SLG 44 + OPS 44 = 404 → wider than screen, scrolls.
+// Pitching scrollable intrinsic:
+//   G 36 + IP 38 + H 26 + R 26 + ER 28 + BB 26 + SO 26 + HR 26 + ERA 44
+//   = 276 → fits without scrolling on iPhone.
 private enum SplitsLayout {
-    static let label: CGFloat = 80
-    static let g:     CGFloat = 40
-    static let cell:  CGFloat = 44
+    static let rowHeight: CGFloat = 36
+    static let label:     CGFloat = 80
+
+    // Counting (shared)
+    static let g:   CGFloat = 36
+    static let ab:  CGFloat = 30
+    static let h:   CGFloat = 26
+    static let hr:  CGFloat = 26
+    static let rbi: CGFloat = 32
+    static let bb:  CGFloat = 26
+    static let so:  CGFloat = 26
+    static let sb:  CGFloat = 26
+    // Pitching extras
+    static let ip:  CGFloat = 38
+    static let r:   CGFloat = 26
+    static let er:  CGFloat = 28
+    // Rate stats
+    static let rate: CGFloat = 44
+    static let era:  CGFloat = 44
 }
 
 // MARK: - Window snapshot
