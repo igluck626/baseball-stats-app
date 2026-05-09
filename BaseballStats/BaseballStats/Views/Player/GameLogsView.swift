@@ -717,46 +717,44 @@ private struct WindowSnapshot {
 // remaining counting + rate columns scroll horizontally. Mirrors the
 // career table's split-pane structure in PlayerProfileView.
 //
-// Column widths for the batting game table. Total scrollable intrinsic
-// (with 4pt padding either side per cell) = 24+24+24+28+24+24+26+30+
-// 26+30+26+26+26 + 4 rates × 44 = ~514pt → wider than screen, so the
-// scroller actually scrolls.
+// Column widths for the batting game table. Frozen pane = Date + Opp;
+// the rest scroll horizontally. Result/IBB/CS are intentionally absent
+// for now: Result isn't reliably populated, IBB/CS are still backfilling
+// after their column was added to batting_gamelogs.
 private enum BattingGameColumn {
-    static let date:   CGFloat = 48
-    static let opp:    CGFloat = 56
-    static let result: CGFloat = 36
-    static let ab:     CGFloat = 26
-    static let r:      CGFloat = 24
-    static let h:      CGFloat = 24
-    static let tb:     CGFloat = 28
-    static let dbl:    CGFloat = 26
-    static let trp:    CGFloat = 26
-    static let hr:     CGFloat = 26
-    static let rbi:    CGFloat = 30
-    static let bb:     CGFloat = 26
-    static let ibb:    CGFloat = 30
-    static let so:     CGFloat = 26
-    static let sb:     CGFloat = 26
-    static let cs:     CGFloat = 26
-    static let avg:    CGFloat = 44
-    static let obp:    CGFloat = 44
-    static let slg:    CGFloat = 44
-    static let ops:    CGFloat = 44
+    static let date: CGFloat = 48
+    static let opp:  CGFloat = 56
+    static let ab:   CGFloat = 26
+    static let r:    CGFloat = 24
+    static let h:    CGFloat = 24
+    static let tb:   CGFloat = 28
+    static let dbl:  CGFloat = 26
+    static let trp:  CGFloat = 26
+    static let hr:   CGFloat = 26
+    static let rbi:  CGFloat = 30
+    static let bb:   CGFloat = 26
+    static let so:   CGFloat = 26
+    static let sb:   CGFloat = 26
+    static let avg:  CGFloat = 44
+    static let obp:  CGFloat = 44
+    static let slg:  CGFloat = 44
+    static let ops:  CGFloat = 44
 }
 
+// Same shape for pitching. Result column is intentionally absent (not
+// reliably populated yet).
 private enum PitchingGameColumn {
-    static let date:   CGFloat = 48
-    static let opp:    CGFloat = 56
-    static let result: CGFloat = 36
-    static let ip:     CGFloat = 36
-    static let h:      CGFloat = 24
-    static let r:      CGFloat = 24
-    static let er:     CGFloat = 26
-    static let bb:     CGFloat = 26
-    static let so:     CGFloat = 26
-    static let hr:     CGFloat = 26
-    static let hbp:    CGFloat = 30
-    static let era:    CGFloat = 44
+    static let date: CGFloat = 48
+    static let opp:  CGFloat = 56
+    static let ip:   CGFloat = 36
+    static let h:    CGFloat = 24
+    static let r:    CGFloat = 24
+    static let er:   CGFloat = 26
+    static let bb:   CGFloat = 26
+    static let so:   CGFloat = 26
+    static let hr:   CGFloat = 26
+    static let hbp:  CGFloat = 30
+    static let era:  CGFloat = 44
 }
 
 // MARK: - Batting game-log table
@@ -853,9 +851,8 @@ private let monthCapsuleRowHeight: CGFloat = 48
 private struct BattingFrozenHeader: View {
     var body: some View {
         HStack(spacing: 0) {
-            Text("Date")  .frame(width: BattingGameColumn.date,   alignment: .leading)
-            Text("Opp")   .frame(width: BattingGameColumn.opp,    alignment: .leading)
-            Text("Result").frame(width: BattingGameColumn.result, alignment: .center)
+            Text("Date").frame(width: BattingGameColumn.date, alignment: .leading)
+            Text("Opp") .frame(width: BattingGameColumn.opp,  alignment: .leading)
         }
         .font(.caption.weight(.semibold))
         .foregroundStyle(.secondary)
@@ -877,10 +874,8 @@ private struct BattingScrollableHeader: View {
             Text("HR") .frame(width: BattingGameColumn.hr,  alignment: .trailing).padding(.horizontal, 2)
             Text("RBI").frame(width: BattingGameColumn.rbi, alignment: .trailing).padding(.horizontal, 2)
             Text("BB") .frame(width: BattingGameColumn.bb,  alignment: .trailing).padding(.horizontal, 2)
-            Text("IBB").frame(width: BattingGameColumn.ibb, alignment: .trailing).padding(.horizontal, 2)
             Text("SO") .frame(width: BattingGameColumn.so,  alignment: .trailing).padding(.horizontal, 2)
             Text("SB") .frame(width: BattingGameColumn.sb,  alignment: .trailing).padding(.horizontal, 2)
-            Text("CS") .frame(width: BattingGameColumn.cs,  alignment: .trailing).padding(.horizontal, 2)
             Text("AVG").frame(width: BattingGameColumn.avg, alignment: .trailing).padding(.horizontal, 2)
             Text("OBP").frame(width: BattingGameColumn.obp, alignment: .trailing).padding(.horizontal, 2)
             Text("SLG").frame(width: BattingGameColumn.slg, alignment: .trailing).padding(.horizontal, 2)
@@ -903,8 +898,6 @@ private struct BattingFrozenGameRow: View {
                 .monospacedDigit()
             opponentLabel(game)
                 .frame(width: BattingGameColumn.opp, alignment: .leading)
-            Text(formatResult(game.result))
-                .frame(width: BattingGameColumn.result, alignment: .center)
         }
         .font(.caption)
         .padding(.leading, 12)
@@ -920,23 +913,21 @@ private struct BattingScrollableGameRow: View {
     let alternate: Bool
     var body: some View {
         HStack(spacing: 0) {
-            Text(formatInt(game.AB))                                              .frame(width: BattingGameColumn.ab,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatInt(game.R))                                               .frame(width: BattingGameColumn.r,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatInt(game.H))                                               .frame(width: BattingGameColumn.h,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatInt(perGameTB(game)))                                      .frame(width: BattingGameColumn.tb,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatInt(game.doubles))                                         .frame(width: BattingGameColumn.dbl, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatInt(game.triples))                                         .frame(width: BattingGameColumn.trp, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatInt(game.HR))                                              .frame(width: BattingGameColumn.hr,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatInt(game.RBI))                                             .frame(width: BattingGameColumn.rbi, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatInt(game.BB))                                              .frame(width: BattingGameColumn.bb,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatInt(game.IBB))                                             .frame(width: BattingGameColumn.ibb, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatInt(game.SO))                                              .frame(width: BattingGameColumn.so,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatInt(game.SB))                                              .frame(width: BattingGameColumn.sb,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatInt(game.CS))                                              .frame(width: BattingGameColumn.cs,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(format3(rates.avg))                                              .frame(width: BattingGameColumn.avg, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(format3(rates.obp))                                              .frame(width: BattingGameColumn.obp, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(format3(rates.slg))                                              .frame(width: BattingGameColumn.slg, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(format3(rates.ops))                                              .frame(width: BattingGameColumn.ops, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(game.AB))        .frame(width: BattingGameColumn.ab,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(game.R))         .frame(width: BattingGameColumn.r,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(game.H))         .frame(width: BattingGameColumn.h,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(perGameTB(game))).frame(width: BattingGameColumn.tb,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(game.doubles))   .frame(width: BattingGameColumn.dbl, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(game.triples))   .frame(width: BattingGameColumn.trp, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(game.HR))        .frame(width: BattingGameColumn.hr,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(game.RBI))       .frame(width: BattingGameColumn.rbi, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(game.BB))        .frame(width: BattingGameColumn.bb,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(game.SO))        .frame(width: BattingGameColumn.so,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(game.SB))        .frame(width: BattingGameColumn.sb,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(format3(rates.avg))        .frame(width: BattingGameColumn.avg, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(format3(rates.obp))        .frame(width: BattingGameColumn.obp, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(format3(rates.slg))        .frame(width: BattingGameColumn.slg, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(format3(rates.ops))        .frame(width: BattingGameColumn.ops, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
         }
         .font(.caption)
         .padding(.trailing, 12)
@@ -954,8 +945,6 @@ private struct BattingFrozenMonthTotalsRow: View {
                 .frame(width: BattingGameColumn.date, alignment: .leading)
             Text("")
                 .frame(width: BattingGameColumn.opp, alignment: .leading)
-            Text("")
-                .frame(width: BattingGameColumn.result, alignment: .center)
         }
         .font(.caption.weight(.semibold))
         .padding(.leading, 12)
@@ -971,19 +960,17 @@ private struct BattingScrollableMonthTotalsRow: View {
     var body: some View {
         let m = group.monthlyTotals
         HStack(spacing: 0) {
-            Text(formatInt(m.ab))   .frame(width: BattingGameColumn.ab,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatInt(m.r))    .frame(width: BattingGameColumn.r,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatInt(m.h))    .frame(width: BattingGameColumn.h,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatInt(m.tb))   .frame(width: BattingGameColumn.tb,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(m.ab))     .frame(width: BattingGameColumn.ab,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(m.r))      .frame(width: BattingGameColumn.r,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(m.h))      .frame(width: BattingGameColumn.h,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(m.tb))     .frame(width: BattingGameColumn.tb,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             Text(formatInt(m.doubles)).frame(width: BattingGameColumn.dbl, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             Text(formatInt(m.triples)).frame(width: BattingGameColumn.trp, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatInt(m.hr))   .frame(width: BattingGameColumn.hr,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatInt(m.rbi))  .frame(width: BattingGameColumn.rbi, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatInt(m.bb))   .frame(width: BattingGameColumn.bb,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatInt(m.ibb))  .frame(width: BattingGameColumn.ibb, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatInt(m.so))   .frame(width: BattingGameColumn.so,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatInt(m.sb))   .frame(width: BattingGameColumn.sb,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatInt(m.cs))   .frame(width: BattingGameColumn.cs,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(m.hr))     .frame(width: BattingGameColumn.hr,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(m.rbi))    .frame(width: BattingGameColumn.rbi, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(m.bb))     .frame(width: BattingGameColumn.bb,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(m.so))     .frame(width: BattingGameColumn.so,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatInt(m.sb))     .frame(width: BattingGameColumn.sb,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             // Cumulative-through-end-of-month rates.
             Text(format3(group.throughMonth.avg)).frame(width: BattingGameColumn.avg, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             Text(format3(group.throughMonth.obp)).frame(width: BattingGameColumn.obp, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
@@ -1072,9 +1059,8 @@ private struct PitchingGameLogTable: View {
 private struct PitchingFrozenHeader: View {
     var body: some View {
         HStack(spacing: 0) {
-            Text("Date")  .frame(width: PitchingGameColumn.date,   alignment: .leading)
-            Text("Opp")   .frame(width: PitchingGameColumn.opp,    alignment: .leading)
-            Text("Result").frame(width: PitchingGameColumn.result, alignment: .center)
+            Text("Date").frame(width: PitchingGameColumn.date, alignment: .leading)
+            Text("Opp") .frame(width: PitchingGameColumn.opp,  alignment: .leading)
         }
         .font(.caption.weight(.semibold))
         .foregroundStyle(.secondary)
@@ -1114,8 +1100,6 @@ private struct PitchingFrozenGameRow: View {
                 .monospacedDigit()
             opponentLabel(game)
                 .frame(width: PitchingGameColumn.opp, alignment: .leading)
-            Text(formatResult(game.result))
-                .frame(width: PitchingGameColumn.result, alignment: .center)
         }
         .font(.caption)
         .padding(.leading, 12)
@@ -1157,8 +1141,6 @@ private struct PitchingFrozenMonthTotalsRow: View {
                 .frame(width: PitchingGameColumn.date, alignment: .leading)
             Text("")
                 .frame(width: PitchingGameColumn.opp, alignment: .leading)
-            Text("")
-                .frame(width: PitchingGameColumn.result, alignment: .center)
         }
         .font(.caption.weight(.semibold))
         .padding(.leading, 12)
@@ -1319,13 +1301,6 @@ private func perGameTB(_ g: GameLog) -> Int? {
     return h + dbl + 2 * trp + 3 * hr
 }
 
-/// Game-result column rendering. The backend ships the raw decision
-/// flags ("W" / "L" / "T" for batters; "W" / "L" / "S" / "H" / "BS" /
-/// "ND" for pitchers) — pass through unchanged, fall back to "—".
-private func formatResult(_ result: String?) -> String {
-    guard let r = result, !r.isEmpty else { return "—" }
-    return r
-}
 
 private func format2(_ value: Double?) -> String {
     guard let value else { return "—" }
