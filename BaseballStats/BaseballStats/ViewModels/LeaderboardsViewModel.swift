@@ -112,13 +112,13 @@ final class LeaderboardsViewModel: ObservableObject {
         "H", "BB", "HR", "CG", "SHO",
     ]
 
-    /// Default stat for each kind. Batting opens on WAR (the headline
-    /// modern stat); pitching opens on ERA (the most-recognized
-    /// pitching stat for casual fans). These are also what the UI
-    /// snaps back to whenever the user toggles between Batting and
-    /// Pitching — no preserving the previous selection across kinds.
+    /// Default stat for each kind. Both kinds open on WAR — the
+    /// headline modern stat for hitters and pitchers alike. These
+    /// are also what the UI snaps back to whenever the user toggles
+    /// between Batting and Pitching — no preserving the previous
+    /// selection across kinds.
     static let defaultBattingStat  = "WAR"
-    static let defaultPitchingStat = "ERA"
+    static let defaultPitchingStat = "WAR"
 
     /// Pagination — start at 25, grow in 25-row batches up to 100.
     static let initialLimit: Int = 25
@@ -210,11 +210,23 @@ final class LeaderboardsViewModel: ObservableObject {
         displayedLimit < Self.maxLimit && entries.count >= displayedLimit
     }
 
-    /// Fetch with the current `displayedLimit`. Call sites that change
-    /// any filter (kind / stat / year / league / team) should reset
-    /// pagination first via `resetPagination()`.
+    /// Fetch with the current selection state. The view drives this via
+    /// `.task(id: fetchKey)` so that any change to a selection field
+    /// (kind / stat / year / league / team / displayedLimit) coalesces
+    /// into exactly one fetch — no chained-onChange races, no double-
+    /// fetches even when a user gesture mutates two fields at once
+    /// (e.g. the kind toggle resetting the stat and the page limit).
+    ///
+    /// Distinguishes "first page" from "load more" by comparing the
+    /// limit to `initialLimit`, so the view can show a row spinner for
+    /// pagination instead of the big center spinner.
     func load() async {
-        isLoading = true
+        let loadingMore = displayedLimit > Self.initialLimit
+        if loadingMore {
+            isLoadingMore = true
+        } else {
+            isLoading = true
+        }
         error = nil
         do {
             let response = try await api.getLeaderboard(
@@ -231,25 +243,24 @@ final class LeaderboardsViewModel: ObservableObject {
             entries = []
         }
         isLoading = false
+        isLoadingMore = false
     }
 
-    /// Reset the request limit back to the first page. Call before
-    /// `load()` whenever the user changes a filter — otherwise a
-    /// previously-expanded board (e.g. limit=100) would pre-fetch a
-    /// full 100 rows on the very next selection change.
+    /// Reset the request limit back to the first page. Call before any
+    /// filter mutation — otherwise a previously-expanded board (e.g.
+    /// limit=100) would pre-fetch a full 100 rows on the next change.
     func resetPagination() {
         displayedLimit = Self.initialLimit
     }
 
-    /// Bump the limit by one page and re-fetch. No-op once the cap is
-    /// reached or the prior batch was short (no more data available).
-    func loadMore() async {
+    /// Bump the limit by one page. The actual fetch is triggered by
+    /// the view's `.task(id: fetchKey)` reacting to the new limit, so
+    /// this method just mutates state — no async work, no possibility
+    /// of racing the kind/stat reset path.
+    func loadMore() {
         guard canLoadMore, !isLoadingMore else { return }
         let nextLimit = min(displayedLimit + Self.pageStep, Self.maxLimit)
         guard nextLimit > displayedLimit else { return }
-        isLoadingMore = true
         displayedLimit = nextLimit
-        await load()
-        isLoadingMore = false
     }
 }

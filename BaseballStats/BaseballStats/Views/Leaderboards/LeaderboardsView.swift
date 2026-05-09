@@ -13,6 +13,33 @@ import SwiftUI
 struct LeaderboardsView: View {
     @StateObject private var viewModel = LeaderboardsViewModel()
 
+    /// Hashable snapshot of every input that should trigger a fetch.
+    /// Driving `.task(id:)` off this guarantees one fetch per coherent
+    /// state — even when a single user gesture mutates two fields at
+    /// once (kind toggle → stat reset + pagination reset). Without
+    /// this, the previous chained-onChange approach raced and could
+    /// either skip the fetch (when reset to the same stat) or fire
+    /// twice (when stat actually changed).
+    private struct FetchKey: Hashable {
+        let kind:   LeaderboardsViewModel.PlayerKind
+        let stat:   String
+        let year:   Int
+        let league: LeaderboardsViewModel.LeagueFilter
+        let team:   LeaderboardsViewModel.TeamFilter
+        let limit:  Int
+    }
+
+    private var fetchKey: FetchKey {
+        FetchKey(
+            kind:   viewModel.playerKind,
+            stat:   viewModel.selectedStat,
+            year:   viewModel.selectedYear,
+            league: viewModel.selectedLeague,
+            team:   viewModel.selectedTeam,
+            limit:  viewModel.displayedLimit
+        )
+    }
+
     var body: some View {
         NavigationStack {
             ZStack {
@@ -31,33 +58,32 @@ struct LeaderboardsView: View {
                 }
             }
         }
-        .task { await viewModel.load() }
+        // Single source of truth for fetching — runs once on mount and
+        // again whenever any selection field changes. SwiftUI cancels
+        // the in-flight fetch automatically when the id changes mid-
+        // request, so there's no chance of a stale response landing.
+        .task(id: fetchKey) {
+            await viewModel.load()
+        }
+        // The onChange handlers below only mutate side-state (stat
+        // default, team validity, page limit). The fetch is the .task
+        // above, which reacts to whatever those mutations resolve to.
         .onChange(of: viewModel.playerKind) { _, _ in
-            // Always snap to the kind's headline default — Batting→WAR,
-            // Pitching→ERA — even when the previous stat (e.g. WAR)
-            // exists in both catalogs. Toggle reads as a fresh start.
             viewModel.resetStatForCurrentKind()
-            // The stat reset will fire its own onChange and reload, so
-            // we don't need to call load() here too.
+            viewModel.resetPagination()
         }
         .onChange(of: viewModel.selectedStat) { _, _ in
             viewModel.resetPagination()
-            Task { await viewModel.load() }
         }
         .onChange(of: viewModel.selectedYear) { _, _ in
             viewModel.resetPagination()
-            Task { await viewModel.load() }
         }
         .onChange(of: viewModel.selectedLeague) { _, _ in
-            // If the user had a team selected from the other league,
-            // drop back to All Teams before refetching.
             viewModel.resetTeamIfHidden()
             viewModel.resetPagination()
-            Task { await viewModel.load() }
         }
         .onChange(of: viewModel.selectedTeam) { _, _ in
             viewModel.resetPagination()
-            Task { await viewModel.load() }
         }
     }
 
@@ -226,7 +252,9 @@ struct LeaderboardsView: View {
     /// the dataset is exhausted.
     private var showMoreRow: some View {
         Button {
-            Task { await viewModel.loadMore() }
+            // Just bumps displayedLimit — the .task(id: fetchKey) above
+            // sees the new key and fires the load.
+            viewModel.loadMore()
         } label: {
             HStack {
                 Spacer()
