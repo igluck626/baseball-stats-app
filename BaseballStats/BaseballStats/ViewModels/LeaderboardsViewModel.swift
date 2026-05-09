@@ -99,21 +99,31 @@ final class LeaderboardsViewModel: ObservableObject {
     ]
 
     /// Stat keys are the user-facing labels and the API query values both —
-    /// the backend's leaderboard catalog uses these exact strings. Order
-    /// here drives the picker order: most-popular first.
+    /// the backend's leaderboard catalog uses these exact strings. WAR
+    /// leads both lists; the rest follow popularity order.
     /// Note: HLD ("holds") isn't currently tracked in pitcher_seasons,
     /// so it's deliberately absent from the pitching list.
     static let battingStats:  [String] = [
-        "HR", "AVG", "RBI", "OPS", "H", "R", "SB", "BB",
-        "OBP", "SLG", "WAR", "2B", "3B", "SO", "PA", "AB",
+        "WAR", "HR", "AVG", "RBI", "OPS", "H", "R", "SB", "BB",
+        "OBP", "SLG", "2B", "3B", "SO", "PA", "AB",
     ]
     static let pitchingStats: [String] = [
-        "ERA", "SO", "W", "WHIP", "SV", "IP",
-        "H", "BB", "HR", "WAR", "CG", "SHO",
+        "WAR", "ERA", "SO", "W", "WHIP", "SV", "IP",
+        "H", "BB", "HR", "CG", "SHO",
     ]
 
-    static let defaultBattingStat  = "HR"
+    /// Default stat for each kind. Batting opens on WAR (the headline
+    /// modern stat); pitching opens on ERA (the most-recognized
+    /// pitching stat for casual fans). These are also what the UI
+    /// snaps back to whenever the user toggles between Batting and
+    /// Pitching — no preserving the previous selection across kinds.
+    static let defaultBattingStat  = "WAR"
     static let defaultPitchingStat = "ERA"
+
+    /// Pagination — start at 25, grow in 25-row batches up to 100.
+    static let initialLimit: Int = 25
+    static let pageStep:     Int = 25
+    static let maxLimit:     Int = 100
 
     static var currentYear: Int {
         Calendar.current.component(.year, from: Date())
@@ -131,7 +141,11 @@ final class LeaderboardsViewModel: ObservableObject {
 
     @Published var entries: [LeaderboardEntry] = []
     @Published var isLoading = false
+    @Published var isLoadingMore = false
     @Published var error: String?
+    /// How many rows the next request will ask the backend for. Bumps
+    /// up by `pageStep` on each "Show more" tap, capped at `maxLimit`.
+    @Published var displayedLimit: Int = LeaderboardsViewModel.initialLimit
 
     private let api: APIClient
 
@@ -144,19 +158,16 @@ final class LeaderboardsViewModel: ObservableObject {
         playerKind == .batter ? Self.battingStats : Self.pitchingStats
     }
 
-    /// Reset the stat to the default for the new player kind. Called when
-    /// the user toggles Batting/Pitching — keeping a batting-only stat
-    /// selected when switching to Pitching would 400 the next request.
+    /// Reset the stat to the default for the new player kind. Called
+    /// unconditionally when the user toggles Batting/Pitching — even
+    /// when the previous stat exists in both catalogs (e.g. WAR), the
+    /// product wants the toggle to behave as a "fresh start" landing
+    /// on each kind's headline default rather than preserving the
+    /// prior selection across the boundary.
     func resetStatForCurrentKind() {
         selectedStat = (playerKind == .batter)
             ? Self.defaultBattingStat
             : Self.defaultPitchingStat
-    }
-
-    /// Whether this stat label is part of the current player kind's catalog.
-    /// Used to detect cross-kind selections that need a reset.
-    func statBelongsToCurrentKind() -> Bool {
-        availableStats.contains(selectedStat)
     }
 
     /// Teams visible in the picker, narrowed by the league filter so a
@@ -189,6 +200,19 @@ final class LeaderboardsViewModel: ObservableObject {
 
     // MARK: - Loading
 
+    /// Whether the "Show more" button should be visible at the bottom
+    /// of the list. Two conditions, both required:
+    ///   • We haven't hit the 100-row cap yet.
+    ///   • The last request returned a full batch — if the API gave us
+    ///     fewer rows than we asked for (e.g. team-filtered board with
+    ///     only 12 qualifying players), the dataset is exhausted.
+    var canLoadMore: Bool {
+        displayedLimit < Self.maxLimit && entries.count >= displayedLimit
+    }
+
+    /// Fetch with the current `displayedLimit`. Call sites that change
+    /// any filter (kind / stat / year / league / team) should reset
+    /// pagination first via `resetPagination()`.
     func load() async {
         isLoading = true
         error = nil
@@ -198,7 +222,8 @@ final class LeaderboardsViewModel: ObservableObject {
                 year:       selectedYear,
                 playerType: playerKind.rawValue,
                 league:     selectedLeague.apiValue,
-                team:       selectedTeam.apiCode
+                team:       selectedTeam.apiCode,
+                limit:      displayedLimit
             )
             entries = response?.leaders ?? []
         } catch {
@@ -206,5 +231,25 @@ final class LeaderboardsViewModel: ObservableObject {
             entries = []
         }
         isLoading = false
+    }
+
+    /// Reset the request limit back to the first page. Call before
+    /// `load()` whenever the user changes a filter — otherwise a
+    /// previously-expanded board (e.g. limit=100) would pre-fetch a
+    /// full 100 rows on the very next selection change.
+    func resetPagination() {
+        displayedLimit = Self.initialLimit
+    }
+
+    /// Bump the limit by one page and re-fetch. No-op once the cap is
+    /// reached or the prior batch was short (no more data available).
+    func loadMore() async {
+        guard canLoadMore, !isLoadingMore else { return }
+        let nextLimit = min(displayedLimit + Self.pageStep, Self.maxLimit)
+        guard nextLimit > displayedLimit else { return }
+        isLoadingMore = true
+        displayedLimit = nextLimit
+        await load()
+        isLoadingMore = false
     }
 }

@@ -33,26 +33,30 @@ struct LeaderboardsView: View {
         }
         .task { await viewModel.load() }
         .onChange(of: viewModel.playerKind) { _, _ in
-            // Switching kinds may invalidate the selected stat (e.g. AVG
-            // doesn't exist for pitchers). Reset before re-fetching.
-            if !viewModel.statBelongsToCurrentKind() {
-                viewModel.resetStatForCurrentKind()
-            }
-            Task { await viewModel.load() }
+            // Always snap to the kind's headline default — Batting→WAR,
+            // Pitching→ERA — even when the previous stat (e.g. WAR)
+            // exists in both catalogs. Toggle reads as a fresh start.
+            viewModel.resetStatForCurrentKind()
+            // The stat reset will fire its own onChange and reload, so
+            // we don't need to call load() here too.
         }
         .onChange(of: viewModel.selectedStat) { _, _ in
+            viewModel.resetPagination()
             Task { await viewModel.load() }
         }
         .onChange(of: viewModel.selectedYear) { _, _ in
+            viewModel.resetPagination()
             Task { await viewModel.load() }
         }
         .onChange(of: viewModel.selectedLeague) { _, _ in
             // If the user had a team selected from the other league,
             // drop back to All Teams before refetching.
             viewModel.resetTeamIfHidden()
+            viewModel.resetPagination()
             Task { await viewModel.load() }
         }
         .onChange(of: viewModel.selectedTeam) { _, _ in
+            viewModel.resetPagination()
             Task { await viewModel.load() }
         }
     }
@@ -85,13 +89,21 @@ struct LeaderboardsView: View {
     @ViewBuilder
     private var content: some View {
         VStack(spacing: 10) {
-            kindAndStatBar
-            leaguePicker
-            teamPicker
+            // Controls keep their inset so the segmented and pill
+            // chrome reads at a comfortable width...
+            VStack(spacing: 10) {
+                kindAndStatBar
+                leaguePicker
+                teamPicker
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+
+            // ...but the list itself sits flush so the inset-grouped
+            // card spans nearly the full screen, giving the player
+            // name + team line as much room as possible.
             list
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
     }
 
     /// Top control row — kind (segmented) on the left, stat (menu) pill
@@ -190,16 +202,49 @@ struct LeaderboardsView: View {
     }
 
     private var resultsList: some View {
-        List(viewModel.entries) { entry in
-            ZStack {
-                NavigationLink(value: entry.player) { EmptyView() }
-                    .opacity(0)
-                LeaderboardRow(entry: entry, format: rowFormat)
+        List {
+            ForEach(viewModel.entries) { entry in
+                ZStack {
+                    NavigationLink(value: entry.player) { EmptyView() }
+                        .opacity(0)
+                    LeaderboardRow(entry: entry, format: rowFormat)
+                }
+                .listRowSeparatorTint(Color(.systemGray4))
             }
-            .listRowSeparatorTint(Color(.systemGray4))
+            if viewModel.canLoadMore {
+                showMoreRow
+            }
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
+    }
+
+    /// Footer row inside the inset-grouped card. A button styled to
+    /// blend with the card chrome (no row chevron, accent color text)
+    /// that bumps the displayed limit by one page until it caps at 100.
+    /// Hidden via `viewModel.canLoadMore` once the cap is reached or
+    /// the dataset is exhausted.
+    private var showMoreRow: some View {
+        Button {
+            Task { await viewModel.loadMore() }
+        } label: {
+            HStack {
+                Spacer()
+                if viewModel.isLoadingMore {
+                    ProgressView()
+                } else {
+                    Text("Show more")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.accentColor)
+                }
+                Spacer()
+            }
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
+        }
+        .disabled(viewModel.isLoadingMore)
+        .buttonStyle(.plain)
+        .listRowSeparator(.hidden)
     }
 
     private func errorState(_ message: String) -> some View {
