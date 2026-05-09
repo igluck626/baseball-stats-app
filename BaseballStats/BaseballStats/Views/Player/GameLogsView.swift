@@ -375,7 +375,11 @@ struct GameLogsView: View {
             if isPitcher { PitchingGameTableHeader() } else { BattingGameTableHeader() }
             Divider()
             ForEach(Array(games.enumerated()), id: \.offset) { index, game in
-                gameRow(game: game, alternate: !index.isMultiple(of: 2))
+                // Filtered windows (Last N / Custom) are a subset, not a
+                // chronological prefix of the season — a cumulative rate
+                // through that game would be misleading. Pass nil so the
+                // AVG/ERA column renders "—".
+                gameRow(game: game, alternate: !index.isMultiple(of: 2), cumulativeRate: nil)
                 if index != games.indices.last { Divider().opacity(0.25) }
             }
         }
@@ -388,8 +392,12 @@ struct GameLogsView: View {
             Divider()
             ForEach(groups) { group in
                 MonthHeaderCapsule(label: monthFullName(group.month, year: group.year))
-                ForEach(Array(group.games.enumerated()), id: \.offset) { index, game in
-                    gameRow(game: game, alternate: !index.isMultiple(of: 2))
+                ForEach(Array(group.games.enumerated()), id: \.offset) { index, gc in
+                    gameRow(
+                        game: gc.game,
+                        alternate: !index.isMultiple(of: 2),
+                        cumulativeRate: gc.cumulativeRate
+                    )
                     if index != group.games.indices.last {
                         Divider().opacity(0.25)
                     }
@@ -406,11 +414,11 @@ struct GameLogsView: View {
     }
 
     @ViewBuilder
-    private func gameRow(game: GameLog, alternate: Bool) -> some View {
+    private func gameRow(game: GameLog, alternate: Bool, cumulativeRate: Double?) -> some View {
         if isPitcher {
-            PitchingGameRow(game: game, alternate: alternate)
+            PitchingGameRow(game: game, alternate: alternate, cumulativeERA: cumulativeRate)
         } else {
-            BattingGameRow(game: game, alternate: alternate)
+            BattingGameRow(game: game, alternate: alternate, cumulativeAVG: cumulativeRate)
         }
     }
 
@@ -430,32 +438,60 @@ struct GameLogsView: View {
 
     // MARK: - Monthly grouping
 
-    /// Walk `allGames` (reverse-chrono) in chronological order, group by
-    /// (year, month), and compute season-to-date stats through the end
-    /// of each month so the totals row can show running AVG/ERA. Returns
-    /// the groups in display order (most recent month first).
+    /// Walk `allGames` (reverse-chrono) in chronological order, pair each
+    /// game with the running cumulative AVG (batters) or ERA (pitchers)
+    /// through that game, group by (year, month), and compute the
+    /// season-to-date totals snapshot through the end of each month for
+    /// the totals row. Returns the groups in display order (most recent
+    /// month first), with games inside each group in reverse-chrono order.
     private func monthGroups(allGames: [GameLog]) -> [MonthGroup] {
         let chrono = Array(allGames.reversed())
-        var buckets: [(year: Int, month: Int, games: [GameLog])] = []
+
+        // Walk chronologically once, accumulating the rate-stat
+        // numerator/denominator and emitting each game's cumulative
+        // rate. Baseball Reference's game logs show the rate stat as
+        // "season-to-date through this game", which is what this loop
+        // computes — not the per-game H/AB or ER*9/IP.
+        var sumAB = 0
+        var sumH  = 0
+        var sumIP = 0.0
+        var sumER = 0
+        var chronoWithCumulative: [GameWithCumulative] = []
         for g in chrono {
-            guard let ym = parseYM(g.game_date) else { continue }
-            if let last = buckets.last, last.year == ym.0, last.month == ym.1 {
-                buckets[buckets.count - 1].games.append(g)
+            let rate: Double?
+            if isPitcher {
+                sumIP += g.IP ?? 0
+                sumER += g.ER ?? 0
+                rate = sumIP > 0 ? Double(sumER) * 9.0 / sumIP : nil
             } else {
-                buckets.append((ym.0, ym.1, [g]))
+                sumAB += g.AB ?? 0
+                sumH  += g.H  ?? 0
+                rate = sumAB > 0 ? Double(sumH) / Double(sumAB) : nil
+            }
+            chronoWithCumulative.append(GameWithCumulative(game: g, cumulativeRate: rate))
+        }
+
+        var buckets: [(year: Int, month: Int, games: [GameWithCumulative])] = []
+        for gc in chronoWithCumulative {
+            guard let ym = parseYM(gc.game.game_date) else { continue }
+            if let last = buckets.last, last.year == ym.0, last.month == ym.1 {
+                buckets[buckets.count - 1].games.append(gc)
+            } else {
+                buckets.append((ym.0, ym.1, [gc]))
             }
         }
 
         var cumulative: [GameLog] = []
         var out: [MonthGroup] = []
         for bucket in buckets {
-            cumulative.append(contentsOf: bucket.games)
+            let bucketGames = bucket.games.map { $0.game }
+            cumulative.append(contentsOf: bucketGames)
             let through: WindowSnapshot = isPitcher
                 ? .computePitching(games: cumulative)
                 : .computeBatting(games: cumulative)
             let monthly: WindowSnapshot = isPitcher
-                ? .computePitching(games: bucket.games)
-                : .computeBatting(games: bucket.games)
+                ? .computePitching(games: bucketGames)
+                : .computeBatting(games: bucketGames)
             out.append(MonthGroup(
                 year: bucket.year,
                 month: bucket.month,
@@ -490,8 +526,10 @@ private struct MonthHeaderCapsule: View {
 private struct MonthGroup: Identifiable {
     let year: Int
     let month: Int
-    /// Games in reverse-chrono order within this month.
-    let games: [GameLog]
+    /// Games in reverse-chrono order within this month, each paired with
+    /// the season-to-date AVG (batters) or ERA (pitchers) through that
+    /// individual game.
+    let games: [GameWithCumulative]
     /// Stats summed over just this month's games.
     let monthlyTotals: WindowSnapshot
     /// Season-to-date stats through the end of this month — used for the
@@ -499,6 +537,14 @@ private struct MonthGroup: Identifiable {
     let throughMonth: WindowSnapshot
 
     var id: String { "\(year)-\(month)" }
+}
+
+/// One row of the games table — the raw game alongside the cumulative
+/// rate stat (AVG for batters, ERA for pitchers) through that game.
+/// `nil` means "not applicable" (filtered subset views) and renders "—".
+private struct GameWithCumulative {
+    let game: GameLog
+    let cumulativeRate: Double?
 }
 
 // MARK: - Splits column widths
@@ -668,6 +714,8 @@ private struct BattingGameTableHeader: View {
 private struct BattingGameRow: View {
     let game: GameLog
     let alternate: Bool
+    /// Season-to-date AVG through this game. `nil` = subset view, render "—".
+    let cumulativeAVG: Double?
     var body: some View {
         HStack(spacing: 0) {
             Text(formatGameDate(game.game_date))
@@ -681,17 +729,12 @@ private struct BattingGameRow: View {
             Text(formatInt(game.HR)).frame(width: BattingGameColumn.hr, alignment: .trailing).monospacedDigit()
             Text(formatInt(game.RBI)).frame(width: BattingGameColumn.rbi, alignment: .trailing).monospacedDigit()
             Text(formatInt(game.BB)).frame(width: BattingGameColumn.bb, alignment: .trailing).monospacedDigit()
-            Text(format3(perGameAVG(game))).frame(width: BattingGameColumn.avg, alignment: .trailing).monospacedDigit()
+            Text(format3(cumulativeAVG)).frame(width: BattingGameColumn.avg, alignment: .trailing).monospacedDigit()
         }
         .font(.caption)
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
         .background(alternate ? Color(.systemGray6).opacity(0.5) : Color.clear)
-    }
-
-    private func perGameAVG(_ g: GameLog) -> Double? {
-        guard let h = g.H, let ab = g.AB, ab > 0 else { return nil }
-        return Double(h) / Double(ab)
     }
 }
 
@@ -747,6 +790,8 @@ private struct PitchingGameTableHeader: View {
 private struct PitchingGameRow: View {
     let game: GameLog
     let alternate: Bool
+    /// Season-to-date ERA through this game. `nil` = subset view, render "—".
+    let cumulativeERA: Double?
     var body: some View {
         HStack(spacing: 0) {
             Text(formatGameDate(game.game_date))
@@ -760,17 +805,12 @@ private struct PitchingGameRow: View {
             Text(formatInt(game.ER)).frame(width: PitchingGameColumn.er, alignment: .trailing).monospacedDigit()
             Text(formatInt(game.BB)).frame(width: PitchingGameColumn.bb, alignment: .trailing).monospacedDigit()
             Text(formatInt(game.SO)).frame(width: PitchingGameColumn.so, alignment: .trailing).monospacedDigit()
-            Text(format2(perGameERA(game))).frame(width: PitchingGameColumn.era, alignment: .trailing).monospacedDigit()
+            Text(format2(cumulativeERA)).frame(width: PitchingGameColumn.era, alignment: .trailing).monospacedDigit()
         }
         .font(.caption)
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
         .background(alternate ? Color(.systemGray6).opacity(0.5) : Color.clear)
-    }
-
-    private func perGameERA(_ g: GameLog) -> Double? {
-        guard let er = g.ER, let ip = g.IP, ip > 0 else { return nil }
-        return Double(er) * 9.0 / ip
     }
 }
 
