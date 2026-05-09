@@ -117,7 +117,9 @@ struct GameLogsView: View {
     private var splitsTable: some View {
         let rows = splitRows
         return HStack(spacing: 0) {
-            // Frozen pane — split label only.
+            // Frozen pane — split label only. Pinned to the exact
+            // intrinsic width of its content so it can't expand to grab
+            // half the table from the flexible ScrollView next to it.
             VStack(spacing: 0) {
                 splitsFrozenHeader
                 Divider()
@@ -126,6 +128,7 @@ struct GameLogsView: View {
                     if idx != rows.indices.last { Divider().opacity(0.5) }
                 }
             }
+            .frame(width: SplitsLayout.frozenPaneWidth)
             .background(.ultraThinMaterial)
             .shadow(color: .black.opacity(0.08), radius: 4, x: 2, y: 0)
             .zIndex(1)
@@ -636,9 +639,13 @@ private struct GameWithCumulative {
 private enum SplitsLayout {
     static let rowHeight: CGFloat = 36
     // Sized for the longest split label ("Last 30") at .caption — ~40pt
-    // measured + a few points of slack for Dynamic Type. "Custom",
-    // "Season", and the "Splits" header are all shorter and fit easily.
-    static let label:     CGFloat = 52
+    // measured + a small slack for Dynamic Type. "Custom", "Season",
+    // and the "Splits" header are all shorter and fit easily.
+    static let label:     CGFloat = 48
+    // Frozen-pane total width = leadingPad + label = 12 + 48 = 60pt.
+    // Pinned on the VStack so a maxWidth-infinity child can't make the
+    // pane claim more space inside the outer HStack.
+    static let frozenPaneWidth: CGFloat = 60
 
     // Counting (shared)
     static let g:   CGFloat = 36
@@ -783,20 +790,30 @@ private struct WindowSnapshot {
 
 // MARK: - Game table layout
 
-// Frozen-pane layout: Date / Opp / Result on the left stay put; the
-// remaining counting + rate columns scroll horizontally. Mirrors the
-// career table's split-pane structure in PlayerProfileView.
+// Frozen-pane layout: Date / Opp on the left stay put; the remaining
+// counting + rate columns scroll horizontally. Mirrors the career
+// table's split-pane structure in PlayerProfileView.
 //
-// Column widths for the batting game table. Frozen pane = Date + Opp;
-// the rest scroll horizontally. Result/IBB/CS are intentionally absent
-// for now: Result isn't reliably populated, IBB/CS are still backfilling
-// after their column was added to batting_gamelogs.
+// Frozen-pane total width — pinned on the VStack so a child with
+// .frame(maxWidth: .infinity) (e.g. MonthSectionLabel) can't make the
+// pane claim half the table width inside the outer HStack.
+//
+//   leadingPad 12 + date 38 + opp 50 = 100pt
+//
+private let gameLogFrozenPaneWidth: CGFloat = 100
+
+// Column widths for the batting game table. Result/IBB/CS are
+// intentionally absent for now: Result isn't reliably populated,
+// IBB/CS are still backfilling after their column was added to
+// batting_gamelogs.
 private enum BattingGameColumn {
+    // Frozen pane: leadingPad + date + opp = 12 + 38 + 50 = 100pt.
     // Date "10/30" at .caption monospacedDigit measures ~33pt; opp
-    // "vs WSN" (caption2 prefix + caption code) measures ~38pt. Tight
-    // widths free up screen for the scrolling stats columns.
+    // "vs CWS" (caption2 prefix + caption code with 4pt spacer)
+    // measures ~40pt — bumped from 44→50 to keep the 3-letter team
+    // code from truncating to "vs C…".
     static let date: CGFloat = 38
-    static let opp:  CGFloat = 44
+    static let opp:  CGFloat = 50
     static let ab:   CGFloat = 26
     static let r:    CGFloat = 24
     static let h:    CGFloat = 24
@@ -817,10 +834,10 @@ private enum BattingGameColumn {
 // Same shape for pitching. Result column is intentionally absent (not
 // reliably populated yet).
 private enum PitchingGameColumn {
-    // Same compact frozen-pane widths as the batting table so both
-    // tables look consistent and free up room for the stats columns.
+    // Same compact frozen-pane widths as the batting table for visual
+    // consistency. Frozen pane: 12 + 38 + 50 = 100pt.
     static let date: CGFloat = 38
-    static let opp:  CGFloat = 44
+    static let opp:  CGFloat = 50
     static let ip:   CGFloat = 36
     static let h:    CGFloat = 24
     static let r:    CGFloat = 24
@@ -873,6 +890,7 @@ private struct BattingGameLogTable: View {
                     }
                 }
             }
+            .frame(width: gameLogFrozenPaneWidth)
             .background(.ultraThinMaterial)
             .shadow(color: .black.opacity(0.08), radius: 4, x: 2, y: 0)
             .zIndex(1)
@@ -1089,6 +1107,7 @@ private struct PitchingGameLogTable: View {
                     }
                 }
             }
+            .frame(width: gameLogFrozenPaneWidth)
             .background(.ultraThinMaterial)
             .shadow(color: .black.opacity(0.08), radius: 4, x: 2, y: 0)
             .zIndex(1)
