@@ -702,6 +702,7 @@ private struct WindowSnapshot {
             rbi: window?.RBI,
             bb: window?.BB,
             so: window?.SO,
+            sb: window?.SB,
             avg: window?.BA,
             obp: window?.OBP,
             slg: window?.SLG,

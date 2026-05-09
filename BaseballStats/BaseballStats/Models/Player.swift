@@ -454,6 +454,7 @@ struct GameLogWindow: Codable {
     let RBI: Int?
     let BB: Int?
     let SO: Int?
+    let SB: Int?
     let BA: Double?
     let OBP: Double?
     let SLG: Double?

@@ -888,7 +888,8 @@ def _aggregate_batting_window(games: list[dict]) -> dict:
         return {"G": 0, "AB": 0, "R": 0, "H": 0, "HR": 0, "RBI": 0, "BB": 0,
                 "SO": 0, "BA": None, "OBP": None, "SLG": None, "OPS": None}
     s = {k: sum((g.get(k) or 0) for g in games) for k in
-         ("AB", "R", "H", "doubles", "triples", "HR", "RBI", "BB", "SO", "HBP", "SF")}
+         ("AB", "R", "H", "doubles", "triples", "HR", "RBI",
+          "BB", "SO", "SB", "HBP", "SF")}
     ab, h, hr, bb, hbp, sf = s["AB"], s["H"], s["HR"], s["BB"], s["HBP"], s["SF"]
     doubles, triples = s["doubles"], s["triples"]
     singles = h - doubles - triples - hr
@@ -902,7 +903,7 @@ def _aggregate_batting_window(games: list[dict]) -> dict:
     return {
         "G":   len(games),
         "AB":  ab, "R": s["R"], "H": h, "HR": hr, "RBI": s["RBI"],
-        "BB":  bb, "SO": s["SO"],
+        "BB":  bb, "SO": s["SO"], "SB": s["SB"],
         "BA":  ba, "OBP": obp, "SLG": slg, "OPS": ops,
     }
 
