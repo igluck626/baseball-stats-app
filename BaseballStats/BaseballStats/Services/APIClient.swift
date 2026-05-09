@@ -138,6 +138,28 @@ final class APIClient {
         return try await getOptional(url)
     }
 
+    /// `GET /leaderboards?stat=&year=&player_type=`. Returns nil on 404
+    /// (e.g. a season with no qualifying rate-stat leaders). Sort order
+    /// is decided server-side: ERA / WHIP ascending, everything else
+    /// descending.
+    func getLeaderboard(
+        stat: String,
+        year: Int,
+        playerType: String,
+        limit: Int = 25
+    ) async throws -> LeaderboardResponse? {
+        let url = try buildURL(
+            path: "/leaderboards",
+            query: [
+                URLQueryItem(name: "stat",        value: stat),
+                URLQueryItem(name: "year",        value: String(year)),
+                URLQueryItem(name: "player_type", value: playerType),
+                URLQueryItem(name: "limit",       value: String(limit)),
+            ]
+        )
+        return try await getOptional(url)
+    }
+
     // MARK: - Internals
 
     private func buildURL(path: String, query: [URLQueryItem] = []) throws -> URL {

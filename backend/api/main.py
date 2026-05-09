@@ -758,6 +758,58 @@ def team_history(team_id: str):
 
 
 # ---------------------------------------------------------------------------
+# Leaderboards
+# ---------------------------------------------------------------------------
+
+# Stats accepted by the leaderboard endpoint. Must match the keys in
+# data_service._LEADERBOARD_BATTING / _PITCHING. Surfaced here so the
+# 400 error message stays in sync with what data_service knows.
+_LEADERBOARD_BATTING_STATS  = {"HR", "AVG", "OPS", "RBI", "SB", "WAR"}
+_LEADERBOARD_PITCHING_STATS = {"ERA", "SO", "W", "WHIP", "SV", "WAR"}
+
+
+@app.get("/leaderboards")
+def leaderboards(
+    stat:        str = Query(..., description="Stat key, e.g. HR / AVG / WAR / ERA"),
+    year:        int = Query(..., description="Season year"),
+    player_type: str = Query("batter", description="'batter' or 'pitcher'"),
+    limit:       int = Query(25, ge=1, le=100),
+):
+    """Top `limit` players for the given (stat, year). Sort order is
+    automatic — ERA / WHIP ascending (lower is better), everything else
+    descending. Each row carries a full PlayerSearchResult-shaped
+    `player` block so the iOS row can render the same chrome as the
+    search results and navigation can push straight into PlayerProfile."""
+    if player_type not in ("batter", "pitcher"):
+        raise HTTPException(
+            status_code=400,
+            detail="player_type must be 'batter' or 'pitcher'",
+        )
+    valid_stats = (
+        _LEADERBOARD_BATTING_STATS if player_type == "batter"
+        else _LEADERBOARD_PITCHING_STATS
+    )
+    if stat not in valid_stats:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"stat {stat!r} not supported for {player_type!r}. "
+                f"Try one of: {sorted(valid_stats)}"
+            ),
+        )
+
+    response = data_service.get_leaderboard(
+        stat=stat, year=year, player_type=player_type, limit=limit,
+    )
+    if response is None or not response.get("leaders"):
+        raise HTTPException(
+            status_code=404,
+            detail=f"No {stat} leaders found for year {year}",
+        )
+    return response
+
+
+# ---------------------------------------------------------------------------
 # Admin endpoints
 # ---------------------------------------------------------------------------
 

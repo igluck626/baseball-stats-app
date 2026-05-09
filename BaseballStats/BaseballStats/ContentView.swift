@@ -19,6 +19,11 @@ struct ContentView: View {
                 .tabItem {
                     Label("Standings", systemImage: "list.bullet")
                 }
+
+            LeaderboardsView()
+                .tabItem {
+                    Label("Leaders", systemImage: "trophy")
+                }
         }
         .toolbarBackground(.ultraThinMaterial, for: .tabBar)
         .toolbarBackground(.visible, for: .tabBar)

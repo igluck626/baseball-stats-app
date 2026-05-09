@@ -1067,6 +1067,129 @@ def get_team_history(team_id: str) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Leaderboards — top N players for a given (stat, year, player_type)
+# ---------------------------------------------------------------------------
+# Stat → (DB column, sort direction, optional minimum-PA/IP filter).
+# - ERA / WHIP sort ASC because lower is better; everything else DESC.
+# - Rate stats (AVG / OPS / ERA / WHIP) get a loose minimum so a single
+#   pinch-hit AB or a one-inning relief outing doesn't crown the table.
+# - Column names match the SQLAlchemy model exactly. "AVG" is exposed in
+#   the API for readability but maps to the DB's "BA" column.
+_LEADERBOARD_BATTING: dict[str, tuple[str, str, Optional[str]]] = {
+    "HR":  ("HR",  "desc", None),
+    "AVG": ("BA",  "desc", "PA"),
+    "OPS": ("OPS", "desc", "PA"),
+    "RBI": ("RBI", "desc", None),
+    "SB":  ("SB",  "desc", None),
+    "WAR": ("WAR", "desc", None),
+}
+_LEADERBOARD_PITCHING: dict[str, tuple[str, str, Optional[str]]] = {
+    "ERA":  ("ERA",  "asc",  "IP"),
+    "SO":   ("SO",   "desc", None),
+    "W":    ("W",    "desc", None),
+    "WHIP": ("WHIP", "asc",  "IP"),
+    "SV":   ("SV",   "desc", None),
+    "WAR":  ("WAR",  "desc", None),
+}
+
+# Minimum PA / IP a player needs to appear on a rate-stat leaderboard.
+# Loose enough to populate mid-season (no full-PA-per-team-game gating)
+# but strict enough to filter out cup-of-coffee callups.
+_LEADERBOARD_MIN_PA = 200
+_LEADERBOARD_MIN_IP = 50.0
+
+
+def get_leaderboard(
+    stat: str,
+    year: int,
+    player_type: str,
+    limit: int = 25,
+) -> Optional[dict]:
+    """Top `limit` players for a given (stat, year) on either batting or
+    pitching seasons.
+
+    Returns a response dict shaped like:
+      {
+        "stat": "HR", "year": 2026, "player_type": "batter",
+        "leaders": [
+          {"rank": 1, "value": 54.0, "player": { ...PlayerSearchResult... }},
+          ...
+        ]
+      }
+
+    Returns None if the database is unreachable or the stat is unknown.
+    """
+    if not connection.db_available():
+        return None
+
+    is_batter = player_type == "batter"
+    table = _PlayerSeason if is_batter else _PitcherSeason
+    catalog = _LEADERBOARD_BATTING if is_batter else _LEADERBOARD_PITCHING
+    if stat not in catalog:
+        return None
+    column_name, direction, eligibility = catalog[stat]
+
+    column = getattr(table, column_name)
+    order_by = column.asc() if direction == "asc" else column.desc()
+
+    with connection.get_session() as db:
+        q = (
+            db.query(table)
+            .filter(table.year == year)
+            .filter(column.isnot(None))
+        )
+        # Eligibility filter for rate stats — needs enough volume to be
+        # meaningful. PA / IP columns exist on both season tables.
+        if eligibility == "PA":
+            q = q.filter(table.PA.isnot(None), table.PA >= _LEADERBOARD_MIN_PA)
+        elif eligibility == "IP":
+            q = q.filter(table.IP.isnot(None), table.IP >= _LEADERBOARD_MIN_IP)
+        rows = q.order_by(order_by).limit(limit).all()
+
+        leaders = []
+        for rank, season_row in enumerate(rows, start=1):
+            player_row = (
+                crud.get_pitcher(db, season_row.player_id)
+                if not is_batter
+                else crud.get_player(db, season_row.player_id)
+            )
+            # Two-way players land in both tables — fall back to the
+            # "other" name table so the row is never anonymous.
+            if player_row is None:
+                player_row = (
+                    crud.get_player(db, season_row.player_id)
+                    if not is_batter
+                    else crud.get_pitcher(db, season_row.player_id)
+                )
+            if player_row is None:
+                continue
+
+            team_code = _resolve_team_code(season_row.team, season_row.league)
+            value = getattr(season_row, column_name)
+            leaders.append({
+                "rank":  rank,
+                "value": value,
+                "player": {
+                    "player_id":       player_row.player_id,
+                    "name":            player_row.name,
+                    "bbref_id":        player_row.bbref_id,
+                    "mlb_debut":       player_row.mlb_debut,
+                    "mlb_last_season": player_row.mlb_last_season,
+                    "current_team":    season_row.team,
+                    "team_code":       team_code,
+                    **_bio_dict(player_row, db),
+                },
+            })
+
+    return {
+        "stat":        stat,
+        "year":        year,
+        "player_type": player_type,
+        "leaders":     leaders,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Pybaseball fetchers — used by nightly_update only (current season ingest).
 # Historical seasons are loaded from Lahman; full-career pybaseball fetches
 # were removed when Lahman became the primary source.
