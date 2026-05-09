@@ -46,6 +46,9 @@ struct LeaderboardsView: View {
         .onChange(of: viewModel.selectedYear) { _, _ in
             Task { await viewModel.load() }
         }
+        .onChange(of: viewModel.selectedLeague) { _, _ in
+            Task { await viewModel.load() }
+        }
     }
 
     // MARK: - Chrome
@@ -75,18 +78,19 @@ struct LeaderboardsView: View {
 
     @ViewBuilder
     private var content: some View {
-        VStack(spacing: 12) {
-            controlsBar
+        VStack(spacing: 10) {
+            kindAndStatBar
+            leaguePicker
             list
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
     }
 
-    /// Two pickers stacked horizontally — kind (segmented) on the left,
-    /// stat (menu) on the right. Kind is fixed-width so toggling Batting/
-    /// Pitching doesn't reflow the stat menu.
-    private var controlsBar: some View {
+    /// Top control row — kind (segmented) on the left, stat (menu) pill
+    /// on the right. Kind is allowed to flex so the stat menu stays at
+    /// its intrinsic width on the right edge.
+    private var kindAndStatBar: some View {
         HStack(spacing: 12) {
             Picker("Kind", selection: $viewModel.playerKind) {
                 ForEach(LeaderboardsViewModel.PlayerKind.allCases) { kind in
@@ -98,6 +102,18 @@ struct LeaderboardsView: View {
 
             statMenu
         }
+    }
+
+    /// All / AL / NL segmented filter sitting under the kind toggle.
+    /// Maps to the backend's optional `league` query param via
+    /// `LeagueFilter.apiValue`.
+    private var leaguePicker: some View {
+        Picker("League", selection: $viewModel.selectedLeague) {
+            ForEach(LeaderboardsViewModel.LeagueFilter.allCases) { league in
+                Text(league.label).tag(league)
+            }
+        }
+        .pickerStyle(.segmented)
     }
 
     private var statMenu: some View {

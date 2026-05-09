@@ -774,16 +774,30 @@ def leaderboards(
     year:        int = Query(..., description="Season year"),
     player_type: str = Query("batter", description="'batter' or 'pitcher'"),
     limit:       int = Query(25, ge=1, le=100),
+    league:      str | None = Query(
+        None,
+        description="Optional league filter — 'AL' or 'NL'. Omit for both leagues.",
+    ),
 ):
     """Top `limit` players for the given (stat, year). Sort order is
     automatic — ERA / WHIP ascending (lower is better), everything else
     descending. Each row carries a full PlayerSearchResult-shaped
     `player` block so the iOS row can render the same chrome as the
-    search results and navigation can push straight into PlayerProfile."""
+    search results and navigation can push straight into PlayerProfile.
+
+    Rate-stat eligibility (AVG/OPS/ERA/WHIP) scales with games played:
+    standard 502 PA / 162 IP for completed seasons, pro-rated for
+    in-progress seasons (3.1 PA × max team games / 1.0 IP × max team
+    games)."""
     if player_type not in ("batter", "pitcher"):
         raise HTTPException(
             status_code=400,
             detail="player_type must be 'batter' or 'pitcher'",
+        )
+    if league is not None and league not in ("AL", "NL"):
+        raise HTTPException(
+            status_code=400,
+            detail="league must be 'AL' or 'NL' if provided",
         )
     valid_stats = (
         _LEADERBOARD_BATTING_STATS if player_type == "batter"
@@ -799,12 +813,14 @@ def leaderboards(
         )
 
     response = data_service.get_leaderboard(
-        stat=stat, year=year, player_type=player_type, limit=limit,
+        stat=stat, year=year, player_type=player_type,
+        limit=limit, league=league,
     )
     if response is None or not response.get("leaders"):
+        league_clause = f", {league}" if league else ""
         raise HTTPException(
             status_code=404,
-            detail=f"No {stat} leaders found for year {year}",
+            detail=f"No {stat} leaders found for year {year}{league_clause}",
         )
     return response
 

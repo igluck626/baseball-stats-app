@@ -26,6 +26,26 @@ final class LeaderboardsViewModel: ObservableObject {
         }
     }
 
+    /// League filter — "All" combines both leagues; AL/NL pass through to
+    /// the backend's `league` query param. Standalone enum so the view's
+    /// segmented control can iterate it directly.
+    enum LeagueFilter: String, CaseIterable, Identifiable {
+        case all = "All"
+        case al  = "AL"
+        case nl  = "NL"
+        var id: String { rawValue }
+        var label: String { rawValue }
+        /// API param value — nil for "All", which the backend treats as
+        /// "no filter".
+        var apiValue: String? {
+            switch self {
+            case .all: return nil
+            case .al:  return "AL"
+            case .nl:  return "NL"
+            }
+        }
+    }
+
     /// Stat keys are the user-facing labels and the API query values both —
     /// the backend's leaderboard catalog uses these exact strings.
     static let battingStats:  [String] = ["WAR", "HR", "AVG", "OPS", "RBI", "SB"]
@@ -40,9 +60,10 @@ final class LeaderboardsViewModel: ObservableObject {
 
     // MARK: - Selection
 
-    @Published var playerKind: PlayerKind = .batter
-    @Published var selectedStat: String   = LeaderboardsViewModel.defaultBattingStat
-    @Published var selectedYear: Int      = LeaderboardsViewModel.currentYear
+    @Published var playerKind: PlayerKind     = .batter
+    @Published var selectedStat: String       = LeaderboardsViewModel.defaultBattingStat
+    @Published var selectedYear: Int          = LeaderboardsViewModel.currentYear
+    @Published var selectedLeague: LeagueFilter = .all
 
     // MARK: - State
 
@@ -85,7 +106,8 @@ final class LeaderboardsViewModel: ObservableObject {
             let response = try await api.getLeaderboard(
                 stat:       selectedStat,
                 year:       selectedYear,
-                playerType: playerKind.rawValue
+                playerType: playerKind.rawValue,
+                league:     selectedLeague.apiValue
             )
             entries = response?.leaders ?? []
         } catch {

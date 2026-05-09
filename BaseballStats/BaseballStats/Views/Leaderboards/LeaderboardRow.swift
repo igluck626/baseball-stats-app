@@ -25,35 +25,39 @@ struct LeaderboardRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             rankCell
             headshot
 
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(entry.player.name)
-                        .font(.title3.weight(.semibold))
-                        .lineLimit(1)
+            // Name + team/HOF stack flexes to fill the leftover row
+            // width — the previous Spacer between this stack and the
+            // trailing value cell was eating the slack and forcing the
+            // name + team to truncate.
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entry.player.name)
+                    .font(.title3.weight(.semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.9)
 
+                HStack(spacing: 6) {
+                    if let teamLine {
+                        Text(teamLine)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
                     if entry.player.is_hof == true {
                         hofBadge
                     }
                 }
-
-                if let teamLine {
-                    Text(teamLine)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
             }
-
-            Spacer(minLength: 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             Text(formattedValue)
                 .font(.title3.weight(.semibold))
                 .monospacedDigit()
                 .foregroundStyle(.primary)
+                .lineLimit(1)
 
             Image(systemName: "chevron.right")
                 .font(.footnote.weight(.semibold))
@@ -78,14 +82,19 @@ struct LeaderboardRow: View {
         AsyncImage(url: entry.player.largeHeadshotURL) { phase in
             switch phase {
             case .success(let image):
-                image.resizable().scaledToFill()
+                // scaledToFit on a circle clip preserves the full
+                // headshot — MLB's source image is already a portrait
+                // crop with breathing room, so .fill was over-cropping
+                // the head/shoulders. .fit keeps the silhouette intact
+                // even at the bumped size.
+                image.resizable().scaledToFit()
             case .empty, .failure:
                 placeholderSilhouette
             @unknown default:
                 placeholderSilhouette
             }
         }
-        .frame(width: 60, height: 60)
+        .frame(width: 68, height: 68)
         .background(Circle().fill(.ultraThinMaterial))
         .clipShape(Circle())
         .overlay(Circle().strokeBorder(.quaternary, lineWidth: 0.5))

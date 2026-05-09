@@ -11,6 +11,7 @@ They are used by bulk_load.py and nightly_update.py only.
 import datetime
 import json
 import logging
+import math
 import os
 import sys
 import time
@@ -1092,11 +1093,41 @@ _LEADERBOARD_PITCHING: dict[str, tuple[str, str, Optional[str]]] = {
     "WAR":  ("WAR",  "desc", None),
 }
 
-# Minimum PA / IP a player needs to appear on a rate-stat leaderboard.
-# Loose enough to populate mid-season (no full-PA-per-team-game gating)
-# but strict enough to filter out cup-of-coffee callups.
-_LEADERBOARD_MIN_PA = 200
-_LEADERBOARD_MIN_IP = 50.0
+# MLB's standard rate-stat qualifiers, applied to completed seasons
+# (3.1 PA per team game and 1.0 IP per team game over a 162-game schedule).
+_QUALIFIER_PA_PER_GAME = 3.1
+_QUALIFIER_IP_PER_GAME = 1.0
+_FULL_SEASON_GAMES     = 162
+
+
+def _qualifier_thresholds(db, year: int) -> tuple[int, float]:
+    """Return (min_PA, min_IP) for rate-stat eligibility in `year`,
+    pro-rated by the most games played by any team that season.
+
+    For completed historical seasons this reproduces the standard 502 PA
+    / 162 IP qualifying lines (give or take the schedule length). For an
+    in-progress season it scales down so mid-season leaderboards aren't
+    empty — at game 25 of 162 a batter needs 78 PA, a pitcher 25 IP.
+
+    Falls back to a full 162-game schedule when team_seasons doesn't
+    have a row for `year` yet (e.g. opening day before standings are
+    saved). The pro-rated math then floors at zero, so an empty year
+    still produces non-negative thresholds.
+    """
+    rows = crud.get_team_standings(db, year)
+    games = []
+    for r in rows:
+        w, l = r.W, r.L
+        if w is not None and l is not None:
+            games.append(w + l)
+    max_games = max(games) if games else _FULL_SEASON_GAMES
+    if max_games <= 0:
+        max_games = _FULL_SEASON_GAMES
+    # math.ceil keeps the threshold strictly above the typical at-bat
+    # so a 200-PA hitter at game 64 (3.1 × 64 = 198.4) still qualifies.
+    min_pa = int(math.ceil(_QUALIFIER_PA_PER_GAME * max_games))
+    min_ip = float(_QUALIFIER_IP_PER_GAME * max_games)
+    return min_pa, min_ip
 
 
 def get_leaderboard(
@@ -1104,13 +1135,25 @@ def get_leaderboard(
     year: int,
     player_type: str,
     limit: int = 25,
+    league: Optional[str] = None,
 ) -> Optional[dict]:
     """Top `limit` players for a given (stat, year) on either batting or
     pitching seasons.
 
+    `league` filters the result to a single league ("AL" / "NL"); omit
+    or pass an empty value to combine both leagues. The `league` column
+    exists on both player_seasons and pitcher_seasons.
+
+    Rate stats (AVG/OPS/ERA/WHIP) require a pro-rated PA/IP minimum
+    based on the season's max games played, so mid-season leaderboards
+    populate while completed-season leaderboards stay at the standard
+    502 PA / 162 IP qualifiers.
+
     Returns a response dict shaped like:
       {
         "stat": "HR", "year": 2026, "player_type": "batter",
+        "league": "AL",
+        "min_pa": 502, "min_ip": 162.0,
         "leaders": [
           {"rank": 1, "value": 54.0, "player": { ...PlayerSearchResult... }},
           ...
@@ -1133,17 +1176,22 @@ def get_leaderboard(
     order_by = column.asc() if direction == "asc" else column.desc()
 
     with connection.get_session() as db:
+        min_pa, min_ip = _qualifier_thresholds(db, year)
+
         q = (
             db.query(table)
             .filter(table.year == year)
             .filter(column.isnot(None))
         )
-        # Eligibility filter for rate stats — needs enough volume to be
-        # meaningful. PA / IP columns exist on both season tables.
+        if league:
+            q = q.filter(table.league == league)
+        # Rate-stat eligibility — needs enough volume to be meaningful.
+        # PA lives on player_seasons only; IP on both. The catalog only
+        # uses "PA" for batter rate stats, so the column lookup is safe.
         if eligibility == "PA":
-            q = q.filter(table.PA.isnot(None), table.PA >= _LEADERBOARD_MIN_PA)
+            q = q.filter(table.PA.isnot(None), table.PA >= min_pa)
         elif eligibility == "IP":
-            q = q.filter(table.IP.isnot(None), table.IP >= _LEADERBOARD_MIN_IP)
+            q = q.filter(table.IP.isnot(None), table.IP >= min_ip)
         rows = q.order_by(order_by).limit(limit).all()
 
         leaders = []
@@ -1185,6 +1233,9 @@ def get_leaderboard(
         "stat":        stat,
         "year":        year,
         "player_type": player_type,
+        "league":      league,
+        "min_pa":      min_pa,
+        "min_ip":      min_ip,
         "leaders":     leaders,
     }
 
