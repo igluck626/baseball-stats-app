@@ -23,6 +23,23 @@ struct PlayerProfileView: View {
     /// (two-way → batting; pitcher with batting history → pitching).
     @State private var selectedRole: Role?
 
+    // Career-table column visibility. Sets contain the keys for every
+    // optional column the user wants to show; core columns (WAR/G/PA/AB
+    // for batting, WAR/G for pitching) are always rendered regardless.
+    @State private var showingColumnFilter = false
+    @State private var visibleBattingColumns: Set<String> = Self.defaultBattingColumns
+    @State private var visiblePitchingColumns: Set<String> = Self.defaultPitchingColumns
+
+    static let defaultBattingColumns: Set<String> = [
+        "AVG", "OBP", "SLG", "OPS",
+        "R", "H", "2B", "3B", "HR", "RBI", "SB", "BB", "SO",
+    ]
+
+    static let defaultPitchingColumns: Set<String> = [
+        "ERA", "WHIP", "FIP",
+        "W", "L", "W-L%", "GS", "IP", "SO", "BB", "HR",
+    ]
+
     enum Tab: String, CaseIterable, Identifiable {
         case overview  = "Overview"
         case career    = "Career"
@@ -149,7 +166,7 @@ struct PlayerProfileView: View {
                 Divider().padding(.vertical, 4)
 
                 if let dob = formatLongDate(player.birthdate) {
-                    HeaderBioRow(label: "Date of Birth", value: dob)
+                    HeaderBioRow(label: "Date of Birth", value: dobWithAge(dob))
                 }
                 if let place = placeOfBirth {
                     HeaderBioRow(label: "Place of Birth", value: place)
@@ -509,6 +526,27 @@ struct PlayerProfileView: View {
         }
     }
 
+    /// Append "(Age N)" to a formatted DOB string. Calculates age from
+    /// player.birth_year/month/day against today's date — adjusts down
+    /// by one if the player's birthday hasn't occurred yet this year.
+    /// Returns the DOB unchanged if birth_year is missing.
+    private func dobWithAge(_ formattedDOB: String) -> String {
+        guard let by = player.birth_year else { return formattedDOB }
+        let cal = Calendar.current
+        let today = Date()
+        let currentYear  = cal.component(.year,  from: today)
+        let currentMonth = cal.component(.month, from: today)
+        let currentDay   = cal.component(.day,   from: today)
+        var age = currentYear - by
+        if let bm = player.birth_month, let bd = player.birth_day {
+            if currentMonth < bm || (currentMonth == bm && currentDay < bd) {
+                age -= 1
+            }
+        }
+        guard age >= 0 else { return formattedDOB }
+        return "\(formattedDOB) (Age \(age))"
+    }
+
     /// "Linden, NJ" for US-born, "Oshu, Japan" for international (state
     /// is skipped per spec when birth_country isn't USA).
     private var placeOfBirth: String? {
@@ -667,7 +705,18 @@ struct PlayerProfileView: View {
             loadingCard
         } else if let career = viewModel.careerBatting,
                   let seasons = career.seasons, !seasons.isEmpty {
-            battingCareerTable(seasons: seasons)
+            VStack(alignment: .leading, spacing: 10) {
+                careerToolbar
+                battingCareerTable(seasons: seasons)
+            }
+            .sheet(isPresented: $showingColumnFilter) {
+                ColumnFilterSheet(
+                    title: "Batting Columns",
+                    groups: battingFilterGroups,
+                    visible: $visibleBattingColumns,
+                    defaults: Self.defaultBattingColumns
+                )
+            }
         } else {
             noStatsCard("No batting career stats")
         }
@@ -679,10 +728,42 @@ struct PlayerProfileView: View {
             loadingCard
         } else if let career = viewModel.careerPitching,
                   let seasons = career.seasons, !seasons.isEmpty {
-            pitchingCareerTable(seasons: seasons)
+            VStack(alignment: .leading, spacing: 10) {
+                careerToolbar
+                pitchingCareerTable(seasons: seasons)
+            }
+            .sheet(isPresented: $showingColumnFilter) {
+                ColumnFilterSheet(
+                    title: "Pitching Columns",
+                    groups: pitchingFilterGroups,
+                    visible: $visiblePitchingColumns,
+                    defaults: Self.defaultPitchingColumns
+                )
+            }
         } else {
             noStatsCard("No pitching career stats")
         }
+    }
+
+    /// "Standard" preset label + filter button row above each career
+    /// table. Tapping the slider button opens the column-filter sheet
+    /// scoped to whichever role's table is showing.
+    private var careerToolbar: some View {
+        HStack(spacing: 8) {
+            Text("Standard")
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.secondary)
+            Spacer()
+            Button {
+                showingColumnFilter = true
+            } label: {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+            }
+            .accessibilityLabel("Choose columns")
+        }
+        .padding(.horizontal, 4)
     }
 
     private func battingCareerTable(seasons: [CareerSeason]) -> some View {
@@ -714,22 +795,26 @@ struct PlayerProfileView: View {
             .shadow(color: .black.opacity(0.08), radius: 4, x: 2, y: 0)
             .zIndex(1)
 
-            // Scrollable section — WAR through IBB (25 columns).
+            // Scrollable section — WAR + filtered optional columns.
             ScrollView(.horizontal, showsIndicators: false) {
                 VStack(spacing: 0) {
-                    BattingCareerScrollableHeader()
+                    BattingCareerScrollableHeader(visible: visibleBattingColumns)
                     Divider()
                     ForEach(Array(sorted.enumerated()), id: \.offset) { index, season in
                         BattingCareerScrollableSeasonRow(
                             season: season,
-                            alternate: !index.isMultiple(of: 2)
+                            alternate: !index.isMultiple(of: 2),
+                            visible: visibleBattingColumns
                         )
                         if index != sorted.indices.last {
                             Divider().opacity(0.4)
                         }
                     }
                     Divider()
-                    BattingCareerScrollableTotalsRow(agg: agg)
+                    BattingCareerScrollableTotalsRow(
+                        agg: agg,
+                        visible: visibleBattingColumns
+                    )
                 }
             }
         }
@@ -767,22 +852,26 @@ struct PlayerProfileView: View {
             .shadow(color: .black.opacity(0.08), radius: 4, x: 2, y: 0)
             .zIndex(1)
 
-            // Scrollable section — WAR through SO/BB (31 columns).
+            // Scrollable section — WAR + filtered optional columns.
             ScrollView(.horizontal, showsIndicators: false) {
                 VStack(spacing: 0) {
-                    PitchingCareerScrollableHeader()
+                    PitchingCareerScrollableHeader(visible: visiblePitchingColumns)
                     Divider()
                     ForEach(Array(sorted.enumerated()), id: \.offset) { index, season in
                         PitchingCareerScrollableSeasonRow(
                             season: season,
-                            alternate: !index.isMultiple(of: 2)
+                            alternate: !index.isMultiple(of: 2),
+                            visible: visiblePitchingColumns
                         )
                         if index != sorted.indices.last {
                             Divider().opacity(0.4)
                         }
                     }
                     Divider()
-                    PitchingCareerScrollableTotalsRow(agg: agg)
+                    PitchingCareerScrollableTotalsRow(
+                        agg: agg,
+                        visible: visiblePitchingColumns
+                    )
                 }
             }
         }
@@ -1077,33 +1166,36 @@ private struct BattingCareerFrozenTotalsRow: View {
 // MARK: - Scrollable section (WAR through IBB)
 
 private struct BattingCareerScrollableHeader: View {
+    let visible: Set<String>
     var body: some View {
         HStack(spacing: 0) {
-            Text("WAR") .frame(width: BattingCareerColumn.war,     alignment: .trailing).padding(.horizontal, 2)
-            Text("G")   .frame(width: BattingCareerColumn.g,       alignment: .trailing).padding(.horizontal, 2)
-            Text("PA")  .frame(width: BattingCareerColumn.pa,      alignment: .trailing).padding(.horizontal, 2)
-            Text("AB")  .frame(width: BattingCareerColumn.ab,      alignment: .trailing).padding(.horizontal, 2)
-            Text("R")   .frame(width: BattingCareerColumn.r,       alignment: .trailing).padding(.horizontal, 2)
-            Text("H")   .frame(width: BattingCareerColumn.h,       alignment: .trailing).padding(.horizontal, 2)
-            Text("2B")  .frame(width: BattingCareerColumn.doubles, alignment: .trailing).padding(.horizontal, 2)
-            Text("3B")  .frame(width: BattingCareerColumn.triples, alignment: .trailing).padding(.horizontal, 2)
-            Text("HR")  .frame(width: BattingCareerColumn.hr,      alignment: .trailing).padding(.horizontal, 2)
-            Text("RBI") .frame(width: BattingCareerColumn.rbi,     alignment: .trailing).padding(.horizontal, 2)
-            Text("SB")  .frame(width: BattingCareerColumn.sb,      alignment: .trailing).padding(.horizontal, 2)
-            Text("CS")  .frame(width: BattingCareerColumn.cs,      alignment: .trailing).padding(.horizontal, 2)
-            Text("BB")  .frame(width: BattingCareerColumn.bb,      alignment: .trailing).padding(.horizontal, 2)
-            Text("SO")  .frame(width: BattingCareerColumn.so,      alignment: .trailing).padding(.horizontal, 2)
-            Text("BA")  .frame(width: BattingCareerColumn.ba,      alignment: .trailing).padding(.horizontal, 2)
-            Text("OBP") .frame(width: BattingCareerColumn.obp,     alignment: .trailing).padding(.horizontal, 2)
-            Text("SLG") .frame(width: BattingCareerColumn.slg,     alignment: .trailing).padding(.horizontal, 2)
-            Text("OPS") .frame(width: BattingCareerColumn.ops,     alignment: .trailing).padding(.horizontal, 2)
-            Text("OPS+").frame(width: BattingCareerColumn.opsPlus, alignment: .trailing).padding(.horizontal, 2)
-            Text("TB")  .frame(width: BattingCareerColumn.tb,      alignment: .trailing).padding(.horizontal, 2)
-            Text("GIDP").frame(width: BattingCareerColumn.gidp,    alignment: .trailing).padding(.horizontal, 2)
-            Text("HBP") .frame(width: BattingCareerColumn.hbp,     alignment: .trailing).padding(.horizontal, 2)
-            Text("SH")  .frame(width: BattingCareerColumn.sh,      alignment: .trailing).padding(.horizontal, 2)
-            Text("SF")  .frame(width: BattingCareerColumn.sf,      alignment: .trailing).padding(.horizontal, 2)
-            Text("IBB") .frame(width: BattingCareerColumn.ibb,     alignment: .trailing).padding(.horizontal, 2)
+            // Core — always shown.
+            Text("WAR").frame(width: BattingCareerColumn.war, alignment: .trailing).padding(.horizontal, 2)
+            Text("G")  .frame(width: BattingCareerColumn.g,   alignment: .trailing).padding(.horizontal, 2)
+            Text("PA") .frame(width: BattingCareerColumn.pa,  alignment: .trailing).padding(.horizontal, 2)
+            Text("AB") .frame(width: BattingCareerColumn.ab,  alignment: .trailing).padding(.horizontal, 2)
+            // Optional — render only when visible.
+            if visible.contains("R")    { Text("R")   .frame(width: BattingCareerColumn.r,       alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("H")    { Text("H")   .frame(width: BattingCareerColumn.h,       alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("2B")   { Text("2B")  .frame(width: BattingCareerColumn.doubles, alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("3B")   { Text("3B")  .frame(width: BattingCareerColumn.triples, alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("HR")   { Text("HR")  .frame(width: BattingCareerColumn.hr,      alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("RBI")  { Text("RBI") .frame(width: BattingCareerColumn.rbi,     alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("SB")   { Text("SB")  .frame(width: BattingCareerColumn.sb,      alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("CS")   { Text("CS")  .frame(width: BattingCareerColumn.cs,      alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("BB")   { Text("BB")  .frame(width: BattingCareerColumn.bb,      alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("SO")   { Text("SO")  .frame(width: BattingCareerColumn.so,      alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("AVG")  { Text("BA")  .frame(width: BattingCareerColumn.ba,      alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("OBP")  { Text("OBP") .frame(width: BattingCareerColumn.obp,     alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("SLG")  { Text("SLG") .frame(width: BattingCareerColumn.slg,     alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("OPS")  { Text("OPS") .frame(width: BattingCareerColumn.ops,     alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("OPS+") { Text("OPS+").frame(width: BattingCareerColumn.opsPlus, alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("TB")   { Text("TB")  .frame(width: BattingCareerColumn.tb,      alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("GIDP") { Text("GIDP").frame(width: BattingCareerColumn.gidp,    alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("HBP")  { Text("HBP") .frame(width: BattingCareerColumn.hbp,     alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("SH")   { Text("SH")  .frame(width: BattingCareerColumn.sh,      alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("SF")   { Text("SF")  .frame(width: BattingCareerColumn.sf,      alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("IBB")  { Text("IBB") .frame(width: BattingCareerColumn.ibb,     alignment: .trailing).padding(.horizontal, 2) }
         }
         .font(.system(size: 11, weight: .semibold))
         .foregroundStyle(.secondary)
@@ -1115,38 +1207,43 @@ private struct BattingCareerScrollableHeader: View {
 private struct BattingCareerScrollableSeasonRow: View {
     let season: CareerSeason
     let alternate: Bool
+    let visible: Set<String>
 
     var body: some View {
         HStack(spacing: 0) {
+            // Core
             Text(formatWAR(season.WAR))
                 .frame(width: BattingCareerColumn.war, alignment: .trailing)
                 .monospacedDigit()
                 .padding(.horizontal, 2)
-            Text(formatCount(season.G))      .frame(width: BattingCareerColumn.g,       alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.PA))     .frame(width: BattingCareerColumn.pa,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.AB))     .frame(width: BattingCareerColumn.ab,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.R))      .frame(width: BattingCareerColumn.r,       alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.H))      .frame(width: BattingCareerColumn.h,       alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.doubles)).frame(width: BattingCareerColumn.doubles, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.triples)).frame(width: BattingCareerColumn.triples, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.HR))     .frame(width: BattingCareerColumn.hr,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.RBI))    .frame(width: BattingCareerColumn.rbi,     alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.SB))     .frame(width: BattingCareerColumn.sb,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.CS))     .frame(width: BattingCareerColumn.cs,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.BB))     .frame(width: BattingCareerColumn.bb,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.SO))     .frame(width: BattingCareerColumn.so,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(format3(season.BA))         .frame(width: BattingCareerColumn.ba,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(format3(season.OBP))        .frame(width: BattingCareerColumn.obp,     alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(format3(season.SLG))        .frame(width: BattingCareerColumn.slg,     alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(format3(season.OPS))        .frame(width: BattingCareerColumn.ops,     alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatRoundedInt(season.OPS_plus))
-                .frame(width: BattingCareerColumn.opsPlus, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(seasonTB(season))).frame(width: BattingCareerColumn.tb,    alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.GIDP))   .frame(width: BattingCareerColumn.gidp,    alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.HBP))    .frame(width: BattingCareerColumn.hbp,     alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.SH))     .frame(width: BattingCareerColumn.sh,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.SF))     .frame(width: BattingCareerColumn.sf,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.IBB))    .frame(width: BattingCareerColumn.ibb,     alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(season.G)) .frame(width: BattingCareerColumn.g,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(season.PA)).frame(width: BattingCareerColumn.pa, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(season.AB)).frame(width: BattingCareerColumn.ab, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            // Optional
+            if visible.contains("R")    { Text(formatCount(season.R))      .frame(width: BattingCareerColumn.r,       alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("H")    { Text(formatCount(season.H))      .frame(width: BattingCareerColumn.h,       alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("2B")   { Text(formatCount(season.doubles)).frame(width: BattingCareerColumn.doubles, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("3B")   { Text(formatCount(season.triples)).frame(width: BattingCareerColumn.triples, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("HR")   { Text(formatCount(season.HR))     .frame(width: BattingCareerColumn.hr,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("RBI")  { Text(formatCount(season.RBI))    .frame(width: BattingCareerColumn.rbi,     alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("SB")   { Text(formatCount(season.SB))     .frame(width: BattingCareerColumn.sb,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("CS")   { Text(formatCount(season.CS))     .frame(width: BattingCareerColumn.cs,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("BB")   { Text(formatCount(season.BB))     .frame(width: BattingCareerColumn.bb,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("SO")   { Text(formatCount(season.SO))     .frame(width: BattingCareerColumn.so,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("AVG")  { Text(format3(season.BA))         .frame(width: BattingCareerColumn.ba,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("OBP")  { Text(format3(season.OBP))        .frame(width: BattingCareerColumn.obp,     alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("SLG")  { Text(format3(season.SLG))        .frame(width: BattingCareerColumn.slg,     alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("OPS")  { Text(format3(season.OPS))        .frame(width: BattingCareerColumn.ops,     alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("OPS+") {
+                Text(formatRoundedInt(season.OPS_plus))
+                    .frame(width: BattingCareerColumn.opsPlus, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            }
+            if visible.contains("TB")   { Text(formatCount(seasonTB(season))).frame(width: BattingCareerColumn.tb,    alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("GIDP") { Text(formatCount(season.GIDP))   .frame(width: BattingCareerColumn.gidp,    alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("HBP")  { Text(formatCount(season.HBP))    .frame(width: BattingCareerColumn.hbp,     alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("SH")   { Text(formatCount(season.SH))     .frame(width: BattingCareerColumn.sh,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("SF")   { Text(formatCount(season.SF))     .frame(width: BattingCareerColumn.sf,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("IBB")  { Text(formatCount(season.IBB))    .frame(width: BattingCareerColumn.ibb,     alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
         }
         .font(.system(size: 11))
         .padding(.trailing, 12)
@@ -1157,39 +1254,44 @@ private struct BattingCareerScrollableSeasonRow: View {
 
 private struct BattingCareerScrollableTotalsRow: View {
     let agg: BattingCareerAgg
+    let visible: Set<String>
 
     var body: some View {
         HStack(spacing: 0) {
+            // Core
             Text(formatWAR(agg.war))
                 .frame(width: BattingCareerColumn.war, alignment: .trailing)
                 .monospacedDigit()
                 .padding(.horizontal, 2)
-            Text(formatCount(agg.g))   .frame(width: BattingCareerColumn.g,       alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(agg.pa))  .frame(width: BattingCareerColumn.pa,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(agg.ab))  .frame(width: BattingCareerColumn.ab,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(agg.r))   .frame(width: BattingCareerColumn.r,       alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(agg.h))   .frame(width: BattingCareerColumn.h,       alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(agg.dbl)) .frame(width: BattingCareerColumn.doubles, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(agg.trp)) .frame(width: BattingCareerColumn.triples, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(agg.hr))  .frame(width: BattingCareerColumn.hr,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(agg.rbi)) .frame(width: BattingCareerColumn.rbi,     alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(agg.sb))  .frame(width: BattingCareerColumn.sb,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(agg.cs))  .frame(width: BattingCareerColumn.cs,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(agg.bb))  .frame(width: BattingCareerColumn.bb,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(agg.so))  .frame(width: BattingCareerColumn.so,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(format3(agg.avg))     .frame(width: BattingCareerColumn.ba,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(format3(agg.obp))     .frame(width: BattingCareerColumn.obp,     alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(format3(agg.slg))     .frame(width: BattingCareerColumn.slg,     alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(format3(agg.ops))     .frame(width: BattingCareerColumn.ops,     alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text("—").frame(width: BattingCareerColumn.opsPlus, alignment: .trailing)
-                .foregroundStyle(.tertiary)
-                .padding(.horizontal, 2)
-            Text(formatCount(agg.tb))  .frame(width: BattingCareerColumn.tb,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(agg.gidp)).frame(width: BattingCareerColumn.gidp,    alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(agg.hbp)) .frame(width: BattingCareerColumn.hbp,     alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(agg.sh))  .frame(width: BattingCareerColumn.sh,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(agg.sf))  .frame(width: BattingCareerColumn.sf,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(agg.ibb)) .frame(width: BattingCareerColumn.ibb,     alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(agg.g)) .frame(width: BattingCareerColumn.g,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(agg.pa)).frame(width: BattingCareerColumn.pa, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(agg.ab)).frame(width: BattingCareerColumn.ab, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            // Optional
+            if visible.contains("R")    { Text(formatCount(agg.r))   .frame(width: BattingCareerColumn.r,       alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("H")    { Text(formatCount(agg.h))   .frame(width: BattingCareerColumn.h,       alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("2B")   { Text(formatCount(agg.dbl)) .frame(width: BattingCareerColumn.doubles, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("3B")   { Text(formatCount(agg.trp)) .frame(width: BattingCareerColumn.triples, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("HR")   { Text(formatCount(agg.hr))  .frame(width: BattingCareerColumn.hr,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("RBI")  { Text(formatCount(agg.rbi)) .frame(width: BattingCareerColumn.rbi,     alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("SB")   { Text(formatCount(agg.sb))  .frame(width: BattingCareerColumn.sb,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("CS")   { Text(formatCount(agg.cs))  .frame(width: BattingCareerColumn.cs,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("BB")   { Text(formatCount(agg.bb))  .frame(width: BattingCareerColumn.bb,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("SO")   { Text(formatCount(agg.so))  .frame(width: BattingCareerColumn.so,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("AVG")  { Text(format3(agg.avg))     .frame(width: BattingCareerColumn.ba,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("OBP")  { Text(format3(agg.obp))     .frame(width: BattingCareerColumn.obp,     alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("SLG")  { Text(format3(agg.slg))     .frame(width: BattingCareerColumn.slg,     alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("OPS")  { Text(format3(agg.ops))     .frame(width: BattingCareerColumn.ops,     alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("OPS+") {
+                Text("—").frame(width: BattingCareerColumn.opsPlus, alignment: .trailing)
+                    .foregroundStyle(.tertiary)
+                    .padding(.horizontal, 2)
+            }
+            if visible.contains("TB")   { Text(formatCount(agg.tb))  .frame(width: BattingCareerColumn.tb,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("GIDP") { Text(formatCount(agg.gidp)).frame(width: BattingCareerColumn.gidp,    alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("HBP")  { Text(formatCount(agg.hbp)) .frame(width: BattingCareerColumn.hbp,     alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("SH")   { Text(formatCount(agg.sh))  .frame(width: BattingCareerColumn.sh,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("SF")   { Text(formatCount(agg.sf))  .frame(width: BattingCareerColumn.sf,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("IBB")  { Text(formatCount(agg.ibb)) .frame(width: BattingCareerColumn.ibb,     alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
         }
         .font(.system(size: 9.5, weight: .semibold))
         .lineLimit(1)
@@ -1322,39 +1424,44 @@ private struct PitchingCareerFrozenTotalsRow: View {
 // MARK: - Scrollable section (WAR through SO/BB)
 
 private struct PitchingCareerScrollableHeader: View {
+    let visible: Set<String>
     var body: some View {
         HStack(spacing: 0) {
-            Text("WAR")   .frame(width: PitchingCareerColumn.war,     alignment: .trailing).padding(.horizontal, 2)
-            Text("W")     .frame(width: PitchingCareerColumn.w,       alignment: .trailing).padding(.horizontal, 2)
-            Text("L")     .frame(width: PitchingCareerColumn.l,       alignment: .trailing).padding(.horizontal, 2)
-            Text("W-L%")  .frame(width: PitchingCareerColumn.wlPct,   alignment: .trailing).padding(.horizontal, 2)
-            Text("ERA")   .frame(width: PitchingCareerColumn.era,     alignment: .trailing).padding(.horizontal, 2)
-            Text("G")     .frame(width: PitchingCareerColumn.g,       alignment: .trailing).padding(.horizontal, 2)
-            Text("GS")    .frame(width: PitchingCareerColumn.gs,      alignment: .trailing).padding(.horizontal, 2)
-            Text("GF")    .frame(width: PitchingCareerColumn.gf,      alignment: .trailing).padding(.horizontal, 2)
-            Text("CG")    .frame(width: PitchingCareerColumn.cg,      alignment: .trailing).padding(.horizontal, 2)
-            Text("SHO")   .frame(width: PitchingCareerColumn.sho,     alignment: .trailing).padding(.horizontal, 2)
-            Text("SV")    .frame(width: PitchingCareerColumn.sv,      alignment: .trailing).padding(.horizontal, 2)
-            Text("IP")    .frame(width: PitchingCareerColumn.ip,      alignment: .trailing).padding(.horizontal, 2)
-            Text("H")     .frame(width: PitchingCareerColumn.h,       alignment: .trailing).padding(.horizontal, 2)
-            Text("R")     .frame(width: PitchingCareerColumn.r,       alignment: .trailing).padding(.horizontal, 2)
-            Text("ER")    .frame(width: PitchingCareerColumn.er,      alignment: .trailing).padding(.horizontal, 2)
-            Text("HR")    .frame(width: PitchingCareerColumn.hr,      alignment: .trailing).padding(.horizontal, 2)
-            Text("BB")    .frame(width: PitchingCareerColumn.bb,      alignment: .trailing).padding(.horizontal, 2)
-            Text("IBB")   .frame(width: PitchingCareerColumn.ibb,     alignment: .trailing).padding(.horizontal, 2)
-            Text("SO")    .frame(width: PitchingCareerColumn.so,      alignment: .trailing).padding(.horizontal, 2)
-            Text("HBP")   .frame(width: PitchingCareerColumn.hbp,     alignment: .trailing).padding(.horizontal, 2)
-            Text("BK")    .frame(width: PitchingCareerColumn.bk,      alignment: .trailing).padding(.horizontal, 2)
-            Text("WP")    .frame(width: PitchingCareerColumn.wp,      alignment: .trailing).padding(.horizontal, 2)
-            Text("BF")    .frame(width: PitchingCareerColumn.bf,      alignment: .trailing).padding(.horizontal, 2)
-            Text("ERA+")  .frame(width: PitchingCareerColumn.eraPlus, alignment: .trailing).padding(.horizontal, 2)
-            Text("FIP")   .frame(width: PitchingCareerColumn.fip,     alignment: .trailing).padding(.horizontal, 2)
-            Text("WHIP")  .frame(width: PitchingCareerColumn.whip,    alignment: .trailing).padding(.horizontal, 2)
-            Text("H/9")   .frame(width: PitchingCareerColumn.hPer9,   alignment: .trailing).padding(.horizontal, 2)
-            Text("HR/9")  .frame(width: PitchingCareerColumn.hrPer9,  alignment: .trailing).padding(.horizontal, 2)
-            Text("BB/9")  .frame(width: PitchingCareerColumn.bbPer9,  alignment: .trailing).padding(.horizontal, 2)
-            Text("SO/9")  .frame(width: PitchingCareerColumn.soPer9,  alignment: .trailing).padding(.horizontal, 2)
-            Text("SO/BB") .frame(width: PitchingCareerColumn.soBB,    alignment: .trailing).padding(.horizontal, 2)
+            // Core
+            Text("WAR").frame(width: PitchingCareerColumn.war, alignment: .trailing).padding(.horizontal, 2)
+            // Optional
+            if visible.contains("W")     { Text("W")     .frame(width: PitchingCareerColumn.w,       alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("L")     { Text("L")     .frame(width: PitchingCareerColumn.l,       alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("W-L%")  { Text("W-L%")  .frame(width: PitchingCareerColumn.wlPct,   alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("ERA")   { Text("ERA")   .frame(width: PitchingCareerColumn.era,     alignment: .trailing).padding(.horizontal, 2) }
+            // Core
+            Text("G").frame(width: PitchingCareerColumn.g, alignment: .trailing).padding(.horizontal, 2)
+            // Optional
+            if visible.contains("GS")    { Text("GS")    .frame(width: PitchingCareerColumn.gs,      alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("GF")    { Text("GF")    .frame(width: PitchingCareerColumn.gf,      alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("CG")    { Text("CG")    .frame(width: PitchingCareerColumn.cg,      alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("SHO")   { Text("SHO")   .frame(width: PitchingCareerColumn.sho,     alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("SV")    { Text("SV")    .frame(width: PitchingCareerColumn.sv,      alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("IP")    { Text("IP")    .frame(width: PitchingCareerColumn.ip,      alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("H")     { Text("H")     .frame(width: PitchingCareerColumn.h,       alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("R")     { Text("R")     .frame(width: PitchingCareerColumn.r,       alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("ER")    { Text("ER")    .frame(width: PitchingCareerColumn.er,      alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("HR")    { Text("HR")    .frame(width: PitchingCareerColumn.hr,      alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("BB")    { Text("BB")    .frame(width: PitchingCareerColumn.bb,      alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("IBB")   { Text("IBB")   .frame(width: PitchingCareerColumn.ibb,     alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("SO")    { Text("SO")    .frame(width: PitchingCareerColumn.so,      alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("HBP")   { Text("HBP")   .frame(width: PitchingCareerColumn.hbp,     alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("BK")    { Text("BK")    .frame(width: PitchingCareerColumn.bk,      alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("WP")    { Text("WP")    .frame(width: PitchingCareerColumn.wp,      alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("BF")    { Text("BF")    .frame(width: PitchingCareerColumn.bf,      alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("ERA+")  { Text("ERA+")  .frame(width: PitchingCareerColumn.eraPlus, alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("FIP")   { Text("FIP")   .frame(width: PitchingCareerColumn.fip,     alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("WHIP")  { Text("WHIP")  .frame(width: PitchingCareerColumn.whip,    alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("H/9")   { Text("H/9")   .frame(width: PitchingCareerColumn.hPer9,   alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("HR/9")  { Text("HR/9")  .frame(width: PitchingCareerColumn.hrPer9,  alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("BB/9")  { Text("BB/9")  .frame(width: PitchingCareerColumn.bbPer9,  alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("SO/9")  { Text("SO/9")  .frame(width: PitchingCareerColumn.soPer9,  alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("SO/BB") { Text("SO/BB") .frame(width: PitchingCareerColumn.soBB,    alignment: .trailing).padding(.horizontal, 2) }
         }
         .font(.system(size: 11, weight: .semibold))
         .foregroundStyle(.secondary)
@@ -1366,51 +1473,64 @@ private struct PitchingCareerScrollableHeader: View {
 private struct PitchingCareerScrollableSeasonRow: View {
     let season: PitcherCareerSeason
     let alternate: Bool
+    let visible: Set<String>
 
     var body: some View {
         HStack(spacing: 0) {
+            // Core
             Text(formatWAR(season.WAR))
                 .frame(width: PitchingCareerColumn.war, alignment: .trailing)
                 .monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.W))   .frame(width: PitchingCareerColumn.w,    alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.L))   .frame(width: PitchingCareerColumn.l,    alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatWinPct(w: season.W, l: season.L))
-                .frame(width: PitchingCareerColumn.wlPct, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(format2(season.ERA))     .frame(width: PitchingCareerColumn.era,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.G))         .frame(width: PitchingCareerColumn.g,    alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.GS))        .frame(width: PitchingCareerColumn.gs,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            // Optional
+            if visible.contains("W")     { Text(formatCount(season.W)).frame(width: PitchingCareerColumn.w, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("L")     { Text(formatCount(season.L)).frame(width: PitchingCareerColumn.l, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("W-L%")  {
+                Text(formatWinPct(w: season.W, l: season.L))
+                    .frame(width: PitchingCareerColumn.wlPct, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            }
+            if visible.contains("ERA")   { Text(format2(season.ERA)).frame(width: PitchingCareerColumn.era, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            // Core
+            Text(formatCount(season.G)).frame(width: PitchingCareerColumn.g, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            // Optional
+            if visible.contains("GS")    { Text(formatCount(season.GS)).frame(width: PitchingCareerColumn.gs, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
             // For modern pitchers GF/CG/SHO/SV are realistically 0 when
             // the field comes back null (nightly fetched a bref row
             // without the column), so show "0" rather than "—".
-            Text(formatCountOrZero(season.GF))  .frame(width: PitchingCareerColumn.gf,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCountOrZero(season.CG))  .frame(width: PitchingCareerColumn.cg,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCountOrZero(season.SHO)) .frame(width: PitchingCareerColumn.sho,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCountOrZero(season.SV))  .frame(width: PitchingCareerColumn.sv,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatIP(season.IP))           .frame(width: PitchingCareerColumn.ip,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.H))         .frame(width: PitchingCareerColumn.h,    alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.R))         .frame(width: PitchingCareerColumn.r,    alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.ER))        .frame(width: PitchingCareerColumn.er,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.HR))        .frame(width: PitchingCareerColumn.hr,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.BB))        .frame(width: PitchingCareerColumn.bb,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.IBB))       .frame(width: PitchingCareerColumn.ibb,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.SO))        .frame(width: PitchingCareerColumn.so,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCountOrZero(season.HBP)) .frame(width: PitchingCareerColumn.hbp,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCountOrZero(season.BK))  .frame(width: PitchingCareerColumn.bk,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCountOrZero(season.WP))  .frame(width: PitchingCareerColumn.wp,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.BFP)) .frame(width: PitchingCareerColumn.bf,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatRoundedInt(season.ERA_plus))
-                .frame(width: PitchingCareerColumn.eraPlus, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(format2(season.FIP))     .frame(width: PitchingCareerColumn.fip,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(format2(season.WHIP))    .frame(width: PitchingCareerColumn.whip, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            if visible.contains("GF")    { Text(formatCountOrZero(season.GF)).frame(width: PitchingCareerColumn.gf,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("CG")    { Text(formatCountOrZero(season.CG)).frame(width: PitchingCareerColumn.cg,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("SHO")   { Text(formatCountOrZero(season.SHO)).frame(width: PitchingCareerColumn.sho, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("SV")    { Text(formatCountOrZero(season.SV)).frame(width: PitchingCareerColumn.sv,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("IP")    { Text(formatIP(season.IP)).frame(width: PitchingCareerColumn.ip, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("H")     { Text(formatCount(season.H)).frame(width: PitchingCareerColumn.h, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("R")     { Text(formatCount(season.R)).frame(width: PitchingCareerColumn.r, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("ER")    { Text(formatCount(season.ER)).frame(width: PitchingCareerColumn.er, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("HR")    { Text(formatCount(season.HR)).frame(width: PitchingCareerColumn.hr, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("BB")    { Text(formatCount(season.BB)).frame(width: PitchingCareerColumn.bb, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("IBB")   { Text(formatCount(season.IBB)).frame(width: PitchingCareerColumn.ibb, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("SO")    { Text(formatCount(season.SO)).frame(width: PitchingCareerColumn.so, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("HBP")   { Text(formatCountOrZero(season.HBP)).frame(width: PitchingCareerColumn.hbp, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("BK")    { Text(formatCountOrZero(season.BK)).frame(width: PitchingCareerColumn.bk, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("WP")    { Text(formatCountOrZero(season.WP)).frame(width: PitchingCareerColumn.wp, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("BF")    { Text(formatCount(season.BFP)).frame(width: PitchingCareerColumn.bf, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("ERA+")  {
+                Text(formatRoundedInt(season.ERA_plus))
+                    .frame(width: PitchingCareerColumn.eraPlus, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            }
+            if visible.contains("FIP")   { Text(format2(season.FIP)).frame(width: PitchingCareerColumn.fip, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("WHIP")  { Text(format2(season.WHIP)).frame(width: PitchingCareerColumn.whip, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
             // H/9 isn't stored — derive on-device. The HR/9, BB/9, SO/9
             // values are stored on the season and used directly.
-            Text(format2(perNine(season.H, ip: season.IP)))
-                .frame(width: PitchingCareerColumn.hPer9,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(format2(season.HR_per9)) .frame(width: PitchingCareerColumn.hrPer9, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(format2(season.BB_per9)) .frame(width: PitchingCareerColumn.bbPer9, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(format2(season.K_per9))  .frame(width: PitchingCareerColumn.soPer9, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(format2(soBBRatio(so: season.SO, bb: season.BB)))
-                .frame(width: PitchingCareerColumn.soBB,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            if visible.contains("H/9")   {
+                Text(format2(perNine(season.H, ip: season.IP)))
+                    .frame(width: PitchingCareerColumn.hPer9, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            }
+            if visible.contains("HR/9")  { Text(format2(season.HR_per9)).frame(width: PitchingCareerColumn.hrPer9, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("BB/9")  { Text(format2(season.BB_per9)).frame(width: PitchingCareerColumn.bbPer9, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("SO/9")  { Text(format2(season.K_per9)).frame(width: PitchingCareerColumn.soPer9, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("SO/BB") {
+                Text(format2(soBBRatio(so: season.SO, bb: season.BB)))
+                    .frame(width: PitchingCareerColumn.soBB, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            }
         }
         .font(.system(size: 11))
         .padding(.trailing, 12)
@@ -1421,45 +1541,56 @@ private struct PitchingCareerScrollableSeasonRow: View {
 
 private struct PitchingCareerScrollableTotalsRow: View {
     let agg: PitchingCareerAgg
+    let visible: Set<String>
     var body: some View {
         HStack(spacing: 0) {
+            // Core
             Text(formatWAR(agg.war))
                 .frame(width: PitchingCareerColumn.war, alignment: .trailing)
                 .monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(agg.w))    .frame(width: PitchingCareerColumn.w,    alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(agg.l))    .frame(width: PitchingCareerColumn.l,    alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatWinPctValue(agg.winPct))
-                .frame(width: PitchingCareerColumn.wlPct, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(format2(agg.era))      .frame(width: PitchingCareerColumn.era,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(agg.g))    .frame(width: PitchingCareerColumn.g,    alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(agg.gs))   .frame(width: PitchingCareerColumn.gs,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(agg.gf))   .frame(width: PitchingCareerColumn.gf,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(agg.cg))   .frame(width: PitchingCareerColumn.cg,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(agg.sho))  .frame(width: PitchingCareerColumn.sho,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(agg.sv))   .frame(width: PitchingCareerColumn.sv,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatIP(agg.ip))      .frame(width: PitchingCareerColumn.ip,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(agg.h))    .frame(width: PitchingCareerColumn.h,    alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(agg.r))    .frame(width: PitchingCareerColumn.r,    alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(agg.er))   .frame(width: PitchingCareerColumn.er,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(agg.hr))   .frame(width: PitchingCareerColumn.hr,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(agg.bb))   .frame(width: PitchingCareerColumn.bb,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(agg.ibb))  .frame(width: PitchingCareerColumn.ibb,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(agg.so))   .frame(width: PitchingCareerColumn.so,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(agg.hbp))  .frame(width: PitchingCareerColumn.hbp,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(agg.bk))   .frame(width: PitchingCareerColumn.bk,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(agg.wp))   .frame(width: PitchingCareerColumn.wp,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(agg.bf))   .frame(width: PitchingCareerColumn.bf,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            // Optional
+            if visible.contains("W")     { Text(formatCount(agg.w)).frame(width: PitchingCareerColumn.w, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("L")     { Text(formatCount(agg.l)).frame(width: PitchingCareerColumn.l, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("W-L%")  {
+                Text(formatWinPctValue(agg.winPct))
+                    .frame(width: PitchingCareerColumn.wlPct, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            }
+            if visible.contains("ERA")   { Text(format2(agg.era)).frame(width: PitchingCareerColumn.era, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            // Core
+            Text(formatCount(agg.g)).frame(width: PitchingCareerColumn.g, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            // Optional
+            if visible.contains("GS")    { Text(formatCount(agg.gs)).frame(width: PitchingCareerColumn.gs, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("GF")    { Text(formatCount(agg.gf)).frame(width: PitchingCareerColumn.gf, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("CG")    { Text(formatCount(agg.cg)).frame(width: PitchingCareerColumn.cg, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("SHO")   { Text(formatCount(agg.sho)).frame(width: PitchingCareerColumn.sho, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("SV")    { Text(formatCount(agg.sv)).frame(width: PitchingCareerColumn.sv, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("IP")    { Text(formatIP(agg.ip)).frame(width: PitchingCareerColumn.ip, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("H")     { Text(formatCount(agg.h)).frame(width: PitchingCareerColumn.h, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("R")     { Text(formatCount(agg.r)).frame(width: PitchingCareerColumn.r, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("ER")    { Text(formatCount(agg.er)).frame(width: PitchingCareerColumn.er, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("HR")    { Text(formatCount(agg.hr)).frame(width: PitchingCareerColumn.hr, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("BB")    { Text(formatCount(agg.bb)).frame(width: PitchingCareerColumn.bb, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("IBB")   { Text(formatCount(agg.ibb)).frame(width: PitchingCareerColumn.ibb, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("SO")    { Text(formatCount(agg.so)).frame(width: PitchingCareerColumn.so, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("HBP")   { Text(formatCount(agg.hbp)).frame(width: PitchingCareerColumn.hbp, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("BK")    { Text(formatCount(agg.bk)).frame(width: PitchingCareerColumn.bk, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("WP")    { Text(formatCount(agg.wp)).frame(width: PitchingCareerColumn.wp, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("BF")    { Text(formatCount(agg.bf)).frame(width: PitchingCareerColumn.bf, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
             // ERA+ and FIP aren't summable — leave blank.
-            Text("—").frame(width: PitchingCareerColumn.eraPlus, alignment: .trailing)
-                .foregroundStyle(.tertiary).padding(.horizontal, 2)
-            Text("—").frame(width: PitchingCareerColumn.fip, alignment: .trailing)
-                .foregroundStyle(.tertiary).padding(.horizontal, 2)
-            Text(format2(agg.whip))     .frame(width: PitchingCareerColumn.whip, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(format2(agg.hPer9))    .frame(width: PitchingCareerColumn.hPer9,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(format2(agg.hrPer9))   .frame(width: PitchingCareerColumn.hrPer9, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(format2(agg.careerBB9)).frame(width: PitchingCareerColumn.bbPer9, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(format2(agg.kPer9))    .frame(width: PitchingCareerColumn.soPer9, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(format2(agg.soBB))     .frame(width: PitchingCareerColumn.soBB,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            if visible.contains("ERA+")  {
+                Text("—").frame(width: PitchingCareerColumn.eraPlus, alignment: .trailing)
+                    .foregroundStyle(.tertiary).padding(.horizontal, 2)
+            }
+            if visible.contains("FIP")   {
+                Text("—").frame(width: PitchingCareerColumn.fip, alignment: .trailing)
+                    .foregroundStyle(.tertiary).padding(.horizontal, 2)
+            }
+            if visible.contains("WHIP")  { Text(format2(agg.whip)).frame(width: PitchingCareerColumn.whip, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("H/9")   { Text(format2(agg.hPer9)).frame(width: PitchingCareerColumn.hPer9, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("HR/9")  { Text(format2(agg.hrPer9)).frame(width: PitchingCareerColumn.hrPer9, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("BB/9")  { Text(format2(agg.careerBB9)).frame(width: PitchingCareerColumn.bbPer9, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("SO/9")  { Text(format2(agg.kPer9)).frame(width: PitchingCareerColumn.soPer9, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("SO/BB") { Text(format2(agg.soBB)).frame(width: PitchingCareerColumn.soBB, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
         }
         .font(.system(size: 9.5, weight: .semibold))
         .lineLimit(1)
@@ -1674,6 +1805,144 @@ private func formatLongDate(_ iso: String?) -> String? {
     output.dateFormat = "MMMM d, yyyy"
     output.timeZone = TimeZone(identifier: "UTC")
     return output.string(from: date)
+}
+
+// MARK: - Column filter metadata
+
+/// One toggleable column in the career-table filter sheet.
+struct ColumnFilterEntry: Identifiable {
+    let key: String
+    let label: String
+    let description: String
+    var id: String { key }
+}
+
+struct ColumnFilterGroup: Identifiable {
+    let title: String
+    let columns: [ColumnFilterEntry]
+    var id: String { title }
+}
+
+let battingFilterGroups: [ColumnFilterGroup] = [
+    ColumnFilterGroup(title: "Rate Stats", columns: [
+        ColumnFilterEntry(key: "AVG",  label: "AVG",  description: "Batting average (H ÷ AB)"),
+        ColumnFilterEntry(key: "OBP",  label: "OBP",  description: "On-base percentage"),
+        ColumnFilterEntry(key: "SLG",  label: "SLG",  description: "Slugging percentage"),
+        ColumnFilterEntry(key: "OPS",  label: "OPS",  description: "On-base + slugging"),
+        ColumnFilterEntry(key: "OPS+", label: "OPS+", description: "OPS adjusted to league/park (100 = avg)"),
+    ]),
+    ColumnFilterGroup(title: "Counting — Offense", columns: [
+        ColumnFilterEntry(key: "R",   label: "R",   description: "Runs scored"),
+        ColumnFilterEntry(key: "H",   label: "H",   description: "Hits"),
+        ColumnFilterEntry(key: "2B",  label: "2B",  description: "Doubles"),
+        ColumnFilterEntry(key: "3B",  label: "3B",  description: "Triples"),
+        ColumnFilterEntry(key: "HR",  label: "HR",  description: "Home runs"),
+        ColumnFilterEntry(key: "RBI", label: "RBI", description: "Runs batted in"),
+        ColumnFilterEntry(key: "SB",  label: "SB",  description: "Stolen bases"),
+        ColumnFilterEntry(key: "CS",  label: "CS",  description: "Caught stealing"),
+        ColumnFilterEntry(key: "BB",  label: "BB",  description: "Walks"),
+        ColumnFilterEntry(key: "SO",  label: "SO",  description: "Strikeouts"),
+    ]),
+    ColumnFilterGroup(title: "Advanced", columns: [
+        ColumnFilterEntry(key: "TB",   label: "TB",   description: "Total bases"),
+        ColumnFilterEntry(key: "GIDP", label: "GIDP", description: "Grounded into double play"),
+        ColumnFilterEntry(key: "HBP",  label: "HBP",  description: "Hit by pitch"),
+        ColumnFilterEntry(key: "SH",   label: "SH",   description: "Sacrifice hits"),
+        ColumnFilterEntry(key: "SF",   label: "SF",   description: "Sacrifice flies"),
+        ColumnFilterEntry(key: "IBB",  label: "IBB",  description: "Intentional walks"),
+    ]),
+]
+
+let pitchingFilterGroups: [ColumnFilterGroup] = [
+    ColumnFilterGroup(title: "Rate Stats", columns: [
+        ColumnFilterEntry(key: "ERA",   label: "ERA",   description: "Earned-run average"),
+        ColumnFilterEntry(key: "WHIP",  label: "WHIP",  description: "Walks + hits per inning"),
+        ColumnFilterEntry(key: "FIP",   label: "FIP",   description: "Fielding-independent pitching"),
+        ColumnFilterEntry(key: "ERA+",  label: "ERA+",  description: "ERA adjusted to league/park (100 = avg)"),
+        ColumnFilterEntry(key: "H/9",   label: "H/9",   description: "Hits per nine innings"),
+        ColumnFilterEntry(key: "HR/9",  label: "HR/9",  description: "Home runs per nine innings"),
+        ColumnFilterEntry(key: "BB/9",  label: "BB/9",  description: "Walks per nine innings"),
+        ColumnFilterEntry(key: "SO/9",  label: "SO/9",  description: "Strikeouts per nine innings"),
+        ColumnFilterEntry(key: "SO/BB", label: "SO/BB", description: "Strikeout-to-walk ratio"),
+    ]),
+    ColumnFilterGroup(title: "Counting", columns: [
+        ColumnFilterEntry(key: "W",    label: "W",    description: "Wins"),
+        ColumnFilterEntry(key: "L",    label: "L",    description: "Losses"),
+        ColumnFilterEntry(key: "W-L%", label: "W-L%", description: "Winning percentage"),
+        ColumnFilterEntry(key: "GS",   label: "GS",   description: "Games started"),
+        ColumnFilterEntry(key: "GF",   label: "GF",   description: "Games finished"),
+        ColumnFilterEntry(key: "CG",   label: "CG",   description: "Complete games"),
+        ColumnFilterEntry(key: "SHO",  label: "SHO",  description: "Shutouts"),
+        ColumnFilterEntry(key: "SV",   label: "SV",   description: "Saves"),
+        ColumnFilterEntry(key: "IP",   label: "IP",   description: "Innings pitched"),
+        ColumnFilterEntry(key: "H",    label: "H",    description: "Hits allowed"),
+        ColumnFilterEntry(key: "R",    label: "R",    description: "Runs allowed"),
+        ColumnFilterEntry(key: "ER",   label: "ER",   description: "Earned runs"),
+        ColumnFilterEntry(key: "HR",   label: "HR",   description: "Home runs allowed"),
+        ColumnFilterEntry(key: "BB",   label: "BB",   description: "Walks allowed"),
+        ColumnFilterEntry(key: "IBB",  label: "IBB",  description: "Intentional walks"),
+        ColumnFilterEntry(key: "SO",   label: "SO",   description: "Strikeouts"),
+        ColumnFilterEntry(key: "HBP",  label: "HBP",  description: "Hit batters"),
+        ColumnFilterEntry(key: "BK",   label: "BK",   description: "Balks"),
+        ColumnFilterEntry(key: "WP",   label: "WP",   description: "Wild pitches"),
+        ColumnFilterEntry(key: "BF",   label: "BF",   description: "Batters faced"),
+    ]),
+]
+
+// MARK: - Column filter sheet
+
+/// Modal sheet with grouped toggles for the optional career-table
+/// columns. Core columns (WAR/G/PA/AB for batting, WAR/G for pitching)
+/// aren't shown here — they're always visible and aren't toggleable.
+struct ColumnFilterSheet: View {
+    let title: String
+    let groups: [ColumnFilterGroup]
+    @Binding var visible: Set<String>
+    let defaults: Set<String>
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                ForEach(groups) { group in
+                    Section(group.title) {
+                        ForEach(group.columns) { col in
+                            Toggle(isOn: binding(for: col.key)) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(col.label).font(.body.weight(.semibold))
+                                    Text(col.description)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Reset") { visible = defaults }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                        .fontWeight(.semibold)
+                }
+            }
+        }
+    }
+
+    private func binding(for key: String) -> Binding<Bool> {
+        Binding(
+            get: { visible.contains(key) },
+            set: { newValue in
+                if newValue { visible.insert(key) }
+                else        { visible.remove(key) }
+            }
+        )
+    }
 }
 
 // MARK: - Header bio row
