@@ -635,7 +635,10 @@ private struct GameWithCumulative {
 //   = 276 → fits without scrolling on iPhone.
 private enum SplitsLayout {
     static let rowHeight: CGFloat = 36
-    static let label:     CGFloat = 80
+    // Sized for the longest split label ("Last 30") at .caption — ~40pt
+    // measured + a few points of slack for Dynamic Type. "Custom",
+    // "Season", and the "Splits" header are all shorter and fit easily.
+    static let label:     CGFloat = 52
 
     // Counting (shared)
     static let g:   CGFloat = 36
@@ -789,8 +792,11 @@ private struct WindowSnapshot {
 // for now: Result isn't reliably populated, IBB/CS are still backfilling
 // after their column was added to batting_gamelogs.
 private enum BattingGameColumn {
-    static let date: CGFloat = 48
-    static let opp:  CGFloat = 56
+    // Date "10/30" at .caption monospacedDigit measures ~33pt; opp
+    // "vs WSN" (caption2 prefix + caption code) measures ~38pt. Tight
+    // widths free up screen for the scrolling stats columns.
+    static let date: CGFloat = 38
+    static let opp:  CGFloat = 44
     static let ab:   CGFloat = 26
     static let r:    CGFloat = 24
     static let h:    CGFloat = 24
@@ -811,8 +817,10 @@ private enum BattingGameColumn {
 // Same shape for pitching. Result column is intentionally absent (not
 // reliably populated yet).
 private enum PitchingGameColumn {
-    static let date: CGFloat = 48
-    static let opp:  CGFloat = 56
+    // Same compact frozen-pane widths as the batting table so both
+    // tables look consistent and free up room for the stats columns.
+    static let date: CGFloat = 38
+    static let opp:  CGFloat = 44
     static let ip:   CGFloat = 36
     static let h:    CGFloat = 24
     static let r:    CGFloat = 24
