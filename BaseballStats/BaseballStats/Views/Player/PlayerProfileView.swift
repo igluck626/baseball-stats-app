@@ -166,7 +166,7 @@ struct PlayerProfileView: View {
                 Divider().padding(.vertical, 4)
 
                 if let dob = formatLongDate(player.birthdate) {
-                    HeaderBioRow(label: "Date of Birth", value: dobWithAge(dob))
+                    HeaderBioRow(label: "Date of Birth", value: dob)
                 }
                 if let place = placeOfBirth {
                     HeaderBioRow(label: "Place of Birth", value: place)
@@ -526,27 +526,6 @@ struct PlayerProfileView: View {
         }
     }
 
-    /// Append "(Age N)" to a formatted DOB string. Calculates age from
-    /// player.birth_year/month/day against today's date — adjusts down
-    /// by one if the player's birthday hasn't occurred yet this year.
-    /// Returns the DOB unchanged if birth_year is missing.
-    private func dobWithAge(_ formattedDOB: String) -> String {
-        guard let by = player.birth_year else { return formattedDOB }
-        let cal = Calendar.current
-        let today = Date()
-        let currentYear  = cal.component(.year,  from: today)
-        let currentMonth = cal.component(.month, from: today)
-        let currentDay   = cal.component(.day,   from: today)
-        var age = currentYear - by
-        if let bm = player.birth_month, let bd = player.birth_day {
-            if currentMonth < bm || (currentMonth == bm && currentDay < bd) {
-                age -= 1
-            }
-        }
-        guard age >= 0 else { return formattedDOB }
-        return "\(formattedDOB) (Age \(age))"
-    }
-
     /// "Linden, NJ" for US-born, "Oshu, Japan" for international (state
     /// is skipped per spec when birth_country isn't USA).
     private var placeOfBirth: String? {
@@ -791,6 +770,7 @@ struct PlayerProfileView: View {
                 Divider()
                 BattingCareerFrozenTotalsRow()
             }
+            .frame(width: careerFrozenPaneWidth)
             .background(.ultraThinMaterial)
             .shadow(color: .black.opacity(0.08), radius: 4, x: 2, y: 0)
             .zIndex(1)
@@ -848,6 +828,7 @@ struct PlayerProfileView: View {
                 Divider()
                 PitchingCareerFrozenTotalsRow()
             }
+            .frame(width: careerFrozenPaneWidth)
             .background(.ultraThinMaterial)
             .shadow(color: .black.opacity(0.08), radius: 4, x: 2, y: 0)
             .zIndex(1)
@@ -916,6 +897,19 @@ private struct StatBlock: View {
 
 // MARK: - Batting career table
 
+// Frozen-pane total width — pinned on the VStack so the outer HStack
+// doesn't hand it any extra space. Both batting and pitching career
+// tables use the same Year/Age/Team layout, so this constant is shared.
+//
+//   leadingPad 12
+// + year 32  + (2+2 cell padding)
+// + age 24   + (2+2)
+// + gap 4
+// + team 30  + (2+2)
+// = 114pt
+//
+private let careerFrozenPaneWidth: CGFloat = 114
+
 // Column widths for the full Baseball Reference batting layout —
 // 28 columns totaling ~902pt. Wider than the screen, so the table
 // wraps in a horizontal ScrollView and the user swipes to see the
@@ -924,13 +918,22 @@ private struct StatBlock: View {
 // (4,000+ hits, 1,500+ games) commafy via formatCount and use
 // minimumScaleFactor in the totals row to shrink to fit.
 private enum BattingCareerColumn {
-    static let year:    CGFloat = 38
-    static let age:     CGFloat = 26
+    // Frozen pane (Year + Age + gap + Team) — pinned width:
+    //   leadingPad 12 + year 32 + (2+2) + age 24 + (2+2) + gap 4
+    //                 + team 30 + (2+2)                  = 114pt
+    // Each cell adds 2pt left + 2pt right padding around its frame
+    // width, hence the +4 per cell. See careerFrozenPaneWidth below.
+    //
+    // Year fits "Career" totals text at 9.5pt-semibold (~30pt) and
+    // "2024" at 11pt monospaced. Age fits the "Age" header at
+    // 11pt-semibold (~22pt). Team fits the "Team" header (~26pt) and
+    // 3-letter codes like "LAD"/"CWS" at 11pt regular.
+    static let year:    CGFloat = 32
+    static let age:     CGFloat = 24
     /// Visual gap between the right-aligned Age cell and the
     /// left-aligned Team cell so values don't run together.
-    static let ageTeamGap: CGFloat = 8
-    /// Bumped to 44pt — was 38, which clipped the "Team" header text.
-    static let team:    CGFloat = 44
+    static let ageTeamGap: CGFloat = 4
+    static let team:    CGFloat = 30
     static let war:     CGFloat = 40
     static let g:       CGFloat = 32
     static let pa:      CGFloat = 40
@@ -1310,13 +1313,13 @@ private struct BattingCareerScrollableTotalsRow: View {
 // 34-column Baseball Reference pitching layout. Total intrinsic width
 // ~1,096pt; wraps in a horizontal ScrollView.
 private enum PitchingCareerColumn {
-    static let year:       CGFloat = 38
-    static let age:        CGFloat = 26
+    // Same frozen-pane layout as the batting career table — see
+    // BattingCareerColumn for the width derivation.
+    static let year:       CGFloat = 32
+    static let age:        CGFloat = 24
     /// Visual gap between right-aligned Age and left-aligned Team.
-    static let ageTeamGap: CGFloat = 8
-    /// Bumped to 44pt — was 38, which clipped the "Team" header text.
-    /// Matches the batting career table's frozen-section width.
-    static let team:       CGFloat = 44
+    static let ageTeamGap: CGFloat = 4
+    static let team:       CGFloat = 30
     static let war:        CGFloat = 38
     static let w:          CGFloat = 26
     static let l:          CGFloat = 26
