@@ -1377,23 +1377,26 @@ private struct PitchingCareerScrollableSeasonRow: View {
             Text(formatWinPct(w: season.W, l: season.L))
                 .frame(width: PitchingCareerColumn.wlPct, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             Text(format2(season.ERA))     .frame(width: PitchingCareerColumn.era,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.G))   .frame(width: PitchingCareerColumn.g,    alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.GS))  .frame(width: PitchingCareerColumn.gs,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.GF))  .frame(width: PitchingCareerColumn.gf,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.CG))  .frame(width: PitchingCareerColumn.cg,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.SHO)) .frame(width: PitchingCareerColumn.sho,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.SV))  .frame(width: PitchingCareerColumn.sv,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatIP(season.IP))     .frame(width: PitchingCareerColumn.ip,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.H))   .frame(width: PitchingCareerColumn.h,    alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.R))   .frame(width: PitchingCareerColumn.r,    alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.ER))  .frame(width: PitchingCareerColumn.er,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.HR))  .frame(width: PitchingCareerColumn.hr,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.BB))  .frame(width: PitchingCareerColumn.bb,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.IBB)) .frame(width: PitchingCareerColumn.ibb,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.SO))  .frame(width: PitchingCareerColumn.so,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.HBP)) .frame(width: PitchingCareerColumn.hbp,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.BK))  .frame(width: PitchingCareerColumn.bk,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            Text(formatCount(season.WP))  .frame(width: PitchingCareerColumn.wp,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(season.G))         .frame(width: PitchingCareerColumn.g,    alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(season.GS))        .frame(width: PitchingCareerColumn.gs,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            // For modern pitchers GF/CG/SHO/SV are realistically 0 when
+            // the field comes back null (nightly fetched a bref row
+            // without the column), so show "0" rather than "—".
+            Text(formatCountOrZero(season.GF))  .frame(width: PitchingCareerColumn.gf,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCountOrZero(season.CG))  .frame(width: PitchingCareerColumn.cg,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCountOrZero(season.SHO)) .frame(width: PitchingCareerColumn.sho,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCountOrZero(season.SV))  .frame(width: PitchingCareerColumn.sv,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatIP(season.IP))           .frame(width: PitchingCareerColumn.ip,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(season.H))         .frame(width: PitchingCareerColumn.h,    alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(season.R))         .frame(width: PitchingCareerColumn.r,    alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(season.ER))        .frame(width: PitchingCareerColumn.er,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(season.HR))        .frame(width: PitchingCareerColumn.hr,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(season.BB))        .frame(width: PitchingCareerColumn.bb,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(season.IBB))       .frame(width: PitchingCareerColumn.ibb,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCount(season.SO))        .frame(width: PitchingCareerColumn.so,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCountOrZero(season.HBP)) .frame(width: PitchingCareerColumn.hbp,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCountOrZero(season.BK))  .frame(width: PitchingCareerColumn.bk,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatCountOrZero(season.WP))  .frame(width: PitchingCareerColumn.wp,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             Text(formatCount(season.BFP)) .frame(width: PitchingCareerColumn.bf,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             Text(formatRoundedInt(season.ERA_plus))
                 .frame(width: PitchingCareerColumn.eraPlus, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
@@ -1573,6 +1576,16 @@ private func formatWinPctValue(_ value: Double?) -> String {
 /// NumberFormatter so we don't allocate one per cell render.
 private func formatCount(_ value: Int?) -> String {
     guard let value else { return "—" }
+    return countFormatter.string(from: NSNumber(value: value)) ?? String(value)
+}
+
+/// Like `formatCount` but returns "0" for nil instead of "—". Right
+/// for pitcher counting stats like CG/SHO/SV/GF/BK/WP/HBP where the
+/// backend often stores null rather than zero (pybaseball bref
+/// dataframe missing the column), but the player almost certainly has
+/// 0 of that stat — not "unknown."
+private func formatCountOrZero(_ value: Int?) -> String {
+    guard let value else { return "0" }
     return countFormatter.string(from: NSNumber(value: value)) ?? String(value)
 }
 
