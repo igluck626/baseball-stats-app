@@ -764,8 +764,14 @@ def team_history(team_id: str):
 # Stats accepted by the leaderboard endpoint. Must match the keys in
 # data_service._LEADERBOARD_BATTING / _PITCHING. Surfaced here so the
 # 400 error message stays in sync with what data_service knows.
-_LEADERBOARD_BATTING_STATS  = {"HR", "AVG", "OPS", "RBI", "SB", "WAR"}
-_LEADERBOARD_PITCHING_STATS = {"ERA", "SO", "W", "WHIP", "SV", "WAR"}
+_LEADERBOARD_BATTING_STATS  = {
+    "HR", "AVG", "RBI", "OPS", "H", "R", "SB", "BB",
+    "OBP", "SLG", "WAR", "2B", "3B", "SO", "PA", "AB",
+}
+_LEADERBOARD_PITCHING_STATS = {
+    "ERA", "SO", "W", "WHIP", "SV", "IP",
+    "H", "BB", "HR", "WAR", "CG", "SHO",
+}
 
 
 @app.get("/leaderboards")
@@ -778,6 +784,13 @@ def leaderboards(
         None,
         description="Optional league filter — 'AL' or 'NL'. Omit for both leagues.",
     ),
+    team:        str | None = Query(
+        None,
+        description=(
+            "Optional team filter — Lahman team code (e.g. 'NYA' for the "
+            "Yankees, 'LAN' for the Dodgers). Omit for all teams."
+        ),
+    ),
 ):
     """Top `limit` players for the given (stat, year). Sort order is
     automatic — ERA / WHIP ascending (lower is better), everything else
@@ -785,10 +798,15 @@ def leaderboards(
     `player` block so the iOS row can render the same chrome as the
     search results and navigation can push straight into PlayerProfile.
 
-    Rate-stat eligibility (AVG/OPS/ERA/WHIP) scales with games played:
-    standard 502 PA / 162 IP for completed seasons, pro-rated for
-    in-progress seasons (3.1 PA × max team games / 1.0 IP × max team
-    games)."""
+    Rate-stat eligibility (AVG/OBP/SLG/OPS/ERA/WHIP) scales with games
+    played: standard 502 PA / 162 IP for completed seasons, pro-rated
+    for in-progress seasons (3.1 PA × max team games / 1.0 IP × max
+    team games).
+
+    `league` and `team` are independent filters and may be combined.
+    The team value is matched against all known historical Lahman
+    variants for that franchise, so e.g. team='MIA' also returns
+    "FLO" rows from the Florida Marlins era."""
     if player_type not in ("batter", "pitcher"):
         raise HTTPException(
             status_code=400,
@@ -798,6 +816,14 @@ def leaderboards(
         raise HTTPException(
             status_code=400,
             detail="league must be 'AL' or 'NL' if provided",
+        )
+    if team is not None and team not in data_service._TEAM_FILTER_VARIANTS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"team {team!r} not recognized. Use a Lahman team code: "
+                f"{sorted(data_service._TEAM_FILTER_VARIANTS)}"
+            ),
         )
     valid_stats = (
         _LEADERBOARD_BATTING_STATS if player_type == "batter"
@@ -814,13 +840,14 @@ def leaderboards(
 
     response = data_service.get_leaderboard(
         stat=stat, year=year, player_type=player_type,
-        limit=limit, league=league,
+        limit=limit, league=league, team=team,
     )
     if response is None or not response.get("leaders"):
-        league_clause = f", {league}" if league else ""
+        suffix = ", ".join(filter(None, [league, team]))
+        suffix = f" ({suffix})" if suffix else ""
         raise HTTPException(
             status_code=404,
-            detail=f"No {stat} leaders found for year {year}{league_clause}",
+            detail=f"No {stat} leaders found for year {year}{suffix}",
         )
     return response
 

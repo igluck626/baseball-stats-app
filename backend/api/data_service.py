@@ -1072,17 +1072,30 @@ def get_team_history(team_id: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Stat → (DB column, sort direction, optional minimum-PA/IP filter).
 # - ERA / WHIP sort ASC because lower is better; everything else DESC.
-# - Rate stats (AVG / OPS / ERA / WHIP) get a loose minimum so a single
-#   pinch-hit AB or a one-inning relief outing doesn't crown the table.
-# - Column names match the SQLAlchemy model exactly. "AVG" is exposed in
-#   the API for readability but maps to the DB's "BA" column.
+# - Rate stats (AVG / OBP / SLG / OPS / ERA / WHIP) get a pro-rated PA/IP
+#   minimum so a single pinch-hit AB or a one-inning relief outing doesn't
+#   crown the table.
+# - API stat keys are the user-facing labels and map to the SQLAlchemy
+#   column name when they differ ("AVG"→"BA", "2B"→"doubles", "3B"→"triples").
+# - Note on HLD: pitcher_seasons has no `holds` column today, so the
+#   leaderboard catalog can't include it without a schema migration.
 _LEADERBOARD_BATTING: dict[str, tuple[str, str, Optional[str]]] = {
-    "HR":  ("HR",  "desc", None),
-    "AVG": ("BA",  "desc", "PA"),
-    "OPS": ("OPS", "desc", "PA"),
-    "RBI": ("RBI", "desc", None),
-    "SB":  ("SB",  "desc", None),
-    "WAR": ("WAR", "desc", None),
+    "HR":  ("HR",      "desc", None),
+    "AVG": ("BA",      "desc", "PA"),
+    "RBI": ("RBI",     "desc", None),
+    "OPS": ("OPS",     "desc", "PA"),
+    "H":   ("H",       "desc", None),
+    "R":   ("R",       "desc", None),
+    "SB":  ("SB",      "desc", None),
+    "BB":  ("BB",      "desc", None),
+    "OBP": ("OBP",     "desc", "PA"),
+    "SLG": ("SLG",     "desc", "PA"),
+    "WAR": ("WAR",     "desc", None),
+    "2B":  ("doubles", "desc", None),
+    "3B":  ("triples", "desc", None),
+    "SO":  ("SO",      "desc", None),
+    "PA":  ("PA",      "desc", None),
+    "AB":  ("AB",      "desc", None),
 }
 _LEADERBOARD_PITCHING: dict[str, tuple[str, str, Optional[str]]] = {
     "ERA":  ("ERA",  "asc",  "IP"),
@@ -1090,7 +1103,51 @@ _LEADERBOARD_PITCHING: dict[str, tuple[str, str, Optional[str]]] = {
     "W":    ("W",    "desc", None),
     "WHIP": ("WHIP", "asc",  "IP"),
     "SV":   ("SV",   "desc", None),
+    "IP":   ("IP",   "desc", None),
+    "H":    ("H",    "desc", None),
+    "BB":   ("BB",   "desc", None),
+    "HR":   ("HR",   "desc", None),
     "WAR":  ("WAR",  "desc", None),
+    "CG":   ("CG",   "desc", None),
+    "SHO":  ("SHO",  "desc", None),
+}
+
+# Canonical team key (Lahman code) → all stored variants seen in the
+# season tables across history. Storage today is exclusively Lahman
+# codes ("NYA", "LAN", "FLO", …), confirmed against live leaderboards
+# — no bref codes, no full names — so the filter is straightforward
+# `IN (variants)`.
+_TEAM_FILTER_VARIANTS: dict[str, list[str]] = {
+    "ARI": ["ARI"],
+    "ATL": ["ATL"],
+    "BAL": ["BAL"],
+    "BOS": ["BOS"],
+    "CHA": ["CHA"],                  # Chicago White Sox
+    "CHN": ["CHN"],                  # Chicago Cubs
+    "CIN": ["CIN"],
+    "CLE": ["CLE"],                  # Indians → Guardians, same code
+    "COL": ["COL"],
+    "DET": ["DET"],
+    "HOU": ["HOU"],
+    "KCA": ["KCA"],                  # Kansas City Royals
+    "LAA": ["LAA", "ANA", "CAL"],    # California / Anaheim / LA Angels
+    "LAN": ["LAN", "BRO"],           # LA Dodgers (+ Brooklyn historical)
+    "MIA": ["MIA", "FLO"],           # Florida → Miami
+    "MIL": ["MIL", "ML4"],
+    "MIN": ["MIN"],
+    "NYA": ["NYA"],                  # Yankees
+    "NYN": ["NYN"],                  # Mets
+    "OAK": ["OAK", "ATH"],           # Athletics (2025+ rebrand stores "ATH")
+    "PHI": ["PHI"],
+    "PIT": ["PIT"],
+    "SDN": ["SDN"],
+    "SFN": ["SFN"],
+    "SEA": ["SEA"],
+    "SLN": ["SLN"],
+    "TBA": ["TBA"],
+    "TEX": ["TEX"],
+    "TOR": ["TOR"],
+    "WAS": ["WAS", "MON"],           # Montreal Expos → Washington
 }
 
 # MLB's standard rate-stat qualifiers, applied to completed seasons
@@ -1136,23 +1193,27 @@ def get_leaderboard(
     player_type: str,
     limit: int = 25,
     league: Optional[str] = None,
+    team: Optional[str] = None,
 ) -> Optional[dict]:
     """Top `limit` players for a given (stat, year) on either batting or
     pitching seasons.
 
     `league` filters the result to a single league ("AL" / "NL"); omit
-    or pass an empty value to combine both leagues. The `league` column
-    exists on both player_seasons and pitcher_seasons.
+    or pass an empty value to combine both leagues. `team` filters to a
+    single franchise — pass a Lahman code (e.g. "NYA" for the Yankees,
+    "LAN" for the Dodgers); the helper expands it to all historical
+    storage variants (e.g. "FLO" → also matches "MIA"). Both filters
+    can be combined.
 
-    Rate stats (AVG/OPS/ERA/WHIP) require a pro-rated PA/IP minimum
-    based on the season's max games played, so mid-season leaderboards
-    populate while completed-season leaderboards stay at the standard
-    502 PA / 162 IP qualifiers.
+    Rate stats (AVG/OBP/SLG/OPS/ERA/WHIP) require a pro-rated PA/IP
+    minimum based on the season's max games played, so mid-season
+    leaderboards populate while completed-season leaderboards stay at
+    the standard 502 PA / 162 IP qualifiers.
 
     Returns a response dict shaped like:
       {
         "stat": "HR", "year": 2026, "player_type": "batter",
-        "league": "AL",
+        "league": "AL", "team": "NYA",
         "min_pa": 502, "min_ip": 162.0,
         "leaders": [
           {"rank": 1, "value": 54.0, "player": { ...PlayerSearchResult... }},
@@ -1185,6 +1246,9 @@ def get_leaderboard(
         )
         if league:
             q = q.filter(table.league == league)
+        if team:
+            variants = _TEAM_FILTER_VARIANTS.get(team, [team])
+            q = q.filter(table.team.in_(variants))
         # Rate-stat eligibility — needs enough volume to be meaningful.
         # PA lives on player_seasons only; IP on both. The catalog only
         # uses "PA" for batter rate stats, so the column lookup is safe.
@@ -1234,6 +1298,7 @@ def get_leaderboard(
         "year":        year,
         "player_type": player_type,
         "league":      league,
+        "team":        team,
         "min_pa":      min_pa,
         "min_ip":      min_ip,
         "leaders":     leaders,

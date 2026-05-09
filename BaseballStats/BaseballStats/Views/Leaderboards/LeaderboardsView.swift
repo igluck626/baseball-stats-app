@@ -47,6 +47,12 @@ struct LeaderboardsView: View {
             Task { await viewModel.load() }
         }
         .onChange(of: viewModel.selectedLeague) { _, _ in
+            // If the user had a team selected from the other league,
+            // drop back to All Teams before refetching.
+            viewModel.resetTeamIfHidden()
+            Task { await viewModel.load() }
+        }
+        .onChange(of: viewModel.selectedTeam) { _, _ in
             Task { await viewModel.load() }
         }
     }
@@ -81,6 +87,7 @@ struct LeaderboardsView: View {
         VStack(spacing: 10) {
             kindAndStatBar
             leaguePicker
+            teamPicker
             list
         }
         .padding(.horizontal, 16)
@@ -114,6 +121,36 @@ struct LeaderboardsView: View {
             }
         }
         .pickerStyle(.segmented)
+    }
+
+    /// Full-width Menu picker for team selection — defaults to "All
+    /// Teams". The list narrows based on the active league filter so
+    /// AL + NL-only teams (e.g. Yankees while NL is selected) can't
+    /// produce a guaranteed-empty leaderboard.
+    private var teamPicker: some View {
+        Menu {
+            Picker("Team", selection: $viewModel.selectedTeam) {
+                ForEach(viewModel.availableTeams) { team in
+                    Text(team.displayName).tag(team)
+                }
+            }
+        } label: {
+            HStack {
+                Text(viewModel.selectedTeam.displayName)
+                    .font(.subheadline.weight(.medium))
+                    .lineLimit(1)
+                Spacer()
+                Image(systemName: "chevron.down")
+                    .font(.caption2.weight(.semibold))
+            }
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(Color(.systemGray5))
+            )
+        }
     }
 
     private var statMenu: some View {
@@ -186,13 +223,14 @@ struct LeaderboardsView: View {
 
     /// Display format for the trailing value cell. Picks the right number
     /// of decimal places per stat — three for batting rate stats, two for
-    /// pitching rate stats, integer for counting, single-decimal for WAR.
+    /// pitching rate stats, single-decimal for WAR / IP, integer for the
+    /// rest.
     private var rowFormat: LeaderboardRow.ValueFormat {
         switch viewModel.selectedStat {
-        case "AVG", "OPS":           return .threeDecimal
-        case "ERA", "WHIP":          return .twoDecimal
-        case "WAR":                  return .oneDecimal
-        default:                     return .integer
+        case "AVG", "OBP", "SLG", "OPS": return .threeDecimal
+        case "ERA", "WHIP":              return .twoDecimal
+        case "WAR", "IP":                return .oneDecimal
+        default:                         return .integer
         }
     }
 }
