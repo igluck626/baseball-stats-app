@@ -230,18 +230,15 @@ struct PlayerProfileView: View {
 
     // MARK: - Selectors
 
-    /// Show the Batting/Pitching toggle whenever a pitcher has any
-    /// batting history at all, not just for true two-way players. This
-    /// lets users see the historical batting line for, say, a deadball-
-    /// era pitcher who hit a few home runs.
-    ///
-    /// `viewModel.isPitcher` is threshold-based and only flips on once
-    /// the career fetch resolves with ≥50 IP — the leaderboard hint
-    /// covers the gap so the toggle doesn't briefly hide while the
-    /// pitcher's profile is loading from a Pitching board tap.
+    /// Show the Batting/Pitching toggle only for genuine two-way
+    /// players (Ohtani, Ruth) — players who clear both the per-season
+    /// PA threshold AND the career IP threshold encoded in
+    /// `viewModel.isTwoWay`. Modern AL pitchers with a single
+    /// interleague at-bat or an empty MLB Stats batting envelope used
+    /// to trip the previous "any batting history" check and surface
+    /// an empty toggle on a pure pitcher's profile.
     private var showsRoleSelector: Bool {
-        let isPitcherEntry = player.is_pitcher == true
-        return (viewModel.isPitcher || isPitcherEntry) && viewModel.hasAnyBatting
+        viewModel.isTwoWay
     }
 
     /// The role to surface before any explicit toggle by the user.
