@@ -83,6 +83,41 @@ final class PlayerViewModel: ObservableObject {
     /// Both thresholds met — Ohtani, Babe Ruth. UI surfaces a role toggle.
     var isTwoWay: Bool { isBatter && isPitcher }
 
+    // MARK: - Career-totals based role detection
+
+    /// Threshold for "this player has a real career on this side of
+    /// the ball." 50 PA / 50 IP is loose enough to include NL-era
+    /// pitchers like deGrom (423 career PA — never 250 in a season,
+    /// so `isBatter` rejects him, but he genuinely has a batting
+    /// career worth surfacing) and tight enough to exclude pinch-hit-
+    /// pitcher novelty stints.
+    private static let meaningfulPA: Int     = 50
+    private static let meaningfulIP: Double  = 50
+
+    /// True iff this player's career batting volume crosses the
+    /// "meaningful" line. Drives whether the profile should expose
+    /// the Batting/Pitching role toggle alongside `hasMeaningfulPitching`.
+    var hasMeaningfulBatting: Bool {
+        careerPA > Self.meaningfulPA
+    }
+
+    /// True iff this player's career pitching volume crosses the
+    /// "meaningful" line. Same purpose as `hasMeaningfulBatting`.
+    var hasMeaningfulPitching: Bool {
+        careerIP > Self.meaningfulIP
+    }
+
+    /// Heuristic the profile uses to pick a default role tab when the
+    /// leaderboard `is_pitcher` hint isn't available (e.g. the user
+    /// reached the player via search). Pitching wins when career IP
+    /// exceeds career PA — true for pure pitchers (1500 IP, 0 PA) and
+    /// for NL-era starters (deGrom: 1500 IP > 423 PA), false for
+    /// position players and two-way batting-leans (Ohtani: 600 IP <
+    /// 1500 PA, Ruth: 1221 IP < 10600 PA).
+    var inferredPitcherRole: Bool {
+        careerIP > Double(careerPA)
+    }
+
     /// Whether any batting data is loaded — used by the View's fallback
     /// branch when neither threshold is met (e.g. rookies, sub-threshold
     /// careers, or before career data has loaded). Don't conflate with

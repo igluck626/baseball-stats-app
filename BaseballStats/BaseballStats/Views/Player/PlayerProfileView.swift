@@ -230,32 +230,32 @@ struct PlayerProfileView: View {
 
     // MARK: - Selectors
 
-    /// Show the Batting/Pitching toggle only for genuine two-way
-    /// players (Ohtani, Ruth) — players who clear both the per-season
-    /// PA threshold AND the career IP threshold encoded in
-    /// `viewModel.isTwoWay`. Modern AL pitchers with a single
-    /// interleague at-bat or an empty MLB Stats batting envelope used
-    /// to trip the previous "any batting history" check and surface
-    /// an empty toggle on a pure pitcher's profile.
+    /// Show the Batting/Pitching toggle when the player has a
+    /// meaningful career on BOTH sides of the ball — career PA > 50
+    /// AND career IP > 50. The previous `viewModel.isTwoWay` gate used
+    /// per-season PA thresholds, which excluded NL-era pitchers like
+    /// deGrom (423 career PA but never 250 in a single season) — they
+    /// have a real batting career and deserve the toggle. The 50/50
+    /// floor still keeps modern AL pitchers with a single interleague
+    /// at-bat from tripping the toggle on.
     private var showsRoleSelector: Bool {
-        viewModel.isTwoWay
+        viewModel.hasMeaningfulBatting && viewModel.hasMeaningfulPitching
     }
 
-    /// The role to surface before any explicit toggle by the user.
-    /// Priority:
-    ///   1. The leaderboard's `is_pitcher` hint — if the user tapped a
-    ///      pitcher row, default to pitching even before fetches land.
-    ///      Without this, sub-50-IP arms (rookies, mid-season callups)
-    ///      open on the batting tab while career data is loading.
-    ///   2. Two-way players → batting (the marquee role).
-    ///   3. Pure pitchers (threshold-detected) → pitching.
-    ///   4. Otherwise → batting.
+    /// The role to surface before any explicit user toggle. Priority:
+    ///   1. Leaderboard `is_pitcher` hint — if the user tapped a
+    ///      pitcher row, default to pitching even before fetches land
+    ///      (and even when the role toggle is visible — a tap from
+    ///      the pitching board should land on pitching for two-way
+    ///      players too).
+    ///   2. No hint → use the IP-vs-PA heuristic. Pitching wins for
+    ///      pure pitchers (any IP, no PA) and NL-era starters (deGrom:
+    ///      1500 IP > 423 PA); batting wins for position players and
+    ///      Ohtani / Ruth (PA dominates IP).
     private var defaultRole: Role {
         if player.is_pitcher == true { return .pitching }
         if player.is_pitcher == false { return .batting }
-        if viewModel.isTwoWay { return .batting }
-        if viewModel.isPitcher { return .pitching }
-        return .batting
+        return viewModel.inferredPitcherRole ? .pitching : .batting
     }
 
     /// What the picker currently reflects — user choice if they've
@@ -318,28 +318,31 @@ struct PlayerProfileView: View {
 
     // MARK: - Tab routing
 
-    /// Decides which role's content to show.
-    /// 1. Toggle visible (pitcher with any batting history) → follow
-    ///    the picker (which itself defaults via `defaultRole`).
-    /// 2. Leaderboard says this is a pitcher → pitching, even when
-    ///    career thresholds haven't yet flipped `viewModel.isPitcher`.
-    /// 3. Threshold batter only → batting.
-    /// 4. Sub-threshold fallback → whichever side has data, batting
-    ///    otherwise.
+    /// Decides which role's content to show. With `showsRoleSelector`
+    /// gated on meaningful batting AND pitching, this branch table
+    /// only matters for one-sided players plus the loading window
+    /// before either fetch lands.
     private var showingBatting: Bool {
         if showsRoleSelector {
             return effectiveRole == .batting
         }
-        if player.is_pitcher == true {
+        // Leaderboard hint wins for the loading-window case where
+        // career data hasn't resolved yet.
+        if player.is_pitcher == true { return false }
+        if player.is_pitcher == false { return true }
+        // Pure pitcher — pitching only.
+        if viewModel.hasMeaningfulPitching && !viewModel.hasMeaningfulBatting {
             return false
         }
-        if viewModel.isBatter && !viewModel.isPitcher {
+        // Pure batter — batting only.
+        if viewModel.hasMeaningfulBatting && !viewModel.hasMeaningfulPitching {
             return true
         }
-        if !viewModel.hasAnyBatting && viewModel.hasAnyPitching {
-            return false
-        }
-        return true
+        // Neither side has loaded yet (or neither crosses the 50-PA /
+        // 50-IP floor). Fall back to the same IP-vs-PA heuristic the
+        // default role uses, so a search-tapped pitcher whose career
+        // pitching has resolved shows pitching content right away.
+        return !viewModel.inferredPitcherRole
     }
 
     @ViewBuilder
