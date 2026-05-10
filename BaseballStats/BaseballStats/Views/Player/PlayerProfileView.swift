@@ -604,7 +604,7 @@ struct PlayerProfileView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity)
-        .glassEffect(glassFor(style), in: RoundedRectangle(cornerRadius: 20))
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20))
         .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 2)
     }
 
@@ -628,17 +628,11 @@ struct PlayerProfileView: View {
         }
     }
 
-    /// Liquid-glass variant for a stats grid card. The current-season
-    /// card carries a faint accent tint to read as the headline; the
-    /// standard variant is plain regular glass. Replaces the previous
-    /// non-adaptive `Color.white.opacity(0.8)` fill, which broke in
-    /// dark mode.
-    private func glassFor(_ style: CardStyle) -> Glass {
-        switch style {
-        case .current:  return .regular.tint(Color.accentColor.opacity(0.18))
-        case .standard: return .regular
-        }
-    }
+    // The previous build distinguished the current-season card with a
+    // tinted glass; the tint read too heavy next to the standard cards
+    // and broke the consistent feel of the profile. Both card styles
+    // now use plain `.regular` glass — the current card still stands
+    // out via the accent-colored title bar inside `statsGridCard`.
 
     private func noStatsCard(_ title: String) -> some View {
         VStack(spacing: 10) {
@@ -1997,6 +1991,11 @@ struct ColumnFilterSheet: View {
                                         .foregroundStyle(.secondary)
                                 }
                             }
+                            // Drop the per-row opaque background so the
+                            // sheet's glass bleeds through the rows
+                            // themselves, not just the gaps between
+                            // sections.
+                            .listRowBackground(Color.clear)
                         }
                     }
                 }
@@ -2019,11 +2018,12 @@ struct ColumnFilterSheet: View {
             }
         }
         // Liquid-glass sheet chrome — translucent backdrop with the
-        // standard slide-up animation. medium + large detents let the
-        // user dismiss with a swipe instead of always tapping Done.
+        // standard slide-up animation. .ultraThinMaterial reads more
+        // glass-like than .regularMaterial; medium + large detents let
+        // the user dismiss with a swipe instead of always tapping Done.
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
-        .presentationBackground(.regularMaterial)
+        .presentationBackground(.ultraThinMaterial)
     }
 
     private func binding(for key: String) -> Binding<Bool> {
