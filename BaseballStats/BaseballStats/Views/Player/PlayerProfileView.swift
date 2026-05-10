@@ -704,6 +704,7 @@ struct PlayerProfileView: View {
                   let seasons = career.seasons, !seasons.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
                 careerToolbar
+                leaderLegend
                 battingCareerTable(seasons: seasons)
             }
             .sheet(isPresented: $showingColumnFilter) {
@@ -727,6 +728,7 @@ struct PlayerProfileView: View {
                   let seasons = career.seasons, !seasons.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
                 careerToolbar
+                leaderLegend
                 pitchingCareerTable(seasons: seasons)
             }
             .sheet(isPresented: $showingColumnFilter) {
@@ -759,6 +761,33 @@ struct PlayerProfileView: View {
                     .foregroundStyle(.secondary)
             }
             .accessibilityLabel("Choose columns")
+        }
+        .padding(.horizontal, 4)
+    }
+
+    /// Compact one-line legend explaining the gold-tinted leader cells.
+    /// Two colored dots + caption labels, secondary tone — sits between
+    /// the column-filter row and the career table on both batting and
+    /// pitching tabs.
+    private var leaderLegend: some View {
+        HStack(spacing: 14) {
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(LeaderTint.league)
+                    .frame(width: 7, height: 7)
+                Text("League leader")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(LeaderTint.majors)
+                    .frame(width: 7, height: 7)
+                Text("Majors leader")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
         }
         .padding(.horizontal, 4)
     }
@@ -1625,12 +1654,21 @@ private struct PitchingCareerScrollableTotalsRow: View {
 
 // MARK: - League-leader cells
 
+/// Tint colors used to mark league/majors leaders. Muted gold for a
+/// single-league lead, brighter gold for a majors lead — readable in a
+/// monospaced numeric table without being garish, and the same shade
+/// the legend dot uses so the colors map 1:1.
+private enum LeaderTint {
+    static let league = Color(red: 0.8, green: 0.6, blue: 0.1)
+    static let majors = Color(red: 0.9, green: 0.7, blue: 0.0)
+}
+
 /// Builds the standard "career-row stat cell" — `.frame(width:, alignment:)
 /// .monospacedDigit().padding(.horizontal, 2)` — and applies the leadership
-/// styling: `.bold()` if the player led their league in that stat that
-/// season, `.bold().italic()` if they led the majors. Pass-through to a
-/// plain Text when the leaders dict has no entry for `label` (the common
-/// case for any given cell).
+/// styling: `.bold()` + muted gold if the player led their league in that
+/// stat that season, `.bold().italic()` + brighter gold if they led the
+/// majors. Pass-through to a plain primary-color Text when the leaders
+/// dict has no entry for `label` (the common case for any given cell).
 @ViewBuilder
 private func leaderCell(
     _ value: String,
@@ -1639,9 +1677,12 @@ private func leaderCell(
     width: CGFloat
 ) -> some View {
     let kind = leaders?[label]
+    let tint: Color = kind == "majors" ? LeaderTint.majors :
+                      kind == "league" ? LeaderTint.league : .primary
     Text(value)
         .bold(kind != nil)
         .italic(kind == "majors")
+        .foregroundStyle(tint)
         .frame(width: width, alignment: .trailing)
         .monospacedDigit()
         .padding(.horizontal, 2)
