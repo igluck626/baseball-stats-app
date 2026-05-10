@@ -239,6 +239,13 @@ struct CareerSeason: Codable, Identifiable, Hashable {
     let runs_above_avg: Double?
     let runs_above_rep: Double?
 
+    /// Per-stat league/majors leadership flags computed by the backend.
+    /// Keyed by user-facing stat label ("AVG", "HR", "2B", "WAR" …).
+    /// Value is "league" if the player led their league that year and
+    /// "majors" if they led both leagues combined. Empty dict for
+    /// seasons without league info or seasons with no leading stats.
+    let leaders: [String: String]?
+
     /// Stable per-row id for SwiftUI lists. Year is unique within a player's
     /// career in the season-totals view, so it works as the identifier.
     var id: Int { year ?? 0 }
@@ -371,6 +378,11 @@ struct PitcherCareerSeason: Codable, Identifiable, Hashable {
     let ERA_plus: Double?
     let runs_above_avg: Double?
     let runs_above_rep: Double?
+
+    /// Per-stat league/majors leadership flags. Same shape and semantics
+    /// as `CareerSeason.leaders` — keyed by user-facing label
+    /// ("ERA", "SO", "W", "WHIP", "SV", "IP", "WAR").
+    let leaders: [String: String]?
 
     var id: Int { year ?? 0 }
 }

@@ -32,7 +32,7 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 # or backend/api (local venv).
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, case, func, or_
 
 from database import connection, crud
 from database.models import PitcherSeason as _PitcherSeason
@@ -464,6 +464,151 @@ def get_current_stats(player_id: int) -> Optional[dict]:
     }
 
 
+# ---------------------------------------------------------------------------
+# League-leader detection for career stat tables
+# ---------------------------------------------------------------------------
+# Per-season "did this player lead the league / majors?" flags. The career
+# endpoints attach a `leaders` dict per season row mapping stat label →
+# "league" or "majors" so the iOS table can bold (league) and bold-italic
+# (majors) the matching cell.
+#
+# Catalog entries: (api_label, db_column, sort_direction, qualifier)
+#   - api_label is the dict key the iOS row looks up — also the user-facing
+#     stat name. AVG / 2B / 3B differ from the DB column.
+#   - sort_direction is "max" for higher-is-better stats and "min" for
+#     ERA / WHIP where lower wins.
+#   - qualifier is "PA" / "IP" / None and gates which rows are eligible
+#     to "lead" — re-uses the same pro-rated thresholds as the leaderboard.
+_LEADER_BATTING_STATS: list[tuple[str, str, str, Optional[str]]] = [
+    ("AVG", "BA",      "max", "PA"),
+    ("HR",  "HR",      "max", None),
+    ("RBI", "RBI",     "max", None),
+    ("OPS", "OPS",     "max", "PA"),
+    ("H",   "H",       "max", None),
+    ("R",   "R",       "max", None),
+    ("SB",  "SB",      "max", None),
+    ("BB",  "BB",      "max", None),
+    ("OBP", "OBP",     "max", "PA"),
+    ("SLG", "SLG",     "max", "PA"),
+    ("WAR", "WAR",     "max", None),
+    ("2B",  "doubles", "max", None),
+    ("3B",  "triples", "max", None),
+    # bbref still tracks SO leadership even though striking out the most
+    # is "anti-leading"; mirror their convention so we can bold it the
+    # same way they do.
+    ("SO",  "SO",      "max", None),
+]
+_LEADER_PITCHING_STATS: list[tuple[str, str, str, Optional[str]]] = [
+    ("ERA",  "ERA",  "min", "IP"),
+    ("SO",   "SO",   "max", None),
+    ("W",    "W",    "max", None),
+    ("WHIP", "WHIP", "min", "IP"),
+    ("SV",   "SV",   "max", None),
+    ("IP",   "IP",   "max", None),
+    ("WAR",  "WAR",  "max", None),
+]
+
+
+def _leader_extremes(
+    db,
+    table,
+    year: int,
+    league: Optional[str],
+    catalog: list[tuple[str, str, str, Optional[str]]],
+    min_pa: int,
+    min_ip: float,
+) -> dict[str, object]:
+    """One SQL pass that returns the {api_label → extreme value} for every
+    stat in `catalog` over the given (year, league) slice. League=None
+    targets the whole majors. Rate-stat extremes are computed only over
+    rows that meet the PA / IP qualifier — `case` filters those rows
+    inside the aggregate, so a single 1-AB pinch hitter never wins AVG.
+    """
+    selects = []
+    for _, column_name, agg, qualifier in catalog:
+        col = getattr(table, column_name)
+        extreme_fn = func.max if agg == "max" else func.min
+        if qualifier == "PA":
+            expr = extreme_fn(case(
+                (and_(table.PA.isnot(None), table.PA >= min_pa), col),
+                else_=None,
+            ))
+        elif qualifier == "IP":
+            expr = extreme_fn(case(
+                (and_(table.IP.isnot(None), table.IP >= min_ip), col),
+                else_=None,
+            ))
+        else:
+            expr = extreme_fn(col)
+        # Aliased with the DB column name so we can read each result by
+        # attribute. SQL aliases must be valid identifiers — labels like
+        # "2B" and "3B" can't be used directly.
+        selects.append(expr.label(f"x_{column_name}"))
+
+    q = db.query(*selects).filter(table.year == year)
+    if league:
+        q = q.filter(table.league == league)
+    row = q.one()
+    return {
+        api_label: getattr(row, f"x_{column_name}")
+        for (api_label, column_name, _, _) in catalog
+    }
+
+
+def _season_leaders(
+    db,
+    season: dict,
+    table,
+    catalog: list[tuple[str, str, str, Optional[str]]],
+    extremes_cache: dict,
+    qualifier_cache: dict,
+) -> dict[str, str]:
+    """Return {api_label: 'league' | 'majors'} for every catalog stat the
+    player tied or led that season. Empty dict for seasons missing year
+    or league. Caches extremes per (year, league) and qualifier
+    thresholds per year so a 22-season career resolves with at most
+    `2 × seasons` extremes queries plus one qualifier query per year."""
+    year   = season.get("year")
+    league = season.get("league")
+    if year is None:
+        return {}
+
+    if year not in qualifier_cache:
+        qualifier_cache[year] = _qualifier_thresholds(db, year)
+    min_pa, min_ip = qualifier_cache[year]
+
+    def cached_extremes(scope_league: Optional[str]) -> dict:
+        key = (year, scope_league or "__majors__")
+        if key not in extremes_cache:
+            extremes_cache[key] = _leader_extremes(
+                db, table, year, scope_league, catalog, min_pa, min_ip,
+            )
+        return extremes_cache[key]
+
+    league_extremes = cached_extremes(league) if league else {}
+    majors_extremes = cached_extremes(None)
+
+    leaders: dict[str, str] = {}
+    eps = 1e-9
+    for api_label, column_name, _, _ in catalog:
+        # The season dict is built from the DB row, so key under the
+        # column name. AVG / 2B / 3B store as BA / doubles / triples.
+        raw_value = season.get(column_name)
+        if raw_value is None:
+            continue
+        try:
+            v = float(raw_value)
+        except (TypeError, ValueError):
+            continue
+        majors_v = majors_extremes.get(api_label)
+        league_v = league_extremes.get(api_label)
+        if majors_v is not None and abs(v - float(majors_v)) <= eps:
+            leaders[api_label] = "majors"
+        elif league_v is not None and abs(v - float(league_v)) <= eps:
+            leaders[api_label] = "league"
+    return leaders
+
+
 def get_career_stats(player_id: int) -> Optional[dict]:
     """Return season-by-season batting stats for a player's career, from DB only."""
     if not connection.db_available():
@@ -477,6 +622,18 @@ def get_career_stats(player_id: int) -> Optional[dict]:
         player = crud.get_player(db, player_id)
         name = player.name if player else None
         bio = _bio_dict(player, db)
+
+        # Compute league/majors leadership per season inside the
+        # session — _season_leaders issues its SQL through `db`. Caches
+        # are scoped per request so multi-year careers don't duplicate
+        # year-level work.
+        extremes_cache: dict = {}
+        qualifier_cache: dict = {}
+        for s in seasons:
+            s["leaders"] = _season_leaders(
+                db, s, _PlayerSeason, _LEADER_BATTING_STATS,
+                extremes_cache, qualifier_cache,
+            )
 
     seasons_with_counting = [s for s in seasons if s.get("H") is not None]
     career_totals: dict = {
@@ -586,6 +743,15 @@ def get_career_pitching_stats(player_id: int) -> Optional[dict]:
         pitcher = crud.get_pitcher(db, player_id)
         name = pitcher.name if pitcher else None
         bio = _bio_dict(pitcher, db)
+
+        # See `get_career_stats` for the same leaders pattern.
+        extremes_cache: dict = {}
+        qualifier_cache: dict = {}
+        for s in seasons:
+            s["leaders"] = _season_leaders(
+                db, s, _PitcherSeason, _LEADER_PITCHING_STATS,
+                extremes_cache, qualifier_cache,
+            )
 
     return {
         "player_id":     player_id,

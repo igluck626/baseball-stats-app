@@ -1231,30 +1231,30 @@ private struct BattingCareerScrollableSeasonRow: View {
     let visible: Set<String>
 
     var body: some View {
+        let l = season.leaders
         HStack(spacing: 0) {
             // Core
-            Text(formatWAR(season.WAR))
-                .frame(width: BattingCareerColumn.war, alignment: .trailing)
-                .monospacedDigit()
-                .padding(.horizontal, 2)
+            leaderCell(formatWAR(season.WAR),    label: "WAR", leaders: l, width: BattingCareerColumn.war)
             Text(formatCount(season.G)) .frame(width: BattingCareerColumn.g,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             Text(formatCount(season.PA)).frame(width: BattingCareerColumn.pa, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             Text(formatCount(season.AB)).frame(width: BattingCareerColumn.ab, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            // Optional
-            if visible.contains("R")    { Text(formatCount(season.R))      .frame(width: BattingCareerColumn.r,       alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
-            if visible.contains("H")    { Text(formatCount(season.H))      .frame(width: BattingCareerColumn.h,       alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
-            if visible.contains("2B")   { Text(formatCount(season.doubles)).frame(width: BattingCareerColumn.doubles, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
-            if visible.contains("3B")   { Text(formatCount(season.triples)).frame(width: BattingCareerColumn.triples, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
-            if visible.contains("HR")   { Text(formatCount(season.HR))     .frame(width: BattingCareerColumn.hr,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
-            if visible.contains("RBI")  { Text(formatCount(season.RBI))    .frame(width: BattingCareerColumn.rbi,     alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
-            if visible.contains("SB")   { Text(formatCount(season.SB))     .frame(width: BattingCareerColumn.sb,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            // Optional. Tracked-by-bbref leadership stats use leaderCell;
+            // CS / OPS+ / TB / GIDP / HBP / SH / SF / IBB aren't on the
+            // leaderboard catalog and stay as plain Text.
+            if visible.contains("R")    { leaderCell(formatCount(season.R),       label: "R",   leaders: l, width: BattingCareerColumn.r) }
+            if visible.contains("H")    { leaderCell(formatCount(season.H),       label: "H",   leaders: l, width: BattingCareerColumn.h) }
+            if visible.contains("2B")   { leaderCell(formatCount(season.doubles), label: "2B",  leaders: l, width: BattingCareerColumn.doubles) }
+            if visible.contains("3B")   { leaderCell(formatCount(season.triples), label: "3B",  leaders: l, width: BattingCareerColumn.triples) }
+            if visible.contains("HR")   { leaderCell(formatCount(season.HR),      label: "HR",  leaders: l, width: BattingCareerColumn.hr) }
+            if visible.contains("RBI")  { leaderCell(formatCount(season.RBI),     label: "RBI", leaders: l, width: BattingCareerColumn.rbi) }
+            if visible.contains("SB")   { leaderCell(formatCount(season.SB),      label: "SB",  leaders: l, width: BattingCareerColumn.sb) }
             if visible.contains("CS")   { Text(formatCount(season.CS))     .frame(width: BattingCareerColumn.cs,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
-            if visible.contains("BB")   { Text(formatCount(season.BB))     .frame(width: BattingCareerColumn.bb,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
-            if visible.contains("SO")   { Text(formatCount(season.SO))     .frame(width: BattingCareerColumn.so,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
-            if visible.contains("AVG")  { Text(format3(season.BA))         .frame(width: BattingCareerColumn.ba,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
-            if visible.contains("OBP")  { Text(format3(season.OBP))        .frame(width: BattingCareerColumn.obp,     alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
-            if visible.contains("SLG")  { Text(format3(season.SLG))        .frame(width: BattingCareerColumn.slg,     alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
-            if visible.contains("OPS")  { Text(format3(season.OPS))        .frame(width: BattingCareerColumn.ops,     alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("BB")   { leaderCell(formatCount(season.BB),      label: "BB",  leaders: l, width: BattingCareerColumn.bb) }
+            if visible.contains("SO")   { leaderCell(formatCount(season.SO),      label: "SO",  leaders: l, width: BattingCareerColumn.so) }
+            if visible.contains("AVG")  { leaderCell(format3(season.BA),          label: "AVG", leaders: l, width: BattingCareerColumn.ba) }
+            if visible.contains("OBP")  { leaderCell(format3(season.OBP),         label: "OBP", leaders: l, width: BattingCareerColumn.obp) }
+            if visible.contains("SLG")  { leaderCell(format3(season.SLG),         label: "SLG", leaders: l, width: BattingCareerColumn.slg) }
+            if visible.contains("OPS")  { leaderCell(format3(season.OPS),         label: "OPS", leaders: l, width: BattingCareerColumn.ops) }
             if visible.contains("OPS+") {
                 Text(formatRoundedInt(season.OPS_plus))
                     .frame(width: BattingCareerColumn.opsPlus, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
@@ -1497,19 +1497,19 @@ private struct PitchingCareerScrollableSeasonRow: View {
     let visible: Set<String>
 
     var body: some View {
+        let l = season.leaders
         HStack(spacing: 0) {
             // Core
-            Text(formatWAR(season.WAR))
-                .frame(width: PitchingCareerColumn.war, alignment: .trailing)
-                .monospacedDigit().padding(.horizontal, 2)
-            // Optional
-            if visible.contains("W")     { Text(formatCount(season.W)).frame(width: PitchingCareerColumn.w, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            leaderCell(formatWAR(season.WAR), label: "WAR", leaders: l, width: PitchingCareerColumn.war)
+            // Optional. Pitching leadership stats per bbref: ERA, SO, W,
+            // WHIP, SV, IP, WAR. Everything else stays plain Text.
+            if visible.contains("W")     { leaderCell(formatCount(season.W), label: "W", leaders: l, width: PitchingCareerColumn.w) }
             if visible.contains("L")     { Text(formatCount(season.L)).frame(width: PitchingCareerColumn.l, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
             if visible.contains("W-L%")  {
                 Text(formatWinPct(w: season.W, l: season.L))
                     .frame(width: PitchingCareerColumn.wlPct, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             }
-            if visible.contains("ERA")   { Text(format2(season.ERA)).frame(width: PitchingCareerColumn.era, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("ERA")   { leaderCell(format2(season.ERA), label: "ERA", leaders: l, width: PitchingCareerColumn.era) }
             // Core
             Text(formatCount(season.G)).frame(width: PitchingCareerColumn.g, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             // Optional
@@ -1520,15 +1520,15 @@ private struct PitchingCareerScrollableSeasonRow: View {
             if visible.contains("GF")    { Text(formatCountOrZero(season.GF)).frame(width: PitchingCareerColumn.gf,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
             if visible.contains("CG")    { Text(formatCountOrZero(season.CG)).frame(width: PitchingCareerColumn.cg,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
             if visible.contains("SHO")   { Text(formatCountOrZero(season.SHO)).frame(width: PitchingCareerColumn.sho, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
-            if visible.contains("SV")    { Text(formatCountOrZero(season.SV)).frame(width: PitchingCareerColumn.sv,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
-            if visible.contains("IP")    { Text(formatIP(season.IP)).frame(width: PitchingCareerColumn.ip, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("SV")    { leaderCell(formatCountOrZero(season.SV), label: "SV", leaders: l, width: PitchingCareerColumn.sv) }
+            if visible.contains("IP")    { leaderCell(formatIP(season.IP),          label: "IP", leaders: l, width: PitchingCareerColumn.ip) }
             if visible.contains("H")     { Text(formatCount(season.H)).frame(width: PitchingCareerColumn.h, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
             if visible.contains("R")     { Text(formatCount(season.R)).frame(width: PitchingCareerColumn.r, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
             if visible.contains("ER")    { Text(formatCount(season.ER)).frame(width: PitchingCareerColumn.er, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
             if visible.contains("HR")    { Text(formatCount(season.HR)).frame(width: PitchingCareerColumn.hr, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
             if visible.contains("BB")    { Text(formatCount(season.BB)).frame(width: PitchingCareerColumn.bb, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
             if visible.contains("IBB")   { Text(formatCount(season.IBB)).frame(width: PitchingCareerColumn.ibb, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
-            if visible.contains("SO")    { Text(formatCount(season.SO)).frame(width: PitchingCareerColumn.so, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("SO")    { leaderCell(formatCount(season.SO), label: "SO", leaders: l, width: PitchingCareerColumn.so) }
             if visible.contains("HBP")   { Text(formatCountOrZero(season.HBP)).frame(width: PitchingCareerColumn.hbp, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
             if visible.contains("BK")    { Text(formatCountOrZero(season.BK)).frame(width: PitchingCareerColumn.bk, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
             if visible.contains("WP")    { Text(formatCountOrZero(season.WP)).frame(width: PitchingCareerColumn.wp, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
@@ -1538,7 +1538,7 @@ private struct PitchingCareerScrollableSeasonRow: View {
                     .frame(width: PitchingCareerColumn.eraPlus, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             }
             if visible.contains("FIP")   { Text(format2(season.FIP)).frame(width: PitchingCareerColumn.fip, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
-            if visible.contains("WHIP")  { Text(format2(season.WHIP)).frame(width: PitchingCareerColumn.whip, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("WHIP")  { leaderCell(format2(season.WHIP), label: "WHIP", leaders: l, width: PitchingCareerColumn.whip) }
             // H/9 isn't stored — derive on-device. The HR/9, BB/9, SO/9
             // values are stored on the season and used directly.
             if visible.contains("H/9")   {
@@ -1621,6 +1621,30 @@ private struct PitchingCareerScrollableTotalsRow: View {
         .background(Color(.systemGray5).opacity(0.7))
         .overlay(alignment: .top) { Divider() }
     }
+}
+
+// MARK: - League-leader cells
+
+/// Builds the standard "career-row stat cell" — `.frame(width:, alignment:)
+/// .monospacedDigit().padding(.horizontal, 2)` — and applies the leadership
+/// styling: `.bold()` if the player led their league in that stat that
+/// season, `.bold().italic()` if they led the majors. Pass-through to a
+/// plain Text when the leaders dict has no entry for `label` (the common
+/// case for any given cell).
+@ViewBuilder
+private func leaderCell(
+    _ value: String,
+    label: String,
+    leaders: [String: String]?,
+    width: CGFloat
+) -> some View {
+    let kind = leaders?[label]
+    Text(value)
+        .bold(kind != nil)
+        .italic(kind == "majors")
+        .frame(width: width, alignment: .trailing)
+        .monospacedDigit()
+        .padding(.horizontal, 2)
 }
 
 // MARK: - Formatters
