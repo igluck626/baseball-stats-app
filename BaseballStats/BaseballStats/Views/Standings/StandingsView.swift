@@ -205,7 +205,7 @@ private struct DivisionCard: View {
                 }
             }
         }
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
     }
 }
 

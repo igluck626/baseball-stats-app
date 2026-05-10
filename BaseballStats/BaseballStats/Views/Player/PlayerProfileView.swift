@@ -129,7 +129,7 @@ struct PlayerProfileView: View {
                     .scaledToFill()
             } placeholder: {
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.gray.opacity(0.15))
+                    .fill(Color(.secondarySystemFill))
             }
             .frame(width: 90, height: 110)
             .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -189,8 +189,7 @@ struct PlayerProfileView: View {
             Spacer(minLength: 0)
         }
         .padding(16)
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
         .padding(.horizontal, 16)
         .padding(.top, 8)
     }
@@ -605,7 +604,7 @@ struct PlayerProfileView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity)
-        .background(cardBackground(style))
+        .glassEffect(glassFor(style), in: RoundedRectangle(cornerRadius: 20))
         .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 2)
     }
 
@@ -629,17 +628,15 @@ struct PlayerProfileView: View {
         }
     }
 
-    /// Background fill for a stats grid card. @ViewBuilder so the two
-    /// branches can return different concrete types (filled white vs.
-    /// material-filled rounded rect).
-    @ViewBuilder
-    private func cardBackground(_ style: CardStyle) -> some View {
-        let shape = RoundedRectangle(cornerRadius: 20)
+    /// Liquid-glass variant for a stats grid card. The current-season
+    /// card carries a faint accent tint to read as the headline; the
+    /// standard variant is plain regular glass. Replaces the previous
+    /// non-adaptive `Color.white.opacity(0.8)` fill, which broke in
+    /// dark mode.
+    private func glassFor(_ style: CardStyle) -> Glass {
         switch style {
-        case .current:
-            shape.fill(Color.white.opacity(0.8))
-        case .standard:
-            shape.fill(.ultraThinMaterial)
+        case .current:  return .regular.tint(Color.accentColor.opacity(0.18))
+        case .standard: return .regular
         }
     }
 
@@ -657,7 +654,7 @@ struct PlayerProfileView: View {
         }
         .padding(24)
         .frame(maxWidth: .infinity)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20))
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20))
     }
 
     private func errorCard(_ message: String) -> some View {
@@ -675,14 +672,14 @@ struct PlayerProfileView: View {
         }
         .padding(24)
         .frame(maxWidth: .infinity)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20))
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20))
     }
 
     private var loadingCard: some View {
         ProgressView()
             .controlSize(.large)
             .frame(maxWidth: .infinity, minHeight: 180)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20))
+            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20))
     }
 
     // MARK: - Career
@@ -846,8 +843,7 @@ struct PlayerProfileView: View {
             }
         }
         .frame(maxWidth: .infinity)
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
     }
 
     private func pitchingCareerTable(seasons: [PitcherCareerSeason]) -> some View {
@@ -904,8 +900,7 @@ struct PlayerProfileView: View {
             }
         }
         .frame(maxWidth: .infinity)
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
     }
 
     // MARK: - Game Logs
@@ -2006,6 +2001,11 @@ struct ColumnFilterSheet: View {
                     }
                 }
             }
+            // Hide the default opaque grouped background so the sheet's
+            // glass shows through the form. iOS 26's Form/Section + Toggle
+            // styling already reads as native glass with the standard
+            // .insetGrouped material; this just lets it actually be glass.
+            .scrollContentBackground(.hidden)
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -2018,6 +2018,12 @@ struct ColumnFilterSheet: View {
                 }
             }
         }
+        // Liquid-glass sheet chrome — translucent backdrop with the
+        // standard slide-up animation. medium + large detents let the
+        // user dismiss with a swipe instead of always tapping Done.
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .presentationBackground(.regularMaterial)
     }
 
     private func binding(for key: String) -> Binding<Bool> {

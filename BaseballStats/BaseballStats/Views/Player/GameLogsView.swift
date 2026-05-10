@@ -149,7 +149,7 @@ struct GameLogsView: View {
         // Overview cards (which also use .frame(maxWidth: .infinity)
         // before their material background).
         .frame(maxWidth: .infinity)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
     }
 
     /// Order in which split rows are rendered.
@@ -391,7 +391,7 @@ struct GameLogsView: View {
         }
         // Stretch to parent width — same reasoning as splitsTable.
         .frame(maxWidth: .infinity)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
     }
 
     @ViewBuilder

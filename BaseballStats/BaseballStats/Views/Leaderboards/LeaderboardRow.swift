@@ -94,7 +94,7 @@ struct LeaderboardRow: View {
                 .scaledToFill()
         } placeholder: {
             RoundedRectangle(cornerRadius: 6)
-                .fill(Color.gray.opacity(0.15))
+                .fill(Color(.secondarySystemFill))
         }
         .frame(width: 50, height: 60)
         .clipShape(RoundedRectangle(cornerRadius: 6))

@@ -184,10 +184,7 @@ struct LeaderboardsView: View {
             .foregroundStyle(.primary)
             .padding(.horizontal, 12)
             .padding(.vertical, 9)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(Color(.systemGray5))
-            )
+            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 10))
         }
     }
 
@@ -208,7 +205,7 @@ struct LeaderboardsView: View {
             .foregroundStyle(.primary)
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
-            .background(Capsule().fill(Color(.systemGray5)))
+            .glassEffect(.regular, in: Capsule())
         }
     }
 
