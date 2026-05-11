@@ -64,6 +64,21 @@ log = logging.getLogger(__name__)
 # Batting (PlayerSeason)
 # ---------------------------------------------------------------------------
 
+def _safe_tb(br) -> int | None:
+    """TB = H + 2·doubles + 3·triples + 4·HR. Returns None when H is
+    missing on the bref row (and so the formula isn't computable).
+    Treats null component fields as 0 so a single null 3B doesn't blow
+    away the whole row's TB."""
+    h = data_service._safe(br["H"]) if "H" in br.index else None
+    if h is None:
+        return None
+    dbl = data_service._safe(br["2B"]) or 0 if "2B" in br.index else 0
+    trp = data_service._safe(br["3B"]) or 0 if "3B" in br.index else 0
+    hr  = data_service._safe(br["HR"]) or 0 if "HR" in br.index else 0
+    return int(h + dbl + 2 * trp + 3 * hr)
+
+
+
 def _build_current_batter_entry(player_id: int, bref_df, bwar_current, current_year: int) -> dict | None:
     """Build a player_seasons row for the current year, or None if no data."""
     player_bref = bref_df[bref_df["mlbID"] == player_id]
@@ -128,6 +143,10 @@ def _build_current_batter_entry(player_id: int, bref_df, bwar_current, current_y
             "GIDP":    data_service._safe_col(br, "GIDP")
                        if "GIDP" in br.index
                        else data_service._safe_col(br, "GDP"),
+            # TB = H + 2·doubles + 3·triples + 4·HR. Computed from the
+            # bref row's own component values so the nightly upserts
+            # carry TB even before the init_db backfill runs.
+            "TB":      _safe_tb(br),
             **data_service._batting_derived(br),
         })
 

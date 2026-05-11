@@ -220,6 +220,11 @@ struct CareerSeason: Codable, Identifiable, Hashable {
     let SH: Int?
     let SF: Int?
     let GIDP: Int?
+    /// Total bases — H + 2·2B + 3·3B + 4·HR. Stored on player_seasons
+    /// (backfilled by init_db for historical rows); older API
+    /// responses that predate the column return nil and the view
+    /// falls back to deriving the value on-device.
+    let TB: Int?
 
     let BA: Double?
     let OBP: Double?

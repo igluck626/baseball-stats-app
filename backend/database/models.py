@@ -65,6 +65,11 @@ class PlayerSeason(Base):
     SO             = Column(Integer)
     SB             = Column(Integer)
     CS             = Column(Integer)
+    # Derived from H + 2*doubles + 3*triples + 4*HR, but stored as a
+    # column so the leaderboard / leader-detection queries can target
+    # it directly (no SQL expression in the aggregate, no missing
+    # leader entry on the iOS career table).
+    TB             = Column(Integer)
     BA             = Column(Float)
     OBP            = Column(Float)
     SLG            = Column(Float)

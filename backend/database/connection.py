@@ -80,6 +80,7 @@ _PLAYER_SEASONS_NEW_COLUMNS: list[tuple[str, str]] = [
     ("SF",   "INTEGER"),
     ("SH",   "INTEGER"),
     ("GIDP", "INTEGER"),
+    ("TB",   "INTEGER"),
 ]
 _PITCHER_SEASONS_NEW_COLUMNS: list[tuple[str, str]] = [
     ("CG",    "INTEGER"),
@@ -298,4 +299,46 @@ def init_db() -> dict:
             idx.create(bind=_engine, checkfirst=True)
             summary["indexes_created"].append(idx.name)
 
+    # 4. One-time backfills for derived columns. Each helper is
+    #    idempotent — it only touches rows whose derived column is
+    #    NULL but whose inputs are present. Safe to call on every
+    #    deploy; once the historical rows are filled it's a no-op.
+    tb_filled = _backfill_player_seasons_tb()
+    if tb_filled:
+        summary.setdefault("backfilled", {})["player_seasons.TB"] = tb_filled
+
     return summary
+
+
+def _backfill_player_seasons_tb() -> int:
+    """Fill player_seasons.TB for rows where it's NULL but H is known.
+    TB = H + 2·doubles + 3·triples + 4·HR (formula expressed with the
+    canonical "singles + 2·2B + 3·3B + 4·HR" identity:
+    H - 2B - 3B - HR + 2·2B + 3·3B + 4·HR = H + 2B + 2·3B + 3·HR).
+    Returns the number of rows updated. Idempotent — re-runs do
+    nothing once TB is populated everywhere.
+    """
+    if _engine is None:
+        return 0
+    inspector = inspect(_engine)
+    if "player_seasons" not in inspector.get_table_names():
+        return 0
+    columns = {c["name"] for c in inspector.get_columns("player_seasons")}
+    if "TB" not in columns:
+        return 0
+    # Postgres + SQLite both accept this UPDATE; quoting "TB" /
+    # "doubles" / "triples" / "HR" is required so Postgres preserves
+    # the mixed case (init_db ALTER TABLE writes them quoted, and the
+    # SQLAlchemy model expects them that way).
+    sql = text("""
+        UPDATE player_seasons
+           SET "TB" = COALESCE("H", 0)
+                    + COALESCE("doubles", 0)
+                    + 2 * COALESCE("triples", 0)
+                    + 3 * COALESCE("HR", 0)
+         WHERE "TB" IS NULL
+           AND "H" IS NOT NULL
+    """)
+    with _engine.begin() as conn:
+        result = conn.execute(sql)
+        return result.rowcount or 0

@@ -1293,10 +1293,10 @@ private struct BattingCareerScrollableSeasonRow: View {
             Text(formatCount(season.PA)).frame(width: BattingCareerColumn.pa, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             Text(formatCount(season.AB)).frame(width: BattingCareerColumn.ab, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             // Optional. Every stat in _LEADER_BATTING_STATS uses
-            // leaderCell; TB is the only column rendered here that
-            // stays as plain Text since it isn't stored as a DB column
-            // and so the backend can't produce a leaders entry for it
-            // without an expression-based catalog refactor.
+            // leaderCell — including TB, which is now stored on
+            // player_seasons (with an init_db backfill for historical
+            // rows). seasonTB() falls back to on-device derivation
+            // for any pre-backfill rows.
             if visible.contains("R")    { leaderCell(formatCount(season.R),       label: "R",    leaders: l, width: BattingCareerColumn.r) }
             if visible.contains("H")    { leaderCell(formatCount(season.H),       label: "H",    leaders: l, width: BattingCareerColumn.h) }
             if visible.contains("2B")   { leaderCell(formatCount(season.doubles), label: "2B",   leaders: l, width: BattingCareerColumn.doubles) }
@@ -1312,7 +1312,7 @@ private struct BattingCareerScrollableSeasonRow: View {
             if visible.contains("SLG")  { leaderCell(format3(season.SLG),         label: "SLG",  leaders: l, width: BattingCareerColumn.slg) }
             if visible.contains("OPS")  { leaderCell(format3(season.OPS),         label: "OPS",  leaders: l, width: BattingCareerColumn.ops) }
             if visible.contains("OPS+") { leaderCell(formatRoundedInt(season.OPS_plus), label: "OPS+", leaders: l, width: BattingCareerColumn.opsPlus) }
-            if visible.contains("TB")   { Text(formatCount(seasonTB(season))).frame(width: BattingCareerColumn.tb, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("TB")   { leaderCell(formatCount(seasonTB(season)), label: "TB", leaders: l, width: BattingCareerColumn.tb) }
             if visible.contains("GIDP") { leaderCell(formatCount(season.GIDP),    label: "GIDP", leaders: l, width: BattingCareerColumn.gidp) }
             if visible.contains("HBP")  { leaderCell(formatCount(season.HBP),     label: "HBP",  leaders: l, width: BattingCareerColumn.hbp) }
             if visible.contains("SH")   { leaderCell(formatCount(season.SH),      label: "SH",   leaders: l, width: BattingCareerColumn.sh) }
@@ -1771,6 +1771,12 @@ private func formatAge(seasonYear: Int?, birthYear: Int?, birthMonth: Int?, birt
 /// since 1B = h − 2B − 3B − HR. Returns nil when H is missing (older
 /// Lahman seasons sometimes lack any batting counting stats).
 private func seasonTB(_ s: CareerSeason) -> Int? {
+    // Prefer the stored value from the backend so it stays in sync
+    // with the league-leader detection (which reads `player_seasons.TB`
+    // directly). Fall back to on-device derivation for older API
+    // responses that predate the TB column or for cases where the
+    // backfill hasn't reached a particular row.
+    if let stored = s.TB { return stored }
     guard let h = s.H else { return nil }
     let dbl = s.doubles ?? 0
     let trp = s.triples ?? 0

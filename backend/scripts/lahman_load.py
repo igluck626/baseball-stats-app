@@ -424,6 +424,12 @@ def _load_batting(
             "SH":      int(agg["SH"]),
             "SF":      int(agg["SF"]),
             "GIDP":    int(agg["GIDP"]),
+            # TB = H + 2·doubles + 3·triples + 4·HR; computed here so
+            # Lahman-historical seasons go in pre-populated rather
+            # than relying on the init_db backfill (which still runs
+            # as a belt-and-suspenders for any nightly-only rows).
+            "TB":      (int(agg["H"]) + int(agg["2B"])
+                        + 2 * int(agg["3B"]) + 3 * int(agg["HR"])),
             **derived,
         }
         by_player_id[mlbam].append(season)

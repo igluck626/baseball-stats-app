@@ -507,10 +507,11 @@ _LEADER_BATTING_STATS: list[tuple[str, str, str, Optional[str]]] = [
     ("SF",   "SF",       "max", None),
     ("IBB",  "IBB",      "max", None),
     ("GIDP", "GIDP",     "max", None),
-    # TB (total bases) is intentionally skipped — it isn't stored as a
-    # column on player_seasons, so the SQL aggregate would need an
-    # expression refactor (H + 2*doubles + 3*triples + 4*HR via a
-    # callable instead of getattr). Revisit if we add a `tb` column.
+    # TB is stored on player_seasons as of the column-add migration in
+    # connection.py — the backfill keeps historical rows in sync. PA
+    # qualifier per spec; can be loosened later if we want a separate
+    # unqualified total-bases category.
+    ("TB",   "TB",       "max", "PA"),
 ]
 _LEADER_PITCHING_STATS: list[tuple[str, str, str, Optional[str]]] = [
     # Rate / derived — IP-qualified.
