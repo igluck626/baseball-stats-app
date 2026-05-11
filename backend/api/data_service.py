@@ -480,32 +480,71 @@ def get_current_stats(player_id: int) -> Optional[dict]:
 #   - qualifier is "PA" / "IP" / None and gates which rows are eligible
 #     to "lead" — re-uses the same pro-rated thresholds as the leaderboard.
 _LEADER_BATTING_STATS: list[tuple[str, str, str, Optional[str]]] = [
-    ("AVG", "BA",      "max", "PA"),
-    ("HR",  "HR",      "max", None),
-    ("RBI", "RBI",     "max", None),
-    ("OPS", "OPS",     "max", "PA"),
-    ("H",   "H",       "max", None),
-    ("R",   "R",       "max", None),
-    ("SB",  "SB",      "max", None),
-    ("BB",  "BB",      "max", None),
-    ("OBP", "OBP",     "max", "PA"),
-    ("SLG", "SLG",     "max", "PA"),
-    ("WAR", "WAR",     "max", None),
-    ("2B",  "doubles", "max", None),
-    ("3B",  "triples", "max", None),
-    # bbref still tracks SO leadership even though striking out the most
-    # is "anti-leading"; mirror their convention so we can bold it the
-    # same way they do.
-    ("SO",  "SO",      "max", None),
+    # Rate / derived
+    ("AVG",  "BA",       "max", "PA"),
+    ("OBP",  "OBP",      "max", "PA"),
+    ("SLG",  "SLG",      "max", "PA"),
+    ("OPS",  "OPS",      "max", "PA"),
+    ("OPS+", "OPS_plus", "max", "PA"),
+    ("WAR",  "WAR",      "max", None),
+    # Counting — primary
+    ("HR",   "HR",       "max", None),
+    ("RBI",  "RBI",      "max", None),
+    ("R",    "R",        "max", None),
+    ("H",    "H",        "max", None),
+    ("2B",   "doubles",  "max", None),
+    ("3B",   "triples",  "max", None),
+    ("SB",   "SB",       "max", None),
+    ("BB",   "BB",       "max", None),
+    # Counting — secondary. bbref still tracks leaders for these even
+    # when the leader-status is "anti-leading" (most strikeouts /
+    # caught-stealings / GIDP) — mirror their convention so we bold
+    # them the same way they do.
+    ("SO",   "SO",       "max", None),
+    ("CS",   "CS",       "max", None),
+    ("HBP",  "HBP",      "max", None),
+    ("SH",   "SH",       "max", None),
+    ("SF",   "SF",       "max", None),
+    ("IBB",  "IBB",      "max", None),
+    ("GIDP", "GIDP",     "max", None),
+    # TB (total bases) is intentionally skipped — it isn't stored as a
+    # column on player_seasons, so the SQL aggregate would need an
+    # expression refactor (H + 2*doubles + 3*triples + 4*HR via a
+    # callable instead of getattr). Revisit if we add a `tb` column.
 ]
 _LEADER_PITCHING_STATS: list[tuple[str, str, str, Optional[str]]] = [
-    ("ERA",  "ERA",  "min", "IP"),
-    ("SO",   "SO",   "max", None),
-    ("W",    "W",    "max", None),
-    ("WHIP", "WHIP", "min", "IP"),
-    ("SV",   "SV",   "max", None),
-    ("IP",   "IP",   "max", None),
-    ("WAR",  "WAR",  "max", None),
+    # Rate / derived — IP-qualified.
+    ("ERA",   "ERA",      "min", "IP"),
+    ("WHIP",  "WHIP",     "min", "IP"),
+    ("FIP",   "FIP",      "min", "IP"),
+    ("ERA+",  "ERA_plus", "max", "IP"),
+    ("BB/9",  "BB_per9",  "min", "IP"),
+    ("HR/9",  "HR_per9",  "min", "IP"),
+    ("SO/9",  "K_per9",   "max", "IP"),
+    ("WAR",   "WAR",      "max", None),
+    # Counting — primary.
+    ("W",     "W",        "max", None),
+    ("SO",    "SO",       "max", None),
+    ("SV",    "SV",       "max", None),
+    ("IP",    "IP",       "max", None),
+    ("GS",    "GS",       "max", None),
+    ("CG",    "CG",       "max", None),
+    ("SHO",   "SHO",      "max", None),
+    # Counting — anti-leader / volume. bbref tracks them; we bold them
+    # the same way (most losses, most ER allowed, etc.).
+    ("L",     "L",        "max", None),
+    ("ER",    "ER",       "max", None),
+    ("HR",    "HR",       "max", None),
+    ("BB",    "BB",       "max", None),
+    ("IBB",   "IBB",      "max", None),
+    ("HBP",   "HBP",      "max", None),
+    ("BK",    "BK",       "max", None),
+    ("WP",    "WP",       "max", None),
+    ("BF",    "BFP",      "max", None),
+    # H/9 and SO/BB are intentionally skipped — they're computed on
+    # the iOS side from H/IP and SO/BB and aren't stored as columns
+    # on pitcher_seasons, so the backend has no column to aggregate
+    # against. W-L% similarly is computed from W and L.
 ]
 
 

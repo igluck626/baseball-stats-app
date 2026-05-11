@@ -1292,33 +1292,32 @@ private struct BattingCareerScrollableSeasonRow: View {
             Text(formatCount(season.G)) .frame(width: BattingCareerColumn.g,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             Text(formatCount(season.PA)).frame(width: BattingCareerColumn.pa, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             Text(formatCount(season.AB)).frame(width: BattingCareerColumn.ab, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            // Optional. Tracked-by-bbref leadership stats use leaderCell;
-            // CS / OPS+ / TB / GIDP / HBP / SH / SF / IBB aren't on the
-            // leaderboard catalog and stay as plain Text.
-            if visible.contains("R")    { leaderCell(formatCount(season.R),       label: "R",   leaders: l, width: BattingCareerColumn.r) }
-            if visible.contains("H")    { leaderCell(formatCount(season.H),       label: "H",   leaders: l, width: BattingCareerColumn.h) }
-            if visible.contains("2B")   { leaderCell(formatCount(season.doubles), label: "2B",  leaders: l, width: BattingCareerColumn.doubles) }
-            if visible.contains("3B")   { leaderCell(formatCount(season.triples), label: "3B",  leaders: l, width: BattingCareerColumn.triples) }
-            if visible.contains("HR")   { leaderCell(formatCount(season.HR),      label: "HR",  leaders: l, width: BattingCareerColumn.hr) }
-            if visible.contains("RBI")  { leaderCell(formatCount(season.RBI),     label: "RBI", leaders: l, width: BattingCareerColumn.rbi) }
-            if visible.contains("SB")   { leaderCell(formatCount(season.SB),      label: "SB",  leaders: l, width: BattingCareerColumn.sb) }
-            if visible.contains("CS")   { Text(formatCount(season.CS))     .frame(width: BattingCareerColumn.cs,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
-            if visible.contains("BB")   { leaderCell(formatCount(season.BB),      label: "BB",  leaders: l, width: BattingCareerColumn.bb) }
-            if visible.contains("SO")   { leaderCell(formatCount(season.SO),      label: "SO",  leaders: l, width: BattingCareerColumn.so) }
-            if visible.contains("AVG")  { leaderCell(format3(season.BA),          label: "AVG", leaders: l, width: BattingCareerColumn.ba) }
-            if visible.contains("OBP")  { leaderCell(format3(season.OBP),         label: "OBP", leaders: l, width: BattingCareerColumn.obp) }
-            if visible.contains("SLG")  { leaderCell(format3(season.SLG),         label: "SLG", leaders: l, width: BattingCareerColumn.slg) }
-            if visible.contains("OPS")  { leaderCell(format3(season.OPS),         label: "OPS", leaders: l, width: BattingCareerColumn.ops) }
-            if visible.contains("OPS+") {
-                Text(formatRoundedInt(season.OPS_plus))
-                    .frame(width: BattingCareerColumn.opsPlus, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            }
-            if visible.contains("TB")   { Text(formatCount(seasonTB(season))).frame(width: BattingCareerColumn.tb,    alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
-            if visible.contains("GIDP") { Text(formatCount(season.GIDP))   .frame(width: BattingCareerColumn.gidp,    alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
-            if visible.contains("HBP")  { Text(formatCount(season.HBP))    .frame(width: BattingCareerColumn.hbp,     alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
-            if visible.contains("SH")   { Text(formatCount(season.SH))     .frame(width: BattingCareerColumn.sh,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
-            if visible.contains("SF")   { Text(formatCount(season.SF))     .frame(width: BattingCareerColumn.sf,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
-            if visible.contains("IBB")  { Text(formatCount(season.IBB))    .frame(width: BattingCareerColumn.ibb,     alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            // Optional. Every stat in _LEADER_BATTING_STATS uses
+            // leaderCell; TB is the only column rendered here that
+            // stays as plain Text since it isn't stored as a DB column
+            // and so the backend can't produce a leaders entry for it
+            // without an expression-based catalog refactor.
+            if visible.contains("R")    { leaderCell(formatCount(season.R),       label: "R",    leaders: l, width: BattingCareerColumn.r) }
+            if visible.contains("H")    { leaderCell(formatCount(season.H),       label: "H",    leaders: l, width: BattingCareerColumn.h) }
+            if visible.contains("2B")   { leaderCell(formatCount(season.doubles), label: "2B",   leaders: l, width: BattingCareerColumn.doubles) }
+            if visible.contains("3B")   { leaderCell(formatCount(season.triples), label: "3B",   leaders: l, width: BattingCareerColumn.triples) }
+            if visible.contains("HR")   { leaderCell(formatCount(season.HR),      label: "HR",   leaders: l, width: BattingCareerColumn.hr) }
+            if visible.contains("RBI")  { leaderCell(formatCount(season.RBI),     label: "RBI",  leaders: l, width: BattingCareerColumn.rbi) }
+            if visible.contains("SB")   { leaderCell(formatCount(season.SB),      label: "SB",   leaders: l, width: BattingCareerColumn.sb) }
+            if visible.contains("CS")   { leaderCell(formatCount(season.CS),      label: "CS",   leaders: l, width: BattingCareerColumn.cs) }
+            if visible.contains("BB")   { leaderCell(formatCount(season.BB),      label: "BB",   leaders: l, width: BattingCareerColumn.bb) }
+            if visible.contains("SO")   { leaderCell(formatCount(season.SO),      label: "SO",   leaders: l, width: BattingCareerColumn.so) }
+            if visible.contains("AVG")  { leaderCell(format3(season.BA),          label: "AVG",  leaders: l, width: BattingCareerColumn.ba) }
+            if visible.contains("OBP")  { leaderCell(format3(season.OBP),         label: "OBP",  leaders: l, width: BattingCareerColumn.obp) }
+            if visible.contains("SLG")  { leaderCell(format3(season.SLG),         label: "SLG",  leaders: l, width: BattingCareerColumn.slg) }
+            if visible.contains("OPS")  { leaderCell(format3(season.OPS),         label: "OPS",  leaders: l, width: BattingCareerColumn.ops) }
+            if visible.contains("OPS+") { leaderCell(formatRoundedInt(season.OPS_plus), label: "OPS+", leaders: l, width: BattingCareerColumn.opsPlus) }
+            if visible.contains("TB")   { Text(formatCount(seasonTB(season))).frame(width: BattingCareerColumn.tb, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("GIDP") { leaderCell(formatCount(season.GIDP),    label: "GIDP", leaders: l, width: BattingCareerColumn.gidp) }
+            if visible.contains("HBP")  { leaderCell(formatCount(season.HBP),     label: "HBP",  leaders: l, width: BattingCareerColumn.hbp) }
+            if visible.contains("SH")   { leaderCell(formatCount(season.SH),      label: "SH",   leaders: l, width: BattingCareerColumn.sh) }
+            if visible.contains("SF")   { leaderCell(formatCount(season.SF),      label: "SF",   leaders: l, width: BattingCareerColumn.sf) }
+            if visible.contains("IBB")  { leaderCell(formatCount(season.IBB),     label: "IBB",  leaders: l, width: BattingCareerColumn.ibb) }
         }
         .font(.system(size: 11))
         .padding(.trailing, 12)
@@ -1555,53 +1554,53 @@ private struct PitchingCareerScrollableSeasonRow: View {
         HStack(spacing: 0) {
             // Core
             leaderCell(formatWAR(season.WAR), label: "WAR", leaders: l, width: PitchingCareerColumn.war)
-            // Optional. Pitching leadership stats per bbref: ERA, SO, W,
-            // WHIP, SV, IP, WAR. Everything else stays plain Text.
-            if visible.contains("W")     { leaderCell(formatCount(season.W), label: "W", leaders: l, width: PitchingCareerColumn.w) }
-            if visible.contains("L")     { Text(formatCount(season.L)).frame(width: PitchingCareerColumn.l, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            // Optional. Every stat in _LEADER_PITCHING_STATS uses
+            // leaderCell. W-L%, H/9, and SO/BB stay as plain Text —
+            // they're derived on-device from W/L, H/IP, and SO/BB so
+            // the backend has no stored column to aggregate leaders
+            // against.
+            if visible.contains("W")     { leaderCell(formatCount(season.W),      label: "W",     leaders: l, width: PitchingCareerColumn.w) }
+            if visible.contains("L")     { leaderCell(formatCount(season.L),      label: "L",     leaders: l, width: PitchingCareerColumn.l) }
             if visible.contains("W-L%")  {
                 Text(formatWinPct(w: season.W, l: season.L))
                     .frame(width: PitchingCareerColumn.wlPct, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             }
-            if visible.contains("ERA")   { leaderCell(format2(season.ERA), label: "ERA", leaders: l, width: PitchingCareerColumn.era) }
+            if visible.contains("ERA")   { leaderCell(format2(season.ERA),         label: "ERA",   leaders: l, width: PitchingCareerColumn.era) }
             // Core
             Text(formatCount(season.G)).frame(width: PitchingCareerColumn.g, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            // Optional
-            if visible.contains("GS")    { Text(formatCount(season.GS)).frame(width: PitchingCareerColumn.gs, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
-            // For modern pitchers GF/CG/SHO/SV are realistically 0 when
-            // the field comes back null (nightly fetched a bref row
-            // without the column), so show "0" rather than "—".
+            // Optional. formatCountOrZero is preserved on GF/CG/SHO/HBP
+            // /BK/WP — modern pitcher rows fetch with null for these
+            // when bref didn't carry the column. leaderCell renders
+            // whatever string we pass it; it doesn't change the
+            // null-to-zero behavior.
+            if visible.contains("GS")    { leaderCell(formatCount(season.GS),       label: "GS",    leaders: l, width: PitchingCareerColumn.gs) }
             if visible.contains("GF")    { Text(formatCountOrZero(season.GF)).frame(width: PitchingCareerColumn.gf,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
-            if visible.contains("CG")    { Text(formatCountOrZero(season.CG)).frame(width: PitchingCareerColumn.cg,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
-            if visible.contains("SHO")   { Text(formatCountOrZero(season.SHO)).frame(width: PitchingCareerColumn.sho, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
-            if visible.contains("SV")    { leaderCell(formatCountOrZero(season.SV), label: "SV", leaders: l, width: PitchingCareerColumn.sv) }
-            if visible.contains("IP")    { leaderCell(formatIP(season.IP),          label: "IP", leaders: l, width: PitchingCareerColumn.ip) }
+            if visible.contains("CG")    { leaderCell(formatCountOrZero(season.CG), label: "CG",    leaders: l, width: PitchingCareerColumn.cg) }
+            if visible.contains("SHO")   { leaderCell(formatCountOrZero(season.SHO), label: "SHO",  leaders: l, width: PitchingCareerColumn.sho) }
+            if visible.contains("SV")    { leaderCell(formatCountOrZero(season.SV),  label: "SV",    leaders: l, width: PitchingCareerColumn.sv) }
+            if visible.contains("IP")    { leaderCell(formatIP(season.IP),          label: "IP",    leaders: l, width: PitchingCareerColumn.ip) }
             if visible.contains("H")     { Text(formatCount(season.H)).frame(width: PitchingCareerColumn.h, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
             if visible.contains("R")     { Text(formatCount(season.R)).frame(width: PitchingCareerColumn.r, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
-            if visible.contains("ER")    { Text(formatCount(season.ER)).frame(width: PitchingCareerColumn.er, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
-            if visible.contains("HR")    { Text(formatCount(season.HR)).frame(width: PitchingCareerColumn.hr, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
-            if visible.contains("BB")    { Text(formatCount(season.BB)).frame(width: PitchingCareerColumn.bb, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
-            if visible.contains("IBB")   { Text(formatCount(season.IBB)).frame(width: PitchingCareerColumn.ibb, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
-            if visible.contains("SO")    { leaderCell(formatCount(season.SO), label: "SO", leaders: l, width: PitchingCareerColumn.so) }
-            if visible.contains("HBP")   { Text(formatCountOrZero(season.HBP)).frame(width: PitchingCareerColumn.hbp, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
-            if visible.contains("BK")    { Text(formatCountOrZero(season.BK)).frame(width: PitchingCareerColumn.bk, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
-            if visible.contains("WP")    { Text(formatCountOrZero(season.WP)).frame(width: PitchingCareerColumn.wp, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
-            if visible.contains("BF")    { Text(formatCount(season.BFP)).frame(width: PitchingCareerColumn.bf, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
-            if visible.contains("ERA+")  {
-                Text(formatRoundedInt(season.ERA_plus))
-                    .frame(width: PitchingCareerColumn.eraPlus, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
-            }
-            if visible.contains("FIP")   { Text(format2(season.FIP)).frame(width: PitchingCareerColumn.fip, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
-            if visible.contains("WHIP")  { leaderCell(format2(season.WHIP), label: "WHIP", leaders: l, width: PitchingCareerColumn.whip) }
-            // H/9 isn't stored — derive on-device. The HR/9, BB/9, SO/9
-            // values are stored on the season and used directly.
+            if visible.contains("ER")    { leaderCell(formatCount(season.ER),       label: "ER",    leaders: l, width: PitchingCareerColumn.er) }
+            if visible.contains("HR")    { leaderCell(formatCount(season.HR),       label: "HR",    leaders: l, width: PitchingCareerColumn.hr) }
+            if visible.contains("BB")    { leaderCell(formatCount(season.BB),       label: "BB",    leaders: l, width: PitchingCareerColumn.bb) }
+            if visible.contains("IBB")   { leaderCell(formatCount(season.IBB),      label: "IBB",   leaders: l, width: PitchingCareerColumn.ibb) }
+            if visible.contains("SO")    { leaderCell(formatCount(season.SO),       label: "SO",    leaders: l, width: PitchingCareerColumn.so) }
+            if visible.contains("HBP")   { leaderCell(formatCountOrZero(season.HBP), label: "HBP",  leaders: l, width: PitchingCareerColumn.hbp) }
+            if visible.contains("BK")    { leaderCell(formatCountOrZero(season.BK),  label: "BK",    leaders: l, width: PitchingCareerColumn.bk) }
+            if visible.contains("WP")    { leaderCell(formatCountOrZero(season.WP),  label: "WP",    leaders: l, width: PitchingCareerColumn.wp) }
+            if visible.contains("BF")    { leaderCell(formatCount(season.BFP),      label: "BF",    leaders: l, width: PitchingCareerColumn.bf) }
+            if visible.contains("ERA+")  { leaderCell(formatRoundedInt(season.ERA_plus), label: "ERA+", leaders: l, width: PitchingCareerColumn.eraPlus) }
+            if visible.contains("FIP")   { leaderCell(format2(season.FIP),          label: "FIP",   leaders: l, width: PitchingCareerColumn.fip) }
+            if visible.contains("WHIP")  { leaderCell(format2(season.WHIP),         label: "WHIP",  leaders: l, width: PitchingCareerColumn.whip) }
+            // H/9 isn't stored — derive on-device, no leader lookup.
             if visible.contains("H/9")   {
                 Text(format2(perNine(season.H, ip: season.IP)))
                     .frame(width: PitchingCareerColumn.hPer9, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             }
-            if visible.contains("HR/9")  { Text(format2(season.HR_per9)).frame(width: PitchingCareerColumn.hrPer9, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
-            if visible.contains("BB/9")  { Text(format2(season.BB_per9)).frame(width: PitchingCareerColumn.bbPer9, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
-            if visible.contains("SO/9")  { Text(format2(season.K_per9)).frame(width: PitchingCareerColumn.soPer9, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("HR/9")  { leaderCell(format2(season.HR_per9),      label: "HR/9",  leaders: l, width: PitchingCareerColumn.hrPer9) }
+            if visible.contains("BB/9")  { leaderCell(format2(season.BB_per9),      label: "BB/9",  leaders: l, width: PitchingCareerColumn.bbPer9) }
+            if visible.contains("SO/9")  { leaderCell(format2(season.K_per9),       label: "SO/9",  leaders: l, width: PitchingCareerColumn.soPer9) }
             if visible.contains("SO/BB") {
                 Text(format2(soBBRatio(so: season.SO, bb: season.BB)))
                     .frame(width: PitchingCareerColumn.soBB, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
