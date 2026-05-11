@@ -2127,33 +2127,33 @@ private struct ColumnFilterGroupView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // .primary at 50% reads through the ultraThinMaterial
-            // glass in both light and dark mode. .secondary was
-            // tested first and washed out against the panel's glass
-            // — it was technically rendering but invisible.
+            // Section title sits on the panel's glass (not inside the
+            // card). .primary at 50% gives the same contrast it
+            // showed at on the all-glass version.
             Text(group.title)
                 .font(.caption2.weight(.bold))
                 .foregroundStyle(.primary)
                 .opacity(0.5)
                 .textCase(.uppercase)
                 .tracking(1.0)
-                .padding(.horizontal, 4)
+                .padding(.horizontal, 16)
                 .padding(.bottom, 2)
 
+            // Form-grouped-style card. systemBackground is solid white
+            // in light mode and solid black in dark mode — high
+            // contrast against the panel's regularMaterial backdrop in
+            // both schemes. Inside the card, row content uses standard
+            // .primary / .secondary text styles.
             VStack(spacing: 0) {
                 ForEach(Array(group.columns.enumerated()), id: \.element.id) { idx, col in
                     ColumnFilterRow(column: col, isOn: bindingFor(col.key))
                     if idx != group.columns.count - 1 {
-                        // Same custom hairline as the panel's header
-                        // divider — Divider() was nearly invisible on
-                        // the regularMaterial backdrop.
-                        Rectangle()
-                            .fill(Color.primary.opacity(0.15))
-                            .frame(height: 0.5)
-                            .padding(.leading, 4)
+                        Divider()
+                            .padding(.leading, 16)
                     }
                 }
             }
+            .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 12))
         }
     }
 }
@@ -2175,15 +2175,13 @@ private struct ColumnFilterRow: View {
                 Text(column.label)
                     .font(.body.weight(.semibold))
                     .foregroundStyle(.primary)
-                // .primary at 60% gives enough contrast on glass in
-                // both light and dark mode while still reading as a
-                // secondary, less-emphasized line under the bold
-                // abbreviation. .secondary was tested first and was
-                // invisible against the panel's ultraThinMaterial.
+                // Rows sit inside the systemBackground card now, so
+                // .secondary reads correctly — it was only the
+                // ultraThinMaterial glass backdrop that washed it out
+                // in the earlier all-glass layout.
                 Text(column.description)
                     .font(.footnote)
-                    .foregroundStyle(.primary)
-                    .opacity(0.6)
+                    .foregroundStyle(.secondary)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -2191,8 +2189,11 @@ private struct ColumnFilterRow: View {
             Toggle("", isOn: $isOn)
                 .labelsHidden()
         }
-        .padding(.horizontal, 4)
-        .padding(.vertical, 10)
+        // 16pt horizontal inset to match iOS Form's standard
+        // grouped-section row indent (label text aligns with the
+        // section header above the card).
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
         .contentShape(Rectangle())
         .onTapGesture { isOn.toggle() }
     }
