@@ -30,15 +30,17 @@ struct PlayerProfileView: View {
     @State private var visibleBattingColumns: Set<String> = Self.defaultBattingColumns
     @State private var visiblePitchingColumns: Set<String> = Self.defaultPitchingColumns
 
-    static let defaultBattingColumns: Set<String> = [
-        "AVG", "OBP", "SLG", "OPS",
-        "R", "H", "2B", "3B", "HR", "RBI", "SB", "BB", "SO",
-    ]
+    // Default to every togglable column on. Users opt out of stats
+    // they don't care about; nothing is hidden behind a setting they
+    // didn't know existed. Computed once from the filter groups so a
+    // future addition to the groups picks up the default automatically.
+    static let defaultBattingColumns: Set<String> = {
+        Set(battingFilterGroups.flatMap { group in group.columns.map(\.key) })
+    }()
 
-    static let defaultPitchingColumns: Set<String> = [
-        "ERA", "WHIP", "FIP",
-        "W", "L", "W-L%", "GS", "IP", "SO", "BB", "HR",
-    ]
+    static let defaultPitchingColumns: Set<String> = {
+        Set(pitchingFilterGroups.flatMap { group in group.columns.map(\.key) })
+    }()
 
     enum Tab: String, CaseIterable, Identifiable {
         case overview  = "Overview"
@@ -1932,49 +1934,59 @@ struct ColumnFilterGroup: Identifiable {
     var id: String { title }
 }
 
+// Batting filter groups. PA/AB/G/WAR are core (always rendered) so
+// they don't appear here. Counting stats live together — the previous
+// "Advanced" section was actually a misclassification of TB/GIDP/HBP/
+// SH/SF/IBB, which are all counting stats. The real Advanced section
+// is just OPS+ for batters (the only derived metric on the table that
+// isn't WAR).
 let battingFilterGroups: [ColumnFilterGroup] = [
     ColumnFilterGroup(title: "Rate Stats", columns: [
-        ColumnFilterEntry(key: "AVG",  label: "AVG",  description: "Batting average (H ÷ AB)"),
-        ColumnFilterEntry(key: "OBP",  label: "OBP",  description: "On-base percentage"),
-        ColumnFilterEntry(key: "SLG",  label: "SLG",  description: "Slugging percentage"),
-        ColumnFilterEntry(key: "OPS",  label: "OPS",  description: "On-base + slugging"),
-        ColumnFilterEntry(key: "OPS+", label: "OPS+", description: "OPS adjusted to league/park (100 = avg)"),
+        ColumnFilterEntry(key: "AVG", label: "AVG", description: "Batting average (H ÷ AB)"),
+        ColumnFilterEntry(key: "OBP", label: "OBP", description: "On-base percentage"),
+        ColumnFilterEntry(key: "SLG", label: "SLG", description: "Slugging percentage"),
+        ColumnFilterEntry(key: "OPS", label: "OPS", description: "On-base + slugging"),
     ]),
     ColumnFilterGroup(title: "Counting — Offense", columns: [
-        ColumnFilterEntry(key: "R",   label: "R",   description: "Runs scored"),
-        ColumnFilterEntry(key: "H",   label: "H",   description: "Hits"),
-        ColumnFilterEntry(key: "2B",  label: "2B",  description: "Doubles"),
-        ColumnFilterEntry(key: "3B",  label: "3B",  description: "Triples"),
-        ColumnFilterEntry(key: "HR",  label: "HR",  description: "Home runs"),
-        ColumnFilterEntry(key: "RBI", label: "RBI", description: "Runs batted in"),
-        ColumnFilterEntry(key: "SB",  label: "SB",  description: "Stolen bases"),
-        ColumnFilterEntry(key: "CS",  label: "CS",  description: "Caught stealing"),
-        ColumnFilterEntry(key: "BB",  label: "BB",  description: "Walks"),
-        ColumnFilterEntry(key: "SO",  label: "SO",  description: "Strikeouts"),
-    ]),
-    ColumnFilterGroup(title: "Advanced", columns: [
-        ColumnFilterEntry(key: "TB",   label: "TB",   description: "Total bases"),
-        ColumnFilterEntry(key: "GIDP", label: "GIDP", description: "Grounded into double play"),
+        ColumnFilterEntry(key: "R",    label: "R",    description: "Runs scored"),
+        ColumnFilterEntry(key: "H",    label: "H",    description: "Hits"),
+        ColumnFilterEntry(key: "2B",   label: "2B",   description: "Doubles"),
+        ColumnFilterEntry(key: "3B",   label: "3B",   description: "Triples"),
+        ColumnFilterEntry(key: "HR",   label: "HR",   description: "Home runs"),
+        ColumnFilterEntry(key: "RBI",  label: "RBI",  description: "Runs batted in"),
+        ColumnFilterEntry(key: "SB",   label: "SB",   description: "Stolen bases"),
+        ColumnFilterEntry(key: "CS",   label: "CS",   description: "Caught stealing"),
+        ColumnFilterEntry(key: "BB",   label: "BB",   description: "Walks"),
+        ColumnFilterEntry(key: "SO",   label: "SO",   description: "Strikeouts"),
         ColumnFilterEntry(key: "HBP",  label: "HBP",  description: "Hit by pitch"),
+        ColumnFilterEntry(key: "IBB",  label: "IBB",  description: "Intentional walks"),
         ColumnFilterEntry(key: "SH",   label: "SH",   description: "Sacrifice hits"),
         ColumnFilterEntry(key: "SF",   label: "SF",   description: "Sacrifice flies"),
-        ColumnFilterEntry(key: "IBB",  label: "IBB",  description: "Intentional walks"),
+        ColumnFilterEntry(key: "GIDP", label: "GIDP", description: "Grounded into double play"),
+        ColumnFilterEntry(key: "TB",   label: "TB",   description: "Total bases"),
+    ]),
+    ColumnFilterGroup(title: "Advanced", columns: [
+        ColumnFilterEntry(key: "OPS+", label: "OPS+", description: "OPS adjusted to league/park (100 = avg)"),
     ]),
 ]
 
+// Pitching filter groups. G/WAR are core. FIP and ERA+ moved out of
+// Rate Stats into Advanced — they're derived sabermetric values, not
+// raw rate stats. H/9, HR/9, BB/9, SO/9, SO/BB stay in Rate Stats
+// since they're per-inning ratios computed directly from counting
+// stats. HLD / BS would belong here too but pitcher_seasons doesn't
+// track them — omitted rather than ship empty toggles.
 let pitchingFilterGroups: [ColumnFilterGroup] = [
     ColumnFilterGroup(title: "Rate Stats", columns: [
         ColumnFilterEntry(key: "ERA",   label: "ERA",   description: "Earned-run average"),
         ColumnFilterEntry(key: "WHIP",  label: "WHIP",  description: "Walks + hits per inning"),
-        ColumnFilterEntry(key: "FIP",   label: "FIP",   description: "Fielding-independent pitching"),
-        ColumnFilterEntry(key: "ERA+",  label: "ERA+",  description: "ERA adjusted to league/park (100 = avg)"),
         ColumnFilterEntry(key: "H/9",   label: "H/9",   description: "Hits per nine innings"),
         ColumnFilterEntry(key: "HR/9",  label: "HR/9",  description: "Home runs per nine innings"),
         ColumnFilterEntry(key: "BB/9",  label: "BB/9",  description: "Walks per nine innings"),
         ColumnFilterEntry(key: "SO/9",  label: "SO/9",  description: "Strikeouts per nine innings"),
         ColumnFilterEntry(key: "SO/BB", label: "SO/BB", description: "Strikeout-to-walk ratio"),
     ]),
-    ColumnFilterGroup(title: "Counting", columns: [
+    ColumnFilterGroup(title: "Counting — Pitching", columns: [
         ColumnFilterEntry(key: "W",    label: "W",    description: "Wins"),
         ColumnFilterEntry(key: "L",    label: "L",    description: "Losses"),
         ColumnFilterEntry(key: "W-L%", label: "W-L%", description: "Winning percentage"),
@@ -1995,6 +2007,10 @@ let pitchingFilterGroups: [ColumnFilterGroup] = [
         ColumnFilterEntry(key: "BK",   label: "BK",   description: "Balks"),
         ColumnFilterEntry(key: "WP",   label: "WP",   description: "Wild pitches"),
         ColumnFilterEntry(key: "BF",   label: "BF",   description: "Batters faced"),
+    ]),
+    ColumnFilterGroup(title: "Advanced", columns: [
+        ColumnFilterEntry(key: "FIP",  label: "FIP",  description: "Fielding-independent pitching"),
+        ColumnFilterEntry(key: "ERA+", label: "ERA+", description: "ERA adjusted to league/park (100 = avg)"),
     ]),
 ]
 
