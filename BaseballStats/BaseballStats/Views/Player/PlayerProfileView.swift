@@ -2050,7 +2050,14 @@ struct ColumnFilterPanel: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 10)
 
-            Divider().opacity(0.5)
+            // Custom divider — SwiftUI's Divider() renders as a near-
+            // invisible hairline against the panel's glass. A flat
+            // Rectangle filled with .primary at 15% opacity stays
+            // legible in both light and dark mode while still reading
+            // as a hairline rather than a hard rule.
+            Rectangle()
+                .fill(Color.primary.opacity(0.15))
+                .frame(height: 0.5)
 
             ScrollView {
                 VStack(spacing: 22) {
@@ -2078,7 +2085,13 @@ struct ColumnFilterPanel: View {
         // column groups; on shorter phones the panel naturally
         // shrinks to fit.
         .frame(maxHeight: 720)
-        .background(.ultraThinMaterial)
+        // .regularMaterial reads as a lighter frosted surface than
+        // .ultraThinMaterial in dark mode, where ultraThin showed too
+        // much of the dark content behind and made the panel feel
+        // like a dark overlay. regularMaterial trades a bit of
+        // transparency in light mode for consistent legibility in
+        // both schemes.
+        .background(.regularMaterial)
         .clipShape(UnevenRoundedRectangle(cornerRadii: .init(
             topLeading: 24, bottomLeading: 0, bottomTrailing: 0, topTrailing: 24
         )))
@@ -2131,7 +2144,12 @@ private struct ColumnFilterGroupView: View {
                 ForEach(Array(group.columns.enumerated()), id: \.element.id) { idx, col in
                     ColumnFilterRow(column: col, isOn: bindingFor(col.key))
                     if idx != group.columns.count - 1 {
-                        Divider()
+                        // Same custom hairline as the panel's header
+                        // divider — Divider() was nearly invisible on
+                        // the regularMaterial backdrop.
+                        Rectangle()
+                            .fill(Color.primary.opacity(0.15))
+                            .frame(height: 0.5)
                             .padding(.leading, 4)
                     }
                 }
