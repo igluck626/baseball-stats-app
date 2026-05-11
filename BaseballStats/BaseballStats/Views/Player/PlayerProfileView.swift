@@ -65,47 +65,93 @@ struct PlayerProfileView: View {
     }
 
     var body: some View {
-        // ScrollViewReader + non-animated scrollTo on tab change. The
-        // previous .id(selectedTab) approach caused a white flash
-        // because SwiftUI destroyed and rebuilt the entire ScrollView
-        // each tab swap. Instant (no-animation) scrollTo lands the
-        // scroll-position reset in the same frame as the tab content
-        // swap, so the header stays put and there's no flash.
-        ScrollViewReader { proxy in
-            ScrollView {
-                VStack(spacing: 0) {
-                    header.id("top")
-                    VStack(spacing: 16) {
-                        if showsRoleSelector {
-                            roleSelector
+        // Outer ZStack so the column-filter overlay can slide up from
+        // the bottom over the profile content. We render the overlay
+        // ourselves instead of using .sheet — under iOS 26 the system
+        // sheet card stamps its own opaque chrome that .presentation-
+        // Background can't reliably clear, so a custom panel is the
+        // only way to get a real glass effect.
+        ZStack(alignment: .bottom) {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(spacing: 0) {
+                        header.id("top")
+                        VStack(spacing: 16) {
+                            if showsRoleSelector {
+                                roleSelector
+                            }
+                            tabSelector
+                            tabContent
                         }
-                        tabSelector
-                        tabContent
+                        .padding(.horizontal, 16)
+                        .padding(.top, 16)
+                        .padding(.bottom, 32)
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.top, 16)
-                    .padding(.bottom, 32)
+                }
+                // Hide the default scroll content background and pin our
+                // own systemGroupedBackground so the page reads as a
+                // single grouped surface (subtle gray) with the
+                // ultraThinMaterial cards sitting on top.
+                .scrollContentBackground(.hidden)
+                .background(Color(.systemGroupedBackground))
+                .navigationBarTitleDisplayMode(.inline)
+                // Material nav-bar matches the rest of the app's chrome.
+                // No more transparent / dark-scheme overrides — the
+                // header is no longer a cinematic photo, so the system
+                // back chevron renders against the standard nav surface.
+                .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
+                .task { await viewModel.loadData() }
+                .onChange(of: selectedTab) { _, _ in
+                    // No animation — withAnimation here would interpolate
+                    // the scroll offset over time and re-introduce the
+                    // mid-transition layout glitches we're fixing.
+                    proxy.scrollTo("top", anchor: .top)
                 }
             }
-            // Hide the default scroll content background and pin our
-            // own systemGroupedBackground so the page reads as a
-            // single grouped surface (subtle gray) with the
-            // ultraThinMaterial cards sitting on top.
-            .scrollContentBackground(.hidden)
-            .background(Color(.systemGroupedBackground))
-            .navigationBarTitleDisplayMode(.inline)
-            // Material nav-bar matches the rest of the app's chrome.
-            // No more transparent / dark-scheme overrides — the
-            // header is no longer a cinematic photo, so the system
-            // back chevron renders against the standard nav surface.
-            .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
-            .task { await viewModel.loadData() }
-            .onChange(of: selectedTab) { _, _ in
-                // No animation — withAnimation here would interpolate
-                // the scroll offset over time and re-introduce the
-                // mid-transition layout glitches we're fixing.
-                proxy.scrollTo("top", anchor: .top)
+
+            // Dim layer + filter panel. Both are conditionally rendered
+            // so the .move / .opacity transitions fire on dismiss as
+            // well as present. .animation on this ZStack drives the
+            // spring; explicit `withAnimation` in callbacks isn't
+            // needed.
+            if showingColumnFilter {
+                Color.black.opacity(0.3)
+                    .ignoresSafeArea()
+                    .transition(.opacity)
+                    .onTapGesture { showingColumnFilter = false }
+                    .zIndex(1)
+
+                columnFilterPanel
+                    .transition(.move(edge: .bottom))
+                    .zIndex(2)
             }
+        }
+        .animation(.spring(response: 0.42, dampingFraction: 0.88), value: showingColumnFilter)
+    }
+
+    /// Bridges the showingBatting state to the right catalog + binding
+    /// for whichever career tab is on screen. Single source of truth
+    /// for the panel — we don't need separate batting/pitching sheets
+    /// since `showingBatting` already decides which career table is
+    /// rendered above.
+    @ViewBuilder
+    private var columnFilterPanel: some View {
+        if showingBatting {
+            ColumnFilterPanel(
+                title: "Batting Columns",
+                groups: battingFilterGroups,
+                visible: $visibleBattingColumns,
+                defaults: Self.defaultBattingColumns,
+                onDismiss: { showingColumnFilter = false }
+            )
+        } else {
+            ColumnFilterPanel(
+                title: "Pitching Columns",
+                groups: pitchingFilterGroups,
+                visible: $visiblePitchingColumns,
+                defaults: Self.defaultPitchingColumns,
+                onDismiss: { showingColumnFilter = false }
+            )
         }
     }
 
@@ -693,18 +739,14 @@ struct PlayerProfileView: View {
             loadingCard
         } else if let career = viewModel.careerBatting,
                   let seasons = career.seasons, !seasons.isEmpty {
+            // The column-filter UI is rendered as a custom overlay on
+            // the profile body (see `columnFilterOverlay` below) — we
+            // own its chrome so the glass renders correctly. The old
+            // .sheet path is intentionally gone.
             VStack(alignment: .leading, spacing: 10) {
                 careerToolbar
                 leaderLegend
                 battingCareerTable(seasons: seasons)
-            }
-            .sheet(isPresented: $showingColumnFilter) {
-                ColumnFilterSheet(
-                    title: "Batting Columns",
-                    groups: battingFilterGroups,
-                    visible: $visibleBattingColumns,
-                    defaults: Self.defaultBattingColumns
-                )
             }
         } else {
             noStatsCard("No batting career stats")
@@ -721,14 +763,6 @@ struct PlayerProfileView: View {
                 careerToolbar
                 leaderLegend
                 pitchingCareerTable(seasons: seasons)
-            }
-            .sheet(isPresented: $showingColumnFilter) {
-                ColumnFilterSheet(
-                    title: "Pitching Columns",
-                    groups: pitchingFilterGroups,
-                    visible: $visiblePitchingColumns,
-                    defaults: Self.defaultPitchingColumns
-                )
             }
         } else {
             noStatsCard("No pitching career stats")
@@ -1969,22 +2003,55 @@ let pitchingFilterGroups: [ColumnFilterGroup] = [
 /// Modal sheet with grouped toggles for the optional career-table
 /// columns. Core columns (WAR/G/PA/AB for batting, WAR/G for pitching)
 /// aren't shown here — they're always visible and aren't toggleable.
-struct ColumnFilterSheet: View {
+/// Bottom-aligned column filter panel — replaces the previous
+/// `.sheet(isPresented:)` + `ColumnFilterSheet` combination. Under
+/// iOS 26 the system sheet card forces its own opaque chrome that
+/// `.presentationBackground(.ultraThinMaterial)` couldn't reliably
+/// override. Rendering this ourselves inside a ZStack lets the
+/// .ultraThinMaterial actually be glass.
+///
+/// The panel: drag indicator → Reset/title/Done bar → divider →
+/// scrolling list of grouped toggle rows. Top corners rounded to
+/// 24pt; bottom extends past the safe area so the material reads
+/// flush with the screen edge. Tap-to-dismiss is handled by the
+/// dim layer in `PlayerProfileView.body`; this view only exposes
+/// the Done callback.
+struct ColumnFilterPanel: View {
     let title: String
     let groups: [ColumnFilterGroup]
     @Binding var visible: Set<String>
     let defaults: Set<String>
-
-    @Environment(\.dismiss) private var dismiss
+    let onDismiss: () -> Void
 
     var body: some View {
-        NavigationStack {
-            // Custom ScrollView + VStack instead of Form/Section. Form
-            // ships with opaque section/row backgrounds that override
-            // `.scrollContentBackground(.hidden)` under iOS 26 — even
-            // `.listRowBackground(Color.clear)` couldn't get the glass
-            // to read through. Hand-rolled rows give full control over
-            // the chrome and let the sheet's ultraThinMaterial dominate.
+        VStack(spacing: 0) {
+            // Drag indicator — visual affordance only (the dim-tap and
+            // Done button do the actual dismiss; we don't wire a drag
+            // gesture to the panel itself).
+            Capsule()
+                .fill(Color(.systemFill))
+                .frame(width: 40, height: 5)
+                .padding(.top, 10)
+                .padding(.bottom, 8)
+
+            // Header bar — Reset on the left, title centered, Done
+            // on the right. Same chrome as the previous sheet's
+            // toolbar.
+            HStack {
+                Button("Reset") { visible = defaults }
+                    .font(.subheadline)
+                Spacer()
+                Text(title)
+                    .font(.headline)
+                Spacer()
+                Button("Done") { onDismiss() }
+                    .font(.subheadline.weight(.semibold))
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 10)
+
+            Divider().opacity(0.5)
+
             ScrollView {
                 VStack(spacing: 22) {
                     ForEach(groups) { group in
@@ -1995,32 +2062,33 @@ struct ColumnFilterSheet: View {
                     }
                 }
                 .padding(.horizontal, 16)
-                .padding(.vertical, 16)
+                .padding(.top, 16)
+                // Bottom padding clears the home indicator on safe-
+                // area-extending phones since the panel ignores the
+                // bottom inset for its material backdrop.
+                .padding(.bottom, 36)
             }
-            // The ScrollView itself paints a default Color.background
-            // behind its content on iOS — explicitly clearing it lets
-            // the sheet's glass show through every row.
             .scrollContentBackground(.hidden)
             .background(Color.clear)
-            .navigationTitle(title)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Reset") { visible = defaults }
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
-                        .fontWeight(.semibold)
-                }
-            }
         }
-        // Liquid-glass sheet chrome — translucent backdrop with the
-        // standard slide-up animation. .ultraThinMaterial reads as
-        // genuinely translucent (you can see the page behind through
-        // it), unlike .regularMaterial which looks like a frosted slab.
-        .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
-        .presentationBackground(.ultraThinMaterial)
+        .frame(maxWidth: .infinity)
+        // Cap height to roughly the bottom 78% of the screen so the
+        // user can still see (and tap) the dimmed profile content
+        // peeking out above. 720pt is enough for any of the longer
+        // column groups; on shorter phones the panel naturally
+        // shrinks to fit.
+        .frame(maxHeight: 720)
+        .background(.ultraThinMaterial)
+        .clipShape(UnevenRoundedRectangle(cornerRadii: .init(
+            topLeading: 24, bottomLeading: 0, bottomTrailing: 0, topTrailing: 24
+        )))
+        // Soft shadow above the panel reinforces the elevation cue
+        // even when the dim layer alone isn't enough contrast.
+        .shadow(color: .black.opacity(0.12), radius: 12, x: 0, y: -4)
+        // Let the material extend to the absolute screen bottom; the
+        // inner ScrollView's bottom padding above handles home-
+        // indicator clearance for the toggle rows.
+        .ignoresSafeArea(.container, edges: .bottom)
     }
 
     private func binding(for key: String) -> Binding<Bool> {
