@@ -1979,32 +1979,29 @@ struct ColumnFilterSheet: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                ForEach(groups) { group in
-                    Section(group.title) {
-                        ForEach(group.columns) { col in
-                            Toggle(isOn: binding(for: col.key)) {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(col.label).font(.body.weight(.semibold))
-                                    Text(col.description)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                            // Drop the per-row opaque background so the
-                            // sheet's glass bleeds through the rows
-                            // themselves, not just the gaps between
-                            // sections.
-                            .listRowBackground(Color.clear)
-                        }
+            // Custom ScrollView + VStack instead of Form/Section. Form
+            // ships with opaque section/row backgrounds that override
+            // `.scrollContentBackground(.hidden)` under iOS 26 — even
+            // `.listRowBackground(Color.clear)` couldn't get the glass
+            // to read through. Hand-rolled rows give full control over
+            // the chrome and let the sheet's ultraThinMaterial dominate.
+            ScrollView {
+                VStack(spacing: 22) {
+                    ForEach(groups) { group in
+                        ColumnFilterGroupView(
+                            group: group,
+                            bindingFor: binding(for:)
+                        )
                     }
                 }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 16)
             }
-            // Hide the default opaque grouped background so the sheet's
-            // glass shows through the form. iOS 26's Form/Section + Toggle
-            // styling already reads as native glass with the standard
-            // .insetGrouped material; this just lets it actually be glass.
+            // The ScrollView itself paints a default Color.background
+            // behind its content on iOS — explicitly clearing it lets
+            // the sheet's glass show through every row.
             .scrollContentBackground(.hidden)
+            .background(Color.clear)
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -2018,9 +2015,9 @@ struct ColumnFilterSheet: View {
             }
         }
         // Liquid-glass sheet chrome — translucent backdrop with the
-        // standard slide-up animation. .ultraThinMaterial reads more
-        // glass-like than .regularMaterial; medium + large detents let
-        // the user dismiss with a swipe instead of always tapping Done.
+        // standard slide-up animation. .ultraThinMaterial reads as
+        // genuinely translucent (you can see the page behind through
+        // it), unlike .regularMaterial which looks like a frosted slab.
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
         .presentationBackground(.ultraThinMaterial)
@@ -2034,6 +2031,61 @@ struct ColumnFilterSheet: View {
                 else        { visible.remove(key) }
             }
         )
+    }
+}
+
+// MARK: - Column filter sheet subviews
+
+/// One group ("Rate Stats", "Counting — Offense", …) inside the column
+/// filter sheet. Section title + a column of `ColumnFilterRow`s with
+/// hairline dividers between them. Sits on the sheet's glass — no
+/// internal background, just the dividers as visual structure.
+private struct ColumnFilterGroupView: View {
+    let group: ColumnFilterGroup
+    let bindingFor: (String) -> Binding<Bool>
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(group.title.uppercased())
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .tracking(0.5)
+                .padding(.horizontal, 4)
+
+            VStack(spacing: 0) {
+                ForEach(Array(group.columns.enumerated()), id: \.element.id) { idx, col in
+                    ColumnFilterRow(column: col, isOn: bindingFor(col.key))
+                    if idx != group.columns.count - 1 {
+                        Divider()
+                            .padding(.leading, 4)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Single toggle row — stat label + description on the left, native
+/// `Toggle` switch on the right. Tap target spans the full row via
+/// `contentShape(Rectangle())`. No row background; the sheet's glass
+/// shows through.
+private struct ColumnFilterRow: View {
+    let column: ColumnFilterEntry
+    @Binding var isOn: Bool
+
+    var body: some View {
+        Toggle(isOn: $isOn) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(column.label)
+                    .font(.body.weight(.semibold))
+                Text(column.description)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 4)
+        .padding(.vertical, 10)
+        .contentShape(Rectangle())
     }
 }
 
