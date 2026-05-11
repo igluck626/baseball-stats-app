@@ -2114,11 +2114,14 @@ private struct ColumnFilterGroupView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // Section header — uppercase, tracked, secondary tone.
-            // Modeled on the grouped-table headers iOS uses elsewhere.
+            // .primary at 50% reads through the ultraThinMaterial
+            // glass in both light and dark mode. .secondary was
+            // tested first and washed out against the panel's glass
+            // — it was technically rendering but invisible.
             Text(group.title)
                 .font(.caption2.weight(.bold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.primary)
+                .opacity(0.5)
                 .textCase(.uppercase)
                 .tracking(1.0)
                 .padding(.horizontal, 4)
@@ -2154,9 +2157,15 @@ private struct ColumnFilterRow: View {
                 Text(column.label)
                     .font(.body.weight(.semibold))
                     .foregroundStyle(.primary)
+                // .primary at 60% gives enough contrast on glass in
+                // both light and dark mode while still reading as a
+                // secondary, less-emphasized line under the bold
+                // abbreviation. .secondary was tested first and was
+                // invisible against the panel's ultraThinMaterial.
                 Text(column.description)
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.primary)
+                    .opacity(0.6)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
