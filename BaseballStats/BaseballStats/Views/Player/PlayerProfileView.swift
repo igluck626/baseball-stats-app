@@ -2113,12 +2113,16 @@ private struct ColumnFilterGroupView: View {
     let bindingFor: (String) -> Binding<Bool>
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(group.title.uppercased())
-                .font(.caption.weight(.semibold))
+        VStack(alignment: .leading, spacing: 8) {
+            // Section header — uppercase, tracked, secondary tone.
+            // Modeled on the grouped-table headers iOS uses elsewhere.
+            Text(group.title)
+                .font(.caption2.weight(.bold))
                 .foregroundStyle(.secondary)
-                .tracking(0.5)
+                .textCase(.uppercase)
+                .tracking(1.0)
                 .padding(.horizontal, 4)
+                .padding(.bottom, 2)
 
             VStack(spacing: 0) {
                 ForEach(Array(group.columns.enumerated()), id: \.element.id) { idx, col in
@@ -2133,27 +2137,37 @@ private struct ColumnFilterGroupView: View {
     }
 }
 
-/// Single toggle row — stat label + description on the left, native
-/// `Toggle` switch on the right. Tap target spans the full row via
-/// `contentShape(Rectangle())`. No row background; the sheet's glass
-/// shows through.
+/// Single toggle row. Earlier this fed a VStack into `Toggle`'s label
+/// slot, but the iOS 26 switch style was collapsing the two-line label
+/// (abbreviation + description) so the description never rendered.
+/// Splitting into an explicit HStack + a labelless Toggle gives us
+/// total control over the label layout. Tap target spans the full row
+/// via `contentShape(Rectangle())`; the gesture flips the binding,
+/// matching the switch toggle behavior.
 private struct ColumnFilterRow: View {
     let column: ColumnFilterEntry
     @Binding var isOn: Bool
 
     var body: some View {
-        Toggle(isOn: $isOn) {
-            VStack(alignment: .leading, spacing: 2) {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(column.label)
                     .font(.body.weight(.semibold))
+                    .foregroundStyle(.primary)
                 Text(column.description)
-                    .font(.caption)
+                    .font(.footnote)
                     .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+            Spacer(minLength: 8)
+            Toggle("", isOn: $isOn)
+                .labelsHidden()
         }
         .padding(.horizontal, 4)
         .padding(.vertical, 10)
         .contentShape(Rectangle())
+        .onTapGesture { isOn.toggle() }
     }
 }
 
