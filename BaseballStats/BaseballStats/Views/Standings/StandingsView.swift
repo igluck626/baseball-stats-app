@@ -220,6 +220,11 @@ private enum CardStyle {
     case wildcard   // Highlight the top 3 as wild-card holders.
 }
 
+/// One DivisionCard renders one card's worth of standings: a frozen
+/// "Team" column on the left and a horizontally scrolling stat pane
+/// on the right. The header row lives *inside* the same ScrollView as
+/// the team rows so all of them scroll as one unit — matches the
+/// frozen-pane pattern used by the Career and Game Logs tables.
 private struct DivisionCard: View {
     let title: String
     let teams: [TeamStanding]
@@ -236,16 +241,47 @@ private struct DivisionCard: View {
             .padding(.top, 12)
             .padding(.bottom, 8)
 
-            ForEach(Array(teams.enumerated()), id: \.offset) { index, team in
-                TeamRow(
-                    team: team,
-                    leader: teams.first,
-                    isLeader: index == 0,
-                    style: style,
-                    rankInList: index
-                )
-                if index != teams.indices.last {
+            HStack(spacing: 0) {
+                // Frozen pane — header cell on top, then one row per
+                // team. Heights mirror the scrollable pane exactly so
+                // per-row tints line up across the boundary.
+                VStack(spacing: 0) {
+                    FrozenHeaderCell()
                     Divider().opacity(0.4)
+                    ForEach(Array(teams.enumerated()), id: \.offset) { index, team in
+                        FrozenTeamCell(
+                            team: team,
+                            isLeader: index == 0,
+                            style: style,
+                            rankInList: index
+                        )
+                        if index != teams.indices.last {
+                            Divider().opacity(0.4)
+                        }
+                    }
+                }
+                .frame(width: StandingsLayout.frozenWidth)
+
+                // Scrollable pane — header + every team's stat row
+                // live in a single VStack so the user's swipe scrolls
+                // them in lockstep.
+                ScrollView(.horizontal, showsIndicators: false) {
+                    VStack(spacing: 0) {
+                        ScrollableHeaderRow()
+                        Divider().opacity(0.4)
+                        ForEach(Array(teams.enumerated()), id: \.offset) { index, team in
+                            ScrollableStatRow(
+                                team: team,
+                                leader: teams.first,
+                                isLeader: index == 0,
+                                style: style,
+                                rankInList: index
+                            )
+                            if index != teams.indices.last {
+                                Divider().opacity(0.4)
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -253,88 +289,80 @@ private struct DivisionCard: View {
     }
 }
 
-/// Column widths for the scrollable stat tail. Tuned to keep the
-/// full row within ~520pt total so an iPhone 17 Pro shows ~3/4 of
-/// the stats without scrolling, and the rest pulls in via swipe.
+/// Column widths + row heights for the standings table. Frozen pane
+/// width is sized to fit "Cleveland Guardians" plus a clinch badge;
+/// the scrollable widths stay tight so the iPhone 17 Pro shows ~6 of
+/// the 10 columns without scrolling and the rest pulls in via swipe.
 private enum StandingsLayout {
-    static let cell:   CGFloat = 38
-    static let pct:    CGFloat = 42
-    static let gb:     CGFloat = 44
-    static let record: CGFloat = 48   // "54-27" style
-    static let streak: CGFloat = 36
-    static let diff:   CGFloat = 44
-    static let magic:  CGFloat = 38
+    static let frozenWidth: CGFloat = 170
+    static let cell:   CGFloat = 38   // W, L
+    static let pct:    CGFloat = 46   // ".571"
+    static let gb:     CGFloat = 46   // "12.5"
+    static let record: CGFloat = 50   // "54-27"
+    static let streak: CGFloat = 40   // "W4"
+    static let diff:   CGFloat = 48   // "+125"
+    static let rowHeight:    CGFloat = 36
+    static let headerHeight: CGFloat = 28
 }
 
-private struct TeamRow: View {
+// MARK: - Header cells
+
+/// Top-left "Team" label in the frozen pane.
+private struct FrozenHeaderCell: View {
+    var body: some View {
+        HStack(spacing: 0) {
+            Text("Team")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+        }
+        .padding(.leading, 14)
+        .padding(.trailing, 4)
+        .frame(height: StandingsLayout.headerHeight)
+    }
+}
+
+/// Column labels for the 10 scrolling stat columns. Order must
+/// match `ScrollableStatRow` cell-for-cell.
+private struct ScrollableHeaderRow: View {
+    var body: some View {
+        HStack(spacing: 0) {
+            headerCell("W",     width: StandingsLayout.cell)
+            headerCell("L",     width: StandingsLayout.cell)
+            headerCell("PCT",   width: StandingsLayout.pct)
+            headerCell("GB",    width: StandingsLayout.gb)
+            headerCell("WCGB",  width: StandingsLayout.gb)
+            headerCell("L10",   width: StandingsLayout.record)
+            headerCell("STRK",  width: StandingsLayout.streak)
+            headerCell("HOME",  width: StandingsLayout.record)
+            headerCell("AWAY",  width: StandingsLayout.record)
+            headerCell("RDIFF", width: StandingsLayout.diff)
+        }
+        .padding(.trailing, 14)
+        .frame(height: StandingsLayout.headerHeight)
+    }
+
+    private func headerCell(_ text: String, width: CGFloat) -> some View {
+        Text(text)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .frame(width: width, alignment: .trailing)
+    }
+}
+
+// MARK: - Body rows
+
+/// Frozen-pane row: leader star, team name, clinch badge, and (for
+/// the division leader) an inline magic-number pill. Magic doesn't
+/// have a dedicated column in the new layout — surfacing it here
+/// keeps it visible without breaking header alignment.
+private struct FrozenTeamCell: View {
     let team: TeamStanding
-    let leader: TeamStanding?
-    /// Top row of a division card.
     let isLeader: Bool
     let style: CardStyle
-    /// Zero-based position in the list — used for wildcard "in / out"
-    /// highlighting (top 3 are in).
     let rankInList: Int
 
     var body: some View {
-        HStack(spacing: 12) {
-            // Fixed-width team name + clinch tag area. Wide enough for
-            // "Cleveland Guardians" + a single-letter clinch badge.
-            teamNameColumn
-                .frame(width: 170, alignment: .leading)
-
-            // Everything stat-side lives in a horizontal scroller so
-            // narrower phones still get all the columns; on wider
-            // phones the user usually doesn't have to scroll.
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 0) {
-                    statCell(formatInt(team.W),  width: StandingsLayout.cell)
-                    statCell(formatInt(team.L),  width: StandingsLayout.cell)
-                    statCell(formatPct(team.win_pct), width: StandingsLayout.pct)
-                    statCell(formatGB(team: team, leader: leader, isLeader: isLeader),
-                             width: StandingsLayout.gb, dim: isLeader)
-                    // Wildcard GB only meaningful on the WC tab; division
-                    // tab still renders it (low cost) so the column stays
-                    // present and aligned across both views.
-                    statCell(formatGBString(team.wild_card_games_back),
-                             width: StandingsLayout.gb, dim: true)
-                    statCell(formatRecord(w: team.last_ten_w, l: team.last_ten_l),
-                             width: StandingsLayout.record)
-                    statCell(team.hasStreak ? (team.streak_code ?? "—") : "—",
-                             width: StandingsLayout.streak)
-                    statCell(formatRecord(w: team.home_w, l: team.home_l),
-                             width: StandingsLayout.record)
-                    statCell(formatRecord(w: team.away_w, l: team.away_l),
-                             width: StandingsLayout.record)
-                    statCell(formatDiff(team.runDifferential),
-                             width: StandingsLayout.diff)
-                    // Magic number only shown for the division leader,
-                    // and only when the API gave us a real value (not
-                    // "-" which means too early to compute).
-                    if isLeader, let magic = team.magic_number,
-                       !magic.isEmpty, magic != "-" {
-                        statCell("Mg \(magic)", width: StandingsLayout.magic,
-                                 emphasized: true)
-                    }
-                }
-                .padding(.trailing, 14)
-            }
-            .scrollContentBackground(.hidden)
-        }
-        .font(.subheadline)
-        .fontWeight(isLeader ? .semibold : .regular)
-        .padding(.leading, 14)
-        .padding(.vertical, 9)
-        .background(rowBackground)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            // Placeholder for team-detail navigation later.
-        }
-    }
-
-    /// Star prefix for division leader, team name, single-character
-    /// clinch badge to the right of the name.
-    private var teamNameColumn: some View {
         HStack(spacing: 6) {
             if isLeader && style == .division {
                 Image(systemName: "star.fill")
@@ -343,7 +371,7 @@ private struct TeamRow: View {
             }
             Text(team.team_name ?? "—")
                 .lineLimit(1)
-                .minimumScaleFactor(0.8)
+                .minimumScaleFactor(0.7)
             if let badge = clinchBadge {
                 Text(badge.letter)
                     .font(.caption2.weight(.bold))
@@ -355,44 +383,103 @@ private struct TeamRow: View {
                             .stroke(badge.color.opacity(0.6), lineWidth: 0.5)
                     )
             }
+            if isLeader, let magic = team.magic_number,
+               !magic.isEmpty, magic != "-" {
+                Text("M\(magic)")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(Color.accentColor)
+            }
+            Spacer(minLength: 0)
         }
+        .font(.subheadline)
+        .fontWeight(isLeader ? .semibold : .regular)
+        .padding(.leading, 14)
+        .padding(.trailing, 4)
+        .frame(height: StandingsLayout.rowHeight)
+        .background(rowBackground(style: style,
+                                  isLeader: isLeader,
+                                  rankInList: rankInList))
     }
 
-    /// Single-character clinch tag mapping per MLB / bbref convention.
     private var clinchBadge: (letter: String, color: Color)? {
-        guard let raw = team.clinch_indicator?.lowercased(),
-              !raw.isEmpty else { return nil }
-        switch raw {
-        case "z": return ("z", .yellow)   // clinched home-field advantage
-        case "y": return ("y", .green)    // clinched division
-        case "x": return ("x", .blue)     // clinched playoff berth
-        case "w": return ("w", .teal)     // clinched wild card
-        case "e": return ("e", .red)      // eliminated
-        default:  return (raw, .secondary)
-        }
+        clinchBadgeFor(team.clinch_indicator)
     }
+}
 
-    /// Subtle row background — division leader gets the accent tint;
-    /// wildcard top-3 gets a light green tint to signal "in the
-    /// playoffs as of right now."
-    private var rowBackground: Color {
-        switch style {
-        case .division:
-            return isLeader ? Color.accentColor.opacity(0.10) : .clear
-        case .wildcard:
-            return rankInList < 3
-                ? Color.green.opacity(0.12)
-                : .clear
+/// Scrollable-pane row: ten stat cells in the same order as the
+/// header. Background tint matches the frozen-side cell so a
+/// division leader's accent fill spans the full card width.
+private struct ScrollableStatRow: View {
+    let team: TeamStanding
+    let leader: TeamStanding?
+    let isLeader: Bool
+    let style: CardStyle
+    let rankInList: Int
+
+    var body: some View {
+        HStack(spacing: 0) {
+            statCell(formatInt(team.W),  width: StandingsLayout.cell)
+            statCell(formatInt(team.L),  width: StandingsLayout.cell)
+            statCell(formatPct(team.win_pct), width: StandingsLayout.pct)
+            statCell(formatGB(team: team, leader: leader, isLeader: isLeader),
+                     width: StandingsLayout.gb, dim: isLeader)
+            statCell(formatGBString(team.wild_card_games_back),
+                     width: StandingsLayout.gb, dim: true)
+            statCell(formatRecord(w: team.last_ten_w, l: team.last_ten_l),
+                     width: StandingsLayout.record)
+            statCell(team.hasStreak ? (team.streak_code ?? "—") : "—",
+                     width: StandingsLayout.streak)
+            statCell(formatRecord(w: team.home_w, l: team.home_l),
+                     width: StandingsLayout.record)
+            statCell(formatRecord(w: team.away_w, l: team.away_l),
+                     width: StandingsLayout.record)
+            statCell(formatDiff(team.runDifferential),
+                     width: StandingsLayout.diff)
         }
+        .font(.subheadline)
+        .fontWeight(isLeader ? .semibold : .regular)
+        .padding(.trailing, 14)
+        .frame(height: StandingsLayout.rowHeight)
+        .background(rowBackground(style: style,
+                                  isLeader: isLeader,
+                                  rankInList: rankInList))
     }
 
     private func statCell(_ text: String, width: CGFloat,
-                          dim: Bool = false, emphasized: Bool = false) -> some View {
+                          dim: Bool = false) -> some View {
         Text(text)
             .frame(width: width, alignment: .trailing)
             .monospacedDigit()
-            .foregroundStyle(emphasized ? Color.accentColor : (dim ? Color.secondary : Color.primary))
-            .fontWeight(emphasized ? .semibold : nil)
+            .foregroundStyle(dim ? Color.secondary : Color.primary)
+    }
+}
+
+// MARK: - Row helpers
+
+/// Single-character clinch tag mapping per MLB / bbref convention.
+/// Shared between the frozen cell and any future detail surfaces.
+private func clinchBadgeFor(_ raw: String?) -> (letter: String, color: Color)? {
+    guard let raw = raw?.lowercased(), !raw.isEmpty else { return nil }
+    switch raw {
+    case "z": return ("z", .yellow)   // clinched home-field advantage
+    case "y": return ("y", .green)    // clinched division
+    case "x": return ("x", .blue)     // clinched playoff berth
+    case "w": return ("w", .teal)     // clinched wild card
+    case "e": return ("e", .red)      // eliminated
+    default:  return (raw, .secondary)
+    }
+}
+
+/// Subtle row background — division leader gets the accent tint;
+/// wildcard top-3 gets a light green tint to signal "in the playoffs
+/// as of right now." Applied identically on both panes so the fill
+/// spans the full card width.
+private func rowBackground(style: CardStyle, isLeader: Bool, rankInList: Int) -> Color {
+    switch style {
+    case .division:
+        return isLeader ? Color.accentColor.opacity(0.10) : .clear
+    case .wildcard:
+        return rankInList < 3 ? Color.green.opacity(0.12) : .clear
     }
 }
 
