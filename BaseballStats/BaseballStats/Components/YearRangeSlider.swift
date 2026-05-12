@@ -2,13 +2,19 @@
 //  YearRangeSlider.swift
 //  BaseballStats
 //
-//  Two-handle range slider snapping to whole integers — used by the
-//  Leaderboards screen to pick a year window for All-Time / Career
-//  modes. SwiftUI has no native range slider, so this is a thin
-//  custom implementation: track + highlighted segment + two draggable
-//  handles in a ZStack, with the gestures resolved against a named
-//  coordinate space so the math doesn't care about handle-local
-//  drag positions.
+//  Tappable chip showing the current "YYYY – YYYY" year window
+//  collapses to one line by default. Tapping expands inline to a
+//  single compact row: from-year label, two side-by-side native
+//  Sliders, to-year label. The left slider adjusts the lower bound,
+//  the right slider adjusts the upper bound, and each binding
+//  clamps so the handles can't cross.
+//
+//  We deliberately use two stock SwiftUI Sliders (UIKit-backed) over
+//  a custom-gesture range slider — earlier custom attempts had hit-
+//  test and state-tracking issues that left handles unusable. The
+//  per-slider visual fills don't quite read as a single "range
+//  between thumbs", but the controls are bulletproof and the chip
+//  above shows the live numeric window the entire time.
 //
 
 import SwiftUI
@@ -16,82 +22,139 @@ import SwiftUI
 struct YearRangeSlider: View {
     @Binding var lowerValue: Int
     @Binding var upperValue: Int
-    /// Inclusive year bounds — the slider clamps to this range and
-    /// uses the span to map x-position → integer year.
+    /// Inclusive year bounds — the outer floor / ceiling for both
+    /// sliders. Per-slider ranges narrow inside this to keep the two
+    /// handles from crossing.
     let bounds: ClosedRange<Int>
 
-    private let trackHeight: CGFloat   = 4
-    private let handleDiameter: CGFloat = 26
-    /// Named coordinate space pinned on the ZStack so the gesture's
-    /// `location.x` is in slider-local coordinates regardless of which
-    /// handle (or where on it) the user touched.
-    private let coordSpace = "year-range-slider"
+    /// Local expansion state — preserved across re-renders so a
+    /// parent VM publish doesn't reset the user's tap-to-open.
+    @State private var isExpanded = false
 
     var body: some View {
-        GeometryReader { geo in
-            let width  = geo.size.width
-            let span   = CGFloat(max(1, bounds.upperBound - bounds.lowerBound))
-            let lowerX = CGFloat(lowerValue - bounds.lowerBound) / span * width
-            let upperX = CGFloat(upperValue - bounds.lowerBound) / span * width
-
-            ZStack(alignment: .leading) {
-                // Background track.
-                Capsule()
-                    .fill(Color(.systemGray5))
-                    .frame(height: trackHeight)
-
-                // Highlighted segment between the two handles. Width
-                // can briefly be 0 when the handles meet — `max(0, …)`
-                // keeps SwiftUI from logging a negative-width warning.
-                Capsule()
-                    .fill(Color.accentColor.opacity(0.85))
-                    .frame(width: max(0, upperX - lowerX), height: trackHeight)
-                    .offset(x: lowerX)
-
-                handle(centerX: lowerX, width: width, isLower: true)
-                handle(centerX: upperX, width: width, isLower: false)
+        VStack(alignment: .leading, spacing: 10) {
+            chip
+            if isExpanded {
+                slidersRow
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
-            .coordinateSpace(name: coordSpace)
         }
-        // Outer frame matches the handle height — the GeometryReader
-        // is otherwise infinite-tall and would steal vertical space
-        // from siblings in a parent VStack.
-        .frame(height: handleDiameter)
+        .animation(.easeInOut(duration: 0.2), value: isExpanded)
     }
 
-    /// One draggable circular handle. `centerX` is the handle's center
-    /// position along the track in slider-local coordinates; the
-    /// .offset positions the handle so its center lands there.
-    private func handle(centerX: CGFloat, width: CGFloat, isLower: Bool) -> some View {
-        Circle()
-            .fill(Color.white)
-            .frame(width: handleDiameter, height: handleDiameter)
-            .shadow(color: .black.opacity(0.18), radius: 2, x: 0, y: 1)
-            .overlay(Circle().stroke(Color(.systemGray3), lineWidth: 0.5))
-            .offset(x: centerX - handleDiameter / 2)
-            // Bigger hit target than the visible circle — touch
-            // can land anywhere inside the diameter without missing.
-            .contentShape(Circle())
-            .gesture(
-                DragGesture(minimumDistance: 0, coordinateSpace: .named(coordSpace))
-                    .onChanged { gesture in
-                        let clamped    = max(0, min(width, gesture.location.x))
-                        let proportion = Double(clamped / width)
-                        let spanInt    = bounds.upperBound - bounds.lowerBound
-                        // .rounded() snaps to whole years — no
-                        // sub-year fractional state ever escapes the
-                        // gesture handler.
-                        let raw = bounds.lowerBound
-                                + Int((Double(spanInt) * proportion).rounded())
-                        if isLower {
-                            // Clamp so the lower handle can't cross
-                            // the upper one. Same logic mirrored for
-                            // the upper handle below.
-                            lowerValue = min(raw, upperValue)
-                        } else {
-                            upperValue = max(raw, lowerValue)
-                        }
-                    }
-            )
+    // MARK: - Chip (collapsed summary)
+
+    /// Single-line tappable summary. Reads "Year range  1871 – 2026"
+    /// with a chevron on the right indicating expansion state. Whole
+    /// row is the tap target so a hurried tap on the chevron, the
+    /// label, or the numbers all toggle the same way.
+    private var chip: some View {
+        Button {
+            isExpanded.toggle()
+        } label: {
+            HStack(spacing: 8) {
+                Text("Year range")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                // `Text(verbatim:)` sidesteps the LocalizedStringKey
+                // path that SwiftUI's `Text("\(year)")` uses, which
+                // applies the user's locale and adds thousand
+                // separators ("1,871" instead of "1871").
+                Text(verbatim: "\(lowerValue) – \(upperValue)")
+                    .font(.subheadline.weight(.semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(.primary)
+                Image(systemName: "chevron.down")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    // Rotate instead of swapping symbols so SwiftUI
+                    // animates the indicator continuously rather than
+                    // cross-fading two glyphs.
+                    .rotationEffect(.degrees(isExpanded ? 180 : 0))
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint(isExpanded ? "Tap to collapse" : "Tap to expand")
+    }
+
+    // MARK: - Expanded controls (single row)
+
+    /// One HStack: from-year label, lower-handle Slider, upper-handle
+    /// Slider, to-year label. The two sliders share the middle space
+    /// 50/50 and each clamps against the other's value so the handles
+    /// can never cross.
+    private var slidersRow: some View {
+        HStack(spacing: 10) {
+            Text(verbatim: String(lowerValue))
+                .font(.caption.weight(.semibold))
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+                .frame(width: 44, alignment: .leading)
+
+            Slider(value: lowerBinding, in: lowerRange, step: 1)
+                .tint(.accentColor)
+
+            Slider(value: upperBinding, in: upperRange, step: 1)
+                .tint(.accentColor)
+
+            Text(verbatim: String(upperValue))
+                .font(.caption.weight(.semibold))
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+                .frame(width: 44, alignment: .trailing)
+        }
+    }
+
+    // MARK: - Bindings + per-slider ranges
+
+    /// Double bridge for the lower slider. Setter snaps to int and
+    /// clamps to `upperValue - 1` so the lower handle can never equal
+    /// or exceed the upper. Also clamps to `bounds.lowerBound`
+    /// defensively (Slider already honors `in:`, but a manual write
+    /// through this binding could bypass it).
+    private var lowerBinding: Binding<Double> {
+        Binding(
+            get: { Double(lowerValue) },
+            set: { newValue in
+                let snapped = Int(newValue.rounded())
+                lowerValue = max(bounds.lowerBound,
+                                 min(snapped, upperValue - 1))
+            }
+        )
+    }
+
+    /// Double bridge for the upper slider — symmetric to lowerBinding.
+    private var upperBinding: Binding<Double> {
+        Binding(
+            get: { Double(upperValue) },
+            set: { newValue in
+                let snapped = Int(newValue.rounded())
+                upperValue = min(bounds.upperBound,
+                                 max(snapped, lowerValue + 1))
+            }
+        )
+    }
+
+    /// Lower slider's allowed range: from the global floor up to one
+    /// year below the current upper value. Per-slider tight ranges
+    /// (rather than `bounds` on both) make each thumb's position
+    /// proportional to its own slice of the timeline, so dragging
+    /// near the right edge of the lower slider feels "almost touching
+    /// the upper value" rather than "halfway through the full bounds".
+    /// Guards against a degenerate inverted range when the two
+    /// values are adjacent — SwiftUI tolerates a zero-width
+    /// ClosedRange and just renders the slider inert.
+    private var lowerRange: ClosedRange<Double> {
+        let lo = Double(bounds.lowerBound)
+        let hi = Double(max(bounds.lowerBound, upperValue - 1))
+        return lo...max(lo, hi)
+    }
+
+    private var upperRange: ClosedRange<Double> {
+        let hi = Double(bounds.upperBound)
+        let lo = Double(min(bounds.upperBound, lowerValue + 1))
+        return min(lo, hi)...hi
     }
 }
