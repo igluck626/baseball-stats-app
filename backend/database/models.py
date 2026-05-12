@@ -374,3 +374,21 @@ class TeamSeason(Base):
     # endpoint can surface "data last updated at X" without depending on
     # in-memory state surviving restarts.
     last_updated = Column(DateTime)
+    # Live standings fields, populated by the nightly update from
+    # the MLB Stats API. Historical (Lahman-only) seasons leave them
+    # NULL — they're dynamic concepts (streak, L10, clinch state) that
+    # don't make sense post-season.
+    streak_code          = Column(String)   # "W4", "L2"
+    last_ten_w           = Column(Integer)
+    last_ten_l           = Column(Integer)
+    home_w               = Column(Integer)
+    home_l               = Column(Integer)
+    away_w               = Column(Integer)
+    away_l               = Column(Integer)
+    games_back           = Column(String)   # MLB API returns "-" or "2.5" — keep as-is
+    wild_card_games_back = Column(String)
+    clinch_indicator     = Column(String)   # "y" / "x" / "w" / "z" / "e"
+    division_leader      = Column(Boolean)
+    clinched             = Column(Boolean)
+    magic_number         = Column(String)
+    elimination_number   = Column(String)

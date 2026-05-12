@@ -9,7 +9,7 @@ the current-year row in player_seasons for every player in the database.
 Phase 2 (pitchers): fetches pitching_stats_bref + bwar_pitch once and upserts
 the current-year row in pitcher_seasons for every pitcher in the database.
 
-Phase 3 (standings): fetches pybaseball.standings() and upserts the
+Phase 3 (standings): fetches the MLB Stats API standings endpoint and upserts the
 current-season row in team_seasons for each team.
 
 Phase 4 (game logs): for every active roster player (mlb_last_season =
@@ -22,7 +22,7 @@ Seasonal workflow
 Pybaseball is the source of truth ONLY for the in-flight current season.
 After each season ends (typically late October), the Lahman archive is
 re-released with the just-completed year. Re-running lahman_load.py
-permanently overwrites the pybaseball-sourced current-season rows with
+permanently overwrites the current-season standings rows with
 canonical Lahman numbers; the cutoff in lahman_load.py is "current year"
 so the rollover is automatic on the next run after Lahman publishes.
 """
@@ -30,7 +30,6 @@ so the rollover is automatic on the next run after Lahman publishes.
 import gc
 import logging
 import os
-import re
 import sys
 
 # ---------------------------------------------------------------------------
@@ -321,17 +320,12 @@ def _update_pitchers(current_year: int) -> tuple[int, int, list[int]]:
 # ---------------------------------------------------------------------------
 # Standings (TeamSeason)
 # ---------------------------------------------------------------------------
-# pybaseball.standings() returns 6 dataframes for years >= 1969 (one per
-# division), in the order AL East / AL Central / AL West / NL East / NL Central
-# / NL West. Each row has a team-name column ("Tm") sometimes annotated with
-# trailing markers like "(W)" or "(WC)" for division winners / wild cards.
-# We strip those, look the cleaned name up against the team-name → team_id map
-# already in team_seasons (built from the historical Lahman load), and upsert.
-_STANDINGS_LAYOUT: list[tuple[str, str]] = [
-    ("AL", "E"), ("AL", "C"), ("AL", "W"),
-    ("NL", "E"), ("NL", "C"), ("NL", "W"),
-]
-_NAME_MARKER_RE = re.compile(r"\s*\([^)]*\)\s*$")
+# Sourced from the MLB Stats API standings endpoint — see
+# `_update_standings` below for the full payload and field map. The
+# previous pybaseball-scrape path is gone; it only ever produced
+# W/L/win_pct/rank, and the new path covers those plus streak / L10 /
+# home / away / run differential / clinch indicators / magic /
+# elimination numbers.
 
 
 def _build_team_name_map() -> dict[str, tuple[str, str]]:
@@ -350,17 +344,44 @@ def _build_team_name_map() -> dict[str, tuple[str, str]]:
     return mapping
 
 
-def _update_standings(current_year: int) -> tuple[int, int]:
-    """Refresh current-season standings via pybaseball. Upserts into
-    team_seasons. Returns (teams_updated, lookup_failures).
-    """
-    log.info(f"Fetching pybaseball.standings({current_year}) ...")
-    try:
-        divisions = pybaseball.standings(current_year)
-    except Exception as exc:
-        log.error(f"standings fetch failed: {exc}")
-        return 0, 0
+# MLB Stats API division-id → our (league, division-letter) tuple.
+# Stable across seasons; cross-checked against
+# https://statsapi.mlb.com/api/v1/divisions
+_MLB_DIVISION_ID_TO_LEAGUE_DIV: dict[int, tuple[str, str]] = {
+    201: ("AL", "E"),  # AL East
+    202: ("AL", "C"),  # AL Central
+    200: ("AL", "W"),  # AL West
+    204: ("NL", "E"),  # NL East
+    205: ("NL", "C"),  # NL Central
+    203: ("NL", "W"),  # NL West
+}
 
+
+def _split_record(splits: list[dict], wanted_type: str) -> tuple[int | None, int | None]:
+    """Pull (wins, losses) from a splitRecords array for the given type
+    ("lastTen" / "home" / "away" / etc.). Returns (None, None) when
+    the type isn't present (pre-season, or the API trimmed it)."""
+    for split in splits or []:
+        if split.get("type") == wanted_type:
+            try:
+                return int(split.get("wins") or 0), int(split.get("losses") or 0)
+            except (TypeError, ValueError):
+                return None, None
+    return None, None
+
+
+def _update_standings(current_year: int) -> tuple[int, int]:
+    """Refresh current-season standings via the MLB Stats API and upsert
+    into team_seasons. Returns (teams_updated, lookup_failures).
+
+    Source: https://statsapi.mlb.com/api/v1/standings?leagueId={103|104}&season=YYYY.
+    Pulls everything in the standings payload — W/L/win_pct plus the
+    new dynamic fields (streak, L10, home/away splits, run differential,
+    games back, wild-card games back, clinch indicators, magic / elim
+    numbers). Maps MLB API team.name to our team_id via the existing
+    team_seasons name map, falling back gracefully on rebrand-era
+    mismatches.
+    """
     name_to_team = _build_team_name_map()
     if not name_to_team:
         log.warning("team_seasons is empty — cannot map team names; skipping standings refresh")
@@ -368,48 +389,91 @@ def _update_standings(current_year: int) -> tuple[int, int]:
 
     rows_to_save: list[dict] = []
     failed_lookups: list[str] = []
-
-    for div_idx, df in enumerate(divisions):
-        if div_idx >= len(_STANDINGS_LAYOUT):
+    # Hit each league separately. leagueId=103 = AL, 104 = NL.
+    for league_id in (103, 104):
+        try:
+            payload = data_service._mlb_get_json(
+                "standings",
+                {"leagueId": league_id, "season": current_year, "standingsTypes": "regularSeason"},
+            )
+        except Exception as exc:
+            log.error(f"standings fetch failed for leagueId={league_id}: {exc}")
             continue
-        if df is None or df.empty or len(df.columns) == 0:
-            continue
-        league, division = _STANDINGS_LAYOUT[div_idx]
-        name_col = "Tm" if "Tm" in df.columns else df.columns[0]
 
-        for rank_idx, row in enumerate(df.itertuples(index=False), 1):
-            row_dict = row._asdict()
-            raw_name = str(row_dict.get(name_col) or "").strip()
-            clean_name = _NAME_MARKER_RE.sub("", raw_name).strip()
-            if not clean_name:
+        for record in payload.get("records") or []:
+            div_id = (record.get("division") or {}).get("id")
+            mapped = _MLB_DIVISION_ID_TO_LEAGUE_DIV.get(div_id)
+            if mapped is None:
+                # Unknown division (post-season, all-star, future re-org)
+                # — skip rather than risk writing a row with no division.
                 continue
+            league, division = mapped
 
-            entry = name_to_team.get(clean_name)
-            if entry is None:
-                failed_lookups.append(clean_name)
-                continue
-            team_id, franch_id = entry
+            team_records = record.get("teamRecords") or []
+            # The API already sorts within a division by divisionRank;
+            # use the row index as our `rank` so leaders show up first.
+            for rank_idx, t in enumerate(team_records, 1):
+                team = t.get("team") or {}
+                team_name = (team.get("name") or "").strip()
+                if not team_name:
+                    continue
+                entry = name_to_team.get(team_name)
+                if entry is None:
+                    failed_lookups.append(team_name)
+                    continue
+                team_id, franch_id = entry
 
-            try:
-                w = int(row_dict.get("W") or 0)
-                l = int(row_dict.get("L") or 0)
-            except (TypeError, ValueError):
-                w = l = 0
-            win_pct = round(w / (w + l), 3) if (w + l) > 0 else None
+                wins   = int(t.get("wins") or 0)
+                losses = int(t.get("losses") or 0)
+                wp_raw = t.get("winningPercentage")
+                try:
+                    win_pct = float(wp_raw) if wp_raw is not None else (
+                        round(wins / (wins + losses), 3) if (wins + losses) > 0 else None
+                    )
+                except (TypeError, ValueError):
+                    win_pct = None
 
-            rows_to_save.append({
-                "year":      current_year,
-                "team_id":   team_id,
-                "franch_id": franch_id,
-                "team_name": clean_name,
-                "league":    league,
-                "division":  division,
-                "rank":      rank_idx,
-                "G":         w + l,
-                "W":         w,
-                "L":         l,
-                "win_pct":   win_pct,
-            })
+                splits = (t.get("records") or {}).get("splitRecords") or []
+                last10_w, last10_l = _split_record(splits, "lastTen")
+                home_w,   home_l   = _split_record(splits, "home")
+                away_w,   away_l   = _split_record(splits, "away")
+
+                streak     = t.get("streak") or {}
+                rows_to_save.append({
+                    "year":      current_year,
+                    "team_id":   team_id,
+                    "franch_id": franch_id,
+                    "team_name": team_name,
+                    "league":    league,
+                    "division":  division,
+                    "rank":      rank_idx,
+                    "G":         wins + losses,
+                    "W":         wins,
+                    "L":         losses,
+                    "win_pct":   win_pct,
+
+                    # Run differential pair — both columns already exist
+                    # on team_seasons; the previous nightly path didn't
+                    # populate them for current-season rows.
+                    "runs_scored":  t.get("runsScored"),
+                    "runs_allowed": t.get("runsAllowed"),
+
+                    # Live fields (new this commit).
+                    "streak_code":          streak.get("streakCode"),
+                    "last_ten_w":           last10_w,
+                    "last_ten_l":           last10_l,
+                    "home_w":               home_w,
+                    "home_l":               home_l,
+                    "away_w":               away_w,
+                    "away_l":               away_l,
+                    "games_back":           t.get("gamesBack"),
+                    "wild_card_games_back": t.get("wildCardGamesBack"),
+                    "clinch_indicator":     t.get("clinchIndicator"),
+                    "division_leader":      bool(t.get("divisionLeader") or False),
+                    "clinched":             bool(t.get("clinched") or False),
+                    "magic_number":         t.get("magicNumber"),
+                    "elimination_number":   t.get("eliminationNumber"),
+                })
 
     if rows_to_save:
         with connection.get_session() as db:

@@ -15,6 +15,11 @@ final class StandingsViewModel: ObservableObject {
     /// Each bucket is sorted by win_pct desc with rank as a tiebreaker.
     @Published var alStandings: [String: [TeamStanding]] = [:]
     @Published var nlStandings: [String: [TeamStanding]] = [:]
+    /// Wildcard race per league — all non-division-leader teams sorted
+    /// by win_pct desc. The Standings view highlights the top 3 as
+    /// "in" via the rank position; everything below is "out / chasing."
+    @Published var alWildcard: [TeamStanding] = []
+    @Published var nlWildcard: [TeamStanding] = []
     @Published var selectedYear: Int
     @Published var isLoading = false
     @Published var error: String?
@@ -52,22 +57,36 @@ final class StandingsViewModel: ObservableObject {
     /// Split the flat array into AL/NL × division buckets and sort each
     /// bucket by win_pct desc. Teams with unknown league/division (very
     /// old Lahman pre-divisional years) get dropped from the buckets.
+    /// Also builds the wildcard list per league (non-division-leaders
+    /// ranked by win_pct desc).
     private func partition(_ response: StandingsResponse?) {
         let teams = response?.standings ?? []
         var al: [String: [TeamStanding]] = [:]
         var nl: [String: [TeamStanding]] = [:]
+        var alWC: [TeamStanding] = []
+        var nlWC: [TeamStanding] = []
         for team in teams {
             guard let div = team.division else { continue }
             switch team.league {
-            case "AL": al[div, default: []].append(team)
-            case "NL": nl[div, default: []].append(team)
-            default:   continue
+            case "AL":
+                al[div, default: []].append(team)
+                if team.division_leader != true { alWC.append(team) }
+            case "NL":
+                nl[div, default: []].append(team)
+                if team.division_leader != true { nlWC.append(team) }
+            default:
+                continue
             }
         }
         for key in al.keys { al[key]?.sort(by: Self.standingsSort) }
         for key in nl.keys { nl[key]?.sort(by: Self.standingsSort) }
         alStandings = al
         nlStandings = nl
+        // If the backend hasn't populated division_leader yet (historical
+        // years), both wildcard arrays come back empty — the view falls
+        // back to hiding the tab in that case.
+        alWildcard = alWC.sorted(by: Self.standingsSort)
+        nlWildcard = nlWC.sorted(by: Self.standingsSort)
     }
 
     /// Best record first. win_pct is the primary key; if two teams are

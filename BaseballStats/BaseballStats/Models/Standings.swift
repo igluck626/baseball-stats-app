@@ -46,6 +46,44 @@ struct TeamStanding: Codable, Identifiable, Hashable {
     let park_name: String?
     let last_updated: String?
 
+    // Live standings fields (populated by the nightly MLB Stats API
+    // pull). Nil for historical / pre-current-season rows where these
+    // dynamic concepts don't apply.
+    let streak_code: String?
+    let last_ten_w: Int?
+    let last_ten_l: Int?
+    let home_w: Int?
+    let home_l: Int?
+    let away_w: Int?
+    let away_l: Int?
+    /// MLB Stats API renders games-back as a mixed string — "-" for
+    /// no deficit, "2.5" / "+1.5" otherwise — so we keep it as-is.
+    let games_back: String?
+    let wild_card_games_back: String?
+    /// Single character per MLB convention: "y" (clinched playoff),
+    /// "x" (clinched division), "w" (clinched wild card),
+    /// "z" (clinched home-field advantage), "e" (eliminated).
+    let clinch_indicator: String?
+    let division_leader: Bool?
+    let clinched: Bool?
+    let magic_number: String?
+    let elimination_number: String?
+
+    /// Run differential — derived from runs_scored − runs_allowed; nil
+    /// when either side hasn't been populated yet (historical pre-
+    /// nightly seasons can leave one or both NULL).
+    var runDifferential: Int? {
+        guard let rs = runs_scored, let ra = runs_allowed else { return nil }
+        return rs - ra
+    }
+
+    /// True iff the team is on a non-trivial winning or losing streak
+    /// (at least one game logged). Used to skip rendering an "—" cell.
+    var hasStreak: Bool {
+        guard let code = streak_code, !code.isEmpty else { return false }
+        return code != "-"
+    }
+
     /// Composite id (year + team_id) — a franchise appears across many
     /// years and many franchises share a year, so neither alone is unique.
     var id: String { "\(year ?? 0)-\(team_id ?? "?")" }

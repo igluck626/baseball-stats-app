@@ -59,7 +59,24 @@ _BIO_COLUMNS: list[tuple[str, str]] = [
 
 
 _TEAM_SEASONS_NEW_COLUMNS: list[tuple[str, str]] = [
-    ("last_updated", "TIMESTAMP"),
+    ("last_updated",         "TIMESTAMP"),
+    # Live standings fields from the MLB Stats API. Boolean columns
+    # use Postgres BOOLEAN; SQLite tolerates the same DDL string for
+    # local tests since SQLAlchemy maps both.
+    ("streak_code",          "VARCHAR"),
+    ("last_ten_w",           "INTEGER"),
+    ("last_ten_l",           "INTEGER"),
+    ("home_w",               "INTEGER"),
+    ("home_l",               "INTEGER"),
+    ("away_w",               "INTEGER"),
+    ("away_l",               "INTEGER"),
+    ("games_back",           "VARCHAR"),
+    ("wild_card_games_back", "VARCHAR"),
+    ("clinch_indicator",     "VARCHAR"),
+    ("division_leader",      "BOOLEAN"),
+    ("clinched",             "BOOLEAN"),
+    ("magic_number",         "VARCHAR"),
+    ("elimination_number",   "VARCHAR"),
 ]
 
 # Columns added to batting_gamelogs after the table's initial creation. The

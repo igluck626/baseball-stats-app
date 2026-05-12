@@ -2,26 +2,32 @@
 //  StandingsView.swift
 //  BaseballStats
 //
-//  Standings tab — year picker + AL/NL switcher + three division cards
-//  (East, Central, West) per league. Pulls flat standings from the
-//  backend; the VM handles partitioning into divisions.
+//  Standings tab — year picker + AL / NL / WC segmented control + the
+//  division cards (E, C, W) for the league tabs or a single wildcard
+//  card for WC. Each team row carries the live MLB Stats API fields
+//  (streak, L10, home/away, run differential, clinch indicators, magic
+//  number) inside a horizontally scrolling tail beyond the fixed
+//  Team / W / L columns.
 //
 
 import SwiftUI
 
 struct StandingsView: View {
     @StateObject private var viewModel = StandingsViewModel()
-    @State private var selectedLeague: League = .al
+    @State private var selectedTab: TabSelection = .al
 
-    enum League: String, CaseIterable, Identifiable {
+    /// Tab selection: AL division view, NL division view, or the
+    /// Wildcard race across both leagues.
+    enum TabSelection: String, CaseIterable, Identifiable {
         case al = "AL"
         case nl = "NL"
+        case wc = "WC"
         var id: String { rawValue }
-
-        var fullName: String {
+        var label: String {
             switch self {
-            case .al: return "American League"
-            case .nl: return "National League"
+            case .al: return "AL"
+            case .nl: return "NL"
+            case .wc: return "Wildcard"
             }
         }
     }
@@ -38,15 +44,8 @@ struct StandingsView: View {
                 backgroundGradient
                 content
             }
-            // Title sits on the inner content so SwiftUI tracks the
-            // ScrollView for the large-title collapse animation. Without
-            // an explicit display mode, the system can fall back to
-            // inline when the toolbar background is forced visible.
             .navigationTitle("Standings")
             .navigationBarTitleDisplayMode(.large)
-            // Material applies when content scrolls under the bar; we
-            // intentionally don't pin it to .visible here because that
-            // collapses the large-title space at the top of the view.
             .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -70,8 +69,6 @@ struct StandingsView: View {
         .ignoresSafeArea()
     }
 
-    /// Year picker lives in the toolbar so the body stays focused on
-    /// the standings cards. Range: 2000 → current year, newest first.
     private var yearMenu: some View {
         let years = Array((2000...StandingsViewModel.currentYear).reversed())
         return Picker("Year", selection: $viewModel.selectedYear) {
@@ -104,13 +101,12 @@ struct StandingsView: View {
     private var standingsScroll: some View {
         ScrollView {
             VStack(spacing: 16) {
-                leaguePicker
-                ForEach(Self.divisionOrder, id: \.self) { div in
-                    if let teams = currentLeagueStandings()[div], !teams.isEmpty {
-                        DivisionCard(
-                            title: "\(selectedLeague.rawValue) \(Self.divisionName[div] ?? div)",
-                            teams: teams
-                        )
+                tabPicker
+                Group {
+                    switch selectedTab {
+                    case .al: divisionList(for: viewModel.alStandings, leagueLabel: "AL")
+                    case .nl: divisionList(for: viewModel.nlStandings, leagueLabel: "NL")
+                    case .wc: wildcardContent
                     }
                 }
                 if let footer = updatedFooter {
@@ -125,17 +121,56 @@ struct StandingsView: View {
         }
     }
 
-    private var leaguePicker: some View {
-        Picker("League", selection: $selectedLeague) {
-            ForEach(League.allCases) { league in
-                Text(league.rawValue).tag(league)
+    private var tabPicker: some View {
+        // Wildcard tab hidden if neither league has WC data (e.g. historical
+        // years where division_leader is null across the board — there's no
+        // signal to compute the WC race from).
+        let hasWildcardData = !viewModel.alWildcard.isEmpty || !viewModel.nlWildcard.isEmpty
+        let available: [TabSelection] = hasWildcardData
+            ? TabSelection.allCases
+            : [.al, .nl]
+        return Picker("Tab", selection: $selectedTab) {
+            ForEach(available) { tab in
+                Text(tab.label).tag(tab)
             }
         }
         .pickerStyle(.segmented)
+        .onChange(of: hasWildcardData) { _, has in
+            if !has && selectedTab == .wc { selectedTab = .al }
+        }
     }
 
-    private func currentLeagueStandings() -> [String: [TeamStanding]] {
-        selectedLeague == .al ? viewModel.alStandings : viewModel.nlStandings
+    @ViewBuilder
+    private func divisionList(for buckets: [String: [TeamStanding]], leagueLabel: String) -> some View {
+        ForEach(Self.divisionOrder, id: \.self) { div in
+            if let teams = buckets[div], !teams.isEmpty {
+                DivisionCard(
+                    title: "\(leagueLabel) \(Self.divisionName[div] ?? div)",
+                    teams: teams,
+                    style: .division
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var wildcardContent: some View {
+        VStack(spacing: 16) {
+            if !viewModel.alWildcard.isEmpty {
+                DivisionCard(
+                    title: "AL Wildcard",
+                    teams: viewModel.alWildcard,
+                    style: .wildcard
+                )
+            }
+            if !viewModel.nlWildcard.isEmpty {
+                DivisionCard(
+                    title: "NL Wildcard",
+                    teams: viewModel.nlWildcard,
+                    style: .wildcard
+                )
+            }
+        }
     }
 
     /// "Updated May 4, 2026" derived from the response's last_updated.
@@ -180,9 +215,15 @@ struct StandingsView: View {
 
 // MARK: - Division card
 
+private enum CardStyle {
+    case division   // Highlight the top row as division leader.
+    case wildcard   // Highlight the top 3 as wild-card holders.
+}
+
 private struct DivisionCard: View {
     let title: String
     let teams: [TeamStanding]
+    let style: CardStyle
 
     var body: some View {
         VStack(spacing: 0) {
@@ -195,11 +236,14 @@ private struct DivisionCard: View {
             .padding(.top, 12)
             .padding(.bottom, 8)
 
-            DivisionHeaderRow()
-            Divider()
-
             ForEach(Array(teams.enumerated()), id: \.offset) { index, team in
-                TeamRow(team: team, leader: teams.first, isLeader: index == 0)
+                TeamRow(
+                    team: team,
+                    leader: teams.first,
+                    isLeader: index == 0,
+                    style: style,
+                    rankInList: index
+                )
                 if index != teams.indices.last {
                     Divider().opacity(0.4)
                 }
@@ -209,77 +253,146 @@ private struct DivisionCard: View {
     }
 }
 
-/// Numeric column widths. The team column is flexible (takes whatever
-/// space remains) so long names like "Cleveland Guardians" don't have
-/// to truncate — they shrink slightly via `minimumScaleFactor` if the
-/// row gets tight, but otherwise display in full.
+/// Column widths for the scrollable stat tail. Tuned to keep the
+/// full row within ~520pt total so an iPhone 17 Pro shows ~3/4 of
+/// the stats without scrolling, and the rest pulls in via swipe.
 private enum StandingsLayout {
-    static let cell: CGFloat = 44
-    static let gb:   CGFloat = 48
-}
-
-private struct DivisionHeaderRow: View {
-    var body: some View {
-        HStack(spacing: 0) {
-            Text("Team").frame(maxWidth: .infinity, alignment: .leading)
-            Text("W").frame(width: StandingsLayout.cell, alignment: .trailing)
-            Text("L").frame(width: StandingsLayout.cell, alignment: .trailing)
-            Text("PCT").frame(width: StandingsLayout.cell, alignment: .trailing)
-            Text("GB").frame(width: StandingsLayout.gb, alignment: .trailing)
-        }
-        .font(.caption.weight(.bold))
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-    }
+    static let cell:   CGFloat = 38
+    static let pct:    CGFloat = 42
+    static let gb:     CGFloat = 44
+    static let record: CGFloat = 48   // "54-27" style
+    static let streak: CGFloat = 36
+    static let diff:   CGFloat = 44
+    static let magic:  CGFloat = 38
 }
 
 private struct TeamRow: View {
     let team: TeamStanding
     let leader: TeamStanding?
-    /// Subtle highlight for the division leader (top row).
+    /// Top row of a division card.
     let isLeader: Bool
+    let style: CardStyle
+    /// Zero-based position in the list — used for wildcard "in / out"
+    /// highlighting (top 3 are in).
+    let rankInList: Int
 
     var body: some View {
-        HStack(spacing: 0) {
-            HStack(spacing: 6) {
-                if isLeader {
-                    Image(systemName: "star.fill")
-                        .font(.caption2)
-                        .foregroundStyle(.yellow)
-                }
-                Text(team.team_name ?? "—")
-                    .lineLimit(1)
-                    // Shrink to 85% of the natural size before
-                    // truncating — keeps "Cleveland Guardians" /
-                    // "Philadelphia Phillies" readable in tight rows.
-                    .minimumScaleFactor(0.85)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+        HStack(spacing: 12) {
+            // Fixed-width team name + clinch tag area. Wide enough for
+            // "Cleveland Guardians" + a single-letter clinch badge.
+            teamNameColumn
+                .frame(width: 170, alignment: .leading)
 
-            Text(formatInt(team.W))
-                .frame(width: StandingsLayout.cell, alignment: .trailing)
-                .monospacedDigit()
-            Text(formatInt(team.L))
-                .frame(width: StandingsLayout.cell, alignment: .trailing)
-                .monospacedDigit()
-            Text(formatPct(team.win_pct))
-                .frame(width: StandingsLayout.cell, alignment: .trailing)
-                .monospacedDigit()
-            Text(formatGB(team: team, leader: leader, isLeader: isLeader))
-                .frame(width: StandingsLayout.gb, alignment: .trailing)
-                .monospacedDigit()
-                .foregroundStyle(isLeader ? .secondary : .primary)
+            // Everything stat-side lives in a horizontal scroller so
+            // narrower phones still get all the columns; on wider
+            // phones the user usually doesn't have to scroll.
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 0) {
+                    statCell(formatInt(team.W),  width: StandingsLayout.cell)
+                    statCell(formatInt(team.L),  width: StandingsLayout.cell)
+                    statCell(formatPct(team.win_pct), width: StandingsLayout.pct)
+                    statCell(formatGB(team: team, leader: leader, isLeader: isLeader),
+                             width: StandingsLayout.gb, dim: isLeader)
+                    // Wildcard GB only meaningful on the WC tab; division
+                    // tab still renders it (low cost) so the column stays
+                    // present and aligned across both views.
+                    statCell(formatGBString(team.wild_card_games_back),
+                             width: StandingsLayout.gb, dim: true)
+                    statCell(formatRecord(w: team.last_ten_w, l: team.last_ten_l),
+                             width: StandingsLayout.record)
+                    statCell(team.hasStreak ? (team.streak_code ?? "—") : "—",
+                             width: StandingsLayout.streak)
+                    statCell(formatRecord(w: team.home_w, l: team.home_l),
+                             width: StandingsLayout.record)
+                    statCell(formatRecord(w: team.away_w, l: team.away_l),
+                             width: StandingsLayout.record)
+                    statCell(formatDiff(team.runDifferential),
+                             width: StandingsLayout.diff)
+                    // Magic number only shown for the division leader,
+                    // and only when the API gave us a real value (not
+                    // "-" which means too early to compute).
+                    if isLeader, let magic = team.magic_number,
+                       !magic.isEmpty, magic != "-" {
+                        statCell("Mg \(magic)", width: StandingsLayout.magic,
+                                 emphasized: true)
+                    }
+                }
+                .padding(.trailing, 14)
+            }
+            .scrollContentBackground(.hidden)
         }
         .font(.subheadline)
         .fontWeight(isLeader ? .semibold : .regular)
-        .padding(.horizontal, 14)
+        .padding(.leading, 14)
         .padding(.vertical, 9)
-        .background(isLeader ? Color.accentColor.opacity(0.10) : Color.clear)
+        .background(rowBackground)
         .contentShape(Rectangle())
         .onTapGesture {
             // Placeholder for team-detail navigation later.
         }
+    }
+
+    /// Star prefix for division leader, team name, single-character
+    /// clinch badge to the right of the name.
+    private var teamNameColumn: some View {
+        HStack(spacing: 6) {
+            if isLeader && style == .division {
+                Image(systemName: "star.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.yellow)
+            }
+            Text(team.team_name ?? "—")
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            if let badge = clinchBadge {
+                Text(badge.letter)
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(badge.color)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 3)
+                            .stroke(badge.color.opacity(0.6), lineWidth: 0.5)
+                    )
+            }
+        }
+    }
+
+    /// Single-character clinch tag mapping per MLB / bbref convention.
+    private var clinchBadge: (letter: String, color: Color)? {
+        guard let raw = team.clinch_indicator?.lowercased(),
+              !raw.isEmpty else { return nil }
+        switch raw {
+        case "z": return ("z", .yellow)   // clinched home-field advantage
+        case "y": return ("y", .green)    // clinched division
+        case "x": return ("x", .blue)     // clinched playoff berth
+        case "w": return ("w", .teal)     // clinched wild card
+        case "e": return ("e", .red)      // eliminated
+        default:  return (raw, .secondary)
+        }
+    }
+
+    /// Subtle row background — division leader gets the accent tint;
+    /// wildcard top-3 gets a light green tint to signal "in the
+    /// playoffs as of right now."
+    private var rowBackground: Color {
+        switch style {
+        case .division:
+            return isLeader ? Color.accentColor.opacity(0.10) : .clear
+        case .wildcard:
+            return rankInList < 3
+                ? Color.green.opacity(0.12)
+                : .clear
+        }
+    }
+
+    private func statCell(_ text: String, width: CGFloat,
+                          dim: Bool = false, emphasized: Bool = false) -> some View {
+        Text(text)
+            .frame(width: width, alignment: .trailing)
+            .monospacedDigit()
+            .foregroundStyle(emphasized ? Color.accentColor : (dim ? Color.secondary : Color.primary))
+            .fontWeight(emphasized ? .semibold : nil)
     }
 }
 
@@ -299,16 +412,39 @@ private func formatPct(_ value: Double?) -> String {
     return s
 }
 
-/// Games-back: ((leader.W − team.W) + (team.L − leader.L)) / 2.
-/// Display "—" for the leader (always 0 GB), "X.X" for everyone else.
-/// Half-game values are common (one team has played more), hence the .X.
+/// Games-back from the division leader: derived on-device for
+/// historical years (where the backend doesn't ship `games_back`),
+/// otherwise echoes the MLB Stats API's pre-computed string verbatim.
 private func formatGB(team: TeamStanding, leader: TeamStanding?, isLeader: Bool) -> String {
     if isLeader { return "—" }
+    if let gb = team.games_back, !gb.isEmpty, gb != "-" { return gb }
     guard let lw = leader?.W, let ll = leader?.L,
           let tw = team.W, let tl = team.L else { return "—" }
     let gb = (Double(lw - tw) + Double(tl - ll)) / 2.0
     if gb == 0 { return "—" }
     return String(format: "%.1f", gb)
+}
+
+/// MLB Stats API renders an absent games-back as the bare string "-".
+/// Normalize to our em-dash so the rest of the row stays visually
+/// consistent.
+private func formatGBString(_ value: String?) -> String {
+    guard let v = value, !v.isEmpty else { return "—" }
+    if v == "-" { return "—" }
+    return v
+}
+
+/// "54-27" formatted record, "—" when either side is nil.
+private func formatRecord(w: Int?, l: Int?) -> String {
+    guard let w = w, let l = l else { return "—" }
+    return "\(w)-\(l)"
+}
+
+/// Signed run differential — "+77" / "−12" / "0" / "—".
+private func formatDiff(_ value: Int?) -> String {
+    guard let value else { return "—" }
+    if value == 0 { return "0" }
+    return value > 0 ? "+\(value)" : "\(value)"
 }
 
 #Preview {
