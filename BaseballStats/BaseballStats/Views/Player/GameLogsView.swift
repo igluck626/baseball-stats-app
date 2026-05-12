@@ -668,7 +668,10 @@ private struct GameWithCumulative {
 // Pitching scrollable intrinsic:
 //   G 36 + IP 38 + H 26 + R 26 + ER 28 + BB 26 + SO 26 + HR 26 + ERA 44
 //   = 276 → fits without scrolling on iPhone.
-private enum SplitsLayout {
+// Visibility note: `internal` (the default) so the Overview tab's
+// Recent Games mini-table can share the same column widths — keeps
+// the two surfaces visually identical without copying constants.
+enum SplitsLayout {
     static let rowHeight: CGFloat = 36
     // Sized for the longest split label ("Last 30") at .caption — ~40pt
     // measured + a small slack for Dynamic Type. "Custom", "Season",
@@ -702,7 +705,11 @@ private enum SplitsLayout {
 /// Uniform shape consumed by both the splits table and the monthly
 /// totals row. Either source (API window or local games-array agg)
 /// produces one of these so the renderer doesn't branch on origin.
-private struct WindowSnapshot {
+///
+/// Visibility note: `internal` (the default) so the Overview tab's
+/// Recent Games mini-table can render the same windows without
+/// re-implementing the adapter or the local aggregation helpers.
+struct WindowSnapshot {
     var g: Int?
     // Batting
     var ab: Int?

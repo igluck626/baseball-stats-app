@@ -430,13 +430,34 @@ struct PlayerProfileView: View {
         }
     }
 
-    /// Two stacked cards: current season → career. Bio data now lives
-    /// in the header card at the top of the page, so we no longer
-    /// render a separate Player Info card here.
+    /// Stacked cards: current-season grid → Recent Games rolling window
+    /// → League Rankings → career grid. The two "live" sections only
+    /// surface for the current MLB year, and Recent Games + Rankings
+    /// are gated on having a resolvable team / league — retired
+    /// players don't reach Overview at all (`tabsToShow` strips it).
     @ViewBuilder
     private var battingOverview: some View {
         VStack(spacing: 20) {
             battingCurrentSeasonCard
+            RecentGamesSection(
+                playerId: player.player_id,
+                isPitcher: false,
+                season: Self.overviewSeason
+            )
+            .id("recent-batting-\(player.player_id)")
+            // Card decides internally whether to render — it resolves
+            // teamCode → league inside its VM and collapses when zero
+            // stats qualify (or when the team code isn't in the
+            // mapping). Keeping the host unconditional means the load
+            // path runs every time, which lets the temporary
+            // diagnostic print fire on every player open.
+            LeagueRankingsCard(
+                playerId: player.player_id,
+                isPitcher: false,
+                season: Self.overviewSeason,
+                teamCode: player.teamCode
+            )
+            .id("rankings-batting-\(player.player_id)")
             battingCareerCard
         }
     }
@@ -445,8 +466,28 @@ struct PlayerProfileView: View {
     private var pitchingOverview: some View {
         VStack(spacing: 20) {
             pitchingCurrentSeasonCard
+            RecentGamesSection(
+                playerId: player.player_id,
+                isPitcher: true,
+                season: Self.overviewSeason
+            )
+            .id("recent-pitching-\(player.player_id)")
+            LeagueRankingsCard(
+                playerId: player.player_id,
+                isPitcher: true,
+                season: Self.overviewSeason,
+                teamCode: player.teamCode
+            )
+            .id("rankings-pitching-\(player.player_id)")
             pitchingCareerCard
         }
+    }
+
+    /// Current calendar year — the only season Overview ever surfaces.
+    /// Pinned to a single source of truth so Recent Games and League
+    /// Rankings are guaranteed to ask about the same year.
+    private static var overviewSeason: Int {
+        Calendar.current.component(.year, from: Date())
     }
 
     // MARK: - Current season cards (3×3 grids)
