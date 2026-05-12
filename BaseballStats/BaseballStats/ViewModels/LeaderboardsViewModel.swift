@@ -26,6 +26,27 @@ final class LeaderboardsViewModel: ObservableObject {
         }
     }
 
+    /// Leaderboard mode — picks which slice of history the rankings
+    /// come from. Drives the segmented control at the top of the view
+    /// and the `mode` query param on the backend.
+    enum Mode: String, CaseIterable, Identifiable {
+        case season   = "season"     // single-year (default)
+        case allTime  = "all_time"   // top single seasons across all years
+        case career   = "career"     // aggregated career totals
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .season:  return "Season"
+            case .allTime: return "All-Time"
+            case .career:  return "Career"
+            }
+        }
+        /// True when the year picker should be visible — only the
+        /// single-year mode needs a year. All-time / career take their
+        /// scope from "everything on record."
+        var usesYear: Bool { self == .season }
+    }
+
     /// League filter — "All" combines both leagues; AL/NL pass through to
     /// the backend's `league` query param. Standalone enum so the view's
     /// segmented control can iterate it directly.
@@ -136,6 +157,7 @@ final class LeaderboardsViewModel: ObservableObject {
     @Published var selectedYear: Int            = LeaderboardsViewModel.currentYear
     @Published var selectedLeague: LeagueFilter = .all
     @Published var selectedTeam: TeamFilter     = LeaderboardsViewModel.allTeams
+    @Published var selectedMode: Mode           = .season
 
     // MARK: - State
 
@@ -231,8 +253,9 @@ final class LeaderboardsViewModel: ObservableObject {
         do {
             let response = try await api.getLeaderboard(
                 stat:       selectedStat,
-                year:       selectedYear,
+                year:       selectedMode.usesYear ? selectedYear : nil,
                 playerType: playerKind.rawValue,
+                mode:       selectedMode.rawValue,
                 league:     selectedLeague.apiValue,
                 team:       selectedTeam.apiCode,
                 limit:      displayedLimit

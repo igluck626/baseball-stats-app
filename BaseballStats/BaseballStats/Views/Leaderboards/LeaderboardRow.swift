@@ -120,11 +120,24 @@ struct LeaderboardRow: View {
 
     // MARK: - Derived display strings
 
-    /// Full team name from the team code, or nil when neither is known.
+    /// Team name + (in all-time mode) the year of the single season
+    /// being ranked. Format: "Los Angeles Angels · 2004" for an
+    /// all-time HR row, plain "Los Angeles Angels" for season/career
+    /// rows. Year alone (no team) for the rare case where the team
+    /// can't be resolved but the year is known.
     private var teamLine: String? {
-        guard let code = entry.player.teamCode, !code.isEmpty,
-              let name = teamFullName(for: code) else { return nil }
-        return name
+        let teamName: String? = {
+            guard let code = entry.player.teamCode, !code.isEmpty,
+                  let name = teamFullName(for: code) else { return nil }
+            return name
+        }()
+        let yearText = entry.year.map(String.init)
+        switch (teamName, yearText) {
+        case let (team?, year?): return "\(team) · \(year)"
+        case let (team?, nil):   return team
+        case let (nil, year?):   return year
+        default:                 return nil
+        }
     }
 
     private var formattedValue: String {

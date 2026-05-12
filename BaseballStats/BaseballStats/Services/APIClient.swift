@@ -148,18 +148,25 @@ final class APIClient {
     /// variants ("FLO" → also "MIA", etc.).
     func getLeaderboard(
         stat: String,
-        year: Int,
+        year: Int?,
         playerType: String,
+        mode: String = "season",
         league: String? = nil,
         team: String? = nil,
         limit: Int = 25
     ) async throws -> LeaderboardResponse? {
         var query: [URLQueryItem] = [
             URLQueryItem(name: "stat",        value: stat),
-            URLQueryItem(name: "year",        value: String(year)),
             URLQueryItem(name: "player_type", value: playerType),
+            URLQueryItem(name: "mode",        value: mode),
             URLQueryItem(name: "limit",       value: String(limit)),
         ]
+        // `year` is required only in season mode; we omit it in
+        // all-time / career so the URL doesn't carry a value the
+        // backend would silently ignore.
+        if let year {
+            query.append(URLQueryItem(name: "year", value: String(year)))
+        }
         if let league {
             query.append(URLQueryItem(name: "league", value: league))
         }

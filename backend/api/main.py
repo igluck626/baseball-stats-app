@@ -774,10 +774,27 @@ _LEADERBOARD_PITCHING_STATS = {
 }
 
 
+_LEADERBOARD_MODES = {"season", "all_time", "career"}
+
+
 @app.get("/leaderboards")
 def leaderboards(
     stat:        str = Query(..., description="Stat key, e.g. HR / AVG / WAR / ERA"),
-    year:        int = Query(..., description="Season year"),
+    year:        int | None = Query(
+        None,
+        description=(
+            "Season year. Required when mode='season'; ignored for "
+            "'all_time' and 'career'."
+        ),
+    ),
+    mode:        str = Query(
+        "season",
+        description=(
+            "Leaderboard mode: 'season' (single-year), 'all_time' "
+            "(top single seasons across all years), or 'career' "
+            "(aggregated career totals)."
+        ),
+    ),
     player_type: str = Query("batter", description="'batter' or 'pitcher'"),
     limit:       int = Query(25, ge=1, le=100),
     league:      str | None = Query(
@@ -792,21 +809,39 @@ def leaderboards(
         ),
     ),
 ):
-    """Top `limit` players for the given (stat, year). Sort order is
+    """Top `limit` players for the given (stat, mode). Sort order is
     automatic — ERA / WHIP ascending (lower is better), everything else
     descending. Each row carries a full PlayerSearchResult-shaped
     `player` block so the iOS row can render the same chrome as the
     search results and navigation can push straight into PlayerProfile.
 
-    Rate-stat eligibility (AVG/OBP/SLG/OPS/ERA/WHIP) scales with games
-    played: standard 502 PA / 162 IP for completed seasons, pro-rated
-    for in-progress seasons (3.1 PA × max team games / 1.0 IP × max
-    team games).
+    Three modes:
+      • `season`   — single-year leaderboard for `year`. Rate-stat
+                     eligibility scales with games played: 502 PA /
+                     162 IP for completed seasons, pro-rated for
+                     in-progress seasons.
+      • `all_time` — top single seasons across every year on record.
+                     Flat 502 PA / 162 IP qualifier for rate stats.
+      • `career`   — aggregated career totals per player. Counting
+                     stats are SUM, rate stats compute from career
+                     totals (career AVG = SUM(H)/SUM(AB), career ERA
+                     = SUM(ER)*9/SUM(IP), …). Rate stats require at
+                     least 1000 PA (batters) or 500 IP (pitchers).
 
     `league` and `team` are independent filters and may be combined.
     The team value is matched against all known historical Lahman
     variants for that franchise, so e.g. team='MIA' also returns
     "FLO" rows from the Florida Marlins era."""
+    if mode not in _LEADERBOARD_MODES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"mode must be one of {sorted(_LEADERBOARD_MODES)}",
+        )
+    if mode == "season" and year is None:
+        raise HTTPException(
+            status_code=400,
+            detail="year is required when mode='season'",
+        )
     if player_type not in ("batter", "pitcher"):
         raise HTTPException(
             status_code=400,
@@ -839,15 +874,20 @@ def leaderboards(
         )
 
     response = data_service.get_leaderboard(
-        stat=stat, year=year, player_type=player_type,
+        stat=stat, year=year, player_type=player_type, mode=mode,
         limit=limit, league=league, team=team,
     )
     if response is None or not response.get("leaders"):
         suffix = ", ".join(filter(None, [league, team]))
         suffix = f" ({suffix})" if suffix else ""
+        scope = (
+            f"year {year}" if mode == "season"
+            else "all time" if mode == "all_time"
+            else "career"
+        )
         raise HTTPException(
             status_code=404,
-            detail=f"No {stat} leaders found for year {year}{suffix}",
+            detail=f"No {stat} leaders found for {scope}{suffix}",
         )
     return response
 

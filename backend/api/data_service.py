@@ -1440,39 +1440,65 @@ def _qualifier_thresholds(db, year: int) -> tuple[int, float]:
     return min_pa, min_ip
 
 
+# Career-mode minimum qualifiers. Looser than per-season MLB rules
+# because they accumulate across a whole career — a 1000 PA floor cuts
+# pinch-hit-only utility guys without excluding genuine starters who
+# had short careers (Joe DiMaggio still cleared this in 13 seasons).
+# 500 IP is roughly 3 full-rotation seasons; relievers who never hit
+# this don't belong in the all-time ERA / WHIP conversation.
+_CAREER_MIN_PA = 1000
+_CAREER_MIN_IP = 500.0
+
+# Standard (modern) full-season qualifying thresholds for the all-time
+# single-season rate-stat leaderboards. Used as a flat floor — we don't
+# pro-rate by year-specific schedule length because the all-time list
+# is dominated by modern seasons anyway, and pre-1961 short schedules
+# rarely produced rate-stat leaders below this PA / IP bar.
+_ALL_TIME_MIN_PA = 502
+_ALL_TIME_MIN_IP = 162.0
+
+
 def get_leaderboard(
     stat: str,
-    year: int,
+    year: Optional[int],
     player_type: str,
+    mode: str = "season",
     limit: int = 25,
     league: Optional[str] = None,
     team: Optional[str] = None,
 ) -> Optional[dict]:
-    """Top `limit` players for a given (stat, year) on either batting or
-    pitching seasons.
+    """Top `limit` players for a given (stat, year/mode) on either
+    batting or pitching seasons. Three modes:
 
-    `league` filters the result to a single league ("AL" / "NL"); omit
-    or pass an empty value to combine both leagues. `team` filters to a
-    single franchise — pass a Lahman code (e.g. "NYA" for the Yankees,
-    "LAN" for the Dodgers); the helper expands it to all historical
-    storage variants (e.g. "FLO" → also matches "MIA"). Both filters
-    can be combined.
+      • `season`   — top single seasons for the given `year` (default).
+      • `all_time` — top single seasons across every year; `year` is
+                     ignored. Rate-stat qualifier is the flat modern
+                     full-season floor (502 PA / 162 IP).
+      • `career`   — aggregated career totals per player. Counting
+                     stats are SUM, rate stats are computed from the
+                     career totals (career AVG = SUM(H)/SUM(AB), etc.).
+                     Rate-stat eligibility uses a career floor
+                     (1000 PA for batters, 500 IP for pitchers).
 
-    Rate stats (AVG/OBP/SLG/OPS/ERA/WHIP) require a pro-rated PA/IP
-    minimum based on the season's max games played, so mid-season
-    leaderboards populate while completed-season leaderboards stay at
-    the standard 502 PA / 162 IP qualifiers. When `team` is supplied
-    the qualifier drops to flat low minimums (10 PA / 3 IP) — a single
-    franchise has too few rotation arms / starting bats to enforce
-    MLB-wide qualifying rules.
+    `league` filters at the season-row level — for career, that means
+    only seasons in that league count toward the player's career
+    aggregate. `team` filters likewise (expanded to all historical
+    franchise variants), and remains useful even in career mode for
+    "best-ever Yankees careers" type queries.
 
     Returns a response dict shaped like:
       {
-        "stat": "HR", "year": 2026, "player_type": "batter",
+        "stat": "HR", "mode": "season",
+        "year": 2026 (null in all_time/career),
+        "player_type": "batter",
         "league": "AL", "team": "NYA",
         "min_pa": 502, "min_ip": 162.0,
         "leaders": [
-          {"rank": 1, "value": 54.0, "player": { ...PlayerSearchResult... }},
+          {
+            "rank": 1, "value": 54.0,
+            "year": 2026 (null in career),
+            "player": { ...PlayerSearchResult... }
+          },
           ...
         ]
       }
@@ -1483,20 +1509,43 @@ def get_leaderboard(
         return None
 
     is_batter = player_type == "batter"
-    table = _PlayerSeason if is_batter else _PitcherSeason
     catalog = _LEADERBOARD_BATTING if is_batter else _LEADERBOARD_PITCHING
     if stat not in catalog:
         return None
+
+    if mode == "career":
+        return _leaderboard_career(
+            stat=stat, is_batter=is_batter,
+            limit=limit, league=league, team=team,
+        )
+    if mode == "all_time":
+        return _leaderboard_all_time(
+            stat=stat, is_batter=is_batter,
+            limit=limit, league=league, team=team,
+        )
+    if year is None:
+        return None
+    return _leaderboard_season(
+        stat=stat, year=year, is_batter=is_batter,
+        limit=limit, league=league, team=team,
+    )
+
+
+def _leaderboard_season(
+    stat: str, year: int, is_batter: bool, limit: int,
+    league: Optional[str], team: Optional[str],
+) -> dict:
+    """Top single-season performances for a specific year. The mode the
+    leaderboard endpoint has always served — extracted here so the
+    three-mode dispatcher can call it as one branch."""
+    table = _PlayerSeason if is_batter else _PitcherSeason
+    catalog = _LEADERBOARD_BATTING if is_batter else _LEADERBOARD_PITCHING
     column_name, direction, eligibility = catalog[stat]
 
     column = getattr(table, column_name)
     order_by = column.asc() if direction == "asc" else column.desc()
 
     with connection.get_session() as db:
-        # MLB-wide pro-rated qualifier for the cross-team leaderboard.
-        # When the user has narrowed to a single franchise, fall back
-        # to flat low minimums — a single team's pitching staff or
-        # starting lineup is too small to clear the league-wide bar.
         if team:
             min_pa, min_ip = _TEAM_FILTER_MIN_PA, _TEAM_FILTER_MIN_IP
         else:
@@ -1513,9 +1562,6 @@ def get_leaderboard(
             clause = _team_filter_clause(table, team)
             if clause is not None:
                 q = q.filter(clause)
-        # Rate-stat eligibility — needs enough volume to be meaningful.
-        # PA lives on player_seasons only; IP on both. The catalog only
-        # uses "PA" for batter rate stats, so the column lookup is safe.
         if eligibility == "PA":
             q = q.filter(table.PA.isnot(None), table.PA >= min_pa)
         elif eligibility == "IP":
@@ -1524,54 +1570,333 @@ def get_leaderboard(
 
         leaders = []
         for rank, season_row in enumerate(rows, start=1):
-            player_row = (
-                crud.get_pitcher(db, season_row.player_id)
-                if not is_batter
-                else crud.get_player(db, season_row.player_id)
-            )
-            # Two-way players land in both tables — fall back to the
-            # "other" name table so the row is never anonymous.
-            if player_row is None:
-                player_row = (
-                    crud.get_player(db, season_row.player_id)
-                    if not is_batter
-                    else crud.get_pitcher(db, season_row.player_id)
-                )
+            player_row = _resolve_player_row(db, season_row.player_id, is_batter)
             if player_row is None:
                 continue
-
             team_code = _resolve_team_code(season_row.team, season_row.league)
-            value = getattr(season_row, column_name)
-            # is_pitcher hint lets the iOS profile screen pick the
-            # right default role tab without having to wait for the
-            # four parallel current/career fetches to resolve. A young
-            # pitcher with sub-50 IP would otherwise look like a non-
-            # pitcher to the threshold-based detection on the client.
             leaders.append({
-                "rank":  rank,
-                "value": value,
-                "player": {
-                    "player_id":       player_row.player_id,
-                    "name":            player_row.name,
-                    "bbref_id":        player_row.bbref_id,
-                    "mlb_debut":       player_row.mlb_debut,
-                    "mlb_last_season": player_row.mlb_last_season,
-                    "current_team":    season_row.team,
-                    "team_code":       team_code,
-                    "is_pitcher":      not is_batter,
-                    **_bio_dict(player_row, db),
-                },
+                "rank":   rank,
+                "value":  getattr(season_row, column_name),
+                "year":   season_row.year,
+                "player": _player_payload(
+                    player_row, db,
+                    current_team=season_row.team,
+                    team_code=team_code,
+                    is_pitcher=not is_batter,
+                ),
             })
 
     return {
         "stat":        stat,
+        "mode":        "season",
         "year":        year,
-        "player_type": player_type,
+        "player_type": "batter" if is_batter else "pitcher",
         "league":      league,
         "team":        team,
         "min_pa":      min_pa,
         "min_ip":      min_ip,
         "leaders":     leaders,
+    }
+
+
+def _leaderboard_all_time(
+    stat: str, is_batter: bool, limit: int,
+    league: Optional[str], team: Optional[str],
+) -> dict:
+    """Top single-season performances across every year on record. Same
+    shape as the season query but with the year filter dropped. Rate
+    stats use the flat modern-season qualifier (502 PA / 162 IP) — we
+    don't pro-rate per-year schedules because pre-1961 leaders cleared
+    that bar anyway and modeling deadball-era schedules adds complexity
+    without changing the produced list."""
+    table = _PlayerSeason if is_batter else _PitcherSeason
+    catalog = _LEADERBOARD_BATTING if is_batter else _LEADERBOARD_PITCHING
+    column_name, direction, eligibility = catalog[stat]
+
+    column = getattr(table, column_name)
+    order_by = column.asc() if direction == "asc" else column.desc()
+
+    min_pa = _TEAM_FILTER_MIN_PA if team else _ALL_TIME_MIN_PA
+    min_ip = _TEAM_FILTER_MIN_IP if team else _ALL_TIME_MIN_IP
+
+    with connection.get_session() as db:
+        q = db.query(table).filter(column.isnot(None))
+        if league:
+            q = q.filter(table.league == league)
+        if team:
+            clause = _team_filter_clause(table, team)
+            if clause is not None:
+                q = q.filter(clause)
+        if eligibility == "PA":
+            q = q.filter(table.PA.isnot(None), table.PA >= min_pa)
+        elif eligibility == "IP":
+            q = q.filter(table.IP.isnot(None), table.IP >= min_ip)
+        rows = q.order_by(order_by).limit(limit).all()
+
+        leaders = []
+        for rank, season_row in enumerate(rows, start=1):
+            player_row = _resolve_player_row(db, season_row.player_id, is_batter)
+            if player_row is None:
+                continue
+            team_code = _resolve_team_code(season_row.team, season_row.league)
+            leaders.append({
+                "rank":   rank,
+                "value":  getattr(season_row, column_name),
+                "year":   season_row.year,
+                "player": _player_payload(
+                    player_row, db,
+                    current_team=season_row.team,
+                    team_code=team_code,
+                    is_pitcher=not is_batter,
+                ),
+            })
+
+    return {
+        "stat":        stat,
+        "mode":        "all_time",
+        "year":        None,
+        "player_type": "batter" if is_batter else "pitcher",
+        "league":      league,
+        "team":        team,
+        "min_pa":      min_pa,
+        "min_ip":      min_ip,
+        "leaders":     leaders,
+    }
+
+
+# Career rate stats — these compute from aggregated counting stats
+# instead of pulling a season column. Set per role so the dispatcher
+# knows when to apply the career PA/IP qualifier.
+_CAREER_BATTING_RATE_STATS  = {"AVG", "OBP", "SLG", "OPS"}
+_CAREER_PITCHING_RATE_STATS = {"ERA", "WHIP"}
+
+
+def _leaderboard_career(
+    stat: str, is_batter: bool, limit: int,
+    league: Optional[str], team: Optional[str],
+) -> dict:
+    """Top career totals per player. Counting stats are SUM; rate stats
+    derive from career sums of their components (career AVG =
+    SUM(H)/SUM(AB), career ERA = SUM(ER)*9/SUM(IP), …). Players need at
+    least 1000 PA (batters) or 500 IP (pitchers) to be eligible for
+    rate-stat boards — keeps the lists meaningful without excluding
+    short-career stars.
+
+    `league` and `team` filter at the season-row level before
+    aggregation: career-mode-with-league = "career stats among AL
+    seasons only," which mirrors the season-mode filter semantics."""
+    # Career mode only borrows the sort direction from the season
+    # catalog — value formulas live in _career_value, and rate-stat
+    # eligibility uses the career floor (1000 PA / 500 IP) rather than
+    # the per-season catalog's PA / IP rule.
+    catalog = _LEADERBOARD_BATTING if is_batter else _LEADERBOARD_PITCHING
+    direction = catalog[stat][1]
+
+    rate_stats = _CAREER_BATTING_RATE_STATS if is_batter else _CAREER_PITCHING_RATE_STATS
+    is_rate = stat in rate_stats
+
+    table = _PlayerSeason if is_batter else _PitcherSeason
+    min_pa = _CAREER_MIN_PA
+    min_ip = _CAREER_MIN_IP
+
+    with connection.get_session() as db:
+        # One aggregate row per player — every column we might need to
+        # compute any supported career stat. Counting stats read off
+        # the matching aggregate; rate stats build on multiple ones.
+        if is_batter:
+            agg_columns = [
+                _PlayerSeason.player_id.label("player_id"),
+                func.sum(_PlayerSeason.WAR).label("WAR"),
+                func.sum(_PlayerSeason.HR).label("HR"),
+                func.sum(_PlayerSeason.RBI).label("RBI"),
+                func.sum(_PlayerSeason.H).label("H"),
+                func.sum(_PlayerSeason.R).label("R"),
+                func.sum(_PlayerSeason.SB).label("SB"),
+                func.sum(_PlayerSeason.BB).label("BB"),
+                func.sum(_PlayerSeason.SO).label("SO"),
+                func.sum(_PlayerSeason.PA).label("PA"),
+                func.sum(_PlayerSeason.AB).label("AB"),
+                func.sum(_PlayerSeason.doubles).label("doubles"),
+                func.sum(_PlayerSeason.triples).label("triples"),
+                func.sum(_PlayerSeason.HBP).label("HBP"),
+                func.sum(_PlayerSeason.SF).label("SF"),
+                # max(year) gives us the player's most-recent season —
+                # used downstream to surface a "current team" label.
+                func.max(_PlayerSeason.year).label("last_year"),
+            ]
+        else:
+            agg_columns = [
+                _PitcherSeason.player_id.label("player_id"),
+                func.sum(_PitcherSeason.WAR).label("WAR"),
+                func.sum(_PitcherSeason.SO).label("SO"),
+                func.sum(_PitcherSeason.W).label("W"),
+                func.sum(_PitcherSeason.SV).label("SV"),
+                func.sum(_PitcherSeason.IP).label("IP"),
+                func.sum(_PitcherSeason.H).label("H"),
+                func.sum(_PitcherSeason.BB).label("BB"),
+                func.sum(_PitcherSeason.HR).label("HR"),
+                func.sum(_PitcherSeason.CG).label("CG"),
+                func.sum(_PitcherSeason.SHO).label("SHO"),
+                func.sum(_PitcherSeason.ER).label("ER"),
+                func.max(_PitcherSeason.year).label("last_year"),
+            ]
+
+        agg_q = db.query(*agg_columns).group_by(table.player_id)
+        if league:
+            agg_q = agg_q.filter(table.league == league)
+        if team:
+            clause = _team_filter_clause(table, team)
+            if clause is not None:
+                agg_q = agg_q.filter(clause)
+        agg_rows = agg_q.all()
+
+        # Compute the requested stat per row, drop ineligible ones,
+        # then sort + take top N. Done in Python so the rate formulas
+        # stay obvious and we don't need to push them into SQL.
+        valued = []
+        for r in agg_rows:
+            value = _career_value(r, stat, is_batter)
+            if value is None:
+                continue
+            if is_rate:
+                if is_batter:
+                    if (r.PA or 0) < min_pa:
+                        continue
+                else:
+                    if float(r.IP or 0) < min_ip:
+                        continue
+            valued.append((r, value))
+
+        reverse = direction == "desc"
+        valued.sort(key=lambda rv: rv[1], reverse=reverse)
+        top = valued[:limit]
+
+        # Build the leader rows + "most recent team" labels. We do one
+        # extra query per top-25 row to grab the player's last-season
+        # team — bounded fan-out, negligible cost vs. the aggregate
+        # scan above.
+        leaders = []
+        for rank, (agg_row, value) in enumerate(top, start=1):
+            player_row = _resolve_player_row(db, agg_row.player_id, is_batter)
+            if player_row is None:
+                continue
+            last_team, last_team_league = _last_season_team(
+                db, agg_row.player_id, agg_row.last_year, is_batter,
+            )
+            team_code = _resolve_team_code(last_team, last_team_league)
+            leaders.append({
+                "rank":   rank,
+                "value":  value,
+                "year":   None,
+                "player": _player_payload(
+                    player_row, db,
+                    current_team=last_team,
+                    team_code=team_code,
+                    is_pitcher=not is_batter,
+                ),
+            })
+
+    return {
+        "stat":        stat,
+        "mode":        "career",
+        "year":        None,
+        "player_type": "batter" if is_batter else "pitcher",
+        "league":      league,
+        "team":        team,
+        "min_pa":      min_pa if is_batter else None,
+        "min_ip":      min_ip if not is_batter else None,
+        "leaders":     leaders,
+    }
+
+
+def _career_value(agg, stat: str, is_batter: bool) -> Optional[float]:
+    """Pull or compute the requested career stat from one aggregated
+    row. Returns None when the stat can't be computed (missing inputs,
+    zero denominators, etc.) so the caller can drop the row."""
+    if is_batter:
+        if stat == "AVG":
+            ab = agg.AB or 0
+            return (agg.H or 0) / ab if ab else None
+        if stat == "OBP":
+            denom = (agg.AB or 0) + (agg.BB or 0) + (agg.HBP or 0) + (agg.SF or 0)
+            num   = (agg.H or 0)  + (agg.BB or 0) + (agg.HBP or 0)
+            return num / denom if denom else None
+        if stat == "SLG":
+            ab = agg.AB or 0
+            if not ab:
+                return None
+            tb = ((agg.H or 0)
+                  + (agg.doubles or 0)
+                  + 2 * (agg.triples or 0)
+                  + 3 * (agg.HR or 0))
+            return tb / ab
+        if stat == "OPS":
+            obp = _career_value(agg, "OBP", True)
+            slg = _career_value(agg, "SLG", True)
+            return (obp + slg) if (obp is not None and slg is not None) else None
+        # Counting stat: pull directly off the aggregated row. The
+        # API stat label might not match the aggregate label (e.g.
+        # "2B" vs "doubles") — translate here.
+        key = {"2B": "doubles", "3B": "triples"}.get(stat, stat)
+        raw = getattr(agg, key, None)
+        return float(raw) if raw is not None else None
+
+    # Pitcher
+    if stat == "ERA":
+        ip = float(agg.IP or 0)
+        return (float(agg.ER or 0) * 9.0) / ip if ip else None
+    if stat == "WHIP":
+        ip = float(agg.IP or 0)
+        return (float((agg.BB or 0) + (agg.H or 0))) / ip if ip else None
+    raw = getattr(agg, stat, None)
+    return float(raw) if raw is not None else None
+
+
+def _resolve_player_row(db, player_id: int, is_batter: bool):
+    """Pull the canonical player record by id. Two-way players (Ohtani-
+    style) sit in both `players` and `pitchers`; fall back to the other
+    table so the row is never anonymous regardless of which leaderboard
+    surfaced them."""
+    primary = crud.get_player if is_batter else crud.get_pitcher
+    fallback = crud.get_pitcher if is_batter else crud.get_player
+    row = primary(db, player_id)
+    if row is None:
+        row = fallback(db, player_id)
+    return row
+
+
+def _last_season_team(db, player_id: int, last_year: Optional[int], is_batter: bool):
+    """Return (team, league) for the player's most-recent season in the
+    same role table the aggregate came from. Both values may be None
+    when the season row is missing — caller treats that as 'team
+    unknown' and the iOS row falls back to omitting the team line."""
+    if last_year is None:
+        return None, None
+    table = _PlayerSeason if is_batter else _PitcherSeason
+    row = (
+        db.query(table.team, table.league)
+        .filter(table.player_id == player_id, table.year == last_year)
+        .first()
+    )
+    if row is None:
+        return None, None
+    return row[0], row[1]
+
+
+def _player_payload(player_row, db, *, current_team, team_code, is_pitcher) -> dict:
+    """Common PlayerSearchResult-shaped block for leaderboard rows.
+    Centralized here so the three mode helpers can't drift in what
+    they ship to the client."""
+    return {
+        "player_id":       player_row.player_id,
+        "name":            player_row.name,
+        "bbref_id":        player_row.bbref_id,
+        "mlb_debut":       player_row.mlb_debut,
+        "mlb_last_season": player_row.mlb_last_season,
+        "current_team":    current_team,
+        "team_code":       team_code,
+        "is_pitcher":      is_pitcher,
+        **_bio_dict(player_row, db),
     }
 
 

@@ -20,10 +20,15 @@ struct LeaderboardsView: View {
     /// this, the previous chained-onChange approach raced and could
     /// either skip the fetch (when reset to the same stat) or fire
     /// twice (when stat actually changed).
+    ///
+    /// `year` becomes nil in non-season modes so the same key shape
+    /// covers all three modes — flipping the segmented control changes
+    /// `mode` (and clears `year`), which is one coherent state shift.
     private struct FetchKey: Hashable {
         let kind:   LeaderboardsViewModel.PlayerKind
         let stat:   String
-        let year:   Int
+        let mode:   LeaderboardsViewModel.Mode
+        let year:   Int?
         let league: LeaderboardsViewModel.LeagueFilter
         let team:   LeaderboardsViewModel.TeamFilter
         let limit:  Int
@@ -33,7 +38,8 @@ struct LeaderboardsView: View {
         FetchKey(
             kind:   viewModel.playerKind,
             stat:   viewModel.selectedStat,
-            year:   viewModel.selectedYear,
+            mode:   viewModel.selectedMode,
+            year:   viewModel.selectedMode.usesYear ? viewModel.selectedYear : nil,
             league: viewModel.selectedLeague,
             team:   viewModel.selectedTeam,
             limit:  viewModel.displayedLimit
@@ -54,7 +60,14 @@ struct LeaderboardsView: View {
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    yearMenu
+                    // Year picker only meaningful in season mode —
+                    // all-time / career take their scope from the whole
+                    // database. Hidden via the if rather than disabled
+                    // so the toolbar doesn't carry a stale-looking
+                    // greyed control.
+                    if viewModel.selectedMode.usesYear {
+                        yearMenu
+                    }
                 }
             }
         }
@@ -85,6 +98,9 @@ struct LeaderboardsView: View {
         .onChange(of: viewModel.selectedTeam) { _, _ in
             viewModel.resetPagination()
         }
+        .onChange(of: viewModel.selectedMode) { _, _ in
+            viewModel.resetPagination()
+        }
     }
 
     // MARK: - Chrome
@@ -97,10 +113,14 @@ struct LeaderboardsView: View {
         .ignoresSafeArea()
     }
 
-    /// Year picker — current year down to 2000, newest first. Mirrors
-    /// the Standings tab so the toolbar slot reads the same across tabs.
+    /// Year picker — current year down to 1900, newest first. The
+    /// modern game's record-keeping starts in 1901, but Lahman carries
+    /// usable counting-stat rows for 1900 so we extend that far back.
+    /// Pre-1900 NL / "deadball-era" seasons exist in the archive but
+    /// lack many of the columns (BB rules, sac flies) and would skew
+    /// rate leaderboards unfairly — so 1900 is the floor.
     private var yearMenu: some View {
-        let years = Array((2000...LeaderboardsViewModel.currentYear).reversed())
+        let years = Array((1900...LeaderboardsViewModel.currentYear).reversed())
         return Picker("Year", selection: $viewModel.selectedYear) {
             ForEach(years, id: \.self) { year in
                 Text(String(year)).tag(year)
@@ -118,6 +138,7 @@ struct LeaderboardsView: View {
             // Controls keep their inset so the segmented and pill
             // chrome reads at a comfortable width...
             VStack(spacing: 10) {
+                modePicker
                 kindAndStatBar
                 leaguePicker
                 teamPicker
@@ -130,6 +151,18 @@ struct LeaderboardsView: View {
             // name + team line as much room as possible.
             list
         }
+    }
+
+    /// Season / All-Time / Career segmented control sitting above the
+    /// kind toggle. Drives both the API request shape (year on/off)
+    /// and the toolbar year picker's visibility.
+    private var modePicker: some View {
+        Picker("Mode", selection: $viewModel.selectedMode) {
+            ForEach(LeaderboardsViewModel.Mode.allCases) { mode in
+                Text(mode.label).tag(mode)
+            }
+        }
+        .pickerStyle(.segmented)
     }
 
     /// Top control row — kind (segmented) on the left, stat (menu) pill
@@ -287,7 +320,17 @@ struct LeaderboardsView: View {
         ContentUnavailableView {
             Label("No leaders", systemImage: "list.number")
         } description: {
-            Text("No \(viewModel.selectedStat) leaders for \(String(viewModel.selectedYear)).")
+            Text("No \(viewModel.selectedStat) leaders for \(emptyStateScope).")
+        }
+    }
+
+    /// "2026" in season mode, "all time" / "career" otherwise — keeps
+    /// the empty-state copy honest about which window the user is on.
+    private var emptyStateScope: String {
+        switch viewModel.selectedMode {
+        case .season:  return String(viewModel.selectedYear)
+        case .allTime: return "all time"
+        case .career:  return "career"
         }
     }
 
