@@ -40,6 +40,11 @@ struct PlayerProfileView: View {
     // GameLogsView binds to it so the picker syncs in both directions.
     @State private var gameLogYear = Calendar.current.component(.year, from: Date())
 
+    /// Tracks light vs. dark so the header's team-color backdrop can
+    /// nudge its opacity up in dark mode (the tint reads weaker
+    /// against the system dark background otherwise).
+    @Environment(\.colorScheme) private var colorScheme
+
     // Default to every togglable column on. Users opt out of stats
     // they don't care about; nothing is hidden behind a setting they
     // didn't know existed. Computed once from the filter groups so a
@@ -100,12 +105,45 @@ struct PlayerProfileView: View {
                         .padding(.bottom, 32)
                     }
                 }
-                // Hide the default scroll content background and pin our
-                // own systemGroupedBackground so the page reads as a
-                // single grouped surface (subtle gray) with the
-                // ultraThinMaterial cards sitting on top.
+                // Hide the default scroll content background; layer
+                // the team-color tint on top of systemGroupedBackground
+                // so the page reads as a single grouped surface with
+                // a hint of brand color behind the header that fades
+                // naturally into the stats content below.
+                //
+                // Layer order (front → back): content cards, gradient,
+                // gray. `.background` modifiers stack with later ones
+                // going deeper, so the gradient (applied first) sits
+                // in front of the gray (applied second).
+                //
+                // Stops are shaped so the color holds through the
+                // whole header + tab-selector region (top 30%), eases
+                // through the first stat card (30→70%), and is gone
+                // by the time the user scrolls into the lower cards.
+                // Opacities multiplied by ~0.7 vs. the original curve
+                // so the tint reads as a subtle atmospheric wash — the
+                // brighter / more saturated team colors were coming
+                // through as colored walls at full strength.
+                // Dark-mode values stay proportionally higher so the
+                // tint registers against system dark at all.
                 .scrollContentBackground(.hidden)
-                .background(Color(.systemGroupedBackground))
+                .background {
+                    if let tint = TeamColors.color(for: player.teamCode) {
+                        let isDark = colorScheme == .dark
+                        LinearGradient(
+                            stops: [
+                                .init(color: tint.opacity(isDark ? 0.25  : 0.18 ), location: 0.0),
+                                .init(color: tint.opacity(isDark ? 0.21  : 0.14 ), location: 0.30),
+                                .init(color: tint.opacity(isDark ? 0.056 : 0.035), location: 0.70),
+                                .init(color: .clear,                               location: 1.00),
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                        .ignoresSafeArea()
+                    }
+                }
+                .background(Color(.systemGroupedBackground).ignoresSafeArea())
                 .navigationBarTitleDisplayMode(.inline)
                 // Material nav-bar matches the rest of the app's chrome.
                 // No more transparent / dark-scheme overrides — the
