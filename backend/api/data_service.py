@@ -33,6 +33,7 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sqlalchemy import and_, case, func, or_
+from sqlalchemy.orm import aliased
 
 from database import connection, crud
 from database.models import PitcherSeason as _PitcherSeason
@@ -1565,6 +1566,91 @@ def _dedupe_rows_by_player_year(rows, limit: int) -> list:
     return out
 
 
+def _ranked_unique_seasons(
+    *, db, table, column, direction: str,
+    year: Optional[int], eligibility: Optional[str],
+    league: Optional[str], team: Optional[str],
+    min_pa: int, min_ip: float, limit: int,
+):
+    """Run a leaderboard query that's structurally guaranteed to return
+    at most one row per (player_id, year).
+
+    Mechanism: an inner SELECT assigns a ROW_NUMBER() partitioned by
+    (player_id, year) — ordered so rn=1 is the "best" row per pair
+    (highest value for desc stats, lowest for asc stats, PA/IP as a
+    secondary tiebreaker to prefer the most complete stat row). The
+    outer SELECT filters to rn=1, sorts by the actual stat, and takes
+    the top `limit`.
+
+    This is the SQL-level fortress: even if the underlying table still
+    carries (player_id, year) duplicates from a pre-PK ingest, the
+    response can never repeat a player's same season — the database
+    itself enforces "one per pair" before ranking. The defensive
+    Python-side `_dedupe_rows_by_player_year` runs after as a final
+    safety net (cost: one ~25-element pass), but the CTE alone is
+    sufficient.
+
+    Pass `year=None` to skip the per-year filter (all-time mode).
+    """
+    is_asc = direction == "asc"
+
+    # Partition order — rn=1 should be the row we *want* to keep.
+    # Primary: the leaderboard stat itself, in the response sort
+    # direction. Secondary: PA / IP descending so a tie on the stat
+    # falls to the more-complete (higher-volume) row.
+    partition_order = [column.asc() if is_asc else column.desc()]
+    if hasattr(table, "PA"):
+        partition_order.append(table.PA.desc())
+    if hasattr(table, "IP"):
+        partition_order.append(table.IP.desc())
+
+    rn = (
+        func.row_number()
+        .over(
+            partition_by=(table.player_id, table.year),
+            order_by=tuple(partition_order),
+        )
+        .label("rn")
+    )
+
+    inner = db.query(table, rn).filter(column.isnot(None))
+    if year is not None:
+        inner = inner.filter(table.year == year)
+    if league:
+        inner = inner.filter(table.league == league)
+    if team:
+        clause = _team_filter_clause(table, team)
+        if clause is not None:
+            inner = inner.filter(clause)
+    if eligibility == "PA":
+        inner = inner.filter(table.PA.isnot(None), table.PA >= min_pa)
+    elif eligibility == "IP":
+        inner = inner.filter(table.IP.isnot(None), table.IP >= min_ip)
+    sub = inner.subquery()
+
+    # Aliased table → outer ORM access to the deduped subquery rows.
+    # `aliased(table, sub)` makes `T.column_name` resolve to the
+    # subquery's column rather than the underlying table's, so the
+    # outer ORDER BY hits the dedup-filtered set.
+    T = aliased(table, sub)
+    outer_col = getattr(T, column.key)
+    outer_order = outer_col.asc() if is_asc else outer_col.desc()
+
+    # Fetch a slightly wider window than `limit` so the defensive
+    # Python-side dedupe below has headroom on the off-chance the
+    # ROW_NUMBER subquery somehow produced a tie that the outer
+    # ORDER BY couldn't break deterministically (shouldn't happen,
+    # but the cost is one extra `.limit() * 2` rows).
+    rows = (
+        db.query(T)
+        .filter(sub.c.rn == 1)
+        .order_by(outer_order)
+        .limit(max(limit * 2, 50))
+        .all()
+    )
+    return _dedupe_rows_by_player_year(rows, limit)
+
+
 def _leaderboard_season(
     stat: str, year: int, is_batter: bool, limit: int,
     league: Optional[str], team: Optional[str],
@@ -1575,9 +1661,7 @@ def _leaderboard_season(
     table = _PlayerSeason if is_batter else _PitcherSeason
     catalog = _LEADERBOARD_BATTING if is_batter else _LEADERBOARD_PITCHING
     column_name, direction, eligibility = catalog[stat]
-
     column = getattr(table, column_name)
-    order_by = column.asc() if direction == "asc" else column.desc()
 
     with connection.get_session() as db:
         if team:
@@ -1585,28 +1669,12 @@ def _leaderboard_season(
         else:
             min_pa, min_ip = _qualifier_thresholds(db, year)
 
-        q = (
-            db.query(table)
-            .filter(table.year == year)
-            .filter(column.isnot(None))
+        rows = _ranked_unique_seasons(
+            db=db, table=table, column=column, direction=direction,
+            year=year, eligibility=eligibility,
+            league=league, team=team,
+            min_pa=min_pa, min_ip=min_ip, limit=limit,
         )
-        if league:
-            q = q.filter(table.league == league)
-        if team:
-            clause = _team_filter_clause(table, team)
-            if clause is not None:
-                q = q.filter(clause)
-        if eligibility == "PA":
-            q = q.filter(table.PA.isnot(None), table.PA >= min_pa)
-        elif eligibility == "IP":
-            q = q.filter(table.IP.isnot(None), table.IP >= min_ip)
-        # Fetch wider than `limit` so the per-row dedupe below can
-        # absorb any (player_id, year) duplicates the historical data
-        # may still carry. The PK migration prevents new duplicates
-        # going forward, but legacy rows still need defensive cleanup
-        # at read time.
-        rows = q.order_by(order_by).limit(_DEDUPE_FETCH_LIMIT(limit)).all()
-        rows = _dedupe_rows_by_player_year(rows, limit)
 
         leaders = []
         for rank, season_row in enumerate(rows, start=1):
@@ -1652,31 +1720,18 @@ def _leaderboard_all_time(
     table = _PlayerSeason if is_batter else _PitcherSeason
     catalog = _LEADERBOARD_BATTING if is_batter else _LEADERBOARD_PITCHING
     column_name, direction, eligibility = catalog[stat]
-
     column = getattr(table, column_name)
-    order_by = column.asc() if direction == "asc" else column.desc()
 
     min_pa = _TEAM_FILTER_MIN_PA if team else _ALL_TIME_MIN_PA
     min_ip = _TEAM_FILTER_MIN_IP if team else _ALL_TIME_MIN_IP
 
     with connection.get_session() as db:
-        q = db.query(table).filter(column.isnot(None))
-        if league:
-            q = q.filter(table.league == league)
-        if team:
-            clause = _team_filter_clause(table, team)
-            if clause is not None:
-                q = q.filter(clause)
-        if eligibility == "PA":
-            q = q.filter(table.PA.isnot(None), table.PA >= min_pa)
-        elif eligibility == "IP":
-            q = q.filter(table.IP.isnot(None), table.IP >= min_ip)
-        # Wider fetch + dedupe — same reasoning as the season branch:
-        # historical (player_id, year) duplicates from pre-PK ingest
-        # would otherwise show up as repeated entries in the all-time
-        # rankings ("Sosa 1998" appearing three times for HR).
-        rows = q.order_by(order_by).limit(_DEDUPE_FETCH_LIMIT(limit)).all()
-        rows = _dedupe_rows_by_player_year(rows, limit)
+        rows = _ranked_unique_seasons(
+            db=db, table=table, column=column, direction=direction,
+            year=None, eligibility=eligibility,
+            league=league, team=team,
+            min_pa=min_pa, min_ip=min_ip, limit=limit,
+        )
 
         leaders = []
         for rank, season_row in enumerate(rows, start=1):
