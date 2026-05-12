@@ -328,19 +328,25 @@ def _update_pitchers(current_year: int) -> tuple[int, int, list[int]]:
 # elimination numbers.
 
 
-def _build_team_name_map() -> dict[str, tuple[str, str]]:
-    """Build {team_name → (team_id, franch_id)} from team_seasons. Most-recent
-    year wins so relocated franchises map to their current name."""
+def _build_team_meta_by_id() -> dict[str, tuple[str, str]]:
+    """{team_id → (franch_id, team_name)} from team_seasons. Most-recent
+    year wins so we always pick up the current Lahman code + display
+    name (e.g. the Angels' team_id flipped ANA→LAA at some point —
+    sorting by year desc surfaces the latest in-use shape).
+
+    Used by the standings refresh to look up franch_id + display name
+    from a Lahman team_id. The MLB-numeric-id → Lahman map below is
+    the entry point; this provides the rest of the row metadata."""
     mapping: dict[str, tuple[str, str]] = {}
     with connection.get_session() as db:
         rows = (
-            db.query(TeamSeason.team_name, TeamSeason.team_id, TeamSeason.franch_id, TeamSeason.year)
+            db.query(TeamSeason.team_id, TeamSeason.franch_id, TeamSeason.team_name, TeamSeason.year)
               .order_by(TeamSeason.year.desc())
               .all()
         )
         for r in rows:
-            if r.team_name and r.team_name not in mapping:
-                mapping[r.team_name] = (r.team_id, r.franch_id)
+            if r.team_id and r.team_id not in mapping:
+                mapping[r.team_id] = (r.franch_id, r.team_name)
     return mapping
 
 
@@ -354,6 +360,30 @@ _MLB_DIVISION_ID_TO_LEAGUE_DIV: dict[int, tuple[str, str]] = {
     204: ("NL", "E"),  # NL East
     205: ("NL", "C"),  # NL Central
     203: ("NL", "W"),  # NL West
+}
+
+
+# MLB Stats API numeric team id → Lahman team_id (the value stored in
+# team_seasons.team_id today). The standings endpoint returns only the
+# team nickname in `team.name` ("Rays", "Yankees", "Athletics"), so the
+# previous name-based lookup against team_seasons.team_name failed for
+# 29/30 teams every nightly run — only "Athletics" matched by accident
+# because both surfaces happen to use the bare nickname for that club.
+# The numeric MLB id, by contrast, is permanent and unambiguous.
+#
+# Mappings cross-checked against the live /teams?sportId=1 payload.
+# Most match the lowercased Lahman teamCode 1:1; the two exceptions
+# (108 Angels, 133 Athletics) are pinned to the codes team_seasons
+# actually uses in current seasons (LAA + ATH).
+_MLB_TEAM_ID_TO_LAHMAN_TEAM_ID: dict[int, str] = {
+    109: "ARI",   144: "ATL",   110: "BAL",   111: "BOS",
+    145: "CHA",   112: "CHN",   113: "CIN",   114: "CLE",
+    115: "COL",   116: "DET",   117: "HOU",   118: "KCA",
+    108: "LAA",   119: "LAN",   146: "MIA",   158: "MIL",
+    142: "MIN",   147: "NYA",   121: "NYN",   133: "ATH",
+    143: "PHI",   134: "PIT",   135: "SDN",   137: "SFN",
+    136: "SEA",   138: "SLN",   139: "TBA",   140: "TEX",
+    141: "TOR",   120: "WAS",
 }
 
 
@@ -382,9 +412,9 @@ def _update_standings(current_year: int) -> tuple[int, int]:
     team_seasons name map, falling back gracefully on rebrand-era
     mismatches.
     """
-    name_to_team = _build_team_name_map()
-    if not name_to_team:
-        log.warning("team_seasons is empty — cannot map team names; skipping standings refresh")
+    team_meta = _build_team_meta_by_id()
+    if not team_meta:
+        log.warning("team_seasons is empty — cannot resolve franch_id / team_name; skipping standings refresh")
         return 0, 0
 
     rows_to_save: list[dict] = []
@@ -397,7 +427,7 @@ def _update_standings(current_year: int) -> tuple[int, int]:
                 {"leagueId": league_id, "season": current_year, "standingsTypes": "regularSeason"},
             )
         except Exception as exc:
-            log.error(f"standings fetch failed for leagueId={league_id}: {exc}")
+            log.error(f"standings fetch failed for leagueId={league_id}: {exc}", exc_info=True)
             continue
 
         for record in payload.get("records") or []:
@@ -413,15 +443,29 @@ def _update_standings(current_year: int) -> tuple[int, int]:
             # The API already sorts within a division by divisionRank;
             # use the row index as our `rank` so leaders show up first.
             for rank_idx, t in enumerate(team_records, 1):
-                team = t.get("team") or {}
-                team_name = (team.get("name") or "").strip()
-                if not team_name:
+                team        = t.get("team") or {}
+                mlb_team_id = team.get("id")
+                short_name  = (team.get("name") or "").strip()
+                # MLB-numeric-id → Lahman team_id. Stable, doesn't
+                # depend on string matching against the short
+                # nickname the standings endpoint returns.
+                team_id = _MLB_TEAM_ID_TO_LAHMAN_TEAM_ID.get(mlb_team_id)
+                if team_id is None:
+                    log.warning(
+                        f"standings: no Lahman mapping for MLB team id={mlb_team_id} "
+                        f"({short_name!r}) — add to _MLB_TEAM_ID_TO_LAHMAN_TEAM_ID"
+                    )
+                    failed_lookups.append(short_name or f"mlb_id={mlb_team_id}")
                     continue
-                entry = name_to_team.get(team_name)
-                if entry is None:
-                    failed_lookups.append(team_name)
+                meta = team_meta.get(team_id)
+                if meta is None:
+                    log.warning(
+                        f"standings: Lahman team_id={team_id!r} not in team_seasons "
+                        f"(MLB id={mlb_team_id}, short_name={short_name!r})"
+                    )
+                    failed_lookups.append(team_id)
                     continue
-                team_id, franch_id = entry
+                franch_id, full_team_name = meta
 
                 wins   = int(t.get("wins") or 0)
                 losses = int(t.get("losses") or 0)
@@ -443,7 +487,12 @@ def _update_standings(current_year: int) -> tuple[int, int]:
                     "year":      current_year,
                     "team_id":   team_id,
                     "franch_id": franch_id,
-                    "team_name": team_name,
+                    # Prefer the full city+nickname from team_seasons
+                    # ("Tampa Bay Rays") over the MLB API's nickname-
+                    # only short_name ("Rays") so the iOS standings
+                    # card keeps reading the same as the historical
+                    # rows below it.
+                    "team_name": full_team_name or short_name,
                     "league":    league,
                     "division":  division,
                     "rank":      rank_idx,
