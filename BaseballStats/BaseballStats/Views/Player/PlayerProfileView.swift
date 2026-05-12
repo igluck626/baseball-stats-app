@@ -30,6 +30,16 @@ struct PlayerProfileView: View {
     @State private var visibleBattingColumns: Set<String> = Self.defaultBattingColumns
     @State private var visiblePitchingColumns: Set<String> = Self.defaultPitchingColumns
 
+    // Career-table sort state. Default: most-recent season first
+    // (chronological descending), matching the historical behavior.
+    @State private var battingSort  = CareerSort(key: "Year", direction: .descending)
+    @State private var pitchingSort = CareerSort(key: "Year", direction: .descending)
+
+    // Cross-tab navigation state — when the user taps a season row on
+    // the Career tab, we set this year and flip selectedTab to .gameLogs.
+    // GameLogsView binds to it so the picker syncs in both directions.
+    @State private var gameLogYear = Calendar.current.component(.year, from: Date())
+
     // Default to every togglable column on. Users opt out of stats
     // they don't care about; nothing is hidden behind a setting they
     // didn't know existed. Computed once from the filter groups so a
@@ -820,14 +830,14 @@ struct PlayerProfileView: View {
     }
 
     private func battingCareerTable(seasons: [CareerSeason]) -> some View {
-        let sorted = seasons.sorted { ($0.year ?? 0) > ($1.year ?? 0) }
+        let sorted = sortBatting(seasons, by: battingSort)
         let agg = BattingCareerAgg.compute(seasons: seasons)
         return HStack(spacing: 0) {
             // Frozen section — Year, Age, Team. Stays put while the
             // stat columns to the right scroll horizontally. Subtle
             // shadow on the right edge separates it from the scroller.
             VStack(spacing: 0) {
-                BattingCareerFrozenHeader()
+                BattingCareerFrozenHeader(sort: $battingSort)
                 Divider()
                 ForEach(Array(sorted.enumerated()), id: \.offset) { index, season in
                     BattingCareerFrozenSeasonRow(
@@ -835,7 +845,8 @@ struct PlayerProfileView: View {
                         birthYear:  player.birth_year,
                         birthMonth: player.birth_month,
                         birthDay:   player.birth_day,
-                        alternate:  !index.isMultiple(of: 2)
+                        alternate:  !index.isMultiple(of: 2),
+                        onTap:      { season.year.map(jumpToGameLogs(year:)) }
                     )
                     if index != sorted.indices.last {
                         Divider().opacity(0.4)
@@ -852,13 +863,14 @@ struct PlayerProfileView: View {
             // Scrollable section — WAR + filtered optional columns.
             ScrollView(.horizontal, showsIndicators: false) {
                 VStack(spacing: 0) {
-                    BattingCareerScrollableHeader(visible: visibleBattingColumns)
+                    BattingCareerScrollableHeader(visible: visibleBattingColumns, sort: $battingSort)
                     Divider()
                     ForEach(Array(sorted.enumerated()), id: \.offset) { index, season in
                         BattingCareerScrollableSeasonRow(
                             season: season,
                             alternate: !index.isMultiple(of: 2),
-                            visible: visibleBattingColumns
+                            visible: visibleBattingColumns,
+                            onTap: { season.year.map(jumpToGameLogs(year:)) }
                         )
                         if index != sorted.indices.last {
                             Divider().opacity(0.4)
@@ -877,14 +889,14 @@ struct PlayerProfileView: View {
     }
 
     private func pitchingCareerTable(seasons: [PitcherCareerSeason]) -> some View {
-        let sorted = seasons.sorted { ($0.year ?? 0) > ($1.year ?? 0) }
+        let sorted = sortPitching(seasons, by: pitchingSort)
         let agg = PitchingCareerAgg.compute(seasons: seasons)
         return HStack(spacing: 0) {
             // Frozen section — Year, Age, Team. Matches the batting
             // table's split-pane structure: stays put while WAR/W/L/…
             // scroll horizontally to the right.
             VStack(spacing: 0) {
-                PitchingCareerFrozenHeader()
+                PitchingCareerFrozenHeader(sort: $pitchingSort)
                 Divider()
                 ForEach(Array(sorted.enumerated()), id: \.offset) { index, season in
                     PitchingCareerFrozenSeasonRow(
@@ -892,7 +904,8 @@ struct PlayerProfileView: View {
                         birthYear:  player.birth_year,
                         birthMonth: player.birth_month,
                         birthDay:   player.birth_day,
-                        alternate:  !index.isMultiple(of: 2)
+                        alternate:  !index.isMultiple(of: 2),
+                        onTap:      { season.year.map(jumpToGameLogs(year:)) }
                     )
                     if index != sorted.indices.last {
                         Divider().opacity(0.4)
@@ -909,13 +922,14 @@ struct PlayerProfileView: View {
             // Scrollable section — WAR + filtered optional columns.
             ScrollView(.horizontal, showsIndicators: false) {
                 VStack(spacing: 0) {
-                    PitchingCareerScrollableHeader(visible: visiblePitchingColumns)
+                    PitchingCareerScrollableHeader(visible: visiblePitchingColumns, sort: $pitchingSort)
                     Divider()
                     ForEach(Array(sorted.enumerated()), id: \.offset) { index, season in
                         PitchingCareerScrollableSeasonRow(
                             season: season,
                             alternate: !index.isMultiple(of: 2),
-                            visible: visiblePitchingColumns
+                            visible: visiblePitchingColumns,
+                            onTap: { season.year.map(jumpToGameLogs(year:)) }
                         )
                         if index != sorted.indices.last {
                             Divider().opacity(0.4)
@@ -939,8 +953,25 @@ struct PlayerProfileView: View {
     /// inner GameLogsView (and its @StateObject VM) with the new role,
     /// rather than leaving stale data on screen until the next refresh.
     private var gameLogsTab: some View {
-        GameLogsView(playerId: player.player_id, isPitcher: !showingBatting)
-            .id(showingBatting)
+        // Binding passthrough so a Career-row tap can preload a year.
+        // .id(showingBatting) still recreates the VM on role flip; the
+        // new GameLogsViewModel's initialSeason: argument honors
+        // gameLogYear so the chosen year survives the role swap too.
+        GameLogsView(
+            playerId: player.player_id,
+            isPitcher: !showingBatting,
+            year: $gameLogYear
+        )
+        .id(showingBatting)
+    }
+
+    /// Programmatically jump the Game Logs tab to a specific season.
+    /// Sets the shared year first so GameLogsViewModel picks up the
+    /// right initial season when the tab activates, then switches the
+    /// segmented control.
+    private func jumpToGameLogs(year: Int) {
+        gameLogYear = year
+        selectedTab = .gameLogs
     }
 }
 
@@ -1164,17 +1195,20 @@ private func displayTeamCode(_ raw: String?, league: String? = nil) -> String {
 // MARK: - Frozen section (Year, Age, Team)
 
 private struct BattingCareerFrozenHeader: View {
+    @Binding var sort: CareerSort
     var body: some View {
         HStack(spacing: 0) {
-            Text("Year").frame(width: BattingCareerColumn.year,    alignment: .leading) .padding(.horizontal, 2)
-            Text("Age") .frame(width: BattingCareerColumn.age,     alignment: .trailing).padding(.horizontal, 2)
+            CareerHeaderCell(label: "Year", width: BattingCareerColumn.year,
+                             alignment: .leading,  sort: $sort)
+            CareerHeaderCell(label: "Age",  width: BattingCareerColumn.age,
+                             alignment: .trailing, sort: $sort)
             // Explicit Color.clear gap so right-aligned Age and
             // left-aligned Team don't touch ("34LAA" → "34   LAA").
             Color.clear.frame(width: BattingCareerColumn.ageTeamGap)
-            Text("Team").frame(width: BattingCareerColumn.team,    alignment: .leading) .padding(.horizontal, 2)
+            CareerHeaderCell(label: "Team", width: BattingCareerColumn.team,
+                             alignment: .leading,  sort: $sort)
         }
         .font(.system(size: 11, weight: .semibold))
-        .foregroundStyle(.secondary)
         .padding(.leading, 12)
         .frame(height: 28)
     }
@@ -1186,6 +1220,9 @@ private struct BattingCareerFrozenSeasonRow: View {
     let birthMonth: Int?
     let birthDay:   Int?
     let alternate:  Bool
+    /// Invoked when the user taps anywhere in the row. The parent
+    /// view jumps the Game Logs tab to this season's year.
+    let onTap: () -> Void
 
     var body: some View {
         HStack(spacing: 0) {
@@ -1214,6 +1251,8 @@ private struct BattingCareerFrozenSeasonRow: View {
         .padding(.leading, 12)
         .frame(height: 28)
         .background(alternate ? Color(.systemGray6).opacity(0.5) : Color.clear)
+        .contentShape(Rectangle())
+        .onTapGesture { onTap() }
     }
 }
 
@@ -1242,38 +1281,41 @@ private struct BattingCareerFrozenTotalsRow: View {
 
 private struct BattingCareerScrollableHeader: View {
     let visible: Set<String>
+    @Binding var sort: CareerSort
     var body: some View {
         HStack(spacing: 0) {
             // Core — always shown.
-            Text("WAR").frame(width: BattingCareerColumn.war, alignment: .trailing).padding(.horizontal, 2)
-            Text("G")  .frame(width: BattingCareerColumn.g,   alignment: .trailing).padding(.horizontal, 2)
-            Text("PA") .frame(width: BattingCareerColumn.pa,  alignment: .trailing).padding(.horizontal, 2)
-            Text("AB") .frame(width: BattingCareerColumn.ab,  alignment: .trailing).padding(.horizontal, 2)
+            CareerHeaderCell(label: "WAR", width: BattingCareerColumn.war, alignment: .trailing, sort: $sort)
+            CareerHeaderCell(label: "G",   width: BattingCareerColumn.g,   alignment: .trailing, sort: $sort)
+            CareerHeaderCell(label: "PA",  width: BattingCareerColumn.pa,  alignment: .trailing, sort: $sort)
+            CareerHeaderCell(label: "AB",  width: BattingCareerColumn.ab,  alignment: .trailing, sort: $sort)
             // Optional — render only when visible.
-            if visible.contains("R")    { Text("R")   .frame(width: BattingCareerColumn.r,       alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("H")    { Text("H")   .frame(width: BattingCareerColumn.h,       alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("2B")   { Text("2B")  .frame(width: BattingCareerColumn.doubles, alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("3B")   { Text("3B")  .frame(width: BattingCareerColumn.triples, alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("HR")   { Text("HR")  .frame(width: BattingCareerColumn.hr,      alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("RBI")  { Text("RBI") .frame(width: BattingCareerColumn.rbi,     alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("SB")   { Text("SB")  .frame(width: BattingCareerColumn.sb,      alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("CS")   { Text("CS")  .frame(width: BattingCareerColumn.cs,      alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("BB")   { Text("BB")  .frame(width: BattingCareerColumn.bb,      alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("SO")   { Text("SO")  .frame(width: BattingCareerColumn.so,      alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("AVG")  { Text("BA")  .frame(width: BattingCareerColumn.ba,      alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("OBP")  { Text("OBP") .frame(width: BattingCareerColumn.obp,     alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("SLG")  { Text("SLG") .frame(width: BattingCareerColumn.slg,     alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("OPS")  { Text("OPS") .frame(width: BattingCareerColumn.ops,     alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("OPS+") { Text("OPS+").frame(width: BattingCareerColumn.opsPlus, alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("TB")   { Text("TB")  .frame(width: BattingCareerColumn.tb,      alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("GIDP") { Text("GIDP").frame(width: BattingCareerColumn.gidp,    alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("HBP")  { Text("HBP") .frame(width: BattingCareerColumn.hbp,     alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("SH")   { Text("SH")  .frame(width: BattingCareerColumn.sh,      alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("SF")   { Text("SF")  .frame(width: BattingCareerColumn.sf,      alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("IBB")  { Text("IBB") .frame(width: BattingCareerColumn.ibb,     alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("R")    { CareerHeaderCell(label: "R",    width: BattingCareerColumn.r,       alignment: .trailing, sort: $sort) }
+            if visible.contains("H")    { CareerHeaderCell(label: "H",    width: BattingCareerColumn.h,       alignment: .trailing, sort: $sort) }
+            if visible.contains("2B")   { CareerHeaderCell(label: "2B",   width: BattingCareerColumn.doubles, alignment: .trailing, sort: $sort) }
+            if visible.contains("3B")   { CareerHeaderCell(label: "3B",   width: BattingCareerColumn.triples, alignment: .trailing, sort: $sort) }
+            if visible.contains("HR")   { CareerHeaderCell(label: "HR",   width: BattingCareerColumn.hr,      alignment: .trailing, sort: $sort) }
+            if visible.contains("RBI")  { CareerHeaderCell(label: "RBI",  width: BattingCareerColumn.rbi,     alignment: .trailing, sort: $sort) }
+            if visible.contains("SB")   { CareerHeaderCell(label: "SB",   width: BattingCareerColumn.sb,      alignment: .trailing, sort: $sort) }
+            if visible.contains("CS")   { CareerHeaderCell(label: "CS",   width: BattingCareerColumn.cs,      alignment: .trailing, sort: $sort) }
+            if visible.contains("BB")   { CareerHeaderCell(label: "BB",   width: BattingCareerColumn.bb,      alignment: .trailing, sort: $sort) }
+            if visible.contains("SO")   { CareerHeaderCell(label: "SO",   width: BattingCareerColumn.so,      alignment: .trailing, sort: $sort) }
+            // Visible header text remains "BA" (baseball convention)
+            // but the sort key is "AVG" — matches the visible/leaders
+            // dict keys used elsewhere in the row.
+            if visible.contains("AVG")  { CareerHeaderCell(label: "BA",   sortKey: "AVG", width: BattingCareerColumn.ba,    alignment: .trailing, sort: $sort) }
+            if visible.contains("OBP")  { CareerHeaderCell(label: "OBP",  width: BattingCareerColumn.obp,     alignment: .trailing, sort: $sort) }
+            if visible.contains("SLG")  { CareerHeaderCell(label: "SLG",  width: BattingCareerColumn.slg,     alignment: .trailing, sort: $sort) }
+            if visible.contains("OPS")  { CareerHeaderCell(label: "OPS",  width: BattingCareerColumn.ops,     alignment: .trailing, sort: $sort) }
+            if visible.contains("OPS+") { CareerHeaderCell(label: "OPS+", width: BattingCareerColumn.opsPlus, alignment: .trailing, sort: $sort) }
+            if visible.contains("TB")   { CareerHeaderCell(label: "TB",   width: BattingCareerColumn.tb,      alignment: .trailing, sort: $sort) }
+            if visible.contains("GIDP") { CareerHeaderCell(label: "GIDP", width: BattingCareerColumn.gidp,    alignment: .trailing, sort: $sort) }
+            if visible.contains("HBP")  { CareerHeaderCell(label: "HBP",  width: BattingCareerColumn.hbp,     alignment: .trailing, sort: $sort) }
+            if visible.contains("SH")   { CareerHeaderCell(label: "SH",   width: BattingCareerColumn.sh,      alignment: .trailing, sort: $sort) }
+            if visible.contains("SF")   { CareerHeaderCell(label: "SF",   width: BattingCareerColumn.sf,      alignment: .trailing, sort: $sort) }
+            if visible.contains("IBB")  { CareerHeaderCell(label: "IBB",  width: BattingCareerColumn.ibb,     alignment: .trailing, sort: $sort) }
         }
         .font(.system(size: 11, weight: .semibold))
-        .foregroundStyle(.secondary)
         .padding(.trailing, 12)
         .frame(height: 28)
     }
@@ -1283,6 +1325,9 @@ private struct BattingCareerScrollableSeasonRow: View {
     let season: CareerSeason
     let alternate: Bool
     let visible: Set<String>
+    /// Tap-to-jump-to-game-logs. Both halves of the split-pane row
+    /// receive their own onTap; either side fires the same callback.
+    let onTap: () -> Void
 
     var body: some View {
         let l = season.leaders
@@ -1323,6 +1368,8 @@ private struct BattingCareerScrollableSeasonRow: View {
         .padding(.trailing, 12)
         .frame(height: 28)
         .background(alternate ? Color(.systemGray6).opacity(0.5) : Color.clear)
+        .contentShape(Rectangle())
+        .onTapGesture { onTap() }
     }
 }
 
@@ -1427,15 +1474,18 @@ private enum PitchingCareerColumn {
 // MARK: - Frozen section (Year, Age, Team)
 
 private struct PitchingCareerFrozenHeader: View {
+    @Binding var sort: CareerSort
     var body: some View {
         HStack(spacing: 0) {
-            Text("Year").frame(width: PitchingCareerColumn.year,    alignment: .leading) .padding(.horizontal, 2)
-            Text("Age") .frame(width: PitchingCareerColumn.age,     alignment: .trailing).padding(.horizontal, 2)
+            CareerHeaderCell(label: "Year", width: PitchingCareerColumn.year,
+                             alignment: .leading,  sort: $sort)
+            CareerHeaderCell(label: "Age",  width: PitchingCareerColumn.age,
+                             alignment: .trailing, sort: $sort)
             Color.clear.frame(width: PitchingCareerColumn.ageTeamGap)
-            Text("Team").frame(width: PitchingCareerColumn.team,    alignment: .leading) .padding(.horizontal, 2)
+            CareerHeaderCell(label: "Team", width: PitchingCareerColumn.team,
+                             alignment: .leading,  sort: $sort)
         }
         .font(.system(size: 11, weight: .semibold))
-        .foregroundStyle(.secondary)
         .padding(.leading, 12)
         .frame(height: 28)
     }
@@ -1447,6 +1497,7 @@ private struct PitchingCareerFrozenSeasonRow: View {
     let birthMonth: Int?
     let birthDay:   Int?
     let alternate:  Bool
+    let onTap: () -> Void
 
     var body: some View {
         HStack(spacing: 0) {
@@ -1471,6 +1522,8 @@ private struct PitchingCareerFrozenSeasonRow: View {
         .padding(.leading, 12)
         .frame(height: 28)
         .background(alternate ? Color(.systemGray6).opacity(0.5) : Color.clear)
+        .contentShape(Rectangle())
+        .onTapGesture { onTap() }
     }
 }
 
@@ -1499,46 +1552,46 @@ private struct PitchingCareerFrozenTotalsRow: View {
 
 private struct PitchingCareerScrollableHeader: View {
     let visible: Set<String>
+    @Binding var sort: CareerSort
     var body: some View {
         HStack(spacing: 0) {
             // Core
-            Text("WAR").frame(width: PitchingCareerColumn.war, alignment: .trailing).padding(.horizontal, 2)
+            CareerHeaderCell(label: "WAR", width: PitchingCareerColumn.war, alignment: .trailing, sort: $sort)
             // Optional
-            if visible.contains("W")     { Text("W")     .frame(width: PitchingCareerColumn.w,       alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("L")     { Text("L")     .frame(width: PitchingCareerColumn.l,       alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("W-L%")  { Text("W-L%")  .frame(width: PitchingCareerColumn.wlPct,   alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("ERA")   { Text("ERA")   .frame(width: PitchingCareerColumn.era,     alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("W")     { CareerHeaderCell(label: "W",     width: PitchingCareerColumn.w,       alignment: .trailing, sort: $sort) }
+            if visible.contains("L")     { CareerHeaderCell(label: "L",     width: PitchingCareerColumn.l,       alignment: .trailing, sort: $sort) }
+            if visible.contains("W-L%")  { CareerHeaderCell(label: "W-L%",  width: PitchingCareerColumn.wlPct,   alignment: .trailing, sort: $sort) }
+            if visible.contains("ERA")   { CareerHeaderCell(label: "ERA",   width: PitchingCareerColumn.era,     alignment: .trailing, sort: $sort) }
             // Core
-            Text("G").frame(width: PitchingCareerColumn.g, alignment: .trailing).padding(.horizontal, 2)
+            CareerHeaderCell(label: "G",   width: PitchingCareerColumn.g, alignment: .trailing, sort: $sort)
             // Optional
-            if visible.contains("GS")    { Text("GS")    .frame(width: PitchingCareerColumn.gs,      alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("GF")    { Text("GF")    .frame(width: PitchingCareerColumn.gf,      alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("CG")    { Text("CG")    .frame(width: PitchingCareerColumn.cg,      alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("SHO")   { Text("SHO")   .frame(width: PitchingCareerColumn.sho,     alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("SV")    { Text("SV")    .frame(width: PitchingCareerColumn.sv,      alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("IP")    { Text("IP")    .frame(width: PitchingCareerColumn.ip,      alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("H")     { Text("H")     .frame(width: PitchingCareerColumn.h,       alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("R")     { Text("R")     .frame(width: PitchingCareerColumn.r,       alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("ER")    { Text("ER")    .frame(width: PitchingCareerColumn.er,      alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("HR")    { Text("HR")    .frame(width: PitchingCareerColumn.hr,      alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("BB")    { Text("BB")    .frame(width: PitchingCareerColumn.bb,      alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("IBB")   { Text("IBB")   .frame(width: PitchingCareerColumn.ibb,     alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("SO")    { Text("SO")    .frame(width: PitchingCareerColumn.so,      alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("HBP")   { Text("HBP")   .frame(width: PitchingCareerColumn.hbp,     alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("BK")    { Text("BK")    .frame(width: PitchingCareerColumn.bk,      alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("WP")    { Text("WP")    .frame(width: PitchingCareerColumn.wp,      alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("BF")    { Text("BF")    .frame(width: PitchingCareerColumn.bf,      alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("ERA+")  { Text("ERA+")  .frame(width: PitchingCareerColumn.eraPlus, alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("FIP")   { Text("FIP")   .frame(width: PitchingCareerColumn.fip,     alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("WHIP")  { Text("WHIP")  .frame(width: PitchingCareerColumn.whip,    alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("H/9")   { Text("H/9")   .frame(width: PitchingCareerColumn.hPer9,   alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("HR/9")  { Text("HR/9")  .frame(width: PitchingCareerColumn.hrPer9,  alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("BB/9")  { Text("BB/9")  .frame(width: PitchingCareerColumn.bbPer9,  alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("SO/9")  { Text("SO/9")  .frame(width: PitchingCareerColumn.soPer9,  alignment: .trailing).padding(.horizontal, 2) }
-            if visible.contains("SO/BB") { Text("SO/BB") .frame(width: PitchingCareerColumn.soBB,    alignment: .trailing).padding(.horizontal, 2) }
+            if visible.contains("GS")    { CareerHeaderCell(label: "GS",    width: PitchingCareerColumn.gs,      alignment: .trailing, sort: $sort) }
+            if visible.contains("GF")    { CareerHeaderCell(label: "GF",    width: PitchingCareerColumn.gf,      alignment: .trailing, sort: $sort) }
+            if visible.contains("CG")    { CareerHeaderCell(label: "CG",    width: PitchingCareerColumn.cg,      alignment: .trailing, sort: $sort) }
+            if visible.contains("SHO")   { CareerHeaderCell(label: "SHO",   width: PitchingCareerColumn.sho,     alignment: .trailing, sort: $sort) }
+            if visible.contains("SV")    { CareerHeaderCell(label: "SV",    width: PitchingCareerColumn.sv,      alignment: .trailing, sort: $sort) }
+            if visible.contains("IP")    { CareerHeaderCell(label: "IP",    width: PitchingCareerColumn.ip,      alignment: .trailing, sort: $sort) }
+            if visible.contains("H")     { CareerHeaderCell(label: "H",     width: PitchingCareerColumn.h,       alignment: .trailing, sort: $sort) }
+            if visible.contains("R")     { CareerHeaderCell(label: "R",     width: PitchingCareerColumn.r,       alignment: .trailing, sort: $sort) }
+            if visible.contains("ER")    { CareerHeaderCell(label: "ER",    width: PitchingCareerColumn.er,      alignment: .trailing, sort: $sort) }
+            if visible.contains("HR")    { CareerHeaderCell(label: "HR",    width: PitchingCareerColumn.hr,      alignment: .trailing, sort: $sort) }
+            if visible.contains("BB")    { CareerHeaderCell(label: "BB",    width: PitchingCareerColumn.bb,      alignment: .trailing, sort: $sort) }
+            if visible.contains("IBB")   { CareerHeaderCell(label: "IBB",   width: PitchingCareerColumn.ibb,     alignment: .trailing, sort: $sort) }
+            if visible.contains("SO")    { CareerHeaderCell(label: "SO",    width: PitchingCareerColumn.so,      alignment: .trailing, sort: $sort) }
+            if visible.contains("HBP")   { CareerHeaderCell(label: "HBP",   width: PitchingCareerColumn.hbp,     alignment: .trailing, sort: $sort) }
+            if visible.contains("BK")    { CareerHeaderCell(label: "BK",    width: PitchingCareerColumn.bk,      alignment: .trailing, sort: $sort) }
+            if visible.contains("WP")    { CareerHeaderCell(label: "WP",    width: PitchingCareerColumn.wp,      alignment: .trailing, sort: $sort) }
+            if visible.contains("BF")    { CareerHeaderCell(label: "BF",    width: PitchingCareerColumn.bf,      alignment: .trailing, sort: $sort) }
+            if visible.contains("ERA+")  { CareerHeaderCell(label: "ERA+",  width: PitchingCareerColumn.eraPlus, alignment: .trailing, sort: $sort) }
+            if visible.contains("FIP")   { CareerHeaderCell(label: "FIP",   width: PitchingCareerColumn.fip,     alignment: .trailing, sort: $sort) }
+            if visible.contains("WHIP")  { CareerHeaderCell(label: "WHIP",  width: PitchingCareerColumn.whip,    alignment: .trailing, sort: $sort) }
+            if visible.contains("H/9")   { CareerHeaderCell(label: "H/9",   width: PitchingCareerColumn.hPer9,   alignment: .trailing, sort: $sort) }
+            if visible.contains("HR/9")  { CareerHeaderCell(label: "HR/9",  width: PitchingCareerColumn.hrPer9,  alignment: .trailing, sort: $sort) }
+            if visible.contains("BB/9")  { CareerHeaderCell(label: "BB/9",  width: PitchingCareerColumn.bbPer9,  alignment: .trailing, sort: $sort) }
+            if visible.contains("SO/9")  { CareerHeaderCell(label: "SO/9",  width: PitchingCareerColumn.soPer9,  alignment: .trailing, sort: $sort) }
+            if visible.contains("SO/BB") { CareerHeaderCell(label: "SO/BB", width: PitchingCareerColumn.soBB,    alignment: .trailing, sort: $sort) }
         }
         .font(.system(size: 11, weight: .semibold))
-        .foregroundStyle(.secondary)
         .padding(.trailing, 12)
         .frame(height: 28)
     }
@@ -1548,6 +1601,7 @@ private struct PitchingCareerScrollableSeasonRow: View {
     let season: PitcherCareerSeason
     let alternate: Bool
     let visible: Set<String>
+    let onTap: () -> Void
 
     var body: some View {
         let l = season.leaders
@@ -1610,6 +1664,8 @@ private struct PitchingCareerScrollableSeasonRow: View {
         .padding(.trailing, 12)
         .frame(height: 28)
         .background(alternate ? Color(.systemGray6).opacity(0.5) : Color.clear)
+        .contentShape(Rectangle())
+        .onTapGesture { onTap() }
     }
 }
 
@@ -1673,6 +1729,174 @@ private struct PitchingCareerScrollableTotalsRow: View {
         .frame(height: 28)
         .background(Color(.systemGray5).opacity(0.7))
         .overlay(alignment: .top) { Divider() }
+    }
+}
+
+// MARK: - Career-table sort
+
+/// Active sort for a career stat table — column key + direction.
+/// `key` is the user-facing column label so the header cell only has
+/// to know its own label to render the active-state indicator. The
+/// comparator function below maps each label to a concrete extractor
+/// over `CareerSeason` / `PitcherCareerSeason`.
+struct CareerSort: Equatable {
+    var key: String
+    var direction: Direction
+    enum Direction { case ascending, descending }
+}
+
+/// Nil-last comparator over any Comparable optional. Always returns
+/// `false` for equal pairs so the caller's stable-sort fallback
+/// behavior (here: tie-break by year via SwiftUI's `.sorted` not
+/// being guaranteed stable, but acceptable for a UI sort) is well-
+/// defined.
+private func cmpOpt<T: Comparable>(_ a: T?, _ b: T?, asc: Bool) -> Bool {
+    switch (a, b) {
+    case (nil, nil):    return false
+    case (nil, _):      return false  // nil sinks to the bottom
+    case (_, nil):      return true
+    case let (x?, y?):  return asc ? x < y : x > y
+    }
+}
+
+private func sortBatting(_ seasons: [CareerSeason], by s: CareerSort) -> [CareerSeason] {
+    let asc = s.direction == .ascending
+    return seasons.sorted { a, b in
+        switch s.key {
+        case "Year": return cmpOpt(a.year,    b.year,    asc: asc)
+        case "Age":  return cmpOpt(a.year,    b.year,    asc: asc)  // age is monotonic with year
+        case "Team": return cmpOpt(a.team,    b.team,    asc: asc)
+        case "WAR":  return cmpOpt(a.WAR,     b.WAR,     asc: asc)
+        case "G":    return cmpOpt(a.G,       b.G,       asc: asc)
+        case "PA":   return cmpOpt(a.PA,      b.PA,      asc: asc)
+        case "AB":   return cmpOpt(a.AB,      b.AB,      asc: asc)
+        case "R":    return cmpOpt(a.R,       b.R,       asc: asc)
+        case "H":    return cmpOpt(a.H,       b.H,       asc: asc)
+        case "2B":   return cmpOpt(a.doubles, b.doubles, asc: asc)
+        case "3B":   return cmpOpt(a.triples, b.triples, asc: asc)
+        case "HR":   return cmpOpt(a.HR,      b.HR,      asc: asc)
+        case "RBI":  return cmpOpt(a.RBI,     b.RBI,     asc: asc)
+        case "SB":   return cmpOpt(a.SB,      b.SB,      asc: asc)
+        case "CS":   return cmpOpt(a.CS,      b.CS,      asc: asc)
+        case "BB":   return cmpOpt(a.BB,      b.BB,      asc: asc)
+        case "SO":   return cmpOpt(a.SO,      b.SO,      asc: asc)
+        case "AVG":  return cmpOpt(a.BA,      b.BA,      asc: asc)
+        case "OBP":  return cmpOpt(a.OBP,     b.OBP,     asc: asc)
+        case "SLG":  return cmpOpt(a.SLG,     b.SLG,     asc: asc)
+        case "OPS":  return cmpOpt(a.OPS,     b.OPS,     asc: asc)
+        case "OPS+": return cmpOpt(a.OPS_plus, b.OPS_plus, asc: asc)
+        case "TB":   return cmpOpt(seasonTB(a), seasonTB(b), asc: asc)
+        case "GIDP": return cmpOpt(a.GIDP,    b.GIDP,    asc: asc)
+        case "HBP":  return cmpOpt(a.HBP,     b.HBP,     asc: asc)
+        case "SH":   return cmpOpt(a.SH,      b.SH,      asc: asc)
+        case "SF":   return cmpOpt(a.SF,      b.SF,      asc: asc)
+        case "IBB":  return cmpOpt(a.IBB,     b.IBB,     asc: asc)
+        default:     return cmpOpt(a.year,    b.year,    asc: asc)
+        }
+    }
+}
+
+private func sortPitching(_ seasons: [PitcherCareerSeason], by s: CareerSort) -> [PitcherCareerSeason] {
+    let asc = s.direction == .ascending
+    return seasons.sorted { a, b in
+        switch s.key {
+        case "Year":  return cmpOpt(a.year,    b.year,    asc: asc)
+        case "Age":   return cmpOpt(a.year,    b.year,    asc: asc)
+        case "Team":  return cmpOpt(a.team,    b.team,    asc: asc)
+        case "WAR":   return cmpOpt(a.WAR,     b.WAR,     asc: asc)
+        case "W":     return cmpOpt(a.W,       b.W,       asc: asc)
+        case "L":     return cmpOpt(a.L,       b.L,       asc: asc)
+        case "W-L%":  return cmpOpt(winPctValue(w: a.W, l: a.L),
+                                    winPctValue(w: b.W, l: b.L), asc: asc)
+        case "ERA":   return cmpOpt(a.ERA,     b.ERA,     asc: asc)
+        case "G":     return cmpOpt(a.G,       b.G,       asc: asc)
+        case "GS":    return cmpOpt(a.GS,      b.GS,      asc: asc)
+        case "GF":    return cmpOpt(a.GF,      b.GF,      asc: asc)
+        case "CG":    return cmpOpt(a.CG,      b.CG,      asc: asc)
+        case "SHO":   return cmpOpt(a.SHO,     b.SHO,     asc: asc)
+        case "SV":    return cmpOpt(a.SV,      b.SV,      asc: asc)
+        case "IP":    return cmpOpt(a.IP,      b.IP,      asc: asc)
+        case "H":     return cmpOpt(a.H,       b.H,       asc: asc)
+        case "R":     return cmpOpt(a.R,       b.R,       asc: asc)
+        case "ER":    return cmpOpt(a.ER,      b.ER,      asc: asc)
+        case "HR":    return cmpOpt(a.HR,      b.HR,      asc: asc)
+        case "BB":    return cmpOpt(a.BB,      b.BB,      asc: asc)
+        case "IBB":   return cmpOpt(a.IBB,     b.IBB,     asc: asc)
+        case "SO":    return cmpOpt(a.SO,      b.SO,      asc: asc)
+        case "HBP":   return cmpOpt(a.HBP,     b.HBP,     asc: asc)
+        case "BK":    return cmpOpt(a.BK,      b.BK,      asc: asc)
+        case "WP":    return cmpOpt(a.WP,      b.WP,      asc: asc)
+        case "BF":    return cmpOpt(a.BFP,     b.BFP,     asc: asc)
+        case "ERA+":  return cmpOpt(a.ERA_plus, b.ERA_plus, asc: asc)
+        case "FIP":   return cmpOpt(a.FIP,     b.FIP,     asc: asc)
+        case "WHIP":  return cmpOpt(a.WHIP,    b.WHIP,    asc: asc)
+        case "H/9":   return cmpOpt(perNine(a.H, ip: a.IP),
+                                    perNine(b.H, ip: b.IP), asc: asc)
+        case "HR/9":  return cmpOpt(a.HR_per9, b.HR_per9, asc: asc)
+        case "BB/9":  return cmpOpt(a.BB_per9, b.BB_per9, asc: asc)
+        case "SO/9":  return cmpOpt(a.K_per9,  b.K_per9,  asc: asc)
+        case "SO/BB": return cmpOpt(soBBRatio(so: a.SO, bb: a.BB),
+                                    soBBRatio(so: b.SO, bb: b.BB), asc: asc)
+        default:      return cmpOpt(a.year,    b.year,    asc: asc)
+        }
+    }
+}
+
+/// Win% for sorting — copied from formatWinPct's logic but returns the
+/// numeric value instead of formatted text. nil when the denominator
+/// is zero so the comparator can sink no-decision rows to the bottom.
+private func winPctValue(w: Int?, l: Int?) -> Double? {
+    let wins = w ?? 0
+    let losses = l ?? 0
+    let total = wins + losses
+    guard total > 0 else { return nil }
+    return Double(wins) / Double(total)
+}
+
+/// Sortable career-table header cell. Tap toggles direction when the
+/// cell is already the active sort, or sets it as the new active sort
+/// (defaulting to descending — most use cases want "highest first").
+/// Active state renders a small chevron beside the label.
+private struct CareerHeaderCell: View {
+    let label: String
+    /// Sort identifier — defaults to `label` when not provided. Pass
+    /// explicitly only when the visible label and the comparator key
+    /// differ (currently the labels and keys always match).
+    var sortKey: String? = nil
+    let width: CGFloat
+    let alignment: Alignment
+    @Binding var sort: CareerSort
+
+    var body: some View {
+        let key = sortKey ?? label
+        let isActive = sort.key == key
+        HStack(spacing: 1) {
+            if alignment == .leading {
+                Text(label)
+                if isActive { indicator }
+            } else {
+                if isActive { indicator }
+                Text(label)
+            }
+        }
+        .lineLimit(1)
+        .minimumScaleFactor(0.7)
+        .foregroundStyle(isActive ? Color.primary : .secondary)
+        .frame(width: width, alignment: alignment)
+        .padding(.horizontal, 2)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if isActive {
+                sort.direction = sort.direction == .descending ? .ascending : .descending
+            } else {
+                sort = CareerSort(key: key, direction: .descending)
+            }
+        }
+    }
+
+    private var indicator: some View {
+        Image(systemName: sort.direction == .descending ? "chevron.down" : "chevron.up")
+            .font(.system(size: 7, weight: .semibold))
     }
 }
 

@@ -35,11 +35,15 @@ final class GameLogsViewModel: ObservableObject {
         Calendar.current.component(.year, from: Date())
     }
 
-    init(playerId: Int, isPitcher: Bool, api: APIClient = .shared) {
+    init(playerId: Int, isPitcher: Bool, initialSeason: Int? = nil, api: APIClient = .shared) {
         self.playerId = playerId
         self.isPitcher = isPitcher
         self.api = api
-        self.selectedSeason = Self.currentYear
+        // Honor an explicit initial year so the screen can be opened on
+        // a specific season (e.g. when a career-table row taps in).
+        // Falls back to the current year for the default search-then-
+        // open-the-game-logs path.
+        self.selectedSeason = initialSeason ?? Self.currentYear
     }
 
     func load() async {
@@ -83,12 +87,27 @@ struct GameLogsView: View {
     @StateObject private var vm: GameLogsViewModel
     @State private var selectedRow: SplitRow = .season
     @State private var customInput: String = ""
+    /// Two-way binding to the parent's view of the active season. The
+    /// VM still owns the canonical year (the Picker binds to it and
+    /// the load fires when it changes); this binding just keeps the
+    /// parent in lockstep so a career-table tap can push a specific
+    /// year in, and a Picker change in here propagates back out.
+    @Binding private var year: Int
 
+    /// Convenience overload for the existing search → profile flow,
+    /// which doesn't need to push a year in from outside. Synthesizes
+    /// a binding to a discarded local so the public API of GameLogsView
+    /// stays a single source of truth (Binding<Int>).
     init(playerId: Int, isPitcher: Bool) {
+        self.init(playerId: playerId, isPitcher: isPitcher, year: .constant(GameLogsViewModel.currentYear))
+    }
+
+    init(playerId: Int, isPitcher: Bool, year: Binding<Int>) {
         self.playerId = playerId
         self.isPitcher = isPitcher
+        self._year = year
         _vm = StateObject(wrappedValue: GameLogsViewModel(
-            playerId: playerId, isPitcher: isPitcher
+            playerId: playerId, isPitcher: isPitcher, initialSeason: year.wrappedValue
         ))
     }
 
@@ -99,7 +118,20 @@ struct GameLogsView: View {
             gamesTable
         }
         .task { await vm.load() }
-        .onChange(of: vm.selectedSeason) { _, _ in
+        // Pull external year changes (career-table row tap) into the VM.
+        // != guard prevents the bidirectional onChange pair below from
+        // bouncing the same value back and forth.
+        .onChange(of: year) { _, newYear in
+            if vm.selectedSeason != newYear {
+                vm.selectedSeason = newYear
+            }
+        }
+        // Picker-driven year changes propagate back out to the parent
+        // and trigger the reload. Same != guard.
+        .onChange(of: vm.selectedSeason) { _, newSeason in
+            if year != newSeason {
+                year = newSeason
+            }
             Task { await vm.load() }
         }
     }
