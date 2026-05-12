@@ -39,5 +39,12 @@ struct LeaderboardEntry: Codable, Identifiable, Hashable {
     let year: Int?
     let player: PlayerSearchResult
 
-    var id: Int { player.player_id }
+    /// Composite id — player_id alone collides in All-Time mode when
+    /// the same player appears with multiple seasons in the top 25
+    /// (Bonds 2001 + Bonds 2004 for HR, McGwire 1998 + 1999 + 1997,
+    /// …). Pairing with `year` keeps every row in the response
+    /// distinct; the trailing rank covers the edge case where two
+    /// players genuinely tie on year + value (shouldn't happen with
+    /// the SQL-level dedupe but cheap to belt-and-brace here).
+    var id: String { "\(player.player_id)-\(year ?? -1)-\(rank)" }
 }

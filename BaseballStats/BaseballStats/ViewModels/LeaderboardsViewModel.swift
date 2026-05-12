@@ -260,13 +260,37 @@ final class LeaderboardsViewModel: ObservableObject {
                 team:       selectedTeam.apiCode,
                 limit:      displayedLimit
             )
-            entries = response?.leaders ?? []
+            entries = Self.dedupe(response?.leaders ?? [])
         } catch {
             self.error = error.localizedDescription
             entries = []
         }
         isLoading = false
         isLoadingMore = false
+    }
+
+    /// Drop any (player_id, year) collisions from the server response,
+    /// keeping the first occurrence (i.e. the better-ranked row).
+    /// Belt-and-suspenders backstop for the backend SQL-level CTE
+    /// dedupe — if a stale or partially-deployed backend ever ships
+    /// duplicate entries, the iOS list still renders without the
+    /// "ForEach with duplicate IDs" SwiftUI crash, and the user sees
+    /// each player-season exactly once. Order is preserved from the
+    /// API response (already sorted by stat).
+    static func dedupe(_ leaders: [LeaderboardEntry]) -> [LeaderboardEntry] {
+        var seen = Set<String>()
+        var out: [LeaderboardEntry] = []
+        out.reserveCapacity(leaders.count)
+        for entry in leaders {
+            // (player_id, year) — career rows have year=nil, which
+            // collapses to the same key per player (correct, since
+            // career mode emits one row per player by construction).
+            let key = "\(entry.player.player_id)-\(entry.year ?? -1)"
+            if seen.insert(key).inserted {
+                out.append(entry)
+            }
+        }
+        return out
     }
 
     /// Reset the request limit back to the first page. Call before any
