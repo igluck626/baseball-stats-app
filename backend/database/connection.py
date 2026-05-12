@@ -324,7 +324,92 @@ def init_db() -> dict:
     if tb_filled:
         summary.setdefault("backfilled", {})["player_seasons.TB"] = tb_filled
 
+    # 5. Historical (player_id, year) duplicate cleanup + composite PK
+    #    enforcement. Pre-PK ingestions could write duplicate season
+    #    rows for the same player-year; the leaderboard then surfaced
+    #    them as repeat entries. Dedupe first (Postgres can't add a PK
+    #    over an indexed-pair that has duplicates), then add the PK so
+    #    future ingestion writes via INSERT ... ON CONFLICT can't
+    #    reintroduce them.
+    for tbl_name, qual_col in (("player_seasons", "PA"), ("pitcher_seasons", "IP")):
+        removed = _dedupe_season_duplicates(tbl_name, qual_col)
+        if removed:
+            summary.setdefault("deduped", {})[tbl_name] = removed
+        added_pk = _ensure_seasons_primary_key(tbl_name)
+        if added_pk:
+            summary.setdefault("pks_added", []).append(tbl_name)
+
     return summary
+
+
+def _dedupe_season_duplicates(table: str, quality_col: str) -> int:
+    """Delete duplicate (player_id, year) rows from `table`, keeping
+    the row with the highest `quality_col` (PA for batters, IP for
+    pitchers) — that's the most-complete stat row when an old ingest
+    wrote both a per-stint and a season-total version. Ties broken
+    deterministically by Postgres ctid so the operation is repeatable.
+
+    Postgres-only — relies on ctid + ROW_NUMBER. SQLite skips
+    (the local dev DB rarely accumulates duplicates and lacks
+    the same physical-row identifier).
+    """
+    if _engine is None or _engine.dialect.name != "postgresql":
+        return 0
+    inspector = inspect(_engine)
+    if table not in inspector.get_table_names():
+        return 0
+    columns = {c["name"] for c in inspector.get_columns(table)}
+    if quality_col not in columns or "player_id" not in columns or "year" not in columns:
+        return 0
+    sql = text(f"""
+        WITH ranked AS (
+            SELECT ctid,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY player_id, year
+                       ORDER BY COALESCE("{quality_col}", -1) DESC, ctid ASC
+                   ) AS rn
+            FROM {table}
+        )
+        DELETE FROM {table} t
+        USING ranked r
+        WHERE t.ctid = r.ctid
+          AND r.rn > 1
+    """)
+    with _engine.begin() as conn:
+        result = conn.execute(sql)
+        return result.rowcount or 0
+
+
+def _ensure_seasons_primary_key(table: str) -> bool:
+    """Make (player_id, year) the PK on `table` if it isn't already.
+    Caller is responsible for deduping first — `ALTER TABLE … ADD
+    PRIMARY KEY` fails on duplicate rows.
+
+    Postgres-only. Returns True if a new PK was added, False when the
+    correct PK was already present, the table doesn't exist, or the
+    dialect doesn't support the migration. If a DIFFERENT PK is already
+    in place we leave it alone — re-keying a populated table is too
+    risky to do silently.
+    """
+    if _engine is None or _engine.dialect.name != "postgresql":
+        return False
+    inspector = inspect(_engine)
+    if table not in inspector.get_table_names():
+        return False
+    pk = inspector.get_pk_constraint(table) or {}
+    pk_cols = set(pk.get("constrained_columns") or [])
+    if pk_cols == {"player_id", "year"}:
+        return False
+    if pk_cols:
+        # An unexpected PK shape — bail loudly via the no-op return.
+        # Operator intervention required; we're not going to drop a
+        # PK we didn't put there.
+        return False
+    with _engine.begin() as conn:
+        conn.execute(text(
+            f'ALTER TABLE {table} ADD PRIMARY KEY (player_id, year)'
+        ))
+    return True
 
 
 def _backfill_player_seasons_tb() -> int:

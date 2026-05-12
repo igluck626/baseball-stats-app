@@ -1531,6 +1531,40 @@ def get_leaderboard(
     )
 
 
+# Read-time defense against legacy (player_id, year) duplicates.
+# A pre-PK ingest could write multiple rows for the same season
+# (different stints, partial vs. merged stat rows, etc.), and the
+# leaderboard query would surface all of them — "Sosa 1998 HR" might
+# appear three times before deduping. The PK migration in
+# connection.py is the structural fix; this helper is the defensive
+# read-time guarantee.
+def _DEDUPE_FETCH_LIMIT(limit: int) -> int:
+    """Fetch this many rows from the DB so the per-pair dedupe below
+    has enough headroom even when the historical data has 5–10 copies
+    of the same season row. Cap at 500 so a malformed limit can't
+    blow up the query."""
+    return min(max(limit * 10, 100), 500)
+
+
+def _dedupe_rows_by_player_year(rows, limit: int) -> list:
+    """Drop duplicate (player_id, year) rows from an already-sorted
+    list, keeping the first occurrence of each pair. Since callers
+    have already applied the leaderboard's ORDER BY, the first
+    occurrence is the best-ranked row — exactly what we want to
+    surface. Returns up to `limit` deduped rows."""
+    seen: set[tuple[int, int]] = set()
+    out: list = []
+    for r in rows:
+        key = (r.player_id, r.year)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(r)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def _leaderboard_season(
     stat: str, year: int, is_batter: bool, limit: int,
     league: Optional[str], team: Optional[str],
@@ -1566,7 +1600,13 @@ def _leaderboard_season(
             q = q.filter(table.PA.isnot(None), table.PA >= min_pa)
         elif eligibility == "IP":
             q = q.filter(table.IP.isnot(None), table.IP >= min_ip)
-        rows = q.order_by(order_by).limit(limit).all()
+        # Fetch wider than `limit` so the per-row dedupe below can
+        # absorb any (player_id, year) duplicates the historical data
+        # may still carry. The PK migration prevents new duplicates
+        # going forward, but legacy rows still need defensive cleanup
+        # at read time.
+        rows = q.order_by(order_by).limit(_DEDUPE_FETCH_LIMIT(limit)).all()
+        rows = _dedupe_rows_by_player_year(rows, limit)
 
         leaders = []
         for rank, season_row in enumerate(rows, start=1):
@@ -1631,7 +1671,12 @@ def _leaderboard_all_time(
             q = q.filter(table.PA.isnot(None), table.PA >= min_pa)
         elif eligibility == "IP":
             q = q.filter(table.IP.isnot(None), table.IP >= min_ip)
-        rows = q.order_by(order_by).limit(limit).all()
+        # Wider fetch + dedupe — same reasoning as the season branch:
+        # historical (player_id, year) duplicates from pre-PK ingest
+        # would otherwise show up as repeated entries in the all-time
+        # rankings ("Sosa 1998" appearing three times for HR).
+        rows = q.order_by(order_by).limit(_DEDUPE_FETCH_LIMIT(limit)).all()
+        rows = _dedupe_rows_by_player_year(rows, limit)
 
         leaders = []
         for rank, season_row in enumerate(rows, start=1):

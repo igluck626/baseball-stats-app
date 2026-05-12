@@ -1,5 +1,6 @@
 import datetime
 
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from .models import (
@@ -17,6 +18,44 @@ from .models import (
     PlayerSeason,
     TeamSeason,
 )
+
+
+def _upsert_season(db: Session, model, row: dict) -> None:
+    """Insert-or-update one season row keyed on the table's composite
+    PK (player_id, year). PostgreSQL gets the native atomic
+    ``INSERT ... ON CONFLICT (player_id, year) DO UPDATE SET …`` —
+    cheap, concurrent-safe, and won't produce duplicates even under
+    parallel ingest. SQLite falls back to ``db.merge()`` (SELECT-then-
+    UPDATE/INSERT) since the older SQLite versions in CI don't have
+    ON CONFLICT in the same SQLAlchemy form.
+
+    `row` must contain `player_id` and `year`; every other key in the
+    dict becomes part of the SET clause. The PK columns are excluded
+    from the SET so we don't try to overwrite themselves with the same
+    values (Postgres accepts it, but the resulting NOOP update is
+    wasted work)."""
+    dialect = db.bind.dialect.name if db.bind is not None else ""
+    if dialect == "postgresql":
+        stmt = pg_insert(model).values(**row)
+        update_cols = {
+            k: stmt.excluded[k]
+            for k in row.keys()
+            if k not in ("player_id", "year")
+        }
+        # No non-PK columns means there's nothing to update on
+        # conflict — just skip writing the duplicate row entirely.
+        if update_cols:
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["player_id", "year"],
+                set_=update_cols,
+            )
+        else:
+            stmt = stmt.on_conflict_do_nothing(
+                index_elements=["player_id", "year"],
+            )
+        db.execute(stmt)
+    else:
+        db.merge(model(**row))
 
 
 # ---------------------------------------------------------------------------
@@ -52,8 +91,12 @@ def get_player_seasons(db: Session, player_id: int) -> list[PlayerSeason]:
 
 
 def save_player_seasons(db: Session, player_id: int, seasons: list[dict]) -> None:
+    """Upsert batting season rows for one player. Uses PG-native
+    ON CONFLICT (player_id, year) DO UPDATE so concurrent ingests can't
+    produce duplicate (player_id, year) rows — the historical bug that
+    surfaced "Sosa 1998" three times in the All-Time HR leaderboard."""
     for season in seasons:
-        db.merge(PlayerSeason(player_id=player_id, **season))
+        _upsert_season(db, PlayerSeason, {"player_id": player_id, **season})
 
 
 def get_all_player_ids(db: Session) -> list[int]:
@@ -94,8 +137,11 @@ def get_pitcher_seasons(db: Session, player_id: int) -> list[PitcherSeason]:
 
 
 def save_pitcher_seasons(db: Session, player_id: int, seasons: list[dict]) -> None:
+    """Upsert pitching season rows. Same ON CONFLICT path as
+    save_player_seasons — keeps pitcher_seasons free of duplicate
+    (player_id, year) pairs even under parallel ingest."""
     for season in seasons:
-        db.merge(PitcherSeason(player_id=player_id, **season))
+        _upsert_season(db, PitcherSeason, {"player_id": player_id, **season})
 
 
 def get_all_pitcher_ids(db: Session) -> list[int]:
