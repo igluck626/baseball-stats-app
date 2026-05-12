@@ -150,6 +150,13 @@ final class LeaderboardsViewModel: ObservableObject {
         Calendar.current.component(.year, from: Date())
     }
 
+    /// Inclusive bounds for the year-range slider. Floor matches the
+    /// year picker's floor — 1900 — so the two surfaces present the
+    /// same historical horizon.
+    static var yearRangeBounds: ClosedRange<Int> {
+        1900...currentYear
+    }
+
     // MARK: - Selection
 
     @Published var playerKind: PlayerKind       = .batter
@@ -158,6 +165,13 @@ final class LeaderboardsViewModel: ObservableObject {
     @Published var selectedLeague: LeagueFilter = .all
     @Published var selectedTeam: TeamFilter     = LeaderboardsViewModel.allTeams
     @Published var selectedMode: Mode           = .season
+    /// Year-range floor for the All-Time / Career range slider. Hidden
+    /// (and ignored) in Season mode, where the single-year picker is
+    /// already maximally specific. Persists across mode switches so a
+    /// "1990–1999" window the user set up in All-Time mode carries
+    /// straight into Career when they flip the segment.
+    @Published var selectedYearFrom: Int        = LeaderboardsViewModel.yearRangeBounds.lowerBound
+    @Published var selectedYearTo:   Int        = LeaderboardsViewModel.yearRangeBounds.upperBound
 
     // MARK: - State
 
@@ -251,6 +265,13 @@ final class LeaderboardsViewModel: ObservableObject {
         }
         error = nil
         do {
+            // Year range only flows to the backend in All-Time /
+            // Career — Season mode is already a single-year filter.
+            // Also skip when the range is the full bounds, so the
+            // URL doesn't carry redundant params on the default view.
+            let sendRange = !selectedMode.usesYear
+                && (selectedYearFrom != Self.yearRangeBounds.lowerBound
+                    || selectedYearTo   != Self.yearRangeBounds.upperBound)
             let response = try await api.getLeaderboard(
                 stat:       selectedStat,
                 year:       selectedMode.usesYear ? selectedYear : nil,
@@ -258,6 +279,8 @@ final class LeaderboardsViewModel: ObservableObject {
                 mode:       selectedMode.rawValue,
                 league:     selectedLeague.apiValue,
                 team:       selectedTeam.apiCode,
+                yearFrom:   sendRange ? selectedYearFrom : nil,
+                yearTo:     sendRange ? selectedYearTo   : nil,
                 limit:      displayedLimit
             )
             entries = Self.dedupe(response?.leaders ?? [])

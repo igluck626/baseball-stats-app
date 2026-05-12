@@ -153,6 +153,8 @@ final class APIClient {
         mode: String = "season",
         league: String? = nil,
         team: String? = nil,
+        yearFrom: Int? = nil,
+        yearTo: Int? = nil,
         limit: Int = 25
     ) async throws -> LeaderboardResponse? {
         var query: [URLQueryItem] = [
@@ -172,6 +174,15 @@ final class APIClient {
         }
         if let team {
             query.append(URLQueryItem(name: "team", value: team))
+        }
+        // Year-range floor + ceiling for the all-time / career
+        // slider. Caller passes nil for either bound when it's at the
+        // edge of the slider's bounds, keeping the URL clean.
+        if let yearFrom {
+            query.append(URLQueryItem(name: "year_from", value: String(yearFrom)))
+        }
+        if let yearTo {
+            query.append(URLQueryItem(name: "year_to", value: String(yearTo)))
         }
         let url = try buildURL(path: "/leaderboards", query: query)
         return try await getOptional(url)

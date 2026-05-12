@@ -808,6 +808,22 @@ def leaderboards(
             "Yankees, 'LAN' for the Dodgers). Omit for all teams."
         ),
     ),
+    year_from:   int | None = Query(
+        None,
+        description=(
+            "Optional year-range floor (inclusive). Applies to 'all_time' "
+            "(restricts which single seasons are eligible) and 'career' "
+            "(restricts which seasons count toward the career aggregate). "
+            "Ignored in 'season' mode."
+        ),
+    ),
+    year_to:     int | None = Query(
+        None,
+        description=(
+            "Optional year-range ceiling (inclusive). Paired with year_from "
+            "for 'all_time' / 'career' modes. Ignored in 'season' mode."
+        ),
+    ),
 ):
     """Top `limit` players for the given (stat, mode). Sort order is
     automatic — ERA / WHIP ascending (lower is better), everything else
@@ -873,9 +889,16 @@ def leaderboards(
             ),
         )
 
+    # Normalize a swapped pair (user dragged the upper handle below
+    # the lower one) so the downstream SQL stays predictable. Single
+    # equal values are fine — that's just a one-year window.
+    if year_from is not None and year_to is not None and year_from > year_to:
+        year_from, year_to = year_to, year_from
+
     response = data_service.get_leaderboard(
         stat=stat, year=year, player_type=player_type, mode=mode,
         limit=limit, league=league, team=team,
+        year_from=year_from, year_to=year_to,
     )
     if response is None or not response.get("leaders"):
         suffix = ", ".join(filter(None, [league, team]))

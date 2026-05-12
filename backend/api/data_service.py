@@ -1467,6 +1467,8 @@ def get_leaderboard(
     limit: int = 25,
     league: Optional[str] = None,
     team: Optional[str] = None,
+    year_from: Optional[int] = None,
+    year_to: Optional[int] = None,
 ) -> Optional[dict]:
     """Top `limit` players for a given (stat, year/mode) on either
     batting or pitching seasons. Three modes:
@@ -1518,14 +1520,19 @@ def get_leaderboard(
         return _leaderboard_career(
             stat=stat, is_batter=is_batter,
             limit=limit, league=league, team=team,
+            year_from=year_from, year_to=year_to,
         )
     if mode == "all_time":
         return _leaderboard_all_time(
             stat=stat, is_batter=is_batter,
             limit=limit, league=league, team=team,
+            year_from=year_from, year_to=year_to,
         )
     if year is None:
         return None
+    # Season mode pins to a specific year — year_from/year_to are
+    # ignored on purpose (the year filter is already maximally
+    # specific).
     return _leaderboard_season(
         stat=stat, year=year, is_batter=is_batter,
         limit=limit, league=league, team=team,
@@ -1571,6 +1578,8 @@ def _ranked_unique_seasons(
     year: Optional[int], eligibility: Optional[str],
     league: Optional[str], team: Optional[str],
     min_pa: int, min_ip: float, limit: int,
+    year_from: Optional[int] = None,
+    year_to: Optional[int] = None,
 ):
     """Run a leaderboard query that's structurally guaranteed to return
     at most one row per (player_id, year).
@@ -1616,6 +1625,14 @@ def _ranked_unique_seasons(
     inner = db.query(table, rn).filter(column.isnot(None))
     if year is not None:
         inner = inner.filter(table.year == year)
+    # year_from / year_to are independent of `year` — when season mode
+    # is in play (`year` set), the explicit year filter dominates.
+    # All-time mode passes year=None and uses the range filters to
+    # narrow the eligible seasons.
+    if year_from is not None:
+        inner = inner.filter(table.year >= year_from)
+    if year_to is not None:
+        inner = inner.filter(table.year <= year_to)
     if league:
         inner = inner.filter(table.league == league)
     if team:
@@ -1710,6 +1727,8 @@ def _leaderboard_season(
 def _leaderboard_all_time(
     stat: str, is_batter: bool, limit: int,
     league: Optional[str], team: Optional[str],
+    year_from: Optional[int] = None,
+    year_to: Optional[int] = None,
 ) -> dict:
     """Top single-season performances across every year on record. Same
     shape as the season query but with the year filter dropped. Rate
@@ -1731,6 +1750,7 @@ def _leaderboard_all_time(
             year=None, eligibility=eligibility,
             league=league, team=team,
             min_pa=min_pa, min_ip=min_ip, limit=limit,
+            year_from=year_from, year_to=year_to,
         )
 
         leaders = []
@@ -1755,6 +1775,8 @@ def _leaderboard_all_time(
         "stat":        stat,
         "mode":        "all_time",
         "year":        None,
+        "year_from":   year_from,
+        "year_to":     year_to,
         "player_type": "batter" if is_batter else "pitcher",
         "league":      league,
         "team":        team,
@@ -1774,6 +1796,8 @@ _CAREER_PITCHING_RATE_STATS = {"ERA", "WHIP"}
 def _leaderboard_career(
     stat: str, is_batter: bool, limit: int,
     league: Optional[str], team: Optional[str],
+    year_from: Optional[int] = None,
+    year_to: Optional[int] = None,
 ) -> dict:
     """Top career totals per player. Counting stats are SUM; rate stats
     derive from career sums of their components (career AVG =
@@ -1848,6 +1872,14 @@ def _leaderboard_career(
             clause = _team_filter_clause(table, team)
             if clause is not None:
                 agg_q = agg_q.filter(clause)
+        # year_from / year_to filter the source season rows *before*
+        # the GROUP BY — so "career HR leaders 1990–1999" sums HR
+        # only across each player's 1990s seasons, not their whole
+        # career.
+        if year_from is not None:
+            agg_q = agg_q.filter(table.year >= year_from)
+        if year_to is not None:
+            agg_q = agg_q.filter(table.year <= year_to)
         agg_rows = agg_q.all()
 
         # Compute the requested stat per row, drop ineligible ones,
@@ -1900,6 +1932,8 @@ def _leaderboard_career(
         "stat":        stat,
         "mode":        "career",
         "year":        None,
+        "year_from":   year_from,
+        "year_to":     year_to,
         "player_type": "batter" if is_batter else "pitcher",
         "league":      league,
         "team":        team,

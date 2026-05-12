@@ -25,24 +25,32 @@ struct LeaderboardsView: View {
     /// covers all three modes — flipping the segmented control changes
     /// `mode` (and clears `year`), which is one coherent state shift.
     private struct FetchKey: Hashable {
-        let kind:   LeaderboardsViewModel.PlayerKind
-        let stat:   String
-        let mode:   LeaderboardsViewModel.Mode
-        let year:   Int?
-        let league: LeaderboardsViewModel.LeagueFilter
-        let team:   LeaderboardsViewModel.TeamFilter
-        let limit:  Int
+        let kind:     LeaderboardsViewModel.PlayerKind
+        let stat:     String
+        let mode:     LeaderboardsViewModel.Mode
+        let year:     Int?
+        let yearFrom: Int?
+        let yearTo:   Int?
+        let league:   LeaderboardsViewModel.LeagueFilter
+        let team:     LeaderboardsViewModel.TeamFilter
+        let limit:    Int
     }
 
     private var fetchKey: FetchKey {
-        FetchKey(
-            kind:   viewModel.playerKind,
-            stat:   viewModel.selectedStat,
-            mode:   viewModel.selectedMode,
-            year:   viewModel.selectedMode.usesYear ? viewModel.selectedYear : nil,
-            league: viewModel.selectedLeague,
-            team:   viewModel.selectedTeam,
-            limit:  viewModel.displayedLimit
+        // Range only contributes to the key in modes that actually
+        // use it — flipping the slider in Season mode shouldn't
+        // re-trigger a fetch the backend would ignore anyway.
+        let usesRange = !viewModel.selectedMode.usesYear
+        return FetchKey(
+            kind:     viewModel.playerKind,
+            stat:     viewModel.selectedStat,
+            mode:     viewModel.selectedMode,
+            year:     viewModel.selectedMode.usesYear ? viewModel.selectedYear : nil,
+            yearFrom: usesRange ? viewModel.selectedYearFrom : nil,
+            yearTo:   usesRange ? viewModel.selectedYearTo   : nil,
+            league:   viewModel.selectedLeague,
+            team:     viewModel.selectedTeam,
+            limit:    viewModel.displayedLimit
         )
     }
 
@@ -101,6 +109,12 @@ struct LeaderboardsView: View {
         .onChange(of: viewModel.selectedMode) { _, _ in
             viewModel.resetPagination()
         }
+        .onChange(of: viewModel.selectedYearFrom) { _, _ in
+            viewModel.resetPagination()
+        }
+        .onChange(of: viewModel.selectedYearTo) { _, _ in
+            viewModel.resetPagination()
+        }
     }
 
     // MARK: - Chrome
@@ -142,6 +156,13 @@ struct LeaderboardsView: View {
                 kindAndStatBar
                 leaguePicker
                 teamPicker
+                // Year-range slider — only meaningful in modes that
+                // span multiple years (All-Time, Career). In Season
+                // mode the toolbar year picker already provides a
+                // single-year scope, so the slider stays hidden.
+                if !viewModel.selectedMode.usesYear {
+                    yearRangePicker
+                }
             }
             .padding(.horizontal, 16)
             .padding(.top, 12)
@@ -152,6 +173,34 @@ struct LeaderboardsView: View {
             list
         }
     }
+
+    /// Two-handle range slider with the active "YYYY – YYYY" label on
+    /// the right. Snaps to whole years; bounds match the year picker's
+    /// floor (1900) and ceiling (current MLB season).
+    private var yearRangePicker: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Year range")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("\(yearLabel(viewModel.selectedYearFrom)) – \(yearLabel(viewModel.selectedYearTo))")
+                    .font(.subheadline.weight(.semibold))
+                    .monospacedDigit()
+            }
+            YearRangeSlider(
+                lowerValue: $viewModel.selectedYearFrom,
+                upperValue: $viewModel.selectedYearTo,
+                bounds: LeaderboardsViewModel.yearRangeBounds
+            )
+        }
+        .padding(.horizontal, 4)
+    }
+
+    /// Compact year render — sidesteps Swift's default Int formatter
+    /// adding a thousands-separator to "2,026". Years are read as
+    /// labels, not numbers.
+    private func yearLabel(_ year: Int) -> String { String(year) }
 
     /// Season / All-Time / Career segmented control sitting above the
     /// kind toggle. Drives both the API request shape (year on/off)
