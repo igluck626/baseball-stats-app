@@ -150,11 +150,15 @@ final class LeaderboardsViewModel: ObservableObject {
         Calendar.current.component(.year, from: Date())
     }
 
-    /// Inclusive bounds for the year-range slider. Floor matches the
-    /// year picker's floor — 1900 — so the two surfaces present the
-    /// same historical horizon.
+    /// Inclusive bounds for the year-range slider. Floor is 1871 —
+    /// the first season carried by the Lahman archive, so a range
+    /// like 1871–1900 will return real (if sparse) deadball-era
+    /// leaders. The single-year toolbar picker still floors at 1900
+    /// for season-mode usability; the slider's wider floor only
+    /// matters for All-Time / Career mode where deeper history is
+    /// the whole point.
     static var yearRangeBounds: ClosedRange<Int> {
-        1900...currentYear
+        1871...currentYear
     }
 
     // MARK: - Selection
@@ -170,8 +174,16 @@ final class LeaderboardsViewModel: ObservableObject {
     /// already maximally specific. Persists across mode switches so a
     /// "1990–1999" window the user set up in All-Time mode carries
     /// straight into Career when they flip the segment.
-    @Published var selectedYearFrom: Int        = LeaderboardsViewModel.yearRangeBounds.lowerBound
-    @Published var selectedYearTo:   Int        = LeaderboardsViewModel.yearRangeBounds.upperBound
+    ///
+    /// `selected*` is the *live* slider-bound value — updates on every
+    /// drag tick and drives the chip's "YYYY – YYYY" readout.
+    /// `committed*` lags 500ms behind and is what the fetch actually
+    /// uses. Splitting the two lets the slider feel responsive while
+    /// the API isn't hit on every intermediate value.
+    @Published var selectedYearFrom: Int = LeaderboardsViewModel.yearRangeBounds.lowerBound
+    @Published var selectedYearTo:   Int = LeaderboardsViewModel.yearRangeBounds.upperBound
+    @Published var committedYearFrom: Int = LeaderboardsViewModel.yearRangeBounds.lowerBound
+    @Published var committedYearTo:   Int = LeaderboardsViewModel.yearRangeBounds.upperBound
 
     // MARK: - State
 
@@ -179,11 +191,36 @@ final class LeaderboardsViewModel: ObservableObject {
     @Published var isLoading = false
     @Published var isLoadingMore = false
     @Published var error: String?
+    /// True while a year-range debounce is in flight (the user is
+    /// actively dragging the slider, or just released within the
+    /// last 500ms). The view hides the error UI while true so a
+    /// failed intermediate fetch doesn't flash "Couldn't Load
+    /// Leaderboard" mid-drag.
+    @Published var isRangeAdjusting: Bool = false
     /// How many rows the next request will ask the backend for. Bumps
     /// up by `pageStep` on each "Show more" tap, capped at `maxLimit`.
     @Published var displayedLimit: Int = LeaderboardsViewModel.initialLimit
+    /// Increments once per debounced commit. The view's FetchKey
+    /// watches this single token instead of every filter field, so
+    /// rapid sequential changes (e.g. user tapping through five
+    /// stats in 300ms) coalesce into a single fetch after the
+    /// debounce window settles. Without this, every onChange would
+    /// flip a different FetchKey field and re-fire `.task(id:)`
+    /// — letting a slow earlier response overwrite a fast later one.
+    @Published private(set) var commitToken: Int = 0
 
     private let api: APIClient
+    /// Shared in-flight debounce timer. One slot used by both filter
+    /// changes (200ms) and year-range drags (500ms) — whichever
+    /// happened most recently dictates the wait. A follow-up change
+    /// cancels and replaces it, so the API stays quiet until the
+    /// user genuinely pauses.
+    private var debounceTask: Task<Void, Never>?
+    /// Debounce intervals — chosen so menu-tap changes feel snappy
+    /// (200ms) while slider drags get a generous settle window
+    /// (500ms) before the network call fires.
+    private static let filterDebounceNanos: UInt64 = 200_000_000
+    private static let rangeDebounceNanos:  UInt64 = 500_000_000
 
     init(api: APIClient = .shared) {
         self.api = api
@@ -219,6 +256,63 @@ final class LeaderboardsViewModel: ObservableObject {
             visible += Self.teams
         }
         return visible
+    }
+
+    /// Called from the view's `.onChange` on stat / kind / league /
+    /// team / mode / year picker changes. Clears any stale error
+    /// synchronously so "Couldn't Load Leaderboard" doesn't linger
+    /// past the user's tap, resets pagination, and schedules a
+    /// 200ms commit so a rapid tap sequence collapses into a
+    /// single fetch.
+    func filterDidChange() {
+        error = nil
+        resetPagination()
+        scheduleCommit(after: Self.filterDebounceNanos)
+    }
+
+    /// Called from the view's `.onChange` on either slider handle.
+    /// Clears the stale error, resets pagination, marks the range as
+    /// "actively adjusting" so the view can suppress the error UI,
+    /// and schedules a 500ms commit. Replacement-cancel semantics
+    /// match `filterDidChange()` — the latest call wins.
+    func rangeDidChange() {
+        error = nil
+        resetPagination()
+        isRangeAdjusting = true
+        scheduleCommit(after: Self.rangeDebounceNanos)
+    }
+
+    /// Shared debounce — cancel any running task, start a fresh
+    /// timer, fire `commit()` when it elapses. Cancellation throws
+    /// out of `Task.sleep`; the catch swallows it because a newer
+    /// scheduled commit is on the way.
+    private func scheduleCommit(after nanos: UInt64) {
+        debounceTask?.cancel()
+        debounceTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: nanos)
+                try Task.checkCancellation()
+                self?.commit()
+            } catch {
+                // Cancelled by a fresher change. The replacement
+                // task carries the next commit.
+            }
+        }
+    }
+
+    /// Single shared "fire the fetch" point. Promotes the live slider
+    /// values to committed (idempotent when the slider didn't move),
+    /// clears the range-adjusting flag, and bumps `commitToken` —
+    /// the only field the view's FetchKey actually watches. The
+    /// `&+` overflow-safe increment is paranoia: even at one commit
+    /// per second the Int wraparound is centuries away, but explicit
+    /// is fine.
+    private func commit() {
+        error = nil
+        committedYearFrom = selectedYearFrom
+        committedYearTo   = selectedYearTo
+        isRangeAdjusting  = false
+        commitToken &+= 1
     }
 
     /// If the selected team is in a league that no longer matches the
@@ -269,9 +363,12 @@ final class LeaderboardsViewModel: ObservableObject {
             // Career — Season mode is already a single-year filter.
             // Also skip when the range is the full bounds, so the
             // URL doesn't carry redundant params on the default view.
+            // Reads committed values (post-debounce), not the live
+            // slider values, so the fetch matches what the FetchKey
+            // observed when it triggered this load.
             let sendRange = !selectedMode.usesYear
-                && (selectedYearFrom != Self.yearRangeBounds.lowerBound
-                    || selectedYearTo   != Self.yearRangeBounds.upperBound)
+                && (committedYearFrom != Self.yearRangeBounds.lowerBound
+                    || committedYearTo   != Self.yearRangeBounds.upperBound)
             let response = try await api.getLeaderboard(
                 stat:       selectedStat,
                 year:       selectedMode.usesYear ? selectedYear : nil,
@@ -279,8 +376,8 @@ final class LeaderboardsViewModel: ObservableObject {
                 mode:       selectedMode.rawValue,
                 league:     selectedLeague.apiValue,
                 team:       selectedTeam.apiCode,
-                yearFrom:   sendRange ? selectedYearFrom : nil,
-                yearTo:     sendRange ? selectedYearTo   : nil,
+                yearFrom:   sendRange ? committedYearFrom : nil,
+                yearTo:     sendRange ? committedYearTo   : nil,
                 limit:      displayedLimit
             )
             entries = Self.dedupe(response?.leaders ?? [])
@@ -332,5 +429,8 @@ final class LeaderboardsViewModel: ObservableObject {
         let nextLimit = min(displayedLimit + Self.pageStep, Self.maxLimit)
         guard nextLimit > displayedLimit else { return }
         displayedLimit = nextLimit
+        // Show more is an explicit single tap — fire the next fetch
+        // immediately rather than routing through the debouncer.
+        commitToken &+= 1
     }
 }

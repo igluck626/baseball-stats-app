@@ -13,45 +13,19 @@ import SwiftUI
 struct LeaderboardsView: View {
     @StateObject private var viewModel = LeaderboardsViewModel()
 
-    /// Hashable snapshot of every input that should trigger a fetch.
-    /// Driving `.task(id:)` off this guarantees one fetch per coherent
-    /// state — even when a single user gesture mutates two fields at
-    /// once (kind toggle → stat reset + pagination reset). Without
-    /// this, the previous chained-onChange approach raced and could
-    /// either skip the fetch (when reset to the same stat) or fire
-    /// twice (when stat actually changed).
-    ///
-    /// `year` becomes nil in non-season modes so the same key shape
-    /// covers all three modes — flipping the segmented control changes
-    /// `mode` (and clears `year`), which is one coherent state shift.
+    /// Hashable identifier for the `.task(id:)` modifier. The VM
+    /// owns all the actual filter state and a `commitToken` that
+    /// bumps once per debounced commit (200ms for menu changes,
+    /// 500ms for slider drags) plus once per "Show more" tap. Rapid
+    /// sequential filter changes coalesce into a single token bump
+    /// — that's the whole point of routing the FetchKey through one
+    /// scalar instead of the previous tuple of every field.
     private struct FetchKey: Hashable {
-        let kind:     LeaderboardsViewModel.PlayerKind
-        let stat:     String
-        let mode:     LeaderboardsViewModel.Mode
-        let year:     Int?
-        let yearFrom: Int?
-        let yearTo:   Int?
-        let league:   LeaderboardsViewModel.LeagueFilter
-        let team:     LeaderboardsViewModel.TeamFilter
-        let limit:    Int
+        let token: Int
     }
 
     private var fetchKey: FetchKey {
-        // Range only contributes to the key in modes that actually
-        // use it — flipping the slider in Season mode shouldn't
-        // re-trigger a fetch the backend would ignore anyway.
-        let usesRange = !viewModel.selectedMode.usesYear
-        return FetchKey(
-            kind:     viewModel.playerKind,
-            stat:     viewModel.selectedStat,
-            mode:     viewModel.selectedMode,
-            year:     viewModel.selectedMode.usesYear ? viewModel.selectedYear : nil,
-            yearFrom: usesRange ? viewModel.selectedYearFrom : nil,
-            yearTo:   usesRange ? viewModel.selectedYearTo   : nil,
-            league:   viewModel.selectedLeague,
-            team:     viewModel.selectedTeam,
-            limit:    viewModel.displayedLimit
-        )
+        FetchKey(token: viewModel.commitToken)
     }
 
     var body: some View {
@@ -86,34 +60,38 @@ struct LeaderboardsView: View {
         .task(id: fetchKey) {
             await viewModel.load()
         }
-        // The onChange handlers below only mutate side-state (stat
-        // default, team validity, page limit). The fetch is the .task
-        // above, which reacts to whatever those mutations resolve to.
+        // Every filter onChange routes through one of two VM helpers:
+        //   • filterDidChange — 200ms debounce (menu / segmented taps)
+        //   • rangeDidChange  — 500ms debounce (year-range slider)
+        // Both clear `error` synchronously, reset pagination, and bump
+        // `commitToken` after the wait. The `.task(id:)` above only
+        // re-fires when the token actually changes, so rapid taps
+        // collapse into a single API call.
         .onChange(of: viewModel.playerKind) { _, _ in
             viewModel.resetStatForCurrentKind()
-            viewModel.resetPagination()
+            viewModel.filterDidChange()
         }
         .onChange(of: viewModel.selectedStat) { _, _ in
-            viewModel.resetPagination()
+            viewModel.filterDidChange()
         }
         .onChange(of: viewModel.selectedYear) { _, _ in
-            viewModel.resetPagination()
+            viewModel.filterDidChange()
         }
         .onChange(of: viewModel.selectedLeague) { _, _ in
             viewModel.resetTeamIfHidden()
-            viewModel.resetPagination()
+            viewModel.filterDidChange()
         }
         .onChange(of: viewModel.selectedTeam) { _, _ in
-            viewModel.resetPagination()
+            viewModel.filterDidChange()
         }
         .onChange(of: viewModel.selectedMode) { _, _ in
-            viewModel.resetPagination()
+            viewModel.filterDidChange()
         }
         .onChange(of: viewModel.selectedYearFrom) { _, _ in
-            viewModel.resetPagination()
+            viewModel.rangeDidChange()
         }
         .onChange(of: viewModel.selectedYearTo) { _, _ in
-            viewModel.resetPagination()
+            viewModel.rangeDidChange()
         }
     }
 
@@ -174,33 +152,17 @@ struct LeaderboardsView: View {
         }
     }
 
-    /// Two-handle range slider with the active "YYYY – YYYY" label on
-    /// the right. Snaps to whole years; bounds match the year picker's
-    /// floor (1900) and ceiling (current MLB season).
+    /// Tap-to-expand year-range picker. Collapsed: one-line chip
+    /// reading "Year range  1871 – 2026". Expanded: From / To sliders
+    /// reveal underneath. All chrome lives inside the component now.
     private var yearRangePicker: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("Year range")
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text("\(yearLabel(viewModel.selectedYearFrom)) – \(yearLabel(viewModel.selectedYearTo))")
-                    .font(.subheadline.weight(.semibold))
-                    .monospacedDigit()
-            }
-            YearRangeSlider(
-                lowerValue: $viewModel.selectedYearFrom,
-                upperValue: $viewModel.selectedYearTo,
-                bounds: LeaderboardsViewModel.yearRangeBounds
-            )
-        }
+        YearRangeSlider(
+            lowerValue: $viewModel.selectedYearFrom,
+            upperValue: $viewModel.selectedYearTo,
+            bounds: LeaderboardsViewModel.yearRangeBounds
+        )
         .padding(.horizontal, 4)
     }
-
-    /// Compact year render — sidesteps Swift's default Int formatter
-    /// adding a thousands-separator to "2,026". Years are read as
-    /// labels, not numbers.
-    private func yearLabel(_ year: Int) -> String { String(year) }
 
     /// Season / All-Time / Career segmented control sitting above the
     /// kind toggle. Drives both the API request shape (year on/off)
@@ -297,13 +259,24 @@ struct LeaderboardsView: View {
             ProgressView()
                 .controlSize(.large)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if let error = viewModel.error, viewModel.entries.isEmpty {
+        } else if let error = viewModel.error,
+                  viewModel.entries.isEmpty,
+                  !viewModel.isRangeAdjusting {
+            // Don't paint the error UI while the user is mid-drag on
+            // the year-range slider — the next debounced fetch is
+            // about to land. Showing a transient "Couldn't load…"
+            // card during slider interaction reads as a hard failure
+            // even though it's just an in-flight request the user
+            // is about to supersede anyway.
             errorState(error)
-        } else if viewModel.entries.isEmpty {
+        } else if viewModel.entries.isEmpty,
+                  !viewModel.isRangeAdjusting {
             emptyState
-        } else {
+        } else if !viewModel.entries.isEmpty {
             resultsList
         }
+        // else: dragging in-flight with no cached results yet —
+        // render nothing (the slider stays interactive at the top).
     }
 
     private var resultsList: some View {
