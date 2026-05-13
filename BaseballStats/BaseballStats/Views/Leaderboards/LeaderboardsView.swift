@@ -461,14 +461,16 @@ struct LeaderboardsView: View {
     }
 
     /// Display format for the trailing value cell. Picks the right number
-    /// of decimal places per stat — three for batting rate stats, two for
-    /// pitching rate stats, single-decimal for WAR / IP, integer for the
-    /// rest.
+    /// of decimal places per stat. WAR and IP both render one decimal,
+    /// but IP uses the grouped variant so career IP reads as
+    /// "7,356.0" — career WAR stays plain since it never crosses
+    /// 999.
     private var rowFormat: LeaderboardRow.ValueFormat {
         switch viewModel.selectedStat {
         case "AVG", "OBP", "SLG", "OPS": return .threeDecimal
-        case "ERA", "WHIP":              return .twoDecimal
-        case "WAR", "IP":                return .oneDecimal
+        case "ERA", "WHIP", "FIP":       return .twoDecimal
+        case "WAR":                      return .oneDecimal
+        case "IP":                       return .oneDecimalGrouped
         default:                         return .integer
         }
     }

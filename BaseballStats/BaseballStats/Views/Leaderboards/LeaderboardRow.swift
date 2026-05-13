@@ -11,15 +11,29 @@ import SwiftUI
 
 struct LeaderboardRow: View {
     let entry: LeaderboardEntry
-    /// Format used for the trailing value cell. Picked by the parent based
-    /// on the active stat (3-decimal AVG/OPS, 2-decimal ERA/WHIP, integer
-    /// HR/RBI/SB/SO/W/SV, single-decimal WAR).
+    /// Format used for the trailing value cell. Picked by the parent
+    /// based on the active stat. Two flavors of one-decimal exist
+    /// because WAR caps under 200 (no separator needed) while career
+    /// IP runs into five figures and reads better with the locale's
+    /// thousands separator.
     let format: ValueFormat
 
     enum ValueFormat {
+        /// Counting stats — HR / H / R / RBI / SB / BB / SO / W / SV /
+        /// AB / PA / 2B / 3B. Uses `.formatted(.number)` so values
+        /// above 999 pick up the locale's grouping separator
+        /// (e.g. "4,256" for Pete Rose's hits).
         case integer
+        /// WAR — one decimal, no grouping. Career WAR max is ~165;
+        /// season WAR under 13.
         case oneDecimal
+        /// IP — one decimal *with* grouping so career IP renders as
+        /// "7,356.0" rather than "7356.0".
+        case oneDecimalGrouped
+        /// ERA / WHIP / FIP — two decimals, no grouping (range 0–10).
         case twoDecimal
+        /// AVG / OBP / SLG / OPS — three decimals, leading-zero
+        /// stripped per Baseball Reference convention.
         case threeDecimal
     }
 
@@ -145,9 +159,15 @@ struct LeaderboardRow: View {
         guard let v = entry.value else { return "—" }
         switch format {
         case .integer:
-            return String(Int(v.rounded()))
+            // .formatted(.number) picks up the locale's thousands
+            // separator above 999 — "1,234" instead of "1234".
+            // Round-trip through Int first so we don't accidentally
+            // emit "762.0" for an integer-typed Double from the API.
+            return Int(v.rounded()).formatted(.number)
         case .oneDecimal:
             return String(format: "%.1f", v)
+        case .oneDecimalGrouped:
+            return v.formatted(.number.precision(.fractionLength(1)))
         case .twoDecimal:
             return String(format: "%.2f", v)
         case .threeDecimal:

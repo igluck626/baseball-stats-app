@@ -49,15 +49,16 @@ final class AllTimeRankingsViewModel: ObservableObject {
 
     private let api: APIClient
 
-    /// Career stat catalogs in display order. Tighter list than the
-    /// season-mode catalog: every entry is its own /leaderboards
-    /// call (~500ms server-side per stat in career mode), so trimming
-    /// to the most-meaningful stats keeps the card from hanging at
-    /// load. Dropped from prior revision: SB / OBP / SLG (batter),
-    /// WHIP / SV (pitcher) — still surfaced on the season-mode
-    /// Leaderboards screen for users who want them.
+    /// Career stat catalogs in display order. Tighter than the
+    /// season-mode catalog because each entry is its own
+    /// /leaderboards call (~500ms server-side per stat in career
+    /// mode) — but the backend cache on the career mode means the
+    /// per-stat cost amortizes after the first user hits the window.
+    /// OBP / SLG (batter) and WHIP / SV (pitcher) stay off the list
+    /// because they're well-correlated with stats we already show
+    /// (OPS, ERA respectively).
     static let battingStats:  [String] = [
-        "WAR", "HR", "H", "RBI", "BB", "AVG", "OPS",
+        "WAR", "HR", "H", "RBI", "SB", "BB", "AVG", "OPS",
     ]
     static let pitchingStats: [String] = [
         "WAR", "SO", "W", "ERA", "IP",
