@@ -838,6 +838,16 @@ struct PlayerProfileView: View {
                 careerToolbar
                 leaderLegend
                 battingCareerTable(seasons: seasons)
+                // All-time MLB-wide career rankings card. Self-
+                // collapses when this player doesn't crack the top
+                // 100 in any tracked stat, so most names render
+                // nothing — only the all-time-great careers get a
+                // visible card down here.
+                AllTimeRankingsCard(
+                    playerId: player.player_id,
+                    isPitcher: false
+                )
+                .id("alltime-batting-\(player.player_id)")
             }
         } else {
             noStatsCard("No batting career stats")
@@ -854,6 +864,11 @@ struct PlayerProfileView: View {
                 careerToolbar
                 leaderLegend
                 pitchingCareerTable(seasons: seasons)
+                AllTimeRankingsCard(
+                    playerId: player.player_id,
+                    isPitcher: true
+                )
+                .id("alltime-pitching-\(player.player_id)")
             }
         } else {
             noStatsCard("No pitching career stats")

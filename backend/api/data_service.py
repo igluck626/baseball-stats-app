@@ -1517,7 +1517,7 @@ def get_leaderboard(
         return None
 
     if mode == "career":
-        return _leaderboard_career(
+        return _cached_leaderboard_career(
             stat=stat, is_batter=is_batter,
             limit=limit, league=league, team=team,
             year_from=year_from, year_to=year_to,
@@ -1791,6 +1791,59 @@ def _leaderboard_all_time(
 # knows when to apply the career PA/IP qualifier.
 _CAREER_BATTING_RATE_STATS  = {"AVG", "OBP", "SLG", "OPS"}
 _CAREER_PITCHING_RATE_STATS = {"ERA", "WHIP"}
+
+
+# Career leaderboard cache. The career aggregation is the most
+# expensive query in the app — GROUP BY player_id across hundreds of
+# thousands of season rows runs ~500ms per stat, and the result only
+# moves after a nightly update. A simple in-memory dict keyed by the
+# full parameter tuple wins back that latency for everyone except the
+# first caller in each TTL window.
+#
+# Thread safety: relying on the GIL alone. Setting a dict key is a
+# single bytecode op in CPython, so the worst-case race is two
+# concurrent misses recomputing the same result and one overwriting
+# the other on insert — harmless. Skipping a lock keeps the hot path
+# free of contention overhead.
+_CAREER_CACHE_TTL_SECONDS = 60 * 60  # 1 hour — aligns with the nightly job cadence.
+_career_cache: dict[tuple, tuple[float, dict]] = {}
+
+
+def _cached_leaderboard_career(
+    *,
+    stat: str, is_batter: bool, limit: int,
+    league: Optional[str], team: Optional[str],
+    year_from: Optional[int] = None,
+    year_to: Optional[int] = None,
+) -> dict:
+    """Memoizing wrapper around `_leaderboard_career`. Returns a cached
+    result when one is still fresh; otherwise computes, caches, and
+    returns the live result."""
+    key = (
+        stat,
+        is_batter,
+        limit,
+        league,
+        team,
+        year_from,
+        year_to,
+    )
+    now = time.time()
+    cached = _career_cache.get(key)
+    if cached is not None:
+        ts, value = cached
+        if now - ts < _CAREER_CACHE_TTL_SECONDS:
+            return value
+    # Cache miss or expired — recompute. Concurrent misses may
+    # duplicate work; that's acceptable vs. introducing per-key
+    # locks for what's a once-an-hour cold path per (stat, scope).
+    result = _leaderboard_career(
+        stat=stat, is_batter=is_batter, limit=limit,
+        league=league, team=team,
+        year_from=year_from, year_to=year_to,
+    )
+    _career_cache[key] = (now, result)
+    return result
 
 
 def _leaderboard_career(

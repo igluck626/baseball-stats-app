@@ -93,3 +93,38 @@ func teamFullName(for code: String) -> String? {
     }
     return code
 }
+
+/// Maps Lahman codes (the backend's storage form) to the fan-friendly
+/// 3-letter abbreviations users recognize on broadcasts and box
+/// scores — "SFN" → "SFG", "NYA" → "NYY", "CHA" → "CHW", etc. Codes
+/// that are already in the readable form (ATL, BOS, ARI, etc.) and
+/// bbref-style codes already in the readable form (NYY, LAD, SFG)
+/// fall through unchanged. Used in tight-layout contexts like the
+/// leaderboard row where the full name would truncate.
+private let mlbTeamAbbreviation: [String: String] = [
+    "NYA": "NYY",   // Yankees
+    "NYN": "NYM",   // Mets
+    "CHA": "CHW",   // White Sox
+    "CHN": "CHC",   // Cubs
+    "KCA": "KCR",   // Royals
+    "LAN": "LAD",   // Dodgers
+    "SDN": "SDP",   // Padres
+    "SFN": "SFG",   // Giants
+    "SLN": "STL",   // Cardinals
+    "TBA": "TBR",   // Rays
+    "WAS": "WSN",   // Nationals
+    // Modern rebrands — collapse historical codes to today's shorthand.
+    "OAK": "ATH",   // 2025 rebrand: dropped Oakland, just "Athletics"
+    "ANA": "LAA",   // 1997-2004 Anaheim era → current LA Angels
+    "FLO": "MIA",   // pre-2012 Florida Marlins → Miami
+]
+
+/// Compact 3-letter team code suitable for narrow contexts (leaderboard
+/// rows, splits tables). Resolves Lahman storage codes to fan-friendly
+/// abbreviations; returns the input unchanged for codes that are
+/// already in the recognized short form. Returns the input verbatim
+/// for unmapped tokens so callers can still render something rather
+/// than a blank.
+func teamAbbreviation(for code: String) -> String {
+    mlbTeamAbbreviation[code] ?? code
+}

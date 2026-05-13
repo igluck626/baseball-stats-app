@@ -12,6 +12,17 @@ import SwiftUI
 
 struct LeaderboardsView: View {
     @StateObject private var viewModel = LeaderboardsViewModel()
+    /// Cross-tab deeplink coordinator — read here so we can apply
+    /// (and clear) a pending leaderboard destination when other tabs
+    /// route the user into this one (e.g. "View on the all-time
+    /// leaderboard" from the player profile's All-Time Rankings).
+    @EnvironmentObject private var navigation: AppNavigation
+    /// Secondary filters (league, team, year-range) collapse behind a
+    /// toggle by default so the list gets maximum vertical real
+    /// estate — the previous always-visible layout left only ~4
+    /// player rows. Primary navigation (mode pills, kind toggle,
+    /// stat picker) stays pinned at the top regardless.
+    @State private var showFilters = false
 
     /// Hashable identifier for the `.task(id:)` modifier. The VM
     /// owns all the actual filter state and a `commitToken` that
@@ -93,6 +104,41 @@ struct LeaderboardsView: View {
         .onChange(of: viewModel.selectedYearTo) { _, _ in
             viewModel.rangeDidChange()
         }
+        // Deeplink hookup — apply any pending destination on first
+        // mount and on every subsequent change. .onAppear handles
+        // the case where the deeplink was queued *before* this view
+        // existed (cold-start path); .onChange handles the live case
+        // where the user is already on this tab and another view
+        // pushes a fresh destination.
+        .onAppear { applyPendingDestination() }
+        .onChange(of: navigation.pendingLeaderboardDestination) { _, _ in
+            applyPendingDestination()
+        }
+    }
+
+    /// Consume the one-shot deeplink. Setting `playerKind` triggers
+    /// the View's existing onChange handler, which calls
+    /// `resetStatForCurrentKind()` and would otherwise overwrite our
+    /// desired stat back to the kind's default. Setting `selectedStat`
+    /// inside a follow-up Task pushes the write to the next runloop
+    /// tick, so it lands after the kind-onChange has fired and reset
+    /// the stat — at which point our explicit value sticks.
+    private func applyPendingDestination() {
+        guard let dest = navigation.pendingLeaderboardDestination else { return }
+        // Clear any prior error and force the loading flag up front
+        // so the View's `list` branch picks ProgressView over the
+        // error card during the gap between this tab-switch and the
+        // debounced fetch landing. Without this, a stale "Couldn't
+        // Load Leaderboard" can flash for ~200ms (filter debounce)
+        // before the new fetch completes.
+        viewModel.error = nil
+        viewModel.isLoading = true
+        viewModel.playerKind = dest.playerKind
+        viewModel.selectedMode = dest.mode
+        Task { @MainActor in
+            viewModel.selectedStat = dest.stat
+        }
+        navigation.pendingLeaderboardDestination = nil
     }
 
     // MARK: - Chrome
@@ -127,19 +173,18 @@ struct LeaderboardsView: View {
     @ViewBuilder
     private var content: some View {
         VStack(spacing: 10) {
-            // Controls keep their inset so the segmented and pill
-            // chrome reads at a comfortable width...
+            // Primary nav stays pinned. League / team / year-range
+            // collapse behind the filter toggle in `kindAndStatBar` so
+            // the list below has full breathing room by default.
             VStack(spacing: 10) {
                 modePicker
                 kindAndStatBar
-                leaguePicker
-                teamPicker
-                // Year-range slider — only meaningful in modes that
-                // span multiple years (All-Time, Career). In Season
-                // mode the toolbar year picker already provides a
-                // single-year scope, so the slider stays hidden.
-                if !viewModel.selectedMode.usesYear {
-                    yearRangePicker
+                if showFilters {
+                    secondaryFilters
+                        // Slide down from the top edge + fade, so
+                        // the panel reads as expanding out of the
+                        // filter button above it.
+                        .transition(.opacity.combined(with: .move(edge: .top)))
                 }
             }
             .padding(.horizontal, 16)
@@ -176,11 +221,12 @@ struct LeaderboardsView: View {
         .pickerStyle(.segmented)
     }
 
-    /// Top control row — kind (segmented) on the left, stat (menu) pill
-    /// on the right. Kind is allowed to flex so the stat menu stays at
-    /// its intrinsic width on the right edge.
+    /// Top control row — kind (segmented) flexes on the left, stat
+    /// menu pill in the middle, filter toggle icon on the right. The
+    /// filter toggle reveals / hides the secondary filters panel
+    /// below the row.
     private var kindAndStatBar: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             Picker("Kind", selection: $viewModel.playerKind) {
                 ForEach(LeaderboardsViewModel.PlayerKind.allCases) { kind in
                     Text(kind.label).tag(kind)
@@ -190,7 +236,65 @@ struct LeaderboardsView: View {
             .frame(maxWidth: .infinity)
 
             statMenu
+            filterToggleButton
         }
+    }
+
+    /// SF-symbol button that toggles the secondary-filters panel.
+    /// Renders filled + accent-tinted when any of league / team /
+    /// year-range is off its default, so the user can tell at a
+    /// glance that something is narrowing the leaderboard even
+    /// while the panel is collapsed.
+    private var filterToggleButton: some View {
+        let active = hasActiveFilters
+        return Button {
+            // withAnimation here (rather than .animation(_:value:) on
+            // the parent) so the slide is bounded to this toggle's
+            // state change and doesn't accidentally animate
+            // unrelated re-renders.
+            withAnimation(.easeInOut(duration: 0.2)) {
+                showFilters.toggle()
+            }
+        } label: {
+            Image(systemName: active
+                  ? "line.3.horizontal.decrease.circle.fill"
+                  : "line.3.horizontal.decrease.circle")
+                .font(.title3)
+                .foregroundStyle(active ? Color.accentColor : Color.secondary)
+                .symbolRenderingMode(.hierarchical)
+        }
+        .accessibilityLabel("Filters")
+        .accessibilityHint(showFilters ? "Tap to hide filters" : "Tap to show filters")
+    }
+
+    /// Collapsible panel — league segmented, team menu, and the
+    /// year-range slider (only when the active mode actually uses a
+    /// range). Wrapped here so the conditional rendering in `content`
+    /// stays one line.
+    @ViewBuilder
+    private var secondaryFilters: some View {
+        VStack(spacing: 10) {
+            leaguePicker
+            teamPicker
+            if !viewModel.selectedMode.usesYear {
+                yearRangePicker
+            }
+        }
+    }
+
+    /// True when any of the collapsible filters is off its default.
+    /// Drives the toggle button's "active" highlight. Excludes the
+    /// year range in Season mode since the slider isn't sent to the
+    /// backend in that mode anyway.
+    private var hasActiveFilters: Bool {
+        if viewModel.selectedLeague != .all { return true }
+        if viewModel.selectedTeam.apiCode != nil { return true }
+        if !viewModel.selectedMode.usesYear {
+            let bounds = LeaderboardsViewModel.yearRangeBounds
+            if viewModel.selectedYearFrom != bounds.lowerBound { return true }
+            if viewModel.selectedYearTo   != bounds.upperBound { return true }
+        }
+        return false
     }
 
     /// All / AL / NL segmented filter sitting under the kind toggle.
