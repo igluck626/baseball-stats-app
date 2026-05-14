@@ -149,27 +149,16 @@ struct RecentGamesSection: View {
 
     // MARK: - Mini table
 
-    /// Frozen "Last N" label on the left + horizontally scrolling stat
-    /// row on the right. Same column widths as the Game Logs splits
-    /// table so the surfaces feel like one shared component.
+    /// Horizontally scrolling stat table for the selected window. The
+    /// pill selector above already communicates which window is in
+    /// view, so there's no frozen "Last N" left pane — column headers
+    /// on top, single stat row beneath.
     private func statsTable(for snapshot: WindowSnapshot) -> some View {
-        HStack(spacing: 0) {
+        ScrollView(.horizontal, showsIndicators: false) {
             VStack(spacing: 0) {
-                frozenHeader
+                scrollableHeader
                 Divider()
-                frozenLabelRow
-            }
-            .frame(width: SplitsLayout.frozenPaneWidth)
-            .background(.ultraThinMaterial)
-            .shadow(color: .black.opacity(0.08), radius: 4, x: 2, y: 0)
-            .zIndex(1)
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                VStack(spacing: 0) {
-                    scrollableHeader
-                    Divider()
-                    scrollableStatRow(snapshot)
-                }
+                scrollableStatRow(snapshot)
             }
         }
         .frame(maxWidth: .infinity)
@@ -178,24 +167,6 @@ struct RecentGamesSection: View {
             RoundedRectangle(cornerRadius: 12)
                 .stroke(Color(.separator).opacity(0.4), lineWidth: 0.5)
         )
-    }
-
-    private var frozenHeader: some View {
-        Text("Splits")
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(.secondary)
-            .frame(width: SplitsLayout.label, alignment: .leading)
-            .padding(.leading, 12)
-            .frame(height: SplitsLayout.rowHeight)
-    }
-
-    private var frozenLabelRow: some View {
-        Text(window.label)
-            .font(.caption)
-            .lineLimit(1)
-            .frame(width: SplitsLayout.label, alignment: .leading)
-            .padding(.leading, 12)
-            .frame(height: SplitsLayout.rowHeight)
     }
 
     @ViewBuilder
@@ -228,7 +199,7 @@ struct RecentGamesSection: View {
         }
         .font(.caption.weight(.semibold))
         .foregroundStyle(.secondary)
-        .padding(.trailing, 12)
+        .padding(.horizontal, 12)
         .frame(height: SplitsLayout.rowHeight)
     }
 
@@ -267,7 +238,7 @@ struct RecentGamesSection: View {
             }
         }
         .font(.caption)
-        .padding(.trailing, 12)
+        .padding(.horizontal, 12)
         .frame(height: SplitsLayout.rowHeight)
     }
 

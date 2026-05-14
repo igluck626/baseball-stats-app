@@ -559,23 +559,23 @@ struct PlayerProfileView: View {
         if viewModel.isLoadingCurrentBatting && viewModel.currentBatting == nil {
             loadingCard
         } else if let stats = viewModel.currentBatting {
-            // 5×2 grid: row 1 rate stats, row 2 counting stats.
+            // 5×2 grid: WAR leads, then the slash-line rates;
+            // counting stats fill the second row.
             statsGridCard(
                 title: "\(String(stats.season)) Season",
                 subtitle: currentSeasonTeamName,
                 items: [
+                    ("WAR", formatWAR(stats.advanced?.WAR)),
                     ("AVG", format3(stats.standard?.BA)),
                     ("OBP", format3(stats.standard?.OBP)),
                     ("SLG", format3(stats.standard?.SLG)),
                     ("OPS", format3(stats.standard?.OPS)),
-                    ("WAR", formatWAR(stats.advanced?.WAR)),
                     ("G",   formatCount(stats.standard?.G)),
                     ("HR",  formatCount(stats.standard?.HR)),
                     ("RBI", formatCount(stats.standard?.RBI)),
                     ("SB",  formatCount(stats.standard?.SB)),
                     ("PA",  formatCount(stats.standard?.PA)),
-                ],
-                style: .current
+                ]
             )
         } else if let error = viewModel.error {
             errorCard(error)
@@ -589,31 +589,33 @@ struct PlayerProfileView: View {
         if viewModel.isLoadingCurrentPitching && viewModel.currentPitching == nil {
             loadingCard
         } else if let stats = viewModel.currentPitching {
-            // 5×2 grid: row 1 rate stats, row 2 mixed (W-L, role-
-            // dependent cell, IP, SO, BB/9). For starters we surface
-            // GS (their primary workload signal); for relievers we
-            // surface SV instead — GS is always 0 for them and SV is
-            // the metric that actually matters.
+            // 5×2 grid. Starters lead with W-L on row 1 and surface
+            // GS on row 2 (their primary workload signal). Relievers
+            // get SV in W-L's slot and GF in GS's slot — both their
+            // headline volume markers, with GS always 0 for them and
+            // the backend not yet shipping HLD/BS to use here.
+            let g  = stats.standard?.G  ?? 0
             let gs = stats.standard?.GS ?? 0
-            let isStarter = gs > 0
+            let isStarter = isStarterRole(g: g, gs: gs)
             statsGridCard(
                 title: "\(String(stats.season)) Season",
                 subtitle: currentSeasonTeamName,
                 items: [
+                    ("WAR",  formatWAR(stats.advanced?.WAR)),
+                    isStarter
+                        ? ("W-L", formatWL(stats.standard?.W, stats.standard?.L))
+                        : ("SV",  formatCount(stats.standard?.SV)),
                     ("ERA",  format2(stats.standard?.ERA)),
                     ("WHIP", format2(stats.standard?.WHIP)),
-                    ("FIP",  format2(stats.standard?.FIP)),
                     ("K/9",  format2(stats.standard?.K_per9)),
-                    ("WAR",  formatWAR(stats.advanced?.WAR)),
-                    ("W-L",  formatWL(stats.standard?.W, stats.standard?.L)),
+                    ("G",    formatCount(stats.standard?.G)),
                     isStarter
                         ? ("GS", formatCount(stats.standard?.GS))
-                        : ("SV", formatCount(stats.standard?.SV)),
+                        : ("GF", formatCount(stats.standard?.GF)),
                     ("IP",   formatIP(stats.standard?.IP)),
                     ("SO",   formatCount(stats.standard?.SO)),
                     ("BB/9", format2(stats.standard?.BB_per9)),
-                ],
-                style: .current
+                ]
             )
         } else if let error = viewModel.error {
             errorCard(error)
@@ -652,11 +654,11 @@ struct PlayerProfileView: View {
                 title: "Career",
                 subtitle: nil,
                 items: [
+                    ("WAR", formatWAR(totals?.WAR)),
                     ("AVG", format3(agg.avg)),
                     ("OBP", format3(agg.obp)),
                     ("SLG", format3(agg.slg)),
                     ("OPS", format3(agg.ops)),
-                    ("WAR", formatWAR(totals?.WAR)),
                     ("G",   formatCount(totals?.G)),
                     ("HR",  formatCount(totals?.HR)),
                     ("RBI", formatCount(totals?.RBI)),
@@ -681,21 +683,27 @@ struct PlayerProfileView: View {
             // sum(ER)*9/sum(IP) for linear sums).
             let agg = PitchingCareerAgg.compute(seasons: seasons)
             let totals = career.career_totals
-            // Career mirrors current-season layout exactly so users see
-            // a direct comparison cell-by-cell. GS and BB/9 come from
-            // PitchingCareerAgg (career_totals doesn't ship either —
-            // BB/9 needs IP-weighting which collapses to bb*9/sum(IP)).
+            // Career mirrors current-season layout cell-for-cell so
+            // users see a direct comparison. Starter / reliever
+            // detection runs on career totals (career GS as a share
+            // of career G) — closers and setup men get SV / GF in
+            // the role slots; starters keep W-L / GS.
+            let isStarter = isStarterRole(g: agg.g, gs: agg.gs)
             statsGridCard(
                 title: "Career",
                 subtitle: nil,
                 items: [
+                    ("WAR",  formatWAR(totals?.WAR)),
+                    isStarter
+                        ? ("W-L", formatWL(totals?.W, totals?.L))
+                        : ("SV",  formatCount(agg.sv)),
                     ("ERA",  format2(agg.era)),
                     ("WHIP", format2(agg.whip)),
-                    ("FIP",  format2(agg.fip)),
                     ("K/9",  format2(agg.kPer9)),
-                    ("WAR",  formatWAR(totals?.WAR)),
-                    ("W-L",  formatWL(totals?.W, totals?.L)),
-                    ("GS",   formatCount(agg.totalGS)),
+                    ("G",    formatCount(agg.g)),
+                    isStarter
+                        ? ("GS", formatCount(agg.totalGS))
+                        : ("GF", formatCount(agg.gf)),
                     ("IP",   formatIP(totals?.IP)),
                     ("SO",   formatCount(totals?.SO)),
                     ("BB/9", format2(agg.careerBB9)),
@@ -725,13 +733,17 @@ struct PlayerProfileView: View {
 
     // MARK: - Shared overview helpers
 
-    /// Visual treatment for `statsGridCard`. The current-season card gets
-    /// a brighter, accented look; career cards use the standard
-    /// material treatment shared with the bio card.
-    enum CardStyle {
-        case current   // Translucent white background + accent title bar
-        case standard  // .ultraThinMaterial (matches bio card)
+    /// Starter / reliever heuristic — a player is treated as a starter
+    /// if at least 40% of their appearances came as starts. Catches
+    /// pure closers (GS == 0 → 0%), swingmen who lean starter (50%+),
+    /// and Ohtani-shaped two-way pitchers (high GS share). Used by
+    /// both the current-season and career pitching cards so the role
+    /// columns (W-L/SV, GS/GF) stay consistent between the two.
+    private func isStarterRole(g: Int, gs: Int) -> Bool {
+        guard g > 0 else { return true }
+        return Double(gs) / Double(g) >= 0.4
     }
+
 
     /// Card with title (+ optional subtitle on the right) and a 5×2 grid
     /// of stat blocks. Caller passes exactly 10 items in row-major order;
@@ -740,18 +752,10 @@ struct PlayerProfileView: View {
     private func statsGridCard(
         title: String,
         subtitle: String?,
-        items: [(String, String)],
-        style: CardStyle = .standard
+        items: [(String, String)]
     ) -> some View {
         VStack(spacing: 10) {
             HStack(spacing: 8) {
-                if style == .current {
-                    // Small colored bar — visual indicator that this is
-                    // the headline (current-season) card.
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(Color.accentColor)
-                        .frame(width: 4, height: 20)
-                }
                 Text(title).font(.headline)
                 Spacer()
                 if let subtitle {
@@ -788,12 +792,6 @@ struct PlayerProfileView: View {
             }
         }
     }
-
-    // The previous build distinguished the current-season card with a
-    // tinted glass; the tint read too heavy next to the standard cards
-    // and broke the consistent feel of the profile. Both card styles
-    // now use plain `.regular` glass — the current card still stands
-    // out via the accent-colored title bar inside `statsGridCard`.
 
     private func noStatsCard(_ title: String) -> some View {
         VStack(spacing: 10) {
@@ -1414,7 +1412,12 @@ private struct CareerAwardChipsCell: View {
             out.append(ChipItem(text: "AS", color: .secondary, destination: nil))
         }
         if chips.goldGlove {
-            out.append(ChipItem(text: "GG", color: goldenColor, destination: nil))
+            // GG is a winners-only honor but it's a single-tier marker
+            // (no ranking concept), so it sits in the same `.secondary`
+            // tone as AS and SS. The gold-tier color is reserved for
+            // rank-1 voting finishes (MVP-1 / CY-1), which keep the
+            // gold-tier reading distinct.
+            out.append(ChipItem(text: "GG", color: .secondary, destination: nil))
         }
         if chips.silverSlugger {
             out.append(ChipItem(text: "SS", color: .secondary, destination: nil))
@@ -2366,12 +2369,13 @@ private struct CareerHeaderCell: View {
 // MARK: - League-leader cells
 
 /// Tint colors used to mark league/majors leaders. Muted gold for a
-/// single-league lead, brighter gold for a majors lead — readable in a
-/// monospaced numeric table without being garish, and the same shade
-/// the legend dot uses so the colors map 1:1.
+/// single-league lead, bright orange-gold for a majors lead — the
+/// two shades sit at clearly different hues so a glance at the cell
+/// reads the difference without having to consult the legend. The
+/// legend dot uses the same colors so the colors map 1:1.
 private enum LeaderTint {
     static let league = Color(red: 0.8, green: 0.6, blue: 0.1)
-    static let majors = Color(red: 0.9, green: 0.7, blue: 0.0)
+    static let majors = Color(red: 0.95, green: 0.5, blue: 0.0)
 }
 
 /// Builds the standard "career-row stat cell" — `.frame(width:, alignment:)

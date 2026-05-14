@@ -271,7 +271,11 @@ private func ordinal(_ n: Int) -> String {
 private func formatRankingValue(stat: String, value: Double?) -> String {
     guard let value else { return "—" }
     switch stat {
-    case "WAR", "ERA", "WHIP":
+    case "WAR":
+        // BR convention is one decimal — "8.2" not "8.21". ERA / WHIP
+        // get two because the stat conventions there are .XX.
+        return String(format: "%.1f", value)
+    case "ERA", "WHIP":
         return String(format: "%.2f", value)
     case "AVG", "OBP", "SLG", "OPS":
         let s = String(format: "%.3f", value)
