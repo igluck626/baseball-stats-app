@@ -955,7 +955,7 @@ def get_player_awards_full(player_id: int) -> Optional[dict]:
     }
 
 
-def _season_stats_for_voting(db, player_id: int, year: int) -> dict:
+def _season_stats_for_voting(db, player_id: int, year: int, award_id: str) -> dict:
     """Compact stat block for one player-year, used as the row
     subtitle on AwardVotingView. Returns both batting and pitching
     sides — iOS picks one or both depending on which is non-null
@@ -970,6 +970,10 @@ def _season_stats_for_voting(db, player_id: int, year: int) -> dict:
     full-season starters like Greg Maddux at ~100–150 PA, low
     enough to admit anyone splitting their year). 2014 Kershaw and
     1995 Maddux → pitching only; 2021 Ohtani → both sides.
+
+    Cy Young is a pitching-only award, so the batting block is
+    always suppressed regardless of two-way status — even Ohtani's
+    Cy Young row (hypothetical or real) renders pitching only.
     """
     bat = (
         db.query(_PlayerSeason)
@@ -987,30 +991,37 @@ def _season_stats_for_voting(db, player_id: int, year: int) -> dict:
     is_meaningful_pitcher = pit is not None and (pit.IP or 0) > 10
     is_meaningful_batter  = bat is not None and (bat.PA or 0) >= 200
 
-    # A pitcher who batted (sub-100 PA) loses the batting block so
+    # A pitcher who batted (sub-200 PA) loses the batting block so
     # the row doesn't show pitcher-at-plate stats next to his real
-    # pitching line. A true two-way player keeps both.
-    show_batting = bat is not None and (not is_meaningful_pitcher or is_meaningful_batter)
+    # pitching line. A true two-way player keeps both. Cy Young
+    # forces pitching-only — batting is irrelevant to that award.
+    show_batting = (
+        award_id != "CY Young"
+        and bat is not None
+        and (not is_meaningful_pitcher or is_meaningful_batter)
+    )
 
     batting = None
     if show_batting:
         batting = {
-            "AVG": bat.BA,
-            "HR":  bat.HR,
-            "RBI": bat.RBI,
-            "WAR": bat.WAR,
-            "PA":  bat.PA,
+            "AVG":     bat.BA,
+            "HR":      bat.HR,
+            "RBI":     bat.RBI,
+            "WAR":     bat.WAR,
+            "PA":      bat.PA,
+            "OPSplus": bat.OPS_plus,
         }
 
     pitching = None
     if pit is not None:
         pitching = {
-            "ERA": pit.ERA,
-            "W":   pit.W,
-            "L":   pit.L,
-            "SO":  pit.SO,
-            "WAR": pit.WAR,
-            "IP":  pit.IP,
+            "ERA":     pit.ERA,
+            "W":       pit.W,
+            "L":       pit.L,
+            "SO":      pit.SO,
+            "WAR":     pit.WAR,
+            "IP":      pit.IP,
+            "ERAplus": pit.ERA_plus,
         }
 
     return {"batting": batting, "pitching": pitching}
@@ -1038,7 +1049,7 @@ def get_award_voting(award_id: str, year: int, league: str) -> Optional[dict]:
                 "points_won":   r.points_won,
                 "points_max":   r.points_max,
                 "votes_first":  r.votes_first,
-                "season_stats": _season_stats_for_voting(db, r.player_id, year),
+                "season_stats": _season_stats_for_voting(db, r.player_id, year, award_id),
                 "player": {
                     "player_id":       player_row.player_id,
                     "name":            player_row.name,

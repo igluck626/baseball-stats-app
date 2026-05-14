@@ -112,6 +112,9 @@ struct SeasonStatsBlock: Codable, Hashable {
         let RBI: Int?
         let WAR: Double?
         let PA:  Int?
+        /// OPS+ — stored as Float server-side, decoded as Double here
+        /// and rounded for display. BR convention is integer ("132").
+        let OPSplus: Double?
     }
 
     struct SeasonPitching: Codable, Hashable {
@@ -121,5 +124,7 @@ struct SeasonStatsBlock: Codable, Hashable {
         let SO:  Int?
         let WAR: Double?
         let IP:  Double?
+        /// ERA+ — same Float→Double→rounded-int treatment as OPSplus.
+        let ERAplus: Double?
     }
 }
