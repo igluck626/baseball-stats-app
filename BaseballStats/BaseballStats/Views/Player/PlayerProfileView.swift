@@ -589,11 +589,13 @@ struct PlayerProfileView: View {
         if viewModel.isLoadingCurrentPitching && viewModel.currentPitching == nil {
             loadingCard
         } else if let stats = viewModel.currentPitching {
-            // 5×2 grid. Starters lead with W-L on row 1 and surface
-            // GS on row 2 (their primary workload signal). Relievers
-            // get SV in W-L's slot and GF in GS's slot — both their
-            // headline volume markers, with GS always 0 for them and
-            // the backend not yet shipping HLD/BS to use here.
+            // 5×2 grid. Top row is role-agnostic (WAR + the headline
+            // rates) so cells line up between starters and relievers.
+            // Role differentiation lives on the bottom row: starters
+            // surface GS (their workload signal), relievers surface
+            // SV (closer volume). BB is the closer of the row — counts
+            // are easier to scan than BB/9 here and we already have
+            // K/9 on the top row.
             let g  = stats.standard?.G  ?? 0
             let gs = stats.standard?.GS ?? 0
             let isStarter = isStarterRole(g: g, gs: gs)
@@ -602,19 +604,17 @@ struct PlayerProfileView: View {
                 subtitle: currentSeasonTeamName,
                 items: [
                     ("WAR",  formatWAR(stats.advanced?.WAR)),
-                    isStarter
-                        ? ("W-L", formatWL(stats.standard?.W, stats.standard?.L))
-                        : ("SV",  formatCount(stats.standard?.SV)),
+                    ("W-L",  formatWL(stats.standard?.W, stats.standard?.L)),
                     ("ERA",  format2(stats.standard?.ERA)),
                     ("WHIP", format2(stats.standard?.WHIP)),
                     ("K/9",  format2(stats.standard?.K_per9)),
                     ("G",    formatCount(stats.standard?.G)),
                     isStarter
                         ? ("GS", formatCount(stats.standard?.GS))
-                        : ("GF", formatCount(stats.standard?.GF)),
+                        : ("SV", formatCount(stats.standard?.SV)),
                     ("IP",   formatIP(stats.standard?.IP)),
                     ("SO",   formatCount(stats.standard?.SO)),
-                    ("BB/9", format2(stats.standard?.BB_per9)),
+                    ("BB",   formatCount(stats.standard?.BB)),
                 ]
             )
         } else if let error = viewModel.error {
@@ -686,27 +686,25 @@ struct PlayerProfileView: View {
             // Career mirrors current-season layout cell-for-cell so
             // users see a direct comparison. Starter / reliever
             // detection runs on career totals (career GS as a share
-            // of career G) — closers and setup men get SV / GF in
-            // the role slots; starters keep W-L / GS.
+            // of career G) — closers keep SV in the GS slot on the
+            // bottom row; the top row stays role-agnostic.
             let isStarter = isStarterRole(g: agg.g, gs: agg.gs)
             statsGridCard(
                 title: "Career",
                 subtitle: nil,
                 items: [
                     ("WAR",  formatWAR(totals?.WAR)),
-                    isStarter
-                        ? ("W-L", formatWL(totals?.W, totals?.L))
-                        : ("SV",  formatCount(agg.sv)),
+                    ("W-L",  formatWL(totals?.W, totals?.L)),
                     ("ERA",  format2(agg.era)),
                     ("WHIP", format2(agg.whip)),
                     ("K/9",  format2(agg.kPer9)),
                     ("G",    formatCount(agg.g)),
                     isStarter
                         ? ("GS", formatCount(agg.totalGS))
-                        : ("GF", formatCount(agg.gf)),
+                        : ("SV", formatCount(agg.sv)),
                     ("IP",   formatIP(totals?.IP)),
                     ("SO",   formatCount(totals?.SO)),
-                    ("BB/9", format2(agg.careerBB9)),
+                    ("BB",   formatCount(agg.bb)),
                 ]
             )
         }
