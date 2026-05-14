@@ -92,8 +92,34 @@ struct AwardVotingEntry: Codable, Identifiable, Hashable {
     let points_max: Double?
     let votes_first: Int?
     let player: PlayerSearchResult
+    /// That player's batting + pitching stat block for the season the
+    /// vote concerns. Either side can be nil; two-way players get
+    /// both populated.
+    let season_stats: SeasonStatsBlock?
 
     /// Composite id so SwiftUI's ForEach can disambiguate rows in
     /// the rare two-player tie case (same rank, different player).
     var id: String { "\(rank)-\(player.player_id)" }
+}
+
+struct SeasonStatsBlock: Codable, Hashable {
+    let batting: SeasonBatting?
+    let pitching: SeasonPitching?
+
+    struct SeasonBatting: Codable, Hashable {
+        let AVG: Double?
+        let HR:  Int?
+        let RBI: Int?
+        let WAR: Double?
+        let PA:  Int?
+    }
+
+    struct SeasonPitching: Codable, Hashable {
+        let ERA: Double?
+        let W:   Int?
+        let L:   Int?
+        let SO:  Int?
+        let WAR: Double?
+        let IP:  Double?
+    }
 }

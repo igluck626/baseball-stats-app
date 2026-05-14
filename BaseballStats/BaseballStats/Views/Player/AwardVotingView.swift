@@ -180,19 +180,85 @@ private struct AwardVotingRow: View {
             )
     }
 
-    /// "Los Angeles Angels · debut 2011" — uses whichever bio
-    /// breadcrumbs the player block carries. Falls back to a single
-    /// piece if only one is available, nil if both are missing.
+    /// Compact season-stat line for the row subtitle. Picks the
+    /// right format based on which side(s) of the ball the player
+    /// has data on:
+    ///   • Batting only — ".301 · 44 HR · 130 RBI · 8.2 WAR"
+    ///   • Pitching only — "2.41 ERA · 16-7 · 233 SO · 6.8 WAR"
+    ///   • Two-way (both populated above a small volume floor) —
+    ///     batting AVG/HR + pitching ERA/W combined
     private var subtitle: String? {
-        var pieces: [String] = []
-        if let code = entry.player.teamCode, !code.isEmpty,
-           let name = teamFullName(for: code) {
-            pieces.append(name)
+        guard let stats = entry.season_stats else { return nil }
+        let batting = stats.batting.flatMap { isMeaningfulBatting($0) ? $0 : nil }
+        let pitching = stats.pitching.flatMap { isMeaningfulPitching($0) ? $0 : nil }
+
+        if let bat = batting, let pit = pitching {
+            return [
+                formatAvg(bat.AVG),
+                bat.HR.map { "\($0) HR" },
+                formatEra(pit.ERA),
+                formatWL(pit.W, pit.L),
+            ]
+            .compactMap { $0 }
+            .joined(separator: " · ")
         }
-        if let debut = entry.player.mlb_debut {
-            pieces.append("debut \(debut)")
+        if let bat = batting {
+            return [
+                formatAvg(bat.AVG),
+                bat.HR.map  { "\($0) HR" },
+                bat.RBI.map { "\($0) RBI" },
+                formatWar(bat.WAR),
+            ]
+            .compactMap { $0 }
+            .joined(separator: " · ")
         }
-        return pieces.isEmpty ? nil : pieces.joined(separator: " · ")
+        if let pit = pitching {
+            return [
+                formatEra(pit.ERA),
+                formatWL(pit.W, pit.L),
+                pit.SO.map { "\($0) SO" },
+                formatWar(pit.WAR),
+            ]
+            .compactMap { $0 }
+            .joined(separator: " · ")
+        }
+        return nil
+    }
+
+    /// Filters out the single-PH-AB / one-relief-inning rows that
+    /// happen when a player has a season row but didn't actually
+    /// play that side of the ball meaningfully. Voting subtitles
+    /// should reflect a real season, not a token appearance.
+    private func isMeaningfulBatting(_ b: SeasonStatsBlock.SeasonBatting) -> Bool {
+        (b.PA ?? 0) >= 30
+    }
+
+    private func isMeaningfulPitching(_ p: SeasonStatsBlock.SeasonPitching) -> Bool {
+        (p.IP ?? 0) >= 10
+    }
+
+    /// ".301" — leading-zero stripped per Baseball Reference style.
+    private func formatAvg(_ v: Double?) -> String? {
+        guard let v else { return nil }
+        let s = String(format: "%.3f", v)
+        if s.hasPrefix("0.")  { return String(s.dropFirst()) }
+        if s.hasPrefix("-0.") { return "-" + String(s.dropFirst(2)) }
+        return s
+    }
+
+    private func formatEra(_ v: Double?) -> String? {
+        guard let v else { return nil }
+        return String(format: "%.2f ERA", v)
+    }
+
+    private func formatWL(_ w: Int?, _ l: Int?) -> String? {
+        guard let w, let l else { return nil }
+        return "\(w)-\(l)"
+    }
+
+    private func formatWar(_ v: Double?) -> String? {
+        guard let v else { return nil }
+        return String(format: "%.1f WAR", v)
     }
 
     /// Vote total formatted to one decimal — Lahman's pointsWon

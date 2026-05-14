@@ -955,6 +955,48 @@ def get_player_awards_full(player_id: int) -> Optional[dict]:
     }
 
 
+def _season_stats_for_voting(db, player_id: int, year: int) -> dict:
+    """Compact stat block for one player-year, used as the row
+    subtitle on AwardVotingView. Returns both batting and pitching
+    sides — iOS picks one or both depending on which is non-null
+    (two-way players like 2021 Ohtani get both).
+    """
+    batting = None
+    bat = (
+        db.query(_PlayerSeason)
+        .filter(_PlayerSeason.player_id == player_id,
+                _PlayerSeason.year == year)
+        .first()
+    )
+    if bat is not None:
+        batting = {
+            "AVG": bat.BA,
+            "HR":  bat.HR,
+            "RBI": bat.RBI,
+            "WAR": bat.WAR,
+            "PA":  bat.PA,
+        }
+
+    pitching = None
+    pit = (
+        db.query(_PitcherSeason)
+        .filter(_PitcherSeason.player_id == player_id,
+                _PitcherSeason.year == year)
+        .first()
+    )
+    if pit is not None:
+        pitching = {
+            "ERA": pit.ERA,
+            "W":   pit.W,
+            "L":   pit.L,
+            "SO":  pit.SO,
+            "WAR": pit.WAR,
+            "IP":  pit.IP,
+        }
+
+    return {"batting": batting, "pitching": pitching}
+
+
 def get_award_voting(award_id: str, year: int, league: str) -> Optional[dict]:
     """Return the ranked voting leaderboard for a (award_id, year,
     league) tuple, each row carrying a full PlayerSearchResult-shaped
@@ -973,10 +1015,11 @@ def get_award_voting(award_id: str, year: int, league: str) -> Optional[dict]:
             if player_row is None:
                 continue
             entries.append({
-                "rank":        r.rank,
-                "points_won":  r.points_won,
-                "points_max":  r.points_max,
-                "votes_first": r.votes_first,
+                "rank":         r.rank,
+                "points_won":   r.points_won,
+                "points_max":   r.points_max,
+                "votes_first":  r.votes_first,
+                "season_stats": _season_stats_for_voting(db, r.player_id, year),
                 "player": {
                     "player_id":       player_row.player_id,
                     "name":            player_row.name,
