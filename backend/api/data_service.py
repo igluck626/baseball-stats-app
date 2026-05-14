@@ -960,15 +960,40 @@ def _season_stats_for_voting(db, player_id: int, year: int) -> dict:
     subtitle on AwardVotingView. Returns both batting and pitching
     sides — iOS picks one or both depending on which is non-null
     (two-way players like 2021 Ohtani get both).
+
+    Pre-2022 NL pitchers had real plate appearances under the old
+    no-DH rules — a PlayerSeason row will exist for them, but those
+    50-or-150-ish PAs are pitcher-at-the-plate noise, not a real
+    batting line. Suppress the batting side when the player is
+    primarily a pitcher (meaningful IP) and the batting volume is
+    below the two-way floor (200 PA — set high enough to exclude
+    full-season starters like Greg Maddux at ~100–150 PA, low
+    enough to admit anyone splitting their year). 2014 Kershaw and
+    1995 Maddux → pitching only; 2021 Ohtani → both sides.
     """
-    batting = None
     bat = (
         db.query(_PlayerSeason)
         .filter(_PlayerSeason.player_id == player_id,
                 _PlayerSeason.year == year)
         .first()
     )
-    if bat is not None:
+    pit = (
+        db.query(_PitcherSeason)
+        .filter(_PitcherSeason.player_id == player_id,
+                _PitcherSeason.year == year)
+        .first()
+    )
+
+    is_meaningful_pitcher = pit is not None and (pit.IP or 0) > 10
+    is_meaningful_batter  = bat is not None and (bat.PA or 0) >= 200
+
+    # A pitcher who batted (sub-100 PA) loses the batting block so
+    # the row doesn't show pitcher-at-plate stats next to his real
+    # pitching line. A true two-way player keeps both.
+    show_batting = bat is not None and (not is_meaningful_pitcher or is_meaningful_batter)
+
+    batting = None
+    if show_batting:
         batting = {
             "AVG": bat.BA,
             "HR":  bat.HR,
@@ -978,12 +1003,6 @@ def _season_stats_for_voting(db, player_id: int, year: int) -> dict:
         }
 
     pitching = None
-    pit = (
-        db.query(_PitcherSeason)
-        .filter(_PitcherSeason.player_id == player_id,
-                _PitcherSeason.year == year)
-        .first()
-    )
     if pit is not None:
         pitching = {
             "ERA": pit.ERA,
