@@ -129,6 +129,33 @@ final class APIClient {
         return try await getOptional(url)
     }
 
+    /// `GET /players/{id}/awards`. Returns nil on 404 (player has
+    /// no award rows, no All-Star selections, and no vote-share
+    /// rows — common for players who never finished in a vote).
+    func getPlayerAwards(playerId: Int) async throws -> PlayerAwardsResponse? {
+        let url = try buildURL(path: "/players/\(playerId)/awards")
+        return try await getOptional(url)
+    }
+
+    /// `GET /awards/voting?award=&year=&league=`. Returns nil on
+    /// 404 (no voting results for that triple — possible for
+    /// pre-1956 years before Lahman's share file has data).
+    func getAwardVoting(
+        award: String,
+        year: Int,
+        league: String
+    ) async throws -> AwardVotingResponse? {
+        let url = try buildURL(
+            path: "/awards/voting",
+            query: [
+                URLQueryItem(name: "award", value: award),
+                URLQueryItem(name: "year",  value: String(year)),
+                URLQueryItem(name: "league", value: league),
+            ]
+        )
+        return try await getOptional(url)
+    }
+
     /// `GET /teams/standings?year=...`. Returns nil on 404.
     func getStandings(year: Int) async throws -> StandingsResponse? {
         let url = try buildURL(

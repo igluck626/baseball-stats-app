@@ -632,14 +632,61 @@ def player_fielding(player_id: int):
 
 @app.get("/players/{player_id}/awards")
 def player_awards(player_id: int):
-    awards  = data_service.get_awards(player_id)
-    allstar = data_service.get_allstar(player_id)
-    if not awards and not allstar:
+    """Enriched awards payload — raw `awards` and `allstar` arrays
+    (back-compat with the original shape) plus two derived blocks:
+
+      • `headline_awards`: career counts for MVP / Cy Young / ROY /
+        Gold Glove / Silver Slugger / All-Star. Zero-count entries
+        are omitted so callers can iterate the dict directly.
+      • `career_by_year`: one entry per season the player appeared
+        in any awards source — carries that year's award wins,
+        All-Star flag, and MVP/CY/ROY voting rank + points when
+        present.
+      • `award_shares`: raw vote-share rows backing the per-year
+        `votes` arrays — useful for clients that want to render
+        full voting context without re-deriving from the per-year
+        block.
+    """
+    result = data_service.get_player_awards_full(player_id)
+    if result is None:
         raise HTTPException(
             status_code=404,
             detail=f"No awards or All-Star appearances found for player_id {player_id}",
         )
-    return {"player_id": player_id, "awards": awards, "allstar": allstar}
+    return result
+
+
+_AWARD_VOTING_IDS = {"MVP", "CY Young", "ROY"}
+
+
+@app.get("/awards/voting")
+def award_voting(
+    award: str = Query(..., description="Award short code: 'MVP', 'CY Young', or 'ROY'"),
+    year:  int = Query(..., description="Season year"),
+    league: str = Query(..., description="League: 'AL', 'NL', or 'ML' for pre-1969 single-league votes"),
+):
+    """Full voting leaderboard for a single (award, year, league)
+    triple. Each row carries a full PlayerSearchResult-shaped
+    `player` block so the iOS row can render the same chrome as the
+    leaderboard / search rows and navigation can push straight into
+    PlayerProfile."""
+    if award not in _AWARD_VOTING_IDS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"award must be one of {sorted(_AWARD_VOTING_IDS)}",
+        )
+    if league not in ("AL", "NL", "ML"):
+        raise HTTPException(
+            status_code=400,
+            detail="league must be 'AL', 'NL', or 'ML'",
+        )
+    response = data_service.get_award_voting(award_id=award, year=year, league=league)
+    if response is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No {award} voting results for {league} {year}",
+        )
+    return response
 
 
 @app.get("/players/{player_id}/postseason/batting")
@@ -1178,6 +1225,33 @@ def start_lahman_load():
     t = threading.Thread(target=_run_lahman_load, daemon=True)
     t.start()
     return {"status": "started"}
+
+
+@app.post("/admin/load-award-shares")
+def admin_load_award_shares():
+    """Targeted backfill: load just `AwardsSharePlayers.csv` into
+    `player_award_shares`, skipping the full Lahman re-run. Reuses
+    `lahman_load._load_award_shares()` so the canonical mapping
+    (Lahman awardID → "MVP" / "CY Young" / "ROY") and the per-year
+    rank computation stay single-sourced.
+
+    Synchronous — the CSV is small (~7,600 rows) and finishes in a
+    few seconds, so there's no need for the background-thread
+    pattern the full Lahman load uses. Upserts via crud's ON CONFLICT
+    path so re-running the endpoint cleanly overwrites in place.
+    """
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+
+    started = time.time()
+    bridge = lahman_load._load_chadwick_bridge()
+    rows_loaded = lahman_load._load_award_shares(bridge)
+    duration = round(time.time() - started, 2)
+    return {
+        "status":          "done",
+        "rows_loaded":     rows_loaded,
+        "duration_seconds": duration,
+    }
 
 
 @app.get("/admin/lahman-load/status")

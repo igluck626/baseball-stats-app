@@ -211,6 +211,30 @@ class PlayerAllstar(Base):
     starting_pos = Column(Integer)
 
 
+class PlayerAwardShare(Base):
+    """Vote-share rows for the three award votes Lahman ships
+    (MVP / Cy Young / Rookie of the Year). One row per
+    (player, year, award, league) — the same player can appear in
+    both AL and NL columns in rare interleague-eligibility cases.
+    `rank` is computed at load time from `points_won` descending
+    within each (year, award_id, league) group so callers can
+    surface "finished 2nd in MVP voting" without re-sorting.
+    """
+    __tablename__ = "player_award_shares"
+
+    player_id   = Column(Integer, primary_key=True)
+    year        = Column(Integer, primary_key=True)
+    # Canonical short code: "MVP" / "CY Young" / "ROY". Stored
+    # rather than computed so the table can be filtered cheaply
+    # by award without parsing the Lahman string column.
+    award_id    = Column(String,  primary_key=True)
+    league      = Column(String,  primary_key=True)   # "AL" / "NL" / "ML"
+    points_won  = Column(Float)
+    points_max  = Column(Float)
+    votes_first = Column(Integer)
+    rank        = Column(Integer)
+
+
 # ---------------------------------------------------------------------------
 # Postseason — keyed by (player_id, year, round). round is "WS", "ALCS",
 # "NLDS", "WC" etc.

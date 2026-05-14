@@ -40,6 +40,13 @@ struct PlayerProfileView: View {
     // GameLogsView binds to it so the picker syncs in both directions.
     @State private var gameLogYear = Calendar.current.component(.year, from: Date())
 
+    /// Presents the award-voting sheet when the user taps an MVP /
+    /// CY / ROY chiclet on a career row. Cleared on dismiss; the
+    /// `.sheet(item:)` driver re-presents whenever a non-nil value
+    /// is assigned, so a follow-up tap on a different chiclet
+    /// re-opens the sheet with the new (award, year, league).
+    @State private var presentingVoting: AwardVotingDestination?
+
     /// Tracks light vs. dark so the header's team-color backdrop can
     /// nudge its opacity up in dark mode (the tint reads weaker
     /// against the system dark background otherwise).
@@ -177,6 +184,14 @@ struct PlayerProfileView: View {
             }
         }
         .animation(.spring(response: 0.42, dampingFraction: 0.88), value: showingColumnFilter)
+        // Award-voting sheet — driven off the per-row chiclet tap.
+        // Re-presents whenever `presentingVoting` becomes non-nil
+        // with a different (award, year, league), so consecutive
+        // chiclet taps swap the sheet's content instead of
+        // requiring a dismiss in between.
+        .sheet(item: $presentingVoting) { destination in
+            AwardVotingView(destination: destination)
+        }
     }
 
     /// Bridges the showingBatting state to the right catalog + binding
@@ -279,6 +294,16 @@ struct PlayerProfileView: View {
                 if viewModel.isRetired,
                    let final = formatLongDate(player.final_game) {
                     HeaderBioRow(label: "Final Game", value: final)
+                }
+
+                // Career-trophy summary — only renders when the
+                // awards endpoint resolved at least one non-zero
+                // count. Sits below the bio block so it reads as a
+                // breadcrumb rather than overshadowing identity.
+                if let counts = viewModel.awards?.headline_awards,
+                   counts.values.contains(where: { $0 > 0 }) {
+                    HeaderAwardsSummary(counts: counts)
+                        .padding(.top, 6)
                 }
             }
 
@@ -940,7 +965,9 @@ struct PlayerProfileView: View {
                         birthMonth: player.birth_month,
                         birthDay:   player.birth_day,
                         alternate:  !index.isMultiple(of: 2),
-                        onTap:      { season.year.map(jumpToGameLogs(year:)) }
+                        awardYear:  season.year.flatMap { viewModel.awardsByYear[$0] },
+                        onTap:      { season.year.map(jumpToGameLogs(year:)) },
+                        onAwardTap: { presentingVoting = $0 }
                     )
                     if index != sorted.indices.last {
                         Divider().opacity(0.4)
@@ -999,7 +1026,9 @@ struct PlayerProfileView: View {
                         birthMonth: player.birth_month,
                         birthDay:   player.birth_day,
                         alternate:  !index.isMultiple(of: 2),
-                        onTap:      { season.year.map(jumpToGameLogs(year:)) }
+                        awardYear:  season.year.flatMap { viewModel.awardsByYear[$0] },
+                        onTap:      { season.year.map(jumpToGameLogs(year:)) },
+                        onAwardTap: { presentingVoting = $0 }
                     )
                     if index != sorted.indices.last {
                         Divider().opacity(0.4)
@@ -1099,13 +1128,19 @@ private struct StatBlock: View {
 // tables use the same Year/Age/Team layout, so this constant is shared.
 //
 //   leadingPad 12
-// + year 32  + (2+2 cell padding)
-// + age 24   + (2+2)
+// + year 32   + (2+2 cell padding)
+// + age 24    + (2+2)
 // + gap 4
-// + team 30  + (2+2)
-// = 114pt
+// + team 30   + (2+2)
+// + awards 70 + (2+2)
+// = 188pt
 //
-private let careerFrozenPaneWidth: CGFloat = 114
+private let careerFrozenPaneWidth: CGFloat = 188
+/// Width of the per-season awards-chiclet cell on the frozen pane.
+/// Sized to fit the common all-star + one-trophy case (⭐ + GG, ~50pt)
+/// comfortably; multi-chip seasons like a Triple Crown MVP year
+/// (⭐ + GG + SS + MVP-1) get tight but stay readable.
+private let careerAwardsCellWidth: CGFloat = 70
 
 // Column widths for the full Baseball Reference batting layout —
 // 28 columns totaling ~902pt. Wider than the screen, so the table
@@ -1286,7 +1321,7 @@ private func displayTeamCode(_ raw: String?, league: String? = nil) -> String {
     return String(raw.prefix(3)).uppercased()
 }
 
-// MARK: - Frozen section (Year, Age, Team)
+// MARK: - Frozen section (Year, Age, Team, Awards)
 
 private struct BattingCareerFrozenHeader: View {
     @Binding var sort: CareerSort
@@ -1301,10 +1336,228 @@ private struct BattingCareerFrozenHeader: View {
             Color.clear.frame(width: BattingCareerColumn.ageTeamGap)
             CareerHeaderCell(label: "Team", width: BattingCareerColumn.team,
                              alignment: .leading,  sort: $sort)
+            // Awards column is non-sortable — render as plain text
+            // styled like the other header cells.
+            Text("Awards")
+                .frame(width: careerAwardsCellWidth, alignment: .leading)
+                .padding(.horizontal, 2)
+                .foregroundStyle(.secondary)
         }
         .font(.system(size: 11, weight: .semibold))
         .padding(.leading, 12)
         .frame(height: 28)
+    }
+}
+
+// MARK: - Awards chiclet cell (shared by batting + pitching rows)
+
+/// Routing destination for an MVP / Cy Young / ROY chiclet tap.
+/// Identifiable so a parent's `.sheet(item:)` can drive presentation
+/// off this struct directly.
+struct AwardVotingDestination: Identifiable, Hashable {
+    let award: String   // "MVP" / "CY Young" / "ROY"
+    let year: Int
+    let league: String  // "AL" / "NL" / "ML"
+    var id: String { "\(award)-\(year)-\(league)" }
+}
+
+/// Per-season awards cell — small chiclets for All-Star, Gold Glove,
+/// Silver Slugger, Rookie of the Year (winner), MVP-N and CY-N top-
+/// 10 voting finishes. MVP / CY / ROY chiclets are tappable Buttons
+/// that route to the AwardVotingView for that (award, year, league)
+/// triple. Static (non-tappable) chiclets show as inert pills.
+private struct CareerAwardChipsCell: View {
+    let year: Int?
+    let league: String?
+    let awardYear: PlayerAwardYear?
+    /// Invoked when the user taps an MVP / CY / ROY chiclet. The
+    /// parent presents AwardVotingView via `.sheet(item:)`.
+    let onAwardTap: (AwardVotingDestination) -> Void
+
+    var body: some View {
+        HStack(spacing: 3) {
+            if let chips = chips {
+                if chips.allstar       { staticChip("⭐", color: .yellow) }
+                if chips.goldGlove     { staticChip("GG", color: Color(red: 0.78, green: 0.55, blue: 0.10)) }
+                if chips.silverSlugger { staticChip("SS", color: Color(.systemGray)) }
+                if let rank = chips.mvpRank, let dest = destination("MVP") {
+                    tappableChip("MVP-\(rank)", color: rankColor(rank), dest: dest)
+                }
+                if let rank = chips.cyRank, let dest = destination("CY Young") {
+                    tappableChip("CY-\(rank)", color: rankColor(rank), dest: dest)
+                }
+                if chips.royWinner, let dest = destination("ROY") {
+                    tappableChip("ROY", color: Color.accentColor, dest: dest)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 2)
+        .frame(width: careerAwardsCellWidth, alignment: .leading)
+    }
+
+    /// Builds an AwardVotingDestination from the season's year +
+    /// league. Returns nil when either is missing — the chiclet
+    /// would have no target voting list to navigate to.
+    private func destination(_ award: String) -> AwardVotingDestination? {
+        guard let y = year, let lg = nonEmptyLeague else { return nil }
+        return AwardVotingDestination(award: award, year: y, league: lg)
+    }
+
+    /// League code suitable for the AwardVotingView fetch. Empty /
+    /// nil maps to "ML" (the catch-all bucket used by pre-1969
+    /// single-league votes and a few early modern years).
+    private var nonEmptyLeague: String? {
+        guard let lg = league, !lg.isEmpty else { return "ML" }
+        return lg
+    }
+
+    private var chips: AwardChips? {
+        AwardChips(awardYear)
+    }
+
+    /// Gold for a 1st-place finish, accent blue for top-3, neutral
+    /// gray beyond. Same tiering as the All-Time Rankings card so
+    /// the visual language stays consistent across screens.
+    private func rankColor(_ rank: Int) -> Color {
+        if rank == 1 { return Color(red: 0.85, green: 0.65, blue: 0.13) }
+        if rank <= 3 { return .accentColor }
+        return Color(.systemGray)
+    }
+
+    private func staticChip(_ text: String, color: Color) -> some View {
+        Text(text)
+            .font(.system(size: 9, weight: .bold))
+            .monospacedDigit()
+            .foregroundStyle(color)
+            .padding(.horizontal, 3)
+            .padding(.vertical, 1)
+            .background(
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(color.opacity(0.12))
+            )
+    }
+
+    private func tappableChip(_ text: String, color: Color,
+                              dest: AwardVotingDestination) -> some View {
+        Button {
+            onAwardTap(dest)
+        } label: {
+            Text(text)
+                .font(.system(size: 9, weight: .bold))
+                .monospacedDigit()
+                .foregroundStyle(color)
+                .padding(.horizontal, 3)
+                .padding(.vertical, 1)
+                .background(
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(color.opacity(0.16))
+                )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// Compact career-trophy summary that sits below the bio rows in
+/// the player header. Renders one badge per non-zero award category
+/// in a fixed display order (MVP → Cy → ROY → All-Star → Gold Glove
+/// → Silver Slugger → WS MVP). Horizontally scrollable for the rare
+/// player with every trophy. Styled subtly — small text, secondary
+/// tint behind the icon — so it informs without overshadowing the
+/// identity rows above it.
+private struct HeaderAwardsSummary: View {
+    let counts: [String: Int]
+
+    /// Display order + display label per canonical key. Categories
+    /// the player doesn't have (or has zero of) are filtered out at
+    /// render time.
+    private static let displayOrder: [(key: String, label: String, sf: String)] = [
+        ("MVP",              "MVP",     "trophy.fill"),
+        ("CY Young",         "CY",      "trophy.fill"),
+        ("ROY",              "ROY",     "rosette"),
+        ("All-Star",         "AS",      "star.fill"),
+        ("Gold Glove",       "GG",      "hand.raised.fill"),
+        ("Silver Slugger",   "SS",      "baseball.fill"),
+        ("World Series MVP", "WS MVP",  "crown.fill"),
+    ]
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(visibleEntries, id: \.key) { entry in
+                    badge(label: entry.label,
+                          sfSymbol: entry.sf,
+                          count: counts[entry.key] ?? 0)
+                }
+            }
+        }
+        // ScrollView wraps a single HStack of badges — give it a
+        // bounded height so it sits cleanly under the bio without
+        // claiming infinite vertical space.
+        .frame(height: 22)
+    }
+
+    private var visibleEntries: [(key: String, label: String, sf: String)] {
+        Self.displayOrder.filter { (counts[$0.key] ?? 0) > 0 }
+    }
+
+    private func badge(label: String, sfSymbol: String, count: Int) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: sfSymbol)
+                .font(.caption2.weight(.semibold))
+            Text("\(count)× \(label)")
+                .font(.caption2.weight(.semibold))
+                .monospacedDigit()
+        }
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(
+            Capsule()
+                .fill(Color(.systemGray6))
+        )
+    }
+}
+
+/// Derived per-year award chiclet state. Builds from the raw
+/// `PlayerAwardYear` block — checking the `awards` array for the
+/// non-voted trophies (Gold Glove, Silver Slugger, ROY winner) and
+/// the `votes` array for MVP/CY top-10 finishes. `isEmpty` lets the
+/// row skip rendering when a player had no awards in a given year.
+struct AwardChips {
+    let allstar: Bool
+    let goldGlove: Bool
+    let silverSlugger: Bool
+    let royWinner: Bool
+    let mvpRank: Int?
+    let cyRank: Int?
+
+    init(_ y: PlayerAwardYear?) {
+        guard let y else {
+            self.allstar = false
+            self.goldGlove = false
+            self.silverSlugger = false
+            self.royWinner = false
+            self.mvpRank = nil
+            self.cyRank = nil
+            return
+        }
+        self.allstar       = y.allstar
+        self.goldGlove     = y.awards.contains { $0.award_name == "Gold Glove" }
+        self.silverSlugger = y.awards.contains { $0.award_name == "Silver Slugger" }
+        self.royWinner     = y.awards.contains { $0.award_name == "Rookie of the Year" }
+        // Only surface top-10 MVP/CY finishes — beyond that the
+        // single-row "27th in MVP voting" chiclet is more noise
+        // than signal in the tight career-table cell.
+        let mvpVote = y.votes.first { $0.award_id == "MVP" }
+        self.mvpRank = mvpVote.flatMap { $0.rank }.flatMap { $0 <= 10 ? $0 : nil }
+        let cyVote  = y.votes.first { $0.award_id == "CY Young" }
+        self.cyRank  = cyVote.flatMap { $0.rank }.flatMap { $0 <= 10 ? $0 : nil }
+    }
+
+    var isEmpty: Bool {
+        !allstar && !goldGlove && !silverSlugger && !royWinner
+            && mvpRank == nil && cyRank == nil
     }
 }
 
@@ -1314,9 +1567,14 @@ private struct BattingCareerFrozenSeasonRow: View {
     let birthMonth: Int?
     let birthDay:   Int?
     let alternate:  Bool
-    /// Invoked when the user taps anywhere in the row. The parent
-    /// view jumps the Game Logs tab to this season's year.
+    let awardYear: PlayerAwardYear?
+    /// Invoked when the user taps anywhere in the row (outside an
+    /// award chiclet). The parent jumps the Game Logs tab to this
+    /// season's year.
     let onTap: () -> Void
+    /// Invoked when the user taps an MVP / CY / ROY chiclet — the
+    /// parent presents AwardVotingView via `.sheet(item:)`.
+    let onAwardTap: (AwardVotingDestination) -> Void
 
     var body: some View {
         HStack(spacing: 0) {
@@ -1340,6 +1598,12 @@ private struct BattingCareerFrozenSeasonRow: View {
                 .truncationMode(.tail)
                 .frame(width: BattingCareerColumn.team, alignment: .leading)
                 .padding(.horizontal, 2)
+            CareerAwardChipsCell(
+                year: season.year,
+                league: season.league,
+                awardYear: awardYear,
+                onAwardTap: onAwardTap
+            )
         }
         .font(.system(size: 11))
         .padding(.leading, 12)
@@ -1359,6 +1623,10 @@ private struct BattingCareerFrozenTotalsRow: View {
                 .padding(.horizontal, 2)
             Color.clear.frame(width: BattingCareerColumn.ageTeamGap)
             Color.clear.frame(width: BattingCareerColumn.team)
+                .padding(.horizontal, 2)
+            // Awards cell stays empty on the totals row — career
+            // totals don't carry per-year award context.
+            Color.clear.frame(width: careerAwardsCellWidth)
                 .padding(.horizontal, 2)
         }
         .font(.system(size: 9.5, weight: .semibold))
@@ -1578,6 +1846,10 @@ private struct PitchingCareerFrozenHeader: View {
             Color.clear.frame(width: PitchingCareerColumn.ageTeamGap)
             CareerHeaderCell(label: "Team", width: PitchingCareerColumn.team,
                              alignment: .leading,  sort: $sort)
+            Text("Awards")
+                .frame(width: careerAwardsCellWidth, alignment: .leading)
+                .padding(.horizontal, 2)
+                .foregroundStyle(.secondary)
         }
         .font(.system(size: 11, weight: .semibold))
         .padding(.leading, 12)
@@ -1591,7 +1863,9 @@ private struct PitchingCareerFrozenSeasonRow: View {
     let birthMonth: Int?
     let birthDay:   Int?
     let alternate:  Bool
+    let awardYear: PlayerAwardYear?
     let onTap: () -> Void
+    let onAwardTap: (AwardVotingDestination) -> Void
 
     var body: some View {
         HStack(spacing: 0) {
@@ -1611,6 +1885,12 @@ private struct PitchingCareerFrozenSeasonRow: View {
                 .truncationMode(.tail)
                 .frame(width: PitchingCareerColumn.team, alignment: .leading)
                 .padding(.horizontal, 2)
+            CareerAwardChipsCell(
+                year: season.year,
+                league: season.league,
+                awardYear: awardYear,
+                onAwardTap: onAwardTap
+            )
         }
         .font(.system(size: 11))
         .padding(.leading, 12)
@@ -1630,6 +1910,8 @@ private struct PitchingCareerFrozenTotalsRow: View {
                 .padding(.horizontal, 2)
             Color.clear.frame(width: PitchingCareerColumn.ageTeamGap)
             Color.clear.frame(width: PitchingCareerColumn.team)
+                .padding(.horizontal, 2)
+            Color.clear.frame(width: careerAwardsCellWidth)
                 .padding(.horizontal, 2)
         }
         .font(.system(size: 9.5, weight: .semibold))

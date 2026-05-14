@@ -11,6 +11,7 @@ from .models import (
     Player,
     PlayerAllstar,
     PlayerAward,
+    PlayerAwardShare,
     PlayerFielding,
     PlayerHof,
     PlayerPostseasonBatting,
@@ -197,6 +198,65 @@ def get_player_allstar(db: Session, player_id: int) -> list[PlayerAllstar]:
 def save_player_allstar(db: Session, rows: list[dict]) -> None:
     for r in rows:
         db.merge(PlayerAllstar(**r))
+
+
+def get_player_award_shares(db: Session, player_id: int) -> list[PlayerAwardShare]:
+    return (
+        db.query(PlayerAwardShare)
+        .filter(PlayerAwardShare.player_id == player_id)
+        .order_by(PlayerAwardShare.year,
+                  PlayerAwardShare.award_id,
+                  PlayerAwardShare.rank)
+        .all()
+    )
+
+
+def get_award_share_voting(db: Session, award_id: str,
+                           year: int, league: str) -> list[PlayerAwardShare]:
+    """Ranked voting leaderboard for a specific (award, year, league)
+    — caller turns each row into a `{player, points_won, …}` entry."""
+    return (
+        db.query(PlayerAwardShare)
+        .filter(PlayerAwardShare.award_id == award_id,
+                PlayerAwardShare.year == year,
+                PlayerAwardShare.league == league)
+        .order_by(PlayerAwardShare.rank)
+        .all()
+    )
+
+
+def save_player_award_shares(db: Session, rows: list[dict]) -> None:
+    """Upsert award-share rows. PostgreSQL gets the native
+    `INSERT ... ON CONFLICT (player_id, year, award_id, league)
+    DO UPDATE SET ...` form so a re-run of the loader (or the
+    `/admin/load-award-shares` endpoint) cleanly overwrites
+    points / votes / rank in place instead of leaving stale rows
+    or relying on db.merge's SELECT-then-UPDATE/INSERT round-trip.
+    SQLite falls back to merge for local-dev compatibility."""
+    if not rows:
+        return
+    dialect = db.bind.dialect.name if db.bind is not None else ""
+    if dialect == "postgresql":
+        for r in rows:
+            stmt = pg_insert(PlayerAwardShare).values(**r)
+            update_cols = {
+                k: stmt.excluded[k]
+                for k in r.keys()
+                if k not in ("player_id", "year", "award_id", "league")
+            }
+            if update_cols:
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["player_id", "year", "award_id", "league"],
+                    set_=update_cols,
+                )
+            else:
+                stmt = stmt.on_conflict_do_nothing(
+                    index_elements=["player_id", "year", "award_id", "league"],
+                )
+            db.execute(stmt)
+    else:
+        for r in rows:
+            db.merge(PlayerAwardShare(**r))
 
 
 # ---------------------------------------------------------------------------

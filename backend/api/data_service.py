@@ -848,6 +848,155 @@ def get_allstar(player_id: int) -> list[dict]:
         return [_row_to_dict(r) for r in rows]
 
 
+def get_award_shares(player_id: int) -> list[dict]:
+    """All MVP / Cy Young / Rookie-of-the-Year vote-share rows for a
+    player, sorted by year then award then rank."""
+    if not connection.db_available():
+        return []
+    with connection.get_session() as db:
+        rows = crud.get_player_award_shares(db, player_id)
+        return [_row_to_dict(r) for r in rows]
+
+
+# Names in `player_awards.award_name` that count as the canonical
+# headline trophies. Kept here rather than in main.py so the
+# endpoint layer stays a thin pass-through.
+_HEADLINE_AWARD_NAMES: dict[str, str] = {
+    "Most Valuable Player": "MVP",
+    "Cy Young Award":       "CY Young",
+    "Rookie of the Year":   "ROY",
+    "Gold Glove":           "Gold Glove",
+    "Silver Slugger":       "Silver Slugger",
+    "World Series MVP":     "World Series MVP",
+}
+
+
+def get_player_awards_full(player_id: int) -> Optional[dict]:
+    """Enriched awards payload for a player. Combines the raw
+    `player_awards` and `player_allstar` arrays with two derived
+    structures the iOS career table renders:
+
+      • `headline_awards` — counts of the major trophies the player
+        has won, plus All-Star appearance count. Zero-count entries
+        are omitted.
+      • `career_by_year` — one entry per season the player was active
+        in awards data, carrying that year's award wins, All-Star
+        flag, and MVP / Cy / ROY voting rank + points when present.
+    """
+    if not connection.db_available():
+        return None
+
+    raw_awards  = get_awards(player_id)
+    raw_allstar = get_allstar(player_id)
+    raw_shares  = get_award_shares(player_id)
+    if not raw_awards and not raw_allstar and not raw_shares:
+        return None
+
+    # ---- headline counts ----
+    counts: dict[str, int] = {}
+    for a in raw_awards:
+        canonical = _HEADLINE_AWARD_NAMES.get(a.get("award_name") or "")
+        if canonical:
+            counts[canonical] = counts.get(canonical, 0) + 1
+    # All-Star appearances — count any row where the player was
+    # selected (GP can be 0 if the player was named but didn't play;
+    # the selection itself still counts as an All-Star appearance).
+    counts["All-Star"] = len(raw_allstar)
+
+    # World Series wins live in the postseason-team data rather than
+    # `player_awards`, so we don't surface a WS count in this dict
+    # today. The iOS career-row badge can light up "WS" off the
+    # postseason endpoint later if/when that wiring lands.
+
+    headline_awards = {k: v for k, v in counts.items() if v > 0}
+
+    # ---- per-year aggregation ----
+    by_year: dict[int, dict] = {}
+    for a in raw_awards:
+        y = a.get("year")
+        if y is None:
+            continue
+        bucket = by_year.setdefault(y, {"year": y, "awards": [], "allstar": False, "votes": []})
+        bucket["awards"].append({
+            "award_name": a.get("award_name"),
+            "league":     a.get("league"),
+            "notes":      a.get("notes"),
+            "tie":        a.get("tie"),
+        })
+    for s in raw_allstar:
+        y = s.get("year")
+        if y is None:
+            continue
+        bucket = by_year.setdefault(y, {"year": y, "awards": [], "allstar": False, "votes": []})
+        bucket["allstar"] = True
+    for sh in raw_shares:
+        y = sh.get("year")
+        if y is None:
+            continue
+        bucket = by_year.setdefault(y, {"year": y, "awards": [], "allstar": False, "votes": []})
+        bucket["votes"].append({
+            "award_id":   sh.get("award_id"),
+            "league":     sh.get("league"),
+            "rank":       sh.get("rank"),
+            "points_won": sh.get("points_won"),
+            "points_max": sh.get("points_max"),
+            "votes_first": sh.get("votes_first"),
+        })
+
+    career_by_year = sorted(by_year.values(), key=lambda b: b["year"])
+
+    return {
+        "player_id":        player_id,
+        "headline_awards":  headline_awards,
+        "career_by_year":   career_by_year,
+        "awards":           raw_awards,
+        "allstar":          raw_allstar,
+        "award_shares":     raw_shares,
+    }
+
+
+def get_award_voting(award_id: str, year: int, league: str) -> Optional[dict]:
+    """Return the ranked voting leaderboard for a (award_id, year,
+    league) tuple, each row carrying a full PlayerSearchResult-shaped
+    `player` block so the iOS row can render the same chrome as the
+    leaderboard / search rows and tap-to-profile reuses the existing
+    PlayerProfileView entry point."""
+    if not connection.db_available():
+        return None
+    with connection.get_session() as db:
+        rows = crud.get_award_share_voting(db, award_id, year, league)
+        if not rows:
+            return None
+        entries: list[dict] = []
+        for r in rows:
+            player_row = crud.get_player(db, r.player_id) or crud.get_pitcher(db, r.player_id)
+            if player_row is None:
+                continue
+            entries.append({
+                "rank":        r.rank,
+                "points_won":  r.points_won,
+                "points_max":  r.points_max,
+                "votes_first": r.votes_first,
+                "player": {
+                    "player_id":       player_row.player_id,
+                    "name":            player_row.name,
+                    "bbref_id":        player_row.bbref_id,
+                    "mlb_debut":       player_row.mlb_debut,
+                    "mlb_last_season": player_row.mlb_last_season,
+                    "current_team":    None,
+                    "team_code":       None,
+                    "is_pitcher":      award_id == "CY Young",
+                    **_bio_dict(player_row, db),
+                },
+            })
+    return {
+        "award_id": award_id,
+        "year":     year,
+        "league":   league,
+        "entries":  entries,
+    }
+
+
 def get_postseason_batting(player_id: int) -> list[dict]:
     if not connection.db_available():
         return []

@@ -44,6 +44,7 @@ PEOPLE_CSV              = os.path.join(LAHMAN_DIR, "People.csv")
 CHADWICK_CSV            = os.path.join(LAHMAN_DIR, "chadwick_mlb.csv")
 FIELDING_CSV            = os.path.join(LAHMAN_DIR, "Fielding.csv")
 AWARDS_CSV              = os.path.join(LAHMAN_DIR, "AwardsPlayers.csv")
+AWARDS_SHARE_CSV        = os.path.join(LAHMAN_DIR, "AwardsSharePlayers.csv")
 ALLSTAR_CSV             = os.path.join(LAHMAN_DIR, "AllstarFull.csv")
 BATTING_POST_CSV        = os.path.join(LAHMAN_DIR, "BattingPost.csv")
 PITCHING_POST_CSV       = os.path.join(LAHMAN_DIR, "PitchingPost.csv")
@@ -875,6 +876,94 @@ def _load_allstar(
 
 
 # ---------------------------------------------------------------------------
+# Award vote shares (AwardsSharePlayers.csv) — MVP / Cy Young / ROY voting.
+#
+# Lahman's awardID strings ("Most Valuable Player", "Cy Young Award",
+# "Rookie of the Year") get collapsed to short canonical codes ("MVP",
+# "CY Young", "ROY") so the iOS surface can switch on stable values.
+# `rank` is computed at load time per (year, awardID, league) group by
+# sorting pointsWon descending — surfaces "finished 3rd in MVP voting"
+# without a runtime window function.
+# ---------------------------------------------------------------------------
+
+_LAHMAN_AWARD_SHARE_ID: dict[str, str] = {
+    "Most Valuable Player": "MVP",
+    "Cy Young Award":       "CY Young",
+    "Rookie of the Year":   "ROY",
+}
+
+
+def _load_award_shares(
+    bridge: dict[str, int],
+    state: Optional[dict] = None,
+    lock: Optional[threading.Lock] = None,
+) -> int:
+    _set_state(state, lock, phase="award_shares")
+    log.info(f"Reading {AWARDS_SHARE_CSV} ...")
+
+    # Bucket by (year, award_id, league) so we can rank within each
+    # group after the file is fully read.
+    bucketed: dict[tuple[int, str, str], list[dict]] = {}
+    skipped_no_id = 0
+    with open(AWARDS_SHARE_CSV, newline="", encoding="utf-8-sig") as fh:
+        for row in csv.DictReader(fh):
+            year = int(row["yearID"])
+            if year >= CUTOFF_YEAR:
+                continue
+            award_id = _LAHMAN_AWARD_SHARE_ID.get(row["awardID"])
+            if award_id is None:
+                continue  # award outside the MVP/CY/ROY scope we track
+            mlbam = bridge.get(row["playerID"])
+            if mlbam is None:
+                skipped_no_id += 1
+                continue
+            league = row.get("lgID") or "ML"
+            bucketed.setdefault((year, award_id, league), []).append({
+                "player_id":   mlbam,
+                "year":        year,
+                "award_id":    award_id,
+                "league":      league,
+                "points_won":  _f(row.get("pointsWon")),
+                "points_max":  _f(row.get("pointsMax")),
+                "votes_first": _i(row.get("votesFirst")),
+            })
+
+    # Rank within each group — highest points_won = rank 1. Ties get
+    # the same rank (dense-ranking would be cleaner but standard
+    # vote-share lists use stride ranking).
+    rows: list[dict] = []
+    for group_rows in bucketed.values():
+        group_rows.sort(key=lambda r: -(r.get("points_won") or 0.0))
+        last_pts: Optional[float] = None
+        last_rank = 0
+        for idx, r in enumerate(group_rows, start=1):
+            pts = r.get("points_won")
+            if pts == last_pts:
+                r["rank"] = last_rank
+            else:
+                r["rank"] = idx
+                last_rank = idx
+                last_pts = pts
+            rows.append(r)
+
+    log.info(f"  saving {len(rows):,} award-share rows ...")
+    _set_state(state, lock, award_shares_rows_total=len(rows),
+               award_shares_skipped_no_id=skipped_no_id)
+
+    saved = 0
+    BATCH = 5000
+    for chunk_start in range(0, len(rows), BATCH):
+        chunk = rows[chunk_start:chunk_start + BATCH]
+        with connection.get_session() as db:
+            crud.save_player_award_shares(db, chunk)
+            saved += len(chunk)
+        _set_state(state, lock, award_shares_loaded=saved)
+
+    log.info(f"  award shares: saved {saved:,}, skipped (no Chadwick id): {skipped_no_id:,}")
+    return saved
+
+
+# ---------------------------------------------------------------------------
 # Postseason batting & pitching
 # ---------------------------------------------------------------------------
 
@@ -1178,12 +1267,13 @@ def run(
 
     fielding_saved   = _load_fielding(bridge, state, lock)
     positions_set    = _compute_primary_positions(state, lock)
-    awards_saved     = _load_awards(bridge, state, lock)
-    allstar_saved    = _load_allstar(bridge, state, lock)
-    post_bat_saved   = _load_postseason_batting(bridge, state, lock)
-    post_pit_saved   = _load_postseason_pitching(bridge, state, lock)
-    teams_saved      = _load_teams(state, lock)
-    hof_saved        = _load_hof(bridge, state, lock)
+    awards_saved        = _load_awards(bridge, state, lock)
+    award_shares_saved  = _load_award_shares(bridge, state, lock)
+    allstar_saved       = _load_allstar(bridge, state, lock)
+    post_bat_saved      = _load_postseason_batting(bridge, state, lock)
+    post_pit_saved      = _load_postseason_pitching(bridge, state, lock)
+    teams_saved         = _load_teams(state, lock)
+    hof_saved           = _load_hof(bridge, state, lock)
 
     _set_state(state, lock, phase="done")
 
@@ -1197,6 +1287,7 @@ def run(
     print(f"  Fielding rows saved          : {fielding_saved:>7,}")
     print(f"  Primary positions set        : {positions_set:>7,}")
     print(f"  Award rows saved             : {awards_saved:>7,}")
+    print(f"  Award-share rows saved       : {award_shares_saved:>7,}")
     print(f"  All-Star rows saved          : {allstar_saved:>7,}")
     print(f"  Postseason batting saved     : {post_bat_saved:>7,}")
     print(f"  Postseason pitching saved    : {post_pit_saved:>7,}")

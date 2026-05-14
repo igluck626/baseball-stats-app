@@ -26,12 +26,28 @@ final class PlayerViewModel: ObservableObject {
     @Published var careerBatting: PlayerCareerStats?
     @Published var currentPitching: PitcherCurrentStats?
     @Published var careerPitching: PitcherCareerStats?
+    /// Career-wide awards + vote-share data — keyed lookups built off
+    /// `awards?.career_by_year` drive the per-season chiclets in the
+    /// frozen pane and the headline-counts row in the header card.
+    @Published var awards: PlayerAwardsResponse?
 
     @Published var isLoadingCurrentBatting = false
     @Published var isLoadingCareerBatting = false
     @Published var isLoadingCurrentPitching = false
     @Published var isLoadingCareerPitching = false
+    @Published var isLoadingAwards = false
     @Published var error: String?
+
+    /// Year → per-season awards block. Lazy-built; rebuilds whenever
+    /// `awards` is republished (the parallel fetch only publishes
+    /// once, so the cost is trivial).
+    var awardsByYear: [Int: PlayerAwardYear] {
+        var map: [Int: PlayerAwardYear] = [:]
+        for entry in awards?.career_by_year ?? [] {
+            map[entry.year] = entry
+        }
+        return map
+    }
 
     private let api: APIClient
 
@@ -167,11 +183,25 @@ final class PlayerViewModel: ObservableObject {
         async let careerBattingDone:   Void = loadCareerBatting()
         async let currentPitchingDone: Void = loadCurrentPitching()
         async let careerPitchingDone:  Void = loadCareerPitching()
+        async let awardsDone:          Void = loadAwards()
 
         _ = await (
             currentBattingDone, careerBattingDone,
-            currentPitchingDone, careerPitchingDone
+            currentPitchingDone, careerPitchingDone,
+            awardsDone
         )
+    }
+
+    private func loadAwards() async {
+        isLoadingAwards = true
+        do {
+            awards = try await api.getPlayerAwards(playerId: player.player_id)
+        } catch {
+            // Award absence shouldn't bubble a screen-level error
+            // ("Couldn't load profile") — a player with no awards
+            // and no votes legitimately 404s.
+        }
+        isLoadingAwards = false
     }
 
     private func loadCurrentBatting() async {
