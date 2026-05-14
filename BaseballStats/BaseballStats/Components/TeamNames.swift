@@ -128,3 +128,52 @@ private let mlbTeamAbbreviation: [String: String] = [
 func teamAbbreviation(for code: String) -> String {
     mlbTeamAbbreviation[code] ?? code
 }
+
+/// Lahman team code → MLB Stats API numeric team id. The MLB CDN
+/// (`midfield.mlbstatic.com`) keys logos off this numeric id, so we
+/// invert here the same table the nightly standings refresh uses
+/// on the backend.
+///
+/// Modern-rebrand and bbref-style aliases (OAK → 133 Athletics,
+/// ANA → 108 Angels, FLO → 146 Marlins, MON → 120 Nationals) point
+/// at the current franchise's id — the logo CDN doesn't keep
+/// pre-rebrand SKUs, but the modern logo is the right call anyway.
+private let mlbStatsApiTeamId: [String: Int] = [
+    // Lahman canonical codes
+    "ARI": 109, "ATL": 144, "BAL": 110, "BOS": 111,
+    "CHA": 145, "CHN": 112, "CIN": 113, "CLE": 114,
+    "COL": 115, "DET": 116, "HOU": 117, "KCA": 118,
+    "LAA": 108, "LAN": 119, "MIA": 146, "MIL": 158,
+    "MIN": 142, "NYA": 147, "NYN": 121, "ATH": 133,
+    "PHI": 143, "PIT": 134, "SDN": 135, "SFN": 137,
+    "SEA": 136, "SLN": 138, "TBA": 139, "TEX": 140,
+    "TOR": 141, "WAS": 120,
+
+    // bbref-style codes that may slip through from current-season
+    // rows the nightly pulled before being normalized to Lahman.
+    "NYY": 147, "NYM": 121, "CHW": 145, "CWS": 145,
+    "CHC": 112, "KCR": 118, "LAD": 119, "SDP": 135,
+    "SFG": 137, "STL": 138, "TBR": 139, "WSN": 120,
+
+    // Modern-rebrand / historical aliases — collapse to the current
+    // franchise so we still surface a logo for older standings rows.
+    "OAK": 133,   // 2025 rebrand: Oakland → Athletics
+    "ANA": 108,   // 1997–2004 Anaheim Angels → LA Angels
+    "FLO": 146,   // pre-2012 Florida Marlins → Miami
+    "MON": 120,   // Expos → Nationals lineage
+]
+
+/// Build the MLB Stats API CDN URL for a team's PNG logo at 120px.
+/// Uses `midfield.mlbstatic.com/v1/team/{id}/spots/120` which serves
+/// PNG (1.7 KB), so `AsyncImage` can render it natively — the
+/// alternate `mlbstatic.com/team-logos/{id}.svg` endpoint also
+/// responds 200 but ships SVG, which iOS' AsyncImage doesn't decode.
+///
+/// Returns nil for empty / unmapped codes; callers (the Standings
+/// row's `teamLogo` AsyncImage placeholder) fall back to a tinted
+/// rectangle so the row layout stays solid.
+func teamLogoURL(for code: String?) -> URL? {
+    guard let code, !code.isEmpty,
+          let mlbId = mlbStatsApiTeamId[code.uppercased()] else { return nil }
+    return URL(string: "https://midfield.mlbstatic.com/v1/team/\(mlbId)/spots/120")
+}
