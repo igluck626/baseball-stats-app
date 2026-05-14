@@ -265,9 +265,21 @@ struct PlayerProfileView: View {
                 }
 
                 if player.is_hof == true {
-                    Text("⭐ Hall of Fame")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.yellow)
+                    // Same red HOF capsule used in the search-row and
+                    // leaderboard-row badges so the indicator reads
+                    // identically across every list surface and the
+                    // profile header.
+                    Text("HOF")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(
+                            Capsule().fill(
+                                Color(red: 0.8, green: 0.1, blue: 0.1).gradient
+                            )
+                        )
+                        .accessibilityLabel("Hall of Fame")
                 }
 
                 // Divider separates the identity rows above from the
@@ -917,26 +929,26 @@ struct PlayerProfileView: View {
     }
 
     /// Compact one-line legend explaining the gold-tinted leader cells.
-    /// Two colored dots + caption labels, secondary tone — sits between
-    /// the column-filter row and the career table on both batting and
-    /// pitching tabs.
+    /// Each label renders in the *exact* style its cells use in the
+    /// table — plain gold for league, bold+italic gold for majors —
+    /// so the legend doubles as a visual cheat sheet.
     private var leaderLegend: some View {
         HStack(spacing: 14) {
             HStack(spacing: 5) {
                 Circle()
-                    .fill(LeaderTint.league)
+                    .fill(LeaderTint.gold)
                     .frame(width: 7, height: 7)
                 Text("League leader")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(LeaderTint.gold)
             }
             HStack(spacing: 5) {
                 Circle()
-                    .fill(LeaderTint.majors)
+                    .fill(LeaderTint.gold)
                     .frame(width: 7, height: 7)
                 Text("Majors leader")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.caption.weight(.bold).italic())
+                    .foregroundStyle(LeaderTint.gold)
             }
             Spacer()
         }
@@ -2366,22 +2378,20 @@ private struct CareerHeaderCell: View {
 
 // MARK: - League-leader cells
 
-/// Tint colors used to mark league/majors leaders. Muted gold for a
-/// single-league lead, bright orange-gold for a majors lead — the
-/// two shades sit at clearly different hues so a glance at the cell
-/// reads the difference without having to consult the legend. The
-/// legend dot uses the same colors so the colors map 1:1.
+/// Tint color used to mark league/majors leaders. Both tiers share
+/// the same muted gold; the league/majors distinction is carried by
+/// font weight + style (plain vs bold + italic) so colorblind users
+/// can tell them apart without relying on a separate hue. The legend
+/// labels demonstrate the exact rendering used in the cells.
 private enum LeaderTint {
-    static let league = Color(red: 0.8, green: 0.6, blue: 0.1)
-    static let majors = Color(red: 0.95, green: 0.5, blue: 0.0)
+    static let gold = Color(red: 0.8, green: 0.6, blue: 0.1)
 }
 
 /// Builds the standard "career-row stat cell" — `.frame(width:, alignment:)
 /// .monospacedDigit().padding(.horizontal, 2)` — and applies the leadership
-/// styling: `.bold()` + muted gold if the player led their league in that
-/// stat that season, `.bold().italic()` + brighter gold if they led the
-/// majors. Pass-through to a plain primary-color Text when the leaders
-/// dict has no entry for `label` (the common case for any given cell).
+/// styling: gold color for any lead, additionally bold + italic when the
+/// player led the majors. Pass-through to a plain primary-color Text when
+/// the leaders dict has no entry for `label` (the common case).
 @ViewBuilder
 private func leaderCell(
     _ value: String,
@@ -2390,12 +2400,10 @@ private func leaderCell(
     width: CGFloat
 ) -> some View {
     let kind = leaders?[label]
-    let tint: Color = kind == "majors" ? LeaderTint.majors :
-                      kind == "league" ? LeaderTint.league : .primary
     Text(value)
-        .bold(kind != nil)
+        .bold(kind == "majors")
         .italic(kind == "majors")
-        .foregroundStyle(tint)
+        .foregroundStyle(kind != nil ? LeaderTint.gold : .primary)
         .frame(width: width, alignment: .trailing)
         .monospacedDigit()
         .padding(.horizontal, 2)
