@@ -1239,19 +1239,42 @@ def admin_load_award_shares():
     few seconds, so there's no need for the background-thread
     pattern the full Lahman load uses. Upserts via crud's ON CONFLICT
     path so re-running the endpoint cleanly overwrites in place.
+
+    Diagnostic mode: returns 200 with `status: "error"` plus the full
+    traceback in the response body when the load fails, so a curl
+    against this endpoint surfaces the root cause without needing
+    server log access. Switch back to a raise once the deployment
+    stabilizes.
     """
+    import traceback
+
     if not connection.db_available():
-        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+        return {
+            "status":  "error",
+            "message": "DATABASE_URL is not configured",
+        }
 
     started = time.time()
-    bridge = lahman_load._load_chadwick_bridge()
-    rows_loaded = lahman_load._load_award_shares(bridge)
-    duration = round(time.time() - started, 2)
-    return {
-        "status":          "done",
-        "rows_loaded":     rows_loaded,
-        "duration_seconds": duration,
-    }
+    try:
+        bridge = lahman_load._load_chadwick_bridge()
+        rows_loaded = lahman_load._load_award_shares(bridge)
+        duration = round(time.time() - started, 2)
+        return {
+            "status":           "done",
+            "rows_loaded":      rows_loaded,
+            "duration_seconds": duration,
+        }
+    except Exception as exc:
+        # Log to server stderr so Railway captures it AND echo the
+        # traceback back to the caller for direct diagnosis.
+        log.exception("load-award-shares failed")
+        return {
+            "status":     "error",
+            "message":    str(exc),
+            "error_type": type(exc).__name__,
+            "traceback":  traceback.format_exc(),
+            "duration_seconds": round(time.time() - started, 2),
+        }
 
 
 @app.get("/admin/lahman-load/status")
