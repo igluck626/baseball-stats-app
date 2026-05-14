@@ -33,6 +33,7 @@ backend/data/lahman/*
 !backend/data/lahman/chadwick_mlb.csv
 !backend/data/lahman/Fielding.csv
 !backend/data/lahman/AwardsPlayers.csv
+!backend/data/lahman/AwardsSharePlayers.csv
 !backend/data/lahman/AllstarFull.csv
 !backend/data/lahman/BattingPost.csv
 !backend/data/lahman/PitchingPost.csv
