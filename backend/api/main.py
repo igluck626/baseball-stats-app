@@ -571,6 +571,22 @@ def search_players(name: str = Query(..., min_length=2, description="Player name
     return {"query": name, "results": results}
 
 
+@app.get("/players/by-mlb-id/{mlb_id}")
+def player_by_mlb_id(mlb_id: int):
+    """Direct lookup by MLB Stats API id. Used by the Scores tab —
+    the live-feed box score names players by MLBAM id and we need to
+    resolve those to our `PlayerSearchResult` shape so navigation
+    into the existing player profile works without a search round
+    trip. Returns the same payload `/players/search` rows have."""
+    result = data_service.get_player_by_id(mlb_id)
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No player found with MLB id {mlb_id}",
+        )
+    return result
+
+
 @app.get("/players/{player_id}/stats/current")
 def current_stats(player_id: int):
     stats = data_service.get_current_stats(player_id)

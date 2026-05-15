@@ -23,6 +23,12 @@ struct ContentView: View {
                 }
                 .tag(AppNavigation.Tab.search)
 
+            ScoresView()
+                .tabItem {
+                    Label("Scores", systemImage: "sportscourt")
+                }
+                .tag(AppNavigation.Tab.scores)
+
             StandingsView()
                 .tabItem {
                     Label("Standings", systemImage: "list.bullet")

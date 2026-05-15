@@ -80,6 +80,16 @@ final class APIClient {
         }
     }
 
+    /// `GET /players/by-mlb-id/{id}`. Direct lookup by MLB Stats API id.
+    /// Returns nil on 404 (no player by that id in our DB). Used by the
+    /// Scores tab when the user taps a player in a box score — the
+    /// live-feed names players by MLBAM id and we need to resolve to a
+    /// `PlayerSearchResult` to drive `PlayerProfileView`.
+    func getPlayerByMlbId(_ mlbId: Int) async throws -> PlayerSearchResult? {
+        let url = try buildURL(path: "/players/by-mlb-id/\(mlbId)")
+        return try await getOptional(url)
+    }
+
     /// `GET /players/{id}/stats/current`. Returns nil on 404 — the player
     /// has no current-season batting line (e.g. retired, or pitcher-only).
     func getPlayerCurrentStats(playerId: Int) async throws -> PlayerCurrentStats? {

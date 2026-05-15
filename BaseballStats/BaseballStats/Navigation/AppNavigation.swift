@@ -28,8 +28,9 @@ final class AppNavigation: ObservableObject {
     /// a future reorder doesn't break deeplinks.
     enum Tab: Int, Hashable {
         case search    = 0
-        case standings = 1
-        case leaders   = 2
+        case scores    = 1
+        case standings = 2
+        case leaders   = 3
     }
 
     @Published var selectedTab: Tab = .search

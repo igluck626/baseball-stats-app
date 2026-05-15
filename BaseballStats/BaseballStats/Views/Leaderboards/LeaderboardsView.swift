@@ -469,7 +469,7 @@ struct LeaderboardsView: View {
         switch viewModel.selectedStat {
         case "AVG", "OBP", "SLG", "OPS": return .threeDecimal
         case "ERA", "WHIP", "FIP":       return .twoDecimal
-        case "WAR":                      return .oneDecimal
+        case "WAR", "SO/9":              return .oneDecimal
         case "IP":                       return .oneDecimalGrouped
         default:                         return .integer
         }

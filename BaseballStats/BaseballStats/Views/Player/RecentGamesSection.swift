@@ -199,7 +199,6 @@ struct RecentGamesSection: View {
         }
         .font(.caption.weight(.semibold))
         .foregroundStyle(.secondary)
-        .padding(.horizontal, 12)
         .frame(height: SplitsLayout.rowHeight)
     }
 
@@ -238,7 +237,6 @@ struct RecentGamesSection: View {
             }
         }
         .font(.caption)
-        .padding(.horizontal, 12)
         .frame(height: SplitsLayout.rowHeight)
     }
 

@@ -400,6 +400,41 @@ def search_player(name: str) -> list[dict]:
     return list(by_id.values())
 
 
+def get_player_by_id(player_id: int) -> Optional[dict]:
+    """Look up one player by their MLB Stats API id (which is what
+    our `player_id` column stores — MLBAM ids are the canonical key
+    everywhere except the Lahman bridge). Returns the same
+    PlayerSearchResult-shape `search_player` builds, so the iOS
+    `PlayerProfileView` can drive off it directly. Used by the
+    Scores tab when the user taps a player in a box score.
+
+    Batters take priority over pitchers for two-way players, mirroring
+    `search_player`'s precedence.
+    """
+    if not connection.db_available():
+        return None
+    with connection.get_session() as db:
+        for getter, is_pitcher in [(crud.get_player, False),
+                                   (crud.get_pitcher, True)]:
+            row = getter(db, player_id)
+            if row is None:
+                continue
+            team_display, team_code = _latest_team_info(
+                db, row.player_id, pitcher=is_pitcher
+            )
+            return {
+                "player_id":       row.player_id,
+                "name":            row.name,
+                "bbref_id":        row.bbref_id,
+                "mlb_debut":       row.mlb_debut,
+                "mlb_last_season": row.mlb_last_season,
+                "current_team":    team_display,
+                "team_code":       team_code,
+                **_bio_dict(row, db),
+            }
+    return None
+
+
 def get_current_stats(player_id: int) -> Optional[dict]:
     """Return current-season batting stats for a player, from PostgreSQL only."""
     if not connection.db_available():

@@ -641,7 +641,7 @@ struct PlayerProfileView: View {
                     .init(label: "W-L",  value: formatWL(stats.standard?.W, stats.standard?.L),       rank: rankableSlot("W",    ranks)),
                     .init(label: "ERA",  value: format2(stats.standard?.ERA),                         rank: rankableSlot("ERA",  ranks)),
                     .init(label: "WHIP", value: format2(stats.standard?.WHIP),                        rank: rankableSlot("WHIP", ranks)),
-                    .init(label: "K/9",  value: format2(stats.standard?.K_per9),                      rank: rankableSlot("SO/9", ranks)),
+                    .init(label: "K/9",  value: format1(stats.standard?.K_per9),                      rank: rankableSlot("SO/9", ranks)),
                     .init(label: "G",    value: formatCount(stats.standard?.G),                       rank: .unrankable),
                     isStarter
                         ? StatItem(label: "GS", value: formatCount(stats.standard?.GS), rank: .unrankable)
@@ -731,7 +731,7 @@ struct PlayerProfileView: View {
                     ("W-L",  formatWL(totals?.W, totals?.L)),
                     ("ERA",  format2(agg.era)),
                     ("WHIP", format2(agg.whip)),
-                    ("K/9",  format2(agg.kPer9)),
+                    ("K/9",  format1(agg.kPer9)),
                     ("G",    formatCount(agg.g)),
                     isStarter
                         ? ("GS", formatCount(agg.totalGS))
@@ -2588,12 +2588,21 @@ private func format3(_ value: Double?) -> String {
     return s
 }
 
-/// Two-decimal display — used for ERA, WHIP, FIP, K/9. ERAs above 1
-/// keep the leading digit, so unlike `format3` we don't strip a leading
+/// Two-decimal display — used for ERA, WHIP, FIP. ERAs above 1 keep
+/// the leading digit, so unlike `format3` we don't strip a leading
 /// zero. Returns "—" for nil.
 private func format2(_ value: Double?) -> String {
     guard let value else { return "—" }
     return String(format: "%.2f", value)
+}
+
+/// One-decimal display — used for K/9 on the Overview pitching
+/// grid. Two decimals reads as false precision for a per-9 rate
+/// (the underlying numerator is integer strikeouts), and one
+/// decimal matches the Baseball Reference convention.
+private func format1(_ value: Double?) -> String {
+    guard let value else { return "—" }
+    return String(format: "%.1f", value)
 }
 
 private func formatInt(_ value: Int?) -> String {
