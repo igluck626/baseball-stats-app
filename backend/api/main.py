@@ -818,6 +818,7 @@ _LEADERBOARD_BATTING_STATS  = {
 _LEADERBOARD_PITCHING_STATS = {
     "ERA", "SO", "W", "WHIP", "SV", "IP",
     "H", "BB", "HR", "WAR", "CG", "SHO",
+    "SO/9",
 }
 
 

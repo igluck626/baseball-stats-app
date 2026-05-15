@@ -340,12 +340,12 @@ struct LeaderboardsView: View {
         Menu {
             Picker("Stat", selection: $viewModel.selectedStat) {
                 ForEach(viewModel.availableStats, id: \.self) { stat in
-                    Text(stat).tag(stat)
+                    Text(LeaderboardsViewModel.displayName(stat)).tag(stat)
                 }
             }
         } label: {
             HStack(spacing: 4) {
-                Text(viewModel.selectedStat)
+                Text(LeaderboardsViewModel.displayName(viewModel.selectedStat))
                     .font(.subheadline.weight(.semibold))
                 Image(systemName: "chevron.down")
                     .font(.caption2.weight(.semibold))
@@ -446,7 +446,7 @@ struct LeaderboardsView: View {
         ContentUnavailableView {
             Label("No leaders", systemImage: "list.number")
         } description: {
-            Text("No \(viewModel.selectedStat) leaders for \(emptyStateScope).")
+            Text("No \(LeaderboardsViewModel.displayName(viewModel.selectedStat)) leaders for \(emptyStateScope).")
         }
     }
 

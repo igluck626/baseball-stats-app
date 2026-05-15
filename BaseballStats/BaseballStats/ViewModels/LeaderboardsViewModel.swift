@@ -119,9 +119,15 @@ final class LeaderboardsViewModel: ObservableObject {
         .init(displayName: "Washington Nationals",  apiCode: "WAS", league: "NL"),
     ]
 
-    /// Stat keys are the user-facing labels and the API query values both —
-    /// the backend's leaderboard catalog uses these exact strings. WAR
-    /// leads both lists; the rest follow popularity order.
+    /// Stat keys mostly double as their own user-facing labels — the
+    /// backend's leaderboard catalog uses these exact strings, so the
+    /// API wire value and the picker text match by default. Stats
+    /// where the API key isn't a comfortable display label get a
+    /// `displayName(_:)` override below; "SO/9" → "K/9" is the only
+    /// one today (the backend key matches the BR career-table column
+    /// header, but readers think of the stat as K/9).
+    ///
+    /// WAR leads both lists; the rest follow popularity order.
     /// Note: HLD ("holds") isn't currently tracked in pitcher_seasons,
     /// so it's deliberately absent from the pitching list.
     static let battingStats:  [String] = [
@@ -130,7 +136,18 @@ final class LeaderboardsViewModel: ObservableObject {
     ]
     static let pitchingStats: [String] = [
         "WAR", "ERA", "SO", "W", "WHIP", "SV", "IP",
-        "H", "BB", "HR", "CG", "SHO",
+        "SO/9", "H", "BB", "HR", "CG", "SHO",
+    ]
+
+    /// User-facing label for a stat. Passes through for stats where
+    /// the API key reads fine on its own; falls into the override map
+    /// only for the cases where it doesn't. Used by the stat picker,
+    /// closed-menu label, and empty-state copy.
+    static func displayName(_ stat: String) -> String {
+        statDisplayOverrides[stat] ?? stat
+    }
+    private static let statDisplayOverrides: [String: String] = [
+        "SO/9": "K/9",
     ]
 
     /// Default stat for each kind. Both kinds open on WAR — the
