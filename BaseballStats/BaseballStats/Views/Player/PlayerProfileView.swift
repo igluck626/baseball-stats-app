@@ -12,11 +12,26 @@
 //  a placeholder for everyone.
 //
 
+import Combine
 import SwiftUI
+
+/// Calendar year — single source of truth for "the current season"
+/// used by every Overview-tab fetch (current-season stats card,
+/// Recent Games window, rank lookups). File-private so the rank VM
+/// can be instantiated in `PlayerProfileView.init` without depending
+/// on a static on the surrounding struct.
+fileprivate var currentOverviewSeason: Int {
+    Calendar.current.component(.year, from: Date())
+}
 
 struct PlayerProfileView: View {
     let player: PlayerSearchResult
     @StateObject private var viewModel: PlayerViewModel
+    /// Current-season rank lookups for the Overview grid. One VM per
+    /// role so two-way players (Ohtani) get independent loads when
+    /// they toggle between the batting and pitching Overview tabs.
+    @StateObject private var battingRanksVM:  CurrentSeasonRanksViewModel
+    @StateObject private var pitchingRanksVM: CurrentSeasonRanksViewModel
     @State private var selectedTab: Tab
     /// nil until the user explicitly toggles. While nil, the picker
     /// reflects `defaultRole`, which depends on the loaded VM data
@@ -81,6 +96,19 @@ struct PlayerProfileView: View {
         self.player = player
         let vm = PlayerViewModel(player: player)
         _viewModel = StateObject(wrappedValue: vm)
+        let season = currentOverviewSeason
+        _battingRanksVM = StateObject(wrappedValue: CurrentSeasonRanksViewModel(
+            playerId:  player.player_id,
+            isPitcher: false,
+            season:    season,
+            teamCode:  player.teamCode
+        ))
+        _pitchingRanksVM = StateObject(wrappedValue: CurrentSeasonRanksViewModel(
+            playerId:  player.player_id,
+            isPitcher: true,
+            season:    season,
+            teamCode:  player.teamCode
+        ))
         // Retired players land on Career; active players on Overview.
         // `isRetired` only depends on player.mlb_last_season, so it's
         // valid here even before any network data has loaded.
@@ -519,21 +547,12 @@ struct PlayerProfileView: View {
                 season: Self.overviewSeason
             )
             .id("recent-batting-\(player.player_id)")
-            // Card decides internally whether to render — it resolves
-            // teamCode → league inside its VM and collapses when zero
-            // stats qualify (or when the team code isn't in the
-            // mapping). Keeping the host unconditional means the load
-            // path runs every time, which lets the temporary
-            // diagnostic print fire on every player open.
-            LeagueRankingsCard(
-                playerId: player.player_id,
-                isPitcher: false,
-                season: Self.overviewSeason,
-                teamCode: player.teamCode
-            )
-            .id("rankings-batting-\(player.player_id)")
             battingCareerCard
         }
+        // Kick off rank fetching as soon as the Overview tab appears,
+        // in parallel with the current-season stats load. The grid
+        // cell falls back to "—" / blank while the load is in flight.
+        .task { await battingRanksVM.load() }
     }
 
     @ViewBuilder
@@ -546,15 +565,9 @@ struct PlayerProfileView: View {
                 season: Self.overviewSeason
             )
             .id("recent-pitching-\(player.player_id)")
-            LeagueRankingsCard(
-                playerId: player.player_id,
-                isPitcher: true,
-                season: Self.overviewSeason,
-                teamCode: player.teamCode
-            )
-            .id("rankings-pitching-\(player.player_id)")
             pitchingCareerCard
         }
+        .task { await pitchingRanksVM.load() }
     }
 
     /// Current calendar year — the only season Overview ever surfaces.
@@ -571,22 +584,26 @@ struct PlayerProfileView: View {
         if viewModel.isLoadingCurrentBatting && viewModel.currentBatting == nil {
             loadingCard
         } else if let stats = viewModel.currentBatting {
-            // 5×2 grid: WAR leads, then the slash-line rates;
-            // counting stats fill the second row.
-            statsGridCard(
+            // 5×2 grid: WAR leads, then the slash-line rates; counting
+            // stats fill the second row. Each cell carries a rank slot
+            // for the third line — looked up by stat key from the
+            // rank VM. G/PA aren't on the leaderboards list so they
+            // render an invisible spacer (.unrankable).
+            let ranks = battingRanksVM.byStat
+            currentSeasonGridCard(
                 title: "\(String(stats.season)) Season",
                 subtitle: currentSeasonTeamName,
                 items: [
-                    ("WAR", formatWAR(stats.advanced?.WAR)),
-                    ("AVG", format3(stats.standard?.BA)),
-                    ("OBP", format3(stats.standard?.OBP)),
-                    ("SLG", format3(stats.standard?.SLG)),
-                    ("OPS", format3(stats.standard?.OPS)),
-                    ("G",   formatCount(stats.standard?.G)),
-                    ("HR",  formatCount(stats.standard?.HR)),
-                    ("RBI", formatCount(stats.standard?.RBI)),
-                    ("SB",  formatCount(stats.standard?.SB)),
-                    ("PA",  formatCount(stats.standard?.PA)),
+                    .init(label: "WAR", value: formatWAR(stats.advanced?.WAR), rank: rankableSlot("WAR", ranks)),
+                    .init(label: "AVG", value: format3(stats.standard?.BA),    rank: rankableSlot("AVG", ranks)),
+                    .init(label: "OBP", value: format3(stats.standard?.OBP),   rank: rankableSlot("OBP", ranks)),
+                    .init(label: "SLG", value: format3(stats.standard?.SLG),   rank: rankableSlot("SLG", ranks)),
+                    .init(label: "OPS", value: format3(stats.standard?.OPS),   rank: rankableSlot("OPS", ranks)),
+                    .init(label: "HR",  value: formatCount(stats.standard?.HR),  rank: rankableSlot("HR",  ranks)),
+                    .init(label: "RBI", value: formatCount(stats.standard?.RBI), rank: rankableSlot("RBI", ranks)),
+                    .init(label: "SB",  value: formatCount(stats.standard?.SB),  rank: rankableSlot("SB",  ranks)),
+                    .init(label: "G",   value: formatCount(stats.standard?.G),   rank: .unrankable),
+                    .init(label: "PA",  value: formatCount(stats.standard?.PA),  rank: .unrankable),
                 ]
             )
         } else if let error = viewModel.error {
@@ -605,28 +622,33 @@ struct PlayerProfileView: View {
             // rates) so cells line up between starters and relievers.
             // Role differentiation lives on the bottom row: starters
             // surface GS (their workload signal), relievers surface
-            // SV (closer volume). BB is the closer of the row — counts
-            // are easier to scan than BB/9 here and we already have
-            // K/9 on the top row.
+            // SV (closer volume). BB closes the row — counts are
+            // easier to scan than BB/9 with K/9 already on top.
+            //
+            // The W-L cell displays a record string but its rank is
+            // tied to the "W" leaderboard — pitchers are ranked by
+            // wins, not by W-L. K/9, G, GS, IP, BB aren't on the
+            // leaderboards list and render an invisible spacer.
             let g  = stats.standard?.G  ?? 0
             let gs = stats.standard?.GS ?? 0
             let isStarter = isStarterRole(g: g, gs: gs)
-            statsGridCard(
+            let ranks = pitchingRanksVM.byStat
+            currentSeasonGridCard(
                 title: "\(String(stats.season)) Season",
                 subtitle: currentSeasonTeamName,
                 items: [
-                    ("WAR",  formatWAR(stats.advanced?.WAR)),
-                    ("W-L",  formatWL(stats.standard?.W, stats.standard?.L)),
-                    ("ERA",  format2(stats.standard?.ERA)),
-                    ("WHIP", format2(stats.standard?.WHIP)),
-                    ("K/9",  format2(stats.standard?.K_per9)),
-                    ("G",    formatCount(stats.standard?.G)),
+                    .init(label: "WAR",  value: formatWAR(stats.advanced?.WAR),                       rank: rankableSlot("WAR",  ranks)),
+                    .init(label: "W-L",  value: formatWL(stats.standard?.W, stats.standard?.L),       rank: rankableSlot("W",    ranks)),
+                    .init(label: "ERA",  value: format2(stats.standard?.ERA),                         rank: rankableSlot("ERA",  ranks)),
+                    .init(label: "WHIP", value: format2(stats.standard?.WHIP),                        rank: rankableSlot("WHIP", ranks)),
+                    .init(label: "K/9",  value: format2(stats.standard?.K_per9),                      rank: rankableSlot("SO/9", ranks)),
+                    .init(label: "G",    value: formatCount(stats.standard?.G),                       rank: .unrankable),
                     isStarter
-                        ? ("GS", formatCount(stats.standard?.GS))
-                        : ("SV", formatCount(stats.standard?.SV)),
-                    ("IP",   formatIP(stats.standard?.IP)),
-                    ("SO",   formatCount(stats.standard?.SO)),
-                    ("BB",   formatCount(stats.standard?.BB)),
+                        ? StatItem(label: "GS", value: formatCount(stats.standard?.GS), rank: .unrankable)
+                        : StatItem(label: "SV", value: formatCount(stats.standard?.SV), rank: rankableSlot("SV", ranks)),
+                    .init(label: "IP",   value: formatIP(stats.standard?.IP),                         rank: rankableSlot("IP", ranks)),
+                    .init(label: "SO",   value: formatCount(stats.standard?.SO),                      rank: rankableSlot("SO", ranks)),
+                    .init(label: "BB",   value: formatCount(stats.standard?.BB),                      rank: .unrankable),
                 ]
             )
         } else if let error = viewModel.error {
@@ -671,10 +693,10 @@ struct PlayerProfileView: View {
                     ("OBP", format3(agg.obp)),
                     ("SLG", format3(agg.slg)),
                     ("OPS", format3(agg.ops)),
-                    ("G",   formatCount(totals?.G)),
                     ("HR",  formatCount(totals?.HR)),
                     ("RBI", formatCount(totals?.RBI)),
                     ("SB",  formatCount(agg.sb)),
+                    ("G",   formatCount(totals?.G)),
                     ("PA",  formatCount(agg.pa)),
                 ]
             )
@@ -755,52 +777,79 @@ struct PlayerProfileView: View {
     }
 
 
-    /// Card with title (+ optional subtitle on the right) and a 5×2 grid
-    /// of stat blocks. Caller passes exactly 10 items in row-major order;
-    /// the layout never scrolls — at iPhone widths each column gets
-    /// ~70pt, comfortable for 4–5 char monospaced .callout values.
+    /// Career card: title (+ optional subtitle) + 5×2 grid of two-line
+    /// stat blocks. No rank lines — career stats don't have a single
+    /// season's leaderboard to compare against.
     private func statsGridCard(
         title: String,
         subtitle: String?,
         items: [(String, String)]
     ) -> some View {
         VStack(spacing: 10) {
-            HStack(spacing: 8) {
-                Text(title).font(.headline)
-                Spacer()
-                if let subtitle {
-                    Text(subtitle)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
+            gridHeader(title: title, subtitle: subtitle)
+            VStack(spacing: 8) {
+                statsLegacyRow(Array(items.prefix(5)))
+                statsLegacyRow(Array(items.dropFirst(5).prefix(5)))
             }
-            statsTwoRows(items: items)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .frame(maxWidth: .infinity)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20))
-        .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 2)
+        .modifier(GridCardChrome())
     }
 
-    /// 5-column row × 2 rows. Each column uses .frame(maxWidth: .infinity)
-    /// inside StatBlock, so the row evenly splits whatever horizontal
-    /// space is available.
-    private func statsTwoRows(items: [(String, String)]) -> some View {
-        let row1 = Array(items.prefix(5))
-        let row2 = Array(items.dropFirst(5).prefix(5))
-        return VStack(spacing: 8) {
-            statsRow(items: row1)
-            statsRow(items: row2)
+    /// Current-season card: title (+ subtitle) + 5×2 grid of three-line
+    /// stat blocks (value / label / rank). Caller passes exactly 10
+    /// `StatItem`s in row-major order with each cell's rank slot
+    /// pre-decided (`.rank` / `.outside` / `.unrankable`).
+    private func currentSeasonGridCard(
+        title: String,
+        subtitle: String?,
+        items: [StatItem]
+    ) -> some View {
+        VStack(spacing: 10) {
+            gridHeader(title: title, subtitle: subtitle)
+            VStack(spacing: 8) {
+                statsRankedRow(Array(items.prefix(5)))
+                statsRankedRow(Array(items.dropFirst(5).prefix(5)))
+            }
+        }
+        .modifier(GridCardChrome())
+    }
+
+    private func gridHeader(title: String, subtitle: String?) -> some View {
+        HStack(spacing: 8) {
+            Text(title).font(.headline)
+            Spacer()
+            if let subtitle {
+                Text(subtitle)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
-    private func statsRow(items: [(String, String)]) -> some View {
+    private func statsLegacyRow(_ items: [(String, String)]) -> some View {
         HStack(spacing: 0) {
             ForEach(items.indices, id: \.self) { i in
                 StatBlock(label: items[i].0, value: items[i].1)
             }
         }
+    }
+
+    private func statsRankedRow(_ items: [StatItem]) -> some View {
+        HStack(spacing: 0) {
+            ForEach(items.indices, id: \.self) { i in
+                StatBlock(label: items[i].label, value: items[i].value, rank: items[i].rank)
+            }
+        }
+    }
+
+    /// Looks up the rank slot for a stat key: if the rank VM has an
+    /// entry, wrap it in `.rank(...)`; otherwise the stat is rankable
+    /// but the player isn't in the top 25 anywhere → `.outside`. Used
+    /// by the current-season grid for cells whose stat does appear on
+    /// the leaderboards list.
+    private func rankableSlot(_ stat: String, _ ranks: [String: BestRank]) -> RankSlot {
+        if let r = ranks[stat] { return .rank(r) }
+        return .outside
     }
 
     private func noStatsCard(_ title: String) -> some View {
@@ -1107,9 +1156,66 @@ struct PlayerProfileView: View {
 
 // MARK: - Stat block
 
+/// Shared chrome for both the legacy career grid and the current-
+/// season grid: padding, glass effect, soft drop shadow. Extracted
+/// so the two grid variants share the same outer look without
+/// duplicating four modifier lines.
+private struct GridCardChrome: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity)
+            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20))
+            .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 2)
+    }
+}
+
+/// Best rank to display in the third line of a current-season stat
+/// cell. The VM picks MLB over league when both exist — a player who
+/// leads MLB also leads their league by definition, but the MLB
+/// framing is the more impressive number.
+enum BestRank: Hashable {
+    case league(Int, String)   // (rank, "AL" / "NL")
+    case mlb(Int)              // 1st MLB, 5th MLB, …
+}
+
+/// Optional third-line slot beneath a stat cell. Three states:
+///   • `.rank(BestRank)` — player is in the top 25 (league or MLB);
+///     renders as "5th AL" / "1st MLB" in tier color.
+///   • `.outside`        — the stat is rankable but the player isn't
+///     in the top 25 anywhere; renders an em-dash in tertiary.
+///   • `.unrankable`     — the stat itself isn't meaningfully ranked
+///     (G, PA, GS, IP, K/9, BB); renders an invisible spacer so the
+///     row stays the same height as cells that do have a rank line.
+enum RankSlot: Hashable {
+    case rank(BestRank)
+    case outside
+    case unrankable
+}
+
+/// One cell on the current-season grid: value + label + rank slot.
+/// Career cards use the legacy two-line `StatBlock(label:value:)`
+/// initializer and don't need this shape.
+struct StatItem {
+    let label: String
+    let value: String
+    let rank: RankSlot
+}
+
 private struct StatBlock: View {
     let label: String
     let value: String
+    /// Optional rank slot — nil renders the legacy two-line cell used
+    /// by career cards; non-nil renders the three-line current-season
+    /// cell with a rank label beneath the stat label.
+    let rank: RankSlot?
+
+    init(label: String, value: String, rank: RankSlot? = nil) {
+        self.label = label
+        self.value = value
+        self.rank = rank
+    }
 
     var body: some View {
         VStack(spacing: 2) {
@@ -1122,9 +1228,65 @@ private struct StatBlock: View {
                 .font(.system(size: 9, weight: .bold))
                 .foregroundStyle(.secondary)
                 .tracking(0.6)
+            if let rank {
+                rankLine(rank)
+            }
         }
         .padding(.vertical, 4)
         .frame(maxWidth: .infinity)
+    }
+
+    @ViewBuilder
+    private func rankLine(_ slot: RankSlot) -> some View {
+        switch slot {
+        case .rank(.league(let r, let lg)):
+            // "3 · AL" — plain integer + middle dot + scope. Tighter
+            // than "3rd AL" and reads cleanly at .caption2 size; the
+            // tier color carries the impressiveness signal.
+            Text("\(r) · \(lg)")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(rankTierColor(r))
+                .monospacedDigit()
+        case .rank(.mlb(let r)):
+            Text("\(r) · MLB")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(rankTierColor(r))
+                .monospacedDigit()
+        case .outside:
+            Text("—")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.tertiary)
+        case .unrankable:
+            // Invisible placeholder so non-rankable cells (G, PA,
+            // GS, IP, K/9, BB) match the height of cells that do
+            // show a rank line. `.hidden()` removes the view from
+            // the render tree while reserving the same layout space
+            // — using `.foregroundStyle(.clear)` on a Text isn't a
+            // safe bet because `.clear` can resolve to a different
+            // ShapeStyle conformer (`HierarchicalShapeStyle` etc.)
+            // and leave the text visible in the system foreground.
+            Text("—")
+                .font(.system(size: 9, weight: .semibold))
+                .hidden()
+        }
+    }
+
+    /// Rank-tier color scale. Applied to whichever scope the row is
+    /// rendering (league or MLB) — the user reads the rank *number*
+    /// for impressiveness, and the scope is conveyed by the suffix
+    /// ("MLB" vs "AL"/"NL") rather than a separate hue.
+    ///
+    ///   1     → gold        (same shade as career league-leader)
+    ///   2–5   → amber-orange (deep-bench top-of-leaderboard)
+    ///   6–10  → blue         (clearly above average)
+    ///   11–25 → secondary    (in the conversation, no tier signal)
+    private func rankTierColor(_ rank: Int) -> Color {
+        switch rank {
+        case 1:       return Color(red: 0.85, green: 0.65, blue: 0.13)
+        case 2...5:   return Color(red: 0.90, green: 0.55, blue: 0.10)
+        case 6...10:  return Color(.systemBlue)
+        default:      return Color(.secondaryLabel)
+        }
     }
 }
 
@@ -3122,6 +3284,117 @@ private struct PitchingCareerAgg {
             l:   seasons.reduce(0)   { $0 + ($1.L   ?? 0) },
             war: seasons.reduce(0.0) { $0 + ($1.WAR ?? 0) }
         )
+    }
+}
+
+// MARK: - Current-season rank fetching
+
+/// Pulls per-stat league and MLB rankings for the current-season grid
+/// — same source as LeagueRankingsCard, just consolidated so the grid
+/// can render the rank inline under each cell. Each stat fires two
+/// `/leaderboards` calls in parallel (one league-scoped, one MLB-
+/// wide); the VM stitches them together and picks the better display
+/// rank per stat (MLB > league > absent).
+@MainActor
+final class CurrentSeasonRanksViewModel: ObservableObject {
+    let playerId: Int
+    let isPitcher: Bool
+    let season: Int
+    let teamCode: String?
+
+    /// Final per-stat display rank, post-coalescing. Reading is keyed
+    /// off the same stat strings the grid passes in — "WAR", "HR",
+    /// "AVG", … — so the grid cells can look up their slot directly.
+    @Published var byStat: [String: BestRank] = [:]
+    @Published var didLoad = false
+
+    private let api: APIClient
+
+    /// Stats fetched per role. Skip G/PA on the batter side and
+    /// G/GS/BB on the pitcher side — those either aren't ranked
+    /// meaningfully or aren't on `_LEADERBOARD_*` server-side. The
+    /// "SO/9" key matches the backend catalog entry that aliases
+    /// to the `K_per9` column (IP-qualified).
+    static let battingStats:  [String] = ["WAR", "HR", "AVG", "OBP", "SLG", "OPS", "RBI", "SB"]
+    static let pitchingStats: [String] = ["WAR", "ERA", "WHIP", "SO", "W", "SV", "IP", "SO/9"]
+
+    init(playerId: Int, isPitcher: Bool, season: Int, teamCode: String?, api: APIClient = .shared) {
+        self.playerId  = playerId
+        self.isPitcher = isPitcher
+        self.season    = season
+        self.teamCode  = teamCode
+        self.api       = api
+    }
+
+    func load() async {
+        // No resolvable league → no fetches at all. byStat stays
+        // empty, every cell falls through to `.outside` ("—").
+        guard let league = leagueForTeamCode(teamCode) else {
+            byStat = [:]
+            didLoad = true
+            return
+        }
+
+        let stats = isPitcher ? Self.pitchingStats : Self.battingStats
+        let playerType = isPitcher ? "pitcher" : "batter"
+
+        // Each stat fires two queries in parallel: one for the
+        // league top-25 and one for MLB top-25. Tuple element is
+        // (stat, isMLB, rank); nil = the player didn't show up in
+        // that scope's top 25 (or the call failed — we treat that
+        // identically to "not found" so a single transient failure
+        // doesn't blank the whole grid).
+        let hits: [(stat: String, isMLB: Bool, rank: Int)] = await withTaskGroup(
+            of: (String, Bool, Int)?.self
+        ) { group in
+            for stat in stats {
+                // League-scoped fetch
+                group.addTask { [api, playerId, season, playerType, league] in
+                    do {
+                        let r = try await api.getLeaderboard(
+                            stat: stat, year: season, playerType: playerType,
+                            league: league, team: nil, limit: 25
+                        )
+                        guard let hit = r?.leaders.first(where: { $0.player.player_id == playerId })
+                        else { return nil }
+                        return (stat, false, hit.rank)
+                    } catch { return nil }
+                }
+                // MLB-wide fetch — same call with league: nil.
+                group.addTask { [api, playerId, season, playerType] in
+                    do {
+                        let r = try await api.getLeaderboard(
+                            stat: stat, year: season, playerType: playerType,
+                            league: nil, team: nil, limit: 25
+                        )
+                        guard let hit = r?.leaders.first(where: { $0.player.player_id == playerId })
+                        else { return nil }
+                        return (stat, true, hit.rank)
+                    } catch { return nil }
+                }
+            }
+            var out: [(String, Bool, Int)] = []
+            for await maybe in group {
+                if let h = maybe { out.append(h) }
+            }
+            return out.map { (stat: $0.0, isMLB: $0.1, rank: $0.2) }
+        }
+
+        // Collate by stat → (leagueRank?, mlbRank?), then prefer MLB
+        // (more impressive framing) and fall back to league.
+        var collated: [String: (league: Int?, mlb: Int?)] = [:]
+        for hit in hits {
+            var entry = collated[hit.stat] ?? (nil, nil)
+            if hit.isMLB { entry.mlb = hit.rank } else { entry.league = hit.rank }
+            collated[hit.stat] = entry
+        }
+        var out: [String: BestRank] = [:]
+        for (stat, e) in collated {
+            if let m = e.mlb        { out[stat] = .mlb(m) }
+            else if let l = e.league { out[stat] = .league(l, league) }
+        }
+        byStat = out
+        didLoad = true
     }
 }
 

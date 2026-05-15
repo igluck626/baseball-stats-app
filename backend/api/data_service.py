@@ -1533,18 +1533,24 @@ _LEADERBOARD_BATTING: dict[str, tuple[str, str, Optional[str]]] = {
     "AB":  ("AB",      "desc", None),
 }
 _LEADERBOARD_PITCHING: dict[str, tuple[str, str, Optional[str]]] = {
-    "ERA":  ("ERA",  "asc",  "IP"),
-    "SO":   ("SO",   "desc", None),
-    "W":    ("W",    "desc", None),
-    "WHIP": ("WHIP", "asc",  "IP"),
-    "SV":   ("SV",   "desc", None),
-    "IP":   ("IP",   "desc", None),
-    "H":    ("H",    "desc", None),
-    "BB":   ("BB",   "desc", None),
-    "HR":   ("HR",   "desc", None),
-    "WAR":  ("WAR",  "desc", None),
-    "CG":   ("CG",   "desc", None),
-    "SHO":  ("SHO",  "desc", None),
+    "ERA":  ("ERA",    "asc",  "IP"),
+    "SO":   ("SO",     "desc", None),
+    "W":    ("W",      "desc", None),
+    "WHIP": ("WHIP",   "asc",  "IP"),
+    "SV":   ("SV",     "desc", None),
+    "IP":   ("IP",     "desc", None),
+    "H":    ("H",      "desc", None),
+    "BB":   ("BB",     "desc", None),
+    "HR":   ("HR",     "desc", None),
+    "WAR":  ("WAR",    "desc", None),
+    "CG":   ("CG",     "desc", None),
+    "SHO":  ("SHO",    "desc", None),
+    # K/9 — column lives at `K_per9` on PitcherSeason; key matches
+    # the "SO/9" label the career-table leader catalog uses (see
+    # `_LEADER_PITCHING_STATS` above), so both lookups stay aligned.
+    # IP-qualified so partial-season relievers don't crowd the
+    # leaderboard with tiny-sample SO/9 outliers.
+    "SO/9": ("K_per9", "desc", "IP"),
 }
 
 # Canonical team key (Lahman code) → matcher that picks up every
