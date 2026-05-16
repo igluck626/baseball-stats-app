@@ -112,35 +112,82 @@ struct BaseRunnerView: View {
 
 // MARK: - Team logo
 
-/// Logo cell used across every Scores-tab card. Resolves
-/// `midfield.mlbstatic.com/v1/team/{id}/spots/120` via `TeamInfo`'s
-/// `id`, falling back to a styled abbreviation circle when the CDN
-/// 404s (rare: All-Star team IDs, certain minor-league rehab
-/// assignments) so the row never collapses to a featureless dot.
+/// In-memory cache of successfully-loaded team logos, keyed by MLB
+/// team id. Lives at the app level so individual `TeamLogoView`
+/// instances can come and go (the Scores tab's 30s auto-refresh
+/// recreates the list views, which previously cancelled in-flight
+/// `AsyncImage` downloads with NSURLErrorCancelled / -999 and never
+/// completed). The cache's own `Task` owns the network call, so a
+/// view tear-down no longer interrupts the download.
 ///
-/// Failure cases print the offending URL once via `.onAppear` so
-/// future logo gaps surface in console logs instead of staying
-/// silent behind the placeholder.
+/// Concurrent requests for the same team coalesce: the first view
+/// to ask kicks off the loader, every subsequent view becomes a
+/// no-op observer of the same `@Published` `images` dict.
+@MainActor
+final class TeamLogoCache: ObservableObject {
+    static let shared = TeamLogoCache()
+
+    /// Successfully-loaded logo images, keyed by MLB team id.
+    /// `@Published` so views re-render the moment a logo lands.
+    @Published private(set) var images: [Int: Image] = [:]
+    /// Team ids whose load failed. Surfaces the abbreviation
+    /// fallback without retrying the (likely-still-bad) URL on
+    /// every view rebuild.
+    @Published private(set) var failed: Set<Int> = []
+
+    /// Active loader tasks per team id. Owned by the cache (not
+    /// the views) so they survive view recreation. Keyed for
+    /// dedupe — if a load is already running, additional `ensure`
+    /// calls are no-ops.
+    private var loaders: [Int: Task<Void, Never>] = [:]
+
+    private init() {}
+
+    /// Kick off a logo fetch if not already cached or in flight.
+    /// Returns immediately — observers re-render via `images` once
+    /// the load completes.
+    func ensureLoaded(team: TeamInfo) {
+        if images[team.id] != nil { return }
+        if failed.contains(team.id) { return }
+        if loaders[team.id] != nil { return }
+        guard let url = team.logoURL else { return }
+
+        loaders[team.id] = Task { @MainActor [weak self] in
+            defer { self?.loaders[team.id] = nil }
+            do {
+                let (data, _) = try await URLSession.shared.data(from: url)
+                guard let uiImage = UIImage(data: data) else {
+                    self?.failed.insert(team.id)
+                    return
+                }
+                self?.images[team.id] = Image(uiImage: uiImage)
+            } catch {
+                let label = team.abbreviation ?? team.name
+                print("[team-logo] FAILED \(label) (id=\(team.id)) url=\(url) error=\(error)")
+                self?.failed.insert(team.id)
+            }
+        }
+    }
+}
+
+/// Logo cell used across every Scores-tab card. Reads from
+/// `TeamLogoCache.shared` so once a logo lands, every subsequent
+/// instance (across navigation, auto-refresh ticks, etc.) renders
+/// from memory instead of re-fetching. Falls back to a styled
+/// abbreviation circle when the CDN won't serve the team.
 struct TeamLogoView: View {
     let team: TeamInfo
     var size: CGFloat = 28
+    @ObservedObject private var cache = TeamLogoCache.shared
 
     var body: some View {
-        AsyncImage(url: team.logoURL) { phase in
-            switch phase {
-            case .success(let image):
-                image.resizable().scaledToFit()
-            case .failure(let error):
+        Group {
+            if let cached = cache.images[team.id] {
+                cached.resizable().scaledToFit()
+            } else if cache.failed.contains(team.id) {
                 fallback
-                    .onAppear {
-                        let url = team.logoURL?.absoluteString ?? "nil"
-                        let label = team.abbreviation ?? team.name
-                        print("[team-logo] FAILED \(label) (id=\(team.id)) url=\(url) error=\(error)")
-                    }
-            case .empty:
-                placeholder
-            @unknown default:
-                fallback
+            } else {
+                placeholder.onAppear { cache.ensureLoaded(team: team) }
             }
         }
         .frame(width: size, height: size)
