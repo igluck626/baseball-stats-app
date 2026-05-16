@@ -482,17 +482,18 @@ struct BoxScoreView: View {
                     }
                 }
             }
+            notableBlock(rows: rows)
         }
     }
 
     private var battingHeader: some View {
         HStack(spacing: 0) {
             Text("").frame(width: 140, alignment: .leading)
-            ForEach(["AB", "R", "H", "RBI", "BB", "SO", "AVG"], id: \.self) { c in
+            ForEach(["AB", "R", "H", "RBI", "BB", "SO", "AVG", "OPS"], id: \.self) { c in
                 Text(c)
                     .font(.caption2.weight(.bold))
                     .foregroundStyle(.secondary)
-                    .frame(width: c == "AVG" ? 40 : 28, alignment: .trailing)
+                    .frame(width: (c == "AVG" || c == "OPS") ? 40 : 28, alignment: .trailing)
                     .monospacedDigit()
             }
         }
@@ -501,6 +502,7 @@ struct BoxScoreView: View {
     private func battingRow(_ p: BoxPlayer) -> some View {
         let b = p.stats?.batting
         let avg = p.seasonStats?.batting?.avg ?? "—"
+        let ops = p.seasonStats?.batting?.ops ?? "—"
         return Button { tapPlayer(id: p.person.id, name: p.person.fullName) } label: {
             HStack(spacing: 0) {
                 playerLabel(p, isPitcher: false)
@@ -513,11 +515,65 @@ struct BoxScoreView: View {
                 cell(b?.strikeOuts)
                 Text(avg).font(.caption).monospacedDigit()
                     .frame(width: 40, alignment: .trailing)
+                Text(ops).font(.caption).monospacedDigit()
+                    .frame(width: 40, alignment: .trailing)
             }
             .padding(.vertical, 2)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+
+    /// "Notable" highlights below the batting table — 2B / 3B / HR
+    /// per category, only rendered when at least one batter on the
+    /// team logged the outcome this game. Season totals come from
+    /// `seasonStats.batting.{doubles,triples,homeRuns}` so the line
+    /// reads as "Acuña Jr. (12)" — the parenthetical year-to-date
+    /// count gives the user instant context without leaving the
+    /// box score. Multiple players with the same outcome are
+    /// comma-joined, ordered by their batting-order appearance.
+    @ViewBuilder
+    private func notableBlock(rows: [BoxPlayer]) -> some View {
+        let doubles  = rows.filter { ($0.stats?.batting?.doubles  ?? 0) > 0 }
+        let triples  = rows.filter { ($0.stats?.batting?.triples  ?? 0) > 0 }
+        let homeRuns = rows.filter { ($0.stats?.batting?.homeRuns ?? 0) > 0 }
+        if !doubles.isEmpty || !triples.isEmpty || !homeRuns.isEmpty {
+            VStack(alignment: .leading, spacing: 2) {
+                if !doubles.isEmpty {
+                    notableLine(label: "2B",
+                                names: doubles.map { lastName($0.person.fullName) },
+                                seasonTotals: doubles.map { $0.seasonStats?.batting?.doubles ?? 0 })
+                }
+                if !triples.isEmpty {
+                    notableLine(label: "3B",
+                                names: triples.map { lastName($0.person.fullName) },
+                                seasonTotals: triples.map { $0.seasonStats?.batting?.triples ?? 0 })
+                }
+                if !homeRuns.isEmpty {
+                    notableLine(label: "HR",
+                                names: homeRuns.map { lastName($0.person.fullName) },
+                                seasonTotals: homeRuns.map { $0.seasonStats?.batting?.homeRuns ?? 0 })
+                }
+            }
+            .padding(.top, 4)
+        }
+    }
+
+    private func notableLine(label: String, names: [String], seasonTotals: [Int]) -> some View {
+        let pieces = zip(names, seasonTotals).map { "\($0) (\($1))" }
+        return (Text("\(label): ").font(.caption2.weight(.bold))
+                + Text(pieces.joined(separator: ", ")).font(.caption2))
+            .foregroundStyle(.secondary)
+            .lineLimit(2)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// "Acuña Jr." — keep the last token of a hyphenated/multi-word
+    /// surname (handles Vladimir Guerrero Jr., Ronald Acuña Jr.,
+    /// J.D. Martinez). Mirrors the `lastName` helper used in the
+    /// decisions row on Final game cards.
+    private func lastName(_ full: String) -> String {
+        full.split(separator: " ").last.map(String.init) ?? full
     }
 
     private func pitchingTable(team: BoxScoreTeam) -> some View {

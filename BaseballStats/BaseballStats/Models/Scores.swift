@@ -219,6 +219,11 @@ struct BoxBatting: Codable, Hashable {
     /// "AVG" — comes through as a String like ".301" / ".000" /
     /// "---" (the latter for players with 0 PA), so we keep it raw.
     let avg: String?
+    /// "OPS" — same MLB convention as AVG. Strings like ".812",
+    /// ".000", "---". Game-stats OPS rarely makes sense (it's
+    /// just-the-game-so-far); the seasonStats version is what the
+    /// box-score table actually surfaces.
+    let ops: String?
 }
 
 struct BoxPitching: Codable, Hashable {

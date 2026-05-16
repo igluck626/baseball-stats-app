@@ -27,13 +27,13 @@ final class AppNavigation: ObservableObject {
     /// Tab cases match ContentView's TabView. Tag values are stable so
     /// a future reorder doesn't break deeplinks.
     enum Tab: Int, Hashable {
-        case search    = 0
-        case scores    = 1
+        case scores    = 0
+        case search    = 1
         case standings = 2
         case leaders   = 3
     }
 
-    @Published var selectedTab: Tab = .search
+    @Published var selectedTab: Tab = .scores
     /// One-shot deeplink slot. Set by callers wanting to push state
     /// into the Leaderboards tab; consumed (and cleared) by
     /// LeaderboardsView on appear / on change. Optional so the

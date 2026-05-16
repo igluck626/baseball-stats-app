@@ -248,25 +248,51 @@ struct ScoresView: View {
     }
 
     private var gameList: some View {
-        ScrollView {
+        // Bucket games by phase so the list reads top-down by what
+        // the user most likely wants to see — live action first,
+        // then today's still-to-come games, then finals at the
+        // bottom. Sort within each bucket so the most "interesting
+        // right now" items rise: latest innings for live, earliest
+        // start time for upcoming, most-recently-completed for
+        // finals.
+        let live = vm.games
+            .filter { $0.phase == .live }
+            .sorted { ($0.linescore?.currentInning ?? 0) > ($1.linescore?.currentInning ?? 0) }
+        let upcoming = vm.games
+            .filter { $0.phase == .preview || $0.phase == .other }
+            .sorted { ($0.startDate ?? .distantFuture) < ($1.startDate ?? .distantFuture) }
+        let completed = vm.games
+            .filter { $0.phase == .final }
+            .sorted { ($0.startDate ?? .distantPast) > ($1.startDate ?? .distantPast) }
+
+        return ScrollView {
             LazyVStack(spacing: 12) {
-                ForEach(vm.games) { game in
-                    if game.phase == .final {
+                if !live.isEmpty {
+                    sectionHeader("Live")
+                    ForEach(live) { game in
+                        NavigationLink(value: game) {
+                            LiveGameCard(game: game)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                if !upcoming.isEmpty {
+                    sectionHeader("Upcoming")
+                    ForEach(upcoming) { game in
+                        NavigationLink(value: game) {
+                            GameCard(game: game)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                if !completed.isEmpty {
+                    sectionHeader("Completed")
+                    ForEach(completed) { game in
                         // Final games are expand-on-tap; box-score
                         // nav happens via the embedded "Box Score →"
                         // button inside the expanded view, so the
                         // outer cell doesn't wrap a NavigationLink.
                         FinalGameCard(game: game, path: $navigationPath)
-                    } else if game.phase == .live {
-                        NavigationLink(value: game) {
-                            LiveGameCard(game: game)
-                        }
-                        .buttonStyle(.plain)
-                    } else {
-                        NavigationLink(value: game) {
-                            GameCard(game: game)
-                        }
-                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -276,6 +302,17 @@ struct ScoresView: View {
         .refreshable {
             await vm.load(date: vm.selectedDate)
         }
+    }
+
+    /// Lightweight bucket header matching the muted division headers
+    /// on the Standings view — small, uppercase, secondary fill.
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title.uppercased())
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, 4)
+            .padding(.horizontal, 4)
     }
 
     // MARK: - Formatters

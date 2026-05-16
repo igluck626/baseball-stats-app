@@ -17,12 +17,6 @@ struct ContentView: View {
 
     var body: some View {
         TabView(selection: $navigation.selectedTab) {
-            SearchView()
-                .tabItem {
-                    Label("Search", systemImage: "magnifyingglass")
-                }
-                .tag(AppNavigation.Tab.search)
-
             ScoresView()
                 .tabItem {
                     // `baseball.fill` ships in iOS 15+ and reads as a
@@ -34,6 +28,12 @@ struct ContentView: View {
                     Label("Scores", systemImage: "baseball.fill")
                 }
                 .tag(AppNavigation.Tab.scores)
+
+            SearchView()
+                .tabItem {
+                    Label("Search", systemImage: "magnifyingglass")
+                }
+                .tag(AppNavigation.Tab.search)
 
             StandingsView()
                 .tabItem {
