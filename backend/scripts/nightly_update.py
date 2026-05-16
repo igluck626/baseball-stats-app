@@ -737,6 +737,21 @@ def main() -> None:
     gl = _update_gamelogs(current_year)
 
     log.info("=" * 52)
+    log.info("Phase 5: reconcile teams from active rosters")
+    log.info("=" * 52)
+    # Belt-and-suspenders for offseason-trade / FA-signing cases
+    # where bref's `Tm` column lags the move. 30 API calls (one per
+    # team) — much cheaper than per-player /people/{id} hits.
+    try:
+        team_sync = data_service.sync_all_player_teams_from_rosters(current_year)
+        log.info(
+            f"Teams reconciled — rows updated: {team_sync.get('updated', 0)}, "
+            f"failed teams: {team_sync.get('failed_teams', [])}"
+        )
+    except Exception as exc:
+        log.error(f"Team reconcile FAILED (non-fatal): {exc}")
+
+    log.info("=" * 52)
     log.info(
         f"Batters   — updated: {bat_updated}, skipped: {bat_skipped}, failed: {len(bat_failed)}"
     )

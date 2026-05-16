@@ -1248,6 +1248,143 @@ def fetch_mlb_player_bio(mlb_id: int) -> Optional[dict]:
     }
 
 
+def sync_player_current_team(player_id: int) -> dict:
+    """Override `team` on the player's current-year season rows
+    with the canonical current-team abbreviation from MLB Stats API.
+
+    Background: pitcher_seasons.team is written from bref's `Tm`
+    column during the nightly run, and bref can lag on offseason
+    moves (free-agent signings, December trades). When iOS's
+    `_latest_team_info` reads the most-recent season row, a stale
+    `team` value drives a wrong team_code in the search result and
+    on the profile header. Calling this helper for a single player
+    repairs both their pitcher_seasons and player_seasons rows
+    using `/people/{id}.currentTeam.abbreviation` as the source of
+    truth.
+
+    Returns a status dict the admin endpoint can echo back. Safe
+    to call for retired players (the `currentTeam` field is absent
+    on those, so we report `no_current_team` and exit without
+    touching the DB).
+    """
+    try:
+        data = _mlb_get_json(f"people/{player_id}", {})
+    except Exception as exc:
+        return {"player_id": player_id, "status": f"mlb_fetch_failed: {exc}"}
+    people = data.get("people") or []
+    if not people:
+        return {"player_id": player_id, "status": "not_found_in_mlb_api"}
+    p = people[0]
+    current_team = p.get("currentTeam") or {}
+    abbr = current_team.get("abbreviation")
+    name = current_team.get("name")
+    if not abbr:
+        return {
+            "player_id": player_id,
+            "status":    "no_current_team",
+            "fullName":  p.get("fullName"),
+        }
+
+    year = _current_year()
+    updated: list[str] = []
+    with connection.get_session() as db:
+        pit_row = (
+            db.query(_PitcherSeason)
+            .filter(_PitcherSeason.player_id == player_id,
+                    _PitcherSeason.year == year)
+            .first()
+        )
+        bat_row = (
+            db.query(_PlayerSeason)
+            .filter(_PlayerSeason.player_id == player_id,
+                    _PlayerSeason.year == year)
+            .first()
+        )
+        if pit_row is not None and pit_row.team != abbr:
+            pit_row.team = abbr
+            updated.append("pitcher_seasons")
+        if bat_row is not None and bat_row.team != abbr:
+            bat_row.team = abbr
+            updated.append("player_seasons")
+        if updated:
+            db.commit()
+
+    return {
+        "player_id":  player_id,
+        "fullName":   p.get("fullName"),
+        "new_team":   abbr,
+        "team_name":  name,
+        "updated":    updated,
+        "status":     "ok" if updated else "already_current",
+    }
+
+
+def sync_all_player_teams_from_rosters(current_year: int) -> dict:
+    """Walk all 30 MLB active rosters and reconcile the `team`
+    column on each player's current-year `pitcher_seasons` /
+    `player_seasons` row. Called at the end of the nightly run as
+    a belt-and-suspenders against bref's `Tm` column lagging on
+    offseason moves.
+
+    30 API calls (one per team) instead of one-per-player —
+    cheaper than `sync_player_current_team` in bulk while covering
+    the same correctness bar for everyone currently on a 40-man.
+    """
+    try:
+        teams_resp = _mlb_get_json("teams", {"sportId": 1, "season": current_year})
+    except Exception as exc:
+        return {"status": f"teams_fetch_failed: {exc}", "updated": 0}
+    teams = teams_resp.get("teams") or []
+
+    updated = 0
+    failed_teams: list[str] = []
+    with connection.get_session() as db:
+        for team in teams:
+            team_id = team.get("id")
+            abbr = team.get("abbreviation")
+            if not team_id or not abbr:
+                continue
+            try:
+                roster_resp = _mlb_get_json(
+                    f"teams/{team_id}/roster",
+                    {"rosterType": "active"},
+                )
+            except Exception:
+                failed_teams.append(str(team_id))
+                continue
+            for entry in roster_resp.get("roster") or []:
+                person = entry.get("person") or {}
+                pid = person.get("id")
+                if not pid:
+                    continue
+                pit_row = (
+                    db.query(_PitcherSeason)
+                    .filter(_PitcherSeason.player_id == pid,
+                            _PitcherSeason.year == current_year)
+                    .first()
+                )
+                if pit_row is not None and pit_row.team != abbr:
+                    pit_row.team = abbr
+                    updated += 1
+                bat_row = (
+                    db.query(_PlayerSeason)
+                    .filter(_PlayerSeason.player_id == pid,
+                            _PlayerSeason.year == current_year)
+                    .first()
+                )
+                if bat_row is not None and bat_row.team != abbr:
+                    bat_row.team = abbr
+                    updated += 1
+        if updated:
+            db.commit()
+
+    return {
+        "status":        "ok",
+        "updated":       updated,
+        "failed_teams":  failed_teams,
+    }
+
+
 def _to_int(v) -> Optional[int]:
     """Defensive int parse; returns None for blank / non-numeric."""
     if v is None or v == "":

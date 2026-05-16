@@ -988,6 +988,31 @@ def env_check():
     return {"DATABASE_URL_set": bool(os.getenv("DATABASE_URL"))}
 
 
+@app.post("/admin/sync-player-team/{mlb_id}")
+def admin_sync_player_team(mlb_id: int):
+    """Ad-hoc fix for a single player whose `team` column is stale
+    on the current-year season row. Pulls authoritative team from
+    MLB Stats API `/people/{id}.currentTeam.abbreviation` and
+    overrides pitcher_seasons.team + player_seasons.team. Used to
+    repair offseason-trade cases where bref's `Tm` column hasn't
+    yet caught up."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    return data_service.sync_player_current_team(mlb_id)
+
+
+@app.post("/admin/sync-all-player-teams")
+def admin_sync_all_player_teams():
+    """Bulk team-reconcile pass against MLB Stats API's 30 active
+    rosters. Used both as a one-shot repair after the diagnosis
+    above and as the post-step the nightly pipeline calls to
+    cover everyone whose bref `Tm` is wrong on a given day."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    current_year = datetime.datetime.utcnow().year
+    return data_service.sync_all_player_teams_from_rosters(current_year)
+
+
 @app.post("/admin/reset-db")
 def admin_reset_db():
     if not connection.db_available():
