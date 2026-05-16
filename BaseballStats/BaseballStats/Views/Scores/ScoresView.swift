@@ -385,12 +385,7 @@ private struct GameCard: View {
 
     private func teamRow(side: GameTeam, winner: Bool) -> some View {
         HStack(spacing: 10) {
-            AsyncImage(url: side.team.logoURL) { image in
-                image.resizable().scaledToFit()
-            } placeholder: {
-                Circle().fill(Color(.secondarySystemFill))
-            }
-            .frame(width: 28, height: 28)
+            TeamLogoView(team: side.team, size: 28)
 
             Text(side.team.abbreviation ?? abbreviate(side.team.name))
                 .font(.subheadline.weight(winner ? .bold : .semibold))
@@ -560,12 +555,7 @@ private struct FinalGameCard: View {
         let isWinner = side.isWinner == true
         let dimmed = !isWinner
         return HStack(spacing: 10) {
-            AsyncImage(url: side.team.logoURL) { image in
-                image.resizable().scaledToFit()
-            } placeholder: {
-                Circle().fill(Color(.secondarySystemFill))
-            }
-            .frame(width: 28, height: 28)
+            TeamLogoView(team: side.team, size: 28)
 
             Text(side.team.abbreviation ?? String(side.team.name.prefix(3)).uppercased())
                 .font(.subheadline.weight(isWinner ? .bold : .semibold))
@@ -767,12 +757,7 @@ private struct LiveGameCard: View {
 
     private func teamRow(side: GameTeam) -> some View {
         HStack(spacing: 10) {
-            AsyncImage(url: side.team.logoURL) { image in
-                image.resizable().scaledToFit()
-            } placeholder: {
-                Circle().fill(Color(.secondarySystemFill))
-            }
-            .frame(width: 28, height: 28)
+            TeamLogoView(team: side.team, size: 28)
 
             Text(side.team.abbreviation ?? String(side.team.name.prefix(3)).uppercased())
                 .font(.subheadline.weight(.semibold))

@@ -324,12 +324,7 @@ struct BoxScoreView: View {
 
     private func teamHeader(side: GameTeam) -> some View {
         VStack(spacing: 4) {
-            AsyncImage(url: side.team.logoURL) { image in
-                image.resizable().scaledToFit()
-            } placeholder: {
-                Circle().fill(Color(.secondarySystemFill))
-            }
-            .frame(width: 56, height: 56)
+            TeamLogoView(team: side.team, size: 56)
             Text(side.team.abbreviation ?? String(side.team.name.prefix(3)).uppercased())
                 .font(.subheadline.weight(.bold))
             Text(side.score.map(String.init) ?? "—")
@@ -448,12 +443,7 @@ struct BoxScoreView: View {
         let team = side == .away ? bs.teams.away : bs.teams.home
         return VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
-                AsyncImage(url: team.team.logoURL) { image in
-                    image.resizable().scaledToFit()
-                } placeholder: {
-                    Circle().fill(Color(.secondarySystemFill))
-                }
-                .frame(width: 28, height: 28)
+                TeamLogoView(team: team.team, size: 28)
                 Text(team.team.name).font(.headline)
             }
             battingTable(team: team)

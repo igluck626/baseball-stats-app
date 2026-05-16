@@ -110,6 +110,66 @@ struct BaseRunnerView: View {
     }
 }
 
+// MARK: - Team logo
+
+/// Logo cell used across every Scores-tab card. Resolves
+/// `midfield.mlbstatic.com/v1/team/{id}/spots/120` via `TeamInfo`'s
+/// `id`, falling back to a styled abbreviation circle when the CDN
+/// 404s (rare: All-Star team IDs, certain minor-league rehab
+/// assignments) so the row never collapses to a featureless dot.
+///
+/// Failure cases print the offending URL once via `.onAppear` so
+/// future logo gaps surface in console logs instead of staying
+/// silent behind the placeholder.
+struct TeamLogoView: View {
+    let team: TeamInfo
+    var size: CGFloat = 28
+
+    var body: some View {
+        AsyncImage(url: team.logoURL) { phase in
+            switch phase {
+            case .success(let image):
+                image.resizable().scaledToFit()
+            case .failure(let error):
+                fallback
+                    .onAppear {
+                        let url = team.logoURL?.absoluteString ?? "nil"
+                        let label = team.abbreviation ?? team.name
+                        print("[team-logo] FAILED \(label) (id=\(team.id)) url=\(url) error=\(error)")
+                    }
+            case .empty:
+                placeholder
+            @unknown default:
+                fallback
+            }
+        }
+        .frame(width: size, height: size)
+    }
+
+    /// In-flight placeholder — a plain muted circle, matching the
+    /// surface tone of the cards while the network round-trip is
+    /// outstanding.
+    private var placeholder: some View {
+        Circle().fill(Color(.secondarySystemFill))
+    }
+
+    /// Permanent fallback when the CDN never returns an image —
+    /// abbreviation centered in the same circle so the user still
+    /// sees a useful team identifier instead of an anonymous dot.
+    private var fallback: some View {
+        let abbr = team.abbreviation ?? String(team.name.prefix(3)).uppercased()
+        return Circle()
+            .fill(Color(.secondarySystemFill))
+            .overlay(
+                Text(abbr)
+                    .font(.system(size: max(8, size * 0.32), weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            )
+    }
+}
+
 // MARK: - LIVE badge
 
 /// Small red "LIVE" capsule with a pulsing dot. The pulse runs
