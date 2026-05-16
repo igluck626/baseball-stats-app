@@ -137,13 +137,6 @@ struct BoxScoreView: View {
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 24)
                 }
-                if let navigationError {
-                    Text(navigationError)
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 24)
-                }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 16)
@@ -156,13 +149,29 @@ struct BoxScoreView: View {
         }
         .onDisappear { vm.stopLivePolling() }
         .overlay(alignment: .top) {
-            if pendingPlayerLookup != nil {
-                ProgressView()
-                    .controlSize(.small)
-                    .padding(8)
-                    .background(.ultraThinMaterial, in: Capsule())
-                    .padding(.top, 8)
+            VStack(spacing: 6) {
+                if pendingPlayerLookup != nil {
+                    ProgressView()
+                        .controlSize(.small)
+                        .padding(8)
+                        .background(.ultraThinMaterial, in: Capsule())
+                }
+                if let navigationError {
+                    Text(navigationError)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.primary)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(.ultraThinMaterial, in: Capsule())
+                        .overlay(
+                            Capsule().stroke(Color(.separator).opacity(0.4), lineWidth: 0.5)
+                        )
+                        .shadow(color: .black.opacity(0.08), radius: 6, x: 0, y: 2)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
             }
+            .padding(.top, 8)
+            .animation(.easeInOut(duration: 0.2), value: navigationError)
         }
     }
 
@@ -438,7 +447,7 @@ struct BoxScoreView: View {
     private func battingRow(_ p: BoxPlayer) -> some View {
         let b = p.stats?.batting
         let avg = p.seasonStats?.batting?.avg ?? "—"
-        return Button { tapPlayer(id: p.person.id) } label: {
+        return Button { tapPlayer(id: p.person.id, name: p.person.fullName) } label: {
             HStack(spacing: 0) {
                 playerLabel(p, isPitcher: false)
                     .frame(width: 140, alignment: .leading)
@@ -491,7 +500,7 @@ struct BoxScoreView: View {
     private func pitchingRow(_ p: BoxPlayer) -> some View {
         let pit = p.stats?.pitching
         let era = p.seasonStats?.pitching?.era ?? "—"
-        return Button { tapPlayer(id: p.person.id) } label: {
+        return Button { tapPlayer(id: p.person.id, name: p.person.fullName) } label: {
             HStack(spacing: 0) {
                 playerLabel(p, isPitcher: true)
                     .frame(width: 140, alignment: .leading)
@@ -539,7 +548,7 @@ struct BoxScoreView: View {
 
     // MARK: - Navigation
 
-    private func tapPlayer(id: Int) {
+    private func tapPlayer(id: Int, name: String) {
         guard pendingPlayerLookup == nil else { return }
         pendingPlayerLookup = id
         navigationError = nil
@@ -548,9 +557,17 @@ struct BoxScoreView: View {
             pendingPlayerLookup = nil
             if let player {
                 path.append(player)
-            } else {
-                navigationError = "Player profile not available."
+                return
             }
+            // 404 → player isn't in our DB yet. The nightly batch
+            // adds new call-ups from bref + MLB Stats API on its
+            // next run, so the toast wording sets the expectation
+            // ("yet") rather than implying permanent unavailability.
+            navigationError = "\(name)'s profile isn't available yet."
+            // Auto-dismiss the toast after a few seconds so a
+            // stranded message doesn't persist on the box score.
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            if navigationError != nil { navigationError = nil }
         }
     }
 

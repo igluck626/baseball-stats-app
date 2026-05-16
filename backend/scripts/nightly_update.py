@@ -60,6 +60,72 @@ log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# New-call-up discovery
+# ---------------------------------------------------------------------------
+
+def _discover_and_add_new_players(bref_df, is_pitcher: bool, current_year: int) -> int:
+    """Walk this year's bref dataframe, find mlbIDs that aren't yet in
+    our players (or pitchers) table, and INSERT a minimal row for each
+    from MLB Stats API `/people/{id}`. Returns the count of newly
+    inserted rows.
+
+    Without this step, new call-ups debut on bref but never appear in
+    our DB until the offseason Lahman archive lands, so the iOS box-
+    score "tap a player → profile" lookup 404s for them all season.
+
+    pitching_stats_bref ships mlbID as string; batting_stats_bref as
+    numeric. Both branches normalize to int before the DB compare.
+    """
+    if "mlbID" not in bref_df.columns:
+        return 0
+    raw_ids = bref_df["mlbID"].dropna().tolist()
+    bref_ids: set[int] = set()
+    for raw in raw_ids:
+        try:
+            bref_ids.add(int(raw))
+        except (TypeError, ValueError):
+            continue
+
+    with connection.get_session() as db:
+        if is_pitcher:
+            existing = set(crud.get_all_pitcher_ids(db))
+        else:
+            existing = set(crud.get_all_player_ids(db))
+    new_ids = sorted(bref_ids - existing)
+    if not new_ids:
+        return 0
+
+    side = "pitchers" if is_pitcher else "batters"
+    log.info(f"Discovered {len(new_ids)} new {side} in bref — fetching bios from MLB Stats API")
+
+    added = 0
+    failed = 0
+    with connection.get_session() as db:
+        for mlb_id in new_ids:
+            bio = data_service.fetch_mlb_player_bio(mlb_id)
+            if bio is None:
+                failed += 1
+                continue
+            # Ensure the bio's debut year defaults to the current
+            # season for these call-ups even when /people/{id}
+            # hasn't yet shipped mlbDebutDate (rare; happens for
+            # the first 24h after a debut).
+            if bio.get("mlb_debut") is None:
+                bio["mlb_debut"] = current_year
+            try:
+                if is_pitcher:
+                    crud.save_pitcher(db, bio)
+                else:
+                    crud.save_player(db, bio)
+                added += 1
+            except Exception as exc:
+                log.error(f"  new {side[:-1]} insert failed for {mlb_id}: {exc}")
+                failed += 1
+    log.info(f"  added {added} new {side}, {failed} failed")
+    return added
+
+
+# ---------------------------------------------------------------------------
 # Batting (PlayerSeason)
 # ---------------------------------------------------------------------------
 
@@ -174,6 +240,13 @@ def _update_batters(current_year: int) -> tuple[int, int, list[int]]:
     data_service._store.pop("bwar_bat_all", None)
     gc.collect()
 
+    # Discover new call-ups present in this season's bref data but
+    # missing from our players table. Lahman doesn't ship rookies
+    # until the offseason archive drop; without this step a debut
+    # like Kevin McGonigle 2026-05-15 would 404 on the iOS
+    # /players/by-mlb-id lookup until the next Lahman cycle.
+    _discover_and_add_new_players(bref_df, is_pitcher=False, current_year=current_year)
+
     with connection.get_session() as db:
         player_ids = crud.get_all_player_ids(db)
     log.info(f"{len(player_ids)} batters in database (batch size: {_BATCH_SIZE})")
@@ -267,6 +340,12 @@ def _update_pitchers(current_year: int) -> tuple[int, int, list[int]]:
     del bwar_df
     data_service._store.pop("bwar_pitch_all", None)
     gc.collect()
+
+    # Same new-call-up discovery pass as batters — pitching_stats_bref
+    # surfaces new pitchers with a usable mlbID before they're in
+    # Lahman, so we insert a minimal pitchers row from MLB Stats API
+    # bio data before iterating.
+    _discover_and_add_new_players(bref_df, is_pitcher=True, current_year=current_year)
 
     with connection.get_session() as db:
         pitcher_ids = crud.get_all_pitcher_ids(db)

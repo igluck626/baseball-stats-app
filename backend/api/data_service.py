@@ -1176,6 +1176,78 @@ def _mlb_get_json(path: str, params: dict) -> dict:
         return json.loads(resp.read().decode("utf-8"))
 
 
+def fetch_mlb_player_bio(mlb_id: int) -> Optional[dict]:
+    """`/people/{id}` → minimal bio dict in `crud.save_player` /
+    `crud.save_pitcher` shape. Used by the nightly update to insert
+    rows for brand-new call-ups (Lahman doesn't have them; bref
+    surfaces them with a usable mlbID, but no name/position/debut
+    info). Returns None on 404 / network failure / unparseable
+    response — caller logs + skips the player, retry on next run.
+
+    bbref_id stays nil for these rows; the Lahman bridge will fill
+    it once the player makes it into the next Lahman archive.
+    """
+    try:
+        data = _mlb_get_json(f"people/{mlb_id}", {})
+    except Exception:
+        return None
+    people = data.get("people") or []
+    if not people:
+        return None
+    p = people[0]
+
+    # MLB ships height as "5' 11\"" — parse to inches. None on
+    # unparseable, which we tolerate (a NULL is fine).
+    h_in: Optional[int] = None
+    raw_h = p.get("height")
+    if isinstance(raw_h, str) and "'" in raw_h:
+        try:
+            feet, rest = raw_h.split("'", 1)
+            inches = rest.replace('"', "").strip()
+            h_in = int(feet.strip()) * 12 + (int(inches) if inches else 0)
+        except (TypeError, ValueError):
+            h_in = None
+
+    debut_iso = p.get("mlbDebutDate")
+    debut_year: Optional[int] = None
+    if isinstance(debut_iso, str) and len(debut_iso) >= 4:
+        try:
+            debut_year = int(debut_iso[:4])
+        except ValueError:
+            debut_year = None
+
+    birth_iso = p.get("birthDate")
+    birth_year = birth_month = birth_day = None
+    if isinstance(birth_iso, str) and len(birth_iso) >= 10:
+        try:
+            birth_year  = int(birth_iso[0:4])
+            birth_month = int(birth_iso[5:7])
+            birth_day   = int(birth_iso[8:10])
+        except ValueError:
+            pass
+
+    return {
+        "player_id":       mlb_id,
+        "name":            p.get("fullName") or f"Player {mlb_id}",
+        "bbref_id":        None,
+        "mlb_debut":       debut_year,
+        "mlb_last_season": None,
+        "position":        (p.get("primaryPosition") or {}).get("abbreviation"),
+        "bats":            (p.get("batSide")        or {}).get("code"),
+        "throws":          (p.get("pitchHand")      or {}).get("code"),
+        "height":          h_in,
+        "weight":          _to_int(p.get("weight")),
+        "birth_year":      birth_year,
+        "birth_month":     birth_month,
+        "birth_day":       birth_day,
+        "birth_city":      p.get("birthCity"),
+        "birth_state":     p.get("birthStateProvince"),
+        "birth_country":   p.get("birthCountry"),
+        "debut":           debut_iso,
+        "final_game":      None,
+    }
+
+
 def _to_int(v) -> Optional[int]:
     """Defensive int parse; returns None for blank / non-numeric."""
     if v is None or v == "":
