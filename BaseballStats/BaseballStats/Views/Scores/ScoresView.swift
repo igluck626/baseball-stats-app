@@ -102,7 +102,6 @@ struct ScoresView: View {
         NavigationStack(path: $navigationPath) {
             VStack(spacing: 0) {
                 dateBar
-                Divider()
                 content
             }
             .navigationTitle("Scores")
@@ -128,10 +127,10 @@ struct ScoresView: View {
 
     // MARK: - Date bar
 
-    /// Single-line nav row: ◀ pill ▶ + calendar. The pill carries the
-    /// relative-day label ("Today" / "Yesterday" / "Mon, May 12") and
-    /// is itself tappable as a fast alternative to the calendar icon
-    /// for opening the date picker.
+    /// Symmetrical nav row: ◀ pill ▶. The center pill carries the
+    /// relative-day label ("Today" / "Yesterday" / "Mon, May 12")
+    /// and is itself the tap target that opens the calendar sheet,
+    /// so there's no separate calendar icon.
     private var dateBar: some View {
         HStack(spacing: 12) {
             stepButton(systemImage: "chevron.left", days: -1)
@@ -139,13 +138,6 @@ struct ScoresView: View {
             datePill
             Spacer(minLength: 0)
             stepButton(systemImage: "chevron.right", days: 1)
-            Button { showingDatePicker = true } label: {
-                Image(systemName: "calendar")
-                    .font(.subheadline.weight(.semibold))
-                    .frame(width: 36, height: 32)
-                    .background(Capsule().fill(Color(.secondarySystemFill)))
-            }
-            .buttonStyle(.plain)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
@@ -160,7 +152,10 @@ struct ScoresView: View {
             Image(systemName: systemImage)
                 .font(.subheadline.weight(.semibold))
                 .frame(width: 36, height: 32)
-                .background(Capsule().fill(Color(.secondarySystemFill)))
+                // Glass capsule to match the Leaders-tab stat picker
+                // — `Color(.secondarySystemFill)` read as a solid
+                // grey patch that fought the page background.
+                .glassEffect(.regular, in: Capsule())
         }
         .buttonStyle(.plain)
     }
@@ -173,7 +168,7 @@ struct ScoresView: View {
                 .foregroundStyle(.primary)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 7)
-                .background(Capsule().fill(Color(.secondarySystemFill)))
+                .glassEffect(.regular, in: Capsule())
         }
         .buttonStyle(.plain)
     }
@@ -496,15 +491,10 @@ private struct FinalGameCard: View {
 
             Divider().frame(height: 56)
 
-            VStack(alignment: .trailing, spacing: 4) {
-                Text("FINAL")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.tertiary)
-            }
-            .frame(minWidth: 56, alignment: .trailing)
+            Text("FINAL")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(minWidth: 56, alignment: .trailing)
         }
     }
 

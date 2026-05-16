@@ -25,7 +25,13 @@ struct ContentView: View {
 
             ScoresView()
                 .tabItem {
-                    Label("Scores", systemImage: "sportscourt")
+                    // `baseball.fill` ships in iOS 15+ and reads as a
+                    // baseball at tab-bar resolution. `figure.baseball`
+                    // (batter silhouette) is the documented fallback if
+                    // we ever drop back to a pre-iOS-15 deployment
+                    // target, but the project's deployment target is
+                    // well past that floor today.
+                    Label("Scores", systemImage: "baseball.fill")
                 }
                 .tag(AppNavigation.Tab.scores)
 
