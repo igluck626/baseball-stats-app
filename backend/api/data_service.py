@@ -345,12 +345,30 @@ def _resolve_team_code(team: Optional[str], league: Optional[str]) -> Optional[s
 def _latest_team_info(
     db, player_id: int, *, pitcher: bool,
 ) -> tuple[Optional[str], Optional[str]]:
-    """(team_display, team_code) from the player's most recent *_seasons row.
-    `team_display` is the raw value as stored; `team_code` is normalized to
-    a 2-3 char abbreviation suitable for client-side lookup. Returns
-    (None, None) when the player has no season rows."""
-    rows = (crud.get_pitcher_seasons(db, player_id) if pitcher
-            else crud.get_player_seasons(db, player_id))
+    """(team_display, team_code) from the player's most recent season
+    row across BOTH `pitcher_seasons` AND `player_seasons`.
+
+    Looking at only one side leaves stale-data holes for ex-NL
+    pitchers (Tyler Rogers et al.): they have batting rows in
+    `player_seasons` from their pre-2022 NL plate appearances but
+    their current team only lives on the pitcher side. When
+    `search_player` runs its pitchers-then-players merge, the
+    second pass overwrites the (correct) pitcher result with the
+    (stale) batting one. Unifying the lookup picks the truly
+    latest row regardless of which side it lives on.
+
+    The `pitcher` parameter is kept for backward compatibility but
+    no longer affects the result — both season tables are read
+    every time. Two-way players (Ohtani: same team both sides)
+    aren't affected; the answer matches either way.
+
+    Returns (None, None) when the player has no season rows in
+    either table."""
+    _ = pitcher
+    rows = (
+        crud.get_pitcher_seasons(db, player_id)
+        + crud.get_player_seasons(db, player_id)
+    )
     if not rows:
         return None, None
     latest = max(rows, key=lambda r: r.year or 0)
