@@ -1249,18 +1249,13 @@ def fetch_mlb_player_bio(mlb_id: int) -> Optional[dict]:
 
 
 def sync_player_current_team(player_id: int) -> dict:
-    """Override `team` on the player's current-year season rows
-    with the canonical current-team abbreviation from MLB Stats API.
-
-    Background: pitcher_seasons.team is written from bref's `Tm`
-    column during the nightly run, and bref can lag on offseason
-    moves (free-agent signings, December trades). When iOS's
-    `_latest_team_info` reads the most-recent season row, a stale
-    `team` value drives a wrong team_code in the search result and
-    on the profile header. Calling this helper for a single player
-    repairs both their pitcher_seasons and player_seasons rows
-    using `/people/{id}.currentTeam.abbreviation` as the source of
-    truth.
+    """Reconcile `team` on the player's current-year season rows
+    against the canonical current-team abbreviation from MLB Stats
+    API. Creates the row if it doesn't exist yet — this is the
+    common case during the offseason / early-season window when
+    bref hasn't picked up a player's new club yet, leaving them
+    without a current-year row entirely. With the row absent,
+    `_latest_team_info` falls back to last year's stale team.
 
     Returns a status dict the admin endpoint can echo back. Safe
     to call for retired players (the `currentTeam` field is absent
@@ -1286,27 +1281,18 @@ def sync_player_current_team(player_id: int) -> dict:
         }
 
     year = _current_year()
-    updated: list[str] = []
     with connection.get_session() as db:
-        pit_row = (
-            db.query(_PitcherSeason)
-            .filter(_PitcherSeason.player_id == player_id,
-                    _PitcherSeason.year == year)
-            .first()
+        in_pitchers = crud.get_pitcher(db, player_id) is not None
+        in_players  = crud.get_player(db, player_id)  is not None
+        actions = _apply_team_to_season_rows(
+            db,
+            player_id=player_id,
+            year=year,
+            abbr=abbr,
+            create_pitcher=in_pitchers,
+            create_batter=in_players,
         )
-        bat_row = (
-            db.query(_PlayerSeason)
-            .filter(_PlayerSeason.player_id == player_id,
-                    _PlayerSeason.year == year)
-            .first()
-        )
-        if pit_row is not None and pit_row.team != abbr:
-            pit_row.team = abbr
-            updated.append("pitcher_seasons")
-        if bat_row is not None and bat_row.team != abbr:
-            bat_row.team = abbr
-            updated.append("player_seasons")
-        if updated:
+        if actions:
             db.commit()
 
     return {
@@ -1314,17 +1300,72 @@ def sync_player_current_team(player_id: int) -> dict:
         "fullName":   p.get("fullName"),
         "new_team":   abbr,
         "team_name":  name,
-        "updated":    updated,
-        "status":     "ok" if updated else "already_current",
+        "actions":    actions,
+        "status":     "ok" if actions else "already_current",
     }
+
+
+def _apply_team_to_season_rows(
+    db,
+    *,
+    player_id: int,
+    year: int,
+    abbr: str,
+    create_pitcher: bool,
+    create_batter: bool,
+) -> list[str]:
+    """Shared mutation step for both single-player and bulk sync
+    paths. Updates the existing current-year season rows when their
+    `team` differs, or creates a minimal placeholder row (year +
+    team only) when the bio table says the player exists but no
+    season row has been written yet. Returns a flat list of strings
+    describing what changed, suitable for the API response and
+    nightly log.
+
+    The flags decide which side(s) to touch: a pure pitcher gets a
+    pitcher_seasons row only, a position player gets player_seasons,
+    a two-way player gets both. The decision is keyed off bio-table
+    presence rather than the roster position so two-way players
+    don't lose their batter row to "this player is on the roster
+    as a pitcher" inference.
+    """
+    actions: list[str] = []
+    if create_pitcher:
+        pit_row = (
+            db.query(_PitcherSeason)
+            .filter(_PitcherSeason.player_id == player_id,
+                    _PitcherSeason.year == year)
+            .first()
+        )
+        if pit_row is None:
+            db.add(_PitcherSeason(player_id=player_id, year=year, team=abbr))
+            actions.append("pitcher_seasons:created")
+        elif pit_row.team != abbr:
+            pit_row.team = abbr
+            actions.append("pitcher_seasons:updated")
+    if create_batter:
+        bat_row = (
+            db.query(_PlayerSeason)
+            .filter(_PlayerSeason.player_id == player_id,
+                    _PlayerSeason.year == year)
+            .first()
+        )
+        if bat_row is None:
+            db.add(_PlayerSeason(player_id=player_id, year=year, team=abbr))
+            actions.append("player_seasons:created")
+        elif bat_row.team != abbr:
+            bat_row.team = abbr
+            actions.append("player_seasons:updated")
+    return actions
 
 
 def sync_all_player_teams_from_rosters(current_year: int) -> dict:
     """Walk all 30 MLB active rosters and reconcile the `team`
     column on each player's current-year `pitcher_seasons` /
-    `player_seasons` row. Called at the end of the nightly run as
-    a belt-and-suspenders against bref's `Tm` column lagging on
-    offseason moves.
+    `player_seasons` row. Creates a minimal placeholder row when
+    one doesn't exist yet (offseason move + bref hasn't shipped a
+    current-year row), so `_latest_team_info` no longer falls back
+    to last year's stale team.
 
     30 API calls (one per team) instead of one-per-player —
     cheaper than `sync_player_current_team` in bulk while covering
@@ -1333,10 +1374,15 @@ def sync_all_player_teams_from_rosters(current_year: int) -> dict:
     try:
         teams_resp = _mlb_get_json("teams", {"sportId": 1, "season": current_year})
     except Exception as exc:
-        return {"status": f"teams_fetch_failed: {exc}", "updated": 0}
+        return {"status": f"teams_fetch_failed: {exc}", "updated": 0, "created": 0}
     teams = teams_resp.get("teams") or []
 
-    updated = 0
+    counts: dict[str, int] = {
+        "pitcher_seasons:updated": 0,
+        "pitcher_seasons:created": 0,
+        "player_seasons:updated":  0,
+        "player_seasons:created":  0,
+    }
     failed_teams: list[str] = []
     with connection.get_session() as db:
         for team in teams:
@@ -1357,31 +1403,32 @@ def sync_all_player_teams_from_rosters(current_year: int) -> dict:
                 pid = person.get("id")
                 if not pid:
                     continue
-                pit_row = (
-                    db.query(_PitcherSeason)
-                    .filter(_PitcherSeason.player_id == pid,
-                            _PitcherSeason.year == current_year)
-                    .first()
+                in_pitchers = crud.get_pitcher(db, pid) is not None
+                in_players  = crud.get_player(db, pid)  is not None
+                # Skip if the player isn't in either bio table —
+                # the new-call-up discovery pass earlier in the
+                # nightly will insert them; we'll catch them on
+                # the next run.
+                if not in_pitchers and not in_players:
+                    continue
+                actions = _apply_team_to_season_rows(
+                    db,
+                    player_id=pid,
+                    year=current_year,
+                    abbr=abbr,
+                    create_pitcher=in_pitchers,
+                    create_batter=in_players,
                 )
-                if pit_row is not None and pit_row.team != abbr:
-                    pit_row.team = abbr
-                    updated += 1
-                bat_row = (
-                    db.query(_PlayerSeason)
-                    .filter(_PlayerSeason.player_id == pid,
-                            _PlayerSeason.year == current_year)
-                    .first()
-                )
-                if bat_row is not None and bat_row.team != abbr:
-                    bat_row.team = abbr
-                    updated += 1
-        if updated:
-            db.commit()
+                for a in actions:
+                    counts[a] = counts.get(a, 0) + 1
+        db.commit()
 
+    total = sum(counts.values())
     return {
-        "status":        "ok",
-        "updated":       updated,
-        "failed_teams":  failed_teams,
+        "status":       "ok",
+        "total":        total,
+        "counts":       counts,
+        "failed_teams": failed_teams,
     }
 
 
