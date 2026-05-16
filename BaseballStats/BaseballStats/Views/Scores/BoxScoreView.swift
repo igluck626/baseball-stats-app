@@ -110,10 +110,47 @@ struct BoxScoreView: View {
     @Binding var path: NavigationPath
     @State private var pendingPlayerLookup: Int?
     @State private var navigationError: String?
+    /// User override for the team-selector segmented control. nil
+    /// → use `defaultSide` (home for final, offensive team for
+    /// live). The actual rendered side is `currentSide`.
+    @State private var selectedSide: TeamSide?
+
+    /// Which team's batting + pitching table to render. The view
+    /// shows one team at a time instead of stacking both — toggled
+    /// via the segmented control at the top.
+    enum TeamSide: String, Hashable, Identifiable, CaseIterable {
+        case away, home
+        var id: String { rawValue }
+    }
 
     init(game: Game, path: Binding<NavigationPath>) {
         _vm = StateObject(wrappedValue: BoxScoreViewModel(game: game))
         _path = path
+    }
+
+    /// Default-selected team when the user hasn't tapped the
+    /// segmented control yet. Final → home (the venue's team is
+    /// the natural anchor). Live → whichever side is batting; for
+    /// top of the inning the away team is offense, otherwise home.
+    /// Preview / other → home (no strong default; consistent with
+    /// final so the picker doesn't surprise the user pre-game).
+    private var defaultSide: TeamSide {
+        switch vm.game.phase {
+        case .live:
+            // `isTopInning == true` → away team batting → away
+            // offensive; default the box-score view to it so the
+            // user lands on the side that's currently active.
+            let isTop = vm.live?.liveData.linescore?.isTopInning
+                ?? vm.game.linescore?.isTopInning
+                ?? false
+            return isTop ? .away : .home
+        case .final, .preview, .other:
+            return .home
+        }
+    }
+
+    private var currentSide: TeamSide {
+        selectedSide ?? defaultSide
     }
 
     var body: some View {
@@ -125,8 +162,8 @@ struct BoxScoreView: View {
                 }
                 if let bs = vm.boxScore {
                     linescoreCard
-                    teamSection(side: .away, bs: bs)
-                    teamSection(side: .home, bs: bs)
+                    teamPicker(bs: bs)
+                    teamSection(side: currentSide, bs: bs)
                 } else if vm.isLoading {
                     ProgressView().controlSize(.large)
                         .frame(maxWidth: .infinity, minHeight: 120)
@@ -388,9 +425,26 @@ struct BoxScoreView: View {
 
     // MARK: - Per-team batting + pitching
 
-    private enum Side { case away, home }
+    /// Segmented control sitting above the per-team box-score
+    /// tables. Labels show each team's full short name so the
+    /// active side reads cleanly at a glance; the segmented style
+    /// matches the Recent Games window picker on the player
+    /// profile so the control feels like part of the same family.
+    private func teamPicker(bs: BoxScoreResponse) -> some View {
+        Picker(
+            "Team",
+            selection: Binding(
+                get: { currentSide },
+                set: { selectedSide = $0 }
+            )
+        ) {
+            Text(bs.teams.away.team.name).tag(TeamSide.away)
+            Text(bs.teams.home.team.name).tag(TeamSide.home)
+        }
+        .pickerStyle(.segmented)
+    }
 
-    private func teamSection(side: Side, bs: BoxScoreResponse) -> some View {
+    private func teamSection(side: TeamSide, bs: BoxScoreResponse) -> some View {
         let team = side == .away ? bs.teams.away : bs.teams.home
         return VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {

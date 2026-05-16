@@ -310,7 +310,11 @@ private struct GameCard: View {
                 teamRow(side: game.teams.home,
                         winner: didWin(side: game.teams.home))
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            // Score section expands to fill remaining width; the
+            // venue section to the right is fixed at 110pt so the
+            // divider sits at a stable position regardless of
+            // venue name length or wrap state.
+            .frame(minWidth: 120, maxWidth: .infinity, alignment: .leading)
 
             Divider().frame(height: 56)
 
@@ -324,10 +328,15 @@ private struct GameCard: View {
                     Text(detail)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        // No lineLimit — long venue names like
+                        // "Globe Life Field at Arlington" wrap to a
+                        // second line inside the fixed-width column
+                        // instead of pushing the divider leftward.
+                        .multilineTextAlignment(.trailing)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            .frame(minWidth: 90, alignment: .trailing)
+            .frame(width: 110, alignment: .trailing)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
@@ -360,10 +369,17 @@ private struct GameCard: View {
 
             Spacer()
 
-            Text(side.score.map(String.init) ?? "")
-                .font(.title3.weight(winner ? .bold : .semibold))
-                .foregroundStyle(loserDimmed(winner) ? .secondary : .primary)
-                .monospacedDigit()
+            // Only render the score for games that have actually
+            // started. The MLB API ships score=0 for both teams
+            // on previews / scheduled games, which read as "0–0"
+            // here even before first pitch; suppress entirely so
+            // the time + venue carry the row instead.
+            if game.phase == .live || game.phase == .final {
+                Text(side.score.map(String.init) ?? "")
+                    .font(.title3.weight(winner ? .bold : .semibold))
+                    .foregroundStyle(loserDimmed(winner) ? .secondary : .primary)
+                    .monospacedDigit()
+            }
         }
     }
 

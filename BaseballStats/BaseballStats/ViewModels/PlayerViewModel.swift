@@ -301,20 +301,18 @@ final class PlayerViewModel: ObservableObject {
     ///
     ///   • Today's schedule — any game in Live or Final state.
     ///     Preview / Scheduled / Postponed / Suspended skip.
-    ///   • Yesterday's schedule — Final games only. Live carry-overs
-    ///     (rare, mostly suspended games) skip.
+    ///   • Yesterday's schedule — Final games only, AND only when
+    ///     we have a `stats_last_updated` cutoff to compare against.
+    ///     If the cutoff is nil (pre-migration row), yesterday is
+    ///     skipped entirely — the nightly batch has been running
+    ///     for months, so the safer default is to assume yesterday
+    ///     is already absorbed rather than risk double-counting it.
     ///
     /// Box scores are fetched in parallel and summed before applying
     /// so a doubleheader or today-plus-yesterday case produces one
     /// merged overlay (not two stacked applications). The LIVE badge
     /// fires only when at least one folded game is actually live;
     /// pure final overlays fill stats silently.
-    ///
-    /// Trade-off: if the nightly batch has already absorbed
-    /// yesterday's stats into overnight totals, applying yesterday's
-    /// overlay would double-count. The current architecture accepts
-    /// that risk in exchange for closing the more common
-    /// "yesterday's stats not yet in DB" gap.
     func loadRecentGameStats() async {
         guard !isRetired else { return }
         guard let teamId = mlbTeamId(for: player.teamCode) else { return }
@@ -346,18 +344,32 @@ final class PlayerViewModel: ObservableObject {
         var eligible: [(gamePk: Int, isLive: Bool)] = []
         for g in todaySchedule?.dates.flatMap(\.games) ?? [] {
             switch g.status.abstractGameState {
-            case "Live":  eligible.append((g.gamePk, true))
+            case "Live":
+                eligible.append((g.gamePk, true))
             case "Final":
+                // Today's final games are always after the most
+                // recent batch run — a nightly that ran during a
+                // future game's window would be a clock anomaly.
+                // shouldOverlay still gates on cutoff-vs-start to
+                // be safe.
                 if Self.shouldOverlay(game: g, cutoff: cutoff) {
                     eligible.append((g.gamePk, false))
                 }
-            default:      break
+            default:
+                break
             }
         }
-        for g in yestSchedule?.dates.flatMap(\.games) ?? [] {
-            if g.status.abstractGameState == "Final",
-               Self.shouldOverlay(game: g, cutoff: cutoff) {
-                eligible.append((g.gamePk, false))
+        // Yesterday's games only qualify when we have a real cutoff
+        // stamp to compare against. Without one, the safer default
+        // is to assume the nightly batch already absorbed yesterday
+        // — the nightly run has been live for months, so the
+        // double-count risk outweighs the missing-stats risk.
+        if cutoff != nil {
+            for g in yestSchedule?.dates.flatMap(\.games) ?? [] {
+                if g.status.abstractGameState == "Final",
+                   Self.shouldOverlay(game: g, cutoff: cutoff) {
+                    eligible.append((g.gamePk, false))
+                }
             }
         }
         guard !eligible.isEmpty else { return }
@@ -387,7 +399,7 @@ final class PlayerViewModel: ObservableObject {
                 for await maybe in group {
                     if let m = maybe { hits.append(m) }
                 }
-                return hits
+                return hits.map { (bat: $0.0, pit: $0.1, isLive: $0.2) }
             }
 
         var totalBat = BoxBattingLine()
