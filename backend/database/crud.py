@@ -95,9 +95,18 @@ def save_player_seasons(db: Session, player_id: int, seasons: list[dict]) -> Non
     """Upsert batting season rows for one player. Uses PG-native
     ON CONFLICT (player_id, year) DO UPDATE so concurrent ingests can't
     produce duplicate (player_id, year) rows — the historical bug that
-    surfaced "Sosa 1998" three times in the All-Time HR leaderboard."""
+    surfaced "Sosa 1998" three times in the All-Time HR leaderboard.
+
+    Stamps last_updated=utcnow() on every saved row so the iOS
+    live-stats overlay can compare game start times against this
+    timestamp to decide whether a game is already in the DB."""
+    now = datetime.datetime.utcnow()
     for season in seasons:
-        _upsert_season(db, PlayerSeason, {"player_id": player_id, **season})
+        _upsert_season(db, PlayerSeason, {
+            "player_id":    player_id,
+            "last_updated": now,
+            **season,
+        })
 
 
 def get_all_player_ids(db: Session) -> list[int]:
@@ -140,9 +149,16 @@ def get_pitcher_seasons(db: Session, player_id: int) -> list[PitcherSeason]:
 def save_pitcher_seasons(db: Session, player_id: int, seasons: list[dict]) -> None:
     """Upsert pitching season rows. Same ON CONFLICT path as
     save_player_seasons — keeps pitcher_seasons free of duplicate
-    (player_id, year) pairs even under parallel ingest."""
+    (player_id, year) pairs even under parallel ingest. last_updated
+    is stamped on every saved row (parallel to save_player_seasons)
+    for the live-stats overlay comparison."""
+    now = datetime.datetime.utcnow()
     for season in seasons:
-        _upsert_season(db, PitcherSeason, {"player_id": player_id, **season})
+        _upsert_season(db, PitcherSeason, {
+            "player_id":    player_id,
+            "last_updated": now,
+            **season,
+        })
 
 
 def get_all_pitcher_ids(db: Session) -> list[int]:

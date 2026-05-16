@@ -598,12 +598,12 @@ struct PlayerProfileView: View {
             // score, so it stays overnight.
             let ranks = battingRanksVM.byStat
             let effective = makeEffectiveBatting(
-                overnight: stats, today: viewModel.todayBatting
+                overnight: stats, recent: viewModel.recentBatting
             )
             currentSeasonGridCard(
                 title: "\(String(stats.season)) Season",
                 subtitle: currentSeasonTeamName,
-                liveBadge: viewModel.todayStatsLoaded && viewModel.todayBatting != nil,
+                liveBadge: viewModel.hasLiveGame && viewModel.recentBatting != nil,
                 items: [
                     .init(label: "WAR", value: formatWAR(effective.WAR), rank: rankableSlot("WAR", ranks)),
                     .init(label: "AVG", value: format3(effective.AVG),    rank: rankableSlot("AVG", ranks)),
@@ -651,12 +651,12 @@ struct PlayerProfileView: View {
             // overnight; decisions arrive late and updating them
             // mid-game would lie about an unfinished game.
             let effective = makeEffectivePitching(
-                overnight: stats, today: viewModel.todayPitching
+                overnight: stats, recent: viewModel.recentPitching
             )
             currentSeasonGridCard(
                 title: "\(String(stats.season)) Season",
                 subtitle: currentSeasonTeamName,
-                liveBadge: viewModel.todayStatsLoaded && viewModel.todayPitching != nil,
+                liveBadge: viewModel.hasLiveGame && viewModel.recentPitching != nil,
                 items: [
                     .init(label: "WAR",  value: formatWAR(effective.WAR),                              rank: rankableSlot("WAR",  ranks)),
                     .init(label: "W-L",  value: formatWL(effective.W, effective.L),                    rank: rankableSlot("W",    ranks)),
@@ -2667,32 +2667,32 @@ fileprivate struct EffectivePitching {
     let BB:     Int?
 }
 
-/// Merge today's batting line on top of the overnight season
-/// totals. When `today == nil` we pass through the overnight
+/// Merge the recent-game batting overlay on top of the overnight
+/// season totals. When `recent == nil` we pass through the overnight
 /// values; otherwise counting stats add directly and rate stats
 /// (AVG / OBP / SLG / OPS) are recomputed off the merged H / AB /
 /// BB / HBP / SF / TB so the third-decimal display is accurate.
 /// WAR isn't updated — box scores don't ship game WAR.
 fileprivate func makeEffectiveBatting(
     overnight stats: PlayerCurrentStats,
-    today: TodayBattingLine?
+    recent: BoxBattingLine?
 ) -> EffectiveBatting {
     let s = stats.standard
     let war = stats.advanced?.WAR
-    guard let today else {
+    guard let recent else {
         return EffectiveBatting(
             WAR: war, AVG: s?.BA, OBP: s?.OBP, SLG: s?.SLG, OPS: s?.OPS,
             G: s?.G, HR: s?.HR, RBI: s?.RBI, SB: s?.SB, PA: s?.PA
         )
     }
-    let H   = (s?.H   ?? 0) + today.H
-    let AB  = (s?.AB  ?? 0) + today.AB
-    let BB  = (s?.BB  ?? 0) + today.BB
-    let HBP = (s?.HBP ?? 0) + today.HBP
-    let SF  = (s?.SF  ?? 0) + today.SF
-    let d2  = (s?.doubles ?? 0) + today.doubles
-    let d3  = (s?.triples ?? 0) + today.triples
-    let HR  = (s?.HR  ?? 0) + today.HR
+    let H   = (s?.H   ?? 0) + recent.H
+    let AB  = (s?.AB  ?? 0) + recent.AB
+    let BB  = (s?.BB  ?? 0) + recent.BB
+    let HBP = (s?.HBP ?? 0) + recent.HBP
+    let SF  = (s?.SF  ?? 0) + recent.SF
+    let d2  = (s?.doubles ?? 0) + recent.doubles
+    let d3  = (s?.triples ?? 0) + recent.triples
+    let HR  = (s?.HR  ?? 0) + recent.HR
     // TB = singles + 2*doubles + 3*triples + 4*HR
     //    = (H - 2B - 3B - HR) + 2*2B + 3*3B + 4*HR
     //    = H + 2B + 2*3B + 3*HR
@@ -2709,26 +2709,26 @@ fileprivate func makeEffectiveBatting(
     return EffectiveBatting(
         WAR: war,
         AVG: avg, OBP: obp, SLG: slg, OPS: ops,
-        G:   (s?.G   ?? 0) + 1,
+        G:   (s?.G   ?? 0) + recent.games,
         HR:  HR,
-        RBI: (s?.RBI ?? 0) + today.RBI,
-        SB:  (s?.SB  ?? 0) + today.SB,
-        PA:  (s?.PA  ?? 0) + today.PA
+        RBI: (s?.RBI ?? 0) + recent.RBI,
+        SB:  (s?.SB  ?? 0) + recent.SB,
+        PA:  (s?.PA  ?? 0) + recent.PA
     )
 }
 
-/// Merge today's pitching line on top of overnight season totals.
-/// Counting stats add; ERA / WHIP / K9 are recomputed off the
-/// merged ER / H / BB / SO / IP. W-L and SV aren't touched —
-/// decisions arrive late in a game and updating them mid-game
-/// would assert an outcome that isn't yet final.
+/// Merge the recent-game pitching overlay on top of overnight
+/// season totals. Counting stats add; ERA / WHIP / K9 are recomputed
+/// off the merged ER / H / BB / SO / IP. W-L and SV aren't touched —
+/// decisions arrive late in a game and updating them mid-game would
+/// assert an outcome that isn't yet final.
 fileprivate func makeEffectivePitching(
     overnight stats: PitcherCurrentStats,
-    today: TodayPitchingLine?
+    recent: BoxPitchingLine?
 ) -> EffectivePitching {
     let s = stats.standard
     let war = stats.advanced?.WAR
-    guard let today else {
+    guard let recent else {
         return EffectivePitching(
             WAR: war,
             W:  s?.W, L: s?.L,
@@ -2737,11 +2737,11 @@ fileprivate func makeEffectivePitching(
             IP: s?.IP, SO: s?.SO, BB: s?.BB
         )
     }
-    let IP = (s?.IP ?? 0) + today.IP
-    let ER = (s?.ER ?? 0) + today.ER
-    let H  = (s?.H  ?? 0) + today.H
-    let BB = (s?.BB ?? 0) + today.BB
-    let SO = (s?.SO ?? 0) + today.SO
+    let IP = (s?.IP ?? 0) + recent.IP
+    let ER = (s?.ER ?? 0) + recent.ER
+    let H  = (s?.H  ?? 0) + recent.H
+    let BB = (s?.BB ?? 0) + recent.BB
+    let SO = (s?.SO ?? 0) + recent.SO
     let era:  Double? = IP > 0 ? Double(ER) * 9.0 / IP : nil
     let whip: Double? = IP > 0 ? Double(H + BB) / IP : nil
     let k9:   Double? = IP > 0 ? Double(SO) * 9.0 / IP : nil
@@ -2749,7 +2749,7 @@ fileprivate func makeEffectivePitching(
         WAR: war,
         W:  s?.W, L: s?.L,
         ERA: era, WHIP: whip, K_per9: k9,
-        G:  (s?.G ?? 0) + 1,
+        G:  (s?.G ?? 0) + recent.games,
         GS: s?.GS, SV: s?.SV,
         IP: IP, SO: SO, BB: BB
     )

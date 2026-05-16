@@ -492,12 +492,29 @@ def get_current_stats(player_id: int) -> Optional[dict]:
     }
 
     return {
-        "player_id": player_id,
-        "season":    year,
-        "bio":       bio,
-        "standard":  standard,
-        "advanced":  advanced,
+        "player_id":         player_id,
+        "season":            year,
+        "bio":               bio,
+        "standard":          standard,
+        "advanced":          advanced,
+        # ISO-8601 UTC stamp of the nightly batch run that last
+        # wrote this row. iOS uses it to decide whether a recent
+        # box-score line is already in the DB (game started before
+        # this stamp) or still missing (started after) and needs
+        # to be folded onto the season totals at render time.
+        "stats_last_updated": _iso_or_none(season.get("last_updated")),
     }
+
+
+def _iso_or_none(value) -> Optional[str]:
+    """Format a datetime as ISO-8601 with a trailing 'Z' if present;
+    nil-pass-through otherwise. Used on the API response so iOS can
+    decode straight into Date via `Date.ISO8601FormatStyle`."""
+    if value is None:
+        return None
+    # SQLAlchemy returns naive UTC datetimes; tag the suffix
+    # explicitly so the iOS decoder doesn't drift into local time.
+    return value.replace(microsecond=0).isoformat() + "Z"
 
 
 # ---------------------------------------------------------------------------
@@ -798,11 +815,12 @@ def get_current_pitching_stats(player_id: int) -> Optional[dict]:
     }
 
     return {
-        "player_id": player_id,
-        "season":    year,
-        "bio":       bio,
-        "standard":  standard,
-        "advanced":  advanced,
+        "player_id":          player_id,
+        "season":             year,
+        "bio":                bio,
+        "standard":           standard,
+        "advanced":           advanced,
+        "stats_last_updated": _iso_or_none(season.get("last_updated")),
     }
 
 

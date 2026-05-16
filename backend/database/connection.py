@@ -92,30 +92,35 @@ _BATTING_GAMELOGS_NEW_COLUMNS: list[tuple[str, str]] = [
 # stat-coverage expansion. Listed here so existing prod tables get them via
 # ALTER TABLE on the next init_db() (lifespan / /admin/migrate / bulk-load).
 _PLAYER_SEASONS_NEW_COLUMNS: list[tuple[str, str]] = [
-    ("IBB",  "INTEGER"),
-    ("HBP",  "INTEGER"),
-    ("SF",   "INTEGER"),
-    ("SH",   "INTEGER"),
-    ("GIDP", "INTEGER"),
-    ("TB",   "INTEGER"),
+    ("IBB",          "INTEGER"),
+    ("HBP",          "INTEGER"),
+    ("SF",           "INTEGER"),
+    ("SH",           "INTEGER"),
+    ("GIDP",         "INTEGER"),
+    ("TB",           "INTEGER"),
+    # Stamped by save_player_seasons. iOS uses it to decide which
+    # box-score lines need overlaying — anything started after this
+    # ts isn't in the row yet, anything before is already counted.
+    ("last_updated", "TIMESTAMP"),
 ]
 _PITCHER_SEASONS_NEW_COLUMNS: list[tuple[str, str]] = [
-    ("CG",    "INTEGER"),
-    ("SHO",   "INTEGER"),
-    ("SV",    "INTEGER"),
-    ("H",     "INTEGER"),
-    ("ER",    "INTEGER"),
-    ("R",     "INTEGER"),
-    ("BAOpp", "FLOAT"),
-    ("IBB",   "INTEGER"),
-    ("WP",    "INTEGER"),
-    ("HBP",   "INTEGER"),
-    ("BK",    "INTEGER"),
-    ("BFP",   "INTEGER"),
-    ("GF",    "INTEGER"),
-    ("SH",    "INTEGER"),
-    ("SF",    "INTEGER"),
-    ("GIDP",  "INTEGER"),
+    ("CG",           "INTEGER"),
+    ("SHO",          "INTEGER"),
+    ("SV",           "INTEGER"),
+    ("H",            "INTEGER"),
+    ("ER",           "INTEGER"),
+    ("R",            "INTEGER"),
+    ("BAOpp",        "FLOAT"),
+    ("IBB",          "INTEGER"),
+    ("WP",           "INTEGER"),
+    ("HBP",          "INTEGER"),
+    ("BK",           "INTEGER"),
+    ("BFP",          "INTEGER"),
+    ("GF",           "INTEGER"),
+    ("SH",           "INTEGER"),
+    ("SF",           "INTEGER"),
+    ("GIDP",         "INTEGER"),
+    ("last_updated", "TIMESTAMP"),
 ]
 
 

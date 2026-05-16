@@ -16,11 +16,18 @@
 import Combine
 import Foundation
 
-/// One-game stat overlay applied on top of the overnight season
-/// totals in the player profile. Populated by `loadTodayStats()`
-/// when the player's team has an in-progress or just-finished game
-/// and the player appeared in the box score.
-struct TodayBattingLine: Hashable {
+/// Box-score line overlay applied on top of the overnight season
+/// totals in the player profile. Populated by `loadRecentGameStats()`
+/// across today's live/final games + yesterday's final games, with
+/// per-game lines summed into a single cumulative overlay before
+/// being merged with the overnight totals. Same shape serves both
+/// per-game parsing and the accumulated total.
+struct BoxBattingLine: Hashable {
+    /// Number of games this line represents. A parsed single-game
+    /// line has games == 1; the cumulative overlay accumulates this
+    /// so the season G can be incremented by the correct amount when
+    /// summing across multiple games (doubleheader, today + yest).
+    var games:   Int = 0
     var AB:      Int = 0
     var R:       Int = 0
     var H:       Int = 0
@@ -36,17 +43,28 @@ struct TodayBattingLine: Hashable {
 
     /// Plate appearances — approximated as AB + BB + HBP + SF. SH
     /// (sacrifice bunts) is omitted; rare enough at modern usage
-    /// that the one-PA imprecision per game is acceptable for a
-    /// "today only" overlay.
+    /// that the one-PA imprecision is acceptable for this overlay.
     var PA: Int { AB + BB + HBP + SF }
 
-    /// "Did the batter actually appear today?" — at least one PA
-    /// of any kind. Defines whether the LIVE badge fires for
-    /// batters; a position player who sat out shouldn't trigger it.
+    /// "Did the batter actually appear?" — at least one PA of any
+    /// kind. A pinch-runner-only row or DNP shouldn't trigger the
+    /// overlay.
     var appeared: Bool { PA > 0 }
+
+    /// Accumulator — sum another box-score line into this one.
+    /// Used when the player appeared in more than one game in the
+    /// window (doubleheader, today + yesterday).
+    mutating func add(_ o: BoxBattingLine) {
+        games += o.games
+        AB += o.AB; R += o.R; H += o.H
+        doubles += o.doubles; triples += o.triples; HR += o.HR
+        RBI += o.RBI; BB += o.BB; SO += o.SO; SB += o.SB
+        HBP += o.HBP; SF += o.SF
+    }
 }
 
-struct TodayPitchingLine: Hashable {
+struct BoxPitchingLine: Hashable {
+    var games: Int = 0
     /// Already in true-decimal form (5.667 = 5⅔). The MLB box score
     /// ships "5.2" as a string; conversion happens at parse time.
     var IP: Double = 0
@@ -58,6 +76,13 @@ struct TodayPitchingLine: Hashable {
     var HR: Int    = 0
 
     var appeared: Bool { IP > 0 }
+
+    mutating func add(_ o: BoxPitchingLine) {
+        games += o.games
+        IP += o.IP
+        H  += o.H;  R  += o.R;  ER += o.ER
+        BB += o.BB; SO += o.SO; HR += o.HR
+    }
 }
 
 @MainActor
@@ -75,18 +100,25 @@ final class PlayerViewModel: ObservableObject {
     /// frozen pane and the headline-counts row in the header card.
     @Published var awards: PlayerAwardsResponse?
 
-    /// Today's box-score line for the player, if their team has a
-    /// game today that's already started and they appeared. nil
-    /// otherwise (no game / didn't play / not yet started / retired).
-    /// View merges these on top of the overnight `currentBatting` /
-    /// `currentPitching` season totals.
-    @Published var todayBatting: TodayBattingLine?
-    @Published var todayPitching: TodayPitchingLine?
-    /// True once `loadTodayStats()` completes AND found a real
-    /// appearance (batting and/or pitching). Drives the LIVE badge
-    /// on the season-card header. Won't flip if the player sat out
-    /// or their team didn't play today.
-    @Published var todayStatsLoaded: Bool = false
+    /// Cumulative box-score overlay for the player across today's
+    /// live/final games + yesterday's final games. Summed in
+    /// `loadRecentGameStats()` and merged into the season totals at
+    /// render time. nil → no overlay applied (no eligible games,
+    /// or the player didn't appear in any of them).
+    @Published var recentBatting: BoxBattingLine?
+    @Published var recentPitching: BoxPitchingLine?
+    /// True once `loadRecentGameStats()` has applied an overlay —
+    /// any recent appearance (live or final, today or yesterday).
+    /// Drives the silent stat update behavior but NOT the LIVE
+    /// badge; see `hasLiveGame` for that.
+    @Published var recentStatsLoaded: Bool = false
+    /// True iff at least one of the games whose stats were folded
+    /// into the overlay is currently in-progress. Final-only
+    /// overlays (yesterday's game + today's already-final game)
+    /// don't flip this. Gates the pulsing LIVE badge so the badge
+    /// only appears when there's something genuinely live to
+    /// watch — final-game stat fill-in stays silent.
+    @Published var hasLiveGame: Bool = false
 
     @Published var isLoadingCurrentBatting = false
     @Published var isLoadingCareerBatting = false
@@ -235,11 +267,10 @@ final class PlayerViewModel: ObservableObject {
     /// first; a slow career fetch doesn't block the overview.
     ///
     /// Once the main parallel loads finish, kicks off a background
-    /// `loadTodayStats()` task — that fetch hits MLB Stats API
-    /// directly and overlays today's box-score line onto the season
-    /// totals if the player's team has played today. The overlay is
-    /// silent (no spinner, no blocking) so the initial profile
-    /// render stays fast.
+    /// `loadRecentGameStats()` task — that fetch hits MLB Stats API
+    /// directly and overlays the player's recent box-score lines
+    /// onto the season totals. The overlay is silent (no spinner,
+    /// no blocking) so the initial profile render stays fast.
     func loadData() async {
         error = nil
 
@@ -258,90 +289,191 @@ final class PlayerViewModel: ObservableObject {
         // Background task — never awaited from `loadData`'s caller so
         // a slow/failed MLB Stats API call can't block UI updates.
         Task { [weak self] in
-            await self?.loadTodayStats()
+            await self?.loadRecentGameStats()
         }
     }
 
-    // MARK: - Today's stats overlay
+    // MARK: - Recent-game stats overlay
 
-    /// Fetches the player's box-score line for today's game (if any)
-    /// and stores it as a `TodayBattingLine` / `TodayPitchingLine`
-    /// overlay. Silently bails on every "doesn't apply" case:
-    ///   • No teamCode / can't resolve to MLB team id (retired,
-    ///     historical players, unmapped code)
-    ///   • Team has no game today
-    ///   • Game hasn't started yet (status "Preview" / "Scheduled")
-    ///   • Player isn't in the box score (DNP)
-    ///   • Player appeared but with zero PA/IP (e.g. courtesy runner)
-    /// All failures are non-fatal — `todayStatsLoaded` stays false
-    /// and the LIVE badge doesn't fire.
-    func loadTodayStats() async {
+    /// Fetches the player's box-score lines for recent games and
+    /// folds them into a cumulative overlay on top of the overnight
+    /// season totals. Eligible games:
+    ///
+    ///   • Today's schedule — any game in Live or Final state.
+    ///     Preview / Scheduled / Postponed / Suspended skip.
+    ///   • Yesterday's schedule — Final games only. Live carry-overs
+    ///     (rare, mostly suspended games) skip.
+    ///
+    /// Box scores are fetched in parallel and summed before applying
+    /// so a doubleheader or today-plus-yesterday case produces one
+    /// merged overlay (not two stacked applications). The LIVE badge
+    /// fires only when at least one folded game is actually live;
+    /// pure final overlays fill stats silently.
+    ///
+    /// Trade-off: if the nightly batch has already absorbed
+    /// yesterday's stats into overnight totals, applying yesterday's
+    /// overlay would double-count. The current architecture accepts
+    /// that risk in exchange for closing the more common
+    /// "yesterday's stats not yet in DB" gap.
+    func loadRecentGameStats() async {
         guard !isRetired else { return }
         guard let teamId = mlbTeamId(for: player.teamCode) else { return }
-
+        let cal = Calendar.current
+        let today = Date()
+        guard let yesterday = cal.date(byAdding: .day, value: -1, to: today) else { return }
         let mlb = MLBStatsAPIClient.shared
-        do {
-            let schedule = try await mlb.getTeamSchedule(date: Date(), teamId: teamId)
-            guard let game = schedule.dates.flatMap(\.games).first(where: {
-                // "Preview" / "Scheduled" → not started; skip.
-                $0.status.abstractGameState != "Preview"
-            }) else { return }
 
-            let feed = try await mlb.getLiveFeed(gamePk: game.gamePk)
-            guard let teams = feed.liveData.boxscore?.teams else { return }
-            let key = "ID\(player.player_id)"
-            guard let boxPlayer = teams.away.players[key] ?? teams.home.players[key]
-            else { return }
+        // Pull both days' schedules in parallel. Each branch survives
+        // its peer's failure independently — a yesterday-fetch error
+        // shouldn't kill today's overlay.
+        async let todayScheduleTry = try? mlb.getTeamSchedule(date: today,     teamId: teamId)
+        async let yestScheduleTry  = try? mlb.getTeamSchedule(date: yesterday, teamId: teamId)
+        let (todaySchedule, yestSchedule) = await (todayScheduleTry, yestScheduleTry)
 
-            let bat = boxPlayer.stats?.batting.flatMap(Self.parseBatting)
-            let pit = boxPlayer.stats?.pitching.flatMap(Self.parsePitching)
+        // Resolve the "stats are accurate as of" cutoff — the most
+        // recent nightly batch stamp on either the batting or
+        // pitching season row (whichever this player has). Any game
+        // that started after this stamp is missing from the DB and
+        // needs overlaying; anything before is already in the row.
+        // nil cutoff (rare: pre-migration row, or column not yet
+        // stamped) means "trust the API, include everything" —
+        // worst case we double-count for one nightly cycle.
+        let cutoff = lastUpdatedCutoff()
 
-            // Only flip the LIVE badge when there's a real appearance
-            // on at least one side. A DNP row that exists in the box
-            // score but with zero PA/IP shouldn't pretend the stats
-            // have been updated.
-            let batAppeared = bat?.appeared == true
-            let pitAppeared = pit?.appeared == true
-            guard batAppeared || pitAppeared else { return }
+        // Build the eligible-games list, tagging each with whether
+        // it's currently live — the `hasLiveGame` flag below is the
+        // OR across these tags.
+        var eligible: [(gamePk: Int, isLive: Bool)] = []
+        for g in todaySchedule?.dates.flatMap(\.games) ?? [] {
+            switch g.status.abstractGameState {
+            case "Live":  eligible.append((g.gamePk, true))
+            case "Final":
+                if Self.shouldOverlay(game: g, cutoff: cutoff) {
+                    eligible.append((g.gamePk, false))
+                }
+            default:      break
+            }
+        }
+        for g in yestSchedule?.dates.flatMap(\.games) ?? [] {
+            if g.status.abstractGameState == "Final",
+               Self.shouldOverlay(game: g, cutoff: cutoff) {
+                eligible.append((g.gamePk, false))
+            }
+        }
+        guard !eligible.isEmpty else { return }
 
-            todayBatting  = batAppeared ? bat : nil
-            todayPitching = pitAppeared ? pit : nil
-            todayStatsLoaded = true
-        } catch {
-            // Silent failure path — no badge, original totals shown.
+        // Fan out box-score fetches in parallel — typical case is
+        // 1-2 games so the cost is small, but TaskGroup keeps the
+        // wall-clock at one round trip even if it grows.
+        let playerKey = "ID\(player.player_id)"
+        let perGame: [(bat: BoxBattingLine?, pit: BoxPitchingLine?, isLive: Bool)]
+            = await withTaskGroup(
+                of: (BoxBattingLine?, BoxPitchingLine?, Bool)?.self
+            ) { group in
+                for entry in eligible {
+                    let pk = entry.gamePk
+                    let live = entry.isLive
+                    group.addTask {
+                        guard let feed = try? await mlb.getLiveFeed(gamePk: pk) else { return nil }
+                        guard let teams = feed.liveData.boxscore?.teams else { return nil }
+                        guard let bp = teams.away.players[playerKey]
+                                    ?? teams.home.players[playerKey] else { return nil }
+                        let bat = bp.stats?.batting.flatMap(Self.parseBatting)
+                        let pit = bp.stats?.pitching.flatMap(Self.parsePitching)
+                        return (bat, pit, live)
+                    }
+                }
+                var hits: [(BoxBattingLine?, BoxPitchingLine?, Bool)] = []
+                for await maybe in group {
+                    if let m = maybe { hits.append(m) }
+                }
+                return hits
+            }
+
+        var totalBat = BoxBattingLine()
+        var totalPit = BoxPitchingLine()
+        var sawBat = false
+        var sawPit = false
+        var anyLive = false
+
+        for entry in perGame {
+            if let b = entry.bat, b.appeared { totalBat.add(b); sawBat = true }
+            if let p = entry.pit, p.appeared { totalPit.add(p); sawPit = true }
+            if entry.isLive { anyLive = true }
+        }
+
+        guard sawBat || sawPit else { return }
+        recentBatting    = sawBat ? totalBat : nil
+        recentPitching   = sawPit ? totalPit : nil
+        recentStatsLoaded = true
+        hasLiveGame      = anyLive
+    }
+
+    /// Most recent nightly-batch stamp from either side of the
+    /// player's loaded current stats. Picks the LATER of the two
+    /// when both exist — overnight ingest can lag one side, and
+    /// using the older stamp would mean we'd skip games that the
+    /// later side already counted, leaving a gap. nil when neither
+    /// side ships a stamp (pre-migration deploys).
+    private func lastUpdatedCutoff() -> Date? {
+        let batStr = currentBatting?.stats_last_updated
+        let pitStr = currentPitching?.stats_last_updated
+        let batDate = batStr.flatMap { try? Date($0, strategy: .iso8601) }
+        let pitDate = pitStr.flatMap { try? Date($0, strategy: .iso8601) }
+        switch (batDate, pitDate) {
+        case let (.some(b), .some(p)): return max(b, p)
+        case let (.some(b), .none):    return b
+        case let (.none, .some(p)):    return p
+        default:                       return nil
         }
     }
 
-    private static func parseBatting(_ b: BoxBatting) -> TodayBattingLine {
-        TodayBattingLine(
-            AB:      b.atBats        ?? 0,
-            R:       b.runs          ?? 0,
-            H:       b.hits          ?? 0,
-            doubles: b.doubles       ?? 0,
-            triples: b.triples       ?? 0,
-            HR:      b.homeRuns      ?? 0,
-            RBI:     b.rbi           ?? 0,
-            BB:      b.baseOnBalls   ?? 0,
-            SO:      b.strikeOuts    ?? 0,
-            // BoxBatting doesn't carry SB / HBP / SF in the current
-            // model — they're zeroed; one-game error margin on the
-            // resulting AVG/OBP recomputation is below display
-            // precision (third decimal place rarely shifts).
+    /// Decide whether to overlay a final game's box-score line on
+    /// top of overnight totals. Returns true when the game started
+    /// strictly after the nightly-batch cutoff (definitively not in
+    /// the DB) or when the cutoff is unknown (safe default: include).
+    /// Conservative on games that started before the cutoff and
+    /// ended after — those are treated as already in the DB to
+    /// avoid double-counting; rare in practice because the batch
+    /// runs in the early-morning window when games aren't active.
+    private static func shouldOverlay(game: Game, cutoff: Date?) -> Bool {
+        guard let cutoff else { return true }
+        guard let started = game.startDate else { return true }
+        return started > cutoff
+    }
+
+    private static func parseBatting(_ b: BoxBatting) -> BoxBattingLine {
+        BoxBattingLine(
+            games:   1,
+            AB:      b.atBats      ?? 0,
+            R:       b.runs        ?? 0,
+            H:       b.hits        ?? 0,
+            doubles: b.doubles     ?? 0,
+            triples: b.triples     ?? 0,
+            HR:      b.homeRuns    ?? 0,
+            RBI:     b.rbi         ?? 0,
+            BB:      b.baseOnBalls ?? 0,
+            SO:      b.strikeOuts  ?? 0,
+            // BoxBatting doesn't carry SB / HBP / SF — zeroed.
+            // One-game error margin on AVG/OBP recomputation is
+            // below display precision; same applies summed across
+            // a small handful of games.
             SB:  0,
             HBP: 0,
             SF:  0
         )
     }
 
-    private static func parsePitching(_ p: BoxPitching) -> TodayPitchingLine {
-        TodayPitchingLine(
-            IP: Self.parseInningsString(p.inningsPitched),
-            H:  p.hits         ?? 0,
-            R:  p.runs         ?? 0,
-            ER: p.earnedRuns   ?? 0,
-            BB: p.baseOnBalls  ?? 0,
-            SO: p.strikeOuts   ?? 0,
-            HR: p.homeRuns     ?? 0
+    private static func parsePitching(_ p: BoxPitching) -> BoxPitchingLine {
+        BoxPitchingLine(
+            games: 1,
+            IP:    Self.parseInningsString(p.inningsPitched),
+            H:     p.hits        ?? 0,
+            R:     p.runs        ?? 0,
+            ER:    p.earnedRuns  ?? 0,
+            BB:    p.baseOnBalls ?? 0,
+            SO:    p.strikeOuts  ?? 0,
+            HR:    p.homeRuns    ?? 0
         )
     }
 

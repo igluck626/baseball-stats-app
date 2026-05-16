@@ -85,6 +85,11 @@ class PlayerSeason(Base):
     SF             = Column(Integer)   # sacrifice flies
     SH             = Column(Integer)   # sacrifice hits
     GIDP           = Column(Integer)   # grounded into double plays
+    # Stamped on every save_player_seasons() call. iOS uses this on
+    # the current-season response to decide which recent box-score
+    # lines need to be folded on top of overnight totals — anything
+    # whose game started after this timestamp isn't yet in the row.
+    last_updated   = Column(DateTime)
 
 
 class Pitcher(Base):
@@ -156,6 +161,10 @@ class PitcherSeason(Base):
     SH             = Column(Integer)   # sacrifice hits allowed
     SF             = Column(Integer)   # sacrifice flies allowed
     GIDP           = Column(Integer)   # double plays induced
+    # Mirror of PlayerSeason.last_updated for the pitcher path.
+    # Stamped on save_pitcher_seasons() so the live-stats overlay on
+    # iOS can compare against game start times.
+    last_updated   = Column(DateTime)
 
 
 # ---------------------------------------------------------------------------

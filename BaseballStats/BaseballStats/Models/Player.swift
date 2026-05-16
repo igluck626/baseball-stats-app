@@ -139,6 +139,12 @@ struct PlayerCurrentStats: Codable {
     let bio: PlayerBio?
     let standard: BattingStandardStats?
     let advanced: BattingAdvancedStats?
+    /// ISO-8601 UTC stamp of the nightly batch run that wrote the
+    /// row. Used by the live-stats overlay to decide whether a
+    /// recent game is already counted (game started before this
+    /// stamp) or still needs folding in (started after). nil for
+    /// historical seasons that pre-date the column.
+    let stats_last_updated: String?
 }
 
 struct BattingStandardStats: Codable {
@@ -278,6 +284,9 @@ struct PitcherCurrentStats: Codable {
     let bio: PlayerBio?
     let standard: PitcherStandardStats?
     let advanced: PitcherAdvancedStats?
+    /// See `PlayerCurrentStats.stats_last_updated` — same semantics
+    /// for the pitcher side.
+    let stats_last_updated: String?
 }
 
 struct PitcherStandardStats: Codable {
