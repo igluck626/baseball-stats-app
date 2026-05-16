@@ -53,6 +53,22 @@ final class MLBStatsAPIClient: @unchecked Sendable {
         return try await fetch(components.url!)
     }
 
+    /// Team-scoped schedule. Used by the player-profile live-stats
+    /// loader to ask "does my team play today?" without pulling the
+    /// full 15-game daily slate. Linescore is hydrated so the caller
+    /// can tell preview vs. started without a second round trip.
+    func getTeamSchedule(date: Date, teamId: Int) async throws -> ScheduleResponse {
+        let iso = Self.scheduleDateFormatter.string(from: date)
+        var components = URLComponents(string: "https://statsapi.mlb.com/api/v1/schedule")!
+        components.queryItems = [
+            URLQueryItem(name: "sportId", value: "1"),
+            URLQueryItem(name: "date",    value: iso),
+            URLQueryItem(name: "teamId",  value: String(teamId)),
+            URLQueryItem(name: "hydrate", value: "linescore"),
+        ]
+        return try await fetch(components.url!)
+    }
+
     /// `/api/v1/game/{gamePk}/boxscore`
     func getBoxScore(gamePk: Int) async throws -> BoxScoreResponse {
         let url = URL(string: "https://statsapi.mlb.com/api/v1/game/\(gamePk)/boxscore")!

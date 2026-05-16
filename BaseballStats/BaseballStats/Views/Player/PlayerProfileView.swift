@@ -589,21 +589,32 @@ struct PlayerProfileView: View {
             // for the third line — looked up by stat key from the
             // rank VM. G/PA aren't on the leaderboards list so they
             // render an invisible spacer (.unrankable).
+            //
+            // `effective` merges today's box-score line on top of the
+            // overnight totals when the player has appeared today.
+            // Counting stats get the today line added; AVG/OBP/SLG/OPS
+            // are recomputed from cumulative numerator + denominator.
+            // WAR isn't updated — game WAR isn't shipped in the box
+            // score, so it stays overnight.
             let ranks = battingRanksVM.byStat
+            let effective = makeEffectiveBatting(
+                overnight: stats, today: viewModel.todayBatting
+            )
             currentSeasonGridCard(
                 title: "\(String(stats.season)) Season",
                 subtitle: currentSeasonTeamName,
+                liveBadge: viewModel.todayStatsLoaded && viewModel.todayBatting != nil,
                 items: [
-                    .init(label: "WAR", value: formatWAR(stats.advanced?.WAR), rank: rankableSlot("WAR", ranks)),
-                    .init(label: "AVG", value: format3(stats.standard?.BA),    rank: rankableSlot("AVG", ranks)),
-                    .init(label: "OBP", value: format3(stats.standard?.OBP),   rank: rankableSlot("OBP", ranks)),
-                    .init(label: "SLG", value: format3(stats.standard?.SLG),   rank: rankableSlot("SLG", ranks)),
-                    .init(label: "OPS", value: format3(stats.standard?.OPS),   rank: rankableSlot("OPS", ranks)),
-                    .init(label: "HR",  value: formatCount(stats.standard?.HR),  rank: rankableSlot("HR",  ranks)),
-                    .init(label: "RBI", value: formatCount(stats.standard?.RBI), rank: rankableSlot("RBI", ranks)),
-                    .init(label: "SB",  value: formatCount(stats.standard?.SB),  rank: rankableSlot("SB",  ranks)),
-                    .init(label: "G",   value: formatCount(stats.standard?.G),   rank: .unrankable),
-                    .init(label: "PA",  value: formatCount(stats.standard?.PA),  rank: .unrankable),
+                    .init(label: "WAR", value: formatWAR(effective.WAR), rank: rankableSlot("WAR", ranks)),
+                    .init(label: "AVG", value: format3(effective.AVG),    rank: rankableSlot("AVG", ranks)),
+                    .init(label: "OBP", value: format3(effective.OBP),   rank: rankableSlot("OBP", ranks)),
+                    .init(label: "SLG", value: format3(effective.SLG),   rank: rankableSlot("SLG", ranks)),
+                    .init(label: "OPS", value: format3(effective.OPS),   rank: rankableSlot("OPS", ranks)),
+                    .init(label: "HR",  value: formatCount(effective.HR),  rank: rankableSlot("HR",  ranks)),
+                    .init(label: "RBI", value: formatCount(effective.RBI), rank: rankableSlot("RBI", ranks)),
+                    .init(label: "SB",  value: formatCount(effective.SB),  rank: rankableSlot("SB",  ranks)),
+                    .init(label: "G",   value: formatCount(effective.G),   rank: .unrankable),
+                    .init(label: "PA",  value: formatCount(effective.PA),  rank: .unrankable),
                 ]
             )
         } else if let error = viewModel.error {
@@ -633,22 +644,32 @@ struct PlayerProfileView: View {
             let gs = stats.standard?.GS ?? 0
             let isStarter = isStarterRole(g: g, gs: gs)
             let ranks = pitchingRanksVM.byStat
+            // Same effective-overlay pattern as batting — today's
+            // box-score line gets folded into the season totals on
+            // the counting stats, with ERA/WHIP/K9 recomputed off
+            // the merged numerator/denominator. W-L/SV stay
+            // overnight; decisions arrive late and updating them
+            // mid-game would lie about an unfinished game.
+            let effective = makeEffectivePitching(
+                overnight: stats, today: viewModel.todayPitching
+            )
             currentSeasonGridCard(
                 title: "\(String(stats.season)) Season",
                 subtitle: currentSeasonTeamName,
+                liveBadge: viewModel.todayStatsLoaded && viewModel.todayPitching != nil,
                 items: [
-                    .init(label: "WAR",  value: formatWAR(stats.advanced?.WAR),                       rank: rankableSlot("WAR",  ranks)),
-                    .init(label: "W-L",  value: formatWL(stats.standard?.W, stats.standard?.L),       rank: rankableSlot("W",    ranks)),
-                    .init(label: "ERA",  value: format2(stats.standard?.ERA),                         rank: rankableSlot("ERA",  ranks)),
-                    .init(label: "WHIP", value: format2(stats.standard?.WHIP),                        rank: rankableSlot("WHIP", ranks)),
-                    .init(label: "K/9",  value: format1(stats.standard?.K_per9),                      rank: rankableSlot("SO/9", ranks)),
-                    .init(label: "G",    value: formatCount(stats.standard?.G),                       rank: .unrankable),
+                    .init(label: "WAR",  value: formatWAR(effective.WAR),                              rank: rankableSlot("WAR",  ranks)),
+                    .init(label: "W-L",  value: formatWL(effective.W, effective.L),                    rank: rankableSlot("W",    ranks)),
+                    .init(label: "ERA",  value: format2(effective.ERA),                                rank: rankableSlot("ERA",  ranks)),
+                    .init(label: "WHIP", value: format2(effective.WHIP),                               rank: rankableSlot("WHIP", ranks)),
+                    .init(label: "K/9",  value: format1(effective.K_per9),                             rank: rankableSlot("SO/9", ranks)),
+                    .init(label: "G",    value: formatCount(effective.G),                              rank: .unrankable),
                     isStarter
-                        ? StatItem(label: "GS", value: formatCount(stats.standard?.GS), rank: .unrankable)
-                        : StatItem(label: "SV", value: formatCount(stats.standard?.SV), rank: rankableSlot("SV", ranks)),
-                    .init(label: "IP",   value: formatIP(stats.standard?.IP),                         rank: rankableSlot("IP", ranks)),
-                    .init(label: "SO",   value: formatCount(stats.standard?.SO),                      rank: rankableSlot("SO", ranks)),
-                    .init(label: "BB",   value: formatCount(stats.standard?.BB),                      rank: .unrankable),
+                        ? StatItem(label: "GS", value: formatCount(effective.GS), rank: .unrankable)
+                        : StatItem(label: "SV", value: formatCount(effective.SV), rank: rankableSlot("SV", ranks)),
+                    .init(label: "IP",   value: formatIP(effective.IP),                                rank: rankableSlot("IP", ranks)),
+                    .init(label: "SO",   value: formatCount(effective.SO),                             rank: rankableSlot("SO", ranks)),
+                    .init(label: "BB",   value: formatCount(effective.BB),                             rank: .unrankable),
                 ]
             )
         } else if let error = viewModel.error {
@@ -798,14 +819,18 @@ struct PlayerProfileView: View {
     /// Current-season card: title (+ subtitle) + 5×2 grid of three-line
     /// stat blocks (value / label / rank). Caller passes exactly 10
     /// `StatItem`s in row-major order with each cell's rank slot
-    /// pre-decided (`.rank` / `.outside` / `.unrankable`).
+    /// pre-decided (`.rank` / `.outside` / `.unrankable`). `liveBadge`
+    /// renders a small pulsing LIVE pill next to the title when
+    /// today's box-score line has been merged into the displayed
+    /// numbers — the only visual indicator that stats are live.
     private func currentSeasonGridCard(
         title: String,
         subtitle: String?,
+        liveBadge: Bool = false,
         items: [StatItem]
     ) -> some View {
         VStack(spacing: 10) {
-            gridHeader(title: title, subtitle: subtitle)
+            gridHeader(title: title, subtitle: subtitle, liveBadge: liveBadge)
             VStack(spacing: 8) {
                 statsRankedRow(Array(items.prefix(5)))
                 statsRankedRow(Array(items.dropFirst(5).prefix(5)))
@@ -814,9 +839,12 @@ struct PlayerProfileView: View {
         .modifier(GridCardChrome())
     }
 
-    private func gridHeader(title: String, subtitle: String?) -> some View {
+    private func gridHeader(title: String, subtitle: String?, liveBadge: Bool = false) -> some View {
         HStack(spacing: 8) {
             Text(title).font(.headline)
+            if liveBadge {
+                LiveBadge()
+            }
             Spacer()
             if let subtitle {
                 Text(subtitle)
@@ -2603,6 +2631,128 @@ private func format2(_ value: Double?) -> String {
 private func format1(_ value: Double?) -> String {
     guard let value else { return "—" }
     return String(format: "%.1f", value)
+}
+
+// MARK: - Effective stats (overnight + today merge)
+
+/// Player-profile season-grid values with today's box-score line
+/// folded in when applicable. The grid builder reads these instead
+/// of `currentBatting.standard.*` so the same render path works
+/// whether or not the player has appeared today.
+fileprivate struct EffectiveBatting {
+    let WAR: Double?
+    let AVG: Double?
+    let OBP: Double?
+    let SLG: Double?
+    let OPS: Double?
+    let G:   Int?
+    let HR:  Int?
+    let RBI: Int?
+    let SB:  Int?
+    let PA:  Int?
+}
+
+fileprivate struct EffectivePitching {
+    let WAR:    Double?
+    let W:      Int?
+    let L:      Int?
+    let ERA:    Double?
+    let WHIP:   Double?
+    let K_per9: Double?
+    let G:      Int?
+    let GS:     Int?
+    let SV:     Int?
+    let IP:     Double?
+    let SO:     Int?
+    let BB:     Int?
+}
+
+/// Merge today's batting line on top of the overnight season
+/// totals. When `today == nil` we pass through the overnight
+/// values; otherwise counting stats add directly and rate stats
+/// (AVG / OBP / SLG / OPS) are recomputed off the merged H / AB /
+/// BB / HBP / SF / TB so the third-decimal display is accurate.
+/// WAR isn't updated — box scores don't ship game WAR.
+fileprivate func makeEffectiveBatting(
+    overnight stats: PlayerCurrentStats,
+    today: TodayBattingLine?
+) -> EffectiveBatting {
+    let s = stats.standard
+    let war = stats.advanced?.WAR
+    guard let today else {
+        return EffectiveBatting(
+            WAR: war, AVG: s?.BA, OBP: s?.OBP, SLG: s?.SLG, OPS: s?.OPS,
+            G: s?.G, HR: s?.HR, RBI: s?.RBI, SB: s?.SB, PA: s?.PA
+        )
+    }
+    let H   = (s?.H   ?? 0) + today.H
+    let AB  = (s?.AB  ?? 0) + today.AB
+    let BB  = (s?.BB  ?? 0) + today.BB
+    let HBP = (s?.HBP ?? 0) + today.HBP
+    let SF  = (s?.SF  ?? 0) + today.SF
+    let d2  = (s?.doubles ?? 0) + today.doubles
+    let d3  = (s?.triples ?? 0) + today.triples
+    let HR  = (s?.HR  ?? 0) + today.HR
+    // TB = singles + 2*doubles + 3*triples + 4*HR
+    //    = (H - 2B - 3B - HR) + 2*2B + 3*3B + 4*HR
+    //    = H + 2B + 2*3B + 3*HR
+    let TB  = H + d2 + 2 * d3 + 3 * HR
+    let avg: Double? = AB > 0 ? Double(H) / Double(AB) : nil
+    let obpNum = H + BB + HBP
+    let obpDen = AB + BB + HBP + SF
+    let obp: Double? = obpDen > 0 ? Double(obpNum) / Double(obpDen) : nil
+    let slg: Double? = AB > 0 ? Double(TB) / Double(AB) : nil
+    let ops: Double? = {
+        guard let obp, let slg else { return nil }
+        return obp + slg
+    }()
+    return EffectiveBatting(
+        WAR: war,
+        AVG: avg, OBP: obp, SLG: slg, OPS: ops,
+        G:   (s?.G   ?? 0) + 1,
+        HR:  HR,
+        RBI: (s?.RBI ?? 0) + today.RBI,
+        SB:  (s?.SB  ?? 0) + today.SB,
+        PA:  (s?.PA  ?? 0) + today.PA
+    )
+}
+
+/// Merge today's pitching line on top of overnight season totals.
+/// Counting stats add; ERA / WHIP / K9 are recomputed off the
+/// merged ER / H / BB / SO / IP. W-L and SV aren't touched —
+/// decisions arrive late in a game and updating them mid-game
+/// would assert an outcome that isn't yet final.
+fileprivate func makeEffectivePitching(
+    overnight stats: PitcherCurrentStats,
+    today: TodayPitchingLine?
+) -> EffectivePitching {
+    let s = stats.standard
+    let war = stats.advanced?.WAR
+    guard let today else {
+        return EffectivePitching(
+            WAR: war,
+            W:  s?.W, L: s?.L,
+            ERA: s?.ERA, WHIP: s?.WHIP, K_per9: s?.K_per9,
+            G:  s?.G, GS: s?.GS, SV: s?.SV,
+            IP: s?.IP, SO: s?.SO, BB: s?.BB
+        )
+    }
+    let IP = (s?.IP ?? 0) + today.IP
+    let ER = (s?.ER ?? 0) + today.ER
+    let H  = (s?.H  ?? 0) + today.H
+    let BB = (s?.BB ?? 0) + today.BB
+    let SO = (s?.SO ?? 0) + today.SO
+    let era:  Double? = IP > 0 ? Double(ER) * 9.0 / IP : nil
+    let whip: Double? = IP > 0 ? Double(H + BB) / IP : nil
+    let k9:   Double? = IP > 0 ? Double(SO) * 9.0 / IP : nil
+    return EffectivePitching(
+        WAR: war,
+        W:  s?.W, L: s?.L,
+        ERA: era, WHIP: whip, K_per9: k9,
+        G:  (s?.G ?? 0) + 1,
+        GS: s?.GS, SV: s?.SV,
+        IP: IP, SO: SO, BB: BB
+    )
 }
 
 private func formatInt(_ value: Int?) -> String {

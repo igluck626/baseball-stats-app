@@ -16,6 +16,50 @@
 import Combine
 import Foundation
 
+/// One-game stat overlay applied on top of the overnight season
+/// totals in the player profile. Populated by `loadTodayStats()`
+/// when the player's team has an in-progress or just-finished game
+/// and the player appeared in the box score.
+struct TodayBattingLine: Hashable {
+    var AB:      Int = 0
+    var R:       Int = 0
+    var H:       Int = 0
+    var doubles: Int = 0
+    var triples: Int = 0
+    var HR:      Int = 0
+    var RBI:     Int = 0
+    var BB:      Int = 0
+    var SO:      Int = 0
+    var SB:      Int = 0
+    var HBP:     Int = 0
+    var SF:      Int = 0
+
+    /// Plate appearances — approximated as AB + BB + HBP + SF. SH
+    /// (sacrifice bunts) is omitted; rare enough at modern usage
+    /// that the one-PA imprecision per game is acceptable for a
+    /// "today only" overlay.
+    var PA: Int { AB + BB + HBP + SF }
+
+    /// "Did the batter actually appear today?" — at least one PA
+    /// of any kind. Defines whether the LIVE badge fires for
+    /// batters; a position player who sat out shouldn't trigger it.
+    var appeared: Bool { PA > 0 }
+}
+
+struct TodayPitchingLine: Hashable {
+    /// Already in true-decimal form (5.667 = 5⅔). The MLB box score
+    /// ships "5.2" as a string; conversion happens at parse time.
+    var IP: Double = 0
+    var H:  Int    = 0
+    var R:  Int    = 0
+    var ER: Int    = 0
+    var BB: Int    = 0
+    var SO: Int    = 0
+    var HR: Int    = 0
+
+    var appeared: Bool { IP > 0 }
+}
+
 @MainActor
 final class PlayerViewModel: ObservableObject {
     /// Source of truth for the bio shown in the header. Comes from the
@@ -30,6 +74,19 @@ final class PlayerViewModel: ObservableObject {
     /// `awards?.career_by_year` drive the per-season chiclets in the
     /// frozen pane and the headline-counts row in the header card.
     @Published var awards: PlayerAwardsResponse?
+
+    /// Today's box-score line for the player, if their team has a
+    /// game today that's already started and they appeared. nil
+    /// otherwise (no game / didn't play / not yet started / retired).
+    /// View merges these on top of the overnight `currentBatting` /
+    /// `currentPitching` season totals.
+    @Published var todayBatting: TodayBattingLine?
+    @Published var todayPitching: TodayPitchingLine?
+    /// True once `loadTodayStats()` completes AND found a real
+    /// appearance (batting and/or pitching). Drives the LIVE badge
+    /// on the season-card header. Won't flip if the player sat out
+    /// or their team didn't play today.
+    @Published var todayStatsLoaded: Bool = false
 
     @Published var isLoadingCurrentBatting = false
     @Published var isLoadingCareerBatting = false
@@ -176,6 +233,13 @@ final class PlayerViewModel: ObservableObject {
     /// Fires all four endpoints in parallel via `async let`. Each branch
     /// owns its own loading flag so the UI can render whichever finishes
     /// first; a slow career fetch doesn't block the overview.
+    ///
+    /// Once the main parallel loads finish, kicks off a background
+    /// `loadTodayStats()` task — that fetch hits MLB Stats API
+    /// directly and overlays today's box-score line onto the season
+    /// totals if the player's team has played today. The overlay is
+    /// silent (no spinner, no blocking) so the initial profile
+    /// render stays fast.
     func loadData() async {
         error = nil
 
@@ -190,6 +254,109 @@ final class PlayerViewModel: ObservableObject {
             currentPitchingDone, careerPitchingDone,
             awardsDone
         )
+
+        // Background task — never awaited from `loadData`'s caller so
+        // a slow/failed MLB Stats API call can't block UI updates.
+        Task { [weak self] in
+            await self?.loadTodayStats()
+        }
+    }
+
+    // MARK: - Today's stats overlay
+
+    /// Fetches the player's box-score line for today's game (if any)
+    /// and stores it as a `TodayBattingLine` / `TodayPitchingLine`
+    /// overlay. Silently bails on every "doesn't apply" case:
+    ///   • No teamCode / can't resolve to MLB team id (retired,
+    ///     historical players, unmapped code)
+    ///   • Team has no game today
+    ///   • Game hasn't started yet (status "Preview" / "Scheduled")
+    ///   • Player isn't in the box score (DNP)
+    ///   • Player appeared but with zero PA/IP (e.g. courtesy runner)
+    /// All failures are non-fatal — `todayStatsLoaded` stays false
+    /// and the LIVE badge doesn't fire.
+    func loadTodayStats() async {
+        guard !isRetired else { return }
+        guard let teamId = mlbTeamId(for: player.teamCode) else { return }
+
+        let mlb = MLBStatsAPIClient.shared
+        do {
+            let schedule = try await mlb.getTeamSchedule(date: Date(), teamId: teamId)
+            guard let game = schedule.dates.flatMap(\.games).first(where: {
+                // "Preview" / "Scheduled" → not started; skip.
+                $0.status.abstractGameState != "Preview"
+            }) else { return }
+
+            let feed = try await mlb.getLiveFeed(gamePk: game.gamePk)
+            guard let teams = feed.liveData.boxscore?.teams else { return }
+            let key = "ID\(player.player_id)"
+            guard let boxPlayer = teams.away.players[key] ?? teams.home.players[key]
+            else { return }
+
+            let bat = boxPlayer.stats?.batting.flatMap(Self.parseBatting)
+            let pit = boxPlayer.stats?.pitching.flatMap(Self.parsePitching)
+
+            // Only flip the LIVE badge when there's a real appearance
+            // on at least one side. A DNP row that exists in the box
+            // score but with zero PA/IP shouldn't pretend the stats
+            // have been updated.
+            let batAppeared = bat?.appeared == true
+            let pitAppeared = pit?.appeared == true
+            guard batAppeared || pitAppeared else { return }
+
+            todayBatting  = batAppeared ? bat : nil
+            todayPitching = pitAppeared ? pit : nil
+            todayStatsLoaded = true
+        } catch {
+            // Silent failure path — no badge, original totals shown.
+        }
+    }
+
+    private static func parseBatting(_ b: BoxBatting) -> TodayBattingLine {
+        TodayBattingLine(
+            AB:      b.atBats        ?? 0,
+            R:       b.runs          ?? 0,
+            H:       b.hits          ?? 0,
+            doubles: b.doubles       ?? 0,
+            triples: b.triples       ?? 0,
+            HR:      b.homeRuns      ?? 0,
+            RBI:     b.rbi           ?? 0,
+            BB:      b.baseOnBalls   ?? 0,
+            SO:      b.strikeOuts    ?? 0,
+            // BoxBatting doesn't carry SB / HBP / SF in the current
+            // model — they're zeroed; one-game error margin on the
+            // resulting AVG/OBP recomputation is below display
+            // precision (third decimal place rarely shifts).
+            SB:  0,
+            HBP: 0,
+            SF:  0
+        )
+    }
+
+    private static func parsePitching(_ p: BoxPitching) -> TodayPitchingLine {
+        TodayPitchingLine(
+            IP: Self.parseInningsString(p.inningsPitched),
+            H:  p.hits         ?? 0,
+            R:  p.runs         ?? 0,
+            ER: p.earnedRuns   ?? 0,
+            BB: p.baseOnBalls  ?? 0,
+            SO: p.strikeOuts   ?? 0,
+            HR: p.homeRuns     ?? 0
+        )
+    }
+
+    /// MLB box scores ship innings as "5.2" → 5 and ⅔ innings, NOT
+    /// 5.2 in decimal. Convert to true decimal (5.667) so it can be
+    /// added to the overnight Float-stored IP without distortion.
+    private static func parseInningsString(_ s: String?) -> Double {
+        guard let s, !s.isEmpty else { return 0 }
+        if let dot = s.firstIndex(of: ".") {
+            let whole = Double(s[..<dot]) ?? 0
+            let after = s.index(after: dot)
+            let frac = Double(s[after...]) ?? 0
+            return whole + frac / 3.0
+        }
+        return Double(s) ?? 0
     }
 
     private func loadAwards() async {

@@ -177,3 +177,13 @@ func teamLogoURL(for code: String?) -> URL? {
           let mlbId = mlbStatsApiTeamId[code.uppercased()] else { return nil }
     return URL(string: "https://midfield.mlbstatic.com/v1/team/\(mlbId)/spots/120")
 }
+
+/// Lahman team code → MLB Stats API numeric team id. Surfaced as a
+/// function rather than re-exposing the dictionary directly so the
+/// case-folding rule stays in one place. Used by the live-stats
+/// loader to call `/schedule?teamId={id}` for "does this team play
+/// today?" lookups without coupling that path to logo URLs.
+func mlbTeamId(for code: String?) -> Int? {
+    guard let code, !code.isEmpty else { return nil }
+    return mlbStatsApiTeamId[code.uppercased()]
+}
