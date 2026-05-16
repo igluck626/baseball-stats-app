@@ -20,11 +20,17 @@ final class BoxScoreViewModel: ObservableObject {
     let game: Game
 
     @Published var boxScore: BoxScoreResponse?
+    /// Populated only for live games — refreshed every 30s by the
+    /// live-feed polling loop. The box-score subtree of the live
+    /// feed is projected into `boxScore` so the same render path
+    /// works for both modes.
+    @Published var live: LiveFeedResponse?
     @Published var isLoading = false
     @Published var error: String?
 
     private let mlb: MLBStatsAPIClient
     private let api: APIClient
+    private var liveTask: Task<Void, Never>?
 
     init(game: Game, mlb: MLBStatsAPIClient = .shared, api: APIClient = .shared) {
         self.game = game
@@ -35,13 +41,56 @@ final class BoxScoreViewModel: ObservableObject {
     func load() async {
         isLoading = true
         error = nil
+        if game.phase == .live {
+            await loadLive()
+        } else {
+            await loadStatic()
+        }
+        isLoading = false
+    }
+
+    private func loadStatic() async {
         do {
             boxScore = try await mlb.getBoxScore(gamePk: game.gamePk)
         } catch {
             self.error = error.localizedDescription
             boxScore = nil
         }
-        isLoading = false
+    }
+
+    private func loadLive() async {
+        do {
+            let feed = try await mlb.getLiveFeed(gamePk: game.gamePk)
+            live = feed
+            if let teams = feed.liveData.boxscore?.teams {
+                boxScore = BoxScoreResponse(teams: teams)
+            }
+        } catch {
+            self.error = error.localizedDescription
+            live = nil
+        }
+    }
+
+    /// Starts a 30s polling loop for live games. Idempotent + self-
+    /// terminating when `liveData.linescore.inningState` reports
+    /// "Final" / "Game Over". Caller stops it on disappear.
+    func startLivePolling() {
+        guard game.phase == .live else { return }
+        stopLivePolling()
+        liveTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 30 * 1_000_000_000)
+                guard !Task.isCancelled, let self else { return }
+                await self.loadLive()
+                let state = self.live?.liveData.linescore?.inningState?.lowercased()
+                if state == "final" || state == "game over" { return }
+            }
+        }
+    }
+
+    func stopLivePolling() {
+        liveTask?.cancel()
+        liveTask = nil
     }
 
     /// Resolve an MLB-id-keyed player → our backend's PlayerSearchResult.
@@ -71,6 +120,9 @@ struct BoxScoreView: View {
         ScrollView {
             VStack(spacing: 16) {
                 headerCard
+                if vm.game.phase == .live, let live = vm.live?.liveData {
+                    liveSituationCard(live)
+                }
                 if let bs = vm.boxScore {
                     linescoreCard
                     teamSection(side: .away, bs: bs)
@@ -98,7 +150,11 @@ struct BoxScoreView: View {
         }
         .navigationTitle(navigationTitle)
         .navigationBarTitleDisplayMode(.inline)
-        .task { await vm.load() }
+        .task {
+            await vm.load()
+            vm.startLivePolling()
+        }
+        .onDisappear { vm.stopLivePolling() }
         .overlay(alignment: .top) {
             if pendingPlayerLookup != nil {
                 ProgressView()
@@ -122,12 +178,18 @@ struct BoxScoreView: View {
 
     private var headerCard: some View {
         VStack(spacing: 10) {
+            // LIVE badge sits centered above the score row so it
+            // owns the headline visual; the team-by-score row stays
+            // symmetric below.
+            if vm.game.phase == .live {
+                LiveBadge()
+            }
             HStack(spacing: 12) {
                 teamHeader(side: vm.game.teams.away)
                 Spacer()
                 Text(centerStatus)
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(vm.game.phase == .live ? Color.red : Color.secondary)
                 Spacer()
                 teamHeader(side: vm.game.teams.home)
             }
@@ -142,6 +204,76 @@ struct BoxScoreView: View {
         .frame(maxWidth: .infinity)
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
         .shadow(color: .black.opacity(0.06), radius: 6, x: 0, y: 2)
+    }
+
+    /// Live in-game card — surfaces the current matchup, base
+    /// runners, and count. Only rendered while `phase == .live`
+    /// (the view-body branch is already gated on that), so we can
+    /// freely assume the linescore has live state.
+    private func liveSituationCard(_ live: LiveData) -> some View {
+        let ls = live.linescore
+        let play = live.plays?.currentPlay
+        let batter = play?.matchup?.batter ?? ls?.offense?.batter
+        let pitcher = play?.matchup?.pitcher ?? ls?.defense?.pitcher
+        let balls = play?.count?.balls ?? ls?.balls ?? 0
+        let strikes = play?.count?.strikes ?? ls?.strikes ?? 0
+        let outs = play?.count?.outs ?? ls?.outs ?? 0
+        let inningArrow = (ls?.isTopInning).map { $0 ? "▲" : "▼" } ?? ""
+        let inningOrd = ls?.currentInningOrdinal ?? "—"
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Text("\(inningArrow) \(inningOrd)")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(.red)
+                    .monospacedDigit()
+                Spacer()
+                Text("\(balls)-\(strikes) · \(outs) out\(outs == 1 ? "" : "s")")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            HStack(alignment: .center, spacing: 16) {
+                BaseRunnerView(
+                    first:  ls?.offense?.first  != nil,
+                    second: ls?.offense?.second != nil,
+                    third:  ls?.offense?.third  != nil,
+                    size: 44
+                )
+                VStack(alignment: .leading, spacing: 4) {
+                    if let pitcher {
+                        Text("Pitching: \(pitcher.fullName)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    if let batter {
+                        Text("Batting: \(batter.fullName)")
+                            .font(.caption.weight(.semibold))
+                            .lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            if let desc = lastPlayDescription(play) {
+                Text(desc)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity)
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
+        .shadow(color: .black.opacity(0.06), radius: 6, x: 0, y: 2)
+    }
+
+    /// Prefer the resolved PA description; fall back to the last
+    /// individual pitch event's description for mid-PA states.
+    private func lastPlayDescription(_ play: LivePlay?) -> String? {
+        if let desc = play?.result?.description, !desc.isEmpty { return desc }
+        return play?.playEvents?.compactMap(\.details?.description).last
     }
 
     private func teamHeader(side: GameTeam) -> some View {

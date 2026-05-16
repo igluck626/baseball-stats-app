@@ -58,19 +58,19 @@ final class ScoresViewModel: ObservableObject {
     }
 
     /// Spin up a polling task that re-runs `load(date:)` every 30s
-    /// while any game in `games` is live. Cancels itself naturally
-    /// when no live games remain. Caller is responsible for calling
-    /// `stopAutoRefresh()` when the view disappears or the date
-    /// changes.
+    /// while any game in `games` is live AND the selected date is
+    /// today. We don't poll past dates (scores frozen) or future
+    /// dates (no live state to refresh into). Cancels itself
+    /// naturally once the last live game on today's slate ends.
     func startAutoRefresh(for date: Date) {
         stopAutoRefresh()
+        guard Calendar.current.isDateInToday(date) else { return }
         guard games.contains(where: { $0.phase == .live }) else { return }
         refreshTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 30 * 1_000_000_000)
                 guard !Task.isCancelled, let self else { return }
                 await self.load(date: date)
-                // Stop polling if no game remains live after the refresh.
                 if !self.games.contains(where: { $0.phase == .live }) { return }
             }
         }
@@ -257,6 +257,11 @@ struct ScoresView: View {
                         // button inside the expanded view, so the
                         // outer cell doesn't wrap a NavigationLink.
                         FinalGameCard(game: game, path: $navigationPath)
+                    } else if game.phase == .live {
+                        NavigationLink(value: game) {
+                            LiveGameCard(game: game)
+                        }
+                        .buttonStyle(.plain)
                     } else {
                         NavigationLink(value: game) {
                             GameCard(game: game)
@@ -655,6 +660,162 @@ private struct FinalGameCard: View {
         }
         .buttonStyle(.plain)
         .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+}
+
+// MARK: - Live game card
+
+/// Card variant for games currently in progress. Holds its own
+/// `LiveFeedViewModel` so each card polls `/feed/live` independently;
+/// the parent `ScoresViewModel`'s 30-second schedule poll only
+/// covers list-level state (a game flipping from preview → live or
+/// live → final). Tapping the card pushes the live BoxScoreView.
+private struct LiveGameCard: View {
+    let game: Game
+    @StateObject private var feed = LiveFeedViewModel()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            scoreboardRow
+            if let live = feed.live?.liveData {
+                Divider()
+                inGameDetail(live)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity)
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
+        .shadow(color: .black.opacity(0.06), radius: 6, x: 0, y: 2)
+        .contentShape(Rectangle())
+        .task { await feed.start(gamePk: game.gamePk) }
+        .onDisappear { feed.stop() }
+    }
+
+    // MARK: Top — team rows + inning + LIVE badge
+
+    private var scoreboardRow: some View {
+        HStack(alignment: .center, spacing: 14) {
+            VStack(spacing: 8) {
+                teamRow(side: game.teams.away)
+                teamRow(side: game.teams.home)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Divider().frame(height: 56)
+
+            VStack(alignment: .trailing, spacing: 6) {
+                LiveBadge()
+                inningArrow
+            }
+            .frame(minWidth: 60, alignment: .trailing)
+        }
+    }
+
+    private func teamRow(side: GameTeam) -> some View {
+        HStack(spacing: 10) {
+            AsyncImage(url: side.team.logoURL) { image in
+                image.resizable().scaledToFit()
+            } placeholder: {
+                Circle().fill(Color(.secondarySystemFill))
+            }
+            .frame(width: 28, height: 28)
+
+            Text(side.team.abbreviation ?? String(side.team.name.prefix(3)).uppercased())
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(1)
+
+            Spacer()
+
+            Text(side.score.map(String.init) ?? "")
+                .font(.title3.weight(.semibold))
+                .monospacedDigit()
+        }
+    }
+
+    /// "▲ 7th" / "▼ 9th" — top vs bottom of inning, derived from the
+    /// linescore's `isTopInning`. Falls back to the inning ordinal
+    /// alone when the half isn't reported (mid-inning / end-inning).
+    private var inningArrow: some View {
+        let ls = game.linescore ?? feed.live?.liveData.linescore.map(toGameLinescore)
+        let ordinal = ls?.currentInningOrdinal
+            ?? feed.live?.liveData.linescore?.currentInningOrdinal
+            ?? "?"
+        let isTop = feed.live?.liveData.linescore?.isTopInning
+            ?? game.linescore?.isTopInning
+        let arrow: String? = isTop.map { $0 ? "▲" : "▼" }
+        return HStack(spacing: 4) {
+            if let arrow {
+                Text(arrow).font(.caption.weight(.bold))
+            }
+            Text(ordinal)
+                .font(.caption.weight(.semibold))
+                .monospacedDigit()
+        }
+        .foregroundStyle(.red)
+    }
+
+    /// Bridge from `LiveLinescore` → `Linescore` shape so the
+    /// inning ordinal can be read off either source. The fields
+    /// we care about (`currentInningOrdinal`) line up by name.
+    private func toGameLinescore(_ live: LiveLinescore) -> Linescore {
+        Linescore(
+            currentInning: live.currentInning,
+            currentInningOrdinal: live.currentInningOrdinal,
+            inningState: live.inningState,
+            innings: live.innings,
+            teams: live.teams,
+            scheduledInnings: live.scheduledInnings,
+            isTopInning: live.isTopInning,
+            balls: live.balls,
+            strikes: live.strikes,
+            outs: live.outs
+        )
+    }
+
+    // MARK: Bottom — current matchup, bases + count, last play
+
+    private func inGameDetail(_ live: LiveData) -> some View {
+        let ls = live.linescore
+        let play = live.plays?.currentPlay
+        let batter = play?.matchup?.batter ?? ls?.offense?.batter
+        let pitcher = play?.matchup?.pitcher ?? ls?.defense?.pitcher
+        let balls = play?.count?.balls ?? ls?.balls ?? 0
+        let strikes = play?.count?.strikes ?? ls?.strikes ?? 0
+        let outs = play?.count?.outs ?? ls?.outs ?? 0
+        return VStack(alignment: .leading, spacing: 8) {
+            if let batter, let pitcher {
+                Text("\(batter.fullName) vs. \(pitcher.fullName)")
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+            }
+            HStack(spacing: 12) {
+                BaseRunnerView(
+                    first:  ls?.offense?.first  != nil,
+                    second: ls?.offense?.second != nil,
+                    third:  ls?.offense?.third  != nil,
+                    size: 26
+                )
+                Text("\(balls)-\(strikes), \(outs) out\(outs == 1 ? "" : "s")")
+                    .font(.caption.weight(.semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
+            if let desc = lastPlayDescription(play) {
+                Text(desc)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
+    }
+
+    /// "Strike swinging" / "Single to left field" — prefer the PA
+    /// result description when the AB has resolved; otherwise the
+    /// last pitch event's description (mid-PA states).
+    private func lastPlayDescription(_ play: LivePlay?) -> String? {
+        if let desc = play?.result?.description, !desc.isEmpty { return desc }
+        return play?.playEvents?.compactMap(\.details?.description).last
     }
 }
 

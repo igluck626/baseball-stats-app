@@ -231,3 +231,108 @@ struct BoxPitching: Codable, Hashable {
     let homeRuns: Int?
     let era: String?              // "2.41" — string from the API
 }
+
+// MARK: - Live feed (/api/v1.1/game/{pk}/feed/live)
+
+/// Full-game live snapshot — `LiveGameCard` polls this every 30s to
+/// drive the in-progress card and the live BoxScoreView. Decodes
+/// only the `liveData` subtree; the response also contains
+/// `gameData` (static metadata) which we skip.
+struct LiveFeedResponse: Codable {
+    let liveData: LiveData
+}
+
+struct LiveData: Codable {
+    let linescore: LiveLinescore?
+    let plays: LivePlays?
+    /// Same shape as the standalone /boxscore endpoint nested one
+    /// level deeper. Live mode uses this so the batting + pitching
+    /// tables on BoxScoreView refresh in sync with the rest of the
+    /// live state without a second round trip.
+    let boxscore: LiveBoxscoreEnvelope?
+}
+
+struct LiveBoxscoreEnvelope: Codable {
+    let teams: BoxScoreTeams
+}
+
+struct LiveLinescore: Codable {
+    let currentInning: Int?
+    let currentInningOrdinal: String?       // "9th", etc.
+    let inningHalf: String?                  // "Top" / "Bottom"
+    let inningState: String?                 // "Top" / "Bottom" / "Middle" / "End"
+    let isTopInning: Bool?
+    let balls: Int?
+    let strikes: Int?
+    let outs: Int?
+    /// Offense block — current batter + base runners. The bases
+    /// themselves are `PlayerInfo?` per base; non-nil means a
+    /// runner is on that base.
+    let offense: LiveOffense?
+    /// Defense block — current pitcher.
+    let defense: LiveDefense?
+    let innings: [Inning]?
+    let teams: LinescoreTeamsTotals?
+    let scheduledInnings: Int?
+}
+
+struct LiveOffense: Codable {
+    let batter: PlayerInfo?
+    let onDeck: PlayerInfo?
+    let inHole: PlayerInfo?
+    let first: PlayerInfo?
+    let second: PlayerInfo?
+    let third: PlayerInfo?
+}
+
+struct LiveDefense: Codable {
+    let pitcher: PlayerInfo?
+    let catcher: PlayerInfo?
+}
+
+struct LivePlays: Codable {
+    let currentPlay: LivePlay?
+}
+
+struct LivePlay: Codable {
+    let result: LivePlayResult?
+    let about: LivePlayAbout?
+    let matchup: LivePlayMatchup?
+    let count: LivePlayCount?
+    /// Per-pitch / per-event log for this PA. We surface the last
+    /// item's description as a one-line "last play" string when
+    /// `result.description` is empty (mid-PA states like a single
+    /// pitch before the plate appearance ends).
+    let playEvents: [LivePlayEvent]?
+}
+
+struct LivePlayResult: Codable {
+    let description: String?
+    let event: String?
+}
+
+struct LivePlayAbout: Codable {
+    let halfInning: String?
+    let inning: Int?
+}
+
+struct LivePlayMatchup: Codable {
+    let batter: PlayerInfo?
+    let pitcher: PlayerInfo?
+}
+
+struct LivePlayCount: Codable {
+    let balls: Int?
+    let strikes: Int?
+    let outs: Int?
+}
+
+struct LivePlayEvent: Codable {
+    let details: LivePlayEventDetails?
+    let isPitch: Bool?
+}
+
+struct LivePlayEventDetails: Codable {
+    let description: String?
+    let event: String?
+}

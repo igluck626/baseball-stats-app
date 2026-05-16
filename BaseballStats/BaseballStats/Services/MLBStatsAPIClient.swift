@@ -59,6 +59,16 @@ final class MLBStatsAPIClient: @unchecked Sendable {
         return try await fetch(url)
     }
 
+    /// `/api/v1.1/game/{gamePk}/feed/live` — full live game state.
+    /// Drives the live game card (current batter / pitcher / count /
+    /// base runners / last play) and the live BoxScoreView. Includes
+    /// the boxscore subtree so live mode can render the same batting
+    /// + pitching tables off the same response.
+    func getLiveFeed(gamePk: Int) async throws -> LiveFeedResponse {
+        let url = URL(string: "https://statsapi.mlb.com/api/v1.1/game/\(gamePk)/feed/live")!
+        return try await fetch(url)
+    }
+
     // MARK: - Internals
 
     private func fetch<T: Decodable>(_ url: URL) async throws -> T {
