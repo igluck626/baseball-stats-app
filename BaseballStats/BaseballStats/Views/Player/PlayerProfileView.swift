@@ -186,6 +186,11 @@ struct PlayerProfileView: View {
                 // back chevron renders against the standard nav surface.
                 .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
                 .task { await viewModel.loadData() }
+                // Cancel the live-stats poll loop when the profile
+                // goes off-screen (back-button, switch tab, etc.) so
+                // we don't keep hitting MLB Stats API for a player
+                // the user has navigated away from.
+                .onDisappear { viewModel.stopRecentGameRefresh() }
                 .onChange(of: selectedTab) { _, _ in
                     // No animation — withAnimation here would interpolate
                     // the scroll offset over time and re-introduce the

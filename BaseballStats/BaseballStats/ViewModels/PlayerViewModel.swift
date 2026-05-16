@@ -119,6 +119,20 @@ final class PlayerViewModel: ObservableObject {
     /// only appears when there's something genuinely live to
     /// watch — final-game stat fill-in stays silent.
     @Published var hasLiveGame: Bool = false
+    /// Broader signal than `hasLiveGame`: true iff this player's
+    /// team has *any* game currently in-progress, even when the
+    /// player himself hasn't entered yet (a setup man waiting in
+    /// the bullpen, a bench bat not yet called on). Drives the
+    /// auto-refresh timer so we keep polling until either the
+    /// player appears or the game ends.
+    @Published var teamHasLiveGame: Bool = false
+
+    /// Backing task for the 60-second `loadRecentGameStats()` poll
+    /// loop. Started after the initial load lands; self-terminates
+    /// when `teamHasLiveGame` flips false (all relevant games
+    /// finished); cancelled on view disappear via
+    /// `stopRecentGameRefresh()`.
+    private var refreshTask: Task<Void, Never>?
 
     @Published var isLoadingCurrentBatting = false
     @Published var isLoadingCareerBatting = false
@@ -288,8 +302,12 @@ final class PlayerViewModel: ObservableObject {
 
         // Background task — never awaited from `loadData`'s caller so
         // a slow/failed MLB Stats API call can't block UI updates.
+        // Once the initial overlay lands, start the 60-second poll
+        // loop so a profile opened before the player appears in
+        // the box score still catches their stats once they do.
         Task { [weak self] in
             await self?.loadRecentGameStats()
+            self?.startRecentGameRefresh()
         }
     }
 
@@ -340,11 +358,16 @@ final class PlayerViewModel: ObservableObject {
 
         // Build the eligible-games list, tagging each with whether
         // it's currently live — the `hasLiveGame` flag below is the
-        // OR across these tags.
+        // OR across these tags. `teamHasLiveGame` is a separate
+        // signal flipped before we even look at the player's box-
+        // score line so the refresh loop keeps polling for
+        // not-yet-appeared players.
         var eligible: [(gamePk: Int, isLive: Bool)] = []
+        var liveOnSchedule = false
         for g in todaySchedule?.dates.flatMap(\.games) ?? [] {
             switch g.status.abstractGameState {
             case "Live":
+                liveOnSchedule = true
                 eligible.append((g.gamePk, true))
             case "Final":
                 // Today's final games are always after the most
@@ -372,6 +395,13 @@ final class PlayerViewModel: ObservableObject {
                 }
             }
         }
+        // Publish the team-live signal even if there's nothing to
+        // overlay yet — it gates whether the refresh loop keeps
+        // running. A bench player whose team is mid-game but who
+        // hasn't pinch-hit yet has no overlay, but we want the
+        // loop to keep checking until they appear.
+        teamHasLiveGame = liveOnSchedule
+
         guard !eligible.isEmpty else { return }
 
         // Fan out box-score fetches in parallel — typical case is
@@ -419,6 +449,36 @@ final class PlayerViewModel: ObservableObject {
         recentPitching   = sawPit ? totalPit : nil
         recentStatsLoaded = true
         hasLiveGame      = anyLive
+    }
+
+    /// Kick off a 60-second poll that re-runs `loadRecentGameStats()`
+    /// while the player's team has a game in progress. Idempotent —
+    /// cancels any existing task before installing a new one so it's
+    /// safe to call multiple times. Self-terminates when
+    /// `teamHasLiveGame` flips to false (all games finished); the
+    /// view-side `.onDisappear` calls `stopRecentGameRefresh()` as a
+    /// belt-and-suspenders so a backgrounded profile doesn't keep
+    /// the task alive across screens.
+    func startRecentGameRefresh() {
+        stopRecentGameRefresh()
+        guard !isRetired else { return }
+        guard teamHasLiveGame else { return }
+        refreshTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 60 * 1_000_000_000)
+                guard !Task.isCancelled, let self else { return }
+                await self.loadRecentGameStats()
+                // Exit once the schedule no longer has any live
+                // games for this team — once everything's final,
+                // overnight totals are the next state change.
+                if !self.teamHasLiveGame { return }
+            }
+        }
+    }
+
+    func stopRecentGameRefresh() {
+        refreshTask?.cancel()
+        refreshTask = nil
     }
 
     /// Most recent nightly-batch stamp from either side of the
