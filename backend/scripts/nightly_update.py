@@ -215,6 +215,30 @@ def _build_current_batter_entry(player_id: int, bref_df, bwar_current, current_y
             **data_service._batting_derived(br),
         })
 
+    # MLB Stats API override — current-season only, same pattern
+    # as the pitcher path. Authoritative source for standard
+    # counting + rate stats (G/PA/AB/R/H/2B/3B/HR/RBI/SB/CS/BB/
+    # SO/IBB/HBP/SF/SH/GIDP/AVG/OBP/SLG/OPS). bwar's WAR / OPS+
+    # values above stay untouched — the API doesn't ship those.
+    # Skipped silently for players with no current-season hitting
+    # splits (pitcher who never bats, fresh DFA, etc.).
+    mlb_api_stats = data_service._fetch_mlb_stats_api_batter(player_id, current_year)
+    if mlb_api_stats is None and not player_bref.empty:
+        log.info(f"  MLB Stats API miss for batter {player_id}, falling back to bref")
+    if mlb_api_stats:
+        for key in ("G", "PA", "AB", "R", "H", "doubles", "triples", "HR",
+                    "RBI", "BB", "SO", "SB", "CS", "IBB", "HBP", "SF", "SH",
+                    "GIDP", "BA", "OBP", "SLG", "OPS"):
+            value = mlb_api_stats.get(key)
+            if value is not None:
+                entry[key] = value
+        # Recompute TB from the API's authoritative counts.
+        h  = mlb_api_stats.get("H") or 0
+        d2 = mlb_api_stats.get("doubles") or 0
+        d3 = mlb_api_stats.get("triples") or 0
+        hr = mlb_api_stats.get("HR") or 0
+        entry["TB"] = h + d2 + 2 * d3 + 3 * hr
+
     return entry
 
 
@@ -308,7 +332,12 @@ def _update_batters(current_year: int) -> tuple[int, int, list[int]]:
 # ---------------------------------------------------------------------------
 
 def _build_current_pitcher_entry(player_id: int, bref_df, bwar_current, current_year: int) -> dict | None:
-    """Build a pitcher_seasons row for the current year, or None if no data."""
+    """Build a pitcher_seasons row for the current year, or None if
+    bref + bwar have no data for this player. When at least one of
+    those has data, additionally fetch the authoritative MLB Stats
+    API season splits and pass them in so the entry builder
+    overrides bref's standard stats (W/L/IP/H/ER/BB/SO/ERA/WHIP)
+    with the canonical values — closes bref's ~24h lag."""
     # pitching_stats_bref stores mlbID as STRING, unlike batting.
     player_bref = bref_df[bref_df["mlbID"] == str(player_id)]
     player_war = (
@@ -321,11 +350,19 @@ def _build_current_pitcher_entry(player_id: int, bref_df, bwar_current, current_
     if player_bref.empty and player_war.empty:
         return None
 
+    # Only hit MLB Stats API for players with some current-year
+    # activity. Saves an N-extra-RTT-per-historical-player tax on
+    # the nightly that would otherwise return 11k empty 200s.
+    mlb_api_stats = data_service._fetch_mlb_stats_api_pitcher(player_id, current_year)
+    if mlb_api_stats is None and not player_bref.empty:
+        log.info(f"  MLB Stats API miss for pitcher {player_id}, falling back to bref")
+
     return data_service._build_pitcher_season_entry(
         player_id,
         current_year,
         player_war,
         bref_df,
+        mlb_api_stats=mlb_api_stats,
     )
 
 

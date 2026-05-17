@@ -1194,6 +1194,125 @@ def _mlb_get_json(path: str, params: dict) -> dict:
         return json.loads(resp.read().decode("utf-8"))
 
 
+def _fetch_mlb_stats_api_batter(mlb_id: int, year: int) -> Optional[dict]:
+    """Pull standard season batting stats for one player from MLB
+    Stats API. Used by the current-season nightly batter pipeline
+    so the iOS app sees the same number bref does — without the
+    24h lag bref imposes between game completion and its public
+    stats table.
+
+    Returns a dict in the `player_seasons` shape (G, PA, AB, R, H,
+    doubles, triples, HR, RBI, BB, SO, SB, CS, IBB, HBP, SF, SH,
+    GIDP, BA, OBP, SLG, OPS) or None when the API has no current-
+    season hitting splits for this player (rare: pitcher who's
+    never batted, freshly-DFA'd / no MLB activity yet).
+    """
+    try:
+        data = _mlb_get_json(
+            f"people/{mlb_id}/stats",
+            {"stats": "season", "season": year, "group": "hitting"},
+        )
+    except Exception:
+        return None
+    stats_blocks = data.get("stats") or []
+    if not stats_blocks:
+        return None
+    splits = stats_blocks[0].get("splits") or []
+    if not splits:
+        return None
+    s = splits[0].get("stat") or {}
+
+    return {
+        "G":       _to_int(s.get("gamesPlayed")),
+        "PA":      _to_int(s.get("plateAppearances")),
+        "AB":      _to_int(s.get("atBats")),
+        "R":       _to_int(s.get("runs")),
+        "H":       _to_int(s.get("hits")),
+        "doubles": _to_int(s.get("doubles")),
+        "triples": _to_int(s.get("triples")),
+        "HR":      _to_int(s.get("homeRuns")),
+        "RBI":     _to_int(s.get("rbi")),
+        "BB":      _to_int(s.get("baseOnBalls")),
+        "SO":      _to_int(s.get("strikeOuts")),
+        "SB":      _to_int(s.get("stolenBases")),
+        "CS":      _to_int(s.get("caughtStealing")),
+        "IBB":     _to_int(s.get("intentionalWalks")),
+        "HBP":     _to_int(s.get("hitByPitch")),
+        "SF":      _to_int(s.get("sacFlies")),
+        "SH":      _to_int(s.get("sacBunts")),
+        "GIDP":    _to_int(s.get("groundIntoDoublePlay")),
+        # MLB Stats API ships AVG / OBP / SLG / OPS as strings like
+        # ".293" — Python's `float()` accepts the leading dot, so
+        # no manual stripping needed. None on missing / "---" (the
+        # zero-PA sentinel the API uses).
+        "BA":      _safe_rate(s.get("avg")),
+        "OBP":     _safe_rate(s.get("obp")),
+        "SLG":     _safe_rate(s.get("slg")),
+        "OPS":     _safe_rate(s.get("ops")),
+    }
+
+
+def _fetch_mlb_stats_api_pitcher(mlb_id: int, year: int) -> Optional[dict]:
+    """Pitcher counterpart to `_fetch_mlb_stats_api_batter`. Returns
+    the standard `pitcher_seasons` fields populated from MLB Stats
+    API's season-pitching splits, or None when the API has no
+    pitching activity for this player this season.
+
+    Holds (`HLD`) is included in the response dict so callers that
+    care can read it, but our `pitcher_seasons` schema doesn't
+    store HLD today — the merge step into the season-row drops
+    that key implicitly by not referencing it.
+    """
+    try:
+        data = _mlb_get_json(
+            f"people/{mlb_id}/stats",
+            {"stats": "season", "season": year, "group": "pitching"},
+        )
+    except Exception:
+        return None
+    stats_blocks = data.get("stats") or []
+    if not stats_blocks:
+        return None
+    splits = stats_blocks[0].get("splits") or []
+    if not splits:
+        return None
+    s = splits[0].get("stat") or {}
+
+    return {
+        "G":     _to_int(s.get("gamesPlayed")),
+        "GS":    _to_int(s.get("gamesStarted")),
+        "W":     _to_int(s.get("wins")),
+        "L":     _to_int(s.get("losses")),
+        "SV":    _to_int(s.get("saves")),
+        "HLD":   _to_int(s.get("holds")),
+        "IP":    _ip_str_to_decimal(s.get("inningsPitched")),
+        "H":     _to_int(s.get("hits")),
+        "R":     _to_int(s.get("runs")),
+        "ER":    _to_int(s.get("earnedRuns")),
+        "HR":    _to_int(s.get("homeRuns")),
+        "BB":    _to_int(s.get("baseOnBalls")),
+        "IBB":   _to_int(s.get("intentionalWalks")),
+        "SO":    _to_int(s.get("strikeOuts")),
+        "HBP":   _to_int(s.get("hitByPitch")),
+        "BK":    _to_int(s.get("balks")),
+        "WP":    _to_int(s.get("wildPitches")),
+        "ERA":   _safe_rate(s.get("era")),
+        "WHIP":  _safe_rate(s.get("whip")),
+    }
+
+
+def _safe_rate(v) -> Optional[float]:
+    """Parse a rate stat string from MLB Stats API. Handles ".293"
+    (leading-dot rates), "2.11" (ERA), "---" (zero-AB sentinel),
+    and None / empty. Returns None for anything unparseable."""
+    if v is None or v == "" or v == "---":
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
 def fetch_mlb_player_bio(mlb_id: int) -> Optional[dict]:
     """`/people/{id}` → minimal bio dict in `crud.save_player` /
     `crud.save_pitcher` shape. Used by the nightly update to insert
@@ -2653,8 +2772,22 @@ def _build_pitcher_season_entry(
     year: int,
     war_group: pd.DataFrame,
     bref_df: Optional[pd.DataFrame],
+    mlb_api_stats: Optional[dict] = None,
 ) -> dict:
-    """Build a pitcher_seasons row from one year of bwar_pitch + (optionally) bref."""
+    """Build a pitcher_seasons row from one year of bwar_pitch +
+    (optionally) bref + (current-season only) the MLB Stats API
+    season splits.
+
+    When `mlb_api_stats` is provided, its values take precedence
+    over bref for the standard counting + rate stats (W, L, G, GS,
+    SV, IP, H, R, ER, HR, BB, IBB, SO, HBP, BK, WP, ERA, WHIP).
+    bref still drives WAR-adjacent computed fields (FIP, BABIP,
+    K_per9, BB_per9, HR_per9) and remaining bref-only counters
+    (CG, SHO, BAOpp, GF, SH, SF, GIDP, BFP). bwar_pitch always
+    drives WAR / ERA_plus / WAA. The MLB Stats API path closes
+    the ~24h lag bref has between game completion and its public
+    stats table publishing.
+    """
     raw_team = str(war_group.iloc[-1]["team_ID"])
     ip_outs_total = float(war_group["IPouts"].sum()) if "IPouts" in war_group else 0.0
     ip_dec = ip_outs_total / 3 if ip_outs_total else 0.0
@@ -2750,6 +2883,36 @@ def _build_pitcher_season_entry(
                 "SF":    _safe_col(br, "SF"),
                 "GIDP":  _safe_col(br, "GIDP") if "GIDP" in br.index else _safe_col(br, "GDP"),
             })
+
+    # MLB Stats API override — current-season only. Overrides the
+    # standard counting + rate stats with the canonical values from
+    # `/people/{id}/stats?group=pitching`. Anything not in this
+    # dict stays as whatever bref / bwar provided above (FIP,
+    # K_per9, BB_per9, HR_per9, BABIP, CG, SHO, BAOpp, GF, SH, SF,
+    # GIDP, BFP). Iterate so None values from the API don't clobber
+    # a populated bref value (e.g. holds — never set by bref).
+    if mlb_api_stats:
+        for key in ("G", "GS", "W", "L", "SV", "IP",
+                    "H", "R", "ER", "HR",
+                    "BB", "IBB", "SO", "HBP", "BK", "WP",
+                    "ERA", "WHIP"):
+            value = mlb_api_stats.get(key)
+            if value is not None:
+                entry[key] = value
+        # Recompute the K/9, BB/9, HR/9, FIP, BABIP rates from the
+        # MLB API counts when IP is non-zero — keeps these in sync
+        # with the new (authoritative) IP / SO / BB / HR values
+        # instead of leaving bref's stale derivations in place.
+        ip_dec = mlb_api_stats.get("IP") or 0.0
+        if ip_dec:
+            so = mlb_api_stats.get("SO") or 0
+            bb = mlb_api_stats.get("BB") or 0
+            hr = mlb_api_stats.get("HR") or 0
+            hbp = mlb_api_stats.get("HBP") or 0
+            entry["K_per9"]  = round(so * 9 / ip_dec, 2)
+            entry["BB_per9"] = round(bb * 9 / ip_dec, 2)
+            entry["HR_per9"] = round(hr * 9 / ip_dec, 2)
+            entry["FIP"]     = _fip(hr, bb, hbp, so, ip_dec)
 
     return entry
 
