@@ -476,17 +476,43 @@ struct BoxScoreView: View {
         }
     }
 
+    /// Per-column widths for the batting table. Kept in one place
+    /// so header + row stay aligned and the total stays under the
+    /// iPhone safe-width — `nameCol + sum(statCols)` should clear
+    /// ~360pt with room for safe-area padding so OPS lands without
+    /// horizontal scrolling.
+    private enum BattingCol {
+        static let name: CGFloat = 96
+        static let ab:   CGFloat = 22
+        static let r:    CGFloat = 22
+        static let h:    CGFloat = 22
+        static let rbi:  CGFloat = 28
+        static let bb:   CGFloat = 22
+        static let so:   CGFloat = 22
+        static let avg:  CGFloat = 36
+        static let ops:  CGFloat = 36
+    }
+
     private var battingHeader: some View {
         HStack(spacing: 0) {
-            Text("").frame(width: 140, alignment: .leading)
-            ForEach(["AB", "R", "H", "RBI", "BB", "SO", "AVG", "OPS"], id: \.self) { c in
-                Text(c)
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: (c == "AVG" || c == "OPS") ? 40 : 28, alignment: .trailing)
-                    .monospacedDigit()
-            }
+            Text("").frame(width: BattingCol.name, alignment: .leading)
+            battingHeaderCell("AB",  width: BattingCol.ab)
+            battingHeaderCell("R",   width: BattingCol.r)
+            battingHeaderCell("H",   width: BattingCol.h)
+            battingHeaderCell("RBI", width: BattingCol.rbi)
+            battingHeaderCell("BB",  width: BattingCol.bb)
+            battingHeaderCell("SO",  width: BattingCol.so)
+            battingHeaderCell("AVG", width: BattingCol.avg)
+            battingHeaderCell("OPS", width: BattingCol.ops)
         }
+    }
+
+    private func battingHeaderCell(_ label: String, width: CGFloat) -> some View {
+        Text(label)
+            .font(.caption2.weight(.bold))
+            .foregroundStyle(.secondary)
+            .frame(width: width, alignment: .trailing)
+            .monospacedDigit()
     }
 
     private func battingRow(_ p: BoxPlayer) -> some View {
@@ -496,17 +522,17 @@ struct BoxScoreView: View {
         return Button { tapPlayer(id: p.person.id, name: p.person.fullName) } label: {
             HStack(spacing: 0) {
                 playerLabel(p, isPitcher: false)
-                    .frame(width: 140, alignment: .leading)
-                cell(b?.atBats)
-                cell(b?.runs)
-                cell(b?.hits)
-                cell(b?.rbi)
-                cell(b?.baseOnBalls)
-                cell(b?.strikeOuts)
+                    .frame(width: BattingCol.name, alignment: .leading)
+                cell(b?.atBats,      width: BattingCol.ab)
+                cell(b?.runs,        width: BattingCol.r)
+                cell(b?.hits,        width: BattingCol.h)
+                cell(b?.rbi,         width: BattingCol.rbi)
+                cell(b?.baseOnBalls, width: BattingCol.bb)
+                cell(b?.strikeOuts,  width: BattingCol.so)
                 Text(avg).font(.caption).monospacedDigit()
-                    .frame(width: 40, alignment: .trailing)
+                    .frame(width: BattingCol.avg, alignment: .trailing)
                 Text(ops).font(.caption).monospacedDigit()
-                    .frame(width: 40, alignment: .trailing)
+                    .frame(width: BattingCol.ops, alignment: .trailing)
             }
             .padding(.vertical, 2)
             .contentShape(Rectangle())
@@ -633,11 +659,11 @@ struct BoxScoreView: View {
         }
     }
 
-    private func cell(_ v: Int?) -> some View {
+    private func cell(_ v: Int?, width: CGFloat = 28) -> some View {
         Text(v.map(String.init) ?? "-")
             .font(.caption)
             .monospacedDigit()
-            .frame(width: 28, alignment: .trailing)
+            .frame(width: width, alignment: .trailing)
     }
 
     private func shortName(_ full: String) -> String {

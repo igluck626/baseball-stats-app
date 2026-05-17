@@ -235,6 +235,14 @@ struct BoxPitching: Codable, Hashable {
     let strikeOuts: Int?
     let homeRuns: Int?
     let era: String?              // "2.41" — string from the API
+    /// Career-side W/L/SV used by `FinalGameCard` to render the
+    /// decision pitchers' updated record next to their name in the
+    /// expanded view ("W: Cole (8-2)"). Only meaningful on the
+    /// `seasonStats.pitching` payload — the game-stats version is
+    /// per-appearance and noisy.
+    let wins: Int?
+    let losses: Int?
+    let saves: Int?
 }
 
 // MARK: - Live feed (/api/v1.1/game/{pk}/feed/live)

@@ -57,6 +57,13 @@ struct StandingsView: View {
         .onChange(of: viewModel.selectedYear) { _, _ in
             Task { await viewModel.loadStandings() }
         }
+        // The Scores tab posts this when a game it's watching
+        // flips Live → Final; re-fetch the current-year slate so
+        // W/L columns and division standings reflect the result
+        // the moment the user switches over.
+        .onReceive(NotificationCenter.default.publisher(for: .standingsShouldRefresh)) { _ in
+            Task { await viewModel.loadStandings() }
+        }
     }
 
     // MARK: - Chrome

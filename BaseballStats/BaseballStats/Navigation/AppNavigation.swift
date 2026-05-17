@@ -22,6 +22,15 @@
 import Combine
 import SwiftUI
 
+extension Notification.Name {
+    /// Posted by the Scores tab when a game on the visible day
+    /// transitions from Live → Final. The Standings tab subscribes
+    /// and re-runs `loadStandings()` so freshly-completed games
+    /// show in the W/L columns without waiting for the next tab
+    /// switch or the next nightly run.
+    static let standingsShouldRefresh = Notification.Name("standingsShouldRefresh")
+}
+
 @MainActor
 final class AppNavigation: ObservableObject {
     /// Tab cases match ContentView's TabView. Tag values are stable so

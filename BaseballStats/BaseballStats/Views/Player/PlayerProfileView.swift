@@ -1286,9 +1286,12 @@ private struct StatBlock: View {
                 .foregroundStyle(rankTierColor(r))
                 .monospacedDigit()
         case .outside:
+            // Rankable but outside top-25 — same invisible-spacer
+            // treatment as `.unrankable` so the cell only shows a
+            // third line when there's an actual rank to display.
             Text("—")
                 .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(.tertiary)
+                .hidden()
         case .unrankable:
             // Invisible placeholder so non-rankable cells (G, PA,
             // GS, IP, K/9, BB) match the height of cells that do
@@ -1700,13 +1703,21 @@ private struct CareerAwardChipsCell: View {
 private struct HeaderAwardsWrap: View {
     let counts: [String: Int]
 
+    /// Icon choices map to SF Symbols available in the current SDK.
+    /// MVP gets `medal.fill` (distinct from CY's trophy). GG uses
+    /// `figure.baseball` to evoke the defensive player silhouette
+    /// without inventing a non-existent `baseball.glove`. SS uses
+    /// `baseball.diamond.bases` — SF Symbols ships this since iOS
+    /// 17 and reads as the field a slugger rounds; renders as the
+    /// missing-symbol placeholder if the SDK is ever older, never a
+    /// compile error.
     private static let displayOrder: [(key: String, label: String, sf: String)] = [
-        ("MVP",              "MVP",    "trophy.fill"),
+        ("MVP",              "MVP",    "medal.fill"),
         ("CY Young",         "CY",     "trophy.fill"),
         ("ROY",              "ROY",    "rosette"),
         ("All-Star",         "AS",     "star.fill"),
-        ("Gold Glove",       "GG",     "hand.raised.fill"),
-        ("Silver Slugger",   "SS",     "baseball.fill"),
+        ("Gold Glove",       "GG",     "figure.baseball"),
+        ("Silver Slugger",   "SS",     "baseball.diamond.bases"),
         ("World Series MVP", "WS MVP", "crown.fill"),
     ]
 

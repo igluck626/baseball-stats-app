@@ -57,6 +57,23 @@ final class ScoresViewModel: ObservableObject {
         didLoad = true
     }
 
+    /// Pull-to-refresh variant: same fetch, but a network failure
+    /// keeps the existing game list visible instead of replacing it
+    /// with an error screen. The user just sees the spinner stop —
+    /// the next normal `load()` will surface persistent failures.
+    func refresh() async {
+        do {
+            let response = try await api.getSchedule(date: selectedDate)
+            let g = response.dates.first(where: { $0.date == ScoresViewModel.iso(selectedDate) })?.games
+                ?? response.dates.flatMap(\.games)
+            self.games = g
+            self.error = nil
+        } catch {
+            // Silent — keep stale games visible rather than wiping
+            // the screen on a transient pull-to-refresh hiccup.
+        }
+    }
+
     /// Spin up a polling task that re-runs `load(date:)` every 30s
     /// while any game in `games` is live AND the selected date is
     /// today. We don't poll past dates (scores frozen) or future
@@ -118,9 +135,17 @@ struct ScoresView: View {
         }
         .task { await vm.load(date: vm.selectedDate) }
         // Restart the auto-refresh whenever a load completes — gives
-        // it a fresh look at whether any game is live now.
-        .onChange(of: vm.games) { _, _ in
+        // it a fresh look at whether any game is live now. Also
+        // detect Live → Final transitions so the Standings tab can
+        // pull in the just-completed W/L delta without waiting for
+        // a tab switch or the next nightly run.
+        .onChange(of: vm.games) { oldGames, newGames in
             vm.startAutoRefresh(for: vm.selectedDate)
+            let wasLive = Set(oldGames.filter { $0.phase == .live }.map(\.gamePk))
+            let nowFinal = newGames.filter { $0.phase == .final }.map(\.gamePk)
+            if nowFinal.contains(where: { wasLive.contains($0) }) {
+                NotificationCenter.default.post(name: .standingsShouldRefresh, object: nil)
+            }
         }
         .onDisappear { vm.stopAutoRefresh() }
     }
@@ -300,7 +325,7 @@ struct ScoresView: View {
             .padding(.vertical, 12)
         }
         .refreshable {
-            await vm.load(date: vm.selectedDate)
+            await vm.refresh()
         }
     }
 
@@ -505,6 +530,13 @@ private struct FinalGameCard: View {
     let game: Game
     @Binding var path: NavigationPath
     @State private var isExpanded = false
+    /// Lazily-fetched box score for the expanded view. Loaded the
+    /// first time the user expands the card so decision-pitcher
+    /// records (W/L: …) and the HR summary line have data to
+    /// render. Cached for the lifetime of the card so subsequent
+    /// expand/collapse cycles don't re-hit the API.
+    @State private var boxScore: BoxScoreResponse?
+    @State private var isLoadingBoxScore = false
 
     var body: some View {
         VStack(spacing: 10) {
@@ -514,6 +546,9 @@ private struct FinalGameCard: View {
                     withAnimation(.easeInOut(duration: 0.22)) {
                         isExpanded.toggle()
                     }
+                    if isExpanded && boxScore == nil && !isLoadingBoxScore {
+                        Task { await fetchBoxScore() }
+                    }
                 }
             if isExpanded {
                 Divider()
@@ -522,6 +557,7 @@ private struct FinalGameCard: View {
                     Divider()
                     decisions
                 }
+                hrSummary
                 boxScoreButton
             }
         }
@@ -530,6 +566,12 @@ private struct FinalGameCard: View {
         .frame(maxWidth: .infinity)
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
         .shadow(color: .black.opacity(0.06), radius: 6, x: 0, y: 2)
+    }
+
+    private func fetchBoxScore() async {
+        isLoadingBoxScore = true
+        defer { isLoadingBoxScore = false }
+        boxScore = try? await MLBStatsAPIClient.shared.getBoxScore(gamePk: game.gamePk)
     }
 
     // MARK: Collapsed header
@@ -652,10 +694,10 @@ private struct FinalGameCard: View {
         return d?.winner != nil || d?.loser != nil || d?.save != nil
     }
 
-    /// W: / L: / SV: lines. Records aren't shipped on the schedule
-    /// `decisions` payload (only id + fullName), so this is name-
-    /// only for Phase 1 — a future iteration can fire a /boxscore
-    /// fetch on expand to pull the W-L records.
+    /// W: / L: / SV: lines. Pitcher records ("W: Cole (8-2)") come
+    /// from the lazily-fetched box score's `seasonStats.pitching`;
+    /// until that arrives we render the name alone so the section
+    /// isn't blank during the brief fetch window.
     private var decisions: some View {
         VStack(alignment: .leading, spacing: 4) {
             if let w = game.decisions?.winner {
@@ -672,17 +714,74 @@ private struct FinalGameCard: View {
     }
 
     private func decisionLine(tag: String, player: PlayerInfo) -> some View {
-        HStack(spacing: 6) {
+        let record = recordForPitcher(id: player.id, tag: tag)
+        return HStack(spacing: 6) {
             Text("\(tag):")
                 .font(.caption.weight(.bold))
                 .foregroundStyle(.secondary)
                 .frame(width: 28, alignment: .leading)
                 .monospacedDigit()
-            Text(player.fullName)
+            Text(player.fullName + (record.map { " (\($0))" } ?? ""))
                 .font(.caption)
                 .foregroundStyle(.primary)
                 .lineLimit(1)
         }
+    }
+
+    /// Look up the decision pitcher's updated W-L (or saves total
+    /// for SV decisions) from the cached box score. nil before the
+    /// fetch completes — the line falls back to a name-only render.
+    private func recordForPitcher(id: Int, tag: String) -> String? {
+        guard let bs = boxScore else { return nil }
+        let key = "ID\(id)"
+        let bp = bs.teams.away.players[key] ?? bs.teams.home.players[key]
+        guard let pit = bp?.seasonStats?.pitching else { return nil }
+        if tag == "SV" {
+            return pit.saves.map { "\($0) SV" }
+        }
+        guard let w = pit.wins, let l = pit.losses else { return nil }
+        return "\(w)-\(l)"
+    }
+
+    /// "HR: Judge (18), Stanton (11)" line shown below the decisions
+    /// section when at least one home run was hit in the game.
+    /// Pulls per-batter HR counts from the lazily-fetched box score;
+    /// renders nothing until the fetch lands (no blank label, no
+    /// loading state — the line just appears when ready).
+    @ViewBuilder
+    private var hrSummary: some View {
+        if let bs = boxScore {
+            let homerSegments = hrSegments(from: bs)
+            if !homerSegments.isEmpty {
+                (Text("HR: ").font(.caption2.weight(.bold))
+                    + Text(homerSegments.joined(separator: ", ")).font(.caption2))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 4)
+            }
+        }
+    }
+
+    /// Per-batter "Lastname (season HR)" pieces ordered by the
+    /// batting-order index for each side. Both teams are walked so
+    /// the line surfaces every HR in the game, not just the
+    /// winners'.
+    private func hrSegments(from bs: BoxScoreResponse) -> [String] {
+        let teams = [bs.teams.away, bs.teams.home]
+        var out: [String] = []
+        for team in teams {
+            for id in team.batters {
+                guard let p = team.players["ID\(id)"] else { continue }
+                guard let hr = p.stats?.batting?.homeRuns, hr > 0 else { continue }
+                let season = p.seasonStats?.batting?.homeRuns ?? 0
+                let last = p.person.fullName.split(separator: " ").last.map(String.init)
+                    ?? p.person.fullName
+                out.append("\(last) (\(season))")
+            }
+        }
+        return out
     }
 
     // MARK: Expanded — box score nav
