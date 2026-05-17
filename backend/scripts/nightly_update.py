@@ -356,6 +356,16 @@ def _build_current_pitcher_entry(player_id: int, bref_df, bwar_current, current_
     mlb_api_stats = data_service._fetch_mlb_stats_api_pitcher(player_id, current_year)
     if mlb_api_stats is None and not player_bref.empty:
         log.info(f"  MLB Stats API miss for pitcher {player_id}, falling back to bref")
+    elif mlb_api_stats is not None:
+        # [DEBUG: MLB Stats API override verification — keep until
+        # we've confirmed the new path lands on a few high-profile
+        # players (Sanchez 650911 etc.) post-deploy.]
+        log.info(
+            f"  MLB API override applied for pitcher {player_id}: "
+            f"GS={mlb_api_stats.get('GS')} W={mlb_api_stats.get('W')} "
+            f"L={mlb_api_stats.get('L')} ERA={mlb_api_stats.get('ERA')} "
+            f"IP={mlb_api_stats.get('IP')}"
+        )
 
     return data_service._build_pitcher_season_entry(
         player_id,
