@@ -346,22 +346,20 @@ final class PlayerViewModel: ObservableObject {
         async let yestScheduleTry  = try? mlb.getTeamSchedule(date: yesterday, teamId: teamId)
         let (todaySchedule, yestSchedule) = await (todayScheduleTry, yestScheduleTry)
 
-        // Resolve the "stats are accurate as of" cutoff — the most
-        // recent nightly batch stamp on either the batting or
-        // pitching season row (whichever this player has). Any game
-        // that started after this stamp is missing from the DB and
-        // needs overlaying; anything before is already in the row.
-        // nil cutoff (rare: pre-migration row, or column not yet
-        // stamped) means "trust the API, include everything" —
-        // worst case we double-count for one nightly cycle.
-        let cutoff = lastUpdatedCutoff()
-
         // Build the eligible-games list, tagging each with whether
         // it's currently live — the `hasLiveGame` flag below is the
         // OR across these tags. `teamHasLiveGame` is a separate
         // signal flipped before we even look at the player's box-
         // score line so the refresh loop keeps polling for
         // not-yet-appeared players.
+        //
+        // Overlay rules (no DB-timestamp comparison needed):
+        //   • Today, any state    → include
+        //   • Yesterday, Live     → include (extras / suspended)
+        //   • Yesterday, Final    → include iff start ≥ 17:00 UTC
+        //     (≥ noon ET / 9 AM PT) — afternoon-and-later games
+        //     finish after the ~02:00 UTC nightly window. Pure
+        //     day games are assumed already in overnight totals.
         var eligible: [(gamePk: Int, isLive: Bool)] = []
         var liveOnSchedule = false
         for g in todaySchedule?.dates.flatMap(\.games) ?? [] {
@@ -370,29 +368,26 @@ final class PlayerViewModel: ObservableObject {
                 liveOnSchedule = true
                 eligible.append((g.gamePk, true))
             case "Final":
-                // Today's final games are always after the most
-                // recent batch run — a nightly that ran during a
-                // future game's window would be a clock anomaly.
-                // shouldOverlay still gates on cutoff-vs-start to
-                // be safe.
-                if Self.shouldOverlay(game: g, cutoff: cutoff) {
-                    eligible.append((g.gamePk, false))
-                }
+                eligible.append((g.gamePk, false))
             default:
                 break
             }
         }
-        // Yesterday's games only qualify when we have a real cutoff
-        // stamp to compare against. Without one, the safer default
-        // is to assume the nightly batch already absorbed yesterday
-        // — the nightly run has been live for months, so the
-        // double-count risk outweighs the missing-stats risk.
-        if cutoff != nil {
-            for g in yestSchedule?.dates.flatMap(\.games) ?? [] {
-                if g.status.abstractGameState == "Final",
-                   Self.shouldOverlay(game: g, cutoff: cutoff) {
+        for g in yestSchedule?.dates.flatMap(\.games) ?? [] {
+            switch g.status.abstractGameState {
+            case "Live":
+                // Carry-over from yesterday (suspended, extra
+                // innings spilling past midnight) — include
+                // unconditionally and treat as live so the LIVE
+                // badge + refresh loop fire correctly.
+                liveOnSchedule = true
+                eligible.append((g.gamePk, true))
+            case "Final":
+                if Self.shouldOverlayYesterdayFinal(game: g) {
                     eligible.append((g.gamePk, false))
                 }
+            default:
+                break
             }
         }
         // Publish the team-live signal even if there's nothing to
@@ -481,45 +476,21 @@ final class PlayerViewModel: ObservableObject {
         refreshTask = nil
     }
 
-    /// Most recent nightly-batch stamp from either side of the
-    /// player's loaded current stats. Picks the LATER of the two
-    /// when both exist — overnight ingest can lag one side, and
-    /// using the older stamp would mean we'd skip games that the
-    /// later side already counted, leaving a gap. nil when neither
-    /// side ships a stamp (pre-migration deploys).
-    private func lastUpdatedCutoff() -> Date? {
-        let batStr = currentBatting?.stats_last_updated
-        let pitStr = currentPitching?.stats_last_updated
-        let batDate = batStr.flatMap { try? Date($0, strategy: .iso8601) }
-        let pitDate = pitStr.flatMap { try? Date($0, strategy: .iso8601) }
-        switch (batDate, pitDate) {
-        case let (.some(b), .some(p)): return max(b, p)
-        case let (.some(b), .none):    return b
-        case let (.none, .some(p)):    return p
-        default:                       return nil
-        }
-    }
-
-    /// Decide whether to overlay a final game's box-score line on
-    /// top of overnight totals. Returns true when the game started
-    /// after `(cutoff − 3 hours)` (i.e. couldn't have been absorbed
-    /// by the batch yet) or when the cutoff is unknown (safe
-    /// default: include).
+    /// Decide whether to fold yesterday's final box-score line on
+    /// top of overnight totals. Game start hour (UTC) is the only
+    /// signal — no DB timestamp comparison.
     ///
-    /// The 3-hour buffer matters for West Coast late-night games:
-    /// a Mariners game scheduled for 10:05pm ET = ~02:05 UTC the
-    /// next day starts ~11 minutes before the nightly's 02:16 UTC
-    /// stamp. Without the buffer, `startDate < cutoff` would mark
-    /// the game as "already in the DB" even though the batch ran
-    /// while the game was still in the first inning. Three hours
-    /// is long enough to cover any reasonable single game (most
-    /// finish in 2.5–3h; extras are the only edge case) and short
-    /// enough that we don't double-count games from the prior day.
-    private static func shouldOverlay(game: Game, cutoff: Date?) -> Bool {
-        guard let cutoff else { return true }
-        guard let started = game.startDate else { return true }
-        let bufferedCutoff = cutoff.addingTimeInterval(-3 * 60 * 60)
-        return started > bufferedCutoff
+    /// Cutoff is 17:00 UTC = noon ET / 9 AM PT. Games with first
+    /// pitch at or after that hour reliably finish past the ~02:00
+    /// UTC nightly window, so they're missing from yesterday's
+    /// overnight totals and need overlaying. Earlier-start day
+    /// games finished hours before the nightly ran and are already
+    /// counted; overlaying them would double-count.
+    private static func shouldOverlayYesterdayFinal(game: Game) -> Bool {
+        guard let started = game.startDate else { return false }
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC") ?? .gmt
+        return cal.component(.hour, from: started) >= 17
     }
 
     private static func parseBatting(_ b: BoxBatting) -> BoxBattingLine {
