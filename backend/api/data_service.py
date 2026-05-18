@@ -1692,6 +1692,65 @@ def repair_null_stats(current_year: int) -> dict:
     }
 
 
+def repair_ip_decimals(current_year: int) -> dict:
+    """One-shot fix for `pitcher_seasons` rows whose `IP` is stored
+    as baseball notation (10.2 meaning 10 ⅔ innings) rather than
+    true decimal (10.667). Caused by an older bref-path bug; the
+    write path is fixed going forward, but existing rows persist
+    the corrupted value until corrected here.
+
+    Detection: a baseball-notation IP has tenths digit ∈ {1, 2}
+    after rounding (.1 = ⅓, .2 = ⅔). True-decimal IPs round to
+    tenths {0, 3, 7} (.0 / .333 / .667). The .0 case is ambiguous
+    (same value in both encodings) and left alone — converting it
+    would be a no-op.
+
+    Conversion mirrors `_ip_to_decimal`: split whole + tenths,
+    treat tenths as outs (1 or 2), add outs/3 back as the true
+    fractional part.
+    """
+    now = datetime.datetime.utcnow()
+    repaired: list[dict] = []
+    examined = 0
+    with connection.get_session() as db:
+        rows = (
+            db.query(_PitcherSeason)
+            .filter(_PitcherSeason.year == current_year,
+                    _PitcherSeason.IP.isnot(None))
+            .all()
+        )
+        for r in rows:
+            ip = r.IP
+            if ip is None:
+                continue
+            examined += 1
+            tenths = round(float(ip) * 10) % 10
+            if tenths not in (1, 2):
+                continue
+            whole = int(float(ip))
+            outs = tenths
+            fixed = round(whole + outs / 3, 3)
+            repaired.append({
+                "player_id": r.player_id,
+                "from":      float(ip),
+                "to":        fixed,
+            })
+            r.IP = fixed
+            r.last_updated = now
+        if repaired:
+            db.commit()
+
+    return {
+        "status":        "ok",
+        "year":          current_year,
+        "examined":      examined,
+        "rows_repaired": len(repaired),
+        # First 10 examples so a curl can confirm the conversion
+        # is doing the right thing without dumping every row.
+        "examples":      repaired[:10],
+    }
+
+
 def _to_int(v) -> Optional[int]:
     """Defensive int parse; returns None for blank / non-numeric."""
     if v is None or v == "":
@@ -2989,7 +3048,14 @@ def _build_pitcher_season_entry(
                 "L":     int(_safe(br["L"]) or 0),
                 "G":     _safe(br["G"]),
                 "GS":    _safe(br["GS"]),
-                "IP":    _safe(br["IP"]),
+                # bref ships IP as a string in baseball notation
+                # ("10.2" = 10 ⅔). _safe() would store the raw float
+                # 10.2 in the DB; convert via _ip_to_decimal to the
+                # true-decimal value (10.667) the rest of the app
+                # assumes. Without this, the iOS overlay adds
+                # today's true-decimal IP onto a baseball-notation
+                # season total and the running IP drifts.
+                "IP":    _ip_to_decimal(br["IP"]) if pd.notna(br["IP"]) else None,
                 "SO":    int(so),
                 "BB":    int(bb),
                 "HR":    int(hr),

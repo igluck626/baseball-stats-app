@@ -1026,6 +1026,21 @@ def admin_repair_null_stats():
     return data_service.repair_null_stats(current_year)
 
 
+@app.post("/admin/repair-ip-decimals")
+def admin_repair_ip_decimals():
+    """One-shot fix for pitcher_seasons IP values stored in
+    baseball notation (10.2 = 10 ⅔) instead of true decimal
+    (10.667). Caused by an older bref-write path; new writes
+    are correct, but existing rows need this pass. Detect: rows
+    whose IP tenths digit is 1 or 2 after rounding. Idempotent
+    — re-running after a successful pass is a no-op since the
+    fixed rows now round to 3 or 7."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    current_year = datetime.datetime.utcnow().year
+    return data_service.repair_ip_decimals(current_year)
+
+
 @app.post("/admin/reset-db")
 def admin_reset_db():
     if not connection.db_available():
