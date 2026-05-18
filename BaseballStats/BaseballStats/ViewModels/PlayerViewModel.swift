@@ -502,16 +502,24 @@ final class PlayerViewModel: ObservableObject {
 
     /// Decide whether to overlay a final game's box-score line on
     /// top of overnight totals. Returns true when the game started
-    /// strictly after the nightly-batch cutoff (definitively not in
-    /// the DB) or when the cutoff is unknown (safe default: include).
-    /// Conservative on games that started before the cutoff and
-    /// ended after — those are treated as already in the DB to
-    /// avoid double-counting; rare in practice because the batch
-    /// runs in the early-morning window when games aren't active.
+    /// after `(cutoff − 3 hours)` (i.e. couldn't have been absorbed
+    /// by the batch yet) or when the cutoff is unknown (safe
+    /// default: include).
+    ///
+    /// The 3-hour buffer matters for West Coast late-night games:
+    /// a Mariners game scheduled for 10:05pm ET = ~02:05 UTC the
+    /// next day starts ~11 minutes before the nightly's 02:16 UTC
+    /// stamp. Without the buffer, `startDate < cutoff` would mark
+    /// the game as "already in the DB" even though the batch ran
+    /// while the game was still in the first inning. Three hours
+    /// is long enough to cover any reasonable single game (most
+    /// finish in 2.5–3h; extras are the only edge case) and short
+    /// enough that we don't double-count games from the prior day.
     private static func shouldOverlay(game: Game, cutoff: Date?) -> Bool {
         guard let cutoff else { return true }
         guard let started = game.startDate else { return true }
-        return started > cutoff
+        let bufferedCutoff = cutoff.addingTimeInterval(-3 * 60 * 60)
+        return started > bufferedCutoff
     }
 
     private static func parseBatting(_ b: BoxBatting) -> BoxBattingLine {
