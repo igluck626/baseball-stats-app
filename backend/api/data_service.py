@@ -2788,20 +2788,28 @@ def _build_pitcher_season_entry(
     the ~24h lag bref has between game completion and its public
     stats table publishing.
     """
-    raw_team = str(war_group.iloc[-1]["team_ID"])
-    ip_outs_total = float(war_group["IPouts"].sum()) if "IPouts" in war_group else 0.0
-    ip_dec = ip_outs_total / 3 if ip_outs_total else 0.0
+    # bwar_pitch slice may be empty when the caller has only MLB
+    # Stats API data (no bref / no bwar yet). Guard the war-derived
+    # section so the entry-build still proceeds with API + bref
+    # values alone.
+    has_war = war_group is not None and not war_group.empty
+    ip_dec: float = 0.0
+    entry: dict = {"year": year, "team": None, "league": None}
 
-    # ERA_plus is rate-based; weight by IPouts to combine stints within a year.
-    era_plus_vals = war_group["ERA_plus"].dropna()
-    era_plus: Optional[float] = None
-    if ip_outs_total > 0 and not era_plus_vals.empty:
-        era_plus = float(
-            (war_group["ERA_plus"].fillna(0) * war_group["IPouts"]).sum() / ip_outs_total
-        )
+    if has_war:
+        raw_team = str(war_group.iloc[-1]["team_ID"])
+        ip_outs_total = float(war_group["IPouts"].sum()) if "IPouts" in war_group else 0.0
+        ip_dec = ip_outs_total / 3 if ip_outs_total else 0.0
 
-    entry: dict = {
-        "year":           year,
+        # ERA_plus is rate-based; weight by IPouts to combine stints within a year.
+        era_plus_vals = war_group["ERA_plus"].dropna()
+        era_plus: Optional[float] = None
+        if ip_outs_total > 0 and not era_plus_vals.empty:
+            era_plus = float(
+                (war_group["ERA_plus"].fillna(0) * war_group["IPouts"]).sum() / ip_outs_total
+            )
+
+        entry.update({
         "team":           _TEAM_DISPLAY.get(raw_team, raw_team),
         "league":         str(war_group.iloc[-1]["lg_ID"]),
         "G":              int(war_group["G"].sum()) if "G" in war_group else None,
@@ -2814,7 +2822,7 @@ def _build_pitcher_season_entry(
         "ERA_plus":       round(era_plus, 1) if era_plus is not None else None,
         "runs_above_avg": round(float(war_group["runs_above_avg"].sum()), 2),
         "runs_above_rep": round(float(war_group["runs_above_rep"].sum()), 2),
-    }
+        })
 
     if bref_df is not None and not bref_df.empty:
         # pitching_stats_bref stores mlbID as STRING.
