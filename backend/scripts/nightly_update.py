@@ -347,11 +347,6 @@ def _build_current_pitcher_entry(player_id: int, bref_df, bwar_current, current_
     landed yet still get a current-season entry. bref + bwar are
     supplements (WAR / ERA+ / FIP / BABIP / per-9 rate fallbacks).
     Returns None only when ALL three sources are empty."""
-    # [DEBUG: nightly-trace — remove once MLB API override path is
-    # confirmed firing in production. ~700 lines per nightly run;
-    # noisy but bounded.]
-    log.info(f"_build_current_pitcher_entry called for {player_id}")
-
     # pitching_stats_bref stores mlbID as STRING, unlike batting.
     player_bref = bref_df[bref_df["mlbID"] == str(player_id)]
     player_war = (
@@ -360,14 +355,6 @@ def _build_current_pitcher_entry(player_id: int, bref_df, bwar_current, current_
         if "stint_ID" in bwar_current.columns
         else bwar_current[bwar_current["mlb_ID"] == float(player_id)]
     )
-
-    # [DEBUG: Sanchez-specific gate-value log — see whether bref +
-    # bwar are empty for the live diagnostic case.]
-    if player_id == 650911:
-        log.info(
-            f"  [SANCHEZ 650911] bref.empty={player_bref.empty} "
-            f"war.empty={player_war.empty}"
-        )
 
     # Always fetch from MLB Stats API. With this as the primary
     # source, the entry builder isn't dependent on bref / bwar

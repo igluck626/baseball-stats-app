@@ -988,22 +988,6 @@ def env_check():
     return {"DATABASE_URL_set": bool(os.getenv("DATABASE_URL"))}
 
 
-@app.get("/admin/test-mlb-stats/{player_id}")
-def admin_test_mlb_stats(player_id: int):
-    """[DEBUG] Probe the new MLB Stats API helpers without running a
-    full nightly. Returns both batter and pitcher splits side by
-    side so callers can sanity-check that the override path sees
-    populated values for a known-active player. Remove once the
-    new pipeline is verified in production."""
-    year = datetime.datetime.utcnow().year
-    return {
-        "player_id": player_id,
-        "year":      year,
-        "batter":    data_service._fetch_mlb_stats_api_batter(player_id, year),
-        "pitcher":   data_service._fetch_mlb_stats_api_pitcher(player_id, year),
-    }
-
-
 @app.post("/admin/sync-player-team/{mlb_id}")
 def admin_sync_player_team(mlb_id: int):
     """Ad-hoc fix for a single player whose `team` column is stale
