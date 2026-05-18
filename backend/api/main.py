@@ -1013,6 +1013,19 @@ def admin_sync_all_player_teams():
     return data_service.sync_all_player_teams_from_rosters(current_year)
 
 
+@app.post("/admin/repair-null-stats")
+def admin_repair_null_stats():
+    """One-shot cleanup for placeholder rows that the Phase 5
+    roster sync created but the nightly stat-fill path missed
+    (gating bug, since fixed). Finds every current-year row with
+    `last_updated IS NULL`, fetches the player's MLB Stats API
+    splits, and writes them in. Safe to call repeatedly."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    current_year = datetime.datetime.utcnow().year
+    return data_service.repair_null_stats(current_year)
+
+
 @app.post("/admin/reset-db")
 def admin_reset_db():
     if not connection.db_available():

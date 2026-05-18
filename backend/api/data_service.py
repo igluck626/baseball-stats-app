@@ -1184,6 +1184,27 @@ _MLB_STATS_API = "https://statsapi.mlb.com/api/v1"
 _MLB_HTTP_TIMEOUT = 30
 
 
+# MLB Stats API numeric team id → Lahman team code. Authoritative
+# canonical for new-school endpoints (roster, schedule) that ship
+# abbreviations like "KC"/"LAA" while our DB / Lahman bridge
+# expects "KCA"/"LAA". Use this dict whenever you need to write
+# `team` into `player_seasons` / `pitcher_seasons` from MLB API
+# data — going through the numeric id avoids the abbreviation
+# mismatch that left Lane Thomas / Nick Loftin etc. stamped with
+# "KC" instead of "KCA". The 108 Angels / 133 Athletics codes
+# match the codes the team_seasons rows actually carry.
+_MLB_TEAM_ID_TO_LAHMAN_TEAM_ID: dict[int, str] = {
+    109: "ARI",   144: "ATL",   110: "BAL",   111: "BOS",
+    145: "CHA",   112: "CHN",   113: "CIN",   114: "CLE",
+    115: "COL",   116: "DET",   117: "HOU",   118: "KCA",
+    108: "LAA",   119: "LAN",   146: "MIA",   158: "MIL",
+    142: "MIN",   147: "NYA",   121: "NYN",   133: "ATH",
+    143: "PHI",   134: "PIT",   135: "SDN",   137: "SFN",
+    136: "SEA",   138: "SLN",   139: "TBA",   140: "TEX",
+    141: "TOR",   120: "WAS",
+}
+
+
 def _mlb_get_json(path: str, params: dict) -> dict:
     """GET https://statsapi.mlb.com/api/v1/{path}?... and return parsed JSON.
     Uses urllib (stdlib) — no `requests` dependency."""
@@ -1408,13 +1429,19 @@ def sync_player_current_team(player_id: int) -> dict:
         return {"player_id": player_id, "status": "not_found_in_mlb_api"}
     p = people[0]
     current_team = p.get("currentTeam") or {}
-    abbr = current_team.get("abbreviation")
     name = current_team.get("name")
-    if not abbr:
+    mlb_team_id = current_team.get("id")
+    # Resolve to the Lahman code — the abbreviation MLB ships
+    # ("KC", "LA") doesn't match what our DB / Lahman bridge
+    # writes ("KCA", "LAN"), so going through the numeric id is
+    # the only consistent path.
+    lahman_code = _MLB_TEAM_ID_TO_LAHMAN_TEAM_ID.get(mlb_team_id) if mlb_team_id else None
+    if not lahman_code:
         return {
-            "player_id": player_id,
-            "status":    "no_current_team",
-            "fullName":  p.get("fullName"),
+            "player_id":   player_id,
+            "status":      "no_current_team",
+            "fullName":    p.get("fullName"),
+            "mlb_team_id": mlb_team_id,
         }
 
     year = _current_year()
@@ -1425,7 +1452,7 @@ def sync_player_current_team(player_id: int) -> dict:
             db,
             player_id=player_id,
             year=year,
-            abbr=abbr,
+            abbr=lahman_code,
             create_pitcher=in_pitchers,
             create_batter=in_players,
         )
@@ -1435,7 +1462,7 @@ def sync_player_current_team(player_id: int) -> dict:
     return {
         "player_id":  player_id,
         "fullName":   p.get("fullName"),
-        "new_team":   abbr,
+        "new_team":   lahman_code,
         "team_name":  name,
         "actions":    actions,
         "status":     "ok" if actions else "already_current",
@@ -1521,11 +1548,20 @@ def sync_all_player_teams_from_rosters(current_year: int) -> dict:
         "player_seasons:created":  0,
     }
     failed_teams: list[str] = []
+    unmapped_teams: list[int] = []
     with connection.get_session() as db:
         for team in teams:
             team_id = team.get("id")
-            abbr = team.get("abbreviation")
-            if not team_id or not abbr:
+            if not team_id:
+                continue
+            # Resolve to the Lahman code — MLB API ships abbrev like
+            # "KC" / "LAA" which don't match our DB's "KCA" / "LAN".
+            # Going through the numeric id avoids the abbreviation
+            # mismatch that left Lane Thomas et al. stamped with
+            # "KC" instead of "KCA".
+            lahman_code = _MLB_TEAM_ID_TO_LAHMAN_TEAM_ID.get(team_id)
+            if not lahman_code:
+                unmapped_teams.append(team_id)
                 continue
             try:
                 roster_resp = _mlb_get_json(
@@ -1552,7 +1588,7 @@ def sync_all_player_teams_from_rosters(current_year: int) -> dict:
                     db,
                     player_id=pid,
                     year=current_year,
-                    abbr=abbr,
+                    abbr=lahman_code,
                     create_pitcher=in_pitchers,
                     create_batter=in_players,
                 )
@@ -1562,10 +1598,97 @@ def sync_all_player_teams_from_rosters(current_year: int) -> dict:
 
     total = sum(counts.values())
     return {
-        "status":       "ok",
-        "total":        total,
-        "counts":       counts,
-        "failed_teams": failed_teams,
+        "status":         "ok",
+        "total":          total,
+        "counts":         counts,
+        "failed_teams":   failed_teams,
+        "unmapped_teams": unmapped_teams,
+    }
+
+
+def repair_null_stats(current_year: int) -> dict:
+    """Find every current-year season row with `last_updated IS NULL`
+    — those are placeholder rows the Phase 5 roster sync created but
+    that the nightly stat-fill path never landed on (the gating bug
+    we just fixed). For each one, fetch the player's MLB Stats API
+    splits and write them in, stamping `last_updated` so future
+    nightlies treat the row as fresh.
+
+    Idempotent — calling again after a successful run is a no-op
+    because the repaired rows now have `last_updated` set.
+    """
+    now = datetime.datetime.utcnow()
+    pit_repaired = 0
+    pit_no_data  = 0
+    bat_repaired = 0
+    bat_no_data  = 0
+    with connection.get_session() as db:
+        # Pitcher side
+        pit_rows = (
+            db.query(_PitcherSeason)
+            .filter(_PitcherSeason.year == current_year,
+                    _PitcherSeason.last_updated.is_(None))
+            .all()
+        )
+        for r in pit_rows:
+            stats = _fetch_mlb_stats_api_pitcher(r.player_id, current_year)
+            if stats is None:
+                pit_no_data += 1
+                continue
+            for key in ("G", "GS", "W", "L", "SV", "IP",
+                        "H", "R", "ER", "HR",
+                        "BB", "IBB", "SO", "HBP", "BK", "WP",
+                        "ERA", "WHIP"):
+                value = stats.get(key)
+                if value is not None:
+                    setattr(r, key, value)
+            # Recompute K/9, BB/9, HR/9 from the new authoritative
+            # counts so they don't drift from the merged IP / SO /
+            # BB / HR values just written.
+            ip = stats.get("IP") or 0.0
+            if ip:
+                r.K_per9  = round((stats.get("SO") or 0) * 9 / ip, 2)
+                r.BB_per9 = round((stats.get("BB") or 0) * 9 / ip, 2)
+                r.HR_per9 = round((stats.get("HR") or 0) * 9 / ip, 2)
+            r.last_updated = now
+            pit_repaired += 1
+
+        # Batter side
+        bat_rows = (
+            db.query(_PlayerSeason)
+            .filter(_PlayerSeason.year == current_year,
+                    _PlayerSeason.last_updated.is_(None))
+            .all()
+        )
+        for r in bat_rows:
+            stats = _fetch_mlb_stats_api_batter(r.player_id, current_year)
+            if stats is None:
+                bat_no_data += 1
+                continue
+            for key in ("G", "PA", "AB", "R", "H", "doubles", "triples", "HR",
+                        "RBI", "BB", "SO", "SB", "CS", "IBB", "HBP", "SF", "SH",
+                        "GIDP", "BA", "OBP", "SLG", "OPS"):
+                value = stats.get(key)
+                if value is not None:
+                    setattr(r, key, value)
+            # TB rebuilt from the merged H / 2B / 3B / HR.
+            h  = stats.get("H") or 0
+            d2 = stats.get("doubles") or 0
+            d3 = stats.get("triples") or 0
+            hr = stats.get("HR") or 0
+            r.TB = h + d2 + 2 * d3 + 3 * hr
+            r.last_updated = now
+            bat_repaired += 1
+
+        db.commit()
+
+    return {
+        "status":             "ok",
+        "year":               current_year,
+        "pitcher_repaired":   pit_repaired,
+        "pitcher_no_mlb_data": pit_no_data,
+        "batter_repaired":    bat_repaired,
+        "batter_no_mlb_data": bat_no_data,
     }
 
 
@@ -2794,7 +2917,12 @@ def _build_pitcher_season_entry(
     # values alone.
     has_war = war_group is not None and not war_group.empty
     ip_dec: float = 0.0
-    entry: dict = {"year": year, "team": None, "league": None}
+    # Start with year only — team / league get filled in iff a
+    # source provides them. When no source does (bref + bwar both
+    # empty, MLB API only carries stat fields), omitting them lets
+    # the upsert preserve whatever team Phase 5 wrote previously
+    # instead of NULLing it.
+    entry: dict = {"year": year}
 
     if has_war:
         raw_team = str(war_group.iloc[-1]["team_ID"])

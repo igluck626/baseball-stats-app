@@ -165,7 +165,9 @@ def _build_current_batter_entry(player_id: int, bref_df, bwar_current, current_y
     if player_bref.empty and player_war.empty and mlb_api_stats is None:
         return None
 
-    entry: dict = {"year": current_year, "team": None, "league": None}
+    # Start with year only — see note in `_build_pitcher_season_entry`
+    # on why team / league are omitted until a source supplies them.
+    entry: dict = {"year": current_year}
 
     if not player_war.empty:
         group = player_war
@@ -497,28 +499,10 @@ _MLB_DIVISION_ID_TO_LEAGUE_DIV: dict[int, tuple[str, str]] = {
 }
 
 
-# MLB Stats API numeric team id → Lahman team_id (the value stored in
-# team_seasons.team_id today). The standings endpoint returns only the
-# team nickname in `team.name` ("Rays", "Yankees", "Athletics"), so the
-# previous name-based lookup against team_seasons.team_name failed for
-# 29/30 teams every nightly run — only "Athletics" matched by accident
-# because both surfaces happen to use the bare nickname for that club.
-# The numeric MLB id, by contrast, is permanent and unambiguous.
-#
-# Mappings cross-checked against the live /teams?sportId=1 payload.
-# Most match the lowercased Lahman teamCode 1:1; the two exceptions
-# (108 Angels, 133 Athletics) are pinned to the codes team_seasons
-# actually uses in current seasons (LAA + ATH).
-_MLB_TEAM_ID_TO_LAHMAN_TEAM_ID: dict[int, str] = {
-    109: "ARI",   144: "ATL",   110: "BAL",   111: "BOS",
-    145: "CHA",   112: "CHN",   113: "CIN",   114: "CLE",
-    115: "COL",   116: "DET",   117: "HOU",   118: "KCA",
-    108: "LAA",   119: "LAN",   146: "MIA",   158: "MIL",
-    142: "MIN",   147: "NYA",   121: "NYN",   133: "ATH",
-    143: "PHI",   134: "PIT",   135: "SDN",   137: "SFN",
-    136: "SEA",   138: "SLN",   139: "TBA",   140: "TEX",
-    141: "TOR",   120: "WAS",
-}
+# MLB Stats API numeric team id → Lahman team_id. The dict lives in
+# `data_service` so both the nightly standings pipeline (here) and
+# the roster-sync path (in data_service itself) share one mapping.
+_MLB_TEAM_ID_TO_LAHMAN_TEAM_ID = data_service._MLB_TEAM_ID_TO_LAHMAN_TEAM_ID
 
 
 def _split_record(splits: list[dict], wanted_type: str) -> tuple[int | None, int | None]:
