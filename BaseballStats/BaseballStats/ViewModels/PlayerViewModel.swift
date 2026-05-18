@@ -444,22 +444,18 @@ final class PlayerViewModel: ObservableObject {
     private static func parseBatting(_ b: BoxBatting) -> BoxBattingLine {
         BoxBattingLine(
             games:   1,
-            AB:      b.atBats      ?? 0,
-            R:       b.runs        ?? 0,
-            H:       b.hits        ?? 0,
-            doubles: b.doubles     ?? 0,
-            triples: b.triples     ?? 0,
-            HR:      b.homeRuns    ?? 0,
-            RBI:     b.rbi         ?? 0,
-            BB:      b.baseOnBalls ?? 0,
-            SO:      b.strikeOuts  ?? 0,
-            // BoxBatting doesn't carry SB / HBP / SF — zeroed.
-            // One-game error margin on AVG/OBP recomputation is
-            // below display precision; same applies summed across
-            // a small handful of games.
-            SB:  0,
-            HBP: 0,
-            SF:  0
+            AB:      b.atBats         ?? 0,
+            R:       b.runs           ?? 0,
+            H:       b.hits           ?? 0,
+            doubles: b.doubles        ?? 0,
+            triples: b.triples        ?? 0,
+            HR:      b.homeRuns       ?? 0,
+            RBI:     b.rbi            ?? 0,
+            BB:      b.baseOnBalls    ?? 0,
+            SO:      b.strikeOuts     ?? 0,
+            SB:      b.stolenBases    ?? 0,
+            HBP:     b.hitByPitch     ?? 0,
+            SF:      b.sacFlies       ?? 0
         )
     }
 

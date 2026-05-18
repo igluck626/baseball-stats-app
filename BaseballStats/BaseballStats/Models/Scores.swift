@@ -216,6 +216,16 @@ struct BoxBatting: Codable, Hashable {
     let rbi: Int?
     let baseOnBalls: Int?
     let strikeOuts: Int?
+    /// Per-game fields the MLB Stats API box score does ship —
+    /// needed by the player-profile overlay to recompute OBP
+    /// accurately (HBP + SF are in the formula's denominator;
+    /// SB drives the season-SB increment).
+    let stolenBases: Int?
+    let caughtStealing: Int?
+    let hitByPitch: Int?
+    let sacFlies: Int?
+    let sacBunts: Int?
+    let groundIntoDoublePlay: Int?
     /// "AVG" — comes through as a String like ".301" / ".000" /
     /// "---" (the latter for players with 0 PA), so we keep it raw.
     let avg: String?
