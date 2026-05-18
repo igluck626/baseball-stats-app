@@ -1546,7 +1546,15 @@ def sync_all_player_teams_from_rosters(current_year: int) -> dict:
         "pitcher_seasons:created": 0,
         "player_seasons:updated":  0,
         "player_seasons:created":  0,
+        # Fresh-rookie discovery: when a roster player is missing
+        # from both bio tables (bref hasn't shipped them yet),
+        # pull the bio from MLB Stats API and insert it so the
+        # next nightly's normal loop processes them via the MLB
+        # API stat path.
+        "pitchers_bio:created":    0,
+        "players_bio:created":     0,
     }
+    bio_failed: list[int] = []
     failed_teams: list[str] = []
     unmapped_teams: list[int] = []
     with connection.get_session() as db:
@@ -1578,12 +1586,30 @@ def sync_all_player_teams_from_rosters(current_year: int) -> dict:
                     continue
                 in_pitchers = crud.get_pitcher(db, pid) is not None
                 in_players  = crud.get_player(db, pid)  is not None
-                # Skip if the player isn't in either bio table —
-                # the new-call-up discovery pass earlier in the
-                # nightly will insert them; we'll catch them on
-                # the next run.
+                # When the player exists on a 40-man but isn't in
+                # any of our bio tables — typical for rookies who
+                # debuted recently and haven't shown up in bref's
+                # batting/pitching stats tables yet (McGonigle,
+                # etc.) — pull the bio from MLB Stats API and
+                # insert. Position determines which side: P slots
+                # go to `pitchers`, everything else to `players`.
                 if not in_pitchers and not in_players:
-                    continue
+                    position = (entry.get("position") or {}).get("abbreviation") or ""
+                    is_pitcher = position == "P"
+                    bio = fetch_mlb_player_bio(pid)
+                    if bio is None:
+                        bio_failed.append(pid)
+                        continue
+                    if bio.get("mlb_debut") is None:
+                        bio["mlb_debut"] = current_year
+                    if is_pitcher:
+                        crud.save_pitcher(db, bio)
+                        in_pitchers = True
+                        counts["pitchers_bio:created"] += 1
+                    else:
+                        crud.save_player(db, bio)
+                        in_players = True
+                        counts["players_bio:created"] += 1
                 actions = _apply_team_to_season_rows(
                     db,
                     player_id=pid,
@@ -1603,6 +1629,7 @@ def sync_all_player_teams_from_rosters(current_year: int) -> dict:
         "counts":         counts,
         "failed_teams":   failed_teams,
         "unmapped_teams": unmapped_teams,
+        "bio_failed":     bio_failed,
     }
 
 

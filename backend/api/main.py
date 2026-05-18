@@ -1006,7 +1006,28 @@ def admin_sync_all_player_teams():
     """Bulk team-reconcile pass against MLB Stats API's 30 active
     rosters. Used both as a one-shot repair after the diagnosis
     above and as the post-step the nightly pipeline calls to
-    cover everyone whose bref `Tm` is wrong on a given day."""
+    cover everyone whose bref `Tm` is wrong on a given day.
+    Now also inserts bio rows for any roster player missing from
+    `players` / `pitchers` — see `discover-from-rosters` for the
+    discovery-focused alias of the same operation."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    current_year = datetime.datetime.utcnow().year
+    return data_service.sync_all_player_teams_from_rosters(current_year)
+
+
+@app.post("/admin/discover-from-rosters")
+def admin_discover_from_rosters():
+    """Walk MLB Stats API's 30 active rosters and insert bio rows
+    for any roster player missing from our `players` / `pitchers`
+    tables. Used for fresh rookies who debuted recently and
+    haven't shown up in bref's batting/pitching stats tables yet
+    (the nightly's bref-driven discovery skips them). After this
+    runs, the next nightly's normal loop will populate their
+    stats via the MLB Stats API override path.
+    Same underlying helper as `/admin/sync-all-player-teams` —
+    that one also reconciles team codes for known players in the
+    same pass."""
     if not connection.db_available():
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
     current_year = datetime.datetime.utcnow().year
