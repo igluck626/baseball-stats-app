@@ -2761,12 +2761,18 @@ fileprivate func makeEffectivePitching(
     let era:  Double? = IP > 0 ? Double(ER) * 9.0 / IP : nil
     let whip: Double? = IP > 0 ? Double(H + BB) / IP : nil
     let k9:   Double? = IP > 0 ? Double(SO) * 9.0 / IP : nil
+    // W / L / SV come from the box score's per-game decision flags
+    // — zero for everyone except the actual decision pitchers, so
+    // summing them in is safe for live games too (the values stay
+    // zero until MLB records the decision at game end).
     return EffectivePitching(
         WAR: war,
-        W:  s?.W, L: s?.L,
+        W:  (s?.W  ?? 0) + recent.W,
+        L:  (s?.L  ?? 0) + recent.L,
         ERA: era, WHIP: whip, K_per9: k9,
         G:  (s?.G ?? 0) + recent.games,
-        GS: s?.GS, SV: s?.SV,
+        GS: s?.GS,
+        SV: (s?.SV ?? 0) + recent.SV,
         IP: IP, SO: SO, BB: BB
     )
 }

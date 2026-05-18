@@ -74,6 +74,13 @@ struct BoxPitchingLine: Hashable {
     var BB: Int    = 0
     var SO: Int    = 0
     var HR: Int    = 0
+    /// Per-game decision flags. Zero for most box-score appearances
+    /// (one pitcher per game earns each); the winning / losing /
+    /// saving pitcher gets a 1. Folded into the season W-L-SV
+    /// totals at render time.
+    var W:  Int    = 0
+    var L:  Int    = 0
+    var SV: Int    = 0
 
     var appeared: Bool { IP > 0 }
 
@@ -82,6 +89,7 @@ struct BoxPitchingLine: Hashable {
         IP += o.IP
         H  += o.H;  R  += o.R;  ER += o.ER
         BB += o.BB; SO += o.SO; HR += o.HR
+        W  += o.W;  L  += o.L;  SV += o.SV
     }
 }
 
@@ -463,12 +471,15 @@ final class PlayerViewModel: ObservableObject {
         BoxPitchingLine(
             games: 1,
             IP:    Self.parseInningsString(p.inningsPitched),
-            H:     p.hits        ?? 0,
-            R:     p.runs        ?? 0,
-            ER:    p.earnedRuns  ?? 0,
-            BB:    p.baseOnBalls ?? 0,
-            SO:    p.strikeOuts  ?? 0,
-            HR:    p.homeRuns    ?? 0
+            H:     p.hits         ?? 0,
+            R:     p.runs         ?? 0,
+            ER:    p.earnedRuns   ?? 0,
+            BB:    p.baseOnBalls  ?? 0,
+            SO:    p.strikeOuts   ?? 0,
+            HR:    p.homeRuns     ?? 0,
+            W:     p.wins         ?? 0,
+            L:     p.losses       ?? 0,
+            SV:    p.saves        ?? 0
         )
     }
 
