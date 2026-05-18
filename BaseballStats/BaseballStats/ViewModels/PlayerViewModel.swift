@@ -18,15 +18,15 @@ import Foundation
 
 /// Box-score line overlay applied on top of the overnight season
 /// totals in the player profile. Populated by `loadRecentGameStats()`
-/// across today's live/final games + yesterday's final games, with
-/// per-game lines summed into a single cumulative overlay before
-/// being merged with the overnight totals. Same shape serves both
-/// per-game parsing and the accumulated total.
+/// across today's live/final games, with per-game lines summed
+/// into a single cumulative overlay before being merged with the
+/// overnight totals. Same shape serves both per-game parsing and
+/// the accumulated total.
 struct BoxBattingLine: Hashable {
     /// Number of games this line represents. A parsed single-game
     /// line has games == 1; the cumulative overlay accumulates this
     /// so the season G can be incremented by the correct amount when
-    /// summing across multiple games (doubleheader, today + yest).
+    /// summing across multiple games (i.e. a doubleheader).
     var games:   Int = 0
     var AB:      Int = 0
     var R:       Int = 0
@@ -52,8 +52,8 @@ struct BoxBattingLine: Hashable {
     var appeared: Bool { PA > 0 }
 
     /// Accumulator — sum another box-score line into this one.
-    /// Used when the player appeared in more than one game in the
-    /// window (doubleheader, today + yesterday).
+    /// Used when the player appeared in more than one game today
+    /// (i.e. a doubleheader).
     mutating func add(_ o: BoxBattingLine) {
         games += o.games
         AB += o.AB; R += o.R; H += o.H
@@ -101,23 +101,23 @@ final class PlayerViewModel: ObservableObject {
     @Published var awards: PlayerAwardsResponse?
 
     /// Cumulative box-score overlay for the player across today's
-    /// live/final games + yesterday's final games. Summed in
-    /// `loadRecentGameStats()` and merged into the season totals at
-    /// render time. nil → no overlay applied (no eligible games,
-    /// or the player didn't appear in any of them).
+    /// live/final games. Summed in `loadRecentGameStats()` and
+    /// merged into the season totals at render time. nil → no
+    /// overlay applied (no eligible games, or the player didn't
+    /// appear in any of them).
     @Published var recentBatting: BoxBattingLine?
     @Published var recentPitching: BoxPitchingLine?
     /// True once `loadRecentGameStats()` has applied an overlay —
-    /// any recent appearance (live or final, today or yesterday).
-    /// Drives the silent stat update behavior but NOT the LIVE
-    /// badge; see `hasLiveGame` for that.
+    /// any appearance in today's live or final games. Drives the
+    /// silent stat update behavior but NOT the LIVE badge; see
+    /// `hasLiveGame` for that.
     @Published var recentStatsLoaded: Bool = false
     /// True iff at least one of the games whose stats were folded
     /// into the overlay is currently in-progress. Final-only
-    /// overlays (yesterday's game + today's already-final game)
-    /// don't flip this. Gates the pulsing LIVE badge so the badge
-    /// only appears when there's something genuinely live to
-    /// watch — final-game stat fill-in stays silent.
+    /// overlays (today's already-completed game) don't flip this.
+    /// Gates the pulsing LIVE badge so the badge only appears
+    /// when there's something genuinely live to watch — final-
+    /// game stat fill-in stays silent.
     @Published var hasLiveGame: Bool = false
     /// Broader signal than `hasLiveGame`: true iff this player's
     /// team has *any* game currently in-progress, even when the
@@ -313,38 +313,28 @@ final class PlayerViewModel: ObservableObject {
 
     // MARK: - Recent-game stats overlay
 
-    /// Fetches the player's box-score lines for recent games and
+    /// Fetches the player's box-score lines for today's games and
     /// folds them into a cumulative overlay on top of the overnight
-    /// season totals. Eligible games:
+    /// season totals. Eligible games are today's Live + Final
+    /// entries — Preview / Scheduled / Postponed skip.
     ///
-    ///   • Today's schedule — any game in Live or Final state.
-    ///     Preview / Scheduled / Postponed / Suspended skip.
-    ///   • Yesterday's schedule — Final games only, AND only when
-    ///     we have a `stats_last_updated` cutoff to compare against.
-    ///     If the cutoff is nil (pre-migration row), yesterday is
-    ///     skipped entirely — the nightly batch has been running
-    ///     for months, so the safer default is to assume yesterday
-    ///     is already absorbed rather than risk double-counting it.
+    /// Yesterday's schedule is NOT consulted: the ~02:00 UTC
+    /// nightly run reliably absorbs every game that finished
+    /// yesterday (essentially nothing past 02:00 UTC ≈ 9 PM PT
+    /// extra-innings edge case). Pulling yesterday risked double-
+    /// counting more often than it fixed missing stats.
     ///
     /// Box scores are fetched in parallel and summed before applying
-    /// so a doubleheader or today-plus-yesterday case produces one
-    /// merged overlay (not two stacked applications). The LIVE badge
-    /// fires only when at least one folded game is actually live;
-    /// pure final overlays fill stats silently.
+    /// so a doubleheader produces one merged overlay (not two
+    /// stacked applications). The LIVE badge fires only when at
+    /// least one folded game is actually live; pure final overlays
+    /// fill stats silently.
     func loadRecentGameStats() async {
         guard !isRetired else { return }
         guard let teamId = mlbTeamId(for: player.teamCode) else { return }
-        let cal = Calendar.current
-        let today = Date()
-        guard let yesterday = cal.date(byAdding: .day, value: -1, to: today) else { return }
         let mlb = MLBStatsAPIClient.shared
 
-        // Pull both days' schedules in parallel. Each branch survives
-        // its peer's failure independently — a yesterday-fetch error
-        // shouldn't kill today's overlay.
-        async let todayScheduleTry = try? mlb.getTeamSchedule(date: today,     teamId: teamId)
-        async let yestScheduleTry  = try? mlb.getTeamSchedule(date: yesterday, teamId: teamId)
-        let (todaySchedule, yestSchedule) = await (todayScheduleTry, yestScheduleTry)
+        let todaySchedule = try? await mlb.getTeamSchedule(date: Date(), teamId: teamId)
 
         // Build the eligible-games list, tagging each with whether
         // it's currently live — the `hasLiveGame` flag below is the
@@ -352,14 +342,6 @@ final class PlayerViewModel: ObservableObject {
         // signal flipped before we even look at the player's box-
         // score line so the refresh loop keeps polling for
         // not-yet-appeared players.
-        //
-        // Overlay rules (no DB-timestamp comparison needed):
-        //   • Today, any state    → include
-        //   • Yesterday, Live     → include (extras / suspended)
-        //   • Yesterday, Final    → include iff start ≥ 17:00 UTC
-        //     (≥ noon ET / 9 AM PT) — afternoon-and-later games
-        //     finish after the ~02:00 UTC nightly window. Pure
-        //     day games are assumed already in overnight totals.
         var eligible: [(gamePk: Int, isLive: Bool)] = []
         var liveOnSchedule = false
         for g in todaySchedule?.dates.flatMap(\.games) ?? [] {
@@ -369,23 +351,6 @@ final class PlayerViewModel: ObservableObject {
                 eligible.append((g.gamePk, true))
             case "Final":
                 eligible.append((g.gamePk, false))
-            default:
-                break
-            }
-        }
-        for g in yestSchedule?.dates.flatMap(\.games) ?? [] {
-            switch g.status.abstractGameState {
-            case "Live":
-                // Carry-over from yesterday (suspended, extra
-                // innings spilling past midnight) — include
-                // unconditionally and treat as live so the LIVE
-                // badge + refresh loop fire correctly.
-                liveOnSchedule = true
-                eligible.append((g.gamePk, true))
-            case "Final":
-                if Self.shouldOverlayYesterdayFinal(game: g) {
-                    eligible.append((g.gamePk, false))
-                }
             default:
                 break
             }
@@ -474,23 +439,6 @@ final class PlayerViewModel: ObservableObject {
     func stopRecentGameRefresh() {
         refreshTask?.cancel()
         refreshTask = nil
-    }
-
-    /// Decide whether to fold yesterday's final box-score line on
-    /// top of overnight totals. Game start hour (UTC) is the only
-    /// signal — no DB timestamp comparison.
-    ///
-    /// Cutoff is 17:00 UTC = noon ET / 9 AM PT. Games with first
-    /// pitch at or after that hour reliably finish past the ~02:00
-    /// UTC nightly window, so they're missing from yesterday's
-    /// overnight totals and need overlaying. Earlier-start day
-    /// games finished hours before the nightly ran and are already
-    /// counted; overlaying them would double-count.
-    private static func shouldOverlayYesterdayFinal(game: Game) -> Bool {
-        guard let started = game.startDate else { return false }
-        var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = TimeZone(identifier: "UTC") ?? .gmt
-        return cal.component(.hour, from: started) >= 17
     }
 
     private static func parseBatting(_ b: BoxBatting) -> BoxBattingLine {
