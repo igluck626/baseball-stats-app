@@ -263,7 +263,9 @@ struct CareerSeason: Codable, Identifiable, Hashable {
 }
 
 /// `career_totals` block. `G/H/HR/RBI` only appear when at least one season
-/// has counting stats — the backend omits them otherwise.
+/// has counting stats — the backend omits them otherwise. Slash-line rates
+/// and OPS+ are computed off the summed counting stats (PA-weighted for
+/// OPS+) so they match bref's career-page numbers.
 struct CareerTotals: Codable {
     let seasons: Int?
     let WAR: Double?
@@ -273,6 +275,11 @@ struct CareerTotals: Codable {
     let H: Int?
     let HR: Int?
     let RBI: Int?
+    let AVG: Double?
+    let OBP: Double?
+    let SLG: Double?
+    let OPS: Double?
+    let OPS_plus: Double?
 }
 
 // MARK: - Pitching: current
@@ -401,8 +408,9 @@ struct PitcherCareerSeason: Codable, Identifiable, Hashable {
     var id: Int { year ?? 0 }
 }
 
-/// Pitching `career_totals` block. Fields the backend computes by summing
-/// across seasons (sum-able counting stats only — no career ERA/WHIP).
+/// Pitching `career_totals` block. ERA / WHIP / ERA+ come off the
+/// summed counting stats (IP-weighted for ERA+) so they line up with
+/// bref's career-page numbers.
 struct PitcherCareerTotals: Codable {
     let seasons: Int?
     let WAR: Double?
@@ -411,6 +419,9 @@ struct PitcherCareerTotals: Codable {
     let BB: Int?
     let W: Int?
     let L: Int?
+    let ERA: Double?
+    let WHIP: Double?
+    let ERA_plus: Double?
 }
 
 // MARK: - Game logs

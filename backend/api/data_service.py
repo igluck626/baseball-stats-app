@@ -795,20 +795,7 @@ def get_career_stats(player_id: int) -> Optional[dict]:
                 extremes_cache, qualifier_cache,
             )
 
-    seasons_with_counting = [s for s in seasons if s.get("H") is not None]
-    career_totals: dict = {
-        "seasons": len(seasons),
-        "WAR":     round(sum((s.get("WAR")     or 0.0) for s in seasons), 1),
-        "WAR_off": round(sum((s.get("WAR_off") or 0.0) for s in seasons), 1),
-        "WAR_def": round(sum((s.get("WAR_def") or 0.0) for s in seasons), 1),
-    }
-    if seasons_with_counting:
-        career_totals.update({
-            "G":   int(sum(s.get("G")   or 0 for s in seasons_with_counting)),
-            "H":   int(sum(s.get("H")   or 0 for s in seasons_with_counting)),
-            "HR":  int(sum(s.get("HR")  or 0 for s in seasons_with_counting)),
-            "RBI": int(sum(s.get("RBI") or 0 for s in seasons_with_counting)),
-        })
+    career_totals = _batting_career_totals(seasons)
 
     return {
         "player_id":     player_id,
@@ -817,6 +804,67 @@ def get_career_stats(player_id: int) -> Optional[dict]:
         "seasons":       seasons,
         "career_totals": career_totals,
     }
+
+
+def _batting_career_totals(seasons: list[dict]) -> dict:
+    """Aggregate season-level batting rows into a `career_totals`
+    dict. Counting stats are linear sums; rate stats come off the
+    aggregated counting stats (the only correct way — averaging
+    per-season rates would double-weight short seasons). Career
+    OPS+ is the PA-weighted average across seasons where OPS+ is
+    populated, matching bref's career-page convention. Seasons
+    without counting stats (the leader / placeholder rows) are
+    excluded from the sum block."""
+    seasons_with_counting = [s for s in seasons if s.get("H") is not None]
+    totals: dict = {
+        "seasons": len(seasons),
+        "WAR":     round(sum((s.get("WAR")     or 0.0) for s in seasons), 1),
+        "WAR_off": round(sum((s.get("WAR_off") or 0.0) for s in seasons), 1),
+        "WAR_def": round(sum((s.get("WAR_def") or 0.0) for s in seasons), 1),
+    }
+    if not seasons_with_counting:
+        return totals
+
+    g   = int(sum(s.get("G")   or 0 for s in seasons_with_counting))
+    h   = int(sum(s.get("H")   or 0 for s in seasons_with_counting))
+    hr  = int(sum(s.get("HR")  or 0 for s in seasons_with_counting))
+    rbi = int(sum(s.get("RBI") or 0 for s in seasons_with_counting))
+    ab  = int(sum(s.get("AB")  or 0 for s in seasons_with_counting))
+    bb  = int(sum(s.get("BB")  or 0 for s in seasons_with_counting))
+    hbp = int(sum(s.get("HBP") or 0 for s in seasons_with_counting))
+    sf  = int(sum(s.get("SF")  or 0 for s in seasons_with_counting))
+    tb  = int(sum(s.get("TB")  or 0 for s in seasons_with_counting))
+
+    totals["G"]   = g
+    totals["H"]   = h
+    totals["HR"]  = hr
+    totals["RBI"] = rbi
+
+    if ab > 0:
+        totals["AVG"] = round(h / ab, 3)
+        totals["SLG"] = round(tb / ab, 3) if tb else None
+    obp_den = ab + bb + hbp + sf
+    if obp_den > 0:
+        totals["OBP"] = round((h + bb + hbp) / obp_den, 3)
+    if totals.get("OBP") is not None and totals.get("SLG") is not None:
+        totals["OPS"] = round(totals["OBP"] + totals["SLG"], 3)
+
+    # PA-weighted career OPS+ across seasons that have one. Missing
+    # seasons silently drop out (same shape as bref's career page —
+    # if WAR backfill never ran for a year, that year doesn't
+    # contribute, but the rest of the career does).
+    num = 0.0
+    den = 0.0
+    for s in seasons_with_counting:
+        ops_plus = s.get("OPS_plus")
+        pa = s.get("PA")
+        if ops_plus is not None and pa is not None and pa > 0:
+            num += float(ops_plus) * float(pa)
+            den += float(pa)
+    if den > 0:
+        totals["OPS_plus"] = round(num / den, 1)
+
+    return totals
 
 
 def get_current_pitching_stats(player_id: int) -> Optional[dict]:
@@ -919,16 +967,50 @@ def get_career_pitching_stats(player_id: int) -> Optional[dict]:
         "name":          name,
         "bio":           bio,
         "seasons":       seasons,
-        "career_totals": {
-            "seasons": len(seasons),
-            "WAR":     round(sum((s.get("WAR") or 0.0) for s in seasons), 1),
-            "IP":      round(sum((s.get("IP")  or 0.0) for s in seasons), 1),
-            "SO":      int(sum(s.get("SO") or 0 for s in seasons)),
-            "BB":      int(sum(s.get("BB") or 0 for s in seasons)),
-            "W":       int(sum(s.get("W")  or 0 for s in seasons)),
-            "L":       int(sum(s.get("L")  or 0 for s in seasons)),
-        },
+        "career_totals": _pitching_career_totals(seasons),
     }
+
+
+def _pitching_career_totals(seasons: list[dict]) -> dict:
+    """Aggregate season-level pitcher rows into a `career_totals`
+    dict. Standard counting stats are linear sums; ERA and WHIP
+    come off summed ER / H / BB / IP (the only correct way for a
+    rate aggregate). Career ERA+ is the IP-weighted average across
+    seasons where ERA+ is populated — matches bref's career-page
+    convention."""
+    totals: dict = {
+        "seasons": len(seasons),
+        "WAR":     round(sum((s.get("WAR") or 0.0) for s in seasons), 1),
+        "IP":      round(sum((s.get("IP")  or 0.0) for s in seasons), 1),
+        "SO":      int(sum(s.get("SO") or 0 for s in seasons)),
+        "BB":      int(sum(s.get("BB") or 0 for s in seasons)),
+        "W":       int(sum(s.get("W")  or 0 for s in seasons)),
+        "L":       int(sum(s.get("L")  or 0 for s in seasons)),
+    }
+
+    ip = sum((s.get("IP") or 0.0) for s in seasons)
+    er = sum((s.get("ER") or 0) for s in seasons)
+    h  = sum((s.get("H")  or 0) for s in seasons)
+    bb = totals["BB"]
+
+    if ip > 0:
+        totals["ERA"]  = round(9.0 * float(er) / float(ip), 2)
+        totals["WHIP"] = round(float(bb + h) / float(ip), 2)
+
+    # IP-weighted career ERA+ across seasons with one (seasons
+    # without ERA+ silently drop out of the weighted average).
+    num = 0.0
+    den = 0.0
+    for s in seasons:
+        era_plus = s.get("ERA_plus")
+        season_ip = s.get("IP")
+        if era_plus is not None and season_ip is not None and season_ip > 0:
+            num += float(era_plus) * float(season_ip)
+            den += float(season_ip)
+    if den > 0:
+        totals["ERA_plus"] = round(num / den, 1)
+
+    return totals
 
 
 # ---------------------------------------------------------------------------

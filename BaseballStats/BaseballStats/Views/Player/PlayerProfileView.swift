@@ -2067,8 +2067,9 @@ private struct BattingCareerScrollableTotalsRow: View {
             if visible.contains("SLG")  { Text(format3(agg.slg))     .frame(width: BattingCareerColumn.slg,     alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
             if visible.contains("OPS")  { Text(format3(agg.ops))     .frame(width: BattingCareerColumn.ops,     alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
             if visible.contains("OPS+") {
-                Text("—").frame(width: BattingCareerColumn.opsPlus, alignment: .trailing)
-                    .foregroundStyle(.tertiary)
+                Text(formatRoundedInt(agg.opsPlus))
+                    .frame(width: BattingCareerColumn.opsPlus, alignment: .trailing)
+                    .monospacedDigit()
                     .padding(.horizontal, 2)
             }
             if visible.contains("TB")   { Text(formatCount(agg.tb))  .frame(width: BattingCareerColumn.tb,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
@@ -2386,10 +2387,13 @@ private struct PitchingCareerScrollableTotalsRow: View {
             if visible.contains("BK")    { Text(formatCount(agg.bk)).frame(width: PitchingCareerColumn.bk, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
             if visible.contains("WP")    { Text(formatCount(agg.wp)).frame(width: PitchingCareerColumn.wp, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
             if visible.contains("BF")    { Text(formatCount(agg.bf)).frame(width: PitchingCareerColumn.bf, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
-            // ERA+ and FIP aren't summable — leave blank.
+            // ERA+ is IP-weighted across seasons; FIP isn't reliably
+            // re-computable from career sums (the constant shifts per
+            // era), so it stays blank in the totals row.
             if visible.contains("ERA+")  {
-                Text("—").frame(width: PitchingCareerColumn.eraPlus, alignment: .trailing)
-                    .foregroundStyle(.tertiary).padding(.horizontal, 2)
+                Text(formatRoundedInt(agg.eraPlus))
+                    .frame(width: PitchingCareerColumn.eraPlus, alignment: .trailing)
+                    .monospacedDigit().padding(.horizontal, 2)
             }
             if visible.contains("FIP")   {
                 Text("—").frame(width: PitchingCareerColumn.fip, alignment: .trailing)
@@ -3308,6 +3312,11 @@ private struct BattingCareerAgg {
     let sh:   Int
     let ibb:  Int
     let war:  Double
+    /// PA-weighted career OPS+. Matches bref's career-page convention:
+    /// Σ(OPS+ × PA) / Σ(PA) across seasons that have an OPS+ on file.
+    /// Seasons without OPS+ silently drop out (their PA is excluded
+    /// from the denominator). nil when no season has OPS+.
+    let opsPlus: Double?
 
     var avg: Double? {
         ab > 0 ? Double(h) / Double(ab) : nil
@@ -3338,7 +3347,17 @@ private struct BattingCareerAgg {
     }
 
     static func compute(seasons: [CareerSeason]) -> BattingCareerAgg {
-        BattingCareerAgg(
+        var opsNum = 0.0
+        var opsDen = 0.0
+        for s in seasons {
+            if let ops = s.OPS_plus, let pa = s.PA, pa > 0 {
+                opsNum += ops * Double(pa)
+                opsDen += Double(pa)
+            }
+        }
+        let opsPlus: Double? = opsDen > 0 ? opsNum / opsDen : nil
+
+        return BattingCareerAgg(
             pa:   seasons.reduce(0) { $0 + ($1.PA ?? 0) },
             ab:   seasons.reduce(0) { $0 + ($1.AB ?? 0) },
             h:    seasons.reduce(0) { $0 + ($1.H ?? 0) },
@@ -3357,7 +3376,8 @@ private struct BattingCareerAgg {
             gidp: seasons.reduce(0) { $0 + ($1.GIDP ?? 0) },
             sh:   seasons.reduce(0) { $0 + ($1.SH ?? 0) },
             ibb:  seasons.reduce(0) { $0 + ($1.IBB ?? 0) },
-            war:  seasons.reduce(0.0) { $0 + ($1.WAR ?? 0) }
+            war:  seasons.reduce(0.0) { $0 + ($1.WAR ?? 0) },
+            opsPlus: opsPlus
         )
     }
 }
@@ -3388,6 +3408,10 @@ private struct PitchingCareerAgg {
     let w: Int
     let l: Int
     let war: Double
+    /// IP-weighted career ERA+. Σ(ERA+ × IP) / Σ(IP) across seasons
+    /// with an ERA+ on file. Seasons missing ERA+ drop out of the
+    /// weighted average. nil when no season has ERA+.
+    let eraPlus: Double?
 
     var era: Double? {
         ip > 0 ? Double(er) * 9.0 / ip : nil
@@ -3442,7 +3466,17 @@ private struct PitchingCareerAgg {
     }
 
     static func compute(seasons: [PitcherCareerSeason]) -> PitchingCareerAgg {
-        PitchingCareerAgg(
+        var eraNum = 0.0
+        var eraDen = 0.0
+        for s in seasons {
+            if let era = s.ERA_plus, let ip = s.IP, ip > 0 {
+                eraNum += era * ip
+                eraDen += ip
+            }
+        }
+        let eraPlus: Double? = eraDen > 0 ? eraNum / eraDen : nil
+
+        return PitchingCareerAgg(
             ip:  seasons.reduce(0.0) { $0 + ($1.IP  ?? 0) },
             er:  seasons.reduce(0)   { $0 + ($1.ER  ?? 0) },
             h:   seasons.reduce(0)   { $0 + ($1.H   ?? 0) },
@@ -3463,7 +3497,8 @@ private struct PitchingCareerAgg {
             sv:  seasons.reduce(0)   { $0 + ($1.SV  ?? 0) },
             w:   seasons.reduce(0)   { $0 + ($1.W   ?? 0) },
             l:   seasons.reduce(0)   { $0 + ($1.L   ?? 0) },
-            war: seasons.reduce(0.0) { $0 + ($1.WAR ?? 0) }
+            war: seasons.reduce(0.0) { $0 + ($1.WAR ?? 0) },
+            eraPlus: eraPlus
         )
     }
 }
