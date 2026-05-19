@@ -1091,6 +1091,29 @@ def admin_bdl_mapping_status(
     return data_service.get_bdl_mapping_status(since_year)
 
 
+@app.post("/admin/retry-unmapped-bdl-players")
+def admin_retry_unmapped_bdl_players(
+    limit: int = Query(1000, ge=1, le=10000,
+                       description="Max DB rows to process this call. Re-invoke to resume."),
+):
+    """Re-run the BDL player mapping for rows that previously
+    failed. Functionally identical to `build-bdl-player-mapping`
+    (the `bdl_id IS NULL` filter already excludes successfully-
+    matched rows), but the floor is locked to `mlb_debut >= 2010`
+    and the endpoint name documents intent: "go pick up the rows
+    the first pass missed, now that the matcher knows about
+    suffix variations and accent stripping." Same rate-limit and
+    re-invocation semantics."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    try:
+        return data_service.build_bdl_player_mapping(
+            since_year=2010, limit=limit,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+
 @app.post("/admin/build-bdl-player-mapping")
 def admin_build_bdl_player_mapping(
     since_year: int = Query(2010, ge=1871, le=2100,

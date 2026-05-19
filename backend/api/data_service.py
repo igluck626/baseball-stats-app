@@ -16,6 +16,7 @@ import math
 import os
 import sys
 import time
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -1627,6 +1628,7 @@ def build_bdl_player_mapping(since_year: int = 2010,
             bdl_id, status, candidates = _bdl_match_one_player(
                 full_name=row.name,
                 side=side,
+                mlb_debut=row.mlb_debut,
             )
             counts["bdl_lookups"] += 1
 
@@ -1793,24 +1795,95 @@ def get_bdl_mapping_status(since_year: int = 2002) -> dict:
 # else is treated as a position-player slot.
 _BDL_PITCHER_POSITIONS: set[str] = {"p", "sp", "rp", "cl"}
 
+# Suffix tokens stripped during name normalization. BDL is inconsistent
+# about including "Jr."/"Sr." — sometimes the canonical name carries
+# the suffix (Bobby Witt Jr.), sometimes it doesn't. Stripping on both
+# sides of the comparison sidesteps the difference.
+_BDL_NAME_SUFFIXES: set[str] = {"jr", "sr", "ii", "iii", "iv", "v"}
+
+
+def _normalize_bdl_name(s: str) -> str:
+    """Aggressive normalization for BDL name matching. Strips accents
+    (Peña → Pena), drops periods and apostrophes (J.J. → JJ,
+    O'Brien → OBrien), removes trailing suffix tokens (Jr / II / III),
+    lowercases, and collapses whitespace. Returns "" for empty input
+    or for a name that's nothing but a suffix marker."""
+    if not s:
+        return ""
+    nfd = unicodedata.normalize("NFD", s)
+    s = "".join(c for c in nfd if not unicodedata.combining(c))
+    s = s.replace(".", "").replace("'", "")
+    tokens = [t for t in s.lower().split() if t not in _BDL_NAME_SUFFIXES]
+    return " ".join(tokens)
+
+
+def _bdl_search_token(full_name: str) -> str:
+    """Pick a normalized last-name token for BDL's `search` param.
+    Walks tokens right-to-left and returns the first one that
+    survives suffix-stripping — so "Bobby Witt Jr." searches for
+    "witt", not "jr". Falls back to the raw last token if every
+    token is a suffix (shouldn't happen)."""
+    tokens = full_name.strip().split() if full_name else []
+    for t in reversed(tokens):
+        normalized = _normalize_bdl_name(t)
+        if normalized:
+            return normalized
+    return tokens[-1].lower() if tokens else ""
+
+
+def _bdl_candidate_dict(p: dict) -> dict:
+    """Shape one BDL player dict into the small inspection payload
+    we surface in `ambiguous` / debug responses."""
+    return {
+        "bdl_id":    p.get("id"),
+        "full_name": p.get("full_name"),
+        "position":  p.get("position"),
+        "team":      (p.get("team") or {}).get("abbreviation"),
+        "debut":     p.get("debut_year"),
+    }
+
+
+def _bdl_is_pitcher(p: dict) -> bool:
+    return (p.get("position") or "").strip().lower() in _BDL_PITCHER_POSITIONS
+
 
 def _bdl_match_one_player(
     full_name: str,
     side: str,
+    mlb_debut: Optional[int] = None,
 ) -> tuple[Optional[int], str, list[dict]]:
     """Returns (bdl_id, status, candidates) for a single name lookup.
     `status` is "matched" / "ambiguous" / "unmatched". `candidates`
-    is the filtered list when ambiguous; otherwise empty."""
+    is the filtered list when ambiguous; otherwise empty.
+
+    Strategy ladder — each tier is tried only if the previous didn't
+    produce exactly one match:
+      1. Exact case-insensitive `full_name` equality.
+      2. Normalized equality — strips accents, periods, and suffix
+         tokens on BOTH sides. Catches "Bobby Witt" vs "Bobby Witt
+         Jr.", "Wily Mo Peña" vs "Wily Mo Pena", "J.J. Davis" vs
+         "JJ Davis".
+      3. Debut-year filter — when (2) still has multiple hits, keep
+         only BDL rows whose `debut_year` is within ±2 of our
+         `mlb_debut`. BDL's debut_year is off-by-one for some
+         players (Trout: BDL 2010, actual 2011), so ±2 buys a year
+         of slack on each side.
+
+    Side filter (batter vs. pitcher) is applied AFTER strategies
+    1–3 select candidates by name; this preserves the existing
+    behavior of disambiguating same-name pairs (Will Smith C vs
+    Will Smith RP) while letting the normalized search still work
+    when a player's position-side is misclassified in BDL.
+    """
     if not full_name:
         return None, "unmatched", []
-    parts = full_name.strip().split()
-    if not parts:
+    search_token = _bdl_search_token(full_name)
+    if not search_token:
         return None, "unmatched", []
-    last = parts[-1]
 
     try:
         data = _bdl_get_json("players", {
-            "search":   last,
+            "search":   search_token,
             "per_page": 100,
         })
     except Exception as exc:
@@ -1818,52 +1891,61 @@ def _bdl_match_one_player(
         return None, "unmatched", []
 
     results = data.get("data") or []
-    target = full_name.strip().lower()
-
-    # Exact full-name match (case insensitive) — keeps the search
-    # broad (last name only) but tightens the comparison so "Will
-    # Smith" doesn't capture "Willie Smith" et al.
-    name_matches = [
-        p for p in results
-        if (p.get("full_name") or "").strip().lower() == target
-    ]
-    if not name_matches:
+    if not results:
         return None, "unmatched", []
 
-    # Side filter — batters take non-pitcher BDL rows, pitchers take
-    # pitcher BDL rows. Two-way players (Ohtani: position="DH" but
-    # in our pitchers table too) will only be picked up on one side
-    # at a time, which is the correct behavior — both sides need
-    # the same bdl_id and the search will land on the same row.
-    def is_pitcher(p: dict) -> bool:
-        return (p.get("position") or "").strip().lower() in _BDL_PITCHER_POSITIONS
+    target_exact = full_name.strip().lower()
+    target_norm  = _normalize_bdl_name(full_name)
 
+    # Strategy 1: exact name match.
+    exact = [
+        p for p in results
+        if (p.get("full_name") or "").strip().lower() == target_exact
+    ]
+
+    # Strategy 2: normalized name match. Use as the canonical
+    # candidate pool when the exact tier didn't already nail one.
+    norm = [
+        p for p in results
+        if _normalize_bdl_name(p.get("full_name") or "") == target_norm
+    ]
+    # Union of the two — exact wins on duplicates, but in practice
+    # exact ⊆ norm (anything exactly equal is also equal after
+    # normalization), so `norm` is the canonical pool.
+    candidates = norm if norm else exact
+
+    if not candidates:
+        return None, "unmatched", []
+
+    # Side filter — batters take non-pitcher rows, pitchers take
+    # pitcher rows. Falls back to the unfiltered set if the side
+    # filter eliminated everything (BDL sometimes mislabels the
+    # position on debut-season rookies).
     if side == "pitcher":
-        side_matches = [p for p in name_matches if is_pitcher(p)]
+        side_matches = [p for p in candidates if _bdl_is_pitcher(p)]
     else:
-        side_matches = [p for p in name_matches if not is_pitcher(p)]
+        side_matches = [p for p in candidates if not _bdl_is_pitcher(p)]
+    if not side_matches:
+        side_matches = candidates
 
     if len(side_matches) == 1:
         return side_matches[0].get("id"), "matched", []
-    if len(side_matches) == 0:
-        # Name hit but no position-side match — fall back to the raw
-        # name match only when there's exactly one candidate. (If
-        # there were multiple, we'd be guessing.)
-        if len(name_matches) == 1:
-            return name_matches[0].get("id"), "matched", []
-        return None, "unmatched", []
-    # Multiple position-side matches — record the full candidate
-    # set so the human reviewer can pick.
-    return None, "ambiguous", [
-        {
-            "bdl_id":    p.get("id"),
-            "full_name": p.get("full_name"),
-            "position":  p.get("position"),
-            "team":      (p.get("team") or {}).get("abbreviation"),
-            "debut":     p.get("debut_year"),
-        }
-        for p in side_matches
-    ]
+
+    # Strategy 3: debut-year filter. Only kicks in when we still
+    # have multiple post-side-filter candidates and our DB carries
+    # an mlb_debut for the row.
+    if mlb_debut is not None and len(side_matches) > 1:
+        year_matches = [
+            p for p in side_matches
+            if p.get("debut_year") is not None
+            and abs(int(p["debut_year"]) - int(mlb_debut)) <= 2
+        ]
+        if len(year_matches) == 1:
+            return year_matches[0].get("id"), "matched", []
+        if year_matches:
+            side_matches = year_matches  # narrow the ambiguous report
+
+    return None, "ambiguous", [_bdl_candidate_dict(p) for p in side_matches]
 
 
 def _fetch_mlb_stats_api_batter(mlb_id: int, year: int) -> Optional[dict]:
