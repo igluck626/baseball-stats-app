@@ -8,6 +8,7 @@ The fetch_and_save_* helpers below pull from pybaseball and persist to the DB.
 They are used by bulk_load.py and nightly_update.py only.
 """
 
+import csv
 import datetime
 import json
 import logging
@@ -120,11 +121,50 @@ _TEAM_DISPLAY: dict[str, str] = {
     "TEX": "Texas",         "TOR": "Toronto",        "WSN": "Washington",
 }
 
+# Chadwick bbref ↔ mlbam bridge — shipped in `backend/data/lahman/`. Used
+# by the targeted backfill to fill `bbref_id` on players whose Lahman
+# load skipped them (mostly fresh debuts whose Chadwick row landed
+# before they made the People.csv).
+_CHADWICK_CSV = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "data", "lahman", "chadwick_mlb.csv",
+)
+
 # ---------------------------------------------------------------------------
 # Simple in-memory TTL cache (used only by the fetch_and_save_* helpers).
 # ---------------------------------------------------------------------------
 
 _store: dict = {}
+
+# Cached Chadwick mlbam → bbref reverse map; populated on first access
+# and reused for the life of the process.
+_chadwick_mlbam_to_bbref: Optional[dict[int, str]] = None
+
+
+def _load_chadwick_mlbam_to_bbref() -> dict[int, str]:
+    """Return the {key_mlbam: key_bbref} reverse map. Cached after the
+    first load — the CSV is ~1 MB and only read once per process.
+    Returns an empty dict (and logs once) if the CSV is missing, so
+    callers can degrade gracefully."""
+    global _chadwick_mlbam_to_bbref
+    if _chadwick_mlbam_to_bbref is not None:
+        return _chadwick_mlbam_to_bbref
+    bridge: dict[int, str] = {}
+    try:
+        with open(_CHADWICK_CSV, newline="", encoding="utf-8-sig") as fh:
+            for row in csv.DictReader(fh):
+                bbref = row.get("key_bbref")
+                mlbam = row.get("key_mlbam")
+                if bbref and mlbam:
+                    try:
+                        bridge[int(mlbam)] = bbref
+                    except (TypeError, ValueError):
+                        continue
+    except FileNotFoundError:
+        log.warning("Chadwick bridge CSV not found at %s — bbref_id "
+                    "lookups will return None", _CHADWICK_CSV)
+    _chadwick_mlbam_to_bbref = bridge
+    return bridge
 
 
 def _cached(key: str, fn, ttl: int = _TTL_CURRENT):
@@ -1876,18 +1916,30 @@ def backfill_player_seasons(player_id: int, year_from: int, year_to: int) -> dic
     Domingo Gonzalez (682445) who don't show on any active roster.
 
     The MLB Stats API season block has `team`, so each year's row
-    gets stamped with the Lahman team code for that year. WAR /
-    OPS+ / FIP and other bwar-only fields are omitted (the upsert
-    path is column-additive, so any pre-existing values stay).
+    gets stamped with the Lahman team code for that year. A second
+    pass over `bwar_bat` / `bwar_pitch` fills in WAR / OPS+ /
+    WAR_off / WAR_def / WAA / runs_above_avg / runs_above_rep
+    (pitchers also get ERA+). The upsert path is column-additive,
+    so the bwar merge only writes advanced columns — it doesn't
+    overwrite the standard counting stats the MLB API leg already
+    wrote, and doesn't NULL out anything that bwar happens to
+    lack for an off-year.
+
+    Also opportunistically backfills `bbref_id` on the bio row via
+    the Chadwick bridge — without it, the Lahman loader can never
+    link this player's historical rows.
     """
     if not connection.db_available():
         return {"status": "no_db"}
 
     counts: dict[str, int] = {
-        "player_seasons:written":  0,
-        "pitcher_seasons:written": 0,
-        "pitchers_bio:created":    0,
-        "players_bio:created":     0,
+        "player_seasons:written":      0,
+        "pitcher_seasons:written":     0,
+        "player_seasons:war_merged":   0,
+        "pitcher_seasons:war_merged":  0,
+        "pitchers_bio:created":        0,
+        "players_bio:created":         0,
+        "bbref_id:populated":          0,
     }
     missing_years: list[int] = []
 
@@ -1914,6 +1966,37 @@ def backfill_player_seasons(player_id: int, year_from: int, year_to: int) -> dic
                 counts["players_bio:created"] += 1
             db.commit()
 
+        # Populate bbref_id from the Chadwick bridge if missing.
+        # Without it, the Lahman loader can't link historical rows
+        # on the next archive drop — and the standalone bref
+        # fetchers below still work either way (bwar keys off
+        # mlb_ID, not bbref_id).
+        bridge = _load_chadwick_mlbam_to_bbref()
+        bbref = bridge.get(player_id)
+        if bbref:
+            if in_pitchers:
+                pit_row = crud.get_pitcher(db, player_id)
+                if pit_row is not None and not pit_row.bbref_id:
+                    pit_row.bbref_id = bbref
+                    counts["bbref_id:populated"] += 1
+            if in_players:
+                bat_row = crud.get_player(db, player_id)
+                if bat_row is not None and not bat_row.bbref_id:
+                    bat_row.bbref_id = bbref
+                    counts["bbref_id:populated"] += 1
+            db.commit()
+
+    # Pre-build bwar lookups so we hit the (cached) full-history
+    # frame once instead of slicing on every year iteration.
+    bwar_bat_by_year = (
+        _player_bwar_batting_seasons(player_id, year_from, year_to)
+        if in_players else {}
+    )
+    bwar_pitch_by_year = (
+        _player_bwar_pitching_seasons(player_id, year_from, year_to)
+        if in_pitchers else {}
+    )
+
     for year in range(year_from, year_to + 1):
         wrote_any = False
         if in_players:
@@ -1923,12 +2006,28 @@ def backfill_player_seasons(player_id: int, year_from: int, year_to: int) -> dic
                     crud.save_player_seasons(db, player_id, [entry])
                 counts["player_seasons:written"] += 1
                 wrote_any = True
+            war_entry = bwar_bat_by_year.get(year)
+            if war_entry:
+                with connection.get_session() as db:
+                    crud.save_player_seasons(
+                        db, player_id, [{"year": year, **war_entry}],
+                    )
+                counts["player_seasons:war_merged"] += 1
+                wrote_any = True
         if in_pitchers:
             entry = _build_backfill_pitcher_entry(player_id, year)
             if entry is not None:
                 with connection.get_session() as db:
                     crud.save_pitcher_seasons(db, player_id, [entry])
                 counts["pitcher_seasons:written"] += 1
+                wrote_any = True
+            war_entry = bwar_pitch_by_year.get(year)
+            if war_entry:
+                with connection.get_session() as db:
+                    crud.save_pitcher_seasons(
+                        db, player_id, [{"year": year, **war_entry}],
+                    )
+                counts["pitcher_seasons:war_merged"] += 1
                 wrote_any = True
         if not wrote_any:
             missing_years.append(year)
@@ -1941,6 +2040,104 @@ def backfill_player_seasons(player_id: int, year_from: int, year_to: int) -> dic
         "counts":        counts,
         "missing_years": missing_years,
     }
+
+
+def _player_bwar_batting_seasons(
+    player_id: int, year_from: int, year_to: int,
+) -> dict[int, dict]:
+    """Aggregate per-stint bwar_bat rows for one player into one
+    advanced-stat dict per year in [year_from, year_to]. Returns
+    a {year: {WAR, OPS_plus, WAR_off, WAR_def, WAA, ...}} map.
+    Empty dict if bwar has no rows for this player (or fails)."""
+    try:
+        bwar = _bwar_bat_all()
+    except Exception as exc:
+        log.warning("bwar_bat fetch failed for %s: %s", player_id, exc)
+        return {}
+    if "mlb_ID" not in bwar.columns or "year_ID" not in bwar.columns:
+        return {}
+    mlb_ids = pd.to_numeric(bwar["mlb_ID"], errors="coerce")
+    years   = pd.to_numeric(bwar["year_ID"], errors="coerce")
+    mask = (
+        (mlb_ids == float(player_id))
+        & (years >= year_from)
+        & (years <= year_to)
+    )
+    slice_ = bwar[mask]
+    if slice_.empty:
+        return {}
+    out: dict[int, dict] = {}
+    for year, group in slice_.groupby(years[mask].astype(int)):
+        total_pa = float(group["PA"].sum()) if "PA" in group else 0.0
+        ops_plus: Optional[float] = None
+        if total_pa > 0 and "OPS_plus" in group and not group["OPS_plus"].dropna().empty:
+            ops_plus = float(
+                (group["OPS_plus"].fillna(0) * group["PA"]).sum() / total_pa
+            )
+        entry: dict = {
+            "WAR":            round(float(group["WAR"].sum()), 2),
+            "WAR_off":        round(float(group["WAR_off"].sum()), 2)
+                              if "WAR_off" in group else None,
+            "WAR_def":        round(float(group["WAR_def"].sum()), 2)
+                              if "WAR_def" in group else None,
+            "WAA":            round(float(group["WAA"].sum()), 2)
+                              if "WAA" in group else None,
+            "OPS_plus":       round(ops_plus, 1) if ops_plus is not None else None,
+            "runs_above_avg": round(float(group["runs_above_avg"].sum()), 2)
+                              if "runs_above_avg" in group else None,
+            "runs_above_rep": round(float(group["runs_above_rep"].sum()), 2)
+                              if "runs_above_rep" in group else None,
+        }
+        # Drop None-valued keys so the upsert doesn't overwrite
+        # existing non-null values with null.
+        out[int(year)] = {k: v for k, v in entry.items() if v is not None}
+    return out
+
+
+def _player_bwar_pitching_seasons(
+    player_id: int, year_from: int, year_to: int,
+) -> dict[int, dict]:
+    """Pitcher counterpart to `_player_bwar_batting_seasons`. ERA+
+    is rate-based; weight by IPouts to combine multi-stint seasons."""
+    try:
+        bwar = _bwar_pitch_all()
+    except Exception as exc:
+        log.warning("bwar_pitch fetch failed for %s: %s", player_id, exc)
+        return {}
+    if "mlb_ID" not in bwar.columns or "year_ID" not in bwar.columns:
+        return {}
+    mlb_ids = pd.to_numeric(bwar["mlb_ID"], errors="coerce")
+    years   = pd.to_numeric(bwar["year_ID"], errors="coerce")
+    mask = (
+        (mlb_ids == float(player_id))
+        & (years >= year_from)
+        & (years <= year_to)
+    )
+    slice_ = bwar[mask]
+    if slice_.empty:
+        return {}
+    out: dict[int, dict] = {}
+    for year, group in slice_.groupby(years[mask].astype(int)):
+        ipouts = float(group["IPouts"].sum()) if "IPouts" in group else 0.0
+        era_plus: Optional[float] = None
+        if ipouts > 0 and "ERA_plus" in group and not group["ERA_plus"].dropna().empty:
+            era_plus = float(
+                (group["ERA_plus"].fillna(0) * group["IPouts"]).sum() / ipouts
+            )
+        entry: dict = {
+            "WAR":            round(float(group["WAR"].sum()), 2),
+            "WAR_def":        round(float(group["WAR_def"].sum()), 2)
+                              if "WAR_def" in group else None,
+            "WAA":            round(float(group["WAA"].sum()), 2)
+                              if "WAA" in group else None,
+            "ERA_plus":       round(era_plus, 1) if era_plus is not None else None,
+            "runs_above_avg": round(float(group["runs_above_avg"].sum()), 2)
+                              if "runs_above_avg" in group else None,
+            "runs_above_rep": round(float(group["runs_above_rep"].sum()), 2)
+                              if "runs_above_rep" in group else None,
+        }
+        out[int(year)] = {k: v for k, v in entry.items() if v is not None}
+    return out
 
 
 def _build_backfill_batter_entry(player_id: int, year: int) -> Optional[dict]:
