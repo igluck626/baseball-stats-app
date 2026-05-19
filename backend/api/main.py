@@ -26,8 +26,8 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 # database imports work after data_service is imported (it adds backend/ to sys.path)
 from database import connection, crud                       # noqa: E402
 from database.models import (                                # noqa: E402
-    BattingGameLog, PitcherSeason, PitchingGameLog,
-    PlayerAllstar, PlayerAward, PlayerFielding,
+    BattingGameLog, Pitcher, PitcherSeason, PitchingGameLog,
+    Player, PlayerAllstar, PlayerAward, PlayerFielding,
     PlayerHof, PlayerPostseasonBatting, PlayerPostseasonPitching,
     PlayerSeason, TeamSeason,
 )
@@ -316,120 +316,58 @@ _nightly_lock = threading.Lock()
 _NIGHTLY_STALE_AFTER = datetime.timedelta(hours=3)
 
 
-def _build_nightly_batter_entry(player_id: int, bref_df, bwar_current, current_year: int):
-    """Build a player_seasons dict for the current year, or None if no data."""
-    player_bref = bref_df[bref_df["mlbID"] == player_id]
-    player_war = (
-        bwar_current[bwar_current["mlb_ID"] == float(player_id)]
-        .sort_values("stint_ID")
-    )
-
-    if player_bref.empty and player_war.empty:
-        return None
-
-    entry: dict = {"year": current_year, "team": None, "league": None}
-
-    if not player_war.empty:
-        group    = player_war
-        total_pa = group["PA"].sum()
-        ops_plus = (
-            float((group["OPS_plus"] * group["PA"]).sum() / total_pa)
-            if total_pa > 0 and not group["OPS_plus"].dropna().empty
-            else None
-        )
-        raw_team = str(group.iloc[-1]["team_ID"])
-        entry.update({
-            "team":           data_service._TEAM_DISPLAY.get(raw_team, raw_team),
-            "league":         str(group.iloc[-1]["lg_ID"]),
-            "WAR":            round(float(group["WAR"].sum()), 2),
-            "WAR_off":        round(float(group["WAR_off"].sum()), 2),
-            "WAR_def":        round(float(group["WAR_def"].sum()), 2),
-            "WAA":            round(float(group["WAA"].sum()), 2),
-            "OPS_plus":       round(ops_plus, 1) if ops_plus is not None else None,
-            "runs_above_avg": round(float(group["runs_above_avg"].sum()), 2),
-            "runs_above_rep": round(float(group["runs_above_rep"].sum()), 2),
-        })
-
-    if not player_bref.empty:
-        br = player_bref.iloc[0]
-        entry["team"] = str(br["Tm"])
-        entry.update({
-            "G":       data_service._safe(br["G"]),
-            "PA":      data_service._safe(br["PA"]),
-            "AB":      data_service._safe(br["AB"]),
-            "R":       data_service._safe(br["R"]),
-            "H":       data_service._safe(br["H"]),
-            "doubles": data_service._safe(br["2B"]),
-            "triples": data_service._safe(br["3B"]),
-            "HR":      data_service._safe(br["HR"]),
-            "RBI":     data_service._safe(br["RBI"]),
-            "BB":      data_service._safe(br["BB"]),
-            "SO":      data_service._safe(br["SO"]),
-            "SB":      data_service._safe(br["SB"]),
-            "CS":      data_service._safe(br["CS"]),
-            "BA":      data_service._safe(br["BA"]),
-            "OBP":     data_service._safe(br["OBP"]),
-            "SLG":     data_service._safe(br["SLG"]),
-            "OPS":     data_service._safe(br["OPS"]),
-            "IBB":     data_service._safe_col(br, "IBB"),
-            "HBP":     data_service._safe_col(br, "HBP"),
-            "SH":      data_service._safe_col(br, "SH"),
-            "SF":      data_service._safe_col(br, "SF"),
-            "GIDP":    data_service._safe_col(br, "GIDP")
-                       if "GIDP" in br.index
-                       else data_service._safe_col(br, "GDP"),
-            **data_service._batting_derived(br),
-        })
-
-    return entry
-
-
-def _build_nightly_pitcher_entry(player_id: int, bref_df, bwar_current, current_year: int):
-    """Build a pitcher_seasons dict for the current year, or None if no data."""
-    player_bref = bref_df[bref_df["mlbID"] == str(player_id)]
-    player_war = (
-        bwar_current[bwar_current["mlb_ID"] == float(player_id)]
-        .sort_values("stint_ID")
-        if "stint_ID" in bwar_current.columns
-        else bwar_current[bwar_current["mlb_ID"] == float(player_id)]
-    )
-
-    if player_bref.empty and player_war.empty:
-        return None
-
-    return data_service._build_pitcher_season_entry(
-        player_id, current_year, player_war, bref_df,
-    )
-
-
 def _nightly_phase(
-    fetch_bref,
     fetch_bwar_all,
     get_ids,
     save_seasons,
     build_entry,
     phase_name: str,
+    bio_model,
     current_year: int,
 ) -> None:
-    """One phase of the nightly update (batters or pitchers)."""
+    """One phase of the nightly update (batters or pitchers).
+
+    Per-player BDL lookups drive the current-season counting + rate
+    stats. bwar provides the full-history WAR / OPS+ layer in a
+    single bulk fetch. `build_entry` is the script-module function
+    (`nightly_update._build_current_batter_entry` /
+    `_build_current_pitcher_entry`) which knows how to merge the
+    two and falls back to MLB Stats API when a row lacks a bdl_id.
+    `bio_model` is `Player` or `Pitcher` — used to pre-load the
+    bdl_id map in one query so the per-player loop doesn't issue
+    a SELECT for every row's mapping.
+    """
+    import time as _time
+
     with _nightly_lock:
         _nightly_state.update(
             phase=phase_name, updated=0, skipped=0, failed=0, total=0
         )
 
-    bref_df      = fetch_bref(current_year)
+    # Fail fast on missing BDL_KEY so a misconfigured Railway env
+    # doesn't drain the rate budget with MLB Stats API fallbacks
+    # before anyone notices.
+    data_service._get_bdl_key()
+
     bwar_df      = fetch_bwar_all()
     bwar_current = bwar_df[bwar_df["year_ID"] == current_year]
 
     with connection.get_session() as db:
         ids: list[int] = get_ids(db)
+        bdl_id_map: dict[int, int | None] = dict(
+            db.query(bio_model.player_id, bio_model.bdl_id)
+              .filter(bio_model.player_id.in_(ids))
+              .all()
+        )
 
     with _nightly_lock:
         _nightly_state["total"] = len(ids)
 
     for player_id in ids:
         try:
-            entry = build_entry(player_id, bref_df, bwar_current, current_year)
+            entry = build_entry(
+                player_id, bdl_id_map.get(player_id), bwar_current, current_year,
+            )
             if entry is None:
                 with _nightly_lock:
                     _nightly_state["skipped"] += 1
@@ -441,6 +379,8 @@ def _nightly_phase(
         except Exception:
             with _nightly_lock:
                 _nightly_state["failed"] += 1
+        # Rate-limit between BDL hits to stay below the 5/sec ceiling.
+        _time.sleep(data_service._BDL_RATE_LIMIT_SLEEP)
 
 
 def _run_nightly_update() -> None:
@@ -463,12 +403,12 @@ def _run_nightly_update() -> None:
         current_year = data_service._current_year()
         log.info(f"[nightly] starting batters phase, year={current_year}")
         _nightly_phase(
-            data_service._batting_bref,
             data_service._bwar_bat_all,
             crud.get_all_player_ids,
             crud.save_player_seasons,
-            _build_nightly_batter_entry,
+            nightly_update._build_current_batter_entry,
             "batters",
+            Player,
             current_year,
         )
         log.info(
@@ -481,12 +421,12 @@ def _run_nightly_update() -> None:
 
         log.info("[nightly] starting pitchers phase")
         _nightly_phase(
-            data_service._pitching_bref,
             data_service._bwar_pitch_all,
             crud.get_all_pitcher_ids,
             crud.save_pitcher_seasons,
-            _build_nightly_pitcher_entry,
+            nightly_update._build_current_pitcher_entry,
             "pitchers",
+            Pitcher,
             current_year,
         )
         log.info(

@@ -1473,6 +1473,129 @@ def _bdl_get_json(path: str, params: Optional[dict] = None) -> dict:
         return json.loads(resp.read().decode("utf-8"))
 
 
+def get_bdl_id_for_player(db, player_id: int, *, is_pitcher: bool) -> Optional[int]:
+    """Look up `bdl_id` for a player in our DB by MLBAM player_id.
+    The mapping is stamped per-side by `build_bdl_player_mapping`,
+    so two-way players have an entry in both tables (Ohtani: same
+    bdl_id on both sides). Returns None when the row exists but
+    the mapping wasn't populated yet — caller should fall back to
+    the MLB Stats API helper until the bootstrap finishes."""
+    if is_pitcher:
+        row = crud.get_pitcher(db, player_id)
+    else:
+        row = crud.get_player(db, player_id)
+    return getattr(row, "bdl_id", None) if row else None
+
+
+def _fetch_bdl_batter_stats(bdl_id: int, year: int) -> Optional[dict]:
+    """Pull standard season batting stats for one player from
+    BallDontLie's `/season_stats?player_ids[]={bdl_id}&season={year}`.
+    Replacement for `_fetch_mlb_stats_api_batter` once the BDL ID
+    mapping is populated.
+
+    Returns a dict in the same `player_seasons` shape the previous
+    MLB Stats API helper produced — keys it can't fill (PA, CS,
+    IBB, HBP, SF, SH, GIDP) are omitted so the upsert path doesn't
+    NULL them out. `WAR` is included only as a fallback for rows
+    where bwar didn't ship one (bwar remains the canonical WAR
+    source — its values overwrite any BDL WAR in the entry merge).
+
+    Note: BDL's live API insists on the singular `season=` form
+    despite the OpenAPI spec saying `seasons[]=`. We send the
+    plural `player_ids[]` and singular `season` exactly as the
+    live endpoint expects."""
+    if bdl_id is None:
+        return None
+    try:
+        data = _bdl_get_json("season_stats", {
+            "player_ids[]": bdl_id,
+            "season":       year,
+        })
+    except Exception:
+        return None
+    rows = data.get("data") or []
+    if not rows:
+        return None
+    s = rows[0]
+
+    h  = _to_int(s.get("batting_h"))     or 0
+    d2 = _to_int(s.get("batting_2b"))    or 0
+    d3 = _to_int(s.get("batting_3b"))    or 0
+    hr = _to_int(s.get("batting_hr"))    or 0
+
+    # Compute TB locally to stay consistent with the rest of the
+    # pipeline (BDL ships batting_tb as well, but recomputing from
+    # the same row's components avoids a class of "TB doesn't equal
+    # H+2B+3B+HR" rounding artifacts).
+    return {
+        "G":       _to_int(s.get("batting_gp")),
+        "AB":      _to_int(s.get("batting_ab")),
+        "R":       _to_int(s.get("batting_r")),
+        "H":       _to_int(s.get("batting_h")),
+        "doubles": _to_int(s.get("batting_2b")),
+        "triples": _to_int(s.get("batting_3b")),
+        "HR":      _to_int(s.get("batting_hr")),
+        "RBI":     _to_int(s.get("batting_rbi")),
+        "BB":      _to_int(s.get("batting_bb")),
+        "SO":      _to_int(s.get("batting_so")),
+        "SB":      _to_int(s.get("batting_sb")),
+        "TB":      h + d2 + 2 * d3 + 3 * hr,
+        "BA":      _safe_rate(s.get("batting_avg")),
+        "OBP":     _safe_rate(s.get("batting_obp")),
+        "SLG":     _safe_rate(s.get("batting_slg")),
+        "OPS":     _safe_rate(s.get("batting_ops")),
+        "WAR":     _safe_rate(s.get("batting_war")),
+    }
+
+
+def _fetch_bdl_pitcher_stats(bdl_id: int, year: int) -> Optional[dict]:
+    """Pitcher counterpart to `_fetch_bdl_batter_stats`. Same
+    /season_stats endpoint; maps the `pitching_*` and `fielding_fip`
+    columns into our `pitcher_seasons` field shape.
+
+    Keys it can't fill (R, IBB, HBP, BK, WP, BFP, BAOpp) are
+    omitted. `WAR` is included only as a fallback for bwar-missing
+    rows; bwar's value wins in the entry merge.
+
+    Quirk: BDL puts FIP under `fielding_fip` despite it being a
+    pitching stat. Lifted into the `FIP` key here so the existing
+    `_build_pitcher_season_entry` override step picks it up
+    without knowing about BDL's namespace."""
+    if bdl_id is None:
+        return None
+    try:
+        data = _bdl_get_json("season_stats", {
+            "player_ids[]": bdl_id,
+            "season":       year,
+        })
+    except Exception:
+        return None
+    rows = data.get("data") or []
+    if not rows:
+        return None
+    s = rows[0]
+
+    return {
+        "G":      _to_int(s.get("pitching_gp")),
+        "GS":     _to_int(s.get("pitching_gs")),
+        "W":      _to_int(s.get("pitching_w")),
+        "L":      _to_int(s.get("pitching_l")),
+        "SV":     _to_int(s.get("pitching_sv")),
+        "HLD":    _to_int(s.get("pitching_hld")),
+        "IP":     _safe_rate(s.get("pitching_ip")),
+        "H":      _to_int(s.get("pitching_h")),
+        "ER":     _to_int(s.get("pitching_er")),
+        "HR":     _to_int(s.get("pitching_hr")),
+        "BB":     _to_int(s.get("pitching_bb")),
+        "SO":     _to_int(s.get("pitching_k")),
+        "ERA":    _safe_rate(s.get("pitching_era")),
+        "WHIP":   _safe_rate(s.get("pitching_whip")),
+        "K_per9": _safe_rate(s.get("pitching_k_per_9")),
+        "WAR":    _safe_rate(s.get("pitching_war")),
+        "FIP":    _safe_rate(s.get("fielding_fip")),
+    }
+
+
 def fetch_bdl_teams() -> dict:
     """Walk BDL's /teams once and return the full list. Output shape
     is intended for human inspection — the caller hand-pastes the
@@ -4264,35 +4387,49 @@ def _build_pitcher_season_entry(
                 "GIDP":  _safe_col(br, "GIDP") if "GIDP" in br.index else _safe_col(br, "GDP"),
             })
 
-    # MLB Stats API override — current-season only. Overrides the
-    # standard counting + rate stats with the canonical values from
-    # `/people/{id}/stats?group=pitching`. Anything not in this
-    # dict stays as whatever bref / bwar provided above (FIP,
-    # K_per9, BB_per9, HR_per9, BABIP, CG, SHO, BAOpp, GF, SH, SF,
-    # GIDP, BFP). Iterate so None values from the API don't clobber
-    # a populated bref value (e.g. holds — never set by bref).
+    # Stats-source override — current-season only. The override
+    # dict can come from BDL (`_fetch_bdl_pitcher_stats` — primary
+    # now that the bdl_id mapping is populated) or from the MLB
+    # Stats API helper (still used as a fallback for rows missing
+    # a bdl_id). Both helpers normalize to the same key shape, so
+    # the consumer here doesn't care which fed it.
+    #
+    # Iterate so None values from the source don't clobber the
+    # values bref / bwar wrote above (e.g. holds — bref doesn't
+    # carry it). BDL ships FIP under `fielding_fip` which the
+    # fetch helper already lifts into the `FIP` key — that's why
+    # we accept FIP / K_per9 / WAR directly from the override.
     if mlb_api_stats:
         for key in ("G", "GS", "W", "L", "SV", "IP",
                     "H", "R", "ER", "HR",
                     "BB", "IBB", "SO", "HBP", "BK", "WP",
-                    "ERA", "WHIP"):
+                    "ERA", "WHIP", "FIP", "K_per9"):
             value = mlb_api_stats.get(key)
             if value is not None:
                 entry[key] = value
-        # Recompute the K/9, BB/9, HR/9, FIP, BABIP rates from the
-        # MLB API counts when IP is non-zero — keeps these in sync
-        # with the new (authoritative) IP / SO / BB / HR values
-        # instead of leaving bref's stale derivations in place.
+        # WAR only comes off the override when bwar didn't populate
+        # one above — bwar is the canonical source.
+        if "WAR" not in entry:
+            war = mlb_api_stats.get("WAR")
+            if war is not None:
+                entry["WAR"] = war
+        # Recompute BB/9 and HR/9 from the override counts when IP
+        # is non-zero — BDL only ships K/9, so the other per-9 rates
+        # need on-the-fly derivation. If the override didn't carry
+        # FIP either (MLB Stats API path), reconstruct it from the
+        # FIP-component fields.
         ip_dec = mlb_api_stats.get("IP") or 0.0
         if ip_dec:
-            so = mlb_api_stats.get("SO") or 0
-            bb = mlb_api_stats.get("BB") or 0
-            hr = mlb_api_stats.get("HR") or 0
+            so  = mlb_api_stats.get("SO") or 0
+            bb  = mlb_api_stats.get("BB") or 0
+            hr  = mlb_api_stats.get("HR") or 0
             hbp = mlb_api_stats.get("HBP") or 0
-            entry["K_per9"]  = round(so * 9 / ip_dec, 2)
+            if "K_per9" not in entry:
+                entry["K_per9"] = round(so * 9 / ip_dec, 2)
             entry["BB_per9"] = round(bb * 9 / ip_dec, 2)
             entry["HR_per9"] = round(hr * 9 / ip_dec, 2)
-            entry["FIP"]     = _fip(hr, bb, hbp, so, ip_dec)
+            if "FIP" not in entry:
+                entry["FIP"] = _fip(hr, bb, hbp, so, ip_dec)
 
     return entry
 

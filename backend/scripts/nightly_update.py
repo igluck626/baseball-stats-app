@@ -3,11 +3,14 @@
 Designed to run as a Railway cron job (e.g., daily at 04:00 UTC after
 Baseball Reference publishes the previous day's data).
 
-Phase 1 (batters): fetches batting_stats_bref + bwar_bat once and upserts
-the current-year row in player_seasons for every player in the database.
+Phase 1 (batters): fetches bwar_bat once for the WAR/OPS+ layer, then
+per-player BallDontLie season_stats for standard counting + rate stats,
+and upserts the current-year row in player_seasons.
 
-Phase 2 (pitchers): fetches pitching_stats_bref + bwar_pitch once and upserts
-the current-year row in pitcher_seasons for every pitcher in the database.
+Phase 2 (pitchers): fetches bwar_pitch once for the WAR/ERA+ layer, then
+per-player BallDontLie season_stats for standard counting + rate stats
+(plus FIP and K/9 from BDL), and upserts the current-year row in
+pitcher_seasons.
 
 Phase 3 (standings): fetches the MLB Stats API standings endpoint and upserts the
 current-season row in team_seasons for each team.
@@ -17,9 +20,18 @@ current year), pulls per-game stats from the MLB Stats API and upserts
 into batting_gamelogs / pitching_gamelogs. Idempotent — yesterday's games
 are the only new rows; older games are upserted as no-ops.
 
+Required env vars (set on the `nightly-update-cron` Railway service in
+addition to the `baseball-stats-app` API service):
+  • DATABASE_URL — same Postgres the API writes to
+  • BDL_KEY      — BallDontLie GOAT-tier API key. Phase 1 and Phase 2
+                   loop over every player at the BDL 5 req/sec ceiling,
+                   so a missing key fails fast at the first call rather
+                   than burning through a 22k-row walk on MLB-Stats-API
+                   fallbacks.
+
 Seasonal workflow
 -----------------
-Pybaseball is the source of truth ONLY for the in-flight current season.
+BDL + bwar are the source of truth for the in-flight current season.
 After each season ends (typically late October), the Lahman archive is
 re-released with the just-completed year. Re-running lahman_load.py
 permanently overwrites the current-season standings rows with
@@ -46,7 +58,11 @@ from sqlalchemy import func as _sql_func              # noqa: E402
 import data_service                                   # noqa: E402
 from database import connection, crud                 # noqa: E402
 from database.models import (                          # noqa: E402
-    PitcherSeason, PlayerSeason, TeamSeason,
+    Pitcher  as _Pitcher,
+    PitcherSeason,
+    Player   as _Player,
+    PlayerSeason,
+    TeamSeason,
 )
 
 import time as _time                                  # noqa: E402
@@ -144,29 +160,39 @@ def _safe_tb(br) -> int | None:
 
 
 
-def _build_current_batter_entry(player_id: int, bref_df, bwar_current, current_year: int) -> dict | None:
-    """Build a player_seasons row for the current year. MLB Stats
-    API is the primary source for standard counting + rate stats;
-    bref + bwar are supplements (WAR / OPS+ / extended counters).
-    Returns None only when ALL three sources are empty."""
-    player_bref = bref_df[bref_df["mlbID"] == player_id]
+def _build_current_batter_entry(
+    player_id: int, bdl_id: int | None, bwar_current, current_year: int,
+) -> dict | None:
+    """Build a player_seasons row for the current year. BallDontLie
+    is the primary source for standard counting + rate stats (once
+    the bdl_id mapping is populated); bwar provides the WAR/OPS+
+    layer. MLB Stats API is kept as a per-player fallback for rows
+    that haven't been BDL-mapped yet so we don't lose coverage on
+    unmapped historical players who happen to still be active.
+
+    Returns None when no source has any data for the player this
+    season (off-roster minor leaguer, retired, etc.)."""
     player_war = (
         bwar_current[bwar_current["mlb_ID"] == float(player_id)]
         .sort_values("stint_ID")
     )
 
-    # Always fetch MLB Stats API — same primary-source promotion
-    # as the pitcher path. Without this, a batter whose bref row
-    # is lagging or missing for the current season never gets a
-    # 2026 entry at all and `_latest_team_info` falls back to a
-    # stale year.
-    mlb_api_stats = data_service._fetch_mlb_stats_api_batter(player_id, current_year)
+    # BDL is the primary stats source once the player has a bdl_id.
+    # `_fetch_bdl_batter_stats` enforces the BDL rate-limit-friendly
+    # singular `season=` form and returns None gracefully on 404 /
+    # rate-limit / parse failure.
+    bdl_stats = None
+    if bdl_id is not None:
+        bdl_stats = data_service._fetch_bdl_batter_stats(bdl_id, current_year)
+    # Fallback to the MLB Stats API only when the row hasn't been
+    # mapped to BDL yet — temporary backstop until the bootstrap
+    # endpoint covers the long tail of historical players.
+    if bdl_stats is None and bdl_id is None:
+        bdl_stats = data_service._fetch_mlb_stats_api_batter(player_id, current_year)
 
-    if player_bref.empty and player_war.empty and mlb_api_stats is None:
+    if player_war.empty and bdl_stats is None:
         return None
 
-    # Start with year only — see note in `_build_pitcher_season_entry`
-    # on why team / league are omitted until a source supplies them.
     entry: dict = {"year": current_year}
 
     if not player_war.empty:
@@ -190,65 +216,27 @@ def _build_current_batter_entry(player_id: int, bref_df, bwar_current, current_y
             "runs_above_rep": round(float(group["runs_above_rep"].sum()), 2),
         })
 
-    if not player_bref.empty:
-        br = player_bref.iloc[0]
-        entry["team"] = str(br["Tm"])
-        entry.update({
-            "G":       data_service._safe(br["G"]),
-            "PA":      data_service._safe(br["PA"]),
-            "AB":      data_service._safe(br["AB"]),
-            "R":       data_service._safe(br["R"]),
-            "H":       data_service._safe(br["H"]),
-            "doubles": data_service._safe(br["2B"]),
-            "triples": data_service._safe(br["3B"]),
-            "HR":      data_service._safe(br["HR"]),
-            "RBI":     data_service._safe(br["RBI"]),
-            "BB":      data_service._safe(br["BB"]),
-            "SO":      data_service._safe(br["SO"]),
-            "SB":      data_service._safe(br["SB"]),
-            "CS":      data_service._safe(br["CS"]),
-            "BA":      data_service._safe(br["BA"]),
-            "OBP":     data_service._safe(br["OBP"]),
-            "SLG":     data_service._safe(br["SLG"]),
-            "OPS":     data_service._safe(br["OPS"]),
-            # Extended counting stats. bref calls GIDP "GDP" — fall back if
-            # the column name differs by pybaseball version.
-            "IBB":     data_service._safe_col(br, "IBB"),
-            "HBP":     data_service._safe_col(br, "HBP"),
-            "SH":      data_service._safe_col(br, "SH"),
-            "SF":      data_service._safe_col(br, "SF"),
-            "GIDP":    data_service._safe_col(br, "GIDP")
-                       if "GIDP" in br.index
-                       else data_service._safe_col(br, "GDP"),
-            # TB = H + 2·doubles + 3·triples + 4·HR. Computed from the
-            # bref row's own component values so the nightly upserts
-            # carry TB even before the init_db backfill runs.
-            "TB":      _safe_tb(br),
-            **data_service._batting_derived(br),
-        })
-
-    # MLB Stats API override — current-season only, same pattern
-    # as the pitcher path. Authoritative source for standard
-    # counting + rate stats (G/PA/AB/R/H/2B/3B/HR/RBI/SB/CS/BB/
-    # SO/IBB/HBP/SF/SH/GIDP/AVG/OBP/SLG/OPS). bwar's WAR / OPS+
-    # values above stay untouched — the API doesn't ship those.
-    # `mlb_api_stats` was already fetched at the top of the
-    # function (now the primary source); reuse it here.
-    if mlb_api_stats is None and not player_bref.empty:
-        log.info(f"  MLB Stats API miss for batter {player_id}, falling back to bref")
-    if mlb_api_stats:
-        for key in ("G", "PA", "AB", "R", "H", "doubles", "triples", "HR",
-                    "RBI", "BB", "SO", "SB", "CS", "IBB", "HBP", "SF", "SH",
-                    "GIDP", "BA", "OBP", "SLG", "OPS"):
-            value = mlb_api_stats.get(key)
+    if bdl_stats:
+        # Standard counting + rate stats from BDL (or MLB Stats API
+        # fallback). Iterate so None values don't clobber whatever
+        # bwar provided above. PA / CS / IBB / HBP / SF / SH / GIDP
+        # are absent from BDL — they'll remain whatever the previous
+        # nightly wrote, or NULL on a fresh row.
+        for key in ("G", "AB", "R", "H", "doubles", "triples", "HR",
+                    "RBI", "BB", "SO", "SB", "TB",
+                    "BA", "OBP", "SLG", "OPS",
+                    # MLB-Stats-API-only keys (fallback path) — BDL
+                    # doesn't ship these, so they only land when
+                    # the helper that fetched is the MLB API one.
+                    "PA", "CS", "IBB", "HBP", "SF", "SH", "GIDP"):
+            value = bdl_stats.get(key)
             if value is not None:
                 entry[key] = value
-        # Recompute TB from the API's authoritative counts.
-        h  = mlb_api_stats.get("H") or 0
-        d2 = mlb_api_stats.get("doubles") or 0
-        d3 = mlb_api_stats.get("triples") or 0
-        hr = mlb_api_stats.get("HR") or 0
-        entry["TB"] = h + d2 + 2 * d3 + 3 * hr
+        # WAR fallback — only fill from BDL when bwar didn't.
+        if "WAR" not in entry:
+            war = bdl_stats.get("WAR")
+            if war is not None:
+                entry["WAR"] = war
 
     return entry
 
@@ -257,8 +245,17 @@ _BATCH_SIZE = 100
 
 
 def _update_batters(current_year: int) -> tuple[int, int, list[int]]:
-    log.info("Fetching batting_stats_bref for current season...")
-    bref_df = data_service._batting_bref(current_year)
+    """Phase 1: walk every batter and refresh their current-season
+    row. BDL is the per-player stats source (rate-limited to ≈4.5
+    req/sec); bwar provides the WAR/OPS+ layer in one bulk fetch.
+    Rookie discovery happens later in Phase 5 (active-roster walk)
+    — without bref's batting page scrape there's no equivalent
+    pre-loop discovery here. Phase 5's coverage is strictly better
+    for active players anyway."""
+    # Pre-flight the BDL key so we fail fast if the cron service
+    # is missing it, before iterating thousands of players and
+    # silently falling back to MLB Stats API on every one of them.
+    data_service._get_bdl_key()
 
     log.info("Fetching bwar_bat...")
     bwar_df = data_service._bwar_bat_all()
@@ -275,16 +272,20 @@ def _update_batters(current_year: int) -> tuple[int, int, list[int]]:
     data_service._store.pop("bwar_bat_all", None)
     gc.collect()
 
-    # Discover new call-ups present in this season's bref data but
-    # missing from our players table. Lahman doesn't ship rookies
-    # until the offseason archive drop; without this step a debut
-    # like Kevin McGonigle 2026-05-15 would 404 on the iOS
-    # /players/by-mlb-id lookup until the next Lahman cycle.
-    _discover_and_add_new_players(bref_df, is_pitcher=False, current_year=current_year)
-
+    # Pre-load the bdl_id map in one query so the per-player loop
+    # doesn't issue a SELECT for each row's mapping.
     with connection.get_session() as db:
         player_ids = crud.get_all_player_ids(db)
-    log.info(f"{len(player_ids)} batters in database (batch size: {_BATCH_SIZE})")
+        bdl_id_map: dict[int, int | None] = dict(
+            db.query(_Player.player_id, _Player.bdl_id)
+              .filter(_Player.player_id.in_(player_ids))
+              .all()
+        )
+    log.info(
+        f"{len(player_ids)} batters in database "
+        f"({sum(1 for v in bdl_id_map.values() if v is not None)} BDL-mapped; "
+        f"batch size: {_BATCH_SIZE})"
+    )
 
     updated = 0
     skipped = 0
@@ -300,7 +301,10 @@ def _update_batters(current_year: int) -> tuple[int, int, list[int]]:
         for player_id in batch_ids:
             try:
                 entry = _build_current_batter_entry(
-                    player_id, bref_df, bwar_current, current_year
+                    player_id,
+                    bdl_id_map.get(player_id),
+                    bwar_current,
+                    current_year,
                 )
                 if entry is None:
                     skipped += 1
@@ -309,6 +313,9 @@ def _update_batters(current_year: int) -> tuple[int, int, list[int]]:
             except Exception as exc:
                 log.error(f"batter {player_id} FAILED: {exc}")
                 failed.append(player_id)
+            # Sleep between BDL hits to stay under the 5/sec rate
+            # limit. The same value bootstrapping uses (≈4.5 req/sec).
+            _time.sleep(data_service._BDL_RATE_LIMIT_SLEEP)
 
         if batch_entries:
             with connection.get_session() as db:
@@ -342,15 +349,16 @@ def _update_batters(current_year: int) -> tuple[int, int, list[int]]:
 # Pitching (PitcherSeason)
 # ---------------------------------------------------------------------------
 
-def _build_current_pitcher_entry(player_id: int, bref_df, bwar_current, current_year: int) -> dict | None:
-    """Build a pitcher_seasons row for the current year. MLB Stats
-    API is the primary source — it's queried unconditionally for
-    every pitcher_id, so newly-active players whose bref row hasn't
-    landed yet still get a current-season entry. bref + bwar are
-    supplements (WAR / ERA+ / FIP / BABIP / per-9 rate fallbacks).
-    Returns None only when ALL three sources are empty."""
-    # pitching_stats_bref stores mlbID as STRING, unlike batting.
-    player_bref = bref_df[bref_df["mlbID"] == str(player_id)]
+def _build_current_pitcher_entry(
+    player_id: int, bdl_id: int | None, bwar_current, current_year: int,
+) -> dict | None:
+    """Build a pitcher_seasons row for the current year. BDL is the
+    primary stats source (counting + rates + FIP + K/9); bwar is
+    the WAR / ERA+ layer. MLB Stats API is a per-player fallback
+    for rows that haven't been BDL-mapped yet. `_build_pitcher_
+    season_entry` does the actual merge — both BDL and the MLB API
+    fetchers normalize to the same key shape, so the call site
+    doesn't care which produced the override."""
     player_war = (
         bwar_current[bwar_current["mlb_ID"] == float(player_id)]
         .sort_values("stint_ID")
@@ -358,37 +366,36 @@ def _build_current_pitcher_entry(player_id: int, bref_df, bwar_current, current_
         else bwar_current[bwar_current["mlb_ID"] == float(player_id)]
     )
 
-    # Always fetch from MLB Stats API. With this as the primary
-    # source, the entry builder isn't dependent on bref / bwar
-    # carrying a current-year row (which can lag a day for fresh
-    # call-ups and mid-season role changes).
-    mlb_api_stats = data_service._fetch_mlb_stats_api_pitcher(player_id, current_year)
+    override = None
+    if bdl_id is not None:
+        override = data_service._fetch_bdl_pitcher_stats(bdl_id, current_year)
+    if override is None and bdl_id is None:
+        override = data_service._fetch_mlb_stats_api_pitcher(player_id, current_year)
 
-    if player_bref.empty and player_war.empty and mlb_api_stats is None:
+    if player_war.empty and override is None:
         return None
 
-    if mlb_api_stats is not None:
-        log.info(
-            f"  MLB API override applied for pitcher {player_id}: "
-            f"GS={mlb_api_stats.get('GS')} W={mlb_api_stats.get('W')} "
-            f"L={mlb_api_stats.get('L')} ERA={mlb_api_stats.get('ERA')} "
-            f"IP={mlb_api_stats.get('IP')}"
-        )
-    elif not player_bref.empty:
-        log.info(f"  MLB Stats API miss for pitcher {player_id}, falling back to bref")
-
+    # `_build_pitcher_season_entry` was extended to recognize
+    # FIP / K_per9 / WAR keys in the override dict — they flow
+    # through cleanly from BDL without a separate call path.
+    # bref_df is None now that we've dropped the page scrape;
+    # the function tolerates a None / empty frame by skipping
+    # the bref-fed branch.
     return data_service._build_pitcher_season_entry(
         player_id,
         current_year,
         player_war,
-        bref_df,
-        mlb_api_stats=mlb_api_stats,
+        None,
+        mlb_api_stats=override,
     )
 
 
 def _update_pitchers(current_year: int) -> tuple[int, int, list[int]]:
-    log.info("Fetching pitching_stats_bref for current season...")
-    bref_df = data_service._pitching_bref(current_year)
+    """Phase 2: pitcher counterpart to `_update_batters`. BDL is the
+    per-pitcher stats source (including FIP and K/9); bwar is the
+    WAR / ERA+ bulk-fetch layer. Discovery deferred to Phase 5."""
+    # Pre-flight the BDL key — same fail-fast pattern as Phase 1.
+    data_service._get_bdl_key()
 
     log.info("Fetching bwar_pitch...")
     bwar_df = data_service._bwar_pitch_all()
@@ -398,15 +405,18 @@ def _update_pitchers(current_year: int) -> tuple[int, int, list[int]]:
     data_service._store.pop("bwar_pitch_all", None)
     gc.collect()
 
-    # Same new-call-up discovery pass as batters — pitching_stats_bref
-    # surfaces new pitchers with a usable mlbID before they're in
-    # Lahman, so we insert a minimal pitchers row from MLB Stats API
-    # bio data before iterating.
-    _discover_and_add_new_players(bref_df, is_pitcher=True, current_year=current_year)
-
     with connection.get_session() as db:
         pitcher_ids = crud.get_all_pitcher_ids(db)
-    log.info(f"{len(pitcher_ids)} pitchers in database (batch size: {_BATCH_SIZE})")
+        bdl_id_map: dict[int, int | None] = dict(
+            db.query(_Pitcher.player_id, _Pitcher.bdl_id)
+              .filter(_Pitcher.player_id.in_(pitcher_ids))
+              .all()
+        )
+    log.info(
+        f"{len(pitcher_ids)} pitchers in database "
+        f"({sum(1 for v in bdl_id_map.values() if v is not None)} BDL-mapped; "
+        f"batch size: {_BATCH_SIZE})"
+    )
 
     updated = 0
     skipped = 0
@@ -419,7 +429,10 @@ def _update_pitchers(current_year: int) -> tuple[int, int, list[int]]:
         for player_id in batch_ids:
             try:
                 entry = _build_current_pitcher_entry(
-                    player_id, bref_df, bwar_current, current_year
+                    player_id,
+                    bdl_id_map.get(player_id),
+                    bwar_current,
+                    current_year,
                 )
                 if entry is None:
                     skipped += 1
@@ -428,6 +441,7 @@ def _update_pitchers(current_year: int) -> tuple[int, int, list[int]]:
             except Exception as exc:
                 log.error(f"pitcher {player_id} FAILED: {exc}")
                 failed.append(player_id)
+            _time.sleep(data_service._BDL_RATE_LIMIT_SLEEP)
 
         if batch_entries:
             with connection.get_session() as db:
