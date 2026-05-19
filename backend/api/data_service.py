@@ -849,10 +849,14 @@ def _batting_career_totals(seasons: list[dict]) -> dict:
     if totals.get("OBP") is not None and totals.get("SLG") is not None:
         totals["OPS"] = round(totals["OBP"] + totals["SLG"], 3)
 
-    # PA-weighted career OPS+ across seasons that have one. Missing
-    # seasons silently drop out (same shape as bref's career page —
-    # if WAR backfill never ran for a year, that year doesn't
-    # contribute, but the rest of the career does).
+    # PA-weighted career OPS+ across seasons that have one. Bref's
+    # actual career OPS+ formula uses career-level OBP/SLG vs PA-
+    # weighted league OBP/SLG baselines — we don't store lgOBP /
+    # lgSLG per season, so PA-weighting season OPS+ is the closest
+    # approximation. Empirically lands within ~1 point for Bonds
+    # (182.7 vs bref 182) and ~4 points low for Trout (168.6 vs
+    # bref 173); the AB-weighted alternative drifts further from
+    # bref on both, so PA-weighted is the best fit available.
     num = 0.0
     den = 0.0
     for s in seasons_with_counting:
@@ -975,9 +979,15 @@ def _pitching_career_totals(seasons: list[dict]) -> dict:
     """Aggregate season-level pitcher rows into a `career_totals`
     dict. Standard counting stats are linear sums; ERA and WHIP
     come off summed ER / H / BB / IP (the only correct way for a
-    rate aggregate). Career ERA+ is the IP-weighted average across
+    rate aggregate). Career ERA+ is the ER-weighted average across
     seasons where ERA+ is populated — matches bref's career-page
-    convention."""
+    methodology, which boils down algebraically to
+    Σ(ER × ERA+) / Σ(ER). An IP-weighted average overestimates
+    badly for pitchers with extreme low-pERA peaks (Pedro Martinez
+    came out at 170 vs bref's 154 under IP-weighting); the ER-
+    weighted form lands at 154 because the dominant seasons that
+    pump ERA+ also yield fewer earned runs, so they get less
+    weight in the ratio."""
     totals: dict = {
         "seasons": len(seasons),
         "WAR":     round(sum((s.get("WAR") or 0.0) for s in seasons), 1),
@@ -997,16 +1007,28 @@ def _pitching_career_totals(seasons: list[dict]) -> dict:
         totals["ERA"]  = round(9.0 * float(er) / float(ip), 2)
         totals["WHIP"] = round(float(bb + h) / float(ip), 2)
 
-    # IP-weighted career ERA+ across seasons with one (seasons
-    # without ERA+ silently drop out of the weighted average).
+    # ER-weighted career ERA+. Use stored ER when present; fall
+    # back to ER ≈ ERA × IP / 9 for the older rows whose ER column
+    # was never backfilled. Seasons missing ERA+ silently drop out
+    # of both sides of the ratio.
     num = 0.0
     den = 0.0
     for s in seasons:
         era_plus = s.get("ERA_plus")
-        season_ip = s.get("IP")
-        if era_plus is not None and season_ip is not None and season_ip > 0:
-            num += float(era_plus) * float(season_ip)
-            den += float(season_ip)
+        if era_plus is None:
+            continue
+        season_er = s.get("ER")
+        if season_er is None:
+            season_ip = s.get("IP")
+            season_era = s.get("ERA")
+            if (season_ip is None or season_ip <= 0
+                    or season_era is None):
+                continue
+            season_er = float(season_era) * float(season_ip) / 9.0
+        if season_er <= 0:
+            continue
+        num += float(era_plus) * float(season_er)
+        den += float(season_er)
     if den > 0:
         totals["ERA_plus"] = round(num / den, 1)
 
