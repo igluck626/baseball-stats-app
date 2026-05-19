@@ -13,10 +13,14 @@
 //  selected date changes, when the view disappears, or when no
 //  games remain live.
 //
-//  Data source is MLB Stats API directly via `MLBStatsAPIClient`
-//  (no Railway round trip). Player taps in the box score reach
-//  through `APIClient.getPlayerByMlbId` to navigate to the
-//  existing `PlayerProfileView`.
+//  Data source is BallDontLie directly via `BallDontLieClient`
+//  (no Railway round trip). The view layer still consumes the
+//  legacy `Game` model — BDL responses are projected via
+//  `BDLGame.toGame()` in Scores.swift so the date strip / cards
+//  / navigation don't need to know about the new shape. Player
+//  taps in the box score (still MLB-Stats-API-backed in this
+//  phase) reach through `APIClient.getPlayerByMlbId` to navigate
+//  to the existing `PlayerProfileView`.
 //
 
 import Combine
@@ -33,24 +37,23 @@ final class ScoresViewModel: ObservableObject {
     /// view can distinguish "still loading" from "no games today".
     @Published var didLoad: Bool = false
 
-    private let api: MLBStatsAPIClient
+    private let bdl: BallDontLieClient
     private var refreshTask: Task<Void, Never>?
 
-    init(api: MLBStatsAPIClient = .shared) {
-        self.api = api
+    init(bdl: BallDontLieClient = .shared) {
+        self.bdl = bdl
     }
 
     func load(date: Date) async {
         isLoading = true
         error = nil
         do {
-            let response = try await api.getSchedule(date: date)
-            let games = response.dates.first(where: { $0.date == ScoresViewModel.iso(date) })?.games
-                ?? response.dates.flatMap(\.games)
-            self.games = games
+            let bdlGames = try await bdl.getGames(date: ScoresViewModel.iso(date))
+            self.games = bdlGames
+                .map { $0.toGame() }
+                .sorted { ($0.startDate ?? .distantFuture) < ($1.startDate ?? .distantFuture) }
         } catch {
-            self.error = (error as? MLBStatsAPIError).map(Self.message(for:))
-                ?? error.localizedDescription
+            self.error = Self.message(for: error)
             self.games = []
         }
         isLoading = false
@@ -63,10 +66,10 @@ final class ScoresViewModel: ObservableObject {
     /// the next normal `load()` will surface persistent failures.
     func refresh() async {
         do {
-            let response = try await api.getSchedule(date: selectedDate)
-            let g = response.dates.first(where: { $0.date == ScoresViewModel.iso(selectedDate) })?.games
-                ?? response.dates.flatMap(\.games)
-            self.games = g
+            let bdlGames = try await bdl.getGames(date: ScoresViewModel.iso(selectedDate))
+            self.games = bdlGames
+                .map { $0.toGame() }
+                .sorted { ($0.startDate ?? .distantFuture) < ($1.startDate ?? .distantFuture) }
             self.error = nil
         } catch {
             // Silent — keep stale games visible rather than wiping
@@ -99,14 +102,31 @@ final class ScoresViewModel: ObservableObject {
     }
 
     static func iso(_ date: Date) -> String {
-        MLBStatsAPIClient.scheduleDateFormatter.string(from: date)
+        // Same yyyy-MM-dd shape MLBStatsAPIClient used — kept as a
+        // class method here so the date-strip code and helper
+        // call-sites don't need to reach across to that client now
+        // that the scores tab no longer talks to it.
+        Self.scheduleDateFormatter.string(from: date)
     }
 
-    private static func message(for error: MLBStatsAPIError) -> String {
-        switch error {
-        case .badStatus(let code):  return "MLB Stats API returned \(code)."
-        case .decoding:             return "Couldn't read the schedule response."
+    static let scheduleDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.calendar = .init(identifier: .gregorian)
+        f.timeZone = .current
+        f.locale   = .init(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
+
+    private static func message(for error: Error) -> String {
+        if let bdlErr = error as? BallDontLieError {
+            switch bdlErr {
+            case .badURL:               return "Couldn't build the games request."
+            case .badStatus(let code):  return "BallDontLie returned \(code)."
+            case .decoding:             return "Couldn't read the games response."
+            }
         }
+        return error.localizedDescription
     }
 }
 
@@ -569,9 +589,16 @@ private struct FinalGameCard: View {
     }
 
     private func fetchBoxScore() async {
-        isLoadingBoxScore = true
-        defer { isLoadingBoxScore = false }
-        boxScore = try? await MLBStatsAPIClient.shared.getBoxScore(gamePk: game.gamePk)
+        // Phase 2 of the BDL migration: `game.gamePk` is now a BDL
+        // game id, not an MLB Stats API gamePk, so the old
+        // /game/{pk}/boxscore call would 404. Phase 3 rewires this
+        // to BDL's /stats endpoint and reshapes the response. Until
+        // then `boxScore` stays nil and the W-L tags + HR summary
+        // line below degrade gracefully (recordForPitcher → nil,
+        // hrSummary → empty view) — the rest of the expanded card
+        // (decisions names, scoreboard, status) renders fine.
+        isLoadingBoxScore = false
+        boxScore = nil
     }
 
     // MARK: Collapsed header
