@@ -77,72 +77,6 @@ log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# New-call-up discovery
-# ---------------------------------------------------------------------------
-
-def _discover_and_add_new_players(bref_df, is_pitcher: bool, current_year: int) -> int:
-    """Walk this year's bref dataframe, find mlbIDs that aren't yet in
-    our players (or pitchers) table, and INSERT a minimal row for each
-    from MLB Stats API `/people/{id}`. Returns the count of newly
-    inserted rows.
-
-    Without this step, new call-ups debut on bref but never appear in
-    our DB until the offseason Lahman archive lands, so the iOS box-
-    score "tap a player → profile" lookup 404s for them all season.
-
-    pitching_stats_bref ships mlbID as string; batting_stats_bref as
-    numeric. Both branches normalize to int before the DB compare.
-    """
-    if "mlbID" not in bref_df.columns:
-        return 0
-    raw_ids = bref_df["mlbID"].dropna().tolist()
-    bref_ids: set[int] = set()
-    for raw in raw_ids:
-        try:
-            bref_ids.add(int(raw))
-        except (TypeError, ValueError):
-            continue
-
-    with connection.get_session() as db:
-        if is_pitcher:
-            existing = set(crud.get_all_pitcher_ids(db))
-        else:
-            existing = set(crud.get_all_player_ids(db))
-    new_ids = sorted(bref_ids - existing)
-    if not new_ids:
-        return 0
-
-    side = "pitchers" if is_pitcher else "batters"
-    log.info(f"Discovered {len(new_ids)} new {side} in bref — fetching bios from MLB Stats API")
-
-    added = 0
-    failed = 0
-    with connection.get_session() as db:
-        for mlb_id in new_ids:
-            bio = data_service.fetch_mlb_player_bio(mlb_id)
-            if bio is None:
-                failed += 1
-                continue
-            # Ensure the bio's debut year defaults to the current
-            # season for these call-ups even when /people/{id}
-            # hasn't yet shipped mlbDebutDate (rare; happens for
-            # the first 24h after a debut).
-            if bio.get("mlb_debut") is None:
-                bio["mlb_debut"] = current_year
-            try:
-                if is_pitcher:
-                    crud.save_pitcher(db, bio)
-                else:
-                    crud.save_player(db, bio)
-                added += 1
-            except Exception as exc:
-                log.error(f"  new {side[:-1]} insert failed for {mlb_id}: {exc}")
-                failed += 1
-    log.info(f"  added {added} new {side}, {failed} failed")
-    return added
-
-
-# ---------------------------------------------------------------------------
 # Batting (PlayerSeason)
 # ---------------------------------------------------------------------------
 
@@ -182,13 +116,16 @@ def _build_current_batter_entry(
         .sort_values("stint_ID")
     )
 
-    # Resolve the BDL stats payload. The fast path is "caller pre-
-    # fetched in a batch and passed it through" — single dict
-    # lookup, no HTTP. We only reach for an individual fetch when
-    # bdl_stats is None AND the row never got a bdl_id stamped
-    # (unmapped historical player still appearing in our DB).
+    # Caller is expected to pre-fetch in a batch and pass it
+    # through. If bdl_stats is None and the row has no bdl_id at
+    # all, we skip — there's no MLB-Stats-API fallback anymore.
+    # Player keeps their last known DB values until they get
+    # mapped via `/admin/build-bdl-player-mapping`.
     if bdl_stats is None and bdl_id is None:
-        bdl_stats = data_service._fetch_mlb_stats_api_batter(player_id, current_year)
+        log.warning(
+            f"  skipping batter {player_id} — no bdl_id mapped, stats not updated"
+        )
+        return None
 
     if player_war.empty and bdl_stats is None:
         return None
@@ -392,7 +329,10 @@ def _build_current_pitcher_entry(
 
     override = bdl_stats
     if override is None and bdl_id is None:
-        override = data_service._fetch_mlb_stats_api_pitcher(player_id, current_year)
+        log.warning(
+            f"  skipping pitcher {player_id} — no bdl_id mapped, stats not updated"
+        )
+        return None
 
     if player_war.empty and override is None:
         return None
@@ -540,169 +480,169 @@ def _build_team_meta_by_id() -> dict[str, tuple[str, str]]:
     return mapping
 
 
-# MLB Stats API division-id → our (league, division-letter) tuple.
-# Stable across seasons; cross-checked against
-# https://statsapi.mlb.com/api/v1/divisions
-_MLB_DIVISION_ID_TO_LEAGUE_DIV: dict[int, tuple[str, str]] = {
-    201: ("AL", "E"),  # AL East
-    202: ("AL", "C"),  # AL Central
-    200: ("AL", "W"),  # AL West
-    204: ("NL", "E"),  # NL East
-    205: ("NL", "C"),  # NL Central
-    203: ("NL", "W"),  # NL West
+# BDL league/division string → our (league code, division letter)
+# tuple. BDL ships "American"/"National" and "East"/"Central"/"West"
+# on the standings payload; map to our 2-letter / 1-letter codes
+# stored on team_seasons.
+_BDL_LEAGUE_TO_CODE: dict[str, str] = {
+    "American": "AL", "National": "NL",
+    "AL": "AL", "NL": "NL",  # tolerate either spelling
+}
+_BDL_DIVISION_TO_CODE: dict[str, str] = {
+    "East":    "E", "Central": "C", "West":    "W",
 }
 
 
-# MLB Stats API numeric team id → Lahman team_id. The dict lives in
-# `data_service` so both the nightly standings pipeline (here) and
-# the roster-sync path (in data_service itself) share one mapping.
-_MLB_TEAM_ID_TO_LAHMAN_TEAM_ID = data_service._MLB_TEAM_ID_TO_LAHMAN_TEAM_ID
+def _streak_code_from_int(streak: object) -> str | None:
+    """BDL ships `streak` as a signed integer (+5 = W5, -3 = L3).
+    Our `streak_code` column wants the legacy string form."""
+    if streak is None or streak == 0:
+        return None
+    try:
+        n = int(streak)
+    except (TypeError, ValueError):
+        return None
+    if n == 0:
+        return None
+    return f"W{n}" if n > 0 else f"L{-n}"
 
 
-def _split_record(splits: list[dict], wanted_type: str) -> tuple[int | None, int | None]:
-    """Pull (wins, losses) from a splitRecords array for the given type
-    ("lastTen" / "home" / "away" / etc.). Returns (None, None) when
-    the type isn't present (pre-season, or the API trimmed it)."""
-    for split in splits or []:
-        if split.get("type") == wanted_type:
-            try:
-                return int(split.get("wins") or 0), int(split.get("losses") or 0)
-            except (TypeError, ValueError):
-                return None, None
-    return None, None
+def _parse_last_ten(s: object) -> tuple[int | None, int | None]:
+    """\"8-2\" → (8, 2). (None, None) on missing / malformed input."""
+    if not s or not isinstance(s, str) or "-" not in s:
+        return None, None
+    parts = s.split("-", 1)
+    try:
+        return int(parts[0]), int(parts[1])
+    except (TypeError, ValueError):
+        return None, None
 
 
 def _update_standings(current_year: int) -> tuple[int, int]:
-    """Refresh current-season standings via the MLB Stats API and upsert
-    into team_seasons. Returns (teams_updated, lookup_failures).
+    """Refresh current-season standings via BDL `/standings?season=N`
+    and upsert into team_seasons. Returns (teams_updated,
+    lookup_failures). All MLB Stats API calls removed for App
+    Store compliance.
 
-    Source: https://statsapi.mlb.com/api/v1/standings?leagueId={103|104}&season=YYYY.
-    Pulls everything in the standings payload — W/L/win_pct plus the
-    new dynamic fields (streak, L10, home/away splits, run differential,
-    games back, wild-card games back, clinch indicators, magic / elim
-    numbers). Maps MLB API team.name to our team_id via the existing
-    team_seasons name map, falling back gracefully on rebrand-era
-    mismatches.
-    """
+    BDL ships everything we need: W/L, win_pct, streak (signed int),
+    last_ten_games ("8-2"), home/road wins+losses, points_for/against
+    (runs), games_behind, magic_number_division, clincher. The rank
+    within a division is derived locally from `division_games_behind`
+    since BDL doesn't ship a per-division rank field directly."""
     team_meta = _build_team_meta_by_id()
     if not team_meta:
         log.warning("team_seasons is empty — cannot resolve franch_id / team_name; skipping standings refresh")
         return 0, 0
 
-    rows_to_save: list[dict] = []
+    try:
+        payload = data_service._bdl_get_json(
+            "standings", {"season": current_year},
+        )
+    except Exception as exc:
+        log.error(f"standings fetch failed: {exc}", exc_info=True)
+        return 0, 0
+
+    rows_by_division: dict[tuple[str, str], list[dict]] = {}
     failed_lookups: list[str] = []
-    # Hit each league separately. leagueId=103 = AL, 104 = NL.
-    for league_id in (103, 104):
-        try:
-            payload = data_service._mlb_get_json(
-                "standings",
-                {"leagueId": league_id, "season": current_year, "standingsTypes": "regularSeason"},
-            )
-        except Exception as exc:
-            log.error(f"standings fetch failed for leagueId={league_id}: {exc}", exc_info=True)
+
+    for t in payload.get("data") or []:
+        team_obj  = t.get("team") or {}
+        bdl_team_id = team_obj.get("id")
+        team_id = data_service._BDL_TO_LAHMAN_TEAM_MAP.get(bdl_team_id)
+        if team_id is None:
+            failed_lookups.append(team_obj.get("abbreviation") or str(bdl_team_id))
+            continue
+        meta = team_meta.get(team_id)
+        if meta is None:
+            failed_lookups.append(team_id)
+            continue
+        franch_id, full_team_name = meta
+
+        league   = _BDL_LEAGUE_TO_CODE.get(team_obj.get("league") or "")
+        division = _BDL_DIVISION_TO_CODE.get(team_obj.get("division") or "")
+        if not league or not division:
+            failed_lookups.append(team_id)
             continue
 
-        for record in payload.get("records") or []:
-            div_id = (record.get("division") or {}).get("id")
-            mapped = _MLB_DIVISION_ID_TO_LEAGUE_DIV.get(div_id)
-            if mapped is None:
-                # Unknown division (post-season, all-star, future re-org)
-                # — skip rather than risk writing a row with no division.
-                continue
-            league, division = mapped
+        wins   = int(t.get("wins") or 0)
+        losses = int(t.get("losses") or 0)
+        wp_raw = t.get("win_percent")
+        try:
+            win_pct = float(wp_raw) if wp_raw is not None else (
+                round(wins / (wins + losses), 3) if (wins + losses) > 0 else None
+            )
+        except (TypeError, ValueError):
+            win_pct = None
 
-            team_records = record.get("teamRecords") or []
-            # The API already sorts within a division by divisionRank;
-            # use the row index as our `rank` so leaders show up first.
-            for rank_idx, t in enumerate(team_records, 1):
-                team        = t.get("team") or {}
-                mlb_team_id = team.get("id")
-                short_name  = (team.get("name") or "").strip()
-                # MLB-numeric-id → Lahman team_id. Stable, doesn't
-                # depend on string matching against the short
-                # nickname the standings endpoint returns.
-                team_id = _MLB_TEAM_ID_TO_LAHMAN_TEAM_ID.get(mlb_team_id)
-                if team_id is None:
-                    log.warning(
-                        f"standings: no Lahman mapping for MLB team id={mlb_team_id} "
-                        f"({short_name!r}) — add to _MLB_TEAM_ID_TO_LAHMAN_TEAM_ID"
-                    )
-                    failed_lookups.append(short_name or f"mlb_id={mlb_team_id}")
-                    continue
-                meta = team_meta.get(team_id)
-                if meta is None:
-                    log.warning(
-                        f"standings: Lahman team_id={team_id!r} not in team_seasons "
-                        f"(MLB id={mlb_team_id}, short_name={short_name!r})"
-                    )
-                    failed_lookups.append(team_id)
-                    continue
-                franch_id, full_team_name = meta
+        last10_w, last10_l = _parse_last_ten(t.get("last_ten_games"))
 
-                wins   = int(t.get("wins") or 0)
-                losses = int(t.get("losses") or 0)
-                wp_raw = t.get("winningPercentage")
-                try:
-                    win_pct = float(wp_raw) if wp_raw is not None else (
-                        round(wins / (wins + losses), 3) if (wins + losses) > 0 else None
-                    )
-                except (TypeError, ValueError):
-                    win_pct = None
+        # `games_behind` from BDL is numeric (0 for division leader).
+        # Our column stores a string ("-" / "2.5"). Re-shape so the
+        # iOS standings card renders the same as the MLB-Stats-API era.
+        gb_raw = t.get("games_behind")
+        if gb_raw is None or gb_raw == 0:
+            games_back_str = "-"
+        else:
+            try:
+                gb_f = float(gb_raw)
+                games_back_str = "-" if gb_f == 0 else f"{gb_f:g}"
+            except (TypeError, ValueError):
+                games_back_str = "-"
 
-                splits = (t.get("records") or {}).get("splitRecords") or []
-                last10_w, last10_l = _split_record(splits, "lastTen")
-                home_w,   home_l   = _split_record(splits, "home")
-                away_w,   away_l   = _split_record(splits, "away")
+        row = {
+            "year":      current_year,
+            "team_id":   team_id,
+            "franch_id": franch_id,
+            "team_name": full_team_name or team_obj.get("display_name"),
+            "league":    league,
+            "division":  division,
+            # Rank is filled in below once we have the full division.
+            "rank":      None,
+            "G":         int(t.get("games_played") or (wins + losses)),
+            "W":         wins,
+            "L":         losses,
+            "win_pct":   win_pct,
+            # BDL uses NBA-style points_for/against — those values
+            # are runs scored / runs allowed for MLB.
+            "runs_scored":  t.get("points_for"),
+            "runs_allowed": t.get("points_against"),
 
-                streak     = t.get("streak") or {}
-                rows_to_save.append({
-                    "year":      current_year,
-                    "team_id":   team_id,
-                    "franch_id": franch_id,
-                    # Prefer the full city+nickname from team_seasons
-                    # ("Tampa Bay Rays") over the MLB API's nickname-
-                    # only short_name ("Rays") so the iOS standings
-                    # card keeps reading the same as the historical
-                    # rows below it.
-                    "team_name": full_team_name or short_name,
-                    "league":    league,
-                    "division":  division,
-                    "rank":      rank_idx,
-                    "G":         wins + losses,
-                    "W":         wins,
-                    "L":         losses,
-                    "win_pct":   win_pct,
+            "streak_code":          _streak_code_from_int(t.get("streak")),
+            "last_ten_w":           last10_w,
+            "last_ten_l":           last10_l,
+            "home_w":               t.get("home_wins"),
+            "home_l":               t.get("home_losses"),
+            "away_w":               t.get("road_wins"),
+            "away_l":               t.get("road_losses"),
+            "games_back":           games_back_str,
+            "wild_card_games_back": None,  # BDL doesn't ship this directly
+            "clinch_indicator":     t.get("clincher"),
+            "division_leader":      (gb_raw == 0),
+            "clinched":             bool(t.get("clincher")),
+            "magic_number":         (str(t.get("magic_number_division"))
+                                     if t.get("magic_number_division") is not None
+                                     else None),
+            "elimination_number":   None,
+            "_division_gb": float(t.get("division_games_behind") or 0),
+        }
+        rows_by_division.setdefault((league, division), []).append(row)
 
-                    # Run differential pair — both columns already exist
-                    # on team_seasons; the previous nightly path didn't
-                    # populate them for current-season rows.
-                    "runs_scored":  t.get("runsScored"),
-                    "runs_allowed": t.get("runsAllowed"),
-
-                    # Live fields (new this commit).
-                    "streak_code":          streak.get("streakCode"),
-                    "last_ten_w":           last10_w,
-                    "last_ten_l":           last10_l,
-                    "home_w":               home_w,
-                    "home_l":               home_l,
-                    "away_w":               away_w,
-                    "away_l":               away_l,
-                    "games_back":           t.get("gamesBack"),
-                    "wild_card_games_back": t.get("wildCardGamesBack"),
-                    "clinch_indicator":     t.get("clinchIndicator"),
-                    "division_leader":      bool(t.get("divisionLeader") or False),
-                    "clinched":             bool(t.get("clinched") or False),
-                    "magic_number":         t.get("magicNumber"),
-                    "elimination_number":   t.get("eliminationNumber"),
-                })
+    rows_to_save: list[dict] = []
+    for _key, rows in rows_by_division.items():
+        # Rank within division by `division_games_behind` asc.
+        rows.sort(key=lambda r: r["_division_gb"])
+        for idx, r in enumerate(rows, 1):
+            r["rank"] = idx
+            r.pop("_division_gb", None)
+            rows_to_save.append(r)
 
     if rows_to_save:
         with connection.get_session() as db:
             crud.save_team_seasons(db, rows_to_save)
 
-    log.info(f"standings: updated {len(rows_to_save)} teams, {len(failed_lookups)} unmatched names")
+    log.info(f"standings: updated {len(rows_to_save)} teams, {len(failed_lookups)} unmatched")
     if failed_lookups:
-        log.warning(f"unmatched team names: {failed_lookups}")
+        log.warning(f"unmatched standings entries: {failed_lookups}")
 
     return len(rows_to_save), len(failed_lookups)
 

@@ -3,9 +3,10 @@
 //  BaseballStats
 //
 //  Direct client for the BallDontLie MLB API — talked to from iOS
-//  without going through our Railway backend. Replaces
-//  `MLBStatsAPIClient` for everything except game logs (those will
-//  move in a later migration phase).
+//  without going through our Railway backend. Sole external stats
+//  data source for the app (the prior MLB Stats API client was
+//  removed for App Store compliance — every scores / box / live /
+//  profile-overlay surface now routes through BDL).
 //
 //  Endpoints in use:
 //    • /mlb/v1/games?dates[]=YYYY-MM-DD         — scores list

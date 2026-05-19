@@ -102,10 +102,8 @@ final class ScoresViewModel: ObservableObject {
     }
 
     static func iso(_ date: Date) -> String {
-        // Same yyyy-MM-dd shape MLBStatsAPIClient used — kept as a
-        // class method here so the date-strip code and helper
-        // call-sites don't need to reach across to that client now
-        // that the scores tab no longer talks to it.
+        // `yyyy-MM-dd` in local timezone — what BDL's `dates[]`
+        // filter expects, and what the date-strip pills key on.
         Self.scheduleDateFormatter.string(from: date)
     }
 
