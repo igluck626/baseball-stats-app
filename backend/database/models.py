@@ -21,6 +21,12 @@ class Player(Base):
     player_id       = Column(Integer, primary_key=True)
     name            = Column(String, nullable=False)
     bbref_id        = Column(String)
+    # BallDontLie's internal player id. Populated by the one-shot
+    # `/admin/build-bdl-player-mapping` walk and used by the
+    # BDL-migration code paths. NULL for historical players BDL
+    # doesn't carry (pre-2010 careers) and for anyone the mapping
+    # job hasn't reached yet.
+    bdl_id          = Column(Integer)
     mlb_debut       = Column(Integer)
     mlb_last_season = Column(Integer)
     position        = Column(String)
@@ -99,6 +105,9 @@ class Pitcher(Base):
     player_id       = Column(Integer, primary_key=True)
     name            = Column(String, nullable=False)
     bbref_id        = Column(String)
+    # See Player.bdl_id — same mapping, populated for two-way
+    # players (Ohtani) on both sides with the same BDL id.
+    bdl_id          = Column(Integer)
     mlb_debut       = Column(Integer)
     mlb_last_season = Column(Integer)
     position        = Column(String)
@@ -390,6 +399,12 @@ class TeamSeason(Base):
     team_id      = Column(String,  primary_key=True)
     franch_id    = Column(String)
     team_name    = Column(String)
+    # BallDontLie's internal team id. Identical across seasons for
+    # the same franchise — populated once by the BDL teams discovery
+    # endpoint and the same id is stamped on every year's row for
+    # that team. Used as the join key when reading BDL standings
+    # or game payloads.
+    bdl_id       = Column(Integer)
     league       = Column(String)
     division     = Column(String)
     rank         = Column(Integer)

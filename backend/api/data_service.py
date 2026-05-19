@@ -1392,6 +1392,349 @@ def _mlb_get_json(path: str, params: dict) -> dict:
         return json.loads(resp.read().decode("utf-8"))
 
 
+# ---------------------------------------------------------------------------
+# BallDontLie API — migration target. Independent ID space (BDL has its
+# own integer ids for players/teams/games — they do NOT match MLBAM ids),
+# so a one-shot bootstrap stamps the mapping onto our `bdl_id` columns
+# before any production read-path traffic moves over.
+# ---------------------------------------------------------------------------
+
+_BDL_API_BASE = "https://api.balldontlie.io/mlb/v1"
+# Bare rate-limit floor BDL enforces (5 req/sec on the GOAT tier).
+# Sleeping slightly over 1/5s between requests stays comfortably under
+# the bucket and dodges the burst-counter 429s we hit during testing.
+_BDL_RATE_LIMIT_SLEEP = 0.22
+
+# Lahman code → BallDontLie team id. Seeded with the four verified
+# from the pre-migration audit (LAA/COL/TEX/PHI); the rest are
+# populated by calling the `/admin/bdl-teams` endpoint, which fetches
+# all 30 from BDL and prints the mapping for hand-paste here. Until
+# the dict is complete, code that resolves teams should fall back to
+# the runtime team_seasons.bdl_id lookup rather than this constant.
+_BDL_TEAM_ID_MAP: dict[str, int] = {
+    "LAA": 13,
+    "COL": 9,
+    "TEX": 28,
+    "PHI": 21,
+}
+
+
+def _get_bdl_key() -> str:
+    """Read the BDL API key from env. Raises a clear error so callers
+    fail fast at Railway boot or per-request rather than silently
+    sending unauthenticated requests (which BDL 401s on every endpoint).
+    """
+    key = os.environ.get("BDL_KEY")
+    if not key:
+        raise RuntimeError(
+            "BDL_KEY environment variable is not set — BallDontLie "
+            "endpoints require the GOAT-tier API key. Set BDL_KEY on "
+            "Railway (and locally in `.env`) before calling any "
+            "`/admin/bdl-*` or `/admin/build-bdl-*` endpoint."
+        )
+    return key
+
+
+def _bdl_get_json(path: str, params: Optional[dict] = None) -> dict:
+    """GET https://api.balldontlie.io/mlb/v1/{path}?... and return
+    parsed JSON. Mirrors `_mlb_get_json` (urllib, stdlib-only) and
+    adds the BDL_KEY Authorization header. Param-array shape (`foo[]`)
+    is preserved through `doseq=True` so callers can pass list
+    values directly.
+
+    Note: BDL's published OpenAPI lies about array params on the
+    /season_stats, /plays, and /plate_appearances endpoints (live
+    API rejects `seasons[]=` and `game_ids[]=`; expects singular
+    `season=` / `game_id=`). Callers must use the singular form on
+    those routes — this helper doesn't disguise the difference.
+    """
+    qs  = urllib.parse.urlencode(params or {}, doseq=True)
+    url = f"{_BDL_API_BASE}/{path.lstrip('/')}"
+    if qs:
+        url = f"{url}?{qs}"
+    req = urllib.request.Request(url, headers={
+        "Authorization": _get_bdl_key(),
+        "User-Agent":    "baseball-stats-app/1.0",
+        "Accept":        "application/json",
+    })
+    with urllib.request.urlopen(req, timeout=_MLB_HTTP_TIMEOUT) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def fetch_bdl_teams() -> dict:
+    """Walk BDL's /teams once and return the full list. Output shape
+    is intended for human inspection — the caller hand-pastes the
+    rows into `_BDL_TEAM_ID_MAP` after verifying the mapping against
+    our Lahman codes. Also stamps `bdl_id` on every current-year row
+    in `team_seasons` so the migration code path can resolve via DB
+    lookup once the constant is filled in.
+
+    The endpoint is paginated (default 25 per page); since there are
+    only 30 teams, requesting per_page=50 gets them in one shot.
+    """
+    data = _bdl_get_json("teams", {"per_page": 50})
+    teams = data.get("data") or []
+    # Build a display list and (when possible) a Lahman-code suggestion.
+    # Lahman uses bbref-style codes that differ from BDL's abbreviation
+    # for ~6 franchises (BDL uses NYY/CHC/LAD/SDP/SFG/STL etc.; our DB
+    # uses NYA/CHN/LAN/SDN/SFN/SLN). The reverse map below covers the
+    # ones we know about; unknown abbreviations are echoed back so the
+    # human reviewer can decide.
+    _BDL_ABBR_TO_LAHMAN: dict[str, str] = {
+        "ARI": "ARI", "ATL": "ATL", "BAL": "BAL", "BOS": "BOS",
+        "CHC": "CHN", "CHW": "CHA", "CIN": "CIN", "CLE": "CLE",
+        "COL": "COL", "DET": "DET", "HOU": "HOU", "KCR": "KCA",
+        "LAA": "LAA", "LAD": "LAN", "MIA": "MIA", "MIL": "MIL",
+        "MIN": "MIN", "NYM": "NYN", "NYY": "NYA", "OAK": "ATH",
+        "ATH": "ATH", "PHI": "PHI", "PIT": "PIT", "SDP": "SDN",
+        "SEA": "SEA", "SFG": "SFN", "STL": "SLN", "TBR": "TBA",
+        "TEX": "TEX", "TOR": "TOR", "WSN": "WAS", "WSH": "WAS",
+    }
+
+    out: list[dict] = []
+    for t in teams:
+        abbr = t.get("abbreviation") or ""
+        out.append({
+            "bdl_id":         t.get("id"),
+            "abbreviation":   abbr,
+            "name":           t.get("name"),
+            "display_name":   t.get("display_name"),
+            "league":         t.get("league"),
+            "division":       t.get("division"),
+            "lahman_suggested": _BDL_ABBR_TO_LAHMAN.get(abbr.upper()),
+        })
+    out.sort(key=lambda x: x.get("abbreviation") or "")
+
+    # Stamp current-year team_seasons rows so the runtime lookup also
+    # works without waiting on a `_BDL_TEAM_ID_MAP` constant update.
+    stamped = 0
+    if connection.db_available():
+        from database.models import TeamSeason as _TeamSeason
+        year = _current_year()
+        with connection.get_session() as db:
+            for row in out:
+                lahman = row.get("lahman_suggested")
+                bdl_id = row.get("bdl_id")
+                if not lahman or bdl_id is None:
+                    continue
+                # Stamp every season's row for this franchise — the
+                # BDL team id is stable across years, so we don't
+                # need to scope by `year`.
+                updated = (
+                    db.query(_TeamSeason)
+                    .filter(_TeamSeason.team_id == lahman)
+                    .update({_TeamSeason.bdl_id: bdl_id},
+                            synchronize_session=False)
+                )
+                stamped += updated or 0
+            db.commit()
+        _ = year
+
+    return {
+        "count":    len(out),
+        "teams":    out,
+        "stamped":  stamped,
+        "hint": (
+            "Paste the (lahman_suggested → bdl_id) pairs into "
+            "_BDL_TEAM_ID_MAP in data_service.py. Rows with "
+            "`lahman_suggested=null` need manual mapping (rebrand or "
+            "abbreviation BDL ships that we haven't seen before)."
+        ),
+    }
+
+
+def build_bdl_player_mapping(since_year: int = 2010,
+                             limit: Optional[int] = None) -> dict:
+    """One-shot bootstrap: walk every player/pitcher in our DB whose
+    `bdl_id` is still NULL (and whose career touches `since_year` or
+    later), search BDL for their name, and stamp the matched BDL id.
+
+    Match rule: exact full-name match (case-insensitive), with a
+    position-side filter — batters match against BDL rows whose
+    position is NOT pitcher-type (P / SP / RP / CL); pitchers match
+    against rows whose position IS pitcher-type. Resolves the
+    common "Will Smith catcher vs. Will Smith reliever" two-row case.
+
+    Ambiguous matches (multiple BDL rows pass the side filter) are
+    logged and skipped — the response includes them under
+    `ambiguous` so a human can hand-resolve. Unmatched rows (zero
+    BDL hits) appear under `unmatched`.
+
+    Rate-limited at 1 request every `_BDL_RATE_LIMIT_SLEEP` seconds
+    (≈4.5 req/sec, just below BDL's 5/sec ceiling). `limit` caps the
+    number of DB rows processed per invocation so a single Railway
+    request stays under the 5-minute timeout — caller can re-invoke
+    to resume (the WHERE clause filters out already-stamped rows).
+    """
+    if not connection.db_available():
+        return {"status": "no_db"}
+
+    # Pre-flight the env var so we fail fast with a clear error
+    # before scanning thousands of DB rows.
+    _get_bdl_key()
+
+    from database.models import Pitcher as _Pitcher
+    from database.models import Player as _Player
+
+    counts = {
+        "batters_matched":   0,
+        "pitchers_matched":  0,
+        "batters_unmatched": 0,
+        "pitchers_unmatched": 0,
+        "batters_ambiguous": 0,
+        "pitchers_ambiguous": 0,
+        "bdl_lookups":       0,
+    }
+    ambiguous: list[dict] = []
+    unmatched: list[dict] = []
+    processed = 0
+
+    with connection.get_session() as db:
+        batter_rows = (
+            db.query(_Player)
+            .filter(_Player.bdl_id.is_(None))
+            .filter(_Player.mlb_debut.isnot(None))
+            .filter(_Player.mlb_debut >= since_year)
+            .order_by(_Player.player_id)
+            .all()
+        )
+        pitcher_rows = (
+            db.query(_Pitcher)
+            .filter(_Pitcher.bdl_id.is_(None))
+            .filter(_Pitcher.mlb_debut.isnot(None))
+            .filter(_Pitcher.mlb_debut >= since_year)
+            .order_by(_Pitcher.player_id)
+            .all()
+        )
+
+        for row, side in [(r, "batter")  for r in batter_rows] + \
+                         [(r, "pitcher") for r in pitcher_rows]:
+            if limit is not None and processed >= limit:
+                break
+            processed += 1
+
+            bdl_id, status, candidates = _bdl_match_one_player(
+                full_name=row.name,
+                side=side,
+            )
+            counts["bdl_lookups"] += 1
+
+            if status == "matched":
+                row.bdl_id = bdl_id
+                counts[f"{'batters' if side == 'batter' else 'pitchers'}_matched"] += 1
+            elif status == "ambiguous":
+                counts[f"{'batters' if side == 'batter' else 'pitchers'}_ambiguous"] += 1
+                ambiguous.append({
+                    "player_id":  row.player_id,
+                    "name":       row.name,
+                    "side":       side,
+                    "candidates": candidates,
+                })
+            else:  # unmatched
+                counts[f"{'batters' if side == 'batter' else 'pitchers'}_unmatched"] += 1
+                if len(unmatched) < 100:
+                    unmatched.append({
+                        "player_id": row.player_id,
+                        "name":      row.name,
+                        "side":      side,
+                    })
+
+            time.sleep(_BDL_RATE_LIMIT_SLEEP)
+
+        db.commit()
+
+    return {
+        "status":     "ok",
+        "since_year": since_year,
+        "processed":  processed,
+        "remaining_batters_estimate":  max(0, len(batter_rows)  - processed),
+        "remaining_pitchers_estimate": max(0, len(pitcher_rows) - max(0, processed - len(batter_rows))),
+        "counts":     counts,
+        # Cap the response payload — we only need a sample to debug
+        # the run; the full unmatched list would otherwise balloon
+        # for first-time runs across thousands of historical players.
+        "ambiguous":  ambiguous[:200],
+        "unmatched":  unmatched,
+    }
+
+
+# Lower-case position codes BDL ships that mean "pitcher". Everything
+# else is treated as a position-player slot.
+_BDL_PITCHER_POSITIONS: set[str] = {"p", "sp", "rp", "cl"}
+
+
+def _bdl_match_one_player(
+    full_name: str,
+    side: str,
+) -> tuple[Optional[int], str, list[dict]]:
+    """Returns (bdl_id, status, candidates) for a single name lookup.
+    `status` is "matched" / "ambiguous" / "unmatched". `candidates`
+    is the filtered list when ambiguous; otherwise empty."""
+    if not full_name:
+        return None, "unmatched", []
+    parts = full_name.strip().split()
+    if not parts:
+        return None, "unmatched", []
+    last = parts[-1]
+
+    try:
+        data = _bdl_get_json("players", {
+            "search":   last,
+            "per_page": 100,
+        })
+    except Exception as exc:
+        log.warning("BDL search failed for %r: %s", full_name, exc)
+        return None, "unmatched", []
+
+    results = data.get("data") or []
+    target = full_name.strip().lower()
+
+    # Exact full-name match (case insensitive) — keeps the search
+    # broad (last name only) but tightens the comparison so "Will
+    # Smith" doesn't capture "Willie Smith" et al.
+    name_matches = [
+        p for p in results
+        if (p.get("full_name") or "").strip().lower() == target
+    ]
+    if not name_matches:
+        return None, "unmatched", []
+
+    # Side filter — batters take non-pitcher BDL rows, pitchers take
+    # pitcher BDL rows. Two-way players (Ohtani: position="DH" but
+    # in our pitchers table too) will only be picked up on one side
+    # at a time, which is the correct behavior — both sides need
+    # the same bdl_id and the search will land on the same row.
+    def is_pitcher(p: dict) -> bool:
+        return (p.get("position") or "").strip().lower() in _BDL_PITCHER_POSITIONS
+
+    if side == "pitcher":
+        side_matches = [p for p in name_matches if is_pitcher(p)]
+    else:
+        side_matches = [p for p in name_matches if not is_pitcher(p)]
+
+    if len(side_matches) == 1:
+        return side_matches[0].get("id"), "matched", []
+    if len(side_matches) == 0:
+        # Name hit but no position-side match — fall back to the raw
+        # name match only when there's exactly one candidate. (If
+        # there were multiple, we'd be guessing.)
+        if len(name_matches) == 1:
+            return name_matches[0].get("id"), "matched", []
+        return None, "unmatched", []
+    # Multiple position-side matches — record the full candidate
+    # set so the human reviewer can pick.
+    return None, "ambiguous", [
+        {
+            "bdl_id":    p.get("id"),
+            "full_name": p.get("full_name"),
+            "position":  p.get("position"),
+            "team":      (p.get("team") or {}).get("abbreviation"),
+            "debut":     p.get("debut_year"),
+        }
+        for p in side_matches
+    ]
+
+
 def _fetch_mlb_stats_api_batter(mlb_id: int, year: int) -> Optional[dict]:
     """Pull standard season batting stats for one player from MLB
     Stats API. Used by the current-season nightly batter pipeline

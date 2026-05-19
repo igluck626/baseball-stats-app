@@ -1047,6 +1047,61 @@ def admin_repair_null_stats():
     return data_service.repair_null_stats(current_year)
 
 
+@app.get("/admin/bdl-teams")
+def admin_bdl_teams():
+    """Walk BallDontLie's `/teams` endpoint and return the full
+    franchise list with their BDL ids alongside our Lahman-suggested
+    codes. Also stamps `bdl_id` on every `team_seasons` row where the
+    Lahman match is unambiguous, so the BDL migration code path can
+    resolve via DB lookup before the hand-paste step lands.
+
+    Output is intended for human inspection — the operator pastes
+    the (lahman_suggested → bdl_id) pairs into `_BDL_TEAM_ID_MAP` in
+    `data_service.py` after spot-checking the abbreviations.
+
+    Requires the `BDL_KEY` env var. Raises 503 with a clear error
+    if it's missing."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    try:
+        return data_service.fetch_bdl_teams()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+
+@app.post("/admin/build-bdl-player-mapping")
+def admin_build_bdl_player_mapping(
+    since_year: int = Query(2010, ge=1871, le=2100,
+                            description="Only walk players whose debut year is >= this. "
+                                        "Default 2010 — BDL's data starts roughly there, "
+                                        "so older players are reliably unmatched."),
+    limit: int = Query(1000, ge=1, le=10000,
+                       description="Max DB rows to process this call. Re-invoke to resume "
+                                   "— the WHERE clause filters out already-stamped rows."),
+):
+    """One-shot bootstrap of the BDL player-id mapping. Walks every
+    `players` and `pitchers` row whose `bdl_id` is NULL and whose
+    `mlb_debut >= since_year`, runs a name search against BDL,
+    disambiguates by position side (batter vs. pitcher), and stamps
+    the matched BDL id onto the row.
+
+    Rate-limited to ≈4.5 req/sec to stay under BDL's 5/sec ceiling.
+    A single call sleeps `limit × 0.22s` worth of wall time, so a
+    `limit=1000` call takes ~3.7 minutes — under Railway's default
+    5-minute HTTP timeout. Re-invoke until `processed = 0` to drain.
+
+    Returns matched / unmatched / ambiguous counts plus a capped
+    sample list of each (full unmatched lists balloon on first runs)."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    try:
+        return data_service.build_bdl_player_mapping(
+            since_year=since_year, limit=limit,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+
 @app.post("/admin/backfill-player-history/{player_id}")
 def admin_backfill_player_history(
     player_id: int,

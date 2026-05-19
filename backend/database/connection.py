@@ -55,10 +55,20 @@ _BIO_COLUMNS: list[tuple[str, str]] = [
     ("birth_country", "VARCHAR"),
     ("debut",         "VARCHAR"),
     ("final_game",    "VARCHAR"),
+    # External-system mapping for the BallDontLie API migration.
+    # Stamped lazily by `/admin/build-bdl-player-mapping`. Kept on
+    # both `players` and `pitchers` because two-way players have a
+    # row in each, and both need to resolve to BDL's single player
+    # id from either side.
+    ("bdl_id",        "INTEGER"),
 ]
 
 
 _TEAM_SEASONS_NEW_COLUMNS: list[tuple[str, str]] = [
+    # BallDontLie's internal team id. Populated by the BDL teams
+    # discovery endpoint (`GET /admin/bdl-teams`) and the same id
+    # is reused across every season's row for that franchise.
+    ("bdl_id",               "INTEGER"),
     ("last_updated",         "TIMESTAMP"),
     # Live standings fields from the MLB Stats API. Boolean columns
     # use Postgres BOOLEAN; SQLite tolerates the same DDL string for
