@@ -39,6 +39,7 @@ canonical Lahman numbers; the cutoff in lahman_load.py is "current year"
 so the rollover is automatic on the next run after Lahman publishes.
 """
 
+import datetime
 import gc
 import logging
 import os
@@ -734,66 +735,58 @@ def _ids_with_current_season(season_model, current_year: int) -> list[int]:
 
 
 def _update_gamelogs(current_year: int) -> dict:
-    """Refresh per-game logs for every player with a current-season row.
+    """Refresh per-game logs for yesterday's finals via the BDL
+    game-centric path. Replaces the prior MLB-Stats-API per-player
+    loop (~2,400 calls per night, 8+ minutes of sleep budget) with
+    one BDL `/stats?game_id={id}` call per game (~15 per night).
 
-    Hits MLB Stats API once per player via data_service.fetch_and_save_*
-    (idempotent upsert), with a 0.2s sleep between calls to stay under
-    rate limits. Returns counts the API status endpoint surfaces:
-        batters_processed   — batters whose fetch+save didn't throw
-        pitchers_processed  — pitchers whose fetch+save didn't throw
-        batter_games_saved  — total batting game rows upserted
-        pitcher_games_saved — total pitching game rows upserted
-        batters_failed      — batters whose call threw
-        pitchers_failed     — pitchers whose call threw
+    Returns the counts the nightly status endpoint surfaces. Two
+    fields kept for backward compatibility with old status shapes:
+        batters_processed   — set to bat_rows so existing dashboards keep working
+        pitchers_processed  — set to pit_rows likewise
+        batter_games_saved  — total batting rows upserted
+        pitcher_games_saved — total pitching rows upserted
+        batters_failed      — always 0 under the new path (errors raise)
+        pitchers_failed     — same
     """
+    # Yesterday's finals — by the 4:00 UTC nightly time, late
+    # West Coast games from "yesterday" are done. Local-date logic
+    # would be more precise but BDL filters by the date string
+    # we pass; "yesterday in UTC" is good enough as a window since
+    # MLB's schedule officialDate aligns with local calendar day.
+    yesterday = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+    log.info(f"  BDL gamelogs target date: {yesterday}")
+
+    result = data_service.save_bdl_gamelogs_for_date(yesterday)
+    bat_rows = int(result.get("bat_rows") or 0)
+    pit_rows = int(result.get("pit_rows") or 0)
+    games    = int(result.get("games")    or 0)
+    skipped  = int(result.get("skipped_unmapped_players") or 0)
+    log.info(
+        f"  BDL gamelogs: {games} games, "
+        f"{bat_rows} batting rows, {pit_rows} pitching rows, "
+        f"{skipped} games with no mapped players"
+    )
+
+    # `bat_ids`/`pit_ids` aren't iterated anymore — left here as
+    # an informational count for the log line, matching the prior
+    # phase header's "active batters / active pitchers" output.
     bat_ids = _ids_with_current_season(PlayerSeason,  current_year)
     pit_ids = _ids_with_current_season(PitcherSeason, current_year)
     log.info(
-        f"  active batters: {len(bat_ids)}, active pitchers: {len(pit_ids)} "
-        f"(delay {_GAMELOG_SLEEP_SECONDS}s between players)"
+        f"  active batters in DB: {len(bat_ids)}, "
+        f"active pitchers in DB: {len(pit_ids)} (informational)"
     )
 
-    bat_processed = 0
-    bat_saved     = 0
-    bat_failed    = 0
-    for i, pid in enumerate(bat_ids, 1):
-        try:
-            bat_saved += data_service.fetch_and_save_batting_gamelogs(pid, current_year)
-            bat_processed += 1
-        except Exception as exc:
-            bat_failed += 1
-            log.error(f"  batting gamelog failed for {pid}: {exc}")
-        _time.sleep(_GAMELOG_SLEEP_SECONDS)
-        if i % _GAMELOG_LOG_EVERY == 0 or i == len(bat_ids):
-            log.info(
-                f"  batting gamelogs: {i}/{len(bat_ids)} "
-                f"(processed={bat_processed}, failed={bat_failed}, rows={bat_saved})"
-            )
-
-    pit_processed = 0
-    pit_saved     = 0
-    pit_failed    = 0
-    for i, pid in enumerate(pit_ids, 1):
-        try:
-            pit_saved += data_service.fetch_and_save_pitching_gamelogs(pid, current_year)
-            pit_processed += 1
-        except Exception as exc:
-            pit_failed += 1
-            log.error(f"  pitching gamelog failed for {pid}: {exc}")
-        _time.sleep(_GAMELOG_SLEEP_SECONDS)
-        if i % _GAMELOG_LOG_EVERY == 0 or i == len(pit_ids):
-            log.info(
-                f"  pitching gamelogs: {i}/{len(pit_ids)} "
-                f"(processed={pit_processed}, failed={pit_failed}, rows={pit_saved})"
-            )
-
     return {
-        "batters_processed":   bat_processed,
-        "pitchers_processed":  pit_processed,
-        "batter_games_saved":  bat_saved,
-        "pitcher_games_saved": pit_saved,
-        "batters_failed":      bat_failed,
-        "pitchers_failed":     pit_failed,
+        "batters_processed":   bat_rows,
+        "pitchers_processed":  pit_rows,
+        "batter_games_saved":  bat_rows,
+        "pitcher_games_saved": pit_rows,
+        "batters_failed":      0,
+        "pitchers_failed":     0,
+        "bdl_games_fetched":   games,
+        "bdl_skipped_games":   skipped,
     }
 
 

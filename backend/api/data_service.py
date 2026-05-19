@@ -1667,6 +1667,235 @@ def _round_or_none(v: Optional[float], digits: int) -> Optional[float]:
     return round(v, digits) if v is not None else None
 
 
+def fetch_bdl_player_bio(bdl_id: int) -> Optional[dict]:
+    """`/players/{bdl_id}` → bio dict in the `crud.save_player` /
+    `crud.save_pitcher` shape, EXCEPT for `player_id`. BDL ids are
+    not MLBAM ids — the caller is responsible for resolving the
+    MLBAM PK separately (typically by name search against MLB
+    Stats API) before insert.
+
+    Returns None on 404 / network failure. The returned dict
+    carries `bdl_id` so the caller can stamp it on the bio row
+    in the same insert.
+    """
+    if bdl_id is None:
+        return None
+    try:
+        data = _bdl_get_json(f"players/{bdl_id}", {})
+    except Exception:
+        return None
+    # BDL's `/players/{id}` returns the player object under `data`,
+    # not in a list (unlike the listing endpoints).
+    p = data.get("data") if isinstance(data.get("data"), dict) else None
+    if p is None:
+        # Older docs imply the object may sometimes come back at the
+        # top level. Tolerate that shape too.
+        if isinstance(data, dict) and data.get("id"):
+            p = data
+        else:
+            return None
+    return _parse_bdl_player_bio(p)
+
+
+def _parse_bdl_player_bio(p: dict) -> dict:
+    """Normalize a BDL player dict (from either `/players/{id}` or
+    `/players/active`) into the bio-row shape `crud.save_player` /
+    `crud.save_pitcher` expects. `player_id` is NOT included —
+    caller fills it in once MLBAM is resolved.
+
+    The returned dict carries `bdl_id` (so callers can stamp the
+    column in the same insert) plus `_team_code` (Lahman code for
+    the player's current team — caller uses it to write the
+    current-year season-row team, then strips before insert)."""
+    name = p.get("full_name") or f"Player {p.get('id')}"
+    bats, throws = _parse_bdl_bats_throws(p.get("bats_throws"))
+    height = _parse_bdl_height(p.get("height"))
+    weight = _parse_bdl_weight(p.get("weight"))
+    by, bm, bd = _parse_bdl_dob(p.get("dob"))
+    city, state, country = _parse_bdl_birth_place(p.get("birth_place"))
+    team_bdl_id = (p.get("team") or {}).get("id")
+    team_code = _BDL_TO_LAHMAN_TEAM_MAP.get(team_bdl_id) if team_bdl_id else None
+
+    return {
+        "name":            name,
+        "bbref_id":        None,
+        "mlb_debut":       _to_int(p.get("debut_year")),
+        "mlb_last_season": None,
+        "position":        p.get("position"),
+        "bats":            bats,
+        "throws":          throws,
+        "height":          height,
+        "weight":          weight,
+        "birth_year":      by,
+        "birth_month":     bm,
+        "birth_day":       bd,
+        "birth_city":      city,
+        "birth_state":     state,
+        "birth_country":   country,
+        # BDL only ships year for debut; the column historically
+        # stored a full ISO date from MLB Stats API. Leave nil and
+        # rely on `mlb_debut` for the integer year.
+        "debut":           None,
+        "final_game":      None,
+        "bdl_id":          p.get("id"),
+        "_team_code":      team_code,
+    }
+
+
+def _parse_bdl_bats_throws(s: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    """\"R/R\" → (\"R\", \"R\"). Tolerant of whitespace and missing
+    halves; returns (None, None) on unparseable input."""
+    if not s or "/" not in s:
+        return None, None
+    parts = s.split("/", 1)
+    a = parts[0].strip()
+    b = parts[1].strip() if len(parts) > 1 else ""
+    return (a or None, b or None)
+
+
+def _parse_bdl_height(s: Optional[str]) -> Optional[int]:
+    """`"6' 1\""` → 73 inches. None on unparseable."""
+    if not s:
+        return None
+    cleaned = s.replace('"', "").strip()
+    if "'" not in cleaned:
+        return None
+    feet_s, inches_s = cleaned.split("'", 1)
+    try:
+        feet = int(feet_s.strip())
+        rest = inches_s.strip()
+        inches = int(rest) if rest else 0
+        return feet * 12 + inches
+    except ValueError:
+        return None
+
+
+def _parse_bdl_weight(s: Optional[str]) -> Optional[int]:
+    """`"235 lbs"` → 235. None on unparseable."""
+    if not s:
+        return None
+    digits = "".join(ch for ch in s if ch.isdigit())
+    if not digits:
+        return None
+    try:
+        return int(digits)
+    except ValueError:
+        return None
+
+
+def _parse_bdl_dob(s: Optional[str]) -> tuple[Optional[int], Optional[int], Optional[int]]:
+    """`"08/07/91"` → (1991, 8, 7). BDL ships MM/DD/YY with a
+    2-digit year; the Y2K window split is "YY > 25 → 19xx, else
+    20xx" so active-player DOBs (peak window 1980-2005) all land
+    in the right century."""
+    if not s or "/" not in s:
+        return None, None, None
+    parts = s.split("/")
+    if len(parts) != 3:
+        return None, None, None
+    try:
+        m  = int(parts[0])
+        d  = int(parts[1])
+        yy = int(parts[2])
+        year = (1900 + yy) if yy > 25 else (2000 + yy)
+        return year, m, d
+    except ValueError:
+        return None, None, None
+
+
+def _parse_bdl_birth_place(
+    s: Optional[str],
+) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    """`"Vineland, NJ"` → (\"Vineland\", \"NJ\", \"USA\").
+       `"Santo Domingo, Dominican Republic"` → (\"Santo Domingo\", None, \"Dominican Republic\").
+       `"San Francisco de Macoris, Distrito Nacional, Dominican Republic"` → all three.
+    Heuristic on the 2-token case: a 2-letter all-caps second
+    token is a US state code; otherwise treat it as a country."""
+    if not s:
+        return None, None, None
+    parts = [t.strip() for t in s.split(",") if t.strip()]
+    if len(parts) >= 3:
+        return parts[0], parts[1], parts[2]
+    if len(parts) == 2:
+        city, second = parts
+        if len(second) == 2 and second.isupper() and second.isalpha():
+            return city, second, "USA"
+        return city, None, second
+    if len(parts) == 1:
+        return parts[0], None, None
+    return None, None, None
+
+
+def _stamp_bdl_id_by_name(
+    db, full_name: str, bdl_id: int, is_pitcher_hint: bool,
+) -> Optional[str]:
+    """Find an existing DB row whose normalized name matches
+    `full_name` AND whose `bdl_id` is still null, and stamp the
+    given `bdl_id` on it. Returns "pitcher" / "batter" identifying
+    which side was stamped, or None when no candidate was found.
+
+    Uses the same normalization (`_normalize_bdl_name`) as the
+    bootstrap mapping endpoint — strips accents, periods, and
+    suffix tokens. Prefers the position-side hinted by the BDL
+    entry (pitchers → `pitchers` table first); falls back to the
+    other side when the primary side has no candidate."""
+    from database.models import Pitcher as _Pitcher
+    from database.models import Player as _Player
+
+    target = _normalize_bdl_name(full_name)
+    if not target:
+        return None
+    tokens = full_name.strip().split() if full_name else []
+    last = tokens[-1] if tokens else ""
+    if not last:
+        return None
+
+    # Position-side priority: hint-first, then the other side.
+    sides = [(_Pitcher, "pitcher"), (_Player, "batter")]
+    if not is_pitcher_hint:
+        sides.reverse()
+
+    for model, side_label in sides:
+        candidates = (
+            db.query(model)
+            .filter(model.bdl_id.is_(None))
+            .filter(model.name.ilike(f"%{last}%"))
+            .all()
+        )
+        for row in candidates:
+            if _normalize_bdl_name(row.name) == target:
+                row.bdl_id = bdl_id
+                return side_label
+    return None
+
+
+def _resolve_mlbam_by_name(full_name: str) -> Optional[int]:
+    """MLB Stats API name search → MLBAM id. Used during BDL-
+    primary roster discovery to find the MLBAM PK for a player
+    BDL knows about that's not yet in our DB. Returns None on
+    ambiguous (multiple results, none exact) or empty matches."""
+    if not full_name:
+        return None
+    try:
+        data = _mlb_get_json("people/search", {"names": full_name})
+    except Exception:
+        return None
+    people = data.get("people") or []
+    if not people:
+        return None
+    target = full_name.strip().lower()
+    exact = [p for p in people if (p.get("fullName") or "").strip().lower() == target]
+    if len(exact) == 1:
+        return _to_int(exact[0].get("id"))
+    if len(people) == 1:
+        return _to_int(people[0].get("id"))
+    # Try active-only filter for ambiguous matches.
+    active = [p for p in people if p.get("active") is True]
+    if len(active) == 1:
+        return _to_int(active[0].get("id"))
+    return None
+
+
 def _fetch_bdl_batter_stats(bdl_id: int, year: int) -> Optional[dict]:
     """One-player convenience wrapper around `_fetch_bdl_batch_stats`
     + `_parse_bdl_batter_row`. Preserved for ad-hoc callers that
@@ -2356,69 +2585,104 @@ def fetch_mlb_player_bio(mlb_id: int) -> Optional[dict]:
 
 def sync_player_current_team(player_id: int) -> dict:
     """Reconcile `team` on the player's current-year season rows
-    against the canonical current-team abbreviation from MLB Stats
-    API. Creates the row if it doesn't exist yet — this is the
-    common case during the offseason / early-season window when
-    bref hasn't picked up a player's new club yet, leaving them
-    without a current-year row entirely. With the row absent,
-    `_latest_team_info` falls back to last year's stale team.
+    against the canonical current-team value. Prefers BDL
+    `/players/{bdl_id}` when the row has a `bdl_id` stamped;
+    falls back to MLB Stats API `/people/{mlb_id}` for the
+    unmapped tail.
 
-    Returns a status dict the admin endpoint can echo back. Safe
-    to call for retired players (the `currentTeam` field is absent
-    on those, so we report `no_current_team` and exit without
-    touching the DB).
+    Creates the row if it doesn't exist yet (offseason / early-
+    season window before any source has shipped a current-year
+    row) so `_latest_team_info` doesn't fall back to last year's
+    stale team. Bootstraps a missing bio when the player isn't
+    in either table; uses BDL data when reachable via the
+    name-search → MLBAM-resolve hop.
     """
-    try:
-        data = _mlb_get_json(f"people/{player_id}", {})
-    except Exception as exc:
-        return {"player_id": player_id, "status": f"mlb_fetch_failed: {exc}"}
-    people = data.get("people") or []
-    if not people:
-        return {"player_id": player_id, "status": "not_found_in_mlb_api"}
-    p = people[0]
-    current_team = p.get("currentTeam") or {}
-    name = current_team.get("name")
-    mlb_team_id = current_team.get("id")
-    # Resolve to the Lahman code — the abbreviation MLB ships
-    # ("KC", "LA") doesn't match what our DB / Lahman bridge
-    # writes ("KCA", "LAN"), so going through the numeric id is
-    # the only consistent path.
-    lahman_code = _MLB_TEAM_ID_TO_LAHMAN_TEAM_ID.get(mlb_team_id) if mlb_team_id else None
+    year = _current_year()
+
+    # Figure out the data source up front: BDL when we have a
+    # bdl_id stamped, MLB API otherwise. Single round-trip path
+    # in each branch.
+    with connection.get_session() as db:
+        existing_pit = crud.get_pitcher(db, player_id)
+        existing_bat = crud.get_player(db, player_id)
+    bdl_id = (getattr(existing_pit, "bdl_id", None)
+              or getattr(existing_bat, "bdl_id", None))
+
+    name: Optional[str] = None
+    lahman_code: Optional[str] = None
+    bio_for_bootstrap: Optional[dict] = None
+    is_pitcher_hint = False
+
+    if bdl_id is not None:
+        bdl_data = None
+        try:
+            bdl_data = _bdl_get_json(f"players/{bdl_id}", {})
+        except Exception as exc:
+            return {"player_id": player_id, "status": f"bdl_fetch_failed: {exc}"}
+        # /players/{id} returns the player object under `data`
+        # (singular dict, not an array — see `fetch_bdl_player_bio`).
+        p = bdl_data.get("data") if isinstance(bdl_data.get("data"), dict) else bdl_data
+        if not p or not p.get("id"):
+            return {"player_id": player_id, "status": "not_found_in_bdl"}
+        name = p.get("full_name")
+        team_bdl_id = (p.get("team") or {}).get("id")
+        lahman_code = _BDL_TO_LAHMAN_TEAM_MAP.get(team_bdl_id) if team_bdl_id else None
+        position = (p.get("position") or "").strip().lower()
+        is_pitcher_hint = position in _BDL_PITCHER_POSITIONS
+        bio_for_bootstrap = _parse_bdl_player_bio(p)
+    else:
+        try:
+            data = _mlb_get_json(f"people/{player_id}", {})
+        except Exception as exc:
+            return {"player_id": player_id, "status": f"mlb_fetch_failed: {exc}"}
+        people = data.get("people") or []
+        if not people:
+            return {"player_id": player_id, "status": "not_found_in_mlb_api"}
+        p = people[0]
+        current_team = p.get("currentTeam") or {}
+        name = p.get("fullName")
+        mlb_team_id = current_team.get("id")
+        lahman_code = _MLB_TEAM_ID_TO_LAHMAN_TEAM_ID.get(mlb_team_id) if mlb_team_id else None
+        position = (p.get("primaryPosition") or {}).get("abbreviation") or ""
+        is_pitcher_hint = position == "P"
+
     if not lahman_code:
         return {
-            "player_id":   player_id,
-            "status":      "no_current_team",
-            "fullName":    p.get("fullName"),
-            "mlb_team_id": mlb_team_id,
+            "player_id": player_id,
+            "status":    "no_current_team",
+            "fullName":  name,
         }
 
-    year = _current_year()
     bio_created: Optional[str] = None
     cleared_last_season = False
     with connection.get_session() as db:
         in_pitchers = crud.get_pitcher(db, player_id) is not None
         in_players  = crud.get_player(db, player_id)  is not None
 
-        # Bootstrap a missing bio when /people/{id} confirms an
-        # active MLB roster slot but the player has no row in
-        # either bio table. Same shape as the Phase 5 roster
-        # discovery — keeps single-player one-shot fixes working
-        # for fresh rookies (Eury Pérez 691587 was the motivating
-        # case: current Marlins pitcher whose mlb_id collides
-        # with the retired 1990 OF in bref/Lahman).
+        # Bootstrap a missing bio. Prefer the BDL-parsed bio when
+        # available (single source of truth, includes bdl_id);
+        # fall back to MLB API bio when the player isn't BDL-
+        # mapped yet (the unmapped-historical tail).
         if not in_pitchers and not in_players:
-            position = (p.get("primaryPosition") or {}).get("abbreviation") or ""
-            is_pitcher = position == "P"
-            bio = fetch_mlb_player_bio(player_id)
+            bio = bio_for_bootstrap
+            if bio is None:
+                bio = fetch_mlb_player_bio(player_id)
             if bio is None:
                 return {
                     "player_id": player_id,
-                    "fullName":  p.get("fullName"),
+                    "fullName":  name,
                     "status":    "bio_fetch_failed",
                 }
+            # Strip the synthesizer-only `_team_code` key before
+            # the ORM insert — it's not a column.
+            bio.pop("_team_code", None)
+            # Drop debut_year-less callups onto the current year.
             if bio.get("mlb_debut") is None:
                 bio["mlb_debut"] = year
-            if is_pitcher:
+            # MLB API path doesn't fill player_id; BDL one doesn't
+            # either. Stamp it here.
+            bio.setdefault("player_id", player_id)
+            if is_pitcher_hint:
                 crud.save_pitcher(db, bio)
                 in_pitchers = True
                 bio_created = "pitcher"
@@ -2429,10 +2693,7 @@ def sync_player_current_team(player_id: int) -> dict:
 
         # Clear stale mlb_last_season — the player is on an active
         # roster right now, so any "retired in YYYY" value from
-        # Lahman's `finalGame` is wrong. Connor Phillips (683175)
-        # was the motivating case: Lahman stamped 2023 from his
-        # late-season debut, then the column was never cleared
-        # when he returned in 2026.
+        # Lahman's `finalGame` is wrong.
         if in_pitchers:
             pit_row = crud.get_pitcher(db, player_id)
             if pit_row is not None and pit_row.mlb_last_season is not None:
@@ -2457,9 +2718,10 @@ def sync_player_current_team(player_id: int) -> dict:
 
     return {
         "player_id":           player_id,
-        "fullName":            p.get("fullName"),
+        "fullName":            name,
         "new_team":            lahman_code,
-        "team_name":           name,
+        "team_name":           lahman_code,
+        "source":              "bdl" if bdl_id is not None else "mlb_stats_api",
         "actions":             actions,
         "bio_created":         bio_created,
         "cleared_last_season": cleared_last_season,
@@ -2522,134 +2784,181 @@ def _apply_team_to_season_rows(
 
 
 def sync_all_player_teams_from_rosters(current_year: int) -> dict:
-    """Walk all 30 MLB active rosters and reconcile the `team`
+    """Walk all 30 BDL active rosters and reconcile the `team`
     column on each player's current-year `pitcher_seasons` /
-    `player_seasons` row. Creates a minimal placeholder row when
-    one doesn't exist yet (offseason move + bref hasn't shipped a
-    current-year row), so `_latest_team_info` no longer falls back
-    to last year's stale team.
+    `player_seasons` row. Also: stamps `bdl_id` on any in-DB
+    player that didn't get one from the mapping bootstrap (by
+    name match), clears `mlb_last_season` on returning players,
+    and discovers brand-new players via BDL bio + MLB Stats API
+    name search (we need the MLBAM PK).
 
-    30 API calls (one per team) instead of one-per-player —
-    cheaper than `sync_player_current_team` in bulk while covering
-    the same correctness bar for everyone currently on a 40-man.
+    30 BDL API calls (one per team) instead of one-per-player —
+    same correctness bar as `sync_player_current_team` for
+    everyone currently on a 40-man, at one round trip per team.
+    Rate-limited: `_BDL_RATE_LIMIT_SLEEP` between team calls.
     """
-    try:
-        teams_resp = _mlb_get_json("teams", {"sportId": 1, "season": current_year})
-    except Exception as exc:
-        return {"status": f"teams_fetch_failed: {exc}", "updated": 0, "created": 0}
-    teams = teams_resp.get("teams") or []
+    _get_bdl_key()
+
+    from database.models import Pitcher as _Pitcher
+    from database.models import Player as _Player
 
     counts: dict[str, int] = {
-        "pitcher_seasons:updated": 0,
-        "pitcher_seasons:created": 0,
-        "player_seasons:updated":  0,
-        "player_seasons:created":  0,
-        # Fresh-rookie discovery: when a roster player is missing
-        # from both bio tables (bref hasn't shipped them yet),
-        # pull the bio from MLB Stats API and insert it so the
-        # next nightly's normal loop processes them via the MLB
-        # API stat path.
-        "pitchers_bio:created":    0,
-        "players_bio:created":     0,
-        # `mlb_last_season` cleared on existing bios when the
-        # player shows up on an active roster — Lahman's
-        # `finalGame` year sticks around even after a player
-        # returns to MLB (Connor Phillips case).
+        "pitcher_seasons:updated":  0,
+        "pitcher_seasons:created":  0,
+        "player_seasons:updated":   0,
+        "player_seasons:created":   0,
+        # Fresh-rookie discovery — BDL has them but our DB doesn't.
+        # Bio comes from BDL; MLBAM PK from an MLB Stats API name
+        # search (we can't insert without the PK).
+        "pitchers_bio:created":     0,
+        "players_bio:created":      0,
+        # `mlb_last_season` cleared on existing bios when the player
+        # shows up on an active roster — Lahman's `finalGame` year
+        # sticks around even after a player returns from a gap year.
         "pitchers_bio:reactivated": 0,
         "players_bio:reactivated":  0,
+        # Stamped via name match — for rows in DB by MLBAM that
+        # didn't get a bdl_id during the bootstrap mapping pass
+        # (or new BDL ids the bootstrap never ran on).
+        "bdl_id:stamped":           0,
     }
     bio_failed: list[int] = []
     failed_teams: list[str] = []
-    unmapped_teams: list[int] = []
+    unresolved: list[dict] = []
+
     with connection.get_session() as db:
-        for team in teams:
-            team_id = team.get("id")
-            if not team_id:
-                continue
-            # Resolve to the Lahman code — MLB API ships abbrev like
-            # "KC" / "LAA" which don't match our DB's "KCA" / "LAN".
-            # Going through the numeric id avoids the abbreviation
-            # mismatch that left Lane Thomas et al. stamped with
-            # "KC" instead of "KCA".
-            lahman_code = _MLB_TEAM_ID_TO_LAHMAN_TEAM_ID.get(team_id)
-            if not lahman_code:
-                unmapped_teams.append(team_id)
-                continue
+        for lahman_code, bdl_team_id in _BDL_TEAM_ID_MAP.items():
             try:
-                roster_resp = _mlb_get_json(
-                    f"teams/{team_id}/roster",
-                    {"rosterType": "active"},
+                roster_resp = _bdl_get_json(
+                    "players/active",
+                    {"team_ids[]": bdl_team_id, "per_page": 100},
                 )
             except Exception:
-                failed_teams.append(str(team_id))
+                failed_teams.append(lahman_code)
                 continue
-            for entry in roster_resp.get("roster") or []:
-                person = entry.get("person") or {}
-                pid = person.get("id")
-                if not pid:
+
+            for entry in roster_resp.get("data") or []:
+                bdl_player_id = entry.get("id")
+                if not bdl_player_id:
                     continue
-                in_pitchers = crud.get_pitcher(db, pid) is not None
-                in_players  = crud.get_player(db, pid)  is not None
-                # When the player exists on a 40-man but isn't in
-                # any of our bio tables — typical for rookies who
-                # debuted recently and haven't shown up in bref's
-                # batting/pitching stats tables yet (McGonigle,
-                # etc.) — pull the bio from MLB Stats API and
-                # insert. Position determines which side: P slots
-                # go to `pitchers`, everything else to `players`.
-                if not in_pitchers and not in_players:
-                    position = (entry.get("position") or {}).get("abbreviation") or ""
-                    is_pitcher = position == "P"
-                    bio = fetch_mlb_player_bio(pid)
-                    if bio is None:
-                        bio_failed.append(pid)
+                position = (entry.get("position") or "").strip().lower()
+                is_pitcher_hint = position in _BDL_PITCHER_POSITIONS
+                full_name = entry.get("full_name")
+
+                # 1. Find existing rows by bdl_id (post-mapping
+                #    primary key for BDL-keyed lookups).
+                pit_row = (
+                    db.query(_Pitcher)
+                    .filter(_Pitcher.bdl_id == bdl_player_id)
+                    .first()
+                )
+                bat_row = (
+                    db.query(_Player)
+                    .filter(_Player.bdl_id == bdl_player_id)
+                    .first()
+                )
+
+                # 2. No bdl_id match — try a name-match against
+                #    bdl_id-less rows and stamp the bdl_id when
+                #    found. Catches anyone the mapping bootstrap
+                #    didn't reach plus brand-new BDL ids whose
+                #    name already exists in our DB under MLBAM.
+                if pit_row is None and bat_row is None and full_name:
+                    stamped_side = _stamp_bdl_id_by_name(
+                        db, full_name, bdl_player_id, is_pitcher_hint,
+                    )
+                    if stamped_side == "pitcher":
+                        pit_row = (
+                            db.query(_Pitcher)
+                            .filter(_Pitcher.bdl_id == bdl_player_id)
+                            .first()
+                        )
+                        counts["bdl_id:stamped"] += 1
+                    elif stamped_side == "batter":
+                        bat_row = (
+                            db.query(_Player)
+                            .filter(_Player.bdl_id == bdl_player_id)
+                            .first()
+                        )
+                        counts["bdl_id:stamped"] += 1
+
+                # 3. Still no match — this is a genuinely new
+                #    player. Resolve MLBAM via MLB Stats API name
+                #    search (our PK requires it), then insert
+                #    using BDL's bio payload from the roster entry.
+                if pit_row is None and bat_row is None:
+                    mlb_id = _resolve_mlbam_by_name(full_name or "")
+                    if mlb_id is None:
+                        unresolved.append({
+                            "bdl_id":    bdl_player_id,
+                            "full_name": full_name,
+                            "team":      lahman_code,
+                        })
                         continue
+                    bio = _parse_bdl_player_bio(entry)
+                    bio.pop("_team_code", None)
                     if bio.get("mlb_debut") is None:
                         bio["mlb_debut"] = current_year
-                    if is_pitcher:
-                        crud.save_pitcher(db, bio)
-                        in_pitchers = True
-                        counts["pitchers_bio:created"] += 1
-                    else:
-                        crud.save_player(db, bio)
-                        in_players = True
-                        counts["players_bio:created"] += 1
-                else:
-                    # Existing bio + active-roster slot → clear any
-                    # stale `mlb_last_season` Lahman left behind
-                    # when the player came back from a gap year.
-                    # `save_pitcher` / `save_player` won't overwrite
-                    # non-null fields with null, so do it directly.
-                    if in_pitchers:
-                        pit_row = crud.get_pitcher(db, pid)
-                        if pit_row is not None and pit_row.mlb_last_season is not None:
-                            pit_row.mlb_last_season = None
-                            counts["pitchers_bio:reactivated"] += 1
-                    if in_players:
-                        bat_row = crud.get_player(db, pid)
-                        if bat_row is not None and bat_row.mlb_last_season is not None:
-                            bat_row.mlb_last_season = None
-                            counts["players_bio:reactivated"] += 1
-                actions = _apply_team_to_season_rows(
-                    db,
-                    player_id=pid,
-                    year=current_year,
-                    abbr=lahman_code,
-                    create_pitcher=in_pitchers,
-                    create_batter=in_players,
+                    bio["player_id"] = mlb_id
+                    try:
+                        if is_pitcher_hint:
+                            crud.save_pitcher(db, bio)
+                            counts["pitchers_bio:created"] += 1
+                            pit_row = crud.get_pitcher(db, mlb_id)
+                        else:
+                            crud.save_player(db, bio)
+                            counts["players_bio:created"] += 1
+                            bat_row = crud.get_player(db, mlb_id)
+                    except Exception:
+                        bio_failed.append(bdl_player_id)
+                        continue
+
+                # 4. Clear stale mlb_last_season — the player is on
+                #    an active roster, so any retired-year stamp
+                #    Lahman left behind is wrong.
+                if pit_row is not None and pit_row.mlb_last_season is not None:
+                    pit_row.mlb_last_season = None
+                    counts["pitchers_bio:reactivated"] += 1
+                if bat_row is not None and bat_row.mlb_last_season is not None:
+                    bat_row.mlb_last_season = None
+                    counts["players_bio:reactivated"] += 1
+
+                # 5. Apply team to the current-year season rows.
+                resolved_player_id = (
+                    (pit_row.player_id if pit_row else None)
+                    or (bat_row.player_id if bat_row else None)
                 )
-                for a in actions:
-                    counts[a] = counts.get(a, 0) + 1
+                if resolved_player_id is not None:
+                    actions = _apply_team_to_season_rows(
+                        db,
+                        player_id=resolved_player_id,
+                        year=current_year,
+                        abbr=lahman_code,
+                        create_pitcher=pit_row is not None,
+                        create_batter=bat_row  is not None,
+                    )
+                    for a in actions:
+                        counts[a] = counts.get(a, 0) + 1
+
+            # Rate-limit between team calls (1 BDL request per
+            # team, 30 teams → ~30 calls. Under-budget for the
+            # 5/sec ceiling with `_BDL_RATE_LIMIT_SLEEP` spacing.)
+            time.sleep(_BDL_RATE_LIMIT_SLEEP)
+
         db.commit()
 
     total = sum(counts.values())
     return {
-        "status":         "ok",
-        "total":          total,
-        "counts":         counts,
-        "failed_teams":   failed_teams,
-        "unmapped_teams": unmapped_teams,
-        "bio_failed":     bio_failed,
+        "status":       "ok",
+        "total":        total,
+        "counts":       counts,
+        "failed_teams": failed_teams,
+        # Players BDL knows about that we couldn't insert because
+        # the MLB Stats API name search didn't surface a single
+        # MLBAM match. Manual hand-mapping required for these
+        # (rare — minor-league call-ups with name collisions).
+        "unresolved":   unresolved,
+        "bio_failed":   bio_failed,
     }
 
 
@@ -3298,6 +3607,388 @@ def _fetch_mlb_gamelog(player_id: int, season: int, group: str) -> list[dict]:
     for stats_block in payload.get("stats") or []:
         out.extend(stats_block.get("splits") or [])
     return out
+
+
+# ---------------------------------------------------------------------------
+# BallDontLie game-centric gamelogs
+# ---------------------------------------------------------------------------
+#
+# The MLB Stats API path above is player-centric: one call per player
+# per season. The nightly Phase 4 ran ~2,400 calls per night at that
+# shape. BDL's `/stats?game_id={id}` gives us every player's line for
+# one game in a single call, so the same coverage drops to ~15 calls
+# per day (one per game).
+#
+# Discovery / mapping notes:
+#   • BDL ships its own player ids — we reverse-lookup our MLBAM PK
+#     via `players.bdl_id` / `pitchers.bdl_id` before insert. Stat
+#     rows whose bdl_id isn't in our DB are skipped (typical for
+#     minor-league callups that BDL knows about but our mapping
+#     bootstrap hasn't reached yet — the next bootstrap pass will
+#     catch them).
+#   • Each player gets up to two rows per game in BDL's response —
+#     one batting (ip is null) and one pitching (ip is not null).
+#     Two-way players (Ohtani) get one of each, both keyed to the
+#     same bdl_id; the parser routes them to the right table.
+
+def fetch_bdl_games_for_date(date_str: str,
+                             finals_only: bool = True) -> list[dict]:
+    """Return BDL games for one local-date (`yyyy-MM-dd`). Filters
+    to finals by default — gamelogs are an end-of-game artifact, so
+    fetching in-progress games would write incomplete lines. Pass
+    `finals_only=False` to include all statuses for debugging."""
+    try:
+        data = _bdl_get_json("games", {
+            "dates[]":  date_str,
+            "per_page": 100,
+        })
+    except Exception:
+        return []
+    games = data.get("data") or []
+    if finals_only:
+        games = [g for g in games if g.get("status") == "STATUS_FINAL"]
+    return games
+
+
+def _bdl_to_mlbam_map(db) -> dict[int, int]:
+    """{bdl_id: mlbam_player_id} from both bio tables. Two-way
+    players (Ohtani: same bdl_id stamped on both tables) end up
+    keying to the same MLBAM id from either side — the merge is
+    a no-op."""
+    from database.models import Pitcher as _Pitcher
+    from database.models import Player as _Player
+
+    out: dict[int, int] = {}
+    for row in (
+        db.query(_Player.player_id, _Player.bdl_id)
+        .filter(_Player.bdl_id.isnot(None))
+        .all()
+    ):
+        if row.bdl_id is not None:
+            out[int(row.bdl_id)] = int(row.player_id)
+    for row in (
+        db.query(_Pitcher.player_id, _Pitcher.bdl_id)
+        .filter(_Pitcher.bdl_id.isnot(None))
+        .all()
+    ):
+        if row.bdl_id is not None:
+            # Don't clobber a batter mapping (preserves two-way
+            # player precedence matching `_latest_team_info`).
+            out.setdefault(int(row.bdl_id), int(row.player_id))
+    return out
+
+
+def _bdl_game_ctx(game: dict, fallback_date: Optional[str] = None) -> dict:
+    """Pre-compute the game-level context the row parsers need:
+    game_id (string), game_date (date), season (int), home and
+    away team names + final-runs counts. `fallback_date` is the
+    local-date string the caller used to find the game; we prefer
+    it over BDL's UTC `date` when present to avoid attributing
+    late West Coast games to the next UTC day."""
+    raw_date = fallback_date or (game.get("date") or "")[:10]
+    try:
+        game_date = datetime.date.fromisoformat(raw_date)
+    except ValueError:
+        game_date = None
+    home = game.get("home_team") or {}
+    away = game.get("away_team") or {}
+    home_data = game.get("home_team_data") or {}
+    away_data = game.get("away_team_data") or {}
+    return {
+        "game_id":         str(game.get("id")),
+        "game_date":       game_date,
+        "season":          _to_int(game.get("season")) or (game_date.year if game_date else None),
+        "home_team_id":    home.get("id"),
+        "away_team_id":    away.get("id"),
+        "home_team_name":  home.get("name"),
+        "away_team_name":  away.get("name"),
+        "home_team_abbr":  home.get("abbreviation"),
+        "away_team_abbr":  away.get("abbreviation"),
+        "home_runs":       _to_int(home_data.get("runs")),
+        "away_runs":       _to_int(away_data.get("runs")),
+    }
+
+
+def _resolve_side(stat: dict, ctx: dict) -> Optional[str]:
+    """Determine which side (home/away) the player played for in
+    this game. BDL's `team_name` on the stat row is the short
+    franchise name — match against the game's home/away team names.
+    Returns "home" / "away" or None when unresolvable."""
+    team_name = (stat.get("team_name") or "").strip()
+    if not team_name:
+        # Fall back to the nested team id on `player.team`.
+        team_id = (stat.get("player") or {}).get("team") or {}
+        tid = team_id.get("id")
+        if tid is None:
+            return None
+        if tid == ctx.get("home_team_id"): return "home"
+        if tid == ctx.get("away_team_id"): return "away"
+        return None
+    if team_name == ctx.get("home_team_name"): return "home"
+    if team_name == ctx.get("away_team_name"): return "away"
+    return None
+
+
+def _parse_bdl_batting_gamelog(stat: dict, ctx: dict) -> Optional[dict]:
+    """One BDL `/stats` row → `batting_gamelogs` row dict. Returns
+    None when the row carries no batting activity (the row's `ip`
+    side, or a row where the player didn't bat). Caller stamps
+    `player_id` from the bdl→mlbam map; this function leaves
+    that key out."""
+    # Skip pure pitching rows — they're identified by a non-null
+    # IP. The batter side of a two-way appearance will be in a
+    # separate row in the same response.
+    if stat.get("ip") is not None and (stat.get("at_bats") is None
+                                       and stat.get("plate_appearances") is None):
+        return None
+    pa = _to_int(stat.get("plate_appearances")) or 0
+    ab = _to_int(stat.get("at_bats")) or 0
+    bb = _to_int(stat.get("bb")) or 0
+    if pa == 0 and ab == 0 and bb == 0:
+        # No batting activity at all — pitcher's defensive-only line.
+        return None
+
+    side = _resolve_side(stat, ctx)
+    if side is None or ctx.get("game_date") is None:
+        return None
+    is_home = side == "home"
+    team_score = ctx["home_runs"] if is_home else ctx["away_runs"]
+    opp_score  = ctx["away_runs"] if is_home else ctx["home_runs"]
+    opp_abbr   = ctx["away_team_abbr"] if is_home else ctx["home_team_abbr"]
+
+    result: Optional[str]
+    if team_score is None or opp_score is None:
+        result = None
+    elif team_score > opp_score: result = "W"
+    elif team_score < opp_score: result = "L"
+    else:                         result = "T"
+
+    return {
+        "game_id":    ctx["game_id"],
+        "game_date":  ctx["game_date"],
+        "season":     ctx["season"],
+        "opponent":   opp_abbr,
+        "home_away":  "H" if is_home else "A",
+        "result":     result,
+        "team_score": team_score,
+        "opp_score":  opp_score,
+        "AB":         _to_int(stat.get("at_bats")),
+        "R":          _to_int(stat.get("runs")),
+        "H":          _to_int(stat.get("hits")),
+        "doubles":    _to_int(stat.get("doubles")),
+        "triples":    _to_int(stat.get("triples")),
+        "HR":         _to_int(stat.get("hr")),
+        "RBI":        _to_int(stat.get("rbi")),
+        "BB":         _to_int(stat.get("bb")),
+        # BDL doesn't ship IBB on /stats — column stays null.
+        "IBB":        None,
+        "SO":         _to_int(stat.get("k")),
+        "SB":         _to_int(stat.get("stolen_bases")),
+        "CS":         _to_int(stat.get("caught_stealing")),
+        "HBP":        _to_int(stat.get("hit_by_pitch")),
+        "SF":         _to_int(stat.get("sac_flies")),
+        # BDL doesn't ship LOB on /stats — stays null.
+        "LOB":        None,
+    }
+
+
+def _parse_bdl_pitching_gamelog(stat: dict, ctx: dict) -> Optional[dict]:
+    """BDL `/stats` row → `pitching_gamelogs` row dict. Returns
+    None when the row has no pitching activity (IP is null)."""
+    ip = stat.get("ip")
+    if ip is None:
+        return None
+    try:
+        ip_dec = float(ip)
+    except (TypeError, ValueError):
+        return None
+    if ip_dec <= 0 and (_to_int(stat.get("p_k")) or 0) == 0:
+        return None
+
+    side = _resolve_side(stat, ctx)
+    if side is None or ctx.get("game_date") is None:
+        return None
+    is_home = side == "home"
+    opp_abbr = ctx["away_team_abbr"] if is_home else ctx["home_team_abbr"]
+
+    # Decision priority — same shape the MLB Stats API parser used.
+    # BS (blown save) is not derivable from BDL; falls through to ND.
+    if   _to_int(stat.get("saves")):   result = "S"
+    elif _to_int(stat.get("holds")):   result = "H"
+    elif _to_int(stat.get("wins")):    result = "W"
+    elif _to_int(stat.get("losses")):  result = "L"
+    else:                                result = "ND"
+
+    return {
+        "game_id":   ctx["game_id"],
+        "game_date": ctx["game_date"],
+        "season":    ctx["season"],
+        "opponent":  opp_abbr,
+        "home_away": "H" if is_home else "A",
+        "result":    result,
+        # BDL ships IP as true decimal already (no `_ip_str_to_decimal`
+        # baseball-notation conversion needed here).
+        "IP":        ip_dec,
+        "H":         _to_int(stat.get("p_hits")),
+        "R":         _to_int(stat.get("p_runs")),
+        "ER":        _to_int(stat.get("er")),
+        "BB":        _to_int(stat.get("p_bb")),
+        "SO":        _to_int(stat.get("p_k")),
+        "HR":        _to_int(stat.get("p_hr")),
+        # BDL doesn't ship HBP or WP on the pitching side of /stats.
+        "HBP":       None,
+        "WP":        None,
+        "pitches":   _to_int(stat.get("pitch_count")),
+        # BDL doesn't ship strikes-thrown either.
+        "strikes":   None,
+    }
+
+
+def fetch_bdl_game_stats(
+    game_id: int, bdl_to_mlbam: dict[int, int], ctx: dict,
+) -> tuple[dict[int, list[dict]], dict[int, list[dict]]]:
+    """Fetch all per-player stat lines for one BDL game and bucket
+    them by MLBAM player_id. Returns (batting_by_pid, pitching_by_pid).
+    Rows whose `player.id` isn't in `bdl_to_mlbam` are silently
+    skipped — they're real BDL players we just haven't mapped yet.
+
+    Paginates via `meta.next_cursor`; per_page=100 is enough for
+    typical 25v25 games, but two-way players push some games over."""
+    bat_by_pid: dict[int, list[dict]] = {}
+    pit_by_pid: dict[int, list[dict]] = {}
+    cursor: Optional[int] = None
+    while True:
+        params: dict = {"game_id": game_id, "per_page": 100}
+        if cursor is not None:
+            params["cursor"] = cursor
+        try:
+            data = _bdl_get_json("stats", params)
+        except Exception as exc:
+            log.warning("BDL /stats fetch failed for game %d: %s", game_id, exc)
+            break
+        for stat in data.get("data") or []:
+            bdl_pid = (stat.get("player") or {}).get("id")
+            if bdl_pid is None:
+                continue
+            mlbam = bdl_to_mlbam.get(int(bdl_pid))
+            if mlbam is None:
+                continue
+            bat = _parse_bdl_batting_gamelog(stat, ctx)
+            if bat is not None:
+                bat_by_pid.setdefault(mlbam, []).append(bat)
+            pit = _parse_bdl_pitching_gamelog(stat, ctx)
+            if pit is not None:
+                pit_by_pid.setdefault(mlbam, []).append(pit)
+        cursor = (data.get("meta") or {}).get("next_cursor")
+        if cursor is None:
+            break
+    return bat_by_pid, pit_by_pid
+
+
+def save_bdl_gamelogs_for_date(date_str: str) -> dict:
+    """Walk every BDL final game on `date_str` (yyyy-mm-dd, local),
+    fetch each game's full stat sheet, and upsert into
+    `batting_gamelogs` / `pitching_gamelogs`. Rate-limited via
+    `_BDL_RATE_LIMIT_SLEEP` between game calls.
+
+    Idempotent — the row PK (player_id, game_id) means re-running
+    on a date that's already loaded is a no-op upsert."""
+    if not connection.db_available():
+        return {"status": "no_db"}
+    _get_bdl_key()
+
+    games = fetch_bdl_games_for_date(date_str, finals_only=True)
+    if not games:
+        return {
+            "status":      "ok",
+            "date":        date_str,
+            "games":       0,
+            "bat_rows":    0,
+            "pit_rows":    0,
+            "skipped_unmapped_players": 0,
+        }
+
+    with connection.get_session() as db:
+        bdl_to_mlbam = _bdl_to_mlbam_map(db)
+    log.info(
+        "BDL gamelogs %s: %d games, %d BDL→MLBAM mappings",
+        date_str, len(games), len(bdl_to_mlbam),
+    )
+
+    total_bat = 0
+    total_pit = 0
+    skipped: int = 0
+    for i, g in enumerate(games):
+        game_id = g.get("id")
+        if game_id is None:
+            continue
+        ctx = _bdl_game_ctx(g, fallback_date=date_str)
+        bat_by_pid, pit_by_pid = fetch_bdl_game_stats(
+            int(game_id), bdl_to_mlbam, ctx,
+        )
+        if bat_by_pid or pit_by_pid:
+            with connection.get_session() as db:
+                for pid, rows in bat_by_pid.items():
+                    crud.save_batting_gamelogs(db, pid, rows)
+                    total_bat += len(rows)
+                for pid, rows in pit_by_pid.items():
+                    crud.save_pitching_gamelogs(db, pid, rows)
+                    total_pit += len(rows)
+        else:
+            # Count games where every player was unmapped (or BDL
+            # returned an empty stat sheet) so the operator sees
+            # the coverage gap.
+            skipped += 1
+
+        if i < len(games) - 1:
+            time.sleep(_BDL_RATE_LIMIT_SLEEP)
+
+    return {
+        "status":                    "ok",
+        "date":                      date_str,
+        "games":                     len(games),
+        "bat_rows":                  total_bat,
+        "pit_rows":                  total_pit,
+        "skipped_unmapped_players":  skipped,
+    }
+
+
+def backfill_bdl_gamelogs(start_date: str, end_date: str) -> dict:
+    """Walk dates from `start_date` through `end_date` (inclusive,
+    `yyyy-mm-dd`) and call `save_bdl_gamelogs_for_date` for each.
+    Resumable — already-loaded games are no-op upserts. Returns
+    aggregated counts plus a per-date breakdown so the caller can
+    spot failure days."""
+    try:
+        start = datetime.date.fromisoformat(start_date)
+        end   = datetime.date.fromisoformat(end_date)
+    except ValueError:
+        return {"status": "bad_date_format"}
+    if end < start:
+        return {"status": "end_before_start"}
+
+    per_day: list[dict] = []
+    total_games = 0
+    total_bat   = 0
+    total_pit   = 0
+    cur = start
+    while cur <= end:
+        result = save_bdl_gamelogs_for_date(cur.isoformat())
+        per_day.append(result)
+        total_games += int(result.get("games") or 0)
+        total_bat   += int(result.get("bat_rows") or 0)
+        total_pit   += int(result.get("pit_rows") or 0)
+        cur += datetime.timedelta(days=1)
+
+    return {
+        "status":      "ok",
+        "start_date":  start_date,
+        "end_date":    end_date,
+        "total_games": total_games,
+        "total_bat_rows": total_bat,
+        "total_pit_rows": total_pit,
+        "per_day":     per_day,
+    }
 
 
 def fetch_and_save_batting_gamelogs(player_id: int, season: int) -> int:

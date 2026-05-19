@@ -988,6 +988,30 @@ def admin_sync_all_player_teams():
     return data_service.sync_all_player_teams_from_rosters(current_year)
 
 
+@app.post("/admin/backfill-bdl-gamelogs")
+def admin_backfill_bdl_gamelogs(
+    start_date: str = Query(..., description="Inclusive start date, yyyy-mm-dd"),
+    end_date:   str = Query(..., description="Inclusive end date, yyyy-mm-dd"),
+):
+    """One-shot history backfill of batting + pitching gamelogs
+    via BallDontLie's game-centric `/stats?game_id={id}` endpoint.
+    Walks every date in [start_date, end_date], fetches all finals,
+    and upserts player game rows.
+
+    Idempotent — the gamelog tables use (player_id, game_id) PKs,
+    so re-running on a date range that's already loaded is a
+    no-op upsert. Rate-limited at the BDL 5/sec ceiling between
+    games. Backfills the entire history we used to fill via per-
+    player MLB-Stats-API calls in roughly one BDL call per 25
+    player-game rows."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    try:
+        return data_service.backfill_bdl_gamelogs(start_date, end_date)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+
 @app.post("/admin/discover-from-rosters")
 def admin_discover_from_rosters():
     """Walk MLB Stats API's 30 active rosters and insert bio rows
