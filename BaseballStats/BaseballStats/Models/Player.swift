@@ -422,6 +422,10 @@ struct PitcherCareerTotals: Codable {
     let ERA: Double?
     let WHIP: Double?
     let ERA_plus: Double?
+    /// Career FIP — IP-weighted average of season FIP, which is
+    /// algebraically equivalent to applying an IP-weighted FIP
+    /// constant to career-summed components.
+    let FIP: Double?
 }
 
 // MARK: - Game logs

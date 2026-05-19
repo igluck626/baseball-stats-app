@@ -2399,18 +2399,18 @@ private struct PitchingCareerScrollableTotalsRow: View {
             if visible.contains("BK")    { Text(formatCount(agg.bk)).frame(width: PitchingCareerColumn.bk, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
             if visible.contains("WP")    { Text(formatCount(agg.wp)).frame(width: PitchingCareerColumn.wp, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
             if visible.contains("BF")    { Text(formatCount(agg.bf)).frame(width: PitchingCareerColumn.bf, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
-            // ERA+ comes off the backend's ER-weighted career_totals
-            // (matches bref). FIP isn't reliably re-computable from
-            // career sums (the constant shifts per era), so it stays
-            // blank in the totals row.
+            // ERA+ and FIP both come off the backend's career_totals.
+            // ERA+ is ER-weighted; FIP is IP-weighted (which folds
+            // in a per-era IP-weighted FIP constant by construction).
             if visible.contains("ERA+")  {
                 Text(formatRoundedInt(totals?.ERA_plus))
                     .frame(width: PitchingCareerColumn.eraPlus, alignment: .trailing)
                     .monospacedDigit().padding(.horizontal, 2)
             }
             if visible.contains("FIP")   {
-                Text("—").frame(width: PitchingCareerColumn.fip, alignment: .trailing)
-                    .foregroundStyle(.tertiary).padding(.horizontal, 2)
+                Text(format2(totals?.FIP))
+                    .frame(width: PitchingCareerColumn.fip, alignment: .trailing)
+                    .monospacedDigit().padding(.horizontal, 2)
             }
             if visible.contains("WHIP")  { Text(format2(agg.whip)).frame(width: PitchingCareerColumn.whip, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
             if visible.contains("H/9")   { Text(format2(agg.hPer9)).frame(width: PitchingCareerColumn.hPer9, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }

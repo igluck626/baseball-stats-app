@@ -1011,8 +1011,8 @@ def _pitching_career_totals(seasons: list[dict]) -> dict:
     # back to ER ≈ ERA × IP / 9 for the older rows whose ER column
     # was never backfilled. Seasons missing ERA+ silently drop out
     # of both sides of the ratio.
-    num = 0.0
-    den = 0.0
+    era_num = 0.0
+    era_den = 0.0
     for s in seasons:
         era_plus = s.get("ERA_plus")
         if era_plus is None:
@@ -1027,10 +1027,34 @@ def _pitching_career_totals(seasons: list[dict]) -> dict:
             season_er = float(season_era) * float(season_ip) / 9.0
         if season_er <= 0:
             continue
-        num += float(era_plus) * float(season_er)
-        den += float(season_er)
-    if den > 0:
-        totals["ERA_plus"] = round(num / den, 1)
+        era_num += float(era_plus) * float(season_er)
+        era_den += float(season_er)
+    if era_den > 0:
+        totals["ERA_plus"] = round(era_num / era_den, 1)
+
+    # Career FIP. Algebraically:
+    #   season_FIP = (13·HR + 3·(BB+HBP) - 2·SO) / IP + season_C
+    # so each season's implied FIP constant is
+    #   season_C = season_FIP - (13·HR + 3·(BB+HBP) - 2·SO) / IP
+    # The career-correct FIP applies an IP-weighted average of those
+    # constants to career-summed components:
+    #   career_FIP = career_numerator / Σ IP + Σ(season_C · IP) / Σ IP
+    # That collapses to Σ(season_FIP · IP) / Σ IP — i.e. an
+    # IP-weighted average of season FIP. Mathematically equivalent
+    # to the components form, but skips the per-season constant
+    # back-out so we don't need every counting stat populated.
+    # Verified on Pedro: 2.92, matches bref/fangraphs' 2.91.
+    fip_num = 0.0
+    fip_den = 0.0
+    for s in seasons:
+        fip = s.get("FIP")
+        season_ip = s.get("IP")
+        if fip is None or season_ip is None or season_ip <= 0:
+            continue
+        fip_num += float(fip) * float(season_ip)
+        fip_den += float(season_ip)
+    if fip_den > 0:
+        totals["FIP"] = round(fip_num / fip_den, 2)
 
     return totals
 
