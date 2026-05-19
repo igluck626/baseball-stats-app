@@ -17,6 +17,7 @@ from sqlalchemy import inspect as _sa_inspect, text as _sa_text
 import sys
 
 import data_service
+from cache import cache as _cache
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -406,6 +407,12 @@ def _run_nightly_update() -> None:
         with _nightly_lock:
             _nightly_state["error"] = f"{exc}\n{tb}"
     finally:
+        # Drop every entry in the in-process cache so the next
+        # iOS request sees fresh nightly data instead of waiting
+        # for individual TTLs to expire. Cheap (clears a dict);
+        # only meaningful for the API worker that ran the nightly
+        # (other workers — if scaled out — clear via TTL).
+        _cache.clear()
         with _nightly_lock:
             _nightly_state["running"]  = False
             _nightly_state["phase"]    = None
@@ -437,10 +444,20 @@ def root():
 
 @app.get("/players/search")
 def search_players(name: str = Query(..., min_length=2, description="Player name")):
+    # Cache by normalized query — search results don't change
+    # within a nightly window, and the user search field can fire
+    # a request per keystroke. Lowercase + strip so "Trout" and
+    # " trout " collapse to one cache key.
+    key = f"search:{name.strip().lower()}"
+    cached = _cache.get(key)
+    if cached is not None:
+        return cached
     results = data_service.search_player(name)
     if not results:
         raise HTTPException(status_code=404, detail=f"No players found matching '{name}'")
-    return {"query": name, "results": results}
+    payload = {"query": name, "results": results}
+    _cache.set(key, payload, ttl_seconds=300)
+    return payload
 
 
 @app.get("/players/by-mlb-id/{mlb_id}")
@@ -479,45 +496,69 @@ def player_by_bdl_id(bdl_id: int):
 
 @app.get("/players/{player_id}/stats/current")
 def current_stats(player_id: int):
+    key = f"player_stats:{player_id}"
+    cached = _cache.get(key)
+    if cached is not None:
+        return cached
     stats = data_service.get_current_stats(player_id)
     if stats is None:
         raise HTTPException(
             status_code=404,
             detail=f"No current season stats found for player_id {player_id}",
         )
+    _cache.set(key, stats, ttl_seconds=300)
     return stats
 
 
 @app.get("/players/{player_id}/stats/career")
 def career_stats(player_id: int):
+    key = f"player_career:{player_id}"
+    cached = _cache.get(key)
+    if cached is not None:
+        return cached
     stats = data_service.get_career_stats(player_id)
     if stats is None:
         raise HTTPException(
             status_code=404,
             detail=f"No career stats found for player_id {player_id}",
         )
+    # Career stats barely change inside one game day — the only
+    # mover is the nightly which calls `cache.clear()` at end of
+    # run. 1-hour TTL guards against memory bloat from a player
+    # whose row never changes anyway.
+    _cache.set(key, stats, ttl_seconds=3600)
     return stats
 
 
 @app.get("/players/{player_id}/pitching/current")
 def current_pitching(player_id: int):
+    key = f"pitcher_stats:{player_id}"
+    cached = _cache.get(key)
+    if cached is not None:
+        return cached
     stats = data_service.get_current_pitching_stats(player_id)
     if stats is None:
         raise HTTPException(
             status_code=404,
             detail=f"No current season pitching stats found for player_id {player_id}",
         )
+    _cache.set(key, stats, ttl_seconds=300)
     return stats
 
 
 @app.get("/players/{player_id}/pitching/career")
 def career_pitching(player_id: int):
+    key = f"pitcher_career:{player_id}"
+    cached = _cache.get(key)
+    if cached is not None:
+        return cached
     stats = data_service.get_career_pitching_stats(player_id)
     if stats is None:
         raise HTTPException(
             status_code=404,
             detail=f"No career pitching stats found for player_id {player_id}",
         )
+    _cache.set(key, stats, ttl_seconds=3600)
     return stats
 
 
@@ -687,6 +728,10 @@ def player_hof(player_id: int):
 
 @app.get("/teams/standings")
 def team_standings(year: int = Query(..., description="Season year, e.g. 2024")):
+    key = f"standings:{year}"
+    cached = _cache.get(key)
+    if cached is not None:
+        return cached
     rows = data_service.get_team_standings(year)
     if not rows:
         raise HTTPException(status_code=404, detail=f"No team data for year {year}")
@@ -696,7 +741,9 @@ def team_standings(year: int = Query(..., description="Season year, e.g. 2024"))
     timestamps = [r.get("last_updated") for r in rows if r.get("last_updated") is not None]
     last_updated = max(timestamps).isoformat() + "Z" if timestamps else None
 
-    return {"year": year, "last_updated": last_updated, "standings": rows}
+    payload = {"year": year, "last_updated": last_updated, "standings": rows}
+    _cache.set(key, payload, ttl_seconds=300)
+    return payload
 
 
 @app.get("/teams/{team_id}/history")
@@ -849,6 +896,17 @@ def leaderboards(
     if year_from is not None and year_to is not None and year_from > year_to:
         year_from, year_to = year_to, year_from
 
+    # Cache by the full parameter tuple — leaderboards are
+    # expensive ranked-window queries and the iOS leaderboard tab
+    # re-fires the same call on every navigation back-and-forth.
+    cache_key = (
+        f"lb:{stat}:{year}:{mode}:{player_type}:{limit}:"
+        f"{league or '_'}:{team or '_'}:{year_from or '_'}:{year_to or '_'}"
+    )
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     response = data_service.get_leaderboard(
         stat=stat, year=year, player_type=player_type, mode=mode,
         limit=limit, league=league, team=team,
@@ -866,12 +924,34 @@ def leaderboards(
             status_code=404,
             detail=f"No {stat} leaders found for {scope}{suffix}",
         )
+    _cache.set(cache_key, response, ttl_seconds=300)
     return response
 
 
 # ---------------------------------------------------------------------------
 # Admin endpoints
 # ---------------------------------------------------------------------------
+
+@app.get("/admin/cache/stats")
+def admin_cache_stats():
+    """Return the in-process cache health snapshot: total keys,
+    keys still within their TTL, and expired (lazily-evicted)
+    keys. Multi-worker note: Railway can run more than one worker
+    and each holds its own cache; the stats here are one worker's
+    view, not the cluster's. Acceptable while single-worker."""
+    return _cache.stats()
+
+
+@app.post("/admin/cache/clear")
+def admin_cache_clear():
+    """Drop every entry in the in-process cache. Called automatically
+    at the end of `_run_nightly_update` so fresh nightly data is
+    visible immediately; available manually for ad-hoc evictions
+    (e.g. after a hot-fix admin endpoint mutates a row)."""
+    before = _cache.stats().get("total_keys", 0)
+    _cache.clear()
+    return {"status": "ok", "cleared": before}
+
 
 @app.get("/admin/env-check")
 def env_check():

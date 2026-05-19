@@ -46,16 +46,69 @@ final class BallDontLieClient: @unchecked Sendable {
         decoder.keyDecodingStrategy = .convertFromSnakeCase
     }
 
+    // MARK: - In-process TTL cache
+    //
+    // Multiple views in the same app session ask for the same
+    // BDL data (Scores tab + Box Score + player profile overlay
+    // all converge on today's games). A short-lived per-process
+    // cache collapses those repeats to one HTTP round trip per
+    // TTL window. Reset by `clearCache()` on pull-to-refresh and
+    // by app relaunch (the cache is in-memory).
+    //
+    // Decoded values are stored (not raw Data) so the `getGameStats`
+    // live-vs-final TTL decision can read the response without a
+    // re-decode round trip. Type erasure via `Any` keeps the
+    // dictionary single-typed; readers cast back to their concrete
+    // generic type at the call site.
+
+    private struct CacheEntry {
+        let value: Any
+        let expiresAt: Date
+        var isValid: Bool { Date() < expiresAt }
+    }
+
+    private var cache: [String: CacheEntry] = [:]
+    private let cacheLock = NSLock()
+
+    private func cachedValue<T>(_ key: String) -> T? {
+        cacheLock.lock(); defer { cacheLock.unlock() }
+        guard let entry = cache[key] else { return nil }
+        if !entry.isValid {
+            cache.removeValue(forKey: key)
+            return nil
+        }
+        return entry.value as? T
+    }
+
+    private func storeInCache(_ key: String, _ value: Any, ttl: TimeInterval) {
+        cacheLock.lock(); defer { cacheLock.unlock() }
+        cache[key] = CacheEntry(
+            value: value,
+            expiresAt: Date().addingTimeInterval(ttl),
+        )
+    }
+
+    /// Drop every cached entry. Called by ScoresView's pull-to-
+    /// refresh so a deliberate user-initiated refresh bypasses
+    /// any stale-window cached values.
+    func clearCache() {
+        cacheLock.lock(); defer { cacheLock.unlock() }
+        cache.removeAll()
+    }
+
     // MARK: - Games
 
     /// Games for one date. `date` is `yyyy-MM-dd` in the user's
     /// local timezone (BDL filters by date, not UTC instant).
     func getGames(date: String) async throws -> [BDLGame] {
+        let key = "games:\(date)"
+        if let cached: [BDLGame] = cachedValue(key) { return cached }
         let items: [URLQueryItem] = [
             URLQueryItem(name: "dates[]",  value: date),
             URLQueryItem(name: "per_page", value: "100"),
         ]
         let envelope: BDLDataEnvelope<BDLGame> = try await fetch(path: "/mlb/v1/games", query: items)
+        storeInCache(key, envelope.data, ttl: 30)
         return envelope.data
     }
 
@@ -63,12 +116,15 @@ final class BallDontLieClient: @unchecked Sendable {
     /// live-stats overlay — answers "does my team play today?"
     /// without pulling the full 15-game daily slate.
     func getTeamGames(date: String, teamId: Int) async throws -> [BDLGame] {
+        let key = "team_games:\(date):\(teamId)"
+        if let cached: [BDLGame] = cachedValue(key) { return cached }
         let items: [URLQueryItem] = [
             URLQueryItem(name: "dates[]",    value: date),
             URLQueryItem(name: "team_ids[]", value: String(teamId)),
             URLQueryItem(name: "per_page",   value: "100"),
         ]
         let envelope: BDLDataEnvelope<BDLGame> = try await fetch(path: "/mlb/v1/games", query: items)
+        storeInCache(key, envelope.data, ttl: 30)
         return envelope.data
     }
 
@@ -78,11 +134,11 @@ final class BallDontLieClient: @unchecked Sendable {
     /// flat list — caller groups by team via `BDLPlayerStat.team`
     /// (vs. the old client's team-nested response shape).
     func getGameStats(gameId: Int) async throws -> [BDLPlayerStat] {
+        let key = "game_stats:\(gameId)"
+        if let cached: [BDLPlayerStat] = cachedValue(key) { return cached }
         // BDL's /stats endpoint accepts game_ids[] (plural) per the
         // OpenAPI; the singular live-API quirk only applies to
-        // /plays and /plate_appearances. Try plural first; on a
-        // 400 about "must be a valid integer", fall back to singular.
-        // In practice plural works for /stats.
+        // /plays and /plate_appearances.
         let items: [URLQueryItem] = [
             URLQueryItem(name: "game_ids[]", value: String(gameId)),
             URLQueryItem(name: "per_page",   value: "100"),
@@ -90,6 +146,14 @@ final class BallDontLieClient: @unchecked Sendable {
         let envelope: BDLDataEnvelope<BDLPlayerStat> = try await fetch(
             path: "/mlb/v1/stats", query: items,
         )
+        // Content-aware TTL: a recorded W/L/SV decision (non-null
+        // wins/losses on any row) means the game's done. Final
+        // games get a 5-minute cache; live games get 60s so the
+        // box-score numbers stay current under the polling loop.
+        let isFinal = envelope.data.contains { stat in
+            (stat.wins ?? 0) > 0 || (stat.losses ?? 0) > 0 || (stat.saves ?? 0) > 0
+        }
+        storeInCache(key, envelope.data, ttl: isFinal ? 300 : 60)
         return envelope.data
     }
 
@@ -98,6 +162,8 @@ final class BallDontLieClient: @unchecked Sendable {
     /// players in lineup order rather than the arbitrary order
     /// `/stats` returns them.
     func getGameLineup(gameId: Int) async throws -> [BDLGameLineup] {
+        let key = "game_lineup:\(gameId)"
+        if let cached: [BDLGameLineup] = cachedValue(key) { return cached }
         let items: [URLQueryItem] = [
             URLQueryItem(name: "game_id",  value: String(gameId)),
             URLQueryItem(name: "per_page", value: "100"),
@@ -105,6 +171,10 @@ final class BallDontLieClient: @unchecked Sendable {
         let envelope: BDLDataEnvelope<BDLGameLineup> = try await fetch(
             path: "/mlb/v1/lineups", query: items,
         )
+        // Lineups are set before first pitch and don't change
+        // mid-game (pinch hitters/runners show up in /stats and
+        // /plays, not /lineups). Long TTL is safe.
+        storeInCache(key, envelope.data, ttl: 300)
         return envelope.data
     }
 
@@ -116,24 +186,35 @@ final class BallDontLieClient: @unchecked Sendable {
     /// the whole stream. Returns plays in the order BDL ships them
     /// (chronological — earliest first; latest is at the tail).
     func getPlays(gameId: Int) async throws -> [BDLPlay] {
+        let key = "plays:\(gameId)"
+        if let cached: [BDLPlay] = cachedValue(key) { return cached }
         let items: [URLQueryItem] = [
             URLQueryItem(name: "game_id",  value: String(gameId)),
             URLQueryItem(name: "per_page", value: "100"),
         ]
-        return try await fetchAllPages(path: "/mlb/v1/plays", baseQuery: items)
+        let result: [BDLPlay] = try await fetchAllPages(path: "/mlb/v1/plays", baseQuery: items)
+        // Live polling loop fires every 30s; matching the cache
+        // TTL means each user sees one network round-trip per poll
+        // window even if multiple views subscribe to the same game.
+        storeInCache(key, result, ttl: 30)
+        return result
     }
 
     /// Per-PA log with base-runner state and pitch-by-pitch detail.
     /// The live card uses the latest entry's `runnerOn{First,Second,
     /// Third}` to render the diamond — `/plays` doesn't carry that.
     func getPlateAppearances(gameId: Int) async throws -> [BDLPlateAppearance] {
+        let key = "pas:\(gameId)"
+        if let cached: [BDLPlateAppearance] = cachedValue(key) { return cached }
         let items: [URLQueryItem] = [
             URLQueryItem(name: "game_id",  value: String(gameId)),
             URLQueryItem(name: "per_page", value: "100"),
         ]
-        return try await fetchAllPages(
+        let result: [BDLPlateAppearance] = try await fetchAllPages(
             path: "/mlb/v1/plate_appearances", baseQuery: items,
         )
+        storeInCache(key, result, ttl: 30)
+        return result
     }
 
     // MARK: - Player resolver

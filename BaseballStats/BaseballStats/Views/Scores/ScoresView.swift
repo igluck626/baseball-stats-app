@@ -64,7 +64,11 @@ final class ScoresViewModel: ObservableObject {
     /// keeps the existing game list visible instead of replacing it
     /// with an error screen. The user just sees the spinner stop —
     /// the next normal `load()` will surface persistent failures.
+    /// Drops every entry in the BDL in-process cache first so a
+    /// deliberate pull-to-refresh bypasses any in-window cached
+    /// values from earlier in the session.
     func refresh() async {
+        bdl.clearCache()
         do {
             let bdlGames = try await bdl.getGames(date: ScoresViewModel.iso(selectedDate))
             self.games = bdlGames
