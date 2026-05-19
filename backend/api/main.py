@@ -1069,6 +1069,28 @@ def admin_bdl_teams():
         raise HTTPException(status_code=503, detail=str(exc))
 
 
+@app.get("/admin/bdl-mapping-status")
+def admin_bdl_mapping_status(
+    since_year: int = Query(2002, ge=1871, le=2100,
+                            description="Coverage denominator floor: only count "
+                                        "players whose mlb_debut >= this. Default 2002."),
+):
+    """Reporting view of the BDL player-id mapping bootstrap.
+    Returns:
+      • `coverage` — total / mapped / unmapped per table, with a
+        match percentage, for rows with `mlb_debut >= since_year`.
+      • `spot_checks` — hand-picked active stars (Trout, Ohtani,
+        Freeman, Vlad Jr., Bobby Witt Jr.). Compares stamped BDL
+        id vs. expected (where known) and flags `mismatch` /
+        `unmapped` / `missing_from_db`.
+      • `recent_sample` — 10 deterministic rows from debut >= 2020
+        so the operator can eyeball that real names line up with
+        sane BDL ids."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    return data_service.get_bdl_mapping_status(since_year)
+
+
 @app.post("/admin/build-bdl-player-mapping")
 def admin_build_bdl_player_mapping(
     since_year: int = Query(2010, ge=1871, le=2100,

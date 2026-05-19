@@ -1669,6 +1669,126 @@ def build_bdl_player_mapping(since_year: int = 2010,
     }
 
 
+def get_bdl_mapping_status(since_year: int = 2002) -> dict:
+    """Reporting view of `players.bdl_id` / `pitchers.bdl_id`
+    coverage. Used between bootstrap calls to see how much of the
+    mapping is done and whether the matched rows look right.
+
+    Sections:
+      `coverage`  — total / mapped / unmapped per table for rows
+                    whose `mlb_debut >= since_year`, plus a percent.
+      `spot_checks` — hand-picked active stars with their expected
+                      BDL ids when known. Compares stamped vs
+                      expected and flags mismatches.
+      `recent_sample` — 10 random-ish rows from debut >= 2020 so
+                        the operator can eyeball that real names
+                        line up with sane BDL ids.
+    """
+    if not connection.db_available():
+        return {"status": "no_db"}
+
+    from database.models import Pitcher as _Pitcher
+    from database.models import Player as _Player
+
+    coverage: dict[str, dict] = {}
+    spot_checks: list[dict] = []
+    recent_sample: list[dict] = []
+
+    # Spot-check targets — flagging an expected BDL id where we know
+    # it (Trout was verified by the migration audit). The rest are
+    # left as "expected: null" so we can fill them in after the
+    # mapping run confirms them.
+    targets: list[dict] = [
+        {"mlbam_id": 545361, "name": "Mike Trout",            "expected_bdl_id": 3403},
+        {"mlbam_id": 660271, "name": "Shohei Ohtani",         "expected_bdl_id": None},
+        {"mlbam_id": 518692, "name": "Freddie Freeman",       "expected_bdl_id": None},
+        {"mlbam_id": 665489, "name": "Vladimir Guerrero Jr.", "expected_bdl_id": None},
+        {"mlbam_id": 677951, "name": "Bobby Witt Jr.",        "expected_bdl_id": None},
+    ]
+
+    with connection.get_session() as db:
+        for model, label in [(_Player, "players"), (_Pitcher, "pitchers")]:
+            total = (
+                db.query(func.count(model.player_id))
+                .filter(model.mlb_debut.isnot(None))
+                .filter(model.mlb_debut >= since_year)
+                .scalar() or 0
+            )
+            mapped = (
+                db.query(func.count(model.player_id))
+                .filter(model.mlb_debut.isnot(None))
+                .filter(model.mlb_debut >= since_year)
+                .filter(model.bdl_id.isnot(None))
+                .scalar() or 0
+            )
+            coverage[label] = {
+                "total":    total,
+                "mapped":   mapped,
+                "unmapped": total - mapped,
+                "match_pct": (
+                    round(100.0 * mapped / total, 1) if total else None
+                ),
+            }
+
+        # Spot-checks read whichever table the player lives in — try
+        # batter side first, fall back to pitcher side. Two-way
+        # players (Ohtani) hit both; report both bdl_ids so a
+        # mismatch between sides is visible.
+        for t in targets:
+            pid = t["mlbam_id"]
+            bat = db.get(_Player,  pid)
+            pit = db.get(_Pitcher, pid)
+            row = {
+                "mlbam_id":         pid,
+                "name":             t["name"],
+                "expected_bdl_id":  t["expected_bdl_id"],
+                "in_players":       bat is not None,
+                "in_pitchers":      pit is not None,
+                "batter_bdl_id":    getattr(bat, "bdl_id", None) if bat else None,
+                "pitcher_bdl_id":   getattr(pit, "bdl_id", None) if pit else None,
+                "db_name_batter":   bat.name if bat else None,
+                "db_name_pitcher":  pit.name if pit else None,
+            }
+            actual = row["batter_bdl_id"] or row["pitcher_bdl_id"]
+            row["status"] = (
+                "missing_from_db" if bat is None and pit is None else
+                "unmapped"        if actual is None else
+                "match"           if (t["expected_bdl_id"] is None
+                                       or actual == t["expected_bdl_id"]) else
+                "mismatch"
+            )
+            spot_checks.append(row)
+
+        # Recent sample — 10 modern (debut >= 2020) batters in
+        # ascending player_id so the response is deterministic
+        # across calls. Picking ascending rather than random keeps
+        # the diff between successive status calls readable.
+        sample_rows = (
+            db.query(_Player.player_id, _Player.name,
+                     _Player.bdl_id, _Player.mlb_debut)
+            .filter(_Player.mlb_debut.isnot(None))
+            .filter(_Player.mlb_debut >= 2020)
+            .order_by(_Player.player_id)
+            .limit(10)
+            .all()
+        )
+        for r in sample_rows:
+            recent_sample.append({
+                "mlbam_id":  r.player_id,
+                "name":      r.name,
+                "bdl_id":    r.bdl_id,
+                "mlb_debut": r.mlb_debut,
+            })
+
+    return {
+        "status":        "ok",
+        "since_year":    since_year,
+        "coverage":      coverage,
+        "spot_checks":   spot_checks,
+        "recent_sample": recent_sample,
+    }
+
+
 # Lower-case position codes BDL ships that mean "pitcher". Everything
 # else is treated as a position-player slot.
 _BDL_PITCHER_POSITIONS: set[str] = {"p", "sp", "rp", "cl"}
