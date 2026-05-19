@@ -1405,17 +1405,28 @@ _BDL_API_BASE = "https://api.balldontlie.io/mlb/v1"
 # the bucket and dodges the burst-counter 429s we hit during testing.
 _BDL_RATE_LIMIT_SLEEP = 0.22
 
-# Lahman code → BallDontLie team id. Seeded with the four verified
-# from the pre-migration audit (LAA/COL/TEX/PHI); the rest are
-# populated by calling the `/admin/bdl-teams` endpoint, which fetches
-# all 30 from BDL and prints the mapping for hand-paste here. Until
-# the dict is complete, code that resolves teams should fall back to
-# the runtime team_seasons.bdl_id lookup rather than this constant.
+# Lahman code → BallDontLie team id. Full 30-team mapping verified
+# via the `/admin/bdl-teams` discovery endpoint. BDL's ids are stable
+# across seasons (one id per franchise, not per season-row), so this
+# constant is the authoritative source — the matching `team_seasons.
+# bdl_id` column stamped by `fetch_bdl_teams` is the same value, just
+# kept on the DB side for SQL joins.
 _BDL_TEAM_ID_MAP: dict[str, int] = {
-    "LAA": 13,
-    "COL": 9,
-    "TEX": 28,
-    "PHI": 21,
+    "ARI":  1, "ATL":  2, "BAL":  3, "BOS":  4, "CHN":  5,
+    "CHA":  6, "CIN":  7, "CLE":  8, "COL":  9, "DET": 10,
+    "HOU": 11, "KCA": 12, "LAA": 13, "LAN": 14, "MIA": 15,
+    "MIL": 16, "MIN": 17, "NYN": 18, "NYA": 19, "ATH": 20,
+    "PHI": 21, "PIT": 22, "SDN": 23, "SFN": 24, "SEA": 25,
+    "SLN": 26, "TBA": 27, "TEX": 28, "TOR": 29, "WAS": 30,
+}
+
+# Inverse mapping for the read direction — BDL ships team ids on
+# every game / stat / play / standings payload, and the iOS app +
+# our DB key off Lahman codes. Generated from `_BDL_TEAM_ID_MAP` so
+# the two can't drift; if a future BDL team is added (expansion,
+# rebrand) only the forward dict needs editing.
+_BDL_TO_LAHMAN_TEAM_MAP: dict[int, str] = {
+    bdl_id: lahman for lahman, bdl_id in _BDL_TEAM_ID_MAP.items()
 }
 
 
