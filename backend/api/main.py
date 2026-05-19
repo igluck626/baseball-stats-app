@@ -541,6 +541,24 @@ def player_by_mlb_id(mlb_id: int):
     return result
 
 
+@app.get("/players/by-bdl-id/{bdl_id}")
+def player_by_bdl_id(bdl_id: int):
+    """Direct lookup by BallDontLie player id. BDL ids are the FK on
+    every BDL game / stat / play / PA payload, so this is how iOS
+    resolves a tapped-in-a-box-score player back to our MLBAM-keyed
+    profile. Returns the same `PlayerSearchResult` shape that
+    `/players/search` and `/players/by-mlb-id/{id}` produce, so the
+    iOS profile navigation works without branching on which id type
+    was the entry point."""
+    result = data_service.get_player_by_bdl_id(bdl_id)
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No player found with BDL id {bdl_id}",
+        )
+    return result
+
+
 @app.get("/players/{player_id}/stats/current")
 def current_stats(player_id: int):
     stats = data_service.get_current_stats(player_id)

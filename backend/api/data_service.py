@@ -468,6 +468,46 @@ def search_player(name: str) -> list[dict]:
     return list(by_id.values())
 
 
+def get_player_by_bdl_id(bdl_id: int) -> Optional[dict]:
+    """Look up one player by their BallDontLie id. BDL ids are the
+    foreign key on every BDL game / stat / play / PA payload, so
+    the iOS Scores tab needs this reverse-lookup whenever it has a
+    BDL player id and wants to navigate to a profile (which is
+    keyed on our MLBAM `player_id`).
+
+    Two-way players (Ohtani) have the same bdl_id stamped on both
+    bio tables — return the batter row first, matching
+    `get_player_by_id`'s precedence."""
+    if not connection.db_available() or bdl_id is None:
+        return None
+    from database.models import Pitcher as _Pitcher
+    from database.models import Player as _Player
+
+    with connection.get_session() as db:
+        for model, is_pitcher in [(_Player, False), (_Pitcher, True)]:
+            row = (
+                db.query(model)
+                .filter(model.bdl_id == bdl_id)
+                .first()
+            )
+            if row is None:
+                continue
+            team_display, team_code = _latest_team_info(
+                db, row.player_id, pitcher=is_pitcher
+            )
+            return {
+                "player_id":       row.player_id,
+                "name":            row.name,
+                "bbref_id":        row.bbref_id,
+                "mlb_debut":       row.mlb_debut,
+                "mlb_last_season": row.mlb_last_season,
+                "current_team":    team_display,
+                "team_code":       team_code,
+                **_bio_dict(row, db),
+            }
+    return None
+
+
 def get_player_by_id(player_id: int) -> Optional[dict]:
     """Look up one player by their MLB Stats API id (which is what
     our `player_id` column stores — MLBAM ids are the canonical key

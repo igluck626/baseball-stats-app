@@ -359,3 +359,165 @@ struct LivePlayEventDetails: Codable {
     let description: String?
     let event: String?
 }
+
+// MARK: - BallDontLie conversion layer
+//
+// During the MLB-Stats-API → BallDontLie migration, the Scores tab
+// still drives off the existing `Game` / `ScheduleResponse` models
+// — too many call sites to swap in one pass. These conversions let
+// a `BDLGame` flow into the existing model space without forcing
+// downstream views to know about the new shape.
+//
+// Mappings:
+//   • status string  → GameStatus.abstractGameState ("Live"/"Final"/"Preview")
+//   • BDL team id    → TeamInfo.id (MLBAM id, looked up via bdlToLahmanTeamId)
+//   • innings array  → Linescore.innings (per-inning runs only —
+//                       BDL doesn't ship hits/errors at the inning
+//                       granularity, just team totals)
+//   • scoring_summary → not surfaced (no equivalent on legacy Game;
+//                       BoxScoreView's expand pane will consume the
+//                       BDL game directly in Phase 3 instead)
+
+/// Maps BDL status string → the abstractGameState enum-like string
+/// the existing `Game.phase` accessor branches on. Anything we
+/// don't recognize falls through to "Preview" so the UI defaults
+/// to scheduled-game chrome.
+private func bdlStatusToAbstract(_ status: String) -> String {
+    switch status {
+    case "STATUS_FINAL":            return "Final"
+    case "STATUS_IN_PROGRESS":      return "Live"
+    case "STATUS_SCHEDULED":        return "Preview"
+    case "STATUS_POSTPONED":        return "Preview"  // shows as scheduled in our UI
+    case "STATUS_DELAYED":          return "Live"
+    default:                        return "Preview"
+    }
+}
+
+extension BDLTeam {
+    /// MLB Stats API numeric team id — what `TeamInfo.id` and the
+    /// logo CDN want. Hops through Lahman so the bridge stays one
+    /// place. Falls back to the BDL id if we can't resolve, which
+    /// means logos won't load for that team but everything else
+    /// still renders.
+    var mlbStatsApiTeamId: Int {
+        mlbTeamId(forBDLId: id) ?? id
+    }
+
+    /// Project to the legacy `TeamInfo` shape.
+    func toTeamInfo() -> TeamInfo {
+        TeamInfo(
+            id:           mlbStatsApiTeamId,
+            name:         displayName,
+            abbreviation: abbreviation,
+        )
+    }
+}
+
+extension BDLGame {
+    /// Project to the legacy `Game` shape so existing views can
+    /// consume BDL results without code changes. `gamePk` is set
+    /// to the BDL id (it's an int in both worlds, just a different
+    /// number space — the player-resolve / box-score paths know
+    /// the difference and route accordingly).
+    func toGame() -> Game {
+        let abstract = bdlStatusToAbstract(status)
+        let status = GameStatus(
+            abstractGameState: abstract,
+            detailedState:     detailedStateFromBDL(),
+            statusCode:        nil,
+            codedGameState:    nil,
+        )
+        let awayInfo = GameTeam(
+            team:           awayTeam.toTeamInfo(),
+            score:          awayTeamData?.runs,
+            leagueRecord:   nil,
+            isWinner:       nil,
+            probablePitcher: nil,
+        )
+        let homeInfo = GameTeam(
+            team:           homeTeam.toTeamInfo(),
+            score:          homeTeamData?.runs,
+            leagueRecord:   nil,
+            isWinner:       nil,
+            probablePitcher: nil,
+        )
+        return Game(
+            gamePk:    id,
+            gameDate:  date,
+            status:    status,
+            teams:     GameTeams(away: awayInfo, home: homeInfo),
+            venue:     venue.map { Venue(id: nil, name: $0) },
+            linescore: toLinescore(),
+            decisions: nil,
+        )
+    }
+
+    /// Approximate `detailedState` from BDL's status enum. We can't
+    /// surface every Stats-API nuance (scheduled vs. warmup vs.
+    /// pre-game) — collapse to the buckets that drive UI branches.
+    private func detailedStateFromBDL() -> String {
+        switch status {
+        case "STATUS_FINAL":       return "Final"
+        case "STATUS_IN_PROGRESS": return "In Progress"
+        case "STATUS_SCHEDULED":   return "Scheduled"
+        case "STATUS_POSTPONED":   return "Postponed"
+        case "STATUS_DELAYED":     return "Delayed"
+        default:                   return status
+        }
+    }
+
+    /// Build a legacy `Linescore` from BDL's `inning_scores` arrays.
+    /// BDL only ships per-team per-inning runs (no hits / errors /
+    /// LOB at that granularity), so we leave those fields nil and
+    /// surface the totals row from `home_team_data` / `away_team_data`.
+    private func toLinescore() -> Linescore? {
+        let awayInns = awayTeamData?.inningScores ?? []
+        let homeInns = homeTeamData?.inningScores ?? []
+        let inningCount = max(awayInns.count, homeInns.count)
+
+        var innings: [Inning] = []
+        for i in 0..<inningCount {
+            let awayR = i < awayInns.count ? awayInns[i] : nil
+            let homeR = i < homeInns.count ? homeInns[i] : nil
+            innings.append(Inning(
+                num:  i + 1,
+                home: InningTotals(runs: homeR, hits: nil, errors: nil, leftOnBase: nil),
+                away: InningTotals(runs: awayR, hits: nil, errors: nil, leftOnBase: nil),
+            ))
+        }
+
+        let teamsTotals = LinescoreTeamsTotals(
+            home: InningTotals(
+                runs:       homeTeamData?.runs,
+                hits:       homeTeamData?.hits,
+                errors:     homeTeamData?.errors,
+                leftOnBase: nil,
+            ),
+            away: InningTotals(
+                runs:       awayTeamData?.runs,
+                hits:       awayTeamData?.hits,
+                errors:     awayTeamData?.errors,
+                leftOnBase: nil,
+            ),
+        )
+
+        // `currentInning` — for live games, BDL's `period` is the
+        // current inning number. For finals, BDL doesn't ship a
+        // value here; leave nil and let the existing UI fall back
+        // to inning-array length.
+        let currentInning = (status == "STATUS_IN_PROGRESS") ? period : nil
+
+        return Linescore(
+            currentInning:        currentInning,
+            currentInningOrdinal: nil,
+            inningState:          nil,
+            innings:              innings.isEmpty ? nil : innings,
+            teams:                teamsTotals,
+            scheduledInnings:     9,
+            isTopInning:          nil,
+            balls:                nil,
+            strikes:              nil,
+            outs:                 nil,
+        )
+    }
+}
