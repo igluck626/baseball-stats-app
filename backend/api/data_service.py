@@ -1553,14 +1553,23 @@ def _fetch_bdl_pitcher_stats(bdl_id: int, year: int) -> Optional[dict]:
     /season_stats endpoint; maps the `pitching_*` and `fielding_fip`
     columns into our `pitcher_seasons` field shape.
 
-    Keys it can't fill (R, IBB, HBP, BK, WP, BFP, BAOpp) are
+    Keys it can't fill (R, IBB, HBP, BK, WP, BFP, BAOpp, FIP) are
     omitted. `WAR` is included only as a fallback for bwar-missing
     rows; bwar's value wins in the entry merge.
 
-    Quirk: BDL puts FIP under `fielding_fip` despite it being a
-    pitching stat. Lifted into the `FIP` key here so the existing
-    `_build_pitcher_season_entry` override step picks it up
-    without knowing about BDL's namespace."""
+    FIP is NOT pulled from BDL: their `fielding_fip` field is a
+    fielding metric (we saw it equal to IP for pitchers and to a
+    weird ~185 for Trout — definitely not pitching FIP). The
+    `_build_pitcher_season_entry` override step instead computes
+    FIP from the standard component formula using the HR / BB / SO
+    counts in this dict — equivalent to bref's FIP when HBP is 0
+    (which it always is on this code path since BDL doesn't ship
+    HBP).
+
+    ERA / WHIP / K/9 are rounded to 2 decimal places at the
+    boundary — BDL ships these with 4-decimal precision which
+    leaks into the API response and onto the iOS career table
+    if we don't trim here."""
     if bdl_id is None:
         return None
     try:
@@ -1588,12 +1597,18 @@ def _fetch_bdl_pitcher_stats(bdl_id: int, year: int) -> Optional[dict]:
         "HR":     _to_int(s.get("pitching_hr")),
         "BB":     _to_int(s.get("pitching_bb")),
         "SO":     _to_int(s.get("pitching_k")),
-        "ERA":    _safe_rate(s.get("pitching_era")),
-        "WHIP":   _safe_rate(s.get("pitching_whip")),
-        "K_per9": _safe_rate(s.get("pitching_k_per_9")),
+        "ERA":    _round_or_none(_safe_rate(s.get("pitching_era")), 2),
+        "WHIP":   _round_or_none(_safe_rate(s.get("pitching_whip")), 2),
+        "K_per9": _round_or_none(_safe_rate(s.get("pitching_k_per_9")), 2),
         "WAR":    _safe_rate(s.get("pitching_war")),
-        "FIP":    _safe_rate(s.get("fielding_fip")),
     }
+
+
+def _round_or_none(v: Optional[float], digits: int) -> Optional[float]:
+    """Round a numeric value to `digits` decimal places. None passes
+    through so callers can chain `_round_or_none(_safe_rate(...), 2)`
+    without losing the missing-data sentinel."""
+    return round(v, digits) if v is not None else None
 
 
 def fetch_bdl_teams() -> dict:
