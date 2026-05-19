@@ -339,57 +339,77 @@ final class PlayerViewModel: ObservableObject {
     /// fill stats silently.
     func loadRecentGameStats() async {
         guard !isRetired else { return }
-        guard let teamId = mlbTeamId(for: player.teamCode) else { return }
-        let mlb = MLBStatsAPIClient.shared
+        // BDL team id is the hop the team-scoped game query needs.
+        // Falls back silently when the player's Lahman teamCode
+        // isn't in the BDL map (extreme edge case — rebranded
+        // teams whose code we haven't added yet).
+        guard let teamCode = player.teamCode,
+              let bdlTeamId = lahmanToBDLTeamId[teamCode] else { return }
+        let bdl = BallDontLieClient.shared
+        let today = Self.dateOnly.string(from: Date())
 
-        let todaySchedule = try? await mlb.getTeamSchedule(date: Date(), teamId: teamId)
+        let todayGames = (try? await bdl.getTeamGames(date: today, teamId: bdlTeamId)) ?? []
 
-        // Build the eligible-games list, tagging each with whether
-        // it's currently live — the `hasLiveGame` flag below is the
-        // OR across these tags. `teamHasLiveGame` is a separate
-        // signal flipped before we even look at the player's box-
-        // score line so the refresh loop keeps polling for
-        // not-yet-appeared players.
-        var eligible: [(gamePk: Int, isLive: Bool)] = []
+        // Tag each eligible game with whether it's currently live.
+        // BDL's status enum collapses to two states we care about:
+        // STATUS_IN_PROGRESS → overlay + keep polling; STATUS_FINAL
+        // → overlay once, stop polling.
+        var eligible: [(gameId: Int, isLive: Bool)] = []
         var liveOnSchedule = false
-        for g in todaySchedule?.dates.flatMap(\.games) ?? [] {
-            switch g.status.abstractGameState {
-            case "Live":
+        for g in todayGames {
+            switch g.status {
+            case "STATUS_IN_PROGRESS", "STATUS_DELAYED":
                 liveOnSchedule = true
-                eligible.append((g.gamePk, true))
-            case "Final":
-                eligible.append((g.gamePk, false))
+                eligible.append((g.id, true))
+            case "STATUS_FINAL":
+                eligible.append((g.id, false))
             default:
                 break
             }
         }
         // Publish the team-live signal even if there's nothing to
-        // overlay yet — it gates whether the refresh loop keeps
-        // running. A bench player whose team is mid-game but who
-        // hasn't pinch-hit yet has no overlay, but we want the
-        // loop to keep checking until they appear.
+        // overlay yet — gates the refresh-loop continuation so a
+        // bench player whose team is mid-game keeps polling until
+        // they appear.
         teamHasLiveGame = liveOnSchedule
 
         guard !eligible.isEmpty else { return }
+        // BDL player id is the join key on the stats response. If
+        // we don't have one (mapping bootstrap hasn't reached this
+        // player yet), we can't filter — bail out and leave the
+        // overnight totals as-is.
+        guard let bdlPlayerId = player.bdl_id else { return }
 
-        // Fan out box-score fetches in parallel — typical case is
-        // 1-2 games so the cost is small, but TaskGroup keeps the
-        // wall-clock at one round trip even if it grows.
-        let playerKey = "ID\(player.player_id)"
+        // Fan out stats fetches in parallel.
         let perGame: [(bat: BoxBattingLine?, pit: BoxPitchingLine?, isLive: Bool)]
             = await withTaskGroup(
                 of: (BoxBattingLine?, BoxPitchingLine?, Bool)?.self
             ) { group in
                 for entry in eligible {
-                    let pk = entry.gamePk
+                    let gid = entry.gameId
                     let live = entry.isLive
                     group.addTask {
-                        guard let feed = try? await mlb.getLiveFeed(gamePk: pk) else { return nil }
-                        guard let teams = feed.liveData.boxscore?.teams else { return nil }
-                        guard let bp = teams.away.players[playerKey]
-                                    ?? teams.home.players[playerKey] else { return nil }
-                        let bat = bp.stats?.batting.flatMap(Self.parseBatting)
-                        let pit = bp.stats?.pitching.flatMap(Self.parsePitching)
+                        guard let rows = try? await bdl.getGameStats(gameId: gid) else {
+                            return nil
+                        }
+                        // BDL returns one row per (player, side) — a
+                        // two-way player gets two rows in the same
+                        // response, one batting one pitching. Sum
+                        // across them for the overlay.
+                        let mine = rows.filter { $0.player.id == bdlPlayerId }
+                        guard !mine.isEmpty else { return nil }
+                        var bat: BoxBattingLine? = nil
+                        var pit: BoxPitchingLine? = nil
+                        for r in mine {
+                            if let line = Self.bdlBattingLine(r) {
+                                if var existing = bat { existing.add(line); bat = existing }
+                                else                  { bat = line }
+                            }
+                            if let line = Self.bdlPitchingLine(r) {
+                                if var existing = pit { existing.add(line); pit = existing }
+                                else                  { pit = line }
+                            }
+                        }
                         return (bat, pit, live)
                     }
                 }
@@ -417,6 +437,53 @@ final class PlayerViewModel: ObservableObject {
         recentPitching   = sawPit ? totalPit : nil
         recentStatsLoaded = true
         hasLiveGame      = anyLive
+    }
+
+    /// BDL `BDLPlayerStat` → batting line. Returns nil when the
+    /// row has no batting activity (pure pitching appearances on
+    /// a two-way player's other row).
+    nonisolated private static func bdlBattingLine(_ s: BDLPlayerStat) -> BoxBattingLine? {
+        let ab = s.atBats ?? 0
+        let bb = s.bb ?? 0
+        let pa = s.plateAppearances ?? 0
+        // Skip if no plate appearances. `appeared` flag elsewhere
+        // gates the overlay sum, so an all-zeros row would no-op
+        // anyway — but bailing here avoids a wasted `add()`.
+        if ab == 0, bb == 0, pa == 0 { return nil }
+        return BoxBattingLine(
+            games:   1,
+            AB:      ab,
+            R:       s.runs           ?? 0,
+            H:       s.hits           ?? 0,
+            doubles: s.doubles        ?? 0,
+            triples: s.triples        ?? 0,
+            HR:      s.hr             ?? 0,
+            RBI:     s.rbi            ?? 0,
+            BB:      bb,
+            SO:      s.k              ?? 0,
+            SB:      s.stolenBases    ?? 0,
+            HBP:     s.hitByPitch     ?? 0,
+            SF:      s.sacFlies       ?? 0
+        )
+    }
+
+    /// BDL `BDLPlayerStat` → pitching line. Returns nil when the
+    /// row has no pitching activity.
+    nonisolated private static func bdlPitchingLine(_ s: BDLPlayerStat) -> BoxPitchingLine? {
+        guard let ip = s.ip, ip > 0 else { return nil }
+        return BoxPitchingLine(
+            games: 1,
+            IP:    ip,
+            H:     s.pHits ?? 0,
+            R:     s.pRuns ?? 0,
+            ER:    s.er    ?? 0,
+            BB:    s.pBb   ?? 0,
+            SO:    s.pK    ?? 0,
+            HR:    s.pHr   ?? 0,
+            W:     s.wins  ?? 0,
+            L:     s.losses ?? 0,
+            SV:    s.saves ?? 0
+        )
     }
 
     /// Kick off a 60-second poll that re-runs `loadRecentGameStats()`
@@ -482,6 +549,19 @@ final class PlayerViewModel: ObservableObject {
             SV:    p.saves        ?? 0
         )
     }
+
+    /// `yyyy-MM-dd` in local timezone for BDL's `dates[]` filter.
+    /// Same shape `ScoresViewModel.scheduleDateFormatter` uses;
+    /// duplicated here so the player profile doesn't reach across
+    /// into the scores tab for a date helper.
+    private static let dateOnly: DateFormatter = {
+        let f = DateFormatter()
+        f.calendar = .init(identifier: .gregorian)
+        f.timeZone = .current
+        f.locale   = .init(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
 
     /// MLB box scores ship innings as "5.2" → 5 and ⅔ innings, NOT
     /// 5.2 in decimal. Convert to true decimal (5.667) so it can be

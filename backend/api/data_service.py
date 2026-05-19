@@ -92,6 +92,11 @@ def _bio_dict(row, db=None) -> dict:
         f"{int(y):04d}-{int(m):02d}-{int(d):02d}" if (y and m and d) else None
     )
     out["headshot_url"] = _headshot_url(row.player_id)
+    # `bdl_id` is the FK iOS uses to filter BDL `/stats?game_ids[]=`
+    # responses to a single player. The column is stamped per-side
+    # (so `_BIO_COLUMNS` skips it — those are bio fields shared
+    # across players/pitchers); read it directly off the row here.
+    out["bdl_id"] = getattr(row, "bdl_id", None)
     if db is not None:
         is_hof, hof_year = _hof_summary(db, row.player_id)
         out["is_hof"]   = is_hof

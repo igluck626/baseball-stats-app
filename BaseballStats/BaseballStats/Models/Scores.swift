@@ -413,6 +413,346 @@ extension BDLTeam {
     }
 }
 
+// MARK: - BDL box-score synthesis
+//
+// BDL's `/stats?game_ids[]={id}` ships a flat array of per-player
+// lines. The existing `BoxScoreView` consumes a team-nested shape:
+// `BoxScoreResponse.teams.{away,home}.players: [String: BoxPlayer]`
+// keyed by `"ID{id}"`, plus `batters: [Int]` / `pitchers: [Int]`
+// for ordering. The synthesizer below reshapes BDL's response into
+// that legacy form, using BDL player ids in place of MLBAM ids
+// throughout (the player-resolve path on tap routes through
+// `BallDontLieClient.resolveBDLPlayerId` to hop back to MLBAM).
+//
+// Notes on what doesn't come through:
+//   • `seasonStats` — BDL's per-game `/stats` endpoint doesn't
+//     carry season-to-date AVG / OPS / ERA. Left nil; the view
+//     degrades to "—" / "(0)" placeholders for those cells.
+//   • Inningss-pitched format — BDL ships true decimal (5.667);
+//     the view expects baseball notation ("5.2"). Converted at
+//     synth time so visuals match the legacy path.
+
+/// "5.667" → "5.2" (5 ⅔ innings in baseball notation). Round to
+/// whole + outs/3. nil passes through.
+func ipToBaseballNotation(_ ip: Double?) -> String? {
+    guard let ip else { return nil }
+    let whole = Int(ip)
+    let frac  = ip - Double(whole)
+    let outs  = Int((frac * 3).rounded())
+    if outs == 3 { return "\(whole + 1).0" }
+    return "\(whole).\(outs)"
+}
+
+extension Array where Element == BDLPlayerStat {
+    /// Project a BDL `/stats` response into the legacy
+    /// `BoxScoreResponse` shape. `game.{away,home}Team` tells us
+    /// which side each per-player row belongs to (we compare
+    /// `BDLPlayerStat.teamName` against BDL's team names). `lineup`
+    /// is optional — when supplied, batting + pitching order is
+    /// driven off `BDLGameLineup.battingOrder`; without it, rows
+    /// are ordered by their position in the BDL response (a usable
+    /// fallback since BDL ships starters first).
+    func toBoxScoreResponse(
+        awayTeam: BDLTeam,
+        homeTeam: BDLTeam,
+        lineup: [BDLGameLineup] = [],
+    ) -> BoxScoreResponse {
+        // Bucket the per-player lines by team. BDL's `team_name`
+        // is the short franchise name ("Yankees" / "Mariners");
+        // BDLTeam.name carries the same value, so a direct equality
+        // check works.
+        var awayStats: [BDLPlayerStat] = []
+        var homeStats: [BDLPlayerStat] = []
+        for s in self {
+            switch s.teamName {
+            case awayTeam.name: awayStats.append(s)
+            case homeTeam.name: homeStats.append(s)
+            default:
+                // BDL is occasionally inconsistent (display name vs.
+                // short name). Fall back to a substring check —
+                // close enough for the box-score split.
+                if let tn = s.teamName, awayTeam.displayName.contains(tn) {
+                    awayStats.append(s)
+                } else if let tn = s.teamName, homeTeam.displayName.contains(tn) {
+                    homeStats.append(s)
+                }
+            }
+        }
+
+        let lineupAway = lineup.filter { $0.team.id == awayTeam.id }
+        let lineupHome = lineup.filter { $0.team.id == homeTeam.id }
+
+        return BoxScoreResponse(teams: BoxScoreTeams(
+            away: buildBoxScoreTeam(team: awayTeam, stats: awayStats, lineup: lineupAway),
+            home: buildBoxScoreTeam(team: homeTeam, stats: homeStats, lineup: lineupHome),
+        ))
+    }
+}
+
+// MARK: - BDL live-feed synthesis
+//
+// The existing live card consumes a `LiveFeedResponse` (rich
+// nested shape from MLB Stats API's `/feed/live`). BDL exposes the
+// same information across two endpoints: `/plays` (sequential play
+// stream) and `/plate_appearances` (per-PA state with base
+// runners). The synthesizer below combines them into a minimal
+// LiveFeedResponse the live card and live-situation card can
+// consume unchanged.
+//
+// What does and doesn't come through:
+//   • currentInning / isTopInning / balls / strikes / outs — from
+//     the latest play.
+//   • current batter / pitcher / batterId / pitcherId — from the
+//     latest play; names parsed out of the "Start Batter/Pitcher"
+//     text ("Quintana pitches to McCutchen").
+//   • Base runners — from the latest plate appearance. We only
+//     need the presence-or-absence flag (the existing UI gates a
+//     filled diamond cell on `offense.first != nil`, not on the
+//     runner's name); use a stub PlayerInfo with id 0 when the
+//     BDL PA flag is true.
+//   • Last play description — from the latest play's `text`.
+//   • Linescore innings + run-totals — NOT synthesized here.
+//     Stays nil; the box-score view's separate `Game.linescore`
+//     read (populated by `BDLGame.toGame`) drives those rows.
+
+extension Array where Element == BDLPlay {
+    /// Build a `LiveFeedResponse` from the BDL play stream plus
+    /// the matching plate-appearance stream. Returns nil if the
+    /// play stream is empty (game hasn't started, or BDL hasn't
+    /// recorded any plays yet).
+    func toLiveFeedResponse(plateAppearances: [BDLPlateAppearance]) -> LiveFeedResponse? {
+        guard let lastPlay = self.last else { return nil }
+        let lastPA = plateAppearances.last
+
+        let (pitcherName, batterName) = parseLastMatchupText(in: self)
+
+        let inningType = lastPlay.inningType ?? ""
+        let isTop = inningType.lowercased() == "top"
+        let ordinal = ordinalLabel(lastPlay.inning)
+
+        // `inningState` semantics from the MLB Stats API: "Top",
+        // "Middle", "Bottom", "End", "Final". BDL doesn't ship a
+        // direct equivalent — map from inning type with a fallback
+        // for "End Inning" play types so the existing isGameOver
+        // check (compares to "final"/"game over") still has a hint
+        // when the inning rolls over.
+        let inningState: String
+        switch lastPlay.type {
+        case "End Inning":               inningState = "End"
+        case "Middle Inning":             inningState = "Middle"
+        default:                          inningState = isTop ? "Top" : "Bottom"
+        }
+
+        let runnerStub: (Bool?) -> PlayerInfo? = { flag in
+            flag == true ? PlayerInfo(id: 0, fullName: "") : nil
+        }
+
+        let linescore = LiveLinescore(
+            currentInning:        lastPlay.inning,
+            currentInningOrdinal: ordinal,
+            inningHalf:           lastPlay.inningType,
+            inningState:          inningState,
+            isTopInning:          isTop,
+            balls:                lastPlay.balls,
+            strikes:              lastPlay.strikes,
+            outs:                 lastPlay.outs,
+            offense: LiveOffense(
+                batter: lastPlay.batterId.map { PlayerInfo(id: $0, fullName: batterName ?? "—") },
+                onDeck: nil,
+                inHole: nil,
+                first:  runnerStub(lastPA?.runnerOnFirst),
+                second: runnerStub(lastPA?.runnerOnSecond),
+                third:  runnerStub(lastPA?.runnerOnThird),
+            ),
+            defense: LiveDefense(
+                pitcher: lastPlay.pitcherId.map { PlayerInfo(id: $0, fullName: pitcherName ?? "—") },
+                catcher: nil,
+            ),
+            innings:          nil,
+            teams:            nil,
+            scheduledInnings: 9,
+        )
+
+        let currentPlay = LivePlay(
+            result: LivePlayResult(
+                description: lastPlay.text,
+                event:       lastPlay.type,
+            ),
+            about: LivePlayAbout(
+                halfInning: lastPlay.inningType,
+                inning:     lastPlay.inning,
+            ),
+            matchup: LivePlayMatchup(
+                batter:  lastPlay.batterId.map { PlayerInfo(id: $0, fullName: batterName ?? "") },
+                pitcher: lastPlay.pitcherId.map { PlayerInfo(id: $0, fullName: pitcherName ?? "") },
+            ),
+            count: LivePlayCount(
+                balls:   lastPlay.balls,
+                strikes: lastPlay.strikes,
+                outs:    lastPlay.outs,
+            ),
+            playEvents: nil,
+        )
+
+        return LiveFeedResponse(liveData: LiveData(
+            linescore: linescore,
+            plays:     LivePlays(currentPlay: currentPlay),
+            boxscore:  nil,
+        ))
+    }
+}
+
+/// Parse "Pitcher pitches to Batter" from the latest "Start
+/// Batter/Pitcher" play. Returns (pitcher, batter) — either side
+/// nil if the format doesn't match (mid-PA replay events, or a
+/// future BDL wording change).
+private func parseLastMatchupText(
+    in plays: [BDLPlay],
+) -> (pitcher: String?, batter: String?) {
+    // Walk backwards to find the most recent matchup intro.
+    for play in plays.reversed() where play.type == "Start Batter/Pitcher" {
+        guard let text = play.text else { continue }
+        if let r = text.range(of: " pitches to ") {
+            let pitcher = String(text[..<r.lowerBound]).trimmingCharacters(in: .whitespaces)
+            let batter  = String(text[r.upperBound...]).trimmingCharacters(in: .whitespaces)
+            return (pitcher.isEmpty ? nil : pitcher,
+                    batter.isEmpty  ? nil : batter)
+        }
+    }
+    return (nil, nil)
+}
+
+/// 1 → "1st", 2 → "2nd", 3 → "3rd", 4-20 → "4th".."20th",
+/// 21+ → standard English suffix rules.
+private func ordinalLabel(_ n: Int) -> String {
+    let last2 = n % 100
+    let last1 = n % 10
+    let suffix: String
+    if (11...13).contains(last2) {
+        suffix = "th"
+    } else {
+        switch last1 {
+        case 1: suffix = "st"
+        case 2: suffix = "nd"
+        case 3: suffix = "rd"
+        default: suffix = "th"
+        }
+    }
+    return "\(n)\(suffix)"
+}
+
+/// Heuristic for whether a `BDLPlayerStat` row is a pitching line.
+/// True when the pitcher fields are populated and the batter ones
+/// are not (or are zero) — pure pitchers. Two-way players who
+/// batted AND pitched (Ohtani) get two rows in BDL's response, one
+/// flagged each way, so this gate doesn't accidentally hide them.
+private func bdlStatIsPitcher(_ s: BDLPlayerStat) -> Bool {
+    s.ip != nil
+}
+
+private func buildBoxScoreTeam(
+    team: BDLTeam,
+    stats: [BDLPlayerStat],
+    lineup: [BDLGameLineup],
+) -> BoxScoreTeam {
+    var players: [String: BoxPlayer] = [:]
+    var battingOrder: [Int] = []
+    var pitchingOrder: [Int] = []
+
+    // Build BoxPlayer records keyed by "ID{bdl_id}" so the existing
+    // dict-lookup pattern in BoxScoreView (`team.players["ID\(id)"]`)
+    // keeps working unchanged.
+    for s in stats {
+        let pid = s.player.id
+        let key = "ID\(pid)"
+        let isPitcher = bdlStatIsPitcher(s)
+        // Avg / OPS / ERA are season-to-date and not shipped on
+        // /stats — leave nil so the view renders the "—" fallback.
+        let batting: BoxBatting? = isPitcher && (s.atBats ?? 0) == 0 ? nil : BoxBatting(
+            atBats:               s.atBats,
+            runs:                 s.runs,
+            hits:                 s.hits,
+            doubles:              s.doubles,
+            triples:              s.triples,
+            homeRuns:             s.hr,
+            rbi:                  s.rbi,
+            baseOnBalls:          s.bb,
+            strikeOuts:           s.k,
+            stolenBases:          s.stolenBases,
+            caughtStealing:       s.caughtStealing,
+            hitByPitch:           s.hitByPitch,
+            sacFlies:             s.sacFlies,
+            sacBunts:             nil,
+            groundIntoDoublePlay: nil,
+            avg:                  nil,
+            ops:                  nil,
+        )
+        let pitching: BoxPitching? = !isPitcher ? nil : BoxPitching(
+            inningsPitched: ipToBaseballNotation(s.ip),
+            hits:           s.pHits,
+            runs:           s.pRuns,
+            earnedRuns:     s.er,
+            baseOnBalls:    s.pBb,
+            strikeOuts:     s.pK,
+            homeRuns:       s.pHr,
+            era:            nil,
+            wins:           s.wins,
+            losses:         s.losses,
+            saves:          s.saves,
+        )
+        players[key] = BoxPlayer(
+            person:             PlayerInfo(id: pid, fullName: s.player.fullName),
+            position:           BoxPosition(abbreviation: s.player.position),
+            stats:              BoxStats(batting: batting, pitching: pitching),
+            seasonStats:        nil,
+            stats_battingOrder: nil,
+        )
+        // Track ordering: pitchers separate from batters. Two-way
+        // players appear in both arrays under the same id, which
+        // mirrors what the MLB Stats API does for Ohtani.
+        if isPitcher { pitchingOrder.append(pid) }
+        if batting != nil && (s.atBats ?? 0) > 0 || (s.bb ?? 0) > 0 || (s.plateAppearances ?? 0) > 0 {
+            battingOrder.append(pid)
+        }
+    }
+
+    // Apply lineup ordering when available — `battingOrder` ints
+    // come back as e.g. 100 / 200 / 300 (slot * 100), so a numeric
+    // sort gives the actual lineup sequence.
+    if !lineup.isEmpty {
+        let battersByLineup = lineup
+            .filter { ($0.battingOrder ?? 0) > 0 }
+            .sorted { ($0.battingOrder ?? 0) < ($1.battingOrder ?? 0) }
+            .map(\.player.id)
+        let pitchersByLineup = lineup
+            .filter { $0.isProbablePitcher == true || ($0.position ?? "").lowercased() == "p" || ($0.position ?? "").lowercased() == "sp" }
+            .map(\.player.id)
+
+        // Intersect with the stats-bearing ids so we don't list
+        // pinch-hitters who didn't actually appear, etc.
+        let appeared = Set(battingOrder + pitchingOrder)
+        let orderedBatters  = battersByLineup.filter  { appeared.contains($0) }
+        let orderedPitchers = pitchersByLineup.filter { appeared.contains($0) }
+
+        // Append any actual appearances the lineup didn't cover
+        // (pinch hitters, bullpen pieces) so they still render.
+        let lineupBatterSet  = Set(orderedBatters)
+        let lineupPitcherSet = Set(orderedPitchers)
+        let extraBatters  = battingOrder.filter  { !lineupBatterSet.contains($0) }
+        let extraPitchers = pitchingOrder.filter { !lineupPitcherSet.contains($0) }
+
+        battingOrder  = orderedBatters  + extraBatters
+        pitchingOrder = orderedPitchers + extraPitchers
+    }
+
+    return BoxScoreTeam(
+        team:     team.toTeamInfo(),
+        players:  players,
+        batters:  battingOrder,
+        pitchers: pitchingOrder,
+    )
+}
+
 extension BDLGame {
     /// Project to the legacy `Game` shape so existing views can
     /// consume BDL results without code changes. `gamePk` is set

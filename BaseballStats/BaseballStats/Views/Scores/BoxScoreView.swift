@@ -20,60 +20,135 @@ final class BoxScoreViewModel: ObservableObject {
     let game: Game
 
     @Published var boxScore: BoxScoreResponse?
-    /// Populated only for live games — refreshed every 30s by the
-    /// live-feed polling loop. The box-score subtree of the live
-    /// feed is projected into `boxScore` so the same render path
-    /// works for both modes.
+    /// Live-game synthesized snapshot — Stage C of the BDL migration
+    /// will populate this from BDL plays + plate appearances.
+    /// Stage A (this commit) leaves it nil for live games; the
+    /// view falls back to "—" placeholders in the live situation
+    /// card until Stage C lands.
     @Published var live: LiveFeedResponse?
     @Published var isLoading = false
     @Published var error: String?
 
-    private let mlb: MLBStatsAPIClient
-    private let api: APIClient
+    private let bdl: BallDontLieClient
     private var liveTask: Task<Void, Never>?
 
-    init(game: Game, mlb: MLBStatsAPIClient = .shared, api: APIClient = .shared) {
+    init(game: Game, bdl: BallDontLieClient = .shared) {
         self.game = game
-        self.mlb = mlb
-        self.api = api
+        self.bdl = bdl
     }
 
     func load() async {
         isLoading = true
         error = nil
+        // Same fetch for live + final — BDL's `/stats?game_ids[]=`
+        // returns per-player lines whether the game is in progress
+        // or done. For live games we ALSO pull the plays + PA
+        // streams in parallel; the synthesizer in Scores.swift
+        // produces the legacy `LiveFeedResponse` shape the live
+        // situation card consumes.
         if game.phase == .live {
-            await loadLive()
+            async let boxTask  = loadBoxScore()
+            async let liveTask = loadLiveState()
+            _ = await boxTask
+            _ = await liveTask
         } else {
-            await loadStatic()
+            await loadBoxScore()
         }
         isLoading = false
     }
 
-    private func loadStatic() async {
+    private func loadLiveState() async {
+        async let playsTask = bdl.getPlays(gameId: game.gamePk)
+        async let pasTask   = bdl.getPlateAppearances(gameId: game.gamePk)
+        guard let plays = try? await playsTask else {
+            live = nil
+            return
+        }
+        let pas = (try? await pasTask) ?? []
+        live = plays.toLiveFeedResponse(plateAppearances: pas)
+    }
+
+    private func loadBoxScore() async {
         do {
-            boxScore = try await mlb.getBoxScore(gamePk: game.gamePk)
+            // BDL game IDs round-trip through `game.gamePk` — the
+            // Phase 2 `BDLGame.toGame()` projection put the BDL id
+            // there. Fetch the per-player stat lines AND the
+            // starting lineup in parallel; the lineup drives the
+            // batting/pitching order in the synthesizer.
+            async let statsTask  = bdl.getGameStats(gameId: game.gamePk)
+            async let lineupTask = bdl.getGameLineup(gameId: game.gamePk)
+            let stats  = try await statsTask
+            let lineup = (try? await lineupTask) ?? []
+
+            // Resolve which BDL team object pairs with each side of
+            // the game. The `Game.teams.{away,home}.team` carries
+            // MLBAM ids (set by `BDLTeam.toTeamInfo()`); reverse-
+            // lookup via the static map to get the BDL team object
+            // shape the synthesizer needs.
+            guard let (awayBDL, homeBDL) = bdlTeams(forGame: game, fromStats: stats) else {
+                self.error = "Couldn't resolve teams for game \(game.gamePk)."
+                boxScore = nil
+                return
+            }
+            boxScore = stats.toBoxScoreResponse(
+                awayTeam: awayBDL,
+                homeTeam: homeBDL,
+                lineup:   lineup,
+            )
         } catch {
             self.error = error.localizedDescription
             boxScore = nil
         }
     }
 
-    private func loadLive() async {
-        do {
-            let feed = try await mlb.getLiveFeed(gamePk: game.gamePk)
-            live = feed
-            if let teams = feed.liveData.boxscore?.teams {
-                boxScore = BoxScoreResponse(teams: teams)
+    /// Re-derive `BDLTeam` objects for the two sides from the stats
+    /// payload (each row carries its team's `BDLTeam` via the player
+    /// nesting). Falls back to building minimal stub `BDLTeam`s
+    /// from the game's MLBAM-keyed info if BDL stats don't carry a
+    /// usable nested team — unlikely on real responses, but the
+    /// synthesizer still needs valid inputs.
+    private func bdlTeams(
+        forGame game: Game, fromStats stats: [BDLPlayerStat],
+    ) -> (away: BDLTeam, home: BDLTeam)? {
+        // Try to pull from the stats nesting: any row's `player.team`
+        // is the BDLTeam for that player's side this game.
+        let byName: [String: BDLTeam] = Dictionary(
+            stats.compactMap { s -> (String, BDLTeam)? in
+                guard let t = s.player.team else { return nil }
+                return (t.name, t)
+            },
+            uniquingKeysWith: { a, _ in a },
+        )
+
+        // Resolve our game's home/away team names → BDL teams.
+        let awayName = game.teams.away.team.abbreviation ?? game.teams.away.team.name
+        let homeName = game.teams.home.team.abbreviation ?? game.teams.home.team.name
+
+        // Names ship differently depending on path — try a few
+        // shapes (BDL `name` is the short franchise, `abbreviation`
+        // is "NYY" etc., `displayName` is "New York Yankees").
+        func resolve(_ ref: String, mlbId: Int) -> BDLTeam? {
+            if let t = byName[ref] { return t }
+            return byName.values.first { t in
+                t.abbreviation == ref || t.displayName == ref || t.name == ref
+            } ?? byName.values.first { t in
+                // Final fallback: match by BDL → MLBAM hop.
+                mlbTeamId(forBDLId: t.id) == mlbId
             }
-        } catch {
-            self.error = error.localizedDescription
-            live = nil
         }
+
+        guard let away = resolve(awayName, mlbId: game.teams.away.team.id),
+              let home = resolve(homeName, mlbId: game.teams.home.team.id) else {
+            return nil
+        }
+        return (away, home)
     }
 
-    /// Starts a 30s polling loop for live games. Idempotent + self-
-    /// terminating when `liveData.linescore.inningState` reports
-    /// "Final" / "Game Over". Caller stops it on disappear.
+    /// 30s polling loop for live games — re-fetches the box score
+    /// (per-player stat lines + linescore inputs) and the live
+    /// situation streams (plays + PAs → live card data). Self-
+    /// terminates when the synthesized inningState reports the
+    /// game has gone final.
     func startLivePolling() {
         guard game.phase == .live else { return }
         stopLivePolling()
@@ -81,7 +156,10 @@ final class BoxScoreViewModel: ObservableObject {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 30 * 1_000_000_000)
                 guard !Task.isCancelled, let self else { return }
-                await self.loadLive()
+                async let boxTask  = self.loadBoxScore()
+                async let liveTask = self.loadLiveState()
+                _ = await boxTask
+                _ = await liveTask
                 let state = self.live?.liveData.linescore?.inningState?.lowercased()
                 if state == "final" || state == "game over" { return }
             }
@@ -93,11 +171,12 @@ final class BoxScoreViewModel: ObservableObject {
         liveTask = nil
     }
 
-    /// Resolve an MLB-id-keyed player → our backend's PlayerSearchResult.
-    /// Returns nil if the player isn't in our DB; the caller surfaces
-    /// that as "Profile not available."
-    func playerProfile(mlbId: Int) async -> PlayerSearchResult? {
-        (try? await api.getPlayerByMlbId(mlbId)) ?? nil
+    /// Resolve a BDL-id-keyed player → our backend's PlayerSearchResult.
+    /// Returns nil if the player isn't BDL-mapped in our DB (the
+    /// bootstrap walk is still adding bdl_ids to historical rows);
+    /// caller surfaces that as "Profile not available."
+    func playerProfile(bdlId: Int) async -> PlayerSearchResult? {
+        (try? await bdl.resolveBDLPlayerId(bdlId)) ?? nil
     }
 }
 
@@ -675,23 +754,26 @@ struct BoxScoreView: View {
     // MARK: - Navigation
 
     private func tapPlayer(id: Int, name: String) {
+        // `id` is a BDL player id (BoxScoreResponse synthesized
+        // from BDL keys players by BDL id, not MLBAM). The resolve
+        // call hops through our backend's `/players/by-bdl-id/{id}`
+        // to land on an MLBAM-keyed PlayerSearchResult that the
+        // existing profile destination can consume.
         guard pendingPlayerLookup == nil else { return }
         pendingPlayerLookup = id
         navigationError = nil
         Task { @MainActor in
-            let player = await vm.playerProfile(mlbId: id)
+            let player = await vm.playerProfile(bdlId: id)
             pendingPlayerLookup = nil
             if let player {
                 path.append(player)
                 return
             }
-            // 404 → player isn't in our DB yet. The nightly batch
-            // adds new call-ups from bref + MLB Stats API on its
-            // next run, so the toast wording sets the expectation
-            // ("yet") rather than implying permanent unavailability.
+            // 404 → player's bdl_id isn't mapped in our DB yet.
+            // The mapping bootstrap walk is still extending into
+            // historical rows; toast wording reflects that ("yet")
+            // rather than implying permanent unavailability.
             navigationError = "\(name)'s profile isn't available yet."
-            // Auto-dismiss the toast after a few seconds so a
-            // stranded message doesn't persist on the box score.
             try? await Task.sleep(nanoseconds: 3_000_000_000)
             if navigationError != nil { navigationError = nil }
         }

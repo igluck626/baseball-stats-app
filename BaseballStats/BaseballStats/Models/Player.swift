@@ -62,6 +62,12 @@ struct PlayerSearchResult: Codable, Identifiable, Hashable {
     /// search-result rows (where role is still inferred client-side
     /// from the fetched career thresholds).
     let is_pitcher: Bool?
+    /// BallDontLie player id, stamped by the backend bootstrap walk.
+    /// Used by the player-profile live-stats overlay to filter
+    /// BDL `/stats?game_ids[]=` responses to a single player.
+    /// Nil for historical players the mapping bootstrap hasn't
+    /// reached yet — caller falls back to "no overlay" in that case.
+    let bdl_id: Int?
 
     var id: Int { player_id }
 
@@ -75,7 +81,7 @@ struct PlayerSearchResult: Codable, Identifiable, Hashable {
         case birth_year, birth_month, birth_day
         case birth_city, birth_state, birth_country
         case debut, final_game, birthdate, headshot_url, is_hof, hof_year
-        case is_pitcher
+        case is_pitcher, bdl_id
     }
 }
 

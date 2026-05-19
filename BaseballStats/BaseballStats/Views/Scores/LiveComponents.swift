@@ -9,9 +9,15 @@
 //
 //  The view model owns its own 30-second poll loop so consumers can
 //  drop it in with `@StateObject` and forget about lifecycle —
-//  `.task { await vm.start(gamePk:) }` kicks off the initial fetch
-//  and timer; the timer self-cancels when the response shows the
-//  game has gone final.
+//  `.task { await vm.start(gameId:) }` kicks off the initial fetch
+//  and timer; the timer self-cancels when the play stream shows the
+//  game has finished (last play type == "End of Game").
+//
+//  Backed by BallDontLie's `/plays` + `/plate_appearances` streams
+//  (Phase 3 of the MLB-Stats-API → BDL migration). The two streams
+//  are synthesized into a legacy `LiveFeedResponse` via the
+//  extension in `Scores.swift` so the live UI doesn't need to
+//  branch on the data source.
 //
 
 import Combine
@@ -25,24 +31,24 @@ final class LiveFeedViewModel: ObservableObject {
     @Published var error: String?
 
     private var task: Task<Void, Never>?
-    private let api: MLBStatsAPIClient
+    private let bdl: BallDontLieClient
 
-    init(api: MLBStatsAPIClient = .shared) {
-        self.api = api
+    init(bdl: BallDontLieClient = .shared) {
+        self.bdl = bdl
     }
 
     /// One-shot fetch + start a 30s polling loop. Idempotent — if
     /// the loop is already running it cancels the old one first so
-    /// changing gamePk (rare, but possible across re-mounts) doesn't
+    /// changing gameId (rare, but possible across re-mounts) doesn't
     /// leak a stale poller.
-    func start(gamePk: Int) async {
+    func start(gameId: Int) async {
         stop()
-        await fetch(gamePk: gamePk)
+        await fetch(gameId: gameId)
         task = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 30 * 1_000_000_000)
                 guard !Task.isCancelled, let self else { return }
-                await self.fetch(gamePk: gamePk)
+                await self.fetch(gameId: gameId)
                 // Stop polling once the game is final — no point
                 // burning network on a frozen response.
                 if self.isGameOver { return }
@@ -55,21 +61,29 @@ final class LiveFeedViewModel: ObservableObject {
         task = nil
     }
 
-    private func fetch(gamePk: Int) async {
+    private func fetch(gameId: Int) async {
         do {
-            live = try await api.getLiveFeed(gamePk: gamePk)
+            // Fetch the play and PA streams in parallel; combine
+            // via the synthesizer in Scores.swift to produce a
+            // legacy LiveFeedResponse the UI already knows.
+            async let playsTask = bdl.getPlays(gameId: gameId)
+            async let pasTask   = bdl.getPlateAppearances(gameId: gameId)
+            let plays = try await playsTask
+            let pas   = (try? await pasTask) ?? []
+            live  = plays.toLiveFeedResponse(plateAppearances: pas)
             error = nil
         } catch {
             self.error = error.localizedDescription
         }
     }
 
-    /// True iff the linescore reports no live inning state — i.e. the
-    /// game finished between the last poll and this one. Used to
-    /// terminate the polling loop.
+    /// True once the synthesized linescore signals the game is
+    /// done — the synthesizer maps BDL's "End Inning"/"End of Game"
+    /// hints into the legacy `inningState` field where this getter
+    /// expects them.
     private var isGameOver: Bool {
         let state = live?.liveData.linescore?.inningState?.lowercased()
-        return state == nil || state == "final" || state == "game over"
+        return state == "final" || state == "game over"
     }
 }
 

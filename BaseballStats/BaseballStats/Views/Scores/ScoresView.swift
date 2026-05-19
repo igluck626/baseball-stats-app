@@ -857,7 +857,7 @@ private struct LiveGameCard: View {
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
         .shadow(color: .black.opacity(0.06), radius: 6, x: 0, y: 2)
         .contentShape(Rectangle())
-        .task { await feed.start(gamePk: game.gamePk) }
+        .task { await feed.start(gameId: game.gamePk) }
         .onDisappear { feed.stop() }
     }
 

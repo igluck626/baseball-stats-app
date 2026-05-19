@@ -159,7 +159,8 @@ private extension String {
             headshot_url: nil,
             is_hof: false,
             hof_year: nil,
-            is_pitcher: nil
+            is_pitcher: nil,
+            bdl_id: nil
         ))
         PlayerSearchResultRow(player: .init(
             player_id: 110849,
@@ -182,7 +183,8 @@ private extension String {
             headshot_url: nil,
             is_hof: true,
             hof_year: 1936,
-            is_pitcher: nil
+            is_pitcher: nil,
+            bdl_id: nil
         ))
     }
     .listStyle(.insetGrouped)

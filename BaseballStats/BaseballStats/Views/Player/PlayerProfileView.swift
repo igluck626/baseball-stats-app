@@ -3619,7 +3619,8 @@ final class CurrentSeasonRanksViewModel: ObservableObject {
             headshot_url: "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/660271/headshot/67/current",
             is_hof: false,
             hof_year: nil,
-            is_pitcher: nil
+            is_pitcher: nil,
+            bdl_id: nil
         ))
     }
 }
