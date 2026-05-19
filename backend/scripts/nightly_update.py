@@ -161,14 +161,18 @@ def _safe_tb(br) -> int | None:
 
 
 def _build_current_batter_entry(
-    player_id: int, bdl_id: int | None, bwar_current, current_year: int,
+    player_id: int,
+    bdl_id: int | None,
+    bwar_current,
+    current_year: int,
+    bdl_stats: dict | None = None,
 ) -> dict | None:
-    """Build a player_seasons row for the current year. BallDontLie
-    is the primary source for standard counting + rate stats (once
-    the bdl_id mapping is populated); bwar provides the WAR/OPS+
-    layer. MLB Stats API is kept as a per-player fallback for rows
-    that haven't been BDL-mapped yet so we don't lose coverage on
-    unmapped historical players who happen to still be active.
+    """Build a player_seasons row for the current year. Caller is
+    expected to pre-fetch BDL stats in bulk (`_fetch_bdl_batch_stats`)
+    and pass the parsed dict in via `bdl_stats`. When the caller
+    didn't pre-fetch (single-player paths, ad-hoc /admin calls) the
+    function falls back to a per-player fetch — BDL when the row
+    has a `bdl_id`, MLB Stats API otherwise.
 
     Returns None when no source has any data for the player this
     season (off-roster minor leaguer, retired, etc.)."""
@@ -177,16 +181,11 @@ def _build_current_batter_entry(
         .sort_values("stint_ID")
     )
 
-    # BDL is the primary stats source once the player has a bdl_id.
-    # `_fetch_bdl_batter_stats` enforces the BDL rate-limit-friendly
-    # singular `season=` form and returns None gracefully on 404 /
-    # rate-limit / parse failure.
-    bdl_stats = None
-    if bdl_id is not None:
-        bdl_stats = data_service._fetch_bdl_batter_stats(bdl_id, current_year)
-    # Fallback to the MLB Stats API only when the row hasn't been
-    # mapped to BDL yet — temporary backstop until the bootstrap
-    # endpoint covers the long tail of historical players.
+    # Resolve the BDL stats payload. The fast path is "caller pre-
+    # fetched in a batch and passed it through" — single dict
+    # lookup, no HTTP. We only reach for an individual fetch when
+    # bdl_stats is None AND the row never got a bdl_id stamped
+    # (unmapped historical player still appearing in our DB).
     if bdl_stats is None and bdl_id is None:
         bdl_stats = data_service._fetch_mlb_stats_api_batter(player_id, current_year)
 
@@ -281,10 +280,28 @@ def _update_batters(current_year: int) -> tuple[int, int, list[int]]:
               .filter(_Player.player_id.in_(player_ids))
               .all()
         )
+    bdl_mapped = sum(1 for v in bdl_id_map.values() if v is not None)
     log.info(
         f"{len(player_ids)} batters in database "
-        f"({sum(1 for v in bdl_id_map.values() if v is not None)} BDL-mapped; "
-        f"batch size: {_BATCH_SIZE})"
+        f"({bdl_mapped} BDL-mapped; batch size: {_BATCH_SIZE})"
+    )
+
+    # Single bulk fetch of every BDL-mapped batter's season stats —
+    # collapses what used to be ~2,200 individual HTTP calls (each
+    # gated by a 0.22s sleep, hence the prior 89-minute runtime)
+    # into ~44 batched calls of 50 player_ids each. Unmapped rows
+    # still fall through to their per-player MLB Stats API fetch
+    # inside the build helper.
+    log.info("Pre-fetching BDL batter stats in batches...")
+    bdl_ids_to_fetch = sorted({v for v in bdl_id_map.values() if v is not None})
+    raw_batch = data_service._fetch_bdl_batch_stats(bdl_ids_to_fetch, current_year)
+    bdl_stats_by_bdl_id: dict[int, dict] = {
+        bdl_id: data_service._parse_bdl_batter_row(row)
+        for bdl_id, row in raw_batch.items()
+    }
+    log.info(
+        f"  BDL batter batch returned stats for {len(bdl_stats_by_bdl_id)}/"
+        f"{len(bdl_ids_to_fetch)} mapped players"
     )
 
     updated = 0
@@ -300,11 +317,14 @@ def _update_batters(current_year: int) -> tuple[int, int, list[int]]:
 
         for player_id in batch_ids:
             try:
+                bdl_id = bdl_id_map.get(player_id)
+                bdl_stats = bdl_stats_by_bdl_id.get(bdl_id) if bdl_id else None
                 entry = _build_current_batter_entry(
                     player_id,
-                    bdl_id_map.get(player_id),
+                    bdl_id,
                     bwar_current,
                     current_year,
+                    bdl_stats=bdl_stats,
                 )
                 if entry is None:
                     skipped += 1
@@ -313,9 +333,11 @@ def _update_batters(current_year: int) -> tuple[int, int, list[int]]:
             except Exception as exc:
                 log.error(f"batter {player_id} FAILED: {exc}")
                 failed.append(player_id)
-            # Sleep between BDL hits to stay under the 5/sec rate
-            # limit. The same value bootstrapping uses (≈4.5 req/sec).
-            _time.sleep(data_service._BDL_RATE_LIMIT_SLEEP)
+            # No per-player BDL sleep — the batch pre-fetch already
+            # paced the HTTP calls. MLB Stats API fallback (only for
+            # unmapped rows) doesn't have a documented rate limit;
+            # the small unmapped set won't burst hard enough to
+            # warrant throttling.
 
         if batch_entries:
             with connection.get_session() as db:
@@ -350,15 +372,16 @@ def _update_batters(current_year: int) -> tuple[int, int, list[int]]:
 # ---------------------------------------------------------------------------
 
 def _build_current_pitcher_entry(
-    player_id: int, bdl_id: int | None, bwar_current, current_year: int,
+    player_id: int,
+    bdl_id: int | None,
+    bwar_current,
+    current_year: int,
+    bdl_stats: dict | None = None,
 ) -> dict | None:
-    """Build a pitcher_seasons row for the current year. BDL is the
-    primary stats source (counting + rates + FIP + K/9); bwar is
-    the WAR / ERA+ layer. MLB Stats API is a per-player fallback
-    for rows that haven't been BDL-mapped yet. `_build_pitcher_
-    season_entry` does the actual merge — both BDL and the MLB API
-    fetchers normalize to the same key shape, so the call site
-    doesn't care which produced the override."""
+    """Build a pitcher_seasons row for the current year. Same shape
+    as the batter builder — caller passes pre-fetched BDL stats
+    in via `bdl_stats`; if absent and `bdl_id is None`, falls back
+    to a per-player MLB Stats API call."""
     player_war = (
         bwar_current[bwar_current["mlb_ID"] == float(player_id)]
         .sort_values("stint_ID")
@@ -366,9 +389,7 @@ def _build_current_pitcher_entry(
         else bwar_current[bwar_current["mlb_ID"] == float(player_id)]
     )
 
-    override = None
-    if bdl_id is not None:
-        override = data_service._fetch_bdl_pitcher_stats(bdl_id, current_year)
+    override = bdl_stats
     if override is None and bdl_id is None:
         override = data_service._fetch_mlb_stats_api_pitcher(player_id, current_year)
 
@@ -412,10 +433,25 @@ def _update_pitchers(current_year: int) -> tuple[int, int, list[int]]:
               .filter(_Pitcher.player_id.in_(pitcher_ids))
               .all()
         )
+    bdl_mapped = sum(1 for v in bdl_id_map.values() if v is not None)
     log.info(
         f"{len(pitcher_ids)} pitchers in database "
-        f"({sum(1 for v in bdl_id_map.values() if v is not None)} BDL-mapped; "
-        f"batch size: {_BATCH_SIZE})"
+        f"({bdl_mapped} BDL-mapped; batch size: {_BATCH_SIZE})"
+    )
+
+    # Single bulk fetch of every BDL-mapped pitcher — same pattern
+    # as the batter phase. ~1,500 pitchers in 50-id chunks = ~30
+    # batched calls, ~7 seconds of inter-batch sleep total.
+    log.info("Pre-fetching BDL pitcher stats in batches...")
+    bdl_ids_to_fetch = sorted({v for v in bdl_id_map.values() if v is not None})
+    raw_batch = data_service._fetch_bdl_batch_stats(bdl_ids_to_fetch, current_year)
+    bdl_stats_by_bdl_id: dict[int, dict] = {
+        bdl_id: data_service._parse_bdl_pitcher_row(row)
+        for bdl_id, row in raw_batch.items()
+    }
+    log.info(
+        f"  BDL pitcher batch returned stats for {len(bdl_stats_by_bdl_id)}/"
+        f"{len(bdl_ids_to_fetch)} mapped players"
     )
 
     updated = 0
@@ -428,11 +464,14 @@ def _update_pitchers(current_year: int) -> tuple[int, int, list[int]]:
 
         for player_id in batch_ids:
             try:
+                bdl_id = bdl_id_map.get(player_id)
+                bdl_stats = bdl_stats_by_bdl_id.get(bdl_id) if bdl_id else None
                 entry = _build_current_pitcher_entry(
                     player_id,
-                    bdl_id_map.get(player_id),
+                    bdl_id,
                     bwar_current,
                     current_year,
+                    bdl_stats=bdl_stats,
                 )
                 if entry is None:
                     skipped += 1
@@ -441,7 +480,7 @@ def _update_pitchers(current_year: int) -> tuple[int, int, list[int]]:
             except Exception as exc:
                 log.error(f"pitcher {player_id} FAILED: {exc}")
                 failed.append(player_id)
-            _time.sleep(data_service._BDL_RATE_LIMIT_SLEEP)
+            # No per-player BDL sleep — batch already paced it.
 
         if batch_entries:
             with connection.get_session() as db:

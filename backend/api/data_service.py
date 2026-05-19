@@ -1487,46 +1487,86 @@ def get_bdl_id_for_player(db, player_id: int, *, is_pitcher: bool) -> Optional[i
     return getattr(row, "bdl_id", None) if row else None
 
 
-def _fetch_bdl_batter_stats(bdl_id: int, year: int) -> Optional[dict]:
-    """Pull standard season batting stats for one player from
-    BallDontLie's `/season_stats?player_ids[]={bdl_id}&season={year}`.
-    Replacement for `_fetch_mlb_stats_api_batter` once the BDL ID
-    mapping is populated.
+def _fetch_bdl_batch_stats(
+    bdl_ids: list[int],
+    year: int,
+    batch_size: int = 50,
+) -> dict[int, dict]:
+    """Bulk-fetch season_stats for many players in one go. Splits
+    `bdl_ids` into chunks of `batch_size` and issues one HTTP
+    request per chunk (`player_ids[]=A&player_ids[]=B&...`),
+    paginating each chunk's response if BDL ships a next_cursor.
+    Returns `{bdl_id: raw_bdl_row}` — missing players (no current-
+    season activity) are simply absent from the dict.
 
-    Returns a dict in the same `player_seasons` shape the previous
-    MLB Stats API helper produced — keys it can't fill (PA, CS,
-    IBB, HBP, SF, SH, GIDP) are omitted so the upsert path doesn't
-    NULL them out. `WAR` is included only as a fallback for rows
-    where bwar didn't ship one (bwar remains the canonical WAR
-    source — its values overwrite any BDL WAR in the entry merge).
+    Rate-limit: one `_BDL_RATE_LIMIT_SLEEP` between chunks instead
+    of between players. A nightly walk of ~2,200 players collapses
+    from ~8 minutes of sleep to ~10 seconds.
 
-    Note: BDL's live API insists on the singular `season=` form
-    despite the OpenAPI spec saying `seasons[]=`. We send the
-    plural `player_ids[]` and singular `season` exactly as the
-    live endpoint expects."""
-    if bdl_id is None:
-        return None
-    try:
-        data = _bdl_get_json("season_stats", {
-            "player_ids[]": bdl_id,
-            "season":       year,
-        })
-    except Exception:
-        return None
-    rows = data.get("data") or []
-    if not rows:
-        return None
-    s = rows[0]
+    Note on the API: BDL's live endpoint accepts `player_ids[]` as
+    a repeated query param plus a singular `season=` (despite the
+    OpenAPI spec advertising `seasons[]`)."""
+    out: dict[int, dict] = {}
+    if not bdl_ids:
+        return out
 
+    # Deduplicate while preserving order; the same bdl_id appearing
+    # twice would waste a slot in the chunk.
+    seen: set[int] = set()
+    unique_ids: list[int] = []
+    for b in bdl_ids:
+        if b is None or b in seen:
+            continue
+        seen.add(b)
+        unique_ids.append(b)
+
+    for start in range(0, len(unique_ids), batch_size):
+        chunk = unique_ids[start:start + batch_size]
+        cursor: Optional[str] = None
+        while True:
+            params: dict = {
+                "player_ids[]": chunk,    # urlencoded with doseq=True
+                "season":       year,
+                "per_page":     100,
+            }
+            if cursor:
+                params["cursor"] = cursor
+            try:
+                data = _bdl_get_json("season_stats", params)
+            except Exception as exc:
+                log.warning(
+                    "BDL batch fetch failed for chunk starting at "
+                    "%d (size %d): %s", start, len(chunk), exc,
+                )
+                break
+            for row in data.get("data") or []:
+                pid = (row.get("player") or {}).get("id")
+                if pid is None or pid in out:
+                    continue
+                try:
+                    out[int(pid)] = row
+                except (TypeError, ValueError):
+                    continue
+            cursor = (data.get("meta") or {}).get("next_cursor")
+            if not cursor:
+                break
+        # Sleep between chunks, not between players.
+        if start + batch_size < len(unique_ids):
+            time.sleep(_BDL_RATE_LIMIT_SLEEP)
+
+    return out
+
+
+def _parse_bdl_batter_row(s: dict) -> dict:
+    """Normalize one BDL season_stats row to the `player_seasons`
+    field shape. Keys BDL doesn't carry (PA, CS, IBB, HBP, SF, SH,
+    GIDP) are omitted so the upsert path doesn't NULL them out.
+    TB is recomputed locally from H/2B/3B/HR for consistency with
+    the rest of the pipeline."""
     h  = _to_int(s.get("batting_h"))     or 0
     d2 = _to_int(s.get("batting_2b"))    or 0
     d3 = _to_int(s.get("batting_3b"))    or 0
     hr = _to_int(s.get("batting_hr"))    or 0
-
-    # Compute TB locally to stay consistent with the rest of the
-    # pipeline (BDL ships batting_tb as well, but recomputing from
-    # the same row's components avoids a class of "TB doesn't equal
-    # H+2B+3B+HR" rounding artifacts).
     return {
         "G":       _to_int(s.get("batting_gp")),
         "AB":      _to_int(s.get("batting_ab")),
@@ -1548,42 +1588,13 @@ def _fetch_bdl_batter_stats(bdl_id: int, year: int) -> Optional[dict]:
     }
 
 
-def _fetch_bdl_pitcher_stats(bdl_id: int, year: int) -> Optional[dict]:
-    """Pitcher counterpart to `_fetch_bdl_batter_stats`. Same
-    /season_stats endpoint; maps the `pitching_*` and `fielding_fip`
-    columns into our `pitcher_seasons` field shape.
-
-    Keys it can't fill (R, IBB, HBP, BK, WP, BFP, BAOpp, FIP) are
-    omitted. `WAR` is included only as a fallback for bwar-missing
-    rows; bwar's value wins in the entry merge.
-
-    FIP is NOT pulled from BDL: their `fielding_fip` field is a
-    fielding metric (we saw it equal to IP for pitchers and to a
-    weird ~185 for Trout — definitely not pitching FIP). The
-    `_build_pitcher_season_entry` override step instead computes
-    FIP from the standard component formula using the HR / BB / SO
-    counts in this dict — equivalent to bref's FIP when HBP is 0
-    (which it always is on this code path since BDL doesn't ship
-    HBP).
-
-    ERA / WHIP / K/9 are rounded to 2 decimal places at the
-    boundary — BDL ships these with 4-decimal precision which
-    leaks into the API response and onto the iOS career table
-    if we don't trim here."""
-    if bdl_id is None:
-        return None
-    try:
-        data = _bdl_get_json("season_stats", {
-            "player_ids[]": bdl_id,
-            "season":       year,
-        })
-    except Exception:
-        return None
-    rows = data.get("data") or []
-    if not rows:
-        return None
-    s = rows[0]
-
+def _parse_bdl_pitcher_row(s: dict) -> dict:
+    """Normalize one BDL season_stats row to the `pitcher_seasons`
+    field shape. ERA / WHIP / K/9 are rounded to 2 dp at this
+    boundary — BDL ships those with 4-decimal precision. FIP is
+    NOT taken from BDL (their `fielding_fip` field is a fielding
+    metric, not pitching FIP) — `_build_pitcher_season_entry`
+    derives FIP from the HR/BB/SO components instead."""
     return {
         "G":      _to_int(s.get("pitching_gp")),
         "GS":     _to_int(s.get("pitching_gs")),
@@ -1609,6 +1620,27 @@ def _round_or_none(v: Optional[float], digits: int) -> Optional[float]:
     through so callers can chain `_round_or_none(_safe_rate(...), 2)`
     without losing the missing-data sentinel."""
     return round(v, digits) if v is not None else None
+
+
+def _fetch_bdl_batter_stats(bdl_id: int, year: int) -> Optional[dict]:
+    """One-player convenience wrapper around `_fetch_bdl_batch_stats`
+    + `_parse_bdl_batter_row`. Preserved for ad-hoc callers that
+    only need a single player — the nightly pipeline uses the
+    batch path directly to amortize the HTTP overhead."""
+    if bdl_id is None:
+        return None
+    batch = _fetch_bdl_batch_stats([bdl_id], year)
+    row = batch.get(int(bdl_id))
+    return _parse_bdl_batter_row(row) if row else None
+
+
+def _fetch_bdl_pitcher_stats(bdl_id: int, year: int) -> Optional[dict]:
+    """Pitcher counterpart to `_fetch_bdl_batter_stats`."""
+    if bdl_id is None:
+        return None
+    batch = _fetch_bdl_batch_stats([bdl_id], year)
+    row = batch.get(int(bdl_id))
+    return _parse_bdl_pitcher_row(row) if row else None
 
 
 def fetch_bdl_teams() -> dict:

@@ -321,24 +321,22 @@ def _nightly_phase(
     get_ids,
     save_seasons,
     build_entry,
+    parse_bdl_row,
     phase_name: str,
     bio_model,
     current_year: int,
 ) -> None:
     """One phase of the nightly update (batters or pitchers).
 
-    Per-player BDL lookups drive the current-season counting + rate
-    stats. bwar provides the full-history WAR / OPS+ layer in a
-    single bulk fetch. `build_entry` is the script-module function
-    (`nightly_update._build_current_batter_entry` /
-    `_build_current_pitcher_entry`) which knows how to merge the
-    two and falls back to MLB Stats API when a row lacks a bdl_id.
-    `bio_model` is `Player` or `Pitcher` — used to pre-load the
-    bdl_id map in one query so the per-player loop doesn't issue
-    a SELECT for every row's mapping.
+    Pre-fetches BDL season_stats for every BDL-mapped player in a
+    single batched HTTP run, then iterates players locally. bwar
+    provides the full-history WAR / OPS+ layer. `build_entry` is
+    the script-module function which merges the two and falls back
+    to MLB Stats API for rows without a `bdl_id`. `bio_model` is
+    `Player` / `Pitcher` (used for the bdl_id-map SELECT);
+    `parse_bdl_row` is `data_service._parse_bdl_batter_row` /
+    `_parse_bdl_pitcher_row` (different normalization per side).
     """
-    import time as _time
-
     with _nightly_lock:
         _nightly_state.update(
             phase=phase_name, updated=0, skipped=0, failed=0, total=0
@@ -360,13 +358,26 @@ def _nightly_phase(
               .all()
         )
 
+    # Bulk BDL fetch — same call shape as the cron-mode nightly's
+    # _update_batters / _update_pitchers helpers. Collapses the
+    # per-player HTTP loop into ~one request per 50 player_ids.
+    bdl_ids_to_fetch = sorted({v for v in bdl_id_map.values() if v is not None})
+    raw_batch = data_service._fetch_bdl_batch_stats(bdl_ids_to_fetch, current_year)
+    bdl_stats_by_bdl_id: dict[int, dict] = {
+        bdl_id: parse_bdl_row(row)
+        for bdl_id, row in raw_batch.items()
+    }
+
     with _nightly_lock:
         _nightly_state["total"] = len(ids)
 
     for player_id in ids:
         try:
+            bdl_id = bdl_id_map.get(player_id)
+            bdl_stats = bdl_stats_by_bdl_id.get(bdl_id) if bdl_id else None
             entry = build_entry(
-                player_id, bdl_id_map.get(player_id), bwar_current, current_year,
+                player_id, bdl_id, bwar_current, current_year,
+                bdl_stats=bdl_stats,
             )
             if entry is None:
                 with _nightly_lock:
@@ -379,8 +390,9 @@ def _nightly_phase(
         except Exception:
             with _nightly_lock:
                 _nightly_state["failed"] += 1
-        # Rate-limit between BDL hits to stay below the 5/sec ceiling.
-        _time.sleep(data_service._BDL_RATE_LIMIT_SLEEP)
+        # No per-player BDL sleep — the batch fetch already paced
+        # the HTTP. MLB Stats API fallback (only for unmapped rows)
+        # is rare and doesn't enforce a strict rate limit.
 
 
 def _run_nightly_update() -> None:
@@ -407,6 +419,7 @@ def _run_nightly_update() -> None:
             crud.get_all_player_ids,
             crud.save_player_seasons,
             nightly_update._build_current_batter_entry,
+            data_service._parse_bdl_batter_row,
             "batters",
             Player,
             current_year,
@@ -425,6 +438,7 @@ def _run_nightly_update() -> None:
             crud.get_all_pitcher_ids,
             crud.save_pitcher_seasons,
             nightly_update._build_current_pitcher_entry,
+            data_service._parse_bdl_pitcher_row,
             "pitchers",
             Pitcher,
             current_year,
