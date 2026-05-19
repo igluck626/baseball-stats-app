@@ -1047,6 +1047,30 @@ def admin_repair_null_stats():
     return data_service.repair_null_stats(current_year)
 
 
+@app.post("/admin/backfill-player-history/{player_id}")
+def admin_backfill_player_history(
+    player_id: int,
+    year_from: int = Query(..., ge=1871, le=2100, description="Start year (inclusive)"),
+    year_to:   int = Query(..., ge=1871, le=2100, description="End year (inclusive)"),
+):
+    """Targeted historical backfill for one player. Pulls MLB Stats
+    API season splits for each year in [year_from, year_to] and
+    writes a `player_seasons` / `pitcher_seasons` row per year,
+    stamped with the team they played for that season.
+
+    Motivating case: Riley Greene (682985) — debuted 2022 but his
+    `players.bbref_id` is null, so the Lahman bridge never attached
+    his 2022–2025 batting rows. This works around that without
+    requiring the bref_id to be populated first. Also bootstraps a
+    missing bio when the player has never been seen before
+    (IL-listed rookies who skip the active-roster discovery)."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    if year_to < year_from:
+        raise HTTPException(status_code=400, detail="year_to must be >= year_from")
+    return data_service.backfill_player_seasons(player_id, year_from, year_to)
+
+
 @app.post("/admin/repair-ip-decimals")
 def admin_repair_ip_decimals():
     """One-shot fix for pitcher_seasons IP values stored in

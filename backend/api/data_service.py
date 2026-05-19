@@ -372,7 +372,16 @@ def _latest_team_info(
     if not rows:
         return None, None
     latest = max(rows, key=lambda r: r.year or 0)
-    return latest.team, _resolve_team_code(latest.team, latest.league)
+    team = latest.team
+    # bref / bwar can emit multi-stint aggregate rows for traded
+    # players ("Minnesota,New York" or "MIN,NYY") where the team
+    # column lists every stint joined by commas in chronological
+    # order. The last piece is the player's most recent club —
+    # take it so display + code resolution stay sensible instead
+    # of bailing to NULL on the multi-team string.
+    if team and "," in team:
+        team = team.split(",")[-1].strip()
+    return team, _resolve_team_code(team, latest.league)
 
 
 def search_player(name: str) -> list[dict]:
@@ -1445,9 +1454,57 @@ def sync_player_current_team(player_id: int) -> dict:
         }
 
     year = _current_year()
+    bio_created: Optional[str] = None
+    cleared_last_season = False
     with connection.get_session() as db:
         in_pitchers = crud.get_pitcher(db, player_id) is not None
         in_players  = crud.get_player(db, player_id)  is not None
+
+        # Bootstrap a missing bio when /people/{id} confirms an
+        # active MLB roster slot but the player has no row in
+        # either bio table. Same shape as the Phase 5 roster
+        # discovery — keeps single-player one-shot fixes working
+        # for fresh rookies (Eury Pérez 691587 was the motivating
+        # case: current Marlins pitcher whose mlb_id collides
+        # with the retired 1990 OF in bref/Lahman).
+        if not in_pitchers and not in_players:
+            position = (p.get("primaryPosition") or {}).get("abbreviation") or ""
+            is_pitcher = position == "P"
+            bio = fetch_mlb_player_bio(player_id)
+            if bio is None:
+                return {
+                    "player_id": player_id,
+                    "fullName":  p.get("fullName"),
+                    "status":    "bio_fetch_failed",
+                }
+            if bio.get("mlb_debut") is None:
+                bio["mlb_debut"] = year
+            if is_pitcher:
+                crud.save_pitcher(db, bio)
+                in_pitchers = True
+                bio_created = "pitcher"
+            else:
+                crud.save_player(db, bio)
+                in_players = True
+                bio_created = "batter"
+
+        # Clear stale mlb_last_season — the player is on an active
+        # roster right now, so any "retired in YYYY" value from
+        # Lahman's `finalGame` is wrong. Connor Phillips (683175)
+        # was the motivating case: Lahman stamped 2023 from his
+        # late-season debut, then the column was never cleared
+        # when he returned in 2026.
+        if in_pitchers:
+            pit_row = crud.get_pitcher(db, player_id)
+            if pit_row is not None and pit_row.mlb_last_season is not None:
+                pit_row.mlb_last_season = None
+                cleared_last_season = True
+        if in_players:
+            bat_row = crud.get_player(db, player_id)
+            if bat_row is not None and bat_row.mlb_last_season is not None:
+                bat_row.mlb_last_season = None
+                cleared_last_season = True
+
         actions = _apply_team_to_season_rows(
             db,
             player_id=player_id,
@@ -1456,16 +1513,18 @@ def sync_player_current_team(player_id: int) -> dict:
             create_pitcher=in_pitchers,
             create_batter=in_players,
         )
-        if actions:
+        if actions or bio_created or cleared_last_season:
             db.commit()
 
     return {
-        "player_id":  player_id,
-        "fullName":   p.get("fullName"),
-        "new_team":   lahman_code,
-        "team_name":  name,
-        "actions":    actions,
-        "status":     "ok" if actions else "already_current",
+        "player_id":           player_id,
+        "fullName":            p.get("fullName"),
+        "new_team":            lahman_code,
+        "team_name":           name,
+        "actions":             actions,
+        "bio_created":         bio_created,
+        "cleared_last_season": cleared_last_season,
+        "status":              "ok" if (actions or bio_created or cleared_last_season) else "already_current",
     }
 
 
@@ -1553,6 +1612,12 @@ def sync_all_player_teams_from_rosters(current_year: int) -> dict:
         # API stat path.
         "pitchers_bio:created":    0,
         "players_bio:created":     0,
+        # `mlb_last_season` cleared on existing bios when the
+        # player shows up on an active roster — Lahman's
+        # `finalGame` year sticks around even after a player
+        # returns to MLB (Connor Phillips case).
+        "pitchers_bio:reactivated": 0,
+        "players_bio:reactivated":  0,
     }
     bio_failed: list[int] = []
     failed_teams: list[str] = []
@@ -1610,6 +1675,22 @@ def sync_all_player_teams_from_rosters(current_year: int) -> dict:
                         crud.save_player(db, bio)
                         in_players = True
                         counts["players_bio:created"] += 1
+                else:
+                    # Existing bio + active-roster slot → clear any
+                    # stale `mlb_last_season` Lahman left behind
+                    # when the player came back from a gap year.
+                    # `save_pitcher` / `save_player` won't overwrite
+                    # non-null fields with null, so do it directly.
+                    if in_pitchers:
+                        pit_row = crud.get_pitcher(db, pid)
+                        if pit_row is not None and pit_row.mlb_last_season is not None:
+                            pit_row.mlb_last_season = None
+                            counts["pitchers_bio:reactivated"] += 1
+                    if in_players:
+                        bat_row = crud.get_player(db, pid)
+                        if bat_row is not None and bat_row.mlb_last_season is not None:
+                            bat_row.mlb_last_season = None
+                            counts["players_bio:reactivated"] += 1
                 actions = _apply_team_to_season_rows(
                     db,
                     player_id=pid,
@@ -1776,6 +1857,195 @@ def repair_ip_decimals(current_year: int) -> dict:
         # is doing the right thing without dumping every row.
         "examples":      repaired[:10],
     }
+
+
+def backfill_player_seasons(player_id: int, year_from: int, year_to: int) -> dict:
+    """Targeted historical backfill — pulls season splits from the
+    MLB Stats API for each year in [year_from, year_to] and writes
+    a `player_seasons` / `pitcher_seasons` row per year.
+
+    Motivating case: Riley Greene (682985) debuted 2022 but his
+    `players` row has `bbref_id=null`, so the Lahman bridge never
+    attached his 2022–2025 batting rows. This endpoint backfills
+    them without needing the bref_id mapping.
+
+    Also bootstraps a missing bio (same shape as
+    `sync_player_current_team`'s discovery branch) when the
+    player_id resolves to a real MLB person but has no row in
+    `players` / `pitchers` yet — covers IL-listed rookies like
+    Domingo Gonzalez (682445) who don't show on any active roster.
+
+    The MLB Stats API season block has `team`, so each year's row
+    gets stamped with the Lahman team code for that year. WAR /
+    OPS+ / FIP and other bwar-only fields are omitted (the upsert
+    path is column-additive, so any pre-existing values stay).
+    """
+    if not connection.db_available():
+        return {"status": "no_db"}
+
+    counts: dict[str, int] = {
+        "player_seasons:written":  0,
+        "pitcher_seasons:written": 0,
+        "pitchers_bio:created":    0,
+        "players_bio:created":     0,
+    }
+    missing_years: list[int] = []
+
+    with connection.get_session() as db:
+        in_pitchers = crud.get_pitcher(db, player_id) is not None
+        in_players  = crud.get_player(db, player_id)  is not None
+
+        if not in_pitchers and not in_players:
+            bio = fetch_mlb_player_bio(player_id)
+            if bio is None:
+                return {
+                    "status":    "bio_fetch_failed",
+                    "player_id": player_id,
+                }
+            position = bio.get("position") or ""
+            is_pitcher = position == "P"
+            if is_pitcher:
+                crud.save_pitcher(db, bio)
+                in_pitchers = True
+                counts["pitchers_bio:created"] += 1
+            else:
+                crud.save_player(db, bio)
+                in_players = True
+                counts["players_bio:created"] += 1
+            db.commit()
+
+    for year in range(year_from, year_to + 1):
+        wrote_any = False
+        if in_players:
+            entry = _build_backfill_batter_entry(player_id, year)
+            if entry is not None:
+                with connection.get_session() as db:
+                    crud.save_player_seasons(db, player_id, [entry])
+                counts["player_seasons:written"] += 1
+                wrote_any = True
+        if in_pitchers:
+            entry = _build_backfill_pitcher_entry(player_id, year)
+            if entry is not None:
+                with connection.get_session() as db:
+                    crud.save_pitcher_seasons(db, player_id, [entry])
+                counts["pitcher_seasons:written"] += 1
+                wrote_any = True
+        if not wrote_any:
+            missing_years.append(year)
+
+    return {
+        "status":        "ok",
+        "player_id":     player_id,
+        "year_from":     year_from,
+        "year_to":       year_to,
+        "counts":        counts,
+        "missing_years": missing_years,
+    }
+
+
+def _build_backfill_batter_entry(player_id: int, year: int) -> Optional[dict]:
+    """Build a `player_seasons` row from one year's MLB Stats API
+    hitting splits. Used by `backfill_player_seasons`. Returns
+    None when the player has no batting activity for that year
+    (off-year, minors-only, didn't exist yet, etc.)."""
+    try:
+        data = _mlb_get_json(
+            f"people/{player_id}/stats",
+            {"stats": "season", "season": year, "group": "hitting"},
+        )
+    except Exception:
+        return None
+    stats_blocks = data.get("stats") or []
+    if not stats_blocks:
+        return None
+    splits = stats_blocks[0].get("splits") or []
+    if not splits:
+        return None
+    split = splits[0]
+    s = split.get("stat") or {}
+    team_id = (split.get("team") or {}).get("id")
+    team_code = _MLB_TEAM_ID_TO_LAHMAN_TEAM_ID.get(team_id) if team_id else None
+
+    h  = _to_int(s.get("hits"))     or 0
+    d2 = _to_int(s.get("doubles"))  or 0
+    d3 = _to_int(s.get("triples"))  or 0
+    hr = _to_int(s.get("homeRuns")) or 0
+
+    entry: dict = {
+        "year":    year,
+        "G":       _to_int(s.get("gamesPlayed")),
+        "PA":      _to_int(s.get("plateAppearances")),
+        "AB":      _to_int(s.get("atBats")),
+        "R":       _to_int(s.get("runs")),
+        "H":       _to_int(s.get("hits")),
+        "doubles": _to_int(s.get("doubles")),
+        "triples": _to_int(s.get("triples")),
+        "HR":      _to_int(s.get("homeRuns")),
+        "RBI":     _to_int(s.get("rbi")),
+        "BB":      _to_int(s.get("baseOnBalls")),
+        "IBB":     _to_int(s.get("intentionalWalks")),
+        "SO":      _to_int(s.get("strikeOuts")),
+        "SB":      _to_int(s.get("stolenBases")),
+        "CS":      _to_int(s.get("caughtStealing")),
+        "HBP":     _to_int(s.get("hitByPitch")),
+        "SF":      _to_int(s.get("sacFlies")),
+        "SH":      _to_int(s.get("sacBunts")),
+        "GIDP":    _to_int(s.get("groundIntoDoublePlay")),
+        "TB":      h + d2 + 2 * d3 + 3 * hr,
+        "BA":      _safe_rate(s.get("avg")),
+        "OBP":     _safe_rate(s.get("obp")),
+        "SLG":     _safe_rate(s.get("slg")),
+        "OPS":     _safe_rate(s.get("ops")),
+    }
+    if team_code:
+        entry["team"] = team_code
+    return entry
+
+
+def _build_backfill_pitcher_entry(player_id: int, year: int) -> Optional[dict]:
+    """Pitcher counterpart to `_build_backfill_batter_entry`."""
+    try:
+        data = _mlb_get_json(
+            f"people/{player_id}/stats",
+            {"stats": "season", "season": year, "group": "pitching"},
+        )
+    except Exception:
+        return None
+    stats_blocks = data.get("stats") or []
+    if not stats_blocks:
+        return None
+    splits = stats_blocks[0].get("splits") or []
+    if not splits:
+        return None
+    split = splits[0]
+    s = split.get("stat") or {}
+    team_id = (split.get("team") or {}).get("id")
+    team_code = _MLB_TEAM_ID_TO_LAHMAN_TEAM_ID.get(team_id) if team_id else None
+
+    entry: dict = {
+        "year": year,
+        "G":    _to_int(s.get("gamesPlayed")),
+        "GS":   _to_int(s.get("gamesStarted")),
+        "W":    _to_int(s.get("wins")),
+        "L":    _to_int(s.get("losses")),
+        "SV":   _to_int(s.get("saves")),
+        "IP":   _ip_str_to_decimal(s.get("inningsPitched")),
+        "H":    _to_int(s.get("hits")),
+        "R":    _to_int(s.get("runs")),
+        "ER":   _to_int(s.get("earnedRuns")),
+        "HR":   _to_int(s.get("homeRuns")),
+        "BB":   _to_int(s.get("baseOnBalls")),
+        "IBB":  _to_int(s.get("intentionalWalks")),
+        "SO":   _to_int(s.get("strikeOuts")),
+        "HBP":  _to_int(s.get("hitByPitch")),
+        "BK":   _to_int(s.get("balks")),
+        "WP":   _to_int(s.get("wildPitches")),
+        "ERA":  _safe_rate(s.get("era")),
+        "WHIP": _safe_rate(s.get("whip")),
+    }
+    if team_code:
+        entry["team"] = team_code
+    return entry
 
 
 def _to_int(v) -> Optional[int]:
