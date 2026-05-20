@@ -230,9 +230,17 @@ final class BallDontLieClient: @unchecked Sendable {
     func getGameLineup(gameId: Int) async throws -> [BDLGameLineup] {
         let key = "game_lineup:\(gameId)"
         if let cached: [BDLGameLineup] = cachedValue(key) { return cached }
+        // BDL's /lineups endpoint silently ignores `game_id`
+        // (singular) and paginates the global lineup firehose —
+        // exact same trap as `/stats` had with the same param
+        // name. The plural array form `game_ids[]` is the one
+        // that actually filters. Verified by curl: singular
+        // returned 50 entries for completely different games;
+        // plural returned 20 entries (10 + 10) for the requested
+        // game's two teams.
         let items: [URLQueryItem] = [
-            URLQueryItem(name: "game_id",  value: String(gameId)),
-            URLQueryItem(name: "per_page", value: "100"),
+            URLQueryItem(name: "game_ids[]", value: String(gameId)),
+            URLQueryItem(name: "per_page",   value: "100"),
         ]
         let envelope: BDLDataEnvelope<BDLGameLineup> = try await fetch(
             path: "/mlb/v1/lineups", query: items,
