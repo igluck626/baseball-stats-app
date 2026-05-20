@@ -101,6 +101,7 @@ def _build_current_batter_entry(
     bwar_current,
     current_year: int,
     bdl_stats: dict | None = None,
+    mlb_debut: int | None = None,
 ) -> dict | None:
     """Build a player_seasons row for the current year. Caller is
     expected to pre-fetch BDL stats in bulk (`_fetch_bdl_batch_stats`)
@@ -110,7 +111,11 @@ def _build_current_batter_entry(
     has a `bdl_id`, MLB Stats API otherwise.
 
     Returns None when no source has any data for the player this
-    season (off-roster minor leaguer, retired, etc.)."""
+    season (off-roster minor leaguer, retired, etc.). `mlb_debut`
+    gates the unmapped-row warning — pre-2002 debuts predate BDL's
+    coverage window and will never have a bdl_id, so logging them
+    every nightly is pure noise. Modern (>=2002) debuts get the
+    warning because they SHOULD be mapped."""
     player_war = (
         bwar_current[bwar_current["mlb_ID"] == float(player_id)]
         .sort_values("stint_ID")
@@ -122,9 +127,15 @@ def _build_current_batter_entry(
     # Player keeps their last known DB values until they get
     # mapped via `/admin/build-bdl-player-mapping`.
     if bdl_stats is None and bdl_id is None:
-        log.warning(
-            f"  skipping batter {player_id} — no bdl_id mapped, stats not updated"
-        )
+        # Suppress the warning for pre-2002 debuts — those rows
+        # predate BDL's data coverage and will never get a bdl_id,
+        # so the warning was flooding the nightly log with
+        # thousands of useless lines. Modern players still log
+        # so a real mapping gap stays visible.
+        if mlb_debut is not None and mlb_debut >= 2002:
+            log.warning(
+                f"  skipping batter {player_id} — no bdl_id mapped, stats not updated"
+            )
         return None
 
     if player_war.empty and bdl_stats is None:
@@ -209,15 +220,19 @@ def _update_batters(current_year: int) -> tuple[int, int, list[int]]:
     data_service._store.pop("bwar_bat_all", None)
     gc.collect()
 
-    # Pre-load the bdl_id map in one query so the per-player loop
-    # doesn't issue a SELECT for each row's mapping.
+    # Pre-load the bdl_id + mlb_debut maps in one query so the
+    # per-player loop doesn't issue a SELECT for each row.
+    # `mlb_debut` is needed to gate the unmapped-row warning —
+    # pre-2002 debuts predate BDL coverage and skip silently.
     with connection.get_session() as db:
         player_ids = crud.get_all_player_ids(db)
-        bdl_id_map: dict[int, int | None] = dict(
-            db.query(_Player.player_id, _Player.bdl_id)
+        bio_rows = (
+            db.query(_Player.player_id, _Player.bdl_id, _Player.mlb_debut)
               .filter(_Player.player_id.in_(player_ids))
               .all()
         )
+        bdl_id_map: dict[int, int | None]    = {r.player_id: r.bdl_id    for r in bio_rows}
+        debut_map:  dict[int, int | None]    = {r.player_id: r.mlb_debut for r in bio_rows}
     bdl_mapped = sum(1 for v in bdl_id_map.values() if v is not None)
     log.info(
         f"{len(player_ids)} batters in database "
@@ -263,6 +278,7 @@ def _update_batters(current_year: int) -> tuple[int, int, list[int]]:
                     bwar_current,
                     current_year,
                     bdl_stats=bdl_stats,
+                    mlb_debut=debut_map.get(player_id),
                 )
                 if entry is None:
                     skipped += 1
@@ -315,11 +331,12 @@ def _build_current_pitcher_entry(
     bwar_current,
     current_year: int,
     bdl_stats: dict | None = None,
+    mlb_debut: int | None = None,
 ) -> dict | None:
     """Build a pitcher_seasons row for the current year. Same shape
     as the batter builder — caller passes pre-fetched BDL stats
-    in via `bdl_stats`; if absent and `bdl_id is None`, falls back
-    to a per-player MLB Stats API call."""
+    in via `bdl_stats`. `mlb_debut` gates the unmapped-row warning
+    so pre-2002 debuts (outside BDL coverage) skip silently."""
     player_war = (
         bwar_current[bwar_current["mlb_ID"] == float(player_id)]
         .sort_values("stint_ID")
@@ -329,9 +346,10 @@ def _build_current_pitcher_entry(
 
     override = bdl_stats
     if override is None and bdl_id is None:
-        log.warning(
-            f"  skipping pitcher {player_id} — no bdl_id mapped, stats not updated"
-        )
+        if mlb_debut is not None and mlb_debut >= 2002:
+            log.warning(
+                f"  skipping pitcher {player_id} — no bdl_id mapped, stats not updated"
+            )
         return None
 
     if player_war.empty and override is None:
@@ -369,11 +387,13 @@ def _update_pitchers(current_year: int) -> tuple[int, int, list[int]]:
 
     with connection.get_session() as db:
         pitcher_ids = crud.get_all_pitcher_ids(db)
-        bdl_id_map: dict[int, int | None] = dict(
-            db.query(_Pitcher.player_id, _Pitcher.bdl_id)
+        bio_rows = (
+            db.query(_Pitcher.player_id, _Pitcher.bdl_id, _Pitcher.mlb_debut)
               .filter(_Pitcher.player_id.in_(pitcher_ids))
               .all()
         )
+        bdl_id_map: dict[int, int | None] = {r.player_id: r.bdl_id    for r in bio_rows}
+        debut_map:  dict[int, int | None] = {r.player_id: r.mlb_debut for r in bio_rows}
     bdl_mapped = sum(1 for v in bdl_id_map.values() if v is not None)
     log.info(
         f"{len(pitcher_ids)} pitchers in database "
@@ -413,6 +433,7 @@ def _update_pitchers(current_year: int) -> tuple[int, int, list[int]]:
                     bwar_current,
                     current_year,
                     bdl_stats=bdl_stats,
+                    mlb_debut=debut_map.get(player_id),
                 )
                 if entry is None:
                     skipped += 1
