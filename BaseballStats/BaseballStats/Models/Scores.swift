@@ -688,10 +688,14 @@ private func buildBoxScoreTeam(
         let pid = s.player.id
         let key = "ID\(pid)"
         let isPitcher = bdlStatIsPitcher(s)
-        // BDL ships AVG / OBP / SLG / OPS / ERA as season-to-date
-        // values on the per-game stat row (Double form, e.g. 0.226
-        // for ".226"). The legacy BoxBatting / BoxPitching expect
-        // MLB-style strings — convert at this boundary.
+        // BDL's per-game stat row ships SEASON-to-date AVG / OBP /
+        // SLG / ERA on the same payload as the per-game counts.
+        // Legacy BoxBatting / BoxPitching split these across two
+        // blocks: `stats.batting` for the game's counts, and
+        // `seasonStats.batting` for the season rates the box-score
+        // view reads. Keep that split so `BoxScoreView` renders
+        // unchanged — game-side carries the integers, season-side
+        // carries the formatted rate strings.
         let batting: BoxBatting? = isPitcher && (s.atBats ?? 0) == 0 ? nil : BoxBatting(
             atBats:               s.atBats,
             runs:                 s.runs,
@@ -708,12 +712,8 @@ private func buildBoxScoreTeam(
             sacFlies:             s.sacFlies,
             sacBunts:             nil,
             groundIntoDoublePlay: nil,
-            avg:                  formatMLBRate(s.avg),
-            // BDL doesn't ship OPS directly; derive from
-            // OBP + SLG when both are present. Either nil → nil.
-            ops:                  formatMLBRate(
-                (s.obp != nil && s.slg != nil) ? (s.obp! + s.slg!) : nil
-            ),
+            avg:                  nil,  // → seasonStats.batting.avg
+            ops:                  nil,
         )
         let pitching: BoxPitching? = !isPitcher ? nil : BoxPitching(
             inningsPitched: ipToBaseballNotation(s.ip),
@@ -723,16 +723,51 @@ private func buildBoxScoreTeam(
             baseOnBalls:    s.pBb,
             strikeOuts:     s.pK,
             homeRuns:       s.pHr,
-            era:            formatMLBEra(s.era),
+            era:            nil,  // → seasonStats.pitching.era
             wins:           s.wins,
             losses:         s.losses,
             saves:          s.saves,
         )
+        // Season block — rate stats only. BDL doesn't ship OPS
+        // directly; derive from OBP + SLG when both are present.
+        let opsValue: Double? = (s.obp != nil && s.slg != nil) ? (s.obp! + s.slg!) : nil
+        let seasonBatting = BoxBatting(
+            atBats:               nil,
+            runs:                 nil,
+            hits:                 nil,
+            doubles:              nil,
+            triples:              nil,
+            homeRuns:             nil,
+            rbi:                  nil,
+            baseOnBalls:          nil,
+            strikeOuts:           nil,
+            stolenBases:          nil,
+            caughtStealing:       nil,
+            hitByPitch:           nil,
+            sacFlies:             nil,
+            sacBunts:             nil,
+            groundIntoDoublePlay: nil,
+            avg:                  formatMLBRate(s.avg),
+            ops:                  formatMLBRate(opsValue),
+        )
+        let seasonPitching = BoxPitching(
+            inningsPitched: nil,
+            hits:           nil,
+            runs:           nil,
+            earnedRuns:     nil,
+            baseOnBalls:    nil,
+            strikeOuts:     nil,
+            homeRuns:       nil,
+            era:            formatMLBEra(s.era),
+            wins:           nil,
+            losses:         nil,
+            saves:          nil,
+        )
         players[key] = BoxPlayer(
             person:             PlayerInfo(id: pid, fullName: s.player.fullName),
             position:           BoxPosition(abbreviation: s.player.position),
-            stats:              BoxStats(batting: batting, pitching: pitching),
-            seasonStats:        nil,
+            stats:              BoxStats(batting: batting,       pitching: pitching),
+            seasonStats:        BoxStats(batting: seasonBatting, pitching: seasonPitching),
             stats_battingOrder: nil,
         )
         // Track ordering: pitchers separate from batters. Two-way
