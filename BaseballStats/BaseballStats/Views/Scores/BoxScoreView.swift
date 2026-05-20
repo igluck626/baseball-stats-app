@@ -57,6 +57,17 @@ final class BoxScoreViewModel: ObservableObject {
     }
 
     func load() async {
+        // Diagnostic — trace which game id the view-model received.
+        // `Game.gamePk` carries the BDL game id post-migration
+        // (BDLGame.toGame puts it there); there's no separate
+        // bdlGameId field. Logging both team names so the operator
+        // can confirm the view-model wasn't handed a different
+        // game than the user tapped.
+        print(
+            "BoxScoreViewModel loading game — gamePk: \(game.gamePk)",
+            "(\(game.teams.away.team.abbreviation ?? "?") @",
+            "\(game.teams.home.team.abbreviation ?? "?"))"
+        )
         isLoading = true
         error = nil
         // Same fetch for live + final — BDL's `/stats?game_ids[]=`
@@ -155,6 +166,12 @@ final class BoxScoreViewModel: ObservableObject {
             // there. Fetch the per-player stat lines AND the
             // starting lineup in parallel; the lineup drives the
             // batting/pitching order in the synthesizer.
+            // Diagnostic — proves the id the view-model passes to
+            // BDL is the one the user actually tapped. If the
+            // Xcode console shows a different id here than the
+            // game card's, the bug is upstream in scores-list →
+            // navigation, not in the BDL client.
+            print("Calling getGameStats / getGameLineup with id: \(game.gamePk)")
             async let statsTask  = bdl.getGameStats(gameId: game.gamePk)
             async let lineupTask = bdl.getGameLineup(gameId: game.gamePk)
             let stats  = try await statsTask
