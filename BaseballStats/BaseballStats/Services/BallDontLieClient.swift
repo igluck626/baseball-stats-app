@@ -228,8 +228,20 @@ final class BallDontLieClient: @unchecked Sendable {
     /// players in lineup order rather than the arbitrary order
     /// `/stats` returns them.
     func getGameLineup(gameId: Int) async throws -> [BDLGameLineup] {
-        let key = "game_lineup:\(gameId)"
-        if let cached: [BDLGameLineup] = cachedValue(key) { return cached }
+        // Diagnostic: confirms the new game_ids[]-using code path
+        // is the one running in the deployed bundle. Remove once
+        // the lineup data confirms working in the box score UI.
+        print("getGameLineup using game_ids[]: \(gameId)")
+        // Cache temporarily disabled while we verify the
+        // `game_ids[]` plural-form fix lands cleanly. Once a
+        // post-deploy session confirms the lineup data is correct,
+        // re-enable the cached-read + storeInCache around this
+        // body. (Even disabled, the cache is in-memory only and
+        // would clear at app relaunch — so a "stale lineup
+        // surviving across install" symptom shouldn't be possible
+        // by construction. The disable is belt-and-suspenders.)
+        // let key = "game_lineup:\(gameId)"
+        // if let cached: [BDLGameLineup] = cachedValue(key) { return cached }
         // BDL's /lineups endpoint silently ignores `game_id`
         // (singular) and paginates the global lineup firehose —
         // exact same trap as `/stats` had with the same param
@@ -248,7 +260,7 @@ final class BallDontLieClient: @unchecked Sendable {
         // Lineups are set before first pitch and don't change
         // mid-game (pinch hitters/runners show up in /stats and
         // /plays, not /lineups). Long TTL is safe.
-        storeInCache(key, envelope.data, ttl: 300)
+        // storeInCache(key, envelope.data, ttl: 300)
         return envelope.data
     }
 
