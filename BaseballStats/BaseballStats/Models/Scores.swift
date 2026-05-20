@@ -36,6 +36,13 @@ struct Game: Codable, Identifiable, Hashable {
     let venue: Venue?
     let linescore: Linescore?
     let decisions: Decisions?
+    // Authoritative BDL team ids straight off `BDLGame.{away,home}_team.id`.
+    // `teams.{away,home}.team.id` carries the MLBAM id (good for logos);
+    // these carry the BDL id (good for joining against BDL lineup /
+    // stat rows). Optional so the struct remains decodable from older
+    // payloads that didn't include them.
+    let bdlAwayTeamId: Int?
+    let bdlHomeTeamId: Int?
 
     var id: Int { gamePk }
 
@@ -477,6 +484,8 @@ extension Array where Element == BDLPlayerStat {
     func toBoxScoreResponse(
         awayTeam: BDLTeam,
         homeTeam: BDLTeam,
+        awayBDLTeamId: Int? = nil,
+        homeBDLTeamId: Int? = nil,
         lineup: [BDLGameLineup] = [],
     ) -> BoxScoreResponse {
         // Bucket the per-player lines by team. BDL's `team_name`
@@ -501,8 +510,34 @@ extension Array where Element == BDLPlayerStat {
             }
         }
 
-        let lineupAway = lineup.filter { $0.team.id == awayTeam.id }
-        let lineupHome = lineup.filter { $0.team.id == homeTeam.id }
+        // Prefer the explicit BDL team ids handed in by the caller
+        // (sourced from `BDLGame.{away,home}_team.id` via `Game`'s
+        // `bdlAwayTeamId` / `bdlHomeTeamId` fields). Those are the
+        // authoritative join keys for the lineup payload. Fall back
+        // to the BDLTeam param's `.id` only when the caller didn't
+        // supply them — older paths might not.
+        let awayJoinId = awayBDLTeamId ?? awayTeam.id
+        let homeJoinId = homeBDLTeamId ?? homeTeam.id
+
+        let lineupAway = lineup.filter { $0.team.id == awayJoinId }
+        let lineupHome = lineup.filter { $0.team.id == homeJoinId }
+
+        // Diagnostic — surfaces both the BDLTeam metadata id (which
+        // can be 0 when the stats-payload resolver fell back to a
+        // stub) and the trusted join id used for the lineup filter.
+        // If the two disagree, the stub path fired but the trusted
+        // id rescued the filter; if the lineup counts are still
+        // zero, BDL's lineup payload has unexpected team ids.
+        print(
+            "Box score teams — away: \(awayTeam.abbreviation) "
+            + "(metaId:\(awayTeam.id), joinId:\(awayJoinId)), "
+            + "home: \(homeTeam.abbreviation) "
+            + "(metaId:\(homeTeam.id), joinId:\(homeJoinId))"
+        )
+        print(
+            "Lineup away count: \(lineupAway.count), "
+            + "home count: \(lineupHome.count)"
+        )
 
         return BoxScoreResponse(teams: BoxScoreTeams(
             away: buildBoxScoreTeam(team: awayTeam, stats: awayStats, lineup: lineupAway),
@@ -874,13 +909,15 @@ extension BDLGame {
             probablePitcher: nil,
         )
         return Game(
-            gamePk:    id,
-            gameDate:  date,
-            status:    status,
-            teams:     GameTeams(away: awayInfo, home: homeInfo),
-            venue:     venue.map { Venue(id: nil, name: $0) },
-            linescore: toLinescore(),
-            decisions: nil,
+            gamePk:        id,
+            gameDate:      date,
+            status:        status,
+            teams:         GameTeams(away: awayInfo, home: homeInfo),
+            venue:         venue.map { Venue(id: nil, name: $0) },
+            linescore:     toLinescore(),
+            decisions:     nil,
+            bdlAwayTeamId: awayTeam.id,
+            bdlHomeTeamId: homeTeam.id,
         )
     }
 

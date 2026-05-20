@@ -190,9 +190,11 @@ final class BoxScoreViewModel: ObservableObject {
             // but the batting/pitching tables work fine.
             let (awayBDL, homeBDL) = bdlTeams(forGame: game, fromStats: stats)
             boxScore = stats.toBoxScoreResponse(
-                awayTeam: awayBDL,
-                homeTeam: homeBDL,
-                lineup:   lineup,
+                awayTeam:      awayBDL,
+                homeTeam:      homeBDL,
+                awayBDLTeamId: game.bdlAwayTeamId,
+                homeBDLTeamId: game.bdlHomeTeamId,
+                lineup:        lineup,
             )
         } catch {
             self.error = error.localizedDescription
