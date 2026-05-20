@@ -697,7 +697,20 @@ def _update_gamelogs(current_year: int) -> dict:
     yesterday = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
     log.info(f"  BDL gamelogs target date: {yesterday}")
 
-    result = data_service.save_bdl_gamelogs_for_date(yesterday)
+    try:
+        result = data_service.save_bdl_gamelogs_for_date(yesterday)
+    except Exception as exc:
+        # Previously a thrown exception here cratered the whole
+        # nightly thread with only a one-line message and no
+        # traceback. Catch + log the stack so we can see *where*
+        # the BDL call hung (rate-limit, auth, DB upsert, etc.)
+        # without re-running locally.
+        log.exception(f"  BDL gamelogs phase FAILED: {exc}")
+        result = {
+            "status":   "error",
+            "bat_rows": 0, "pit_rows": 0, "games": 0,
+            "skipped_unmapped_players": 0,
+        }
     bat_rows = int(result.get("bat_rows") or 0)
     pit_rows = int(result.get("pit_rows") or 0)
     games    = int(result.get("games")    or 0)

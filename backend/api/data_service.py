@@ -3283,11 +3283,25 @@ def fetch_bdl_games_for_date(date_str: str,
             "dates[]":  date_str,
             "per_page": 100,
         })
-    except Exception:
+    except Exception as exc:
+        # Previously this silently returned [] — that masked any
+        # rate-limit / auth / network failure as "0 games today",
+        # which is indistinguishable from a quiet date. Log the
+        # full traceback so Railway shows what blew up.
+        log.exception(
+            "fetch_bdl_games_for_date(%s): /games request failed: %s",
+            date_str, exc,
+        )
         return []
-    games = data.get("data") or []
+    all_games = data.get("data") or []
     if finals_only:
-        games = [g for g in games if g.get("status") == "STATUS_FINAL"]
+        games = [g for g in all_games if g.get("status") == "STATUS_FINAL"]
+    else:
+        games = all_games
+    log.info(
+        "fetch_bdl_games_for_date(%s): %d games returned (%d final, %d other)",
+        date_str, len(all_games), len(games), len(all_games) - len(games),
+    )
     return games
 
 
@@ -3498,16 +3512,32 @@ def fetch_bdl_game_stats(
     bat_by_pid: dict[int, list[dict]] = {}
     pit_by_pid: dict[int, list[dict]] = {}
     cursor: Optional[int] = None
+    total_rows = 0
+    page = 0
     while True:
+        page += 1
         params: dict = {"game_id": game_id, "per_page": 100}
         if cursor is not None:
             params["cursor"] = cursor
+        log.info(
+            "fetch_bdl_game_stats(%d): fetching page %d (cursor=%s)",
+            game_id, page, cursor,
+        )
         try:
             data = _bdl_get_json("stats", params)
         except Exception as exc:
-            log.warning("BDL /stats fetch failed for game %d: %s", game_id, exc)
+            # Full traceback so a transient network / auth / rate-
+            # limit issue shows the failure point. Previously this
+            # was a one-line warning that just said "fetch failed"
+            # without the cause.
+            log.exception(
+                "BDL /stats fetch failed for game %d page %d: %s",
+                game_id, page, exc,
+            )
             break
-        for stat in data.get("data") or []:
+        rows = data.get("data") or []
+        total_rows += len(rows)
+        for stat in rows:
             bdl_pid = (stat.get("player") or {}).get("id")
             if bdl_pid is None:
                 continue
@@ -3523,6 +3553,13 @@ def fetch_bdl_game_stats(
         cursor = (data.get("meta") or {}).get("next_cursor")
         if cursor is None:
             break
+    log.info(
+        "fetch_bdl_game_stats(%d): %d total stat rows across %d page(s) "
+        "→ %d mapped batter rows, %d mapped pitcher rows",
+        game_id, total_rows, page,
+        sum(len(v) for v in bat_by_pid.values()),
+        sum(len(v) for v in pit_by_pid.values()),
+    )
     return bat_by_pid, pit_by_pid
 
 
@@ -3534,12 +3571,15 @@ def save_bdl_gamelogs_for_date(date_str: str) -> dict:
 
     Idempotent — the row PK (player_id, game_id) means re-running
     on a date that's already loaded is a no-op upsert."""
+    log.info("save_bdl_gamelogs_for_date: starting game log fetch for %s", date_str)
     if not connection.db_available():
+        log.warning("save_bdl_gamelogs_for_date(%s): DATABASE_URL not configured", date_str)
         return {"status": "no_db"}
     _get_bdl_key()
 
     games = fetch_bdl_games_for_date(date_str, finals_only=True)
     if not games:
+        log.info("save_bdl_gamelogs_for_date(%s): no final games to ingest", date_str)
         return {
             "status":      "ok",
             "date":        date_str,
@@ -3549,11 +3589,17 @@ def save_bdl_gamelogs_for_date(date_str: str) -> dict:
             "skipped_unmapped_players": 0,
         }
 
+    game_ids = [g.get("id") for g in games]
+    log.info(
+        "save_bdl_gamelogs_for_date(%s): %d final games: %s",
+        date_str, len(games), game_ids,
+    )
+
     with connection.get_session() as db:
         bdl_to_mlbam = _bdl_to_mlbam_map(db)
     log.info(
-        "BDL gamelogs %s: %d games, %d BDL→MLBAM mappings",
-        date_str, len(games), len(bdl_to_mlbam),
+        "save_bdl_gamelogs_for_date(%s): %d BDL→MLBAM mappings loaded",
+        date_str, len(bdl_to_mlbam),
     )
 
     total_bat = 0
@@ -3563,18 +3609,43 @@ def save_bdl_gamelogs_for_date(date_str: str) -> dict:
         game_id = g.get("id")
         if game_id is None:
             continue
+        log.info(
+            "save_bdl_gamelogs_for_date(%s): game %d/%d — fetching stats for game %s",
+            date_str, i + 1, len(games), game_id,
+        )
         ctx = _bdl_game_ctx(g, fallback_date=date_str)
-        bat_by_pid, pit_by_pid = fetch_bdl_game_stats(
-            int(game_id), bdl_to_mlbam, ctx,
+        try:
+            bat_by_pid, pit_by_pid = fetch_bdl_game_stats(
+                int(game_id), bdl_to_mlbam, ctx,
+            )
+        except Exception as exc:
+            log.exception(
+                "save_bdl_gamelogs_for_date(%s): game %s stat fetch raised: %s",
+                date_str, game_id, exc,
+            )
+            continue
+        log.info(
+            "save_bdl_gamelogs_for_date(%s): game %s yielded %d batter rows, "
+            "%d pitcher rows",
+            date_str, game_id,
+            sum(len(v) for v in bat_by_pid.values()),
+            sum(len(v) for v in pit_by_pid.values()),
         )
         if bat_by_pid or pit_by_pid:
-            with connection.get_session() as db:
-                for pid, rows in bat_by_pid.items():
-                    crud.save_batting_gamelogs(db, pid, rows)
-                    total_bat += len(rows)
-                for pid, rows in pit_by_pid.items():
-                    crud.save_pitching_gamelogs(db, pid, rows)
-                    total_pit += len(rows)
+            try:
+                with connection.get_session() as db:
+                    for pid, rows in bat_by_pid.items():
+                        crud.save_batting_gamelogs(db, pid, rows)
+                        total_bat += len(rows)
+                    for pid, rows in pit_by_pid.items():
+                        crud.save_pitching_gamelogs(db, pid, rows)
+                        total_pit += len(rows)
+            except Exception as exc:
+                log.exception(
+                    "save_bdl_gamelogs_for_date(%s): DB upsert for game %s "
+                    "raised: %s",
+                    date_str, game_id, exc,
+                )
         else:
             # Count games where every player was unmapped (or BDL
             # returned an empty stat sheet) so the operator sees
