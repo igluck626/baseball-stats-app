@@ -83,13 +83,15 @@ final class BoxScoreViewModel: ObservableObject {
             // Resolve which BDL team object pairs with each side of
             // the game. The `Game.teams.{away,home}.team` carries
             // MLBAM ids (set by `BDLTeam.toTeamInfo()`); reverse-
-            // lookup via the static map to get the BDL team object
-            // shape the synthesizer needs.
-            guard let (awayBDL, homeBDL) = bdlTeams(forGame: game, fromStats: stats) else {
-                self.error = "Couldn't resolve teams for game \(game.gamePk)."
-                boxScore = nil
-                return
-            }
+            // lookup via the static map gives us the BDL team
+            // shape the synthesizer needs. When resolution fails
+            // (BDL team id not in our hardcoded map, or stats
+            // payload lacks a usable nested team — both happen
+            // periodically as BDL adds new ids), we build stub
+            // BDLTeam objects from the Game's existing TeamInfo
+            // so the box score still renders. Logos may degrade
+            // but the batting/pitching tables work fine.
+            let (awayBDL, homeBDL) = bdlTeams(forGame: game, fromStats: stats)
             boxScore = stats.toBoxScoreResponse(
                 awayTeam: awayBDL,
                 homeTeam: homeBDL,
@@ -103,13 +105,15 @@ final class BoxScoreViewModel: ObservableObject {
 
     /// Re-derive `BDLTeam` objects for the two sides from the stats
     /// payload (each row carries its team's `BDLTeam` via the player
-    /// nesting). Falls back to building minimal stub `BDLTeam`s
-    /// from the game's MLBAM-keyed info if BDL stats don't carry a
-    /// usable nested team — unlikely on real responses, but the
-    /// synthesizer still needs valid inputs.
+    /// nesting). When resolution fails for either side, falls back
+    /// to a stub built from the game's existing `TeamInfo` so the
+    /// synthesizer always has inputs and the box-score view never
+    /// blocks on a team-lookup miss. Stubs lose the BDL `id` (set
+    /// to 0) — logos go through the MLBAM bridge instead, so they
+    /// still resolve via `Game.teams.{home,away}.team`.
     private func bdlTeams(
         forGame game: Game, fromStats stats: [BDLPlayerStat],
-    ) -> (away: BDLTeam, home: BDLTeam)? {
+    ) -> (away: BDLTeam, home: BDLTeam) {
         // Try to pull from the stats nesting: any row's `player.team`
         // is the BDLTeam for that player's side this game.
         let byName: [String: BDLTeam] = Dictionary(
@@ -120,7 +124,6 @@ final class BoxScoreViewModel: ObservableObject {
             uniquingKeysWith: { a, _ in a },
         )
 
-        // Resolve our game's home/away team names → BDL teams.
         let awayName = game.teams.away.team.abbreviation ?? game.teams.away.team.name
         let homeName = game.teams.home.team.abbreviation ?? game.teams.home.team.name
 
@@ -132,16 +135,35 @@ final class BoxScoreViewModel: ObservableObject {
             return byName.values.first { t in
                 t.abbreviation == ref || t.displayName == ref || t.name == ref
             } ?? byName.values.first { t in
-                // Final fallback: match by BDL → MLBAM hop.
                 mlbTeamId(forBDLId: t.id) == mlbId
             }
         }
 
-        guard let away = resolve(awayName, mlbId: game.teams.away.team.id),
-              let home = resolve(homeName, mlbId: game.teams.home.team.id) else {
-            return nil
-        }
+        let away = resolve(awayName, mlbId: game.teams.away.team.id)
+                   ?? Self.stubBDLTeam(from: game.teams.away.team)
+        let home = resolve(homeName, mlbId: game.teams.home.team.id)
+                   ?? Self.stubBDLTeam(from: game.teams.home.team)
         return (away, home)
+    }
+
+    /// Synthesize a minimal `BDLTeam` from a legacy `TeamInfo` for
+    /// the fallback path above. The id is left at 0 (BDL doesn't
+    /// know about this stub, by construction) — every other
+    /// downstream consumer reads `name`/`displayName`/`abbreviation`,
+    /// which we have, or hops through the MLBAM bridge for logos.
+    private static func stubBDLTeam(from info: TeamInfo) -> BDLTeam {
+        let abbr = info.abbreviation ?? String(info.name.prefix(3)).uppercased()
+        return BDLTeam(
+            id:                0,
+            slug:              nil,
+            abbreviation:      abbr,
+            displayName:       info.name,
+            shortDisplayName:  nil,
+            name:              info.name,
+            location:          "",
+            league:            nil,
+            division:          nil,
+        )
     }
 
     /// 30s polling loop for live games — re-fetches the box score

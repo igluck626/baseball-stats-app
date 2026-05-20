@@ -98,18 +98,84 @@ final class BallDontLieClient: @unchecked Sendable {
 
     // MARK: - Games
 
-    /// Games for one date. `date` is `yyyy-MM-dd` in the user's
-    /// local timezone (BDL filters by date, not UTC instant).
+    /// Games for one local date. `date` is `yyyy-MM-dd` in the
+    /// user's local calendar — but BDL buckets games by UTC start
+    /// time, not local date. A 7pm-ET game on Tuesday starts at
+    /// 23:00 UTC Tuesday (BDL bucket: Tuesday); a 7pm-PT game on
+    /// Tuesday starts at 02:00 UTC Wednesday (BDL bucket:
+    /// Wednesday). To return the MLB "Tuesday slate" we have to
+    /// query THREE UTC buckets and filter client-side by Eastern
+    /// local date (MLB schedules off ET).
     func getGames(date: String) async throws -> [BDLGame] {
         let key = "games:\(date)"
         if let cached: [BDLGame] = cachedValue(key) { return cached }
-        let items: [URLQueryItem] = [
-            URLQueryItem(name: "dates[]",  value: date),
-            URLQueryItem(name: "per_page", value: "100"),
-        ]
+
+        // Compute the ±1-day envelope around the requested date.
+        // We over-fetch by two UTC days so no edge case (early
+        // morning local opening on the next-day's slate, very
+        // late finals on the previous slate) can leak through.
+        let neighbors = Self.neighborDates(of: date)
+        var items: [URLQueryItem] = neighbors.map {
+            URLQueryItem(name: "dates[]", value: $0)
+        }
+        items.append(URLQueryItem(name: "per_page", value: "100"))
+
         let envelope: BDLDataEnvelope<BDLGame> = try await fetch(path: "/mlb/v1/games", query: items)
-        storeInCache(key, envelope.data, ttl: 30)
-        return envelope.data
+
+        // Client-side filter: keep only games whose Eastern-local
+        // start date matches the requested date. Dedupe by id in
+        // case BDL returns the same game under multiple buckets
+        // (shouldn't happen, but the union of three queries makes
+        // belt-and-suspenders cheap).
+        var seen: Set<Int> = []
+        var filtered: [BDLGame] = []
+        for g in envelope.data {
+            if seen.contains(g.id) { continue }
+            seen.insert(g.id)
+            if Self.easternDateString(for: g) == date {
+                filtered.append(g)
+            }
+        }
+        storeInCache(key, filtered, ttl: 30)
+        return filtered
+    }
+
+    /// `yyyy-MM-dd` for the day BEFORE and AFTER the input plus
+    /// the input itself, for the BDL multi-bucket query above.
+    /// Static + ISO-8601-shaped so the parse is unambiguous.
+    private static func neighborDates(of yyyymmdd: String) -> [String] {
+        let fmt = DateFormatter()
+        fmt.calendar = .init(identifier: .gregorian)
+        fmt.timeZone = .init(identifier: "UTC") ?? .current
+        fmt.locale   = .init(identifier: "en_US_POSIX")
+        fmt.dateFormat = "yyyy-MM-dd"
+        guard let day = fmt.date(from: yyyymmdd) else { return [yyyymmdd] }
+        let prev = day.addingTimeInterval(-86_400)
+        let next = day.addingTimeInterval( 86_400)
+        return [fmt.string(from: prev), yyyymmdd, fmt.string(from: next)]
+    }
+
+    /// Convert a BDL game's UTC start time to the date portion in
+    /// US Eastern time, which is what MLB's schedule uses to
+    /// assign a game to a calendar day. Falls back to the raw
+    /// string's date prefix if parsing fails (shouldn't, but
+    /// keeps the filter from dropping rows on a quirky payload).
+    private static let easternFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.calendar = .init(identifier: .gregorian)
+        f.timeZone = TimeZone(identifier: "America/New_York") ?? .current
+        f.locale   = .init(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
+
+    private static func easternDateString(for game: BDLGame) -> String? {
+        guard let parsed = game.startDate else {
+            // BDL response was unparseable — fall back to the
+            // UTC date prefix so the game still surfaces somewhere.
+            return String(game.date.prefix(10))
+        }
+        return easternFormatter.string(from: parsed)
     }
 
     /// Team-scoped schedule for one date. Used by the player-profile
