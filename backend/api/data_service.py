@@ -3516,7 +3516,13 @@ def fetch_bdl_game_stats(
     page = 0
     while True:
         page += 1
-        params: dict = {"game_id": game_id, "per_page": 100}
+        # BDL silently ignores `game_id` (singular) on /stats — the
+        # endpoint paginates the global firehose when sent that way,
+        # which is how we saw cursor reach 64,000+ for a single game.
+        # The plural array form is the one that actually filters
+        # (verified by curl test). `_bdl_get_json` urlencodes with
+        # doseq=True, so the list value expands to `game_ids[]=X`.
+        params: dict = {"game_ids[]": [game_id], "per_page": 100}
         if cursor is not None:
             params["cursor"] = cursor
         log.info(
