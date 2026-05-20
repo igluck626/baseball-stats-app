@@ -387,8 +387,13 @@ private func bdlStatusToAbstract(_ status: String) -> String {
     case "STATUS_FINAL":            return "Final"
     case "STATUS_IN_PROGRESS":      return "Live"
     case "STATUS_SCHEDULED":        return "Preview"
-    case "STATUS_POSTPONED":        return "Preview"  // shows as scheduled in our UI
-    case "STATUS_DELAYED":          return "Live"
+    // Delays + postponements aren't truly "live" — the live UI
+    // (LIVE badge, current-inning ordinal) doesn't apply. Treat
+    // them as scheduled so the card renders the start-time chrome
+    // instead of "LIVE · ?" with a question-mark inning.
+    case "STATUS_POSTPONED":        return "Preview"
+    case "STATUS_DELAYED":          return "Preview"
+    case "STATUS_RAIN_DELAY":       return "Preview"
     default:                        return "Preview"
     }
 }
@@ -441,6 +446,23 @@ func ipToBaseballNotation(_ ip: Double?) -> String? {
     let outs  = Int((frac * 3).rounded())
     if outs == 3 { return "\(whole + 1).0" }
     return "\(whole).\(outs)"
+}
+
+/// `0.226` → `".226"` — MLB convention for AVG / OBP / SLG / OPS
+/// is to drop the leading zero. nil passes through; values >= 1
+/// (impossible for AVG/OBP, possible for OPS) keep the leading
+/// digit ("1.034").
+func formatMLBRate(_ v: Double?) -> String? {
+    guard let v else { return nil }
+    let s = String(format: "%.3f", v)
+    return s.hasPrefix("0.") ? String(s.dropFirst()) : s
+}
+
+/// `2.41` → `"2.41"` — ERA keeps its leading digit. nil passes
+/// through.
+func formatMLBEra(_ v: Double?) -> String? {
+    guard let v else { return nil }
+    return String(format: "%.2f", v)
 }
 
 extension Array where Element == BDLPlayerStat {
@@ -666,8 +688,10 @@ private func buildBoxScoreTeam(
         let pid = s.player.id
         let key = "ID\(pid)"
         let isPitcher = bdlStatIsPitcher(s)
-        // Avg / OPS / ERA are season-to-date and not shipped on
-        // /stats — leave nil so the view renders the "—" fallback.
+        // BDL ships AVG / OBP / SLG / OPS / ERA as season-to-date
+        // values on the per-game stat row (Double form, e.g. 0.226
+        // for ".226"). The legacy BoxBatting / BoxPitching expect
+        // MLB-style strings — convert at this boundary.
         let batting: BoxBatting? = isPitcher && (s.atBats ?? 0) == 0 ? nil : BoxBatting(
             atBats:               s.atBats,
             runs:                 s.runs,
@@ -684,8 +708,12 @@ private func buildBoxScoreTeam(
             sacFlies:             s.sacFlies,
             sacBunts:             nil,
             groundIntoDoublePlay: nil,
-            avg:                  nil,
-            ops:                  nil,
+            avg:                  formatMLBRate(s.avg),
+            // BDL doesn't ship OPS directly; derive from
+            // OBP + SLG when both are present. Either nil → nil.
+            ops:                  formatMLBRate(
+                (s.obp != nil && s.slg != nil) ? (s.obp! + s.slg!) : nil
+            ),
         )
         let pitching: BoxPitching? = !isPitcher ? nil : BoxPitching(
             inningsPitched: ipToBaseballNotation(s.ip),
@@ -695,7 +723,7 @@ private func buildBoxScoreTeam(
             baseOnBalls:    s.pBb,
             strikeOuts:     s.pK,
             homeRuns:       s.pHr,
-            era:            nil,
+            era:            formatMLBEra(s.era),
             wins:           s.wins,
             losses:         s.losses,
             saves:          s.saves,

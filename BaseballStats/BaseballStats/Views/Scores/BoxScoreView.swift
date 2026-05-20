@@ -656,30 +656,32 @@ struct BoxScoreView: View {
         let homeRuns = rows.filter { ($0.stats?.batting?.homeRuns ?? 0) > 0 }
         if !doubles.isEmpty || !triples.isEmpty || !homeRuns.isEmpty {
             VStack(alignment: .leading, spacing: 2) {
+                // BDL's per-game `/stats` endpoint doesn't carry
+                // season-to-date 2B / 3B / HR totals, so the old
+                // "(12)" parenthetical would always render as
+                // "(0)". Drop it entirely — names only. If we
+                // ever fetch season totals out-of-band, this can
+                // grow back into the old format.
                 if !doubles.isEmpty {
                     notableLine(label: "2B",
-                                names: doubles.map { lastName($0.person.fullName) },
-                                seasonTotals: doubles.map { $0.seasonStats?.batting?.doubles ?? 0 })
+                                names: doubles.map { lastName($0.person.fullName) })
                 }
                 if !triples.isEmpty {
                     notableLine(label: "3B",
-                                names: triples.map { lastName($0.person.fullName) },
-                                seasonTotals: triples.map { $0.seasonStats?.batting?.triples ?? 0 })
+                                names: triples.map { lastName($0.person.fullName) })
                 }
                 if !homeRuns.isEmpty {
                     notableLine(label: "HR",
-                                names: homeRuns.map { lastName($0.person.fullName) },
-                                seasonTotals: homeRuns.map { $0.seasonStats?.batting?.homeRuns ?? 0 })
+                                names: homeRuns.map { lastName($0.person.fullName) })
                 }
             }
             .padding(.top, 4)
         }
     }
 
-    private func notableLine(label: String, names: [String], seasonTotals: [Int]) -> some View {
-        let pieces = zip(names, seasonTotals).map { "\($0) (\($1))" }
-        return (Text("\(label): ").font(.caption2.weight(.bold))
-                + Text(pieces.joined(separator: ", ")).font(.caption2))
+    private func notableLine(label: String, names: [String]) -> some View {
+        (Text("\(label): ").font(.caption2.weight(.bold))
+            + Text(names.joined(separator: ", ")).font(.caption2))
             .foregroundStyle(.secondary)
             .lineLimit(2)
             .fixedSize(horizontal: false, vertical: true)

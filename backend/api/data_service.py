@@ -21,6 +21,14 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Optional
+from zoneinfo import ZoneInfo
+
+# MLB schedules games off Eastern time — a 10pm-PT start that
+# crosses midnight UTC still belongs to the ET calendar day it
+# started on. Gamelog rows and game-context dates are normalized
+# through this zone before storage / display so a Dodgers night
+# game doesn't get filed under the next day.
+_MLB_LOCAL_TZ = ZoneInfo("America/New_York")
 
 import pandas as pd
 import pybaseball
@@ -3336,15 +3344,29 @@ def _bdl_to_mlbam_map(db) -> dict[int, int]:
 def _bdl_game_ctx(game: dict, fallback_date: Optional[str] = None) -> dict:
     """Pre-compute the game-level context the row parsers need:
     game_id (string), game_date (date), season (int), home and
-    away team names + final-runs counts. `fallback_date` is the
-    local-date string the caller used to find the game; we prefer
-    it over BDL's UTC `date` when present to avoid attributing
-    late West Coast games to the next UTC day."""
-    raw_date = fallback_date or (game.get("date") or "")[:10]
-    try:
-        game_date = datetime.date.fromisoformat(raw_date)
-    except ValueError:
-        game_date = None
+    away team names + final-runs counts.
+
+    `game_date` is derived from BDL's UTC start-time ISO string
+    converted to US/Eastern — MLB schedules off ET, so a 10:10pm-PT
+    game (UTC 02:10 next day) belongs to the ET evening it started
+    on. Falls back to the caller's `fallback_date` only when BDL's
+    timestamp is unparseable."""
+    game_date: Optional[datetime.date] = None
+    raw_iso = game.get("date") or ""
+    if raw_iso:
+        try:
+            # BDL ships e.g. "2026-05-20T02:10:00.000Z". `fromisoformat`
+            # in Python 3.11+ accepts the Z directly; we replace
+            # defensively in case the runtime is older.
+            dt = datetime.datetime.fromisoformat(raw_iso.replace("Z", "+00:00"))
+            game_date = dt.astimezone(_MLB_LOCAL_TZ).date()
+        except (TypeError, ValueError):
+            game_date = None
+    if game_date is None and fallback_date:
+        try:
+            game_date = datetime.date.fromisoformat(fallback_date)
+        except ValueError:
+            game_date = None
     home = game.get("home_team") or {}
     away = game.get("away_team") or {}
     home_data = game.get("home_team_data") or {}
