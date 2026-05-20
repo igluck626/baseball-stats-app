@@ -122,25 +122,6 @@ final class BallDontLieClient: @unchecked Sendable {
 
         let envelope: BDLDataEnvelope<BDLGame> = try await fetch(path: "/mlb/v1/games", query: items)
 
-        // Diagnostic — surface every LAD/SD candidate across the
-        // three UTC buckets BEFORE dedupe + ET filter. Helps
-        // diagnose the "tap LAD @ SD, get wrong game id passed to
-        // box score" symptom: if the same matchup appears twice
-        // with different game ids, the duplicate id is leaking
-        // through somewhere (sort order vs. dedupe order).
-        for g in envelope.data {
-            let a = g.awayTeam.abbreviation
-            let h = g.homeTeam.abbreviation
-            if a == "LAD" || h == "LAD" || a == "SD" || h == "SD" {
-                let etDate = Self.easternDateString(for: g) ?? "?"
-                print(
-                    "Game candidate: id=\(g.id) \(a) @ \(h) "
-                    + "utc_date=\(g.date) et_date=\(etDate) "
-                    + "status=\(g.status)"
-                )
-            }
-        }
-
         // Client-side filter: keep only games whose Eastern-local
         // start date matches the requested date. Dedupe by id in
         // case BDL returns the same game under multiple buckets
@@ -247,28 +228,13 @@ final class BallDontLieClient: @unchecked Sendable {
     /// players in lineup order rather than the arbitrary order
     /// `/stats` returns them.
     func getGameLineup(gameId: Int) async throws -> [BDLGameLineup] {
-        // Diagnostic: confirms the new game_ids[]-using code path
-        // is the one running in the deployed bundle. Remove once
-        // the lineup data confirms working in the box score UI.
-        print("getGameLineup using game_ids[]: \(gameId)")
-        // Cache temporarily disabled while we verify the
-        // `game_ids[]` plural-form fix lands cleanly. Once a
-        // post-deploy session confirms the lineup data is correct,
-        // re-enable the cached-read + storeInCache around this
-        // body. (Even disabled, the cache is in-memory only and
-        // would clear at app relaunch — so a "stale lineup
-        // surviving across install" symptom shouldn't be possible
-        // by construction. The disable is belt-and-suspenders.)
-        // let key = "game_lineup:\(gameId)"
-        // if let cached: [BDLGameLineup] = cachedValue(key) { return cached }
+        let key = "game_lineup:\(gameId)"
+        if let cached: [BDLGameLineup] = cachedValue(key) { return cached }
         // BDL's /lineups endpoint silently ignores `game_id`
         // (singular) and paginates the global lineup firehose —
         // exact same trap as `/stats` had with the same param
         // name. The plural array form `game_ids[]` is the one
-        // that actually filters. Verified by curl: singular
-        // returned 50 entries for completely different games;
-        // plural returned 20 entries (10 + 10) for the requested
-        // game's two teams.
+        // that actually filters.
         let items: [URLQueryItem] = [
             URLQueryItem(name: "game_ids[]", value: String(gameId)),
             URLQueryItem(name: "per_page",   value: "100"),
@@ -279,7 +245,7 @@ final class BallDontLieClient: @unchecked Sendable {
         // Lineups are set before first pitch and don't change
         // mid-game (pinch hitters/runners show up in /stats and
         // /plays, not /lineups). Long TTL is safe.
-        // storeInCache(key, envelope.data, ttl: 300)
+        storeInCache(key, envelope.data, ttl: 300)
         return envelope.data
     }
 

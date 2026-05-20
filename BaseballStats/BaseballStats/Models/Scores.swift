@@ -522,23 +522,6 @@ extension Array where Element == BDLPlayerStat {
         let lineupAway = lineup.filter { $0.team.id == awayJoinId }
         let lineupHome = lineup.filter { $0.team.id == homeJoinId }
 
-        // Diagnostic — surfaces both the BDLTeam metadata id (which
-        // can be 0 when the stats-payload resolver fell back to a
-        // stub) and the trusted join id used for the lineup filter.
-        // If the two disagree, the stub path fired but the trusted
-        // id rescued the filter; if the lineup counts are still
-        // zero, BDL's lineup payload has unexpected team ids.
-        print(
-            "Box score teams — away: \(awayTeam.abbreviation) "
-            + "(metaId:\(awayTeam.id), joinId:\(awayJoinId)), "
-            + "home: \(homeTeam.abbreviation) "
-            + "(metaId:\(homeTeam.id), joinId:\(homeJoinId))"
-        )
-        print(
-            "Lineup away count: \(lineupAway.count), "
-            + "home count: \(lineupHome.count)"
-        )
-
         return BoxScoreResponse(teams: BoxScoreTeams(
             away: buildBoxScoreTeam(team: awayTeam, stats: awayStats, lineup: lineupAway),
             home: buildBoxScoreTeam(team: homeTeam, stats: homeStats, lineup: lineupHome),
