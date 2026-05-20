@@ -675,10 +675,12 @@ def _ids_with_current_season(season_model, current_year: int) -> list[int]:
 
 
 def _update_gamelogs(current_year: int) -> dict:
-    """Refresh per-game logs for yesterday's finals via the BDL
-    game-centric path. Replaces the prior MLB-Stats-API per-player
-    loop (~2,400 calls per night, 8+ minutes of sleep budget) with
-    one BDL `/stats?game_id={id}` call per game (~15 per night).
+    """Refresh per-game logs for last night's finals via the BDL
+    game-centric path. Queries BOTH `yesterday_utc` and `today_utc`
+    because BDL buckets games by UTC start time — a single MLB
+    schedule night spans two UTC dates (ET evening games cross
+    midnight UTC; PT evening games start fully into UTC tomorrow).
+    Overlap is safe via the gamelog PK.
 
     Returns the counts the nightly status endpoint surfaces. Two
     fields kept for backward compatibility with old status shapes:
@@ -689,35 +691,54 @@ def _update_gamelogs(current_year: int) -> dict:
         batters_failed      — always 0 under the new path (errors raise)
         pitchers_failed     — same
     """
-    # Yesterday's finals — by the 4:00 UTC nightly time, late
-    # West Coast games from "yesterday" are done. Local-date logic
-    # would be more precise but BDL filters by the date string
-    # we pass; "yesterday in UTC" is good enough as a window since
-    # MLB's schedule officialDate aligns with local calendar day.
-    yesterday = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
-    log.info(f"  BDL gamelogs target date: {yesterday}")
+    # BDL indexes games by UTC start time, NOT by MLB's local-calendar
+    # schedule day. A single MLB "Tuesday night" slate splits across two
+    # UTC dates: ET-night games (~19:00 ET) cross midnight UTC, and PT-
+    # night games (~19:00 PT) start fully into "UTC tomorrow". The
+    # nightly cron runs at ~04:00 UTC, when those games have just
+    # finished — so we query BOTH `yesterday_utc` AND `today_utc` to
+    # capture the full local-night slate. Overlap is safe: the
+    # (player_id, game_id) PK on the gamelog tables makes any duplicate
+    # row a no-op upsert.
+    today_utc     = datetime.date.today()
+    yesterday_utc = today_utc - datetime.timedelta(days=1)
+    target_dates  = [yesterday_utc.isoformat(), today_utc.isoformat()]
+    log.info(f"  BDL gamelogs target dates: {target_dates}")
 
-    try:
-        result = data_service.save_bdl_gamelogs_for_date(yesterday)
-    except Exception as exc:
-        # Previously a thrown exception here cratered the whole
-        # nightly thread with only a one-line message and no
-        # traceback. Catch + log the stack so we can see *where*
-        # the BDL call hung (rate-limit, auth, DB upsert, etc.)
-        # without re-running locally.
-        log.exception(f"  BDL gamelogs phase FAILED: {exc}")
-        result = {
-            "status":   "error",
-            "bat_rows": 0, "pit_rows": 0, "games": 0,
-            "skipped_unmapped_players": 0,
-        }
-    bat_rows = int(result.get("bat_rows") or 0)
-    pit_rows = int(result.get("pit_rows") or 0)
-    games    = int(result.get("games")    or 0)
-    skipped  = int(result.get("skipped_unmapped_players") or 0)
+    bat_rows = 0
+    pit_rows = 0
+    games    = 0
+    skipped  = 0
+    per_date_results: list[dict] = []
+    for date_str in target_dates:
+        log.info(f"  BDL gamelogs: fetching for {date_str}")
+        try:
+            r = data_service.save_bdl_gamelogs_for_date(date_str)
+        except Exception as exc:
+            # Catch + log the stack so a transient BDL failure
+            # doesn't crater the whole gamelog phase silently. The
+            # other date still runs.
+            log.exception(f"  BDL gamelogs phase FAILED for {date_str}: {exc}")
+            r = {
+                "status":   "error",
+                "bat_rows": 0, "pit_rows": 0, "games": 0,
+                "skipped_unmapped_players": 0,
+            }
+        per_date_results.append({"date": date_str, **r})
+        bat_rows += int(r.get("bat_rows") or 0)
+        pit_rows += int(r.get("pit_rows") or 0)
+        games    += int(r.get("games")    or 0)
+        skipped  += int(r.get("skipped_unmapped_players") or 0)
+        log.info(
+            f"  BDL gamelogs {date_str}: "
+            f"{int(r.get('games') or 0)} games, "
+            f"{int(r.get('bat_rows') or 0)} batting rows, "
+            f"{int(r.get('pit_rows') or 0)} pitching rows"
+        )
+
     log.info(
-        f"  BDL gamelogs: {games} games, "
-        f"{bat_rows} batting rows, {pit_rows} pitching rows, "
+        f"  BDL gamelogs TOTAL across {target_dates}: "
+        f"{games} games, {bat_rows} batting rows, {pit_rows} pitching rows, "
         f"{skipped} games with no mapped players"
     )
 
