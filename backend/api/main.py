@@ -932,6 +932,27 @@ def leaderboards(
 # Admin endpoints
 # ---------------------------------------------------------------------------
 
+@app.get("/admin/debug-game-stats/{game_id}")
+def admin_debug_game_stats(game_id: int):
+    """Diagnostic for the BDL gamelog mapping. Fetches the first
+    page of `/mlb/v1/stats?game_ids[]={game_id}` and reports, for
+    each of the first five stat rows: the BDL player id BDL sent,
+    whether that id is in our `_bdl_to_mlbam_map`, and (when not)
+    what BDL id WE stored under the same player name. Also samples
+    five entries from the loaded map so the operator can eyeball
+    the id-space we populated.
+
+    Temporary endpoint — added to investigate a "5,327 mappings
+    loaded but only 1 of 20 games matched any rows" miss rate.
+    Delete once the cause is identified."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    try:
+        return data_service.debug_game_stats_mapping(game_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+
 @app.get("/admin/cache/stats")
 def admin_cache_stats():
     """Return the in-process cache health snapshot: total keys,
