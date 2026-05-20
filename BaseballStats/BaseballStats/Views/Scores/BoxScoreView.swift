@@ -747,6 +747,7 @@ struct BoxScoreView: View {
                         label:    "2B",
                         players:  doubles,
                         totalKey: \.doubles,
+                        gameKey:  \.doubles,
                     )
                 }
                 if !triples.isEmpty {
@@ -754,6 +755,7 @@ struct BoxScoreView: View {
                         label:    "3B",
                         players:  triples,
                         totalKey: \.triples,
+                        gameKey:  \.triples,
                     )
                 }
                 if !homeRuns.isEmpty {
@@ -761,6 +763,7 @@ struct BoxScoreView: View {
                         label:    "HR",
                         players:  homeRuns,
                         totalKey: \.hr,
+                        gameKey:  \.homeRuns,
                     )
                 }
             }
@@ -772,13 +775,20 @@ struct BoxScoreView: View {
         label: String,
         players: [BoxPlayer],
         totalKey: KeyPath<PlayerSeasonTotals, Int>,
+        gameKey:  KeyPath<BoxBatting,         Int?>,
     ) -> some View {
+        // `vm.seasonTotals[bdl_id]` holds the PRE-game season total
+        // (snapshot from our backend, taken at the start of the
+        // box-score load). Today's game count is on `bp.stats.batting`.
+        // Display = pre-game + today, so a player who hit his 5th HR
+        // today shows "(5)" rather than the pre-game "(4)".
         let pieces: [String] = players.map { bp in
             let last = lastName(bp.person.fullName)
-            if let total = vm.seasonTotals[bp.person.id]?[keyPath: totalKey] {
-                return "\(last) (\(total))"
+            guard let preGame = vm.seasonTotals[bp.person.id]?[keyPath: totalKey] else {
+                return last
             }
-            return last
+            let today = bp.stats?.batting?[keyPath: gameKey] ?? 0
+            return "\(last) (\(preGame + today))"
         }
         return (Text("\(label): ").font(.caption2.weight(.bold))
                 + Text(pieces.joined(separator: ", ")).font(.caption2))

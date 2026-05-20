@@ -681,6 +681,17 @@ private func buildBoxScoreTeam(
     var battingOrder: [Int] = []
     var pitchingOrder: [Int] = []
 
+    // Index lineup entries by BDL player id so each per-player
+    // BoxPlayer construction can pull THIS-GAME's position (and
+    // batting-order presence) from the lineup row rather than the
+    // stat row's BDL career-position fallback. Lineup carries the
+    // post-DH-rule "DH" assignment for pitchers in the batting
+    // order; the stat row's `player.position` would still say "SP".
+    let lineupByPid: [Int: BDLGameLineup] = Dictionary(
+        lineup.map { ($0.player.id, $0) },
+        uniquingKeysWith: { a, _ in a },
+    )
+
     // Build BoxPlayer records keyed by "ID{bdl_id}" so the existing
     // dict-lookup pattern in BoxScoreView (`team.players["ID\(id)"]`)
     // keeps working unchanged.
@@ -763,9 +774,27 @@ private func buildBoxScoreTeam(
             losses:         nil,
             saves:          nil,
         )
+        // Position resolution: lineup row wins (it carries the
+        // game-specific assignment, including DH for a pitcher
+        // in the batting order). Stat row's `player.position` is
+        // a career-default fallback. When a player has a non-null
+        // batting_order AND a pitcher-type position, override to
+        // "DH" — the universal-DH rule means a pitcher in the
+        // batting order is the team's DH, not a hitter playing P.
+        let lineupRow = lineupByPid[pid]
+        let lineupPos = lineupRow?.position
+        let inBattingOrder = (lineupRow?.battingOrder ?? 0) > 0
+        let resolvedPosition: String? = {
+            let raw = lineupPos ?? s.player.position
+            if inBattingOrder, let r = raw?.uppercased(),
+               r == "P" || r == "SP" || r == "RP" {
+                return "DH"
+            }
+            return raw
+        }()
         players[key] = BoxPlayer(
             person:             PlayerInfo(id: pid, fullName: s.player.fullName),
-            position:           BoxPosition(abbreviation: s.player.position),
+            position:           BoxPosition(abbreviation: resolvedPosition),
             stats:              BoxStats(batting: batting,       pitching: pitching),
             seasonStats:        BoxStats(batting: seasonBatting, pitching: seasonPitching),
             stats_battingOrder: nil,
