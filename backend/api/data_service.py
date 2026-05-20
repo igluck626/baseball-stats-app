@@ -3452,8 +3452,16 @@ def _bdl_game_ctx(game: dict, fallback_date: Optional[str] = None) -> dict:
         "season":          _to_int(game.get("season")) or (game_date.year if game_date else None),
         "home_team_id":    home.get("id"),
         "away_team_id":    away.get("id"),
-        "home_team_name":  home.get("name"),
-        "away_team_name":  away.get("name"),
+        # BDL ships THREE different "name" shapes for a team:
+        # `name` is the short franchise tag ("Rangers"), `display_name`
+        # is the full city + nickname ("Texas Rangers"), and stat rows
+        # use a fourth field — `team_name` — which carries the DISPLAY
+        # name, not the short name. `_resolve_side` checks all three
+        # to absorb the inconsistency.
+        "home_team_name":          home.get("name"),
+        "away_team_name":          away.get("name"),
+        "home_team_display_name":  home.get("display_name"),
+        "away_team_display_name":  away.get("display_name"),
         "home_team_abbr":  home.get("abbreviation"),
         "away_team_abbr":  away.get("abbreviation"),
         "home_runs":       _to_int(home_data.get("runs")),
@@ -3463,12 +3471,17 @@ def _bdl_game_ctx(game: dict, fallback_date: Optional[str] = None) -> dict:
 
 def _resolve_side(stat: dict, ctx: dict) -> Optional[str]:
     """Determine which side (home/away) the player played for in
-    this game. BDL's `team_name` on the stat row is the short
-    franchise name — match against the game's home/away team names.
+    this game. The stat row's `team_name` field carries BDL's DISPLAY
+    name ("Texas Rangers"), not the short franchise tag ("Rangers"),
+    so we match against both `home_team_name` (short) AND
+    `home_team_display_name` (long) to absorb the inconsistency.
     Returns "home" / "away" or None when unresolvable."""
     team_name = (stat.get("team_name") or "").strip()
     if not team_name:
-        # Fall back to the nested team id on `player.team`.
+        # Fall back to the nested team id on `player.team`. Note:
+        # this is the player's CURRENT team, not necessarily the
+        # team they played for in this game (for mid-season trades),
+        # so it's a best-effort fallback.
         team_id = (stat.get("player") or {}).get("team") or {}
         tid = team_id.get("id")
         if tid is None:
@@ -3476,8 +3489,19 @@ def _resolve_side(stat: dict, ctx: dict) -> Optional[str]:
         if tid == ctx.get("home_team_id"): return "home"
         if tid == ctx.get("away_team_id"): return "away"
         return None
-    if team_name == ctx.get("home_team_name"): return "home"
-    if team_name == ctx.get("away_team_name"): return "away"
+    # Try both name shapes — BDL is inconsistent (see `_bdl_game_ctx`).
+    home_names = {ctx.get("home_team_name"), ctx.get("home_team_display_name")}
+    away_names = {ctx.get("away_team_name"), ctx.get("away_team_display_name")}
+    if team_name in home_names: return "home"
+    if team_name in away_names: return "away"
+    log.warning(
+        "_resolve_side: stat team_name=%r matched neither home=%r "
+        "(display=%r) nor away=%r (display=%r) for game %s",
+        team_name,
+        ctx.get("home_team_name"), ctx.get("home_team_display_name"),
+        ctx.get("away_team_name"), ctx.get("away_team_display_name"),
+        ctx.get("game_id"),
+    )
     return None
 
 
