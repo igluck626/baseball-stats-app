@@ -122,6 +122,25 @@ final class BallDontLieClient: @unchecked Sendable {
 
         let envelope: BDLDataEnvelope<BDLGame> = try await fetch(path: "/mlb/v1/games", query: items)
 
+        // Diagnostic — surface every LAD/SD candidate across the
+        // three UTC buckets BEFORE dedupe + ET filter. Helps
+        // diagnose the "tap LAD @ SD, get wrong game id passed to
+        // box score" symptom: if the same matchup appears twice
+        // with different game ids, the duplicate id is leaking
+        // through somewhere (sort order vs. dedupe order).
+        for g in envelope.data {
+            let a = g.awayTeam.abbreviation
+            let h = g.homeTeam.abbreviation
+            if a == "LAD" || h == "LAD" || a == "SD" || h == "SD" {
+                let etDate = Self.easternDateString(for: g) ?? "?"
+                print(
+                    "Game candidate: id=\(g.id) \(a) @ \(h) "
+                    + "utc_date=\(g.date) et_date=\(etDate) "
+                    + "status=\(g.status)"
+                )
+            }
+        }
+
         // Client-side filter: keep only games whose Eastern-local
         // start date matches the requested date. Dedupe by id in
         // case BDL returns the same game under multiple buckets
