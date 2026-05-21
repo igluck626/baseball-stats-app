@@ -695,164 +695,70 @@ private func buildBoxScoreTeam(
     stats: [BDLPlayerStat],
     lineup: [BDLGameLineup],
 ) -> BoxScoreTeam {
+    // The merge: start with one BoxPlayer per starting batter (lineup-
+    // sourced, blank stats). Then walk the stats rows and merge each
+    // row's batting / pitching blocks into the matching player —
+    // upgrading the placeholder to real numbers, OR creating a new
+    // BoxPlayer for substitutes / relievers who weren't in the lineup.
+    // Pitchers from the lineup are NOT pre-created (user-instructed):
+    // a starter who hasn't thrown yet shouldn't take up a row.
     var players: [String: BoxPlayer] = [:]
-    var battingOrder: [Int] = []
-    var pitchingOrder: [Int] = []
 
-    // Index lineup entries by BDL player id so each per-player
-    // BoxPlayer construction can pull THIS-GAME's position (and
-    // batting-order presence) from the lineup row rather than the
-    // stat row's BDL career-position fallback. Lineup carries the
-    // post-DH-rule "DH" assignment for pitchers in the batting
-    // order; the stat row's `player.position` would still say "SP".
+    // Index lineup entries by BDL player id so each merge step can
+    // pull THIS-GAME's position (and the universal-DH override).
     let lineupByPid: [Int: BDLGameLineup] = Dictionary(
         lineup.map { ($0.player.id, $0) },
         uniquingKeysWith: { a, _ in a },
     )
 
-    // Build BoxPlayer records keyed by "ID{bdl_id}" so the existing
-    // dict-lookup pattern in BoxScoreView (`team.players["ID\(id)"]`)
-    // keeps working unchanged.
-    for s in stats {
-        let pid = s.player.id
-        let key = "ID\(pid)"
-        let isPitcher = bdlStatIsPitcher(s)
-        // BDL's per-game stat row ships SEASON-to-date AVG / OBP /
-        // SLG / ERA on the same payload as the per-game counts.
-        // Legacy BoxBatting / BoxPitching split these across two
-        // blocks: `stats.batting` for the game's counts, and
-        // `seasonStats.batting` for the season rates the box-score
-        // view reads. Keep that split so `BoxScoreView` renders
-        // unchanged — game-side carries the integers, season-side
-        // carries the formatted rate strings.
-        let batting: BoxBatting? = isPitcher && (s.atBats ?? 0) == 0 ? nil : BoxBatting(
-            atBats:               s.atBats,
-            runs:                 s.runs,
-            hits:                 s.hits,
-            doubles:              s.doubles,
-            triples:              s.triples,
-            homeRuns:             s.hr,
-            rbi:                  s.rbi,
-            baseOnBalls:          s.bb,
-            strikeOuts:           s.k,
-            stolenBases:          s.stolenBases,
-            caughtStealing:       s.caughtStealing,
-            hitByPitch:           s.hitByPitch,
-            sacFlies:             s.sacFlies,
-            sacBunts:             nil,
-            groundIntoDoublePlay: nil,
-            avg:                  nil,  // → seasonStats.batting.avg
-            ops:                  nil,
-        )
-        let pitching: BoxPitching? = !isPitcher ? nil : BoxPitching(
-            inningsPitched: ipToBaseballNotation(s.ip),
-            hits:           s.pHits,
-            runs:           s.pRuns,
-            earnedRuns:     s.er,
-            baseOnBalls:    s.pBb,
-            strikeOuts:     s.pK,
-            homeRuns:       s.pHr,
-            era:            nil,  // → seasonStats.pitching.era
-            wins:           s.wins,
-            losses:         s.losses,
-            saves:          s.saves,
-        )
-        // Season block — rate stats only. BDL doesn't ship OPS
-        // directly; derive from OBP + SLG when both are present.
-        let opsValue: Double? = (s.obp != nil && s.slg != nil) ? (s.obp! + s.slg!) : nil
-        let seasonBatting = BoxBatting(
-            atBats:               nil,
-            runs:                 nil,
-            hits:                 nil,
-            doubles:              nil,
-            triples:              nil,
-            homeRuns:             nil,
-            rbi:                  nil,
-            baseOnBalls:          nil,
-            strikeOuts:           nil,
-            stolenBases:          nil,
-            caughtStealing:       nil,
-            hitByPitch:           nil,
-            sacFlies:             nil,
-            sacBunts:             nil,
-            groundIntoDoublePlay: nil,
-            avg:                  formatMLBRate(s.avg),
-            ops:                  formatMLBRate(opsValue),
-        )
-        let seasonPitching = BoxPitching(
-            inningsPitched: nil,
-            hits:           nil,
-            runs:           nil,
-            earnedRuns:     nil,
-            baseOnBalls:    nil,
-            strikeOuts:     nil,
-            homeRuns:       nil,
-            era:            formatMLBEra(s.era),
-            wins:           nil,
-            losses:         nil,
-            saves:          nil,
-        )
-        // Position resolution: lineup row wins (it carries the
-        // game-specific assignment, including DH for a pitcher
-        // in the batting order). Stat row's `player.position` is
-        // a career-default fallback. When a player has a non-null
-        // batting_order AND a pitcher-type position, override to
-        // "DH" — the universal-DH rule means a pitcher in the
-        // batting order is the team's DH, not a hitter playing P.
-        let lineupRow = lineupByPid[pid]
-        let lineupPos = lineupRow?.position
-        let inBattingOrder = (lineupRow?.battingOrder ?? 0) > 0
-        let resolvedPosition: String? = {
-            let raw = lineupPos ?? s.player.position
-            if inBattingOrder, let r = raw?.uppercased(),
-               r == "P" || r == "SP" || r == "RP" {
-                return "DH"
-            }
-            return raw
-        }()
-        players[key] = BoxPlayer(
-            person:             PlayerInfo(id: pid, fullName: s.player.fullName),
-            position:           BoxPosition(abbreviation: resolvedPosition),
-            stats:              BoxStats(batting: batting,       pitching: pitching),
-            seasonStats:        BoxStats(batting: seasonBatting, pitching: seasonPitching),
-            stats_battingOrder: nil,
-        )
-        // Track ordering: pitchers separate from batters. Two-way
-        // players appear in both arrays under the same id, which
-        // mirrors what the MLB Stats API does for Ohtani.
-        if isPitcher { pitchingOrder.append(pid) }
-        if batting != nil && (s.atBats ?? 0) > 0 || (s.bb ?? 0) > 0 || (s.plateAppearances ?? 0) > 0 {
-            battingOrder.append(pid)
-        }
+    // --- Step 1: seed placeholders for every starting batter. ---
+    for entry in lineup where (entry.battingOrder ?? 0) > 0 {
+        let key = "ID\(entry.player.id)"
+        players[key] = placeholderBatterBoxPlayer(entry: entry)
     }
 
-    // Apply lineup ordering when available — `battingOrder` ints
-    // come back as e.g. 100 / 200 / 300 (slot * 100), so a numeric
-    // sort gives the actual lineup sequence.
-    if !lineup.isEmpty {
-        let battersByLineup = lineup
-            .filter { ($0.battingOrder ?? 0) > 0 }
-            .sorted { ($0.battingOrder ?? 0) < ($1.battingOrder ?? 0) }
-            .map(\.player.id)
-        let pitchersByLineup = lineup
-            .filter { $0.isProbablePitcher == true || ($0.position ?? "").lowercased() == "p" || ($0.position ?? "").lowercased() == "sp" }
-            .map(\.player.id)
+    // --- Step 2: merge stats rows. Each row contributes either a
+    // batting block (player.position-agnostic — anyone with PA / AB /
+    // walks counts as a batter row) or a pitching block (ip != nil).
+    // Two-way players (Ohtani) get two stat rows, one of each shape;
+    // the merger preserves both. ---
+    for s in stats {
+        let key = "ID\(s.player.id)"
+        let increment = boxPlayerFromStatRow(s, lineupRow: lineupByPid[s.player.id])
+        players[key] = mergeBoxPlayer(players[key], increment)
+    }
 
-        // Intersect with the stats-bearing ids so we don't list
-        // pinch-hitters who didn't actually appear, etc.
-        let appeared = Set(battingOrder + pitchingOrder)
-        let orderedBatters  = battersByLineup.filter  { appeared.contains($0) }
-        let orderedPitchers = pitchersByLineup.filter { appeared.contains($0) }
+    // --- Step 3: ordering arrays. ---
+    // Batters: lineup order first; then any stats-only batters
+    // (substitutes / pinch hitters), appended in their stats-payload
+    // order. When the lineup ships empty (BDL outage), the lineup
+    // slice is empty and we degrade to pure stats order — same
+    // behavior the previous implementation had as a fallback.
+    let lineupBatterIds: [Int] = lineup
+        .filter { ($0.battingOrder ?? 0) > 0 }
+        .sorted { ($0.battingOrder ?? 0) < ($1.battingOrder ?? 0) }
+        .map(\.player.id)
+    let lineupBatterSet = Set(lineupBatterIds)
 
-        // Append any actual appearances the lineup didn't cover
-        // (pinch hitters, bullpen pieces) so they still render.
-        let lineupBatterSet  = Set(orderedBatters)
-        let lineupPitcherSet = Set(orderedPitchers)
-        let extraBatters  = battingOrder.filter  { !lineupBatterSet.contains($0) }
-        let extraPitchers = pitchingOrder.filter { !lineupPitcherSet.contains($0) }
+    var seenExtras = Set<Int>()
+    let extraBatterIds: [Int] = stats.compactMap { s in
+        let pid = s.player.id
+        guard !lineupBatterSet.contains(pid) else { return nil }
+        guard statHadBattingActivity(s) else { return nil }
+        guard seenExtras.insert(pid).inserted else { return nil }
+        return pid
+    }
+    let battingOrder = lineupBatterIds + extraBatterIds
 
-        battingOrder  = orderedBatters  + extraBatters
-        pitchingOrder = orderedPitchers + extraPitchers
+    // Pitchers: stats-driven only (user-instructed — a probable
+    // starter who hasn't thrown is excluded). Dedupe in case the
+    // payload ever ships two pitcher rows for the same player.
+    var seenPitchers = Set<Int>()
+    let pitchingOrder: [Int] = stats.compactMap { s in
+        guard s.ip != nil else { return nil }
+        let pid = s.player.id
+        guard seenPitchers.insert(pid).inserted else { return nil }
+        return pid
     }
 
     return BoxScoreTeam(
@@ -861,6 +767,196 @@ private func buildBoxScoreTeam(
         batters:  battingOrder,
         pitchers: pitchingOrder,
     )
+}
+
+/// Stats-row → BoxPlayer projection. Same shape the synthesizer
+/// previously built inline; pulled out so step 2 of the merge can
+/// produce a single per-row increment that's combined with the
+/// running aggregate via `mergeBoxPlayer`.
+private func boxPlayerFromStatRow(
+    _ s: BDLPlayerStat,
+    lineupRow: BDLGameLineup?,
+) -> BoxPlayer {
+    let pid = s.player.id
+    let isPitcher = bdlStatIsPitcher(s)
+    let batting: BoxBatting? = isPitcher && (s.atBats ?? 0) == 0 ? nil : BoxBatting(
+        atBats:               s.atBats,
+        runs:                 s.runs,
+        hits:                 s.hits,
+        doubles:              s.doubles,
+        triples:              s.triples,
+        homeRuns:             s.hr,
+        rbi:                  s.rbi,
+        baseOnBalls:          s.bb,
+        strikeOuts:           s.k,
+        stolenBases:          s.stolenBases,
+        caughtStealing:       s.caughtStealing,
+        hitByPitch:           s.hitByPitch,
+        sacFlies:             s.sacFlies,
+        sacBunts:             nil,
+        groundIntoDoublePlay: nil,
+        avg:                  nil,  // → seasonStats.batting.avg
+        ops:                  nil,
+    )
+    let pitching: BoxPitching? = !isPitcher ? nil : BoxPitching(
+        inningsPitched: ipToBaseballNotation(s.ip),
+        hits:           s.pHits,
+        runs:           s.pRuns,
+        earnedRuns:     s.er,
+        baseOnBalls:    s.pBb,
+        strikeOuts:     s.pK,
+        homeRuns:       s.pHr,
+        era:            nil,  // → seasonStats.pitching.era
+        wins:           s.wins,
+        losses:         s.losses,
+        saves:          s.saves,
+    )
+    // BDL doesn't ship OPS — derive from OBP + SLG.
+    let opsValue: Double? = (s.obp != nil && s.slg != nil) ? (s.obp! + s.slg!) : nil
+    let seasonBatting = BoxBatting(
+        atBats:               nil,
+        runs:                 nil,
+        hits:                 nil,
+        doubles:              nil,
+        triples:              nil,
+        homeRuns:             nil,
+        rbi:                  nil,
+        baseOnBalls:          nil,
+        strikeOuts:           nil,
+        stolenBases:          nil,
+        caughtStealing:       nil,
+        hitByPitch:           nil,
+        sacFlies:             nil,
+        sacBunts:             nil,
+        groundIntoDoublePlay: nil,
+        avg:                  formatMLBRate(s.avg),
+        ops:                  formatMLBRate(opsValue),
+    )
+    let seasonPitching = BoxPitching(
+        inningsPitched: nil,
+        hits:           nil,
+        runs:           nil,
+        earnedRuns:     nil,
+        baseOnBalls:    nil,
+        strikeOuts:     nil,
+        homeRuns:       nil,
+        era:            formatMLBEra(s.era),
+        wins:           nil,
+        losses:         nil,
+        saves:          nil,
+    )
+    // Position: lineup row wins (carries the game-specific DH
+    // override for two-way starters); fall back to the stat row's
+    // career-default `player.position`.
+    let lineupPos = lineupRow?.position
+    let inBattingOrder = (lineupRow?.battingOrder ?? 0) > 0
+    let resolvedPosition: String? = {
+        let raw = lineupPos ?? s.player.position
+        if inBattingOrder, let r = raw?.uppercased(),
+           r == "P" || r == "SP" || r == "RP" {
+            return "DH"
+        }
+        return raw
+    }()
+    return BoxPlayer(
+        person:             PlayerInfo(id: pid, fullName: s.player.fullName),
+        position:           BoxPosition(abbreviation: resolvedPosition),
+        stats:              BoxStats(batting: batting,       pitching: pitching),
+        seasonStats:        BoxStats(batting: seasonBatting, pitching: seasonPitching),
+        stats_battingOrder: nil,
+    )
+}
+
+/// "Hasn't-batted-yet" starter row — blank counts, em-dash rates.
+/// Used as the seed for every lineup batter before any stats roll
+/// in. Replaced (via merge) the moment the player records a PA.
+private func placeholderBatterBoxPlayer(entry: BDLGameLineup) -> BoxPlayer {
+    let resolvedPosition: String? = {
+        let raw = entry.position
+        // Universal-DH override: a "P" / "SP" / "RP" with a real
+        // batting_order is the team's DH for this game.
+        if (entry.battingOrder ?? 0) > 0, let r = raw?.uppercased(),
+           r == "P" || r == "SP" || r == "RP" {
+            return "DH"
+        }
+        return raw
+    }()
+    let blankBatting = BoxBatting(
+        atBats:               0,
+        runs:                 0,
+        hits:                 0,
+        doubles:              0,
+        triples:              0,
+        homeRuns:             0,
+        rbi:                  0,
+        baseOnBalls:          0,
+        strikeOuts:           0,
+        stolenBases:          0,
+        caughtStealing:       0,
+        hitByPitch:           0,
+        sacFlies:             0,
+        sacBunts:             0,
+        groundIntoDoublePlay: 0,
+        avg:                  nil,  // → seasonStats.batting.avg ("—")
+        ops:                  nil,
+    )
+    let blankSeasonBatting = BoxBatting(
+        atBats:               nil,
+        runs:                 nil,
+        hits:                 nil,
+        doubles:              nil,
+        triples:              nil,
+        homeRuns:             nil,
+        rbi:                  nil,
+        baseOnBalls:          nil,
+        strikeOuts:           nil,
+        stolenBases:          nil,
+        caughtStealing:       nil,
+        hitByPitch:           nil,
+        sacFlies:             nil,
+        sacBunts:             nil,
+        groundIntoDoublePlay: nil,
+        avg:                  "—",
+        ops:                  "—",
+    )
+    return BoxPlayer(
+        person:             PlayerInfo(id: entry.player.id, fullName: entry.player.fullName),
+        position:           BoxPosition(abbreviation: resolvedPosition),
+        stats:              BoxStats(batting: blankBatting,       pitching: nil),
+        seasonStats:        BoxStats(batting: blankSeasonBatting, pitching: nil),
+        stats_battingOrder: nil,
+    )
+}
+
+/// Merge an incoming BoxPlayer (from one stats row) onto an
+/// existing aggregate. The merge keeps any non-nil block on the
+/// new row, falling back to the existing aggregate's. Used for two
+/// patterns:
+///   • upgrading a placeholder (blank batting) to real game stats
+///   • combining Ohtani's batter row + pitcher row into one entry
+///     that has both `stats.batting` and `stats.pitching` populated
+private func mergeBoxPlayer(_ existing: BoxPlayer?, _ incoming: BoxPlayer) -> BoxPlayer {
+    guard let existing else { return incoming }
+    return BoxPlayer(
+        person:   incoming.person,
+        position: incoming.position?.abbreviation != nil ? incoming.position : existing.position,
+        stats: BoxStats(
+            batting:  incoming.stats?.batting  ?? existing.stats?.batting,
+            pitching: incoming.stats?.pitching ?? existing.stats?.pitching,
+        ),
+        seasonStats: BoxStats(
+            batting:  incoming.seasonStats?.batting  ?? existing.seasonStats?.batting,
+            pitching: incoming.seasonStats?.pitching ?? existing.seasonStats?.pitching,
+        ),
+        stats_battingOrder: incoming.stats_battingOrder ?? existing.stats_battingOrder,
+    )
+}
+
+/// Did this stats row record any batting activity? Used to decide
+/// whether a non-lineup player (substitute / pinch hitter) gets
+/// appended to `battingOrder`.
+private func statHadBattingActivity(_ s: BDLPlayerStat) -> Bool {
+    (s.atBats ?? 0) > 0 || (s.bb ?? 0) > 0 || (s.plateAppearances ?? 0) > 0
 }
 
 extension BDLGame {
