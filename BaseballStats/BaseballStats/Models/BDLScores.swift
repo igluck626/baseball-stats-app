@@ -166,6 +166,30 @@ struct BDLPlay: Codable, Hashable {
     let trajectory: String?
 }
 
+// MARK: - Season stats
+
+/// One row from `/season_stats?player_ids[]=X&season=Y`. Different
+/// field shape from the per-game `/stats` endpoint — season stats
+/// use a `batting_*` / `pitching_*` prefix on every key. The
+/// box-score lineup placeholder path consumes these to surface a
+/// player's season AVG / OPS / ERA before they've had their first
+/// PA / inning of the day.
+struct BDLSeasonStat: Codable, Hashable {
+    let player: BDLPlayer
+    let teamName: String?
+    let season: Int?
+
+    let battingAvg: Double?
+    let battingObp: Double?
+    let battingSlg: Double?
+    let battingOps: Double?
+
+    let pitchingEra: Double?
+    let pitchingW:   Int?
+    let pitchingL:   Int?
+    let pitchingSv:  Int?
+}
+
 // MARK: - Standings
 
 /// One row from `/standings?season=N`. Only the fields the iOS

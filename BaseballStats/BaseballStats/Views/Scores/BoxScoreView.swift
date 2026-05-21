@@ -157,8 +157,15 @@ final class BoxScoreViewModel: ObservableObject {
             // batting/pitching order in the synthesizer.
             async let statsTask  = bdl.getGameStats(gameId: game.gamePk)
             async let lineupTask = bdl.getGameLineup(gameId: game.gamePk)
-            let stats  = try await statsTask
             let lineup = (try? await lineupTask) ?? []
+            // Season-stats fetch depends on the lineup ids, so it
+            // sequences AFTER lineup but runs concurrently with the
+            // stats await (per-game /stats endpoint is independent).
+            // Failures degrade to "—" placeholders rather than
+            // blocking the box score from rendering.
+            async let seasonTask = loadLineupSeasonStats(lineup: lineup)
+            let stats  = try await statsTask
+            let seasonStatsByPid = await seasonTask
 
             // Resolve which BDL team object pairs with each side of
             // the game. The `Game.teams.{away,home}.team` carries
@@ -173,15 +180,41 @@ final class BoxScoreViewModel: ObservableObject {
             // but the batting/pitching tables work fine.
             let (awayBDL, homeBDL) = bdlTeams(forGame: game, fromStats: stats)
             boxScore = stats.toBoxScoreResponse(
-                awayTeam:      awayBDL,
-                homeTeam:      homeBDL,
-                awayBDLTeamId: game.bdlAwayTeamId,
-                homeBDLTeamId: game.bdlHomeTeamId,
-                lineup:        lineup,
+                awayTeam:         awayBDL,
+                homeTeam:         homeBDL,
+                awayBDLTeamId:    game.bdlAwayTeamId,
+                homeBDLTeamId:    game.bdlHomeTeamId,
+                lineup:           lineup,
+                seasonStatsByPid: seasonStatsByPid,
             )
         } catch {
             self.error = error.localizedDescription
             boxScore = nil
+        }
+    }
+
+    /// Bulk-fetch season AVG / OPS / ERA for every player in the
+    /// starting lineup. Used by the placeholder rows so a starter
+    /// who hasn't batted yet still shows their season rate stats.
+    /// Returns an empty dict on failure (placeholders fall back to
+    /// "—" via the synthesizer's nil-coalesce).
+    private func loadLineupSeasonStats(
+        lineup: [BDLGameLineup],
+    ) async -> [Int: BDLSeasonStat] {
+        let ids = Array(Set(lineup.map(\.player.id)))
+        guard !ids.isEmpty else { return [:] }
+        // BDL standings / season stats are season-keyed; use the
+        // year the game was actually played in (game.startDate falls
+        // back to "now" when BDL ships an unparseable date).
+        let season = Calendar.current.component(.year, from: game.startDate ?? Date())
+        do {
+            let rows = try await bdl.getSeasonStats(playerIds: ids, season: season)
+            return Dictionary(
+                rows.map { ($0.player.id, $0) },
+                uniquingKeysWith: { a, _ in a },
+            )
+        } catch {
+            return [:]
         }
     }
 

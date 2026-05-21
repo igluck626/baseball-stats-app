@@ -249,6 +249,45 @@ final class BallDontLieClient: @unchecked Sendable {
         return envelope.data
     }
 
+    // MARK: - Season stats
+
+    /// Bulk-fetch current-season AVG/OBP/SLG/OPS/ERA for a set of
+    /// players. The box-score view calls this with the BDL ids
+    /// from the starting lineup so placeholder rows (players who
+    /// haven't batted/pitched yet) can show season-to-date rate
+    /// stats instead of em-dashes. Cached 5 minutes — a player's
+    /// season AVG only moves at game finals, so the cache window
+    /// trades latency for negligible staleness.
+    func getSeasonStats(
+        playerIds: [Int],
+        season: Int,
+    ) async throws -> [BDLSeasonStat] {
+        // Dedupe + sort so the cache key is order-independent.
+        let unique = Array(Set(playerIds)).sorted()
+        guard !unique.isEmpty else { return [] }
+        let key = "season_stats:\(season):\(unique.map(String.init).joined(separator: ","))"
+        if let cached: [BDLSeasonStat] = cachedValue(key) { return cached }
+
+        // BDL caps `player_ids[]` per request — backend chunks at 50;
+        // 25 here keeps each request well under any cap and a single
+        // 9-player batting lineup + 1 pitcher fits in one round trip.
+        var all: [BDLSeasonStat] = []
+        for chunk in stride(from: 0, to: unique.count, by: 25) {
+            let slice = Array(unique[chunk..<min(chunk + 25, unique.count)])
+            var items: [URLQueryItem] = slice.map {
+                URLQueryItem(name: "player_ids[]", value: String($0))
+            }
+            items.append(URLQueryItem(name: "season",   value: String(season)))
+            items.append(URLQueryItem(name: "per_page", value: "100"))
+            let envelope: BDLDataEnvelope<BDLSeasonStat> = try await fetch(
+                path: "/mlb/v1/season_stats", query: items,
+            )
+            all.append(contentsOf: envelope.data)
+        }
+        storeInCache(key, all, ttl: 300)
+        return all
+    }
+
     // MARK: - Standings
 
     /// Current W-L (plus full row metadata) for every team in a
