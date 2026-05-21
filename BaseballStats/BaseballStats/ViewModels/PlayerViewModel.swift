@@ -350,43 +350,33 @@ final class PlayerViewModel: ObservableObject {
 
         let todayGames = (try? await bdl.getTeamGames(date: today, teamId: bdlTeamId)) ?? []
 
-        // Cutoff for Final games already absorbed by the nightly run.
-        // `stats_last_updated` is when the overnight batch wrote the
-        // season row. Any Final game that started > 3 hours BEFORE
-        // that stamp is already counted there — re-overlaying it
-        // double-counts (Kurtz showing .286 instead of .277). The
-        // 3-hour buffer covers West Coast games (~3h between first
-        // pitch and final out) that the same nightly might still
-        // catch. Live games bypass this — they're newer than any
-        // nightly by definition.
-        let nightlyCutoff: Date? = {
-            let stamp = currentBatting?.stats_last_updated
-                     ?? currentPitching?.stats_last_updated
-            guard let stamp,
-                  let d = try? Date(stamp, strategy: .iso8601) else { return nil }
-            return d.addingTimeInterval(-3 * 60 * 60)
-        }()
-
         // Tag each eligible game with whether it's currently live.
         // BDL's status enum collapses to two states we care about:
         // STATUS_IN_PROGRESS → overlay + keep polling; STATUS_FINAL
         // → overlay once, stop polling.
         var eligible: [(gameId: Int, isLive: Bool)] = []
         var liveOnSchedule = false
+        var hasFinal = false
         for g in todayGames {
             switch g.status {
             case "STATUS_IN_PROGRESS", "STATUS_DELAYED":
                 liveOnSchedule = true
                 eligible.append((g.id, true))
             case "STATUS_FINAL":
-                // Skip Final games already folded into the nightly
-                // season totals. nil cutoff (historical row / first-
-                // ever load) skips the check and overlays normally.
-                if let nightlyCutoff,
+                // Secondary hard cutoff: games that started > 24h
+                // before the last nightly stamp are definitely in
+                // the DB regardless of any games-played check. This
+                // catches edge cases like a postponed game BDL
+                // re-publishes as Final hours after its scheduled
+                // start time.
+                if let stamp = currentBatting?.stats_last_updated
+                            ?? currentPitching?.stats_last_updated,
+                   let stampDate = try? Date(stamp, strategy: .iso8601),
                    let start = g.startDate,
-                   start <= nightlyCutoff {
+                   start < stampDate.addingTimeInterval(-24 * 60 * 60) {
                     continue
                 }
+                hasFinal = true
                 eligible.append((g.id, false))
             default:
                 break
@@ -404,6 +394,55 @@ final class PlayerViewModel: ObservableObject {
         // player yet), we can't filter — bail out and leave the
         // overnight totals as-is.
         guard let bdlPlayerId = player.bdl_id else { return }
+
+        // Games-played gate for Final games: if our DB's season G
+        // already matches BDL's season G, the overnight batch has
+        // already absorbed today's stats and re-overlaying would
+        // double-count (Kurtz .286 vs .277). Fetch BDL's current
+        // season totals to compare. Live games bypass this — they
+        // haven't been absorbed by definition.
+        //
+        // Comparison rule: "our DB G >= BDL G" → DB caught up →
+        // skip the Final overlays. "DB G < BDL G" → DB still
+        // behind → overlay needed to fill the gap.
+        if hasFinal {
+            let season = Calendar.current.component(.year, from: Date())
+            let rows = (try? await bdl.getSeasonStats(
+                playerIds: [bdlPlayerId], season: season,
+            )) ?? []
+            if let row = rows.first(where: { $0.player.id == bdlPlayerId }) {
+                let dbBattingG  = currentBatting?.standard?.G
+                let dbPitchingG = currentPitching?.standard?.G
+                let bdlBattingG  = row.battingGp
+                let bdlPitchingG = row.pitchingGp
+                let battingDBAhead: Bool = {
+                    if let db = dbBattingG, let b = bdlBattingG { return db >= b }
+                    return false
+                }()
+                let pitchingDBAhead: Bool = {
+                    if let db = dbPitchingG, let p = bdlPitchingG { return db >= p }
+                    return false
+                }()
+                // A two-way player's overlay needs BOTH sides
+                // caught up before we skip the Final. A pure
+                // batter is skipped on the batting side alone;
+                // pure pitcher on the pitching side alone.
+                let battingRelevant = hasMeaningfulBatting && bdlBattingG != nil
+                let pitchingRelevant = hasMeaningfulPitching && bdlPitchingG != nil
+                let dbCaughtUp: Bool = {
+                    if battingRelevant && pitchingRelevant {
+                        return battingDBAhead && pitchingDBAhead
+                    }
+                    if battingRelevant  { return battingDBAhead }
+                    if pitchingRelevant { return pitchingDBAhead }
+                    return false
+                }()
+                if dbCaughtUp {
+                    eligible.removeAll { !$0.isLive }
+                    if eligible.isEmpty { return }
+                }
+            }
+        }
 
         // Fan out stats fetches in parallel.
         let perGame: [(bat: BoxBattingLine?, pit: BoxPitchingLine?, isLive: Bool)]

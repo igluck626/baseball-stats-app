@@ -183,11 +183,18 @@ struct BDLSeasonStat: Codable, Hashable {
     let battingObp: Double?
     let battingSlg: Double?
     let battingOps: Double?
+    /// Season games-played on the batting side. Used by the player-
+    /// profile overlay to detect whether our backend's nightly has
+    /// already absorbed today's game — when BDL's G matches our DB's
+    /// G, we don't apply the overlay (would double-count).
+    let battingGp:  Int?
 
     let pitchingEra: Double?
     let pitchingW:   Int?
     let pitchingL:   Int?
     let pitchingSv:  Int?
+    /// Pitcher counterpart to `battingGp`.
+    let pitchingGp:  Int?
 }
 
 // MARK: - Name utilities
