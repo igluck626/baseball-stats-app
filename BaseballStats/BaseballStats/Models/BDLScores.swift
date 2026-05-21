@@ -190,6 +190,28 @@ struct BDLSeasonStat: Codable, Hashable {
     let pitchingSv:  Int?
 }
 
+// MARK: - Name utilities
+
+/// Last-name segment of a full name, preserving any trailing
+/// baseball suffix ("Jr.", "Sr.", "II", "III", "IV"). Returns
+/// "Tatis Jr." for "Fernando Tatis Jr." and "Trout" for "Mike
+/// Trout". Used by the box-score's "F. Tatis Jr." abbreviation
+/// and the final-game HR summary's "Tatis Jr. (23)" segment.
+func lastNameWithSuffix(_ full: String) -> String {
+    let parts = full.split(separator: " ").map(String.init)
+    guard parts.count >= 2 else { return full }
+    let suffixes: Set<String> = ["Jr.", "Sr.", "Jr", "Sr", "II", "III", "IV"]
+    var working = parts
+    var trailingSuffix: String? = nil
+    if let lastToken = working.last, suffixes.contains(lastToken) {
+        trailingSuffix = lastToken
+        working.removeLast()
+    }
+    guard let last = working.last else { return full }
+    if let trailingSuffix { return "\(last) \(trailingSuffix)" }
+    return last
+}
+
 // MARK: - Standings
 
 /// One row from `/standings?season=N`. Only the fields the iOS

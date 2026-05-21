@@ -916,8 +916,10 @@ struct BoxScoreView: View {
 
     private func shortName(_ full: String) -> String {
         let parts = full.split(separator: " ")
-        guard let first = parts.first, let last = parts.dropFirst().last else { return full }
-        return "\(first.prefix(1)). \(last)"
+        guard let first = parts.first, parts.count >= 2 else { return full }
+        // `lastNameWithSuffix` handles the Jr./Sr./II/III/IV cases —
+        // "Fernando Tatis Jr." → "Tatis Jr." rather than "Jr.".
+        return "\(first.prefix(1)). \(lastNameWithSuffix(full))"
     }
 
     // MARK: - Navigation

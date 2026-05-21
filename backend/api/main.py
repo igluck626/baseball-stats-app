@@ -1147,6 +1147,49 @@ def admin_build_bdl_player_mapping(
         raise HTTPException(status_code=503, detail=str(exc))
 
 
+@app.post("/admin/set-bdl-id/{player_id}")
+def admin_set_bdl_id(
+    player_id: int,
+    bdl_id: int = Query(..., description="BDL player id to stamp onto the row."),
+    bio_type: str = Query(..., pattern="^(batter|pitcher)$",
+                          description="Which bio table to update — 'batter' (`players`) "
+                                      "or 'pitcher' (`pitchers`). Two-way players will need "
+                                      "one call per side."),
+):
+    """One-off override of a player's `bdl_id` mapping. Used to repair
+    rows where the bootstrap matcher picked the wrong BDL row (e.g. a
+    name-twin's dad / son pair where the DB row was stamped before
+    the debut-year tiebreaker landed in the matcher).
+
+    The bootstrap endpoints (`build-bdl-player-mapping`,
+    `retry-unmapped-bdl-players`) only act on rows where `bdl_id IS
+    NULL`, so they can't repair an already-mismapped row. This
+    endpoint is the targeted fix. Provide the BDL id you've verified
+    via `GET https://api.balldontlie.io/mlb/v1/players/{id}`.
+    """
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    bio_model = Player if bio_type == "batter" else Pitcher
+    with connection.get_session() as db:
+        row = db.query(bio_model).filter(bio_model.player_id == player_id).one_or_none()
+        if row is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No {bio_type} found with player_id {player_id}",
+            )
+        previous = row.bdl_id
+        row.bdl_id = bdl_id
+        db.commit()
+        return {
+            "status":      "ok",
+            "player_id":   player_id,
+            "name":        row.name,
+            "bio_type":    bio_type,
+            "previous_bdl_id": previous,
+            "new_bdl_id":  bdl_id,
+        }
+
+
 @app.post("/admin/backfill-player-history/{player_id}")
 def admin_backfill_player_history(
     player_id: int,

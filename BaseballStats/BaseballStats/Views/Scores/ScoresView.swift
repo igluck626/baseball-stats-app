@@ -893,8 +893,7 @@ private struct FinalGameCard: View {
                 guard let p = team.players["ID\(id)"] else { continue }
                 guard let hr = p.stats?.batting?.homeRuns, hr > 0 else { continue }
                 let season = p.seasonStats?.batting?.homeRuns ?? 0
-                let last = p.person.fullName.split(separator: " ").last.map(String.init)
-                    ?? p.person.fullName
+                let last = lastNameWithSuffix(p.person.fullName)
                 out.append("\(last) (\(season))")
             }
         }
