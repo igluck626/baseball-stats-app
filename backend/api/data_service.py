@@ -32,6 +32,7 @@ _MLB_LOCAL_TZ = ZoneInfo("America/New_York")
 
 import pandas as pd
 import pybaseball
+import requests
 from dotenv import load_dotenv
 
 log = logging.getLogger(__name__)
@@ -181,11 +182,38 @@ def _load_chadwick_mlbam_to_bbref() -> dict[int, str]:
     return bridge
 
 
-def _cached(key: str, fn, ttl: int = _TTL_CURRENT):
+def _cached(
+    key: str,
+    fn,
+    ttl: int = _TTL_CURRENT,
+    fall_back_to_stale_on_error: bool = False,
+):
+    """TTL cache with an optional "serve stale on failure" mode.
+
+    Default behavior unchanged: return cached value when fresh,
+    re-fetch via `fn()` otherwise.
+
+    `fall_back_to_stale_on_error=True` adds one extra branch: if
+    `fn()` raises, and a previous (now-expired) cached value still
+    exists in `_store`, return that previous value rather than
+    propagating the exception. Used for bref WAR fetches where
+    baseball-reference.com timeouts are common — better to serve
+    yesterday's WAR than to blank everyone's WAR column.
+    """
     entry = _store.get(key)
     if entry and (time.monotonic() - entry["ts"]) < ttl:
         return entry["value"]
-    result = fn()
+    try:
+        result = fn()
+    except Exception as exc:
+        if fall_back_to_stale_on_error and entry is not None:
+            age_s = time.monotonic() - entry["ts"]
+            log.warning(
+                "fetch failed for cache key %r — returning previous cached value "
+                "(age %.0fs): %s", key, age_s, exc,
+            )
+            return entry["value"]
+        raise
     _store[key] = {"value": result, "ts": time.monotonic()}
     return result
 
@@ -198,6 +226,41 @@ def _fetch_with_retry(fn, retries: int = 2, delay: float = 3.0):
             if attempt == retries:
                 raise
             time.sleep(delay)
+
+
+def _bref_war_with_retry(fn, label: str):
+    """Retry a baseball-reference.com WAR fetch up to 3 times, with
+    a 30-second sleep between attempts. Catches network-level
+    failures (`ReadTimeout`, `ConnectionError`) that pybaseball
+    surfaces from its underlying `requests` calls — the bref site
+    intermittently hangs the connection during nightly runs and the
+    default behavior of pybaseball is to wait indefinitely. Other
+    exception types fall straight through (no retry, since they
+    usually indicate a schema / parsing issue that re-attempts
+    won't fix).
+    """
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            return fn()
+        except (
+            requests.exceptions.ReadTimeout,
+            requests.exceptions.ConnectionError,
+        ) as exc:
+            last_exc = exc
+            log.warning(
+                "bref %s fetch attempt %d/3 failed: %s",
+                label, attempt + 1, exc,
+            )
+            if attempt < 2:
+                time.sleep(30)
+    # All three attempts exhausted — re-raise the last network
+    # error so `_cached` (with fall_back_to_stale_on_error) can
+    # serve the previous run's value, and `_nightly_phase` can
+    # degrade to an empty DataFrame as a last resort.
+    raise last_exc if last_exc is not None else RuntimeError(
+        f"bref {label} fetch failed after 3 attempts",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -218,8 +281,15 @@ def _batting_bref(year: int) -> pd.DataFrame:
 
 
 def _bwar_bat_all() -> pd.DataFrame:
-    return _cached("bwar_bat_all", lambda: pybaseball.bwar_bat(return_all=True),
-                   ttl=_TTL_CURRENT)
+    return _cached(
+        "bwar_bat_all",
+        lambda: _bref_war_with_retry(
+            lambda: pybaseball.bwar_bat(return_all=True),
+            "bwar_bat",
+        ),
+        ttl=_TTL_CURRENT,
+        fall_back_to_stale_on_error=True,
+    )
 
 
 def _pitching_bref(year: int) -> pd.DataFrame:
@@ -232,8 +302,15 @@ def _pitching_bref(year: int) -> pd.DataFrame:
 
 
 def _bwar_pitch_all() -> pd.DataFrame:
-    return _cached("bwar_pitch_all", lambda: pybaseball.bwar_pitch(return_all=True),
-                   ttl=_TTL_CURRENT)
+    return _cached(
+        "bwar_pitch_all",
+        lambda: _bref_war_with_retry(
+            lambda: pybaseball.bwar_pitch(return_all=True),
+            "bwar_pitch",
+        ),
+        ttl=_TTL_CURRENT,
+        fall_back_to_stale_on_error=True,
+    )
 
 
 def _ip_to_decimal(ip) -> float:

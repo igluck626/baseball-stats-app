@@ -343,12 +343,21 @@ final class PlayerViewModel: ObservableObject {
         // Falls back silently when the player's Lahman teamCode
         // isn't in the BDL map (extreme edge case — rebranded
         // teams whose code we haven't added yet).
-        guard let teamCode = player.teamCode,
-              let bdlTeamId = lahmanToBDLTeamId[teamCode] else { return }
+        guard let teamCode = player.teamCode else {
+            print("[overlay] player=\(player.name) teamCode=<nil>")
+            return
+        }
+        let bdlTeamIdLookup = lahmanToBDLTeamId[teamCode]
+        // Diagnostic — surfaces both the Lahman code on the player
+        // row AND the BDL id the dict resolved to. -1 means no
+        // mapping (the dict is missing this Lahman code).
+        print("[overlay] player=\(player.name) teamCode=\(teamCode) bdlTeamId=\(bdlTeamIdLookup ?? -1)")
+        guard let bdlTeamId = bdlTeamIdLookup else { return }
         let bdl = BallDontLieClient.shared
         let today = Self.dateOnly.string(from: Date())
 
         let todayGames = (try? await bdl.getTeamGames(date: today, teamId: bdlTeamId)) ?? []
+        print("[overlay] getTeamGames returned \(todayGames.count) games for bdlTeamId=\(bdlTeamId)")
 
         // Tag each eligible game with whether it's currently live.
         // BDL's status enum collapses to two states we care about:
@@ -357,6 +366,7 @@ final class PlayerViewModel: ObservableObject {
         var eligible: [(gameId: Int, isLive: Bool)] = []
         var liveOnSchedule = false
         for g in todayGames {
+            print("[overlay] game id=\(g.id) status=\(g.status) date=\(g.date)")
             switch g.status {
             case "STATUS_IN_PROGRESS", "STATUS_DELAYED":
                 liveOnSchedule = true
@@ -367,18 +377,25 @@ final class PlayerViewModel: ObservableObject {
                 break
             }
         }
+        print("[overlay] eligible games: \(eligible.count)")
         // Publish the team-live signal even if there's nothing to
         // overlay yet — gates the refresh-loop continuation so a
         // bench player whose team is mid-game keeps polling until
         // they appear.
         teamHasLiveGame = liveOnSchedule
 
-        guard !eligible.isEmpty else { return }
+        guard !eligible.isEmpty else {
+            print("[overlay] no eligible games — skipping overlay")
+            return
+        }
         // BDL player id is the join key on the stats response. If
         // we don't have one (mapping bootstrap hasn't reached this
         // player yet), we can't filter — bail out and leave the
         // overnight totals as-is.
-        guard let bdlPlayerId = player.bdl_id else { return }
+        guard let bdlPlayerId = player.bdl_id else {
+            print("[overlay] player.bdl_id is nil — can't filter stats")
+            return
+        }
 
         // Fan out stats fetches in parallel.
         let perGame: [(bat: BoxBattingLine?, pit: BoxPitchingLine?, isLive: Bool)]
@@ -390,13 +407,16 @@ final class PlayerViewModel: ObservableObject {
                     let live = entry.isLive
                     group.addTask {
                         guard let rows = try? await bdl.getGameStats(gameId: gid) else {
+                            print("[overlay] getGameStats failed for game \(gid)")
                             return nil
                         }
+                        print("[overlay] getGameStats returned \(rows.count) rows for game \(gid)")
                         // BDL returns one row per (player, side) — a
                         // two-way player gets two rows in the same
                         // response, one batting one pitching. Sum
                         // across them for the overlay.
                         let mine = rows.filter { $0.player.id == bdlPlayerId }
+                        print("[overlay] player bdl_id=\(bdlPlayerId) found \(mine.count) stat rows in game \(gid)")
                         guard !mine.isEmpty else { return nil }
                         var bat: BoxBattingLine? = nil
                         var pit: BoxPitchingLine? = nil

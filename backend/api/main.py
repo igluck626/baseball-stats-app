@@ -9,6 +9,7 @@ import traceback
 from contextlib import asynccontextmanager
 from urllib.parse import urlparse
 
+import pandas as pd
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
@@ -266,8 +267,29 @@ def _nightly_phase(
     # before anyone notices.
     data_service._get_bdl_key()
 
-    bwar_df      = fetch_bwar_all()
-    bwar_current = bwar_df[bwar_df["year_ID"] == current_year]
+    # bref WAR is non-critical for the nightly — BDL ships the
+    # current-season counting stats, and WAR / OPS+ / ERA+ only
+    # come from `pybaseball.bwar_*`. If baseball-reference.com is
+    # down (its read endpoint times out intermittently),
+    # `fetch_bwar_all` will have already retried 3× and tried to
+    # serve the previous run's cached value. If even that fails —
+    # first nightly after a fresh deploy with bref still down —
+    # log a warning and degrade to an empty DataFrame so the rest
+    # of the phase (BDL stat ingestion) still runs.
+    try:
+        bwar_df = fetch_bwar_all()
+    except Exception as exc:
+        log.warning(
+            "bref WAR download failed after 3 attempts — continuing with empty "
+            "WAR data: %s", exc,
+        )
+        bwar_df = pd.DataFrame()
+    if bwar_df.empty or "year_ID" not in bwar_df.columns:
+        # Same empty-frame fall-through downstream — `build_entry`
+        # handles a no-WAR match per-player.
+        bwar_current = bwar_df
+    else:
+        bwar_current = bwar_df[bwar_df["year_ID"] == current_year]
 
     with connection.get_session() as db:
         ids: list[int] = get_ids(db)
