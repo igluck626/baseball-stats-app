@@ -343,21 +343,29 @@ final class PlayerViewModel: ObservableObject {
         // Falls back silently when the player's Lahman teamCode
         // isn't in the BDL map (extreme edge case — rebranded
         // teams whose code we haven't added yet).
-        guard let teamCode = player.teamCode else {
-            print("[overlay] player=\(player.name) teamCode=<nil>")
-            return
-        }
-        let bdlTeamIdLookup = lahmanToBDLTeamId[teamCode]
-        // Diagnostic — surfaces both the Lahman code on the player
-        // row AND the BDL id the dict resolved to. -1 means no
-        // mapping (the dict is missing this Lahman code).
-        print("[overlay] player=\(player.name) teamCode=\(teamCode) bdlTeamId=\(bdlTeamIdLookup ?? -1)")
-        guard let bdlTeamId = bdlTeamIdLookup else { return }
+        guard let teamCode = player.teamCode,
+              let bdlTeamId = lahmanToBDLTeamId[teamCode] else { return }
         let bdl = BallDontLieClient.shared
         let today = Self.dateOnly.string(from: Date())
 
         let todayGames = (try? await bdl.getTeamGames(date: today, teamId: bdlTeamId)) ?? []
-        print("[overlay] getTeamGames returned \(todayGames.count) games for bdlTeamId=\(bdlTeamId)")
+
+        // Cutoff for Final games already absorbed by the nightly run.
+        // `stats_last_updated` is when the overnight batch wrote the
+        // season row. Any Final game that started > 3 hours BEFORE
+        // that stamp is already counted there — re-overlaying it
+        // double-counts (Kurtz showing .286 instead of .277). The
+        // 3-hour buffer covers West Coast games (~3h between first
+        // pitch and final out) that the same nightly might still
+        // catch. Live games bypass this — they're newer than any
+        // nightly by definition.
+        let nightlyCutoff: Date? = {
+            let stamp = currentBatting?.stats_last_updated
+                     ?? currentPitching?.stats_last_updated
+            guard let stamp,
+                  let d = try? Date(stamp, strategy: .iso8601) else { return nil }
+            return d.addingTimeInterval(-3 * 60 * 60)
+        }()
 
         // Tag each eligible game with whether it's currently live.
         // BDL's status enum collapses to two states we care about:
@@ -366,36 +374,36 @@ final class PlayerViewModel: ObservableObject {
         var eligible: [(gameId: Int, isLive: Bool)] = []
         var liveOnSchedule = false
         for g in todayGames {
-            print("[overlay] game id=\(g.id) status=\(g.status) date=\(g.date)")
             switch g.status {
             case "STATUS_IN_PROGRESS", "STATUS_DELAYED":
                 liveOnSchedule = true
                 eligible.append((g.id, true))
             case "STATUS_FINAL":
+                // Skip Final games already folded into the nightly
+                // season totals. nil cutoff (historical row / first-
+                // ever load) skips the check and overlays normally.
+                if let nightlyCutoff,
+                   let start = g.startDate,
+                   start <= nightlyCutoff {
+                    continue
+                }
                 eligible.append((g.id, false))
             default:
                 break
             }
         }
-        print("[overlay] eligible games: \(eligible.count)")
         // Publish the team-live signal even if there's nothing to
         // overlay yet — gates the refresh-loop continuation so a
         // bench player whose team is mid-game keeps polling until
         // they appear.
         teamHasLiveGame = liveOnSchedule
 
-        guard !eligible.isEmpty else {
-            print("[overlay] no eligible games — skipping overlay")
-            return
-        }
+        guard !eligible.isEmpty else { return }
         // BDL player id is the join key on the stats response. If
         // we don't have one (mapping bootstrap hasn't reached this
         // player yet), we can't filter — bail out and leave the
         // overnight totals as-is.
-        guard let bdlPlayerId = player.bdl_id else {
-            print("[overlay] player.bdl_id is nil — can't filter stats")
-            return
-        }
+        guard let bdlPlayerId = player.bdl_id else { return }
 
         // Fan out stats fetches in parallel.
         let perGame: [(bat: BoxBattingLine?, pit: BoxPitchingLine?, isLive: Bool)]
@@ -407,16 +415,13 @@ final class PlayerViewModel: ObservableObject {
                     let live = entry.isLive
                     group.addTask {
                         guard let rows = try? await bdl.getGameStats(gameId: gid) else {
-                            print("[overlay] getGameStats failed for game \(gid)")
                             return nil
                         }
-                        print("[overlay] getGameStats returned \(rows.count) rows for game \(gid)")
                         // BDL returns one row per (player, side) — a
                         // two-way player gets two rows in the same
                         // response, one batting one pitching. Sum
                         // across them for the overlay.
                         let mine = rows.filter { $0.player.id == bdlPlayerId }
-                        print("[overlay] player bdl_id=\(bdlPlayerId) found \(mine.count) stat rows in game \(gid)")
                         guard !mine.isEmpty else { return nil }
                         var bat: BoxBattingLine? = nil
                         var pit: BoxPitchingLine? = nil
@@ -519,6 +524,21 @@ final class PlayerViewModel: ObservableObject {
         guard !isRetired else { return }
         guard teamHasLiveGame else { return }
         refreshTask = Task { @MainActor [weak self] in
+            // Fire one refresh immediately on task start so the LIVE
+            // badge appears without waiting a full 60s window. The
+            // BDL client's in-process TTL cache collapses the call
+            // when this method is invoked right after the initial
+            // `loadRecentGameStats()` from `loadData` — no double
+            // HTTP cost. The defense matters when the method is
+            // called fresh (e.g. profile re-entry after backgrounding,
+            // or a game flipping to Live between initial load and
+            // the timer kickoff).
+            if let strong = self {
+                await strong.loadRecentGameStats()
+                if !strong.teamHasLiveGame { return }
+            } else {
+                return
+            }
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 60 * 1_000_000_000)
                 guard !Task.isCancelled, let self else { return }
