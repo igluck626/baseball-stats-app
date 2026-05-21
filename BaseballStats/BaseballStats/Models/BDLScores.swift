@@ -166,6 +166,19 @@ struct BDLPlay: Codable, Hashable {
     let trajectory: String?
 }
 
+// MARK: - Standings
+
+/// One row from `/standings?season=N`. Only the fields the iOS
+/// scores cards consume are pulled — the full payload also carries
+/// streak / last-ten / home-road / clincher fields that the backend
+/// uses for the Standings tab; those are intentionally omitted here
+/// because the iOS scores path only needs the W-L pair.
+struct BDLStandingsEntry: Codable, Hashable {
+    let team: BDLTeam
+    let wins: Int
+    let losses: Int
+}
+
 // MARK: - Plate appearances
 
 struct BDLPlateAppearance: Codable, Hashable {

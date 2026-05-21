@@ -249,6 +249,36 @@ final class BallDontLieClient: @unchecked Sendable {
         return envelope.data
     }
 
+    // MARK: - Standings
+
+    /// Current W-L (plus full row metadata) for every team in a
+    /// given season. The Scores tab uses this to annotate each
+    /// team's name with a `(W-L)` record next to the abbreviation.
+    /// `bypassCache: true` is for the Live→Final transition path —
+    /// the scores polling loop wants the just-updated record the
+    /// moment the game flips, not whatever's still in the 5-minute
+    /// cache window.
+    func getStandings(
+        season: Int,
+        bypassCache: Bool = false,
+    ) async throws -> [BDLStandingsEntry] {
+        let key = "standings:\(season)"
+        if !bypassCache, let cached: [BDLStandingsEntry] = cachedValue(key) {
+            return cached
+        }
+        let items: [URLQueryItem] = [
+            URLQueryItem(name: "season", value: String(season)),
+        ]
+        let envelope: BDLDataEnvelope<BDLStandingsEntry> = try await fetch(
+            path: "/mlb/v1/standings", query: items,
+        )
+        // 5 minute TTL — records only change at game finals, which
+        // are rare on a per-minute basis. The bypassCache path
+        // handles the "fresh record right after final" need.
+        storeInCache(key, envelope.data, ttl: 300)
+        return envelope.data
+    }
+
     // MARK: - Live game
 
     /// Sequential play log for one game. Pagination is via cursor;
