@@ -70,7 +70,9 @@ final class ScoresViewModel: ObservableObject {
         // to an empty dict when standings fail or BDL ships an
         // empty payload — records just won't render that tick.
         let standings = (await standingsTask) ?? []
-        self.teamRecords = Self.recordsByBDLTeamId(standings)
+        self.teamRecords = applyTodaysFinalsAdjustment(
+            to: Self.recordsByBDLTeamId(standings),
+        )
         isLoading = false
         didLoad = true
     }
@@ -97,7 +99,9 @@ final class ScoresViewModel: ObservableObject {
             // the screen on a transient pull-to-refresh hiccup.
         }
         if let standings = await standingsTask {
-            self.teamRecords = Self.recordsByBDLTeamId(standings)
+            self.teamRecords = applyTodaysFinalsAdjustment(
+                to: Self.recordsByBDLTeamId(standings),
+            )
         }
     }
 
@@ -112,7 +116,9 @@ final class ScoresViewModel: ObservableObject {
         let year = Calendar.current.component(.year, from: selectedDate)
         do {
             let standings = try await bdl.getStandings(season: year, bypassCache: true)
-            self.teamRecords = Self.recordsByBDLTeamId(standings)
+            self.teamRecords = applyTodaysFinalsAdjustment(
+                to: Self.recordsByBDLTeamId(standings),
+            )
             NotificationCenter.default.post(name: .standingsShouldRefresh, object: nil)
         } catch {
             // Silent — the dict keeps its previous values; the next
@@ -132,6 +138,55 @@ final class ScoresViewModel: ObservableObject {
             )
         }
         return dict
+    }
+
+    /// BDL's standings endpoint lags real-time finals — the row for a
+    /// team that just lost still shows pre-game wins+losses for some
+    /// minutes after the game ends. Locally bump each Final-on-today's
+    /// slate by +1 win for the winner / +1 loss for the loser, using
+    /// the scores already on the Game payload. Past-day slates skip
+    /// the bump entirely — BDL's records are settled by then, and any
+    /// adjustment would double-count.
+    ///
+    /// Caveat: once BDL catches up to today's final, this method will
+    /// over-count by 1 until the next nightly when the user's local
+    /// calendar rolls forward. That's the deliberate tradeoff —
+    /// briefly-too-high beats briefly-stale for the use case the user
+    /// flagged (Giants showing 20-29 instead of 20-30 right after a
+    /// loss).
+    private func applyTodaysFinalsAdjustment(
+        to records: [Int: TeamRecord],
+    ) -> [Int: TeamRecord] {
+        guard Calendar.current.isDateInToday(selectedDate) else { return records }
+
+        var out = records
+        for game in games where game.phase == .final {
+            guard
+                let awayId = game.bdlAwayTeamId,
+                let homeId = game.bdlHomeTeamId,
+                let awayScore = game.teams.away.score,
+                let homeScore = game.teams.home.score,
+                awayScore != homeScore
+            else { continue }
+            let homeWon = homeScore > awayScore
+            let winnerId = homeWon ? homeId : awayId
+            let loserId  = homeWon ? awayId : homeId
+            if let r = out[winnerId] {
+                out[winnerId] = TeamRecord(
+                    wins:   (r.wins ?? 0) + 1,
+                    losses: r.losses,
+                    pct:    nil,
+                )
+            }
+            if let r = out[loserId] {
+                out[loserId] = TeamRecord(
+                    wins:   r.wins,
+                    losses: (r.losses ?? 0) + 1,
+                    pct:    nil,
+                )
+            }
+        }
+        return out
     }
 
     /// Spin up a polling task that re-runs `load(date:)` every 30s
