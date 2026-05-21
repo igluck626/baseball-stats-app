@@ -184,14 +184,38 @@ final class BallDontLieClient: @unchecked Sendable {
     func getTeamGames(date: String, teamId: Int) async throws -> [BDLGame] {
         let key = "team_games:\(date):\(teamId)"
         if let cached: [BDLGame] = cachedValue(key) { return cached }
-        let items: [URLQueryItem] = [
-            URLQueryItem(name: "dates[]",    value: date),
-            URLQueryItem(name: "team_ids[]", value: String(teamId)),
-            URLQueryItem(name: "per_page",   value: "100"),
-        ]
+
+        // Same ±1 day + ET-filter pattern as `getGames(date:)`. BDL
+        // buckets games by UTC start time, so a 7pm PT start
+        // (02:00 UTC the NEXT day) gets filed under tomorrow's UTC
+        // date even though MLB's schedule calls it tonight. Asking
+        // for just `dates[]=today` would miss it; fetch ±1 day and
+        // filter by ET-local date instead.
+        let neighbors = Self.neighborDates(of: date)
+        var items: [URLQueryItem] = neighbors.map {
+            URLQueryItem(name: "dates[]", value: $0)
+        }
+        items.append(URLQueryItem(name: "team_ids[]", value: String(teamId)))
+        items.append(URLQueryItem(name: "per_page",   value: "100"))
+
         let envelope: BDLDataEnvelope<BDLGame> = try await fetch(path: "/mlb/v1/games", query: items)
-        storeInCache(key, envelope.data, ttl: 30)
-        return envelope.data
+
+        // Client-side filter: keep only games whose Eastern-local
+        // start date matches the requested date. Dedupe by id since
+        // the multi-bucket fetch can theoretically ship the same
+        // game twice (BDL doesn't actually do that, but the union
+        // of three queries makes belt-and-suspenders cheap).
+        var seen: Set<Int> = []
+        var filtered: [BDLGame] = []
+        for g in envelope.data {
+            if seen.contains(g.id) { continue }
+            seen.insert(g.id)
+            if Self.easternDateString(for: g) == date {
+                filtered.append(g)
+            }
+        }
+        storeInCache(key, filtered, ttl: 30)
+        return filtered
     }
 
     // MARK: - Box score
