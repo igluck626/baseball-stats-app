@@ -18,7 +18,7 @@ struct ContentView: View {
     var body: some View {
         TabView(selection: $navigation.selectedTab) {
             ScoresView()
-                .tabItem {
+                .tabItem { 
                     // `baseball.fill` ships in iOS 15+ and reads as a
                     // baseball at tab-bar resolution. `figure.baseball`
                     // (batter silhouette) is the documented fallback if

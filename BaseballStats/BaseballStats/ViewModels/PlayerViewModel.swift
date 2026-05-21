@@ -294,6 +294,7 @@ final class PlayerViewModel: ObservableObject {
     /// onto the season totals. The overlay is silent (no spinner,
     /// no blocking) so the initial profile render stays fast.
     func loadData() async {
+        print("[gp-check] loadData() called")
         error = nil
 
         async let currentBattingDone:  Void = loadCurrentBatting()
@@ -338,17 +339,28 @@ final class PlayerViewModel: ObservableObject {
     /// least one folded game is actually live; pure final overlays
     /// fill stats silently.
     func loadRecentGameStats() async {
-        guard !isRetired else { return }
+        print("[gp-check] loadRecentGameStats() ENTRY — player=\(player.name)")
+        guard !isRetired else {
+            print("[gp-check] early return: player is retired")
+            return
+        }
         // BDL team id is the hop the team-scoped game query needs.
         // Falls back silently when the player's Lahman teamCode
         // isn't in the BDL map (extreme edge case — rebranded
         // teams whose code we haven't added yet).
-        guard let teamCode = player.teamCode,
-              let bdlTeamId = lahmanToBDLTeamId[teamCode] else { return }
+        guard let teamCode = player.teamCode else {
+            print("[gp-check] early return: player.teamCode is nil")
+            return
+        }
+        guard let bdlTeamId = lahmanToBDLTeamId[teamCode] else {
+            print("[gp-check] early return: no BDL mapping for teamCode=\(teamCode)")
+            return
+        }
         let bdl = BallDontLieClient.shared
         let today = Self.dateOnly.string(from: Date())
 
         let todayGames = (try? await bdl.getTeamGames(date: today, teamId: bdlTeamId)) ?? []
+        print("[gp-check] getTeamGames returned \(todayGames.count) games")
 
         // Tag each eligible game with whether it's currently live.
         // BDL's status enum collapses to two states we care about:
@@ -358,90 +370,113 @@ final class PlayerViewModel: ObservableObject {
         var liveOnSchedule = false
         var hasFinal = false
         for g in todayGames {
+            // BDLGame has no `phase` field — derive one inline so
+            // the diagnostic reads like the rest of the app does.
+            let derivedPhase: String = {
+                switch g.status {
+                case "STATUS_IN_PROGRESS", "STATUS_DELAYED": return "live"
+                case "STATUS_FINAL":                          return "final"
+                case "STATUS_SCHEDULED":                      return "preview"
+                case "STATUS_POSTPONED":                      return "other"
+                default:                                      return "other"
+                }
+            }()
+            print(
+                "[gp-check] game id=\(g.id) status=\(g.status) "
+                + "date=\(g.date) phase=\(derivedPhase)"
+            )
             switch g.status {
             case "STATUS_IN_PROGRESS", "STATUS_DELAYED":
                 liveOnSchedule = true
                 eligible.append((g.id, true))
             case "STATUS_FINAL":
-                // Secondary hard cutoff: games that started > 24h
-                // before the last nightly stamp are definitely in
-                // the DB regardless of any games-played check. This
-                // catches edge cases like a postponed game BDL
-                // re-publishes as Final hours after its scheduled
-                // start time.
-                if let stamp = currentBatting?.stats_last_updated
-                            ?? currentPitching?.stats_last_updated,
-                   let stampDate = try? Date(stamp, strategy: .iso8601),
-                   let start = g.startDate,
-                   start < stampDate.addingTimeInterval(-24 * 60 * 60) {
-                    continue
-                }
                 hasFinal = true
                 eligible.append((g.id, false))
             default:
                 break
             }
         }
+        print("[gp-check] after phase filter: \(eligible.count) eligible")
         // Publish the team-live signal even if there's nothing to
         // overlay yet — gates the refresh-loop continuation so a
         // bench player whose team is mid-game keeps polling until
         // they appear.
         teamHasLiveGame = liveOnSchedule
 
-        guard !eligible.isEmpty else { return }
+        guard !eligible.isEmpty else {
+            print("[gp-check] early return: no eligible games (eligible.isEmpty)")
+            return
+        }
         // BDL player id is the join key on the stats response. If
         // we don't have one (mapping bootstrap hasn't reached this
         // player yet), we can't filter — bail out and leave the
         // overnight totals as-is.
-        guard let bdlPlayerId = player.bdl_id else { return }
+        guard let bdlPlayerId = player.bdl_id else {
+            print("[gp-check] early return: player.bdl_id is nil")
+            return
+        }
 
-        // Games-played gate for Final games: if our DB's season G
-        // already matches BDL's season G, the overnight batch has
-        // already absorbed today's stats and re-overlaying would
-        // double-count (Kurtz .286 vs .277). Fetch BDL's current
-        // season totals to compare. Live games bypass this — they
-        // haven't been absorbed by definition.
-        //
-        // Comparison rule: "our DB G >= BDL G" → DB caught up →
-        // skip the Final overlays. "DB G < BDL G" → DB still
-        // behind → overlay needed to fill the gap.
+        // Games-played gate for Final games. The rule (deliberately
+        // simple): overlay the Final games ONLY when BDL's season
+        // games-played count exactly matches our DB's. That's the
+        // window where BDL has flipped the game to STATUS_FINAL but
+        // hasn't yet incremented `batting_gp` / `pitching_gp` — the
+        // box-score data exists but neither BDL nor our DB has
+        // absorbed it. Once BDL increments (bdl_gp > db.G), the
+        // nightly will catch up; until then we deliberately skip
+        // the overlay to avoid double-counting. Live games bypass
+        // this — they're never in the nightly by definition.
         if hasFinal {
             let season = Calendar.current.component(.year, from: Date())
             let rows = (try? await bdl.getSeasonStats(
                 playerIds: [bdlPlayerId], season: season,
             )) ?? []
-            if let row = rows.first(where: { $0.player.id == bdlPlayerId }) {
-                let dbBattingG  = currentBatting?.standard?.G
-                let dbPitchingG = currentPitching?.standard?.G
-                let bdlBattingG  = row.battingGp
-                let bdlPitchingG = row.pitchingGp
-                let battingDBAhead: Bool = {
-                    if let db = dbBattingG, let b = bdlBattingG { return db >= b }
-                    return false
-                }()
-                let pitchingDBAhead: Bool = {
-                    if let db = dbPitchingG, let p = bdlPitchingG { return db >= p }
-                    return false
-                }()
-                // A two-way player's overlay needs BOTH sides
-                // caught up before we skip the Final. A pure
-                // batter is skipped on the batting side alone;
-                // pure pitcher on the pitching side alone.
-                let battingRelevant = hasMeaningfulBatting && bdlBattingG != nil
-                let pitchingRelevant = hasMeaningfulPitching && bdlPitchingG != nil
-                let dbCaughtUp: Bool = {
-                    if battingRelevant && pitchingRelevant {
-                        return battingDBAhead && pitchingDBAhead
-                    }
-                    if battingRelevant  { return battingDBAhead }
-                    if pitchingRelevant { return pitchingDBAhead }
-                    return false
-                }()
-                if dbCaughtUp {
-                    eligible.removeAll { !$0.isLive }
-                    if eligible.isEmpty { return }
+            let bdlSeason = rows.first(where: { $0.player.id == bdlPlayerId })
+            print(
+                "[gp-check] player=\(player.name) "
+                + "db_batting_G=\(currentBatting?.standard?.G ?? -1) "
+                + "bdl_battingGp=\(bdlSeason?.battingGp ?? -1)"
+            )
+            let dbBattingG   = currentBatting?.standard?.G
+            let dbPitchingG  = currentPitching?.standard?.G
+            let bdlBattingG  = bdlSeason?.battingGp
+            let bdlPitchingG = bdlSeason?.pitchingGp
+            let battingEqual: Bool = {
+                if let db = dbBattingG, let b = bdlBattingG { return db == b }
+                return false
+            }()
+            let pitchingEqual: Bool = {
+                if let db = dbPitchingG, let p = bdlPitchingG { return db == p }
+                return false
+            }()
+            // Two-way (Ohtani): overlay needs BOTH sides equal,
+            // otherwise the side BDL already incremented would
+            // double-count when the box-score line lands. Pure
+            // batter / pure pitcher consult only their own side.
+            let shouldOverlayFinals: Bool = {
+                if hasMeaningfulBatting && hasMeaningfulPitching {
+                    return battingEqual && pitchingEqual
+                }
+                if hasMeaningfulBatting  { return battingEqual }
+                if hasMeaningfulPitching { return pitchingEqual }
+                return false
+            }()
+            print(
+                "[gp-check] shouldOverlayFinals=\(shouldOverlayFinals) — Finals will be "
+                + "\(shouldOverlayFinals ? "overlaid" : "skipped")"
+            )
+            if !shouldOverlayFinals {
+                eligible.removeAll { !$0.isLive }
+                if eligible.isEmpty {
+                    print("[gp-check] returning early — no Finals to overlay (BDL ahead) and no Lives")
+                    return
                 }
             }
+        }
+
+        for entry in eligible {
+            let status = todayGames.first(where: { $0.id == entry.gameId })?.status ?? "?"
+            print("[gp-check] eligible game id=\(entry.gameId) status=\(status)")
         }
 
         // Fan out stats fetches in parallel.
@@ -501,6 +536,7 @@ final class PlayerViewModel: ObservableObject {
         recentPitching   = sawPit ? totalPit : nil
         recentStatsLoaded = true
         hasLiveGame      = anyLive
+        print("[gp-check] overlay applied — recentBatting HR=\(recentBatting?.HR ?? -1)")
     }
 
     /// BDL `BDLPlayerStat` → batting line. Returns nil when the
