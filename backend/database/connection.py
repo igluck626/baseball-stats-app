@@ -460,14 +460,36 @@ def _ensure_seasons_primary_key(table: str) -> bool:
 
 
 def dedupe_gamelog_duplicates(table: str, quality_columns: list[str]) -> int:
-    """Delete duplicate `(player_id, game_id)` rows from `table`,
+    """Delete duplicate `(player_id, game_date)` rows from `table`,
     keeping the row with the most non-NULL stat columns among
     `quality_columns`. Ties broken deterministically by Postgres
     `ctid` so the operation is repeatable.
 
-    Postgres-only — relies on `ctid` for the physical-row identifier
-    and `num_nonnulls()` (Postgres 9.6+) for the completeness count.
-    SQLite skips, same convention as `_dedupe_season_duplicates`.
+    Partition is `(player_id, game_date)` rather than
+    `(player_id, game_id)` so the dedupe catches the cross-format
+    case: the same logical game ingested once via MLB Stats API
+    (`game_id = "775296"`) and again via BallDontLie
+    (`game_id = "5058484"`). A pure `(player_id, game_id)` partition
+    would treat those as distinct and leave both rows.
+
+    **Safety filter — `game_id ~ '^[0-9]+$'`**: only rows whose
+    `game_id` is purely numeric enter the partition. Lahman-style
+    string ids (e.g. `"ANA200203310"`) are excluded entirely so
+    historical rows can never be touched, and a doubleheader row
+    written under a Lahman id won't get accidentally compared
+    against a modern numeric id for the same date.
+
+    **Doubleheader caveat**: this still treats two legitimate
+    same-date games (a true doubleheader, both stored under
+    numeric ids) as duplicates and keeps only one. Doubleheaders
+    are rare enough that the cross-format-id reconciliation is
+    worth the tradeoff — but if BDL ever starts populating game
+    logs from doubleheaders we'd need a stricter key (e.g. include
+    game_id when both are non-null and numeric).
+
+    Postgres-only — relies on `ctid` + `num_nonnulls()` + the
+    POSIX-regex `~` operator. SQLite skips, same convention as
+    `_dedupe_season_duplicates`.
 
     Public (no leading underscore) so the matching admin endpoint
     can drive an on-demand dedup pass — the init-time call below
@@ -479,7 +501,8 @@ def dedupe_gamelog_duplicates(table: str, quality_columns: list[str]) -> int:
     if table not in inspector.get_table_names():
         return 0
     columns = {c["name"] for c in inspector.get_columns(table)}
-    if "player_id" not in columns or "game_id" not in columns:
+    if "player_id" not in columns or "game_id" not in columns \
+            or "game_date" not in columns:
         return 0
     relevant = [c for c in quality_columns if c in columns]
     quality_expr = (
@@ -490,10 +513,11 @@ def dedupe_gamelog_duplicates(table: str, quality_columns: list[str]) -> int:
         WITH ranked AS (
             SELECT ctid,
                    ROW_NUMBER() OVER (
-                       PARTITION BY player_id, game_id
+                       PARTITION BY player_id, game_date
                        ORDER BY {quality_expr} DESC, ctid ASC
                    ) AS rn
             FROM {table}
+            WHERE game_id ~ '^[0-9]+$'
         )
         DELETE FROM {table} t
         USING ranked r
