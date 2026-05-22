@@ -1157,6 +1157,38 @@ def admin_dedup_gamelogs():
     }
 
 
+@app.post("/admin/remove-spring-training-gamelogs")
+def admin_remove_spring_training_gamelogs():
+    """One-shot cleanup: delete `batting_gamelogs` and
+    `pitching_gamelogs` rows whose `game_date` is before the
+    current season's Opening Night (2026-03-25). Spring training
+    and exhibition games leaked into the gamelog tables before
+    `fetch_bdl_games_for_date` started filtering on
+    `season_type == "regular"`; this is the cleanup pass for
+    those orphan rows. Idempotent — re-runs are no-ops once the
+    tables are clean.
+    """
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    cutoff = "2026-03-25"
+    with connection.get_session() as db:
+        batting = db.execute(
+            _sa_text("DELETE FROM batting_gamelogs WHERE game_date < :cutoff"),
+            {"cutoff": cutoff},
+        )
+        pitching = db.execute(
+            _sa_text("DELETE FROM pitching_gamelogs WHERE game_date < :cutoff"),
+            {"cutoff": cutoff},
+        )
+        db.commit()
+        return {
+            "status":           "ok",
+            "cutoff":           cutoff,
+            "batting_removed":  batting.rowcount or 0,
+            "pitching_removed": pitching.rowcount or 0,
+        }
+
+
 @app.post("/admin/repair-null-stats")
 def admin_repair_null_stats():
     """One-shot cleanup for placeholder rows that the Phase 5

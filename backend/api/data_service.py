@@ -3360,9 +3360,20 @@ def _ip_str_to_decimal(v) -> Optional[float]:
 def fetch_bdl_games_for_date(date_str: str,
                              finals_only: bool = True) -> list[dict]:
     """Return BDL games for one local-date (`yyyy-MM-dd`). Filters
-    to finals by default — gamelogs are an end-of-game artifact, so
-    fetching in-progress games would write incomplete lines. Pass
-    `finals_only=False` to include all statuses for debugging."""
+    to **regular-season** games (`season_type == "regular"`) and,
+    by default, to finals (`STATUS_FINAL`).
+
+    The regular-season filter is what keeps spring training,
+    postseason, and the All-Star exhibition out of the gamelog
+    tables — BDL serves all of these from the same `/games`
+    endpoint, but only regular-season rows are meaningful for
+    our `player_seasons` / gamelog schemas (which assume one
+    season's worth of rows per player-year).
+
+    The finals filter avoids writing incomplete lines for games
+    still in progress. Pass `finals_only=False` to include all
+    statuses for debugging.
+    """
     try:
         data = _bdl_get_json("games", {
             "dates[]":  date_str,
@@ -3379,13 +3390,17 @@ def fetch_bdl_games_for_date(date_str: str,
         )
         return []
     all_games = data.get("data") or []
+    regular_season = [
+        g for g in all_games if g.get("season_type") == "regular"
+    ]
     if finals_only:
-        games = [g for g in all_games if g.get("status") == "STATUS_FINAL"]
+        games = [g for g in regular_season if g.get("status") == "STATUS_FINAL"]
     else:
-        games = all_games
+        games = regular_season
     log.info(
-        "fetch_bdl_games_for_date(%s): %d games returned (%d final, %d other)",
-        date_str, len(all_games), len(games), len(all_games) - len(games),
+        "fetch_bdl_games_for_date(%s): %d games returned, "
+        "%d regular-season, %d after status filter",
+        date_str, len(all_games), len(regular_season), len(games),
     )
     return games
 
