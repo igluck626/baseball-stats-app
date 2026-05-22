@@ -1056,6 +1056,71 @@ def admin_discover_from_rosters():
     return data_service.sync_all_player_teams_from_rosters(current_year)
 
 
+@app.get("/admin/check-gamelog-duplicates")
+def admin_check_gamelog_duplicates():
+    """Diagnostic: summarize duplicate patterns in the gamelog
+    tables so we can tell what kind of duplicates we're dealing
+    with before/after the dedupe pass runs. Returns per-table:
+      • total row count
+      • distinct (player_id, game_id) pairs — should equal total
+        once the PK is in place.
+      • distinct (player_id, game_date) pairs — when this is
+        *less than* the (player_id, game_id) count, the same
+        logical game is stored under multiple game_id strings
+        (e.g. MLB Stats API gamePks vs. BDL game ids). The
+        (player_id, game_id) PK alone can't fix those — they
+        need a date-keyed reconciliation.
+      • sample 5 Ohtani rows so we can eyeball the game_id shape.
+
+    Postgres-only — runs raw SQL against the engine.
+    """
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+
+    def _summarize(table: str) -> dict:
+        with connection.get_session() as db:
+            total = db.execute(
+                _sa_text(f"SELECT COUNT(*) FROM {table}")
+            ).scalar() or 0
+            by_game_id = db.execute(
+                _sa_text(
+                    f"SELECT COUNT(*) FROM "
+                    f"(SELECT DISTINCT player_id, game_id FROM {table}) s"
+                )
+            ).scalar() or 0
+            by_game_date = db.execute(
+                _sa_text(
+                    f"SELECT COUNT(*) FROM "
+                    f"(SELECT DISTINCT player_id, game_date FROM {table}) s"
+                )
+            ).scalar() or 0
+            ohtani_rows = db.execute(_sa_text(
+                f"SELECT player_id, game_id, game_date, opponent "
+                f"FROM {table} WHERE player_id = 660271 "
+                f"ORDER BY game_date DESC LIMIT 5"
+            )).fetchall()
+            return {
+                "total_rows":                       int(total),
+                "distinct_player_game_id_pairs":    int(by_game_id),
+                "distinct_player_game_date_pairs":  int(by_game_date),
+                "duplicate_rows_over_game_id":      int(total) - int(by_game_id),
+                "ohtani_sample": [
+                    {
+                        "player_id": r[0],
+                        "game_id":   r[1],
+                        "game_date": str(r[2]) if r[2] is not None else None,
+                        "opponent":  r[3],
+                    }
+                    for r in ohtani_rows
+                ],
+            }
+
+    return {
+        "batting_gamelogs":  _summarize("batting_gamelogs"),
+        "pitching_gamelogs": _summarize("pitching_gamelogs"),
+    }
+
+
 @app.post("/admin/dedup-gamelogs")
 def admin_dedup_gamelogs():
     """One-shot cleanup: remove duplicate `(player_id, game_id)`
