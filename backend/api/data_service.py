@@ -567,7 +567,16 @@ def get_player_by_bdl_id(bdl_id: int) -> Optional[dict]:
 
     Two-way players (Ohtani) have the same bdl_id stamped on both
     bio tables — return the batter row first, matching
-    `get_player_by_id`'s precedence."""
+    `get_player_by_id`'s precedence.
+
+    Tiebreaker for multi-row matches on the same bdl_id (rare —
+    happens when the mapping bootstrap stamped the same BDL id
+    onto two MLBAM rows, e.g. a father/son name twin): prefer
+    active players (`mlb_last_season IS NULL`) over retired ones,
+    then prefer the most recent debut so the active half of a
+    name-twin pair wins. A correct one-to-one mapping makes the
+    ordering moot.
+    """
     if not connection.db_available() or bdl_id is None:
         return None
     from database.models import Pitcher as _Pitcher
@@ -578,6 +587,10 @@ def get_player_by_bdl_id(bdl_id: int) -> Optional[dict]:
             row = (
                 db.query(model)
                 .filter(model.bdl_id == bdl_id)
+                .order_by(
+                    model.mlb_last_season.is_(None).desc(),
+                    model.mlb_debut.desc(),
+                )
                 .first()
             )
             if row is None:

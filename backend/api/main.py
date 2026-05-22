@@ -1305,7 +1305,10 @@ def admin_build_bdl_player_mapping(
 @app.post("/admin/set-bdl-id/{player_id}")
 def admin_set_bdl_id(
     player_id: int,
-    bdl_id: int = Query(..., description="BDL player id to stamp onto the row."),
+    bdl_id: str = Query(...,
+                        description="BDL player id (integer) to stamp onto the row, "
+                                    "or the literal string 'null' to clear an existing "
+                                    "mapping."),
     bio_type: str = Query(..., pattern="^(batter|pitcher)$",
                           description="Which bio table to update — 'batter' (`players`) "
                                       "or 'pitcher' (`pitchers`). Two-way players will need "
@@ -1321,9 +1324,27 @@ def admin_set_bdl_id(
     NULL`, so they can't repair an already-mismapped row. This
     endpoint is the targeted fix. Provide the BDL id you've verified
     via `GET https://api.balldontlie.io/mlb/v1/players/{id}`.
+
+    Passing `bdl_id=null` clears the existing mapping back to NULL.
+    Useful when the wrong row was stamped and you want the next
+    `retry-unmapped-bdl-players` pass to re-attempt the match.
     """
     if not connection.db_available():
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    # Parse the string-typed `bdl_id`. We accept str (not int) on
+    # the query param so the literal "null" form is reachable —
+    # FastAPI would 422 on a non-int otherwise.
+    new_bdl_id: int | None
+    if bdl_id.lower() == "null":
+        new_bdl_id = None
+    else:
+        try:
+            new_bdl_id = int(bdl_id)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"bdl_id must be an integer or 'null', got {bdl_id!r}",
+            )
     bio_model = Player if bio_type == "batter" else Pitcher
     with connection.get_session() as db:
         row = db.query(bio_model).filter(bio_model.player_id == player_id).one_or_none()
@@ -1333,7 +1354,7 @@ def admin_set_bdl_id(
                 detail=f"No {bio_type} found with player_id {player_id}",
             )
         previous = row.bdl_id
-        row.bdl_id = bdl_id
+        row.bdl_id = new_bdl_id
         db.commit()
         return {
             "status":      "ok",
@@ -1341,7 +1362,7 @@ def admin_set_bdl_id(
             "name":        row.name,
             "bio_type":    bio_type,
             "previous_bdl_id": previous,
-            "new_bdl_id":  bdl_id,
+            "new_bdl_id":  new_bdl_id,
         }
 
 
