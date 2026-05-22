@@ -1056,6 +1056,42 @@ def admin_discover_from_rosters():
     return data_service.sync_all_player_teams_from_rosters(current_year)
 
 
+@app.post("/admin/dedup-gamelogs")
+def admin_dedup_gamelogs():
+    """One-shot cleanup: remove duplicate `(player_id, game_id)`
+    rows from `batting_gamelogs` and `pitching_gamelogs`, keeping
+    the row with the most non-NULL stat columns. Used when an
+    older deploy created the gamelog tables without the composite
+    PK and duplicate rows accumulated under different ingest
+    paths (MLB Stats API gamePks vs. BDL game ids for the same
+    logical game).
+
+    Mirrors what `init_db()` already runs at startup, so calling
+    this is only useful when you don't want to wait for the next
+    deploy. Idempotent — re-runs are no-ops once each table is
+    clean. After deduping, run `POST /admin/backfill-bdl-gamelogs`
+    to fill any gaps the duplicate cleanup left behind.
+
+    Postgres-only — the helper bails (returns 0) on SQLite where
+    the dev DB rarely accumulates duplicates anyway.
+    """
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    batting_removed = connection.dedupe_gamelog_duplicates(
+        "batting_gamelogs",
+        connection._BATTING_GAMELOGS_QUALITY_COLUMNS,
+    )
+    pitching_removed = connection.dedupe_gamelog_duplicates(
+        "pitching_gamelogs",
+        connection._PITCHING_GAMELOGS_QUALITY_COLUMNS,
+    )
+    return {
+        "status":            "ok",
+        "batting_removed":   batting_removed,
+        "pitching_removed":  pitching_removed,
+    }
+
+
 @app.post("/admin/repair-null-stats")
 def admin_repair_null_stats():
     """One-shot cleanup for placeholder rows that the Phase 5

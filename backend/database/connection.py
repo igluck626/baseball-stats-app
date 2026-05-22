@@ -89,6 +89,20 @@ _TEAM_SEASONS_NEW_COLUMNS: list[tuple[str, str]] = [
     ("elimination_number",   "VARCHAR"),
 ]
 
+# Stat columns used to score "completeness" when deciding which of two
+# duplicate gamelog rows for the same (player_id, game_id) to keep. The
+# dedupe path counts NON-NULL values across these columns via Postgres's
+# `num_nonnulls()` and keeps the higher-scoring row. Same idea as the
+# seasons-table PA / IP quality_col, just over a wider field set since
+# gamelogs are sparser per-row.
+_BATTING_GAMELOGS_QUALITY_COLUMNS: list[str] = [
+    "AB", "R", "H", "doubles", "triples", "HR", "RBI", "BB", "IBB",
+    "SO", "SB", "CS", "HBP", "SF", "LOB", "team_score", "opp_score",
+]
+_PITCHING_GAMELOGS_QUALITY_COLUMNS: list[str] = [
+    "IP", "H", "R", "ER", "BB", "SO", "HR", "HBP", "WP", "pitches", "strikes",
+]
+
 # Columns added to batting_gamelogs after the table's initial creation. The
 # MLB Stats API exposes both, but the original schema didn't store them; the
 # iOS game-logs table needs them for the IBB/CS columns and for cumulative
@@ -354,6 +368,24 @@ def init_db() -> dict:
         if added_pk:
             summary.setdefault("pks_added", []).append(tbl_name)
 
+    # 6. Same dedupe + PK-enforcement dance for the gamelog tables.
+    #    The model defines a composite (player_id, game_id) PK, but
+    #    historical deployments that pre-date it stored duplicate
+    #    rows under different ingest paths (MLB Stats API gamePks
+    #    vs. BDL game ids for the same logical game). Without the
+    #    PK, `db.merge()` writes through cleanly but pre-existing
+    #    duplicates stay.
+    for tbl_name, quality_cols in (
+        ("batting_gamelogs",  _BATTING_GAMELOGS_QUALITY_COLUMNS),
+        ("pitching_gamelogs", _PITCHING_GAMELOGS_QUALITY_COLUMNS),
+    ):
+        removed = dedupe_gamelog_duplicates(tbl_name, quality_cols)
+        if removed:
+            summary.setdefault("deduped", {})[tbl_name] = removed
+        added_pk = _ensure_gamelog_primary_key(tbl_name)
+        if added_pk:
+            summary.setdefault("pks_added", []).append(tbl_name)
+
     return summary
 
 
@@ -423,6 +455,79 @@ def _ensure_seasons_primary_key(table: str) -> bool:
     with _engine.begin() as conn:
         conn.execute(text(
             f'ALTER TABLE {table} ADD PRIMARY KEY (player_id, year)'
+        ))
+    return True
+
+
+def dedupe_gamelog_duplicates(table: str, quality_columns: list[str]) -> int:
+    """Delete duplicate `(player_id, game_id)` rows from `table`,
+    keeping the row with the most non-NULL stat columns among
+    `quality_columns`. Ties broken deterministically by Postgres
+    `ctid` so the operation is repeatable.
+
+    Postgres-only — relies on `ctid` for the physical-row identifier
+    and `num_nonnulls()` (Postgres 9.6+) for the completeness count.
+    SQLite skips, same convention as `_dedupe_season_duplicates`.
+
+    Public (no leading underscore) so the matching admin endpoint
+    can drive an on-demand dedup pass — the init-time call below
+    handles the deploy-time case automatically.
+    """
+    if _engine is None or _engine.dialect.name != "postgresql":
+        return 0
+    inspector = inspect(_engine)
+    if table not in inspector.get_table_names():
+        return 0
+    columns = {c["name"] for c in inspector.get_columns(table)}
+    if "player_id" not in columns or "game_id" not in columns:
+        return 0
+    relevant = [c for c in quality_columns if c in columns]
+    quality_expr = (
+        "num_nonnulls(" + ", ".join(f'"{c}"' for c in relevant) + ")"
+        if relevant else "0"
+    )
+    sql = text(f"""
+        WITH ranked AS (
+            SELECT ctid,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY player_id, game_id
+                       ORDER BY {quality_expr} DESC, ctid ASC
+                   ) AS rn
+            FROM {table}
+        )
+        DELETE FROM {table} t
+        USING ranked r
+        WHERE t.ctid = r.ctid
+          AND r.rn > 1
+    """)
+    with _engine.begin() as conn:
+        result = conn.execute(sql)
+        return result.rowcount or 0
+
+
+def _ensure_gamelog_primary_key(table: str) -> bool:
+    """Make `(player_id, game_id)` the PK on `table` if it isn't
+    already. Caller is responsible for deduping first.
+
+    Postgres-only. Returns True if a new PK was added, False if the
+    correct PK was already present, the table is missing, or a
+    different PK is in place (operator intervention required —
+    we won't drop a PK we didn't create).
+    """
+    if _engine is None or _engine.dialect.name != "postgresql":
+        return False
+    inspector = inspect(_engine)
+    if table not in inspector.get_table_names():
+        return False
+    pk = inspector.get_pk_constraint(table) or {}
+    pk_cols = set(pk.get("constrained_columns") or [])
+    if pk_cols == {"player_id", "game_id"}:
+        return False
+    if pk_cols:
+        return False
+    with _engine.begin() as conn:
+        conn.execute(text(
+            f'ALTER TABLE {table} ADD PRIMARY KEY (player_id, game_id)'
         ))
     return True
 
