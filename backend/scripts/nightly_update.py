@@ -786,6 +786,229 @@ def _update_gamelogs(current_year: int) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Catch-up update
+# ---------------------------------------------------------------------------
+#
+# A second Railway cron job should call `POST /admin/catchup-update` daily at
+# **21:00 UTC (≈2 PM PT)** — after the morning + early-afternoon games have
+# finished and BDL has had several hours to absorb their season totals, but
+# before the evening slate first-pitches. The morning nightly at 02:00 UTC
+# can miss BDL data for late West Coast finals; this lightweight pass picks
+# up those lagging rows without the cost of a full re-run.
+
+def run_catchup_update() -> dict:
+    """Lightweight refresh: refetch BDL season stats only for players
+    who appeared in yesterday's games AND whose DB `G` is still
+    behind BDL's `batting_gp` / `pitching_gp`.
+
+    Sized for the late-day refresh window — typically 20-50 players
+    whose late West Coast games slipped past the morning nightly's
+    BDL data lag. Skips bref WAR / standings / game logs / roster
+    sync entirely; those can wait for tomorrow's full nightly.
+
+    Returns counts: `{date, games_checked, players_seen, checked,
+    updated, already_current, no_bdl_mapping, failed}`. `checked`
+    counts unique (player_id, side) decisions made; `updated` is
+    how many of those triggered a write.
+    """
+    if not connection.db_available():
+        return {"status": "no_db"}
+    # Fail fast on missing BDL_KEY — same convention as the full
+    # nightly so a misconfigured cron service doesn't burn through
+    # mlb-stats-api fallbacks before anyone notices.
+    data_service._get_bdl_key()
+
+    import pandas as _pd
+
+    current_year = data_service._current_year()
+    # ET-local yesterday — same calendar boundary the gamelog ingest
+    # uses (`_MLB_LOCAL_TZ`), so a 10pm PT game is counted under its
+    # ET date rather than the next UTC day's slate.
+    yesterday_et = (
+        datetime.datetime.now(data_service._MLB_LOCAL_TZ).date()
+        - datetime.timedelta(days=1)
+    )
+    date_str = yesterday_et.isoformat()
+    log.info(f"[catchup] yesterday ET = {date_str}")
+
+    counts = {
+        "date":             date_str,
+        "games_checked":    0,
+        "players_seen":     0,
+        "checked":          0,
+        "updated":          0,
+        "already_current":  0,
+        "no_bdl_mapping":   0,
+        "failed":           0,
+    }
+
+    # 1. Yesterday's final games.
+    games = data_service.fetch_bdl_games_for_date(date_str, finals_only=True)
+    counts["games_checked"] = len(games)
+    if not games:
+        log.info("[catchup] no final games yesterday — nothing to do")
+        return {"status": "ok", **counts}
+    log.info(f"[catchup] {len(games)} final games to scan")
+
+    # 2. Collect every MLBAM player_id who appeared in those games.
+    #    `fetch_bdl_game_stats` returns buckets already keyed by MLBAM,
+    #    skipping unmapped BDL ids silently — which is fine here: an
+    #    unmapped player can't be reconciled against our DB anyway.
+    with connection.get_session() as db:
+        bdl_to_mlbam = data_service._bdl_to_mlbam_map(db)
+    seen_pids: set[int] = set()
+    for g in games:
+        game_id = g.get("id")
+        if not game_id:
+            continue
+        try:
+            bat_by_pid, pit_by_pid = data_service.fetch_bdl_game_stats(
+                game_id, bdl_to_mlbam, ctx={},
+            )
+        except Exception as exc:
+            log.warning(f"[catchup] game {game_id} stats fetch failed: {exc}")
+            continue
+        seen_pids |= set(bat_by_pid.keys())
+        seen_pids |= set(pit_by_pid.keys())
+        _time.sleep(data_service._BDL_RATE_LIMIT_SLEEP)
+    counts["players_seen"] = len(seen_pids)
+    if not seen_pids:
+        log.info("[catchup] no players appeared (all unmapped?)")
+        return {"status": "ok", **counts}
+    log.info(f"[catchup] {len(seen_pids)} unique players appeared")
+
+    # 3. Pre-load bdl_id maps + current DB G values for the seen set.
+    with connection.get_session() as db:
+        bat_bio = (
+            db.query(_Player.player_id, _Player.bdl_id, _Player.mlb_debut)
+              .filter(_Player.player_id.in_(seen_pids))
+              .all()
+        )
+        pit_bio = (
+            db.query(_Pitcher.player_id, _Pitcher.bdl_id, _Pitcher.mlb_debut)
+              .filter(_Pitcher.player_id.in_(seen_pids))
+              .all()
+        )
+        bat_g_rows = (
+            db.query(PlayerSeason.player_id, PlayerSeason.G)
+              .filter(PlayerSeason.player_id.in_(seen_pids))
+              .filter(PlayerSeason.year == current_year)
+              .all()
+        )
+        pit_g_rows = (
+            db.query(PitcherSeason.player_id, PitcherSeason.G)
+              .filter(PitcherSeason.player_id.in_(seen_pids))
+              .filter(PitcherSeason.year == current_year)
+              .all()
+        )
+    bat_bdl_map: dict[int, int | None]   = {r.player_id: r.bdl_id    for r in bat_bio}
+    bat_debut_map: dict[int, int | None] = {r.player_id: r.mlb_debut for r in bat_bio}
+    pit_bdl_map: dict[int, int | None]   = {r.player_id: r.bdl_id    for r in pit_bio}
+    pit_debut_map: dict[int, int | None] = {r.player_id: r.mlb_debut for r in pit_bio}
+    bat_db_g: dict[int, int | None] = {r.player_id: r.G for r in bat_g_rows}
+    pit_db_g: dict[int, int | None] = {r.player_id: r.G for r in pit_g_rows}
+
+    # 4. Bulk-fetch BDL season stats for every bdl-mapped seen player.
+    bdl_ids_to_fetch: set[int] = set()
+    for d in (bat_bdl_map, pit_bdl_map):
+        for v in d.values():
+            if v is not None:
+                bdl_ids_to_fetch.add(v)
+    if not bdl_ids_to_fetch:
+        log.warning("[catchup] no BDL-mapped players among seen pids")
+        return {"status": "ok", **counts}
+    raw_batch = data_service._fetch_bdl_batch_stats(
+        sorted(bdl_ids_to_fetch), current_year,
+    )
+    bat_parsed: dict[int, dict] = {
+        bdl_id: data_service._parse_bdl_batter_row(row)
+        for bdl_id, row in raw_batch.items()
+    }
+    pit_parsed: dict[int, dict] = {
+        bdl_id: data_service._parse_bdl_pitcher_row(row)
+        for bdl_id, row in raw_batch.items()
+    }
+
+    # 5. Per-player decision + (when needed) save. Empty-shaped bwar
+    #    DataFrame keeps the build helpers from KeyError on a
+    #    column lookup; WAR / OPS+ / ERA+ stay at whatever the morning
+    #    nightly stamped — they refresh on the next full run.
+    empty_bwar = _pd.DataFrame(columns=["mlb_ID", "year_ID", "stint_ID"])
+
+    with connection.get_session() as db:
+        for player_id in sorted(seen_pids):
+            # --- Batter side ---
+            if player_id in bat_bdl_map:
+                bdl_id = bat_bdl_map[player_id]
+                if bdl_id is None:
+                    counts["no_bdl_mapping"] += 1
+                else:
+                    bdl_stats = bat_parsed.get(bdl_id)
+                    if bdl_stats is None:
+                        # BDL didn't ship a row for this bdl_id —
+                        # might be a player without batting activity
+                        # (pure pitcher), skip silently.
+                        pass
+                    else:
+                        counts["checked"] += 1
+                        bdl_g = bdl_stats.get("G") or 0
+                        db_g  = bat_db_g.get(player_id) or 0
+                        if bdl_g > db_g:
+                            try:
+                                entry = _build_current_batter_entry(
+                                    player_id, bdl_id, empty_bwar,
+                                    current_year,
+                                    bdl_stats=bdl_stats,
+                                    mlb_debut=bat_debut_map.get(player_id),
+                                )
+                                if entry is not None:
+                                    crud.save_player_seasons(db, player_id, [entry])
+                                    counts["updated"] += 1
+                                else:
+                                    counts["failed"] += 1
+                            except Exception as exc:
+                                log.error(f"[catchup] batter {player_id} build/save FAILED: {exc}")
+                                counts["failed"] += 1
+                        else:
+                            counts["already_current"] += 1
+            # --- Pitcher side ---
+            if player_id in pit_bdl_map:
+                bdl_id = pit_bdl_map[player_id]
+                if bdl_id is None:
+                    counts["no_bdl_mapping"] += 1
+                else:
+                    bdl_stats = pit_parsed.get(bdl_id)
+                    if bdl_stats is None:
+                        pass
+                    else:
+                        counts["checked"] += 1
+                        bdl_g = bdl_stats.get("G") or 0
+                        db_g  = pit_db_g.get(player_id) or 0
+                        if bdl_g > db_g:
+                            try:
+                                entry = _build_current_pitcher_entry(
+                                    player_id, bdl_id, empty_bwar,
+                                    current_year,
+                                    bdl_stats=bdl_stats,
+                                    mlb_debut=pit_debut_map.get(player_id),
+                                )
+                                if entry is not None:
+                                    crud.save_pitcher_seasons(db, player_id, [entry])
+                                    counts["updated"] += 1
+                                else:
+                                    counts["failed"] += 1
+                            except Exception as exc:
+                                log.error(f"[catchup] pitcher {player_id} build/save FAILED: {exc}")
+                                counts["failed"] += 1
+                        else:
+                            counts["already_current"] += 1
+        db.commit()
+
+    log.info(f"[catchup] done: {counts}")
+    return {"status": "ok", **counts}
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 

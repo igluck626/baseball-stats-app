@@ -236,6 +236,25 @@ _nightly_lock = threading.Lock()
 _NIGHTLY_STALE_AFTER = datetime.timedelta(hours=3)
 
 
+# Catch-up update — independent of `_nightly_state` so a running
+# nightly doesn't block a mid-day catch-up from reporting its own
+# progress, and vice versa.
+_catchup_state: dict = {
+    "running":          False,
+    "phase":            None,   # "scanning" | "updating" | None
+    "result":           None,   # counts dict from run_catchup_update on completion
+    "error":            None,
+    "last_run":         None,   # ISO-8601 UTC of last completed run
+    "last_started":     None,   # ISO-8601 UTC of current run's start
+}
+_catchup_lock = threading.Lock()
+# Catch-up's stale-flag threshold. The full pass is at most ~30
+# game-stats fetches at one BDL request each — should finish in
+# <2min. 30min is generous enough for transient slowness without
+# letting a SIGKILL'd worker block subsequent runs.
+_CATCHUP_STALE_AFTER = datetime.timedelta(minutes=30)
+
+
 def _nightly_phase(
     fetch_bwar_all,
     get_ids,
@@ -446,6 +465,37 @@ def _run_nightly_update() -> None:
             _nightly_state["phase"]    = None
             _nightly_state["last_run"] = datetime.datetime.utcnow().isoformat() + "Z"
         log.info(f"[nightly] thread exit pid={pid} tid={tid} state={_nightly_state}")
+
+
+def _run_catchup_update() -> None:
+    """Background thread: drive `nightly_update.run_catchup_update`
+    and stash the result on `_catchup_state` so the status endpoint
+    can report it. Mirrors `_run_nightly_update`'s lock/finally
+    pattern but skips the cache-clear (the catch-up's touched
+    rows are too few to warrant blowing the whole TTL window)."""
+    pid = os.getpid()
+    tid = threading.get_ident()
+    log.info(f"[catchup] thread entry pid={pid} tid={tid}")
+    with _catchup_lock:
+        _catchup_state.update(
+            running=True, phase="scanning", result=None, error=None,
+        )
+    try:
+        result = nightly_update.run_catchup_update()
+        with _catchup_lock:
+            _catchup_state["result"] = result
+        log.info(f"[catchup] thread complete: {result}")
+    except Exception as exc:
+        tb = traceback.format_exc()
+        log.error(f"[catchup] FAILED pid={pid} tid={tid}: {exc}\n{tb}")
+        with _catchup_lock:
+            _catchup_state["error"] = f"{exc}\n{tb}"
+    finally:
+        with _catchup_lock:
+            _catchup_state["running"] = False
+            _catchup_state["phase"]   = None
+            _catchup_state["last_run"] = datetime.datetime.utcnow().isoformat() + "Z"
+        log.info(f"[catchup] thread exit pid={pid} tid={tid} state={_catchup_state}")
 
 
 # ---------------------------------------------------------------------------
@@ -1749,6 +1799,71 @@ def reset_nightly_update():
         _nightly_state["error"] = "manual reset"
     log.warning(f"[nightly] manual reset, prior state: {prior}")
     return {"status": "reset", "prior_state": prior}
+
+
+@app.post("/admin/catchup-update")
+def start_catchup_update():
+    """Spawn the lightweight catch-up update in a background
+    thread. Recommended Railway cron: 21:00 UTC daily — see the
+    docstring on `nightly_update.run_catchup_update` for the full
+    rationale (BDL catches up late-PT games a few hours after they
+    finish, the morning nightly often runs before that).
+
+    Idempotent in the no-work case: if no players from yesterday's
+    games are behind, returns `updated=0`. Stale running-flag
+    auto-clears after `_CATCHUP_STALE_AFTER` (30 min) so a
+    SIGKILL'd thread doesn't block the next day's run.
+    """
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+
+    with _catchup_lock:
+        if _catchup_state["running"]:
+            # Stale check — analogous to the nightly's _is_stale_running.
+            last_iso = _catchup_state.get("last_started")
+            stale = False
+            if last_iso:
+                try:
+                    last_dt = datetime.datetime.fromisoformat(
+                        last_iso.replace("Z", "+00:00")
+                    )
+                    now = datetime.datetime.now(datetime.timezone.utc)
+                    if (now - last_dt) > _CATCHUP_STALE_AFTER:
+                        stale = True
+                except ValueError:
+                    pass
+            if stale:
+                log.warning(
+                    f"[catchup] auto-resetting stale lock — "
+                    f"last_started={last_iso}, threshold={_CATCHUP_STALE_AFTER}"
+                )
+                _catchup_state["error"] = (
+                    f"auto-reset: previous run claimed at {last_iso} never completed (stale)"
+                )
+                _catchup_state["running"] = False
+            else:
+                log.info(f"[catchup] POST rejected — already running: {_catchup_state}")
+                return {"status": "already_running", **_catchup_state}
+
+        now_iso = datetime.datetime.utcnow().isoformat() + "Z"
+        _catchup_state["running"] = True
+        _catchup_state["last_started"] = now_iso
+        error_val = _catchup_state.get("error") or ""
+        if not error_val.startswith("auto-reset:"):
+            _catchup_state["error"] = None
+
+    log.info(f"[catchup] POST accepted pid={os.getpid()} started={now_iso} — spawning worker thread")
+    t = threading.Thread(target=_run_catchup_update, daemon=True, name="catchup-update")
+    t.start()
+    return {"status": "started", "last_started": now_iso}
+
+
+@app.get("/admin/catchup-update/status")
+def catchup_update_status():
+    with _catchup_lock:
+        state = dict(_catchup_state)
+    log.info(f"[catchup] GET status pid={os.getpid()}: {state}")
+    return state
 
 
 @app.get("/admin/nightly-update/status")
