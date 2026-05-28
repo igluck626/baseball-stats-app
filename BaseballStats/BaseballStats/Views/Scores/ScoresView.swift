@@ -174,13 +174,12 @@ final class ScoresViewModel: ObservableObject {
     }()
 
     private static func message(for error: Error) -> String {
-        if let bdlErr = error as? BallDontLieError {
-            switch bdlErr {
-            case .badURL:               return "Couldn't build the games request."
-            case .badStatus(let code):  return "BallDontLie returned \(code)."
-            case .decoding:             return "Couldn't read the games response."
-            }
-        }
+        // Prefer the typed-error's `LocalizedError` description
+        // when available — `BallDontLieError` ships friendly
+        // strings via `errorDescription`. The bare
+        // `error.localizedDescription` returns the right text via
+        // the same conformance, so we can route everything through
+        // the single call here instead of pattern-matching cases.
         return error.localizedDescription
     }
 }

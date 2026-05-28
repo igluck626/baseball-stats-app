@@ -397,7 +397,8 @@ final class BallDontLieClient: @unchecked Sendable {
         guard let http = response as? HTTPURLResponse,
               (200..<300).contains(http.statusCode) else {
             let code = (response as? HTTPURLResponse)?.statusCode ?? -1
-            throw BallDontLieError.badStatus(code)
+            let body = String(data: data, encoding: .utf8) ?? ""
+            throw BallDontLieError.httpError(code, body)
         }
         let dec = JSONDecoder()
         return try dec.decode(PlayerSearchResult.self, from: data)
@@ -407,26 +408,46 @@ final class BallDontLieClient: @unchecked Sendable {
 
     private func fetch<T: Decodable>(path: String, query: [URLQueryItem]) async throws -> T {
         guard var components = URLComponents(string: baseURL + path) else {
-            throw BallDontLieError.badURL
+            throw BallDontLieError.unknown
         }
         components.queryItems = query
-        guard let url = components.url else { throw BallDontLieError.badURL }
+        guard let url = components.url else { throw BallDontLieError.unknown }
 
         var req = URLRequest(url: url)
         req.setValue(apiKey, forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Accept")
 
-        let (data, response) = try await session.data(for: req)
-        guard let http = response as? HTTPURLResponse else {
-            throw BallDontLieError.badStatus(-1)
-        }
-        guard (200..<300).contains(http.statusCode) else {
-            throw BallDontLieError.badStatus(http.statusCode)
-        }
-        do {
-            return try decoder.decode(T.self, from: data)
-        } catch {
-            throw BallDontLieError.decoding(error)
+        // Auto-retry on 429 (rate limit) up to 3 attempts, 2s between.
+        // Other HTTP errors fall straight through — retries don't fix
+        // a 404 or a malformed query and would just delay the visible
+        // failure.
+        let maxAttempts = 3
+        var attempt = 0
+        while true {
+            attempt += 1
+            let data: Data
+            let response: URLResponse
+            do {
+                (data, response) = try await session.data(for: req)
+            } catch {
+                throw BallDontLieError.unknown
+            }
+            guard let http = response as? HTTPURLResponse else {
+                throw BallDontLieError.unknown
+            }
+            if http.statusCode == 429, attempt < maxAttempts {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                continue
+            }
+            guard (200..<300).contains(http.statusCode) else {
+                let body = String(data: data, encoding: .utf8) ?? ""
+                throw BallDontLieError.httpError(http.statusCode, body)
+            }
+            do {
+                return try decoder.decode(T.self, from: data)
+            } catch {
+                throw BallDontLieError.decodingError(String(describing: error))
+            }
         }
     }
 
@@ -467,8 +488,31 @@ struct BDLMeta: Decodable {
 
 // MARK: - Errors
 
-enum BallDontLieError: Error {
-    case badURL
-    case badStatus(Int)
-    case decoding(Error)
+/// User-facing error type for every BDL call. Conforming to
+/// `LocalizedError` so `error.localizedDescription` returns the
+/// friendly strings below rather than the default
+/// "Operation couldn't be completed" boilerplate. The body
+/// payload on `httpError` is captured for diagnostics — present
+/// it in logs, not in the UI.
+enum BallDontLieError: LocalizedError {
+    case httpError(Int, String)
+    case decodingError(String)
+    case unknown
+
+    var errorDescription: String? {
+        switch self {
+        case .httpError(429, _):
+            return "Too many requests — please try again in a moment"
+        case .httpError(404, _):
+            return "Data not available"
+        case .httpError(let code, _) where code >= 500:
+            return "Service temporarily unavailable"
+        case .httpError:
+            return "Unable to load data"
+        case .decodingError:
+            return "Unable to parse response"
+        case .unknown:
+            return "Something went wrong — please try again"
+        }
+    }
 }

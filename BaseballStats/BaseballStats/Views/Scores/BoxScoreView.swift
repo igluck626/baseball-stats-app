@@ -149,48 +149,49 @@ final class BoxScoreViewModel: ObservableObject {
     }
 
     private func loadBoxScore() async {
-        do {
-            // BDL game IDs round-trip through `game.gamePk` — the
-            // Phase 2 `BDLGame.toGame()` projection put the BDL id
-            // there. Fetch the per-player stat lines AND the
-            // starting lineup in parallel; the lineup drives the
-            // batting/pitching order in the synthesizer.
-            async let statsTask  = bdl.getGameStats(gameId: game.gamePk)
-            async let lineupTask = bdl.getGameLineup(gameId: game.gamePk)
-            let lineup = (try? await lineupTask) ?? []
-            // Season-stats fetch depends on the lineup ids, so it
-            // sequences AFTER lineup but runs concurrently with the
-            // stats await (per-game /stats endpoint is independent).
-            // Failures degrade to "—" placeholders rather than
-            // blocking the box score from rendering.
-            async let seasonTask = loadLineupSeasonStats(lineup: lineup)
-            let stats  = try await statsTask
-            let seasonStatsByPid = await seasonTask
+        // Lineup and stats fetched in parallel via `async let` so a
+        // slow lineup doesn't extend total latency. Lineup is
+        // best-effort: `try?` collapses any failure to an empty
+        // slice and the synthesizer falls back to BDL-response order
+        // for the batting table. Stats is critical: without it we
+        // have no rows to render, so a failure flips `error` (which
+        // the view renders with a Retry button) and skips the rest.
+        async let statsTask  = bdl.getGameStats(gameId: game.gamePk)
+        async let lineupTask = bdl.getGameLineup(gameId: game.gamePk)
+        let lineup = (try? await lineupTask) ?? []
 
-            // Resolve which BDL team object pairs with each side of
-            // the game. The `Game.teams.{away,home}.team` carries
-            // MLBAM ids (set by `BDLTeam.toTeamInfo()`); reverse-
-            // lookup via the static map gives us the BDL team
-            // shape the synthesizer needs. When resolution fails
-            // (BDL team id not in our hardcoded map, or stats
-            // payload lacks a usable nested team — both happen
-            // periodically as BDL adds new ids), we build stub
-            // BDLTeam objects from the Game's existing TeamInfo
-            // so the box score still renders. Logos may degrade
-            // but the batting/pitching tables work fine.
-            let (awayBDL, homeBDL) = bdlTeams(forGame: game, fromStats: stats)
-            boxScore = stats.toBoxScoreResponse(
-                awayTeam:         awayBDL,
-                homeTeam:         homeBDL,
-                awayBDLTeamId:    game.bdlAwayTeamId,
-                homeBDLTeamId:    game.bdlHomeTeamId,
-                lineup:           lineup,
-                seasonStatsByPid: seasonStatsByPid,
-            )
+        let stats: [BDLPlayerStat]
+        do {
+            stats = try await statsTask
         } catch {
             self.error = error.localizedDescription
             boxScore = nil
+            return
         }
+
+        // Season-stats fetch depends on the lineup ids; runs after
+        // lineup lands but doesn't gate the box-score render.
+        // Failures degrade to "—" placeholders rather than
+        // blocking the box score.
+        let seasonStatsByPid = await loadLineupSeasonStats(lineup: lineup)
+
+        // Resolve which BDL team object pairs with each side of
+        // the game. When resolution fails (BDL team id not in our
+        // hardcoded map, or stats payload lacks a usable nested
+        // team — both happen periodically as BDL adds new ids),
+        // we build stub BDLTeam objects from the Game's existing
+        // TeamInfo so the box score still renders. Logos may
+        // degrade but the batting/pitching tables work fine.
+        let (awayBDL, homeBDL) = bdlTeams(forGame: game, fromStats: stats)
+        boxScore = stats.toBoxScoreResponse(
+            awayTeam:         awayBDL,
+            homeTeam:         homeBDL,
+            awayBDLTeamId:    game.bdlAwayTeamId,
+            homeBDLTeamId:    game.bdlHomeTeamId,
+            lineup:           lineup,
+            seasonStatsByPid: seasonStatsByPid,
+        )
+        self.error = nil
     }
 
     /// Bulk-fetch season AVG / OPS / ERA for every player in the
@@ -384,11 +385,18 @@ struct BoxScoreView: View {
                     ProgressView().controlSize(.large)
                         .frame(maxWidth: .infinity, minHeight: 120)
                 } else if let error = vm.error {
-                    Text(error)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 24)
+                    VStack(spacing: 12) {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 24)
+                        Button("Retry") {
+                            Task { await vm.load() }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                    }
                 }
             }
             .padding(.horizontal, 16)
