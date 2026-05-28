@@ -320,6 +320,12 @@ final class BoxScoreViewModel: ObservableObject {
 
 struct BoxScoreView: View {
     @StateObject private var vm: BoxScoreViewModel
+    /// BDL team id → `(rank, "AL East")` snapshot passed through
+    /// from `ScoresView` so the header card can render the per-team
+    /// "1st AL East" sub-label under each scoreboard cell. Plumbing
+    /// the dict here keeps the box-score view's data flow obvious
+    /// (no `@EnvironmentObject` indirection through the standings).
+    let teamStandings: [Int: TeamStandingInfo]
     /// Parent (`ScoresView`) owns the NavigationStack path; we append
     /// to it when the user taps a player so the existing
     /// `.navigationDestination(for: PlayerSearchResult.self)` on
@@ -340,8 +346,13 @@ struct BoxScoreView: View {
         var id: String { rawValue }
     }
 
-    init(game: Game, path: Binding<NavigationPath>) {
+    init(
+        game: Game,
+        teamStandings: [Int: TeamStandingInfo] = [:],
+        path: Binding<NavigationPath>,
+    ) {
         _vm = StateObject(wrappedValue: BoxScoreViewModel(game: game))
+        self.teamStandings = teamStandings
         _path = path
     }
 
@@ -455,13 +466,19 @@ struct BoxScoreView: View {
                 LiveBadge()
             }
             HStack(spacing: 12) {
-                teamHeader(side: vm.game.teams.away)
+                teamHeader(
+                    side:      vm.game.teams.away,
+                    bdlTeamId: vm.game.bdlAwayTeamId,
+                )
                 Spacer()
                 Text(centerStatus)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(vm.game.phase == .live ? Color.red : Color.secondary)
                 Spacer()
-                teamHeader(side: vm.game.teams.home)
+                teamHeader(
+                    side:      vm.game.teams.home,
+                    bdlTeamId: vm.game.bdlHomeTeamId,
+                )
             }
             if let venue = vm.game.venue?.name {
                 Text(venue)
@@ -546,14 +563,23 @@ struct BoxScoreView: View {
         return play?.playEvents?.compactMap(\.details?.description).last
     }
 
-    private func teamHeader(side: GameTeam) -> some View {
-        VStack(spacing: 4) {
+    private func teamHeader(side: GameTeam, bdlTeamId: Int?) -> some View {
+        let standingText: String? = bdlTeamId
+            .flatMap { teamStandings[$0] }
+            .map { $0.displayString }
+        return VStack(spacing: 4) {
             TeamLogoView(team: side.team, size: 56)
             Text(side.team.abbreviation ?? String(side.team.name.prefix(3)).uppercased())
                 .font(.subheadline.weight(.bold))
             Text(side.score.map(String.init) ?? "—")
                 .font(.title.weight(.bold))
                 .monospacedDigit()
+            if let standingText {
+                Text(standingText)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
         }
     }
 
@@ -732,13 +758,11 @@ struct BoxScoreView: View {
             totalsCell(RBI, width: BattingCol.rbi)
             totalsCell(BB,  width: BattingCol.bb)
             totalsCell(SO,  width: BattingCol.so)
-            Text("—")
-                .font(.caption.weight(.semibold))
-                .monospacedDigit()
+            // AVG / OPS deliberately blank — a row-sum team rate
+            // weights every PA equally and rarely matches expectations.
+            Text("")
                 .frame(width: BattingCol.avg, alignment: .trailing)
-            Text("—")
-                .font(.caption.weight(.semibold))
-                .monospacedDigit()
+            Text("")
                 .frame(width: BattingCol.ops, alignment: .trailing)
         }
         .padding(.vertical, 2)
@@ -1075,9 +1099,8 @@ struct BoxScoreView: View {
             totalsCell(ER, width: PitchingCol.er)
             totalsCell(BB, width: PitchingCol.bb)
             totalsCell(SO, width: PitchingCol.so)
-            Text("—")
-                .font(.caption.weight(.semibold))
-                .monospacedDigit()
+            // ERA deliberately blank — see batting-totals comment.
+            Text("")
                 .frame(width: PitchingCol.era, alignment: .trailing)
             Text(pcAny ? String(pcTotal) : "—")
                 .font(.caption.weight(.semibold))

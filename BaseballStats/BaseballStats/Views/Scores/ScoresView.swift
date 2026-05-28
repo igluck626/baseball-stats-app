@@ -279,7 +279,11 @@ struct ScoresView: View {
             .navigationTitle("Scores")
             .navigationBarTitleDisplayMode(.large)
             .navigationDestination(for: Game.self) { game in
-                BoxScoreView(game: game, path: $navigationPath)
+                BoxScoreView(
+                    game:           game,
+                    teamStandings:  vm.teamStandings,
+                    path:           $navigationPath,
+                )
             }
             .navigationDestination(for: PlayerSearchResult.self) { player in
                 PlayerProfileView(player: player)
@@ -468,11 +472,7 @@ struct ScoresView: View {
                     sectionHeader("Upcoming")
                     ForEach(upcoming) { game in
                         NavigationLink(value: game) {
-                            GameCard(
-                                game:      game,
-                                records:   vm.teamRecords,
-                                standings: vm.teamStandings,
-                            )
+                            GameCard(game: game, records: vm.teamRecords)
                         }
                         .buttonStyle(.plain)
                     }
@@ -485,10 +485,9 @@ struct ScoresView: View {
                         // button inside the expanded view, so the
                         // outer cell doesn't wrap a NavigationLink.
                         FinalGameCard(
-                            game:      game,
-                            records:   vm.teamRecords,
-                            standings: vm.teamStandings,
-                            path:      $navigationPath,
+                            game:    game,
+                            records: vm.teamRecords,
+                            path:    $navigationPath,
                         )
                     }
                 }
@@ -536,7 +535,6 @@ struct ScoresView: View {
 private struct GameCard: View {
     let game: Game
     let records: [Int: TeamRecord]
-    let standings: [Int: TeamStandingInfo]
 
     var body: some View {
         HStack(alignment: .center, spacing: 14) {
@@ -585,10 +583,7 @@ private struct GameCard: View {
     }
 
     private func teamRow(side: GameTeam, winner: Bool, bdlTeamId: Int?) -> some View {
-        let standingText: String? = bdlTeamId
-            .flatMap { standings[$0] }
-            .map { $0.displayString }
-        return HStack(spacing: 10) {
+        HStack(spacing: 10) {
             TeamLogoView(team: side.team, size: 28)
 
             Text(side.team.abbreviation ?? abbreviate(side.team.name))
@@ -602,14 +597,6 @@ private struct GameCard: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
-            }
-
-            if let standingText {
-                Text("• \(standingText)")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
             }
 
             Spacer()
@@ -717,7 +704,6 @@ private struct GameCard: View {
 private struct FinalGameCard: View {
     let game: Game
     let records: [Int: TeamRecord]
-    let standings: [Int: TeamStandingInfo]
     @Binding var path: NavigationPath
     @State private var isExpanded = false
     /// Lazily-fetched box score for the expanded view. Loaded the
@@ -793,9 +779,6 @@ private struct FinalGameCard: View {
     private func teamRow(side: GameTeam, bdlTeamId: Int?) -> some View {
         let isWinner = side.isWinner == true
         let dimmed = !isWinner
-        let standingText: String? = bdlTeamId
-            .flatMap { standings[$0] }
-            .map { $0.displayString }
         return HStack(spacing: 10) {
             TeamLogoView(team: side.team, size: 28)
 
@@ -810,14 +793,6 @@ private struct FinalGameCard: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
-            }
-
-            if let standingText {
-                Text("• \(standingText)")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
             }
 
             Spacer()
