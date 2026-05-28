@@ -746,16 +746,67 @@ private struct FinalGameCard: View {
     }
 
     private func fetchBoxScore() async {
-        // Phase 2 of the BDL migration: `game.gamePk` is now a BDL
-        // game id, not an MLB Stats API gamePk, so the old
-        // /game/{pk}/boxscore call would 404. Phase 3 rewires this
-        // to BDL's /stats endpoint and reshapes the response. Until
-        // then `boxScore` stays nil and the W-L tags + HR summary
-        // line below degrade gracefully (recordForPitcher → nil,
-        // hrSummary → empty view) — the rest of the expanded card
-        // (decisions names, scoreboard, status) renders fine.
-        isLoadingBoxScore = false
-        boxScore = nil
+        guard !isLoadingBoxScore else { return }
+        isLoadingBoxScore = true
+        defer { isLoadingBoxScore = false }
+
+        let bdl = BallDontLieClient.shared
+        // Run the same shape as `BoxScoreView.loadBoxScore`: stats +
+        // lineup in parallel, then season stats keyed by the lineup
+        // pids so the placeholder pitchers carry season W-L-SV. The
+        // synthesizer wires everything up, after which the decisions
+        // section can read each side's pitching flags + the post-game
+        // record adjustment.
+        async let statsTask  = bdl.getGameStats(gameId: game.gamePk)
+        async let lineupTask = bdl.getGameLineup(gameId: game.gamePk)
+        let lineup = (try? await lineupTask) ?? []
+        guard let stats = try? await statsTask else { return }
+
+        let lineupPids = Array(Set(lineup.map(\.player.id)))
+        let season = Calendar.current.component(.year, from: game.startDate ?? Date())
+        let seasonByPid: [Int: BDLSeasonStat] = await {
+            guard !lineupPids.isEmpty else { return [:] }
+            if let rows = try? await bdl.getSeasonStats(playerIds: lineupPids, season: season) {
+                return Dictionary(rows.map { ($0.player.id, $0) }, uniquingKeysWith: { a, _ in a })
+            }
+            return [:]
+        }()
+
+        // BDL team objects: stub from the Game's TeamInfo. This
+        // expanded card doesn't need accurate logos / division (the
+        // synthesizer reads `id` for lineup splits and `name` for
+        // stats-row bucketing), so stub coverage is enough.
+        let awayBDL = Self.stubBDLTeam(
+            from: game.teams.away.team,
+            bdlTeamId: game.bdlAwayTeamId,
+        )
+        let homeBDL = Self.stubBDLTeam(
+            from: game.teams.home.team,
+            bdlTeamId: game.bdlHomeTeamId,
+        )
+        boxScore = stats.toBoxScoreResponse(
+            awayTeam:         awayBDL,
+            homeTeam:         homeBDL,
+            awayBDLTeamId:    game.bdlAwayTeamId,
+            homeBDLTeamId:    game.bdlHomeTeamId,
+            lineup:           lineup,
+            seasonStatsByPid: seasonByPid,
+        )
+    }
+
+    private static func stubBDLTeam(from info: TeamInfo, bdlTeamId: Int?) -> BDLTeam {
+        let abbr = info.abbreviation ?? String(info.name.prefix(3)).uppercased()
+        return BDLTeam(
+            id:                bdlTeamId ?? 0,
+            slug:              nil,
+            abbreviation:      abbr,
+            displayName:       info.name,
+            shortDisplayName:  nil,
+            name:              info.name,
+            location:          "",
+            league:            nil,
+            division:          nil,
+        )
     }
 
     // MARK: Collapsed header
@@ -895,58 +946,93 @@ private struct FinalGameCard: View {
 
     // MARK: Expanded — decisions
 
-    private var hasAnyDecision: Bool {
-        let d = game.decisions
-        return d?.winner != nil || d?.loser != nil || d?.save != nil
+    /// `(winner, loser, saver)` derived from the per-game pitching
+    /// flags on the synthesized box score. BDL ships `wins/losses/saves`
+    /// as 0/1 per row; whichever pitcher has a `1` is the decision
+    /// holder. `saver` is nil when no pitcher recorded a save (close
+    /// games, ties, blown saves).
+    private var decisionPitchers: (winner: BoxPlayer?, loser: BoxPlayer?, saver: BoxPlayer?) {
+        guard let bs = boxScore else { return (nil, nil, nil) }
+        var winner: BoxPlayer?
+        var loser: BoxPlayer?
+        var saver: BoxPlayer?
+        for team in [bs.teams.away, bs.teams.home] {
+            for (_, p) in team.players {
+                guard let g = p.stats?.pitching else { continue }
+                if (g.wins ?? 0)   > 0 { winner = p }
+                if (g.losses ?? 0) > 0 { loser  = p }
+                if (g.saves ?? 0)  > 0 { saver  = p }
+            }
+        }
+        return (winner, loser, saver)
     }
 
-    /// W: / L: / SV: lines. Pitcher records ("W: Cole (8-2)") come
-    /// from the lazily-fetched box score's `seasonStats.pitching`;
-    /// until that arrives we render the name alone so the section
-    /// isn't blank during the brief fetch window.
+    private var hasAnyDecision: Bool {
+        let d = decisionPitchers
+        return d.winner != nil || d.loser != nil || d.saver != nil
+    }
+
+    /// W: / L: / SV: lines, each with the decision pitcher's
+    /// post-game record. Season W-L-SV come from the lineup's
+    /// season-stats pre-load (carried on `seasonStats.pitching` and
+    /// preserved across the merge) plus a `+1` to the matching
+    /// counter for today's decision. nil season stats → bare name.
     private var decisions: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            if let w = game.decisions?.winner {
-                decisionLine(tag: "W",  player: w)
-            }
-            if let l = game.decisions?.loser {
-                decisionLine(tag: "L",  player: l)
-            }
-            if let s = game.decisions?.save {
-                decisionLine(tag: "SV", player: s)
-            }
+        let d = decisionPitchers
+        return VStack(alignment: .leading, spacing: 4) {
+            if let w = d.winner { decisionLine(tag: "W",  pitcher: w) }
+            if let l = d.loser  { decisionLine(tag: "L",  pitcher: l) }
+            if let s = d.saver  { decisionLine(tag: "SV", pitcher: s) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func decisionLine(tag: String, player: PlayerInfo) -> some View {
-        let record = recordForPitcher(id: player.id, tag: tag)
+    private func decisionLine(tag: String, pitcher: BoxPlayer) -> some View {
+        let season = pitcher.seasonStats?.pitching
+        let recordText: String? = {
+            switch tag {
+            case "W":
+                if let w = season?.wins, let l = season?.losses {
+                    return "(\(w + 1)-\(l))"
+                }
+            case "L":
+                if let w = season?.wins, let l = season?.losses {
+                    return "(\(w)-\(l + 1))"
+                }
+            case "SV":
+                if let sv = season?.saves {
+                    return "(\(sv + 1))"
+                }
+            default: break
+            }
+            return nil
+        }()
         return HStack(spacing: 6) {
+            Image(systemName: Self.decisionSymbol(tag))
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(.secondary)
+                .frame(width: 14, alignment: .leading)
             Text("\(tag):")
                 .font(.caption.weight(.bold))
                 .foregroundStyle(.secondary)
-                .frame(width: 28, alignment: .leading)
+                .frame(width: 22, alignment: .leading)
                 .monospacedDigit()
-            Text(player.fullName + (record.map { " (\($0))" } ?? ""))
+            Text(pitcher.person.fullName + (recordText.map { " \($0)" } ?? ""))
                 .font(.caption)
                 .foregroundStyle(.primary)
                 .lineLimit(1)
         }
     }
 
-    /// Look up the decision pitcher's updated W-L (or saves total
-    /// for SV decisions) from the cached box score. nil before the
-    /// fetch completes — the line falls back to a name-only render.
-    private func recordForPitcher(id: Int, tag: String) -> String? {
-        guard let bs = boxScore else { return nil }
-        let key = "ID\(id)"
-        let bp = bs.teams.away.players[key] ?? bs.teams.home.players[key]
-        guard let pit = bp?.seasonStats?.pitching else { return nil }
-        if tag == "SV" {
-            return pit.saves.map { "\($0) SV" }
+    /// SF Symbol chosen per tag to distinguish at a glance:
+    /// trophy for W, x-circle for L, lock for SV (preserved lead).
+    private static func decisionSymbol(_ tag: String) -> String {
+        switch tag {
+        case "W":  return "trophy.fill"
+        case "L":  return "xmark.circle"
+        case "SV": return "lock.fill"
+        default:   return "circle"
         }
-        guard let w = pit.wins, let l = pit.losses else { return nil }
-        return "\(w)-\(l)"
     }
 
     /// "HR: Judge (18), Stanton (11)" line shown below the decisions

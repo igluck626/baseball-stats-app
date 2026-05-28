@@ -570,11 +570,11 @@ struct BoxScoreView: View {
     }
 
     private func teamHeader(side: GameTeam, bdlTeamId: Int?) -> some View {
-        // Build a single sub-label under the score that reads
-        // "(21-27) • 3rd AL East". Each segment is independently
-        // optional — if BDL hasn't shipped a record or standing for
-        // this team yet, the sub-label collapses to whichever piece
-        // we do have, or hides entirely.
+        // Two stacked sub-lines under the score:
+        //   line 1: "(21-27)"  — current-season W-L
+        //   line 2: "3rd AL East" — division rank label
+        // Each segment is independently optional; missing pieces
+        // collapse without leaving an empty row.
         let recordText: String? = {
             guard let r = bdlTeamId.flatMap({ teamRecords[$0] }),
                   let w = r.wins, let l = r.losses else { return nil }
@@ -583,27 +583,26 @@ struct BoxScoreView: View {
         let standingText: String? = bdlTeamId
             .flatMap { teamStandings[$0] }
             .map { $0.displayString }
-        let subLabel: String? = {
-            switch (recordText, standingText) {
-            case let (r?, s?): return "\(r) • \(s)"
-            case let (r?, nil): return r
-            case let (nil, s?): return s
-            case (nil, nil): return nil
-            }
-        }()
-        return VStack(spacing: 4) {
+        return VStack(spacing: 2) {
             TeamLogoView(team: side.team, size: 56)
             Text(side.team.abbreviation ?? String(side.team.name.prefix(3)).uppercased())
                 .font(.subheadline.weight(.bold))
             Text(side.score.map(String.init) ?? "—")
                 .font(.title.weight(.bold))
                 .monospacedDigit()
-            if let subLabel {
-                Text(subLabel)
+                .padding(.bottom, 2)
+            if let recordText {
+                Text(recordText)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                    .lineLimit(1)
+            }
+            if let standingText {
+                Text(standingText)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                    .monospacedDigit()
             }
         }
     }
