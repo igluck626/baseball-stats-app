@@ -260,6 +260,10 @@ struct BoxPitching: Codable, Hashable {
     let wins: Int?
     let losses: Int?
     let saves: Int?
+    /// Pitch count for this appearance (only meaningful on the
+    /// game-stats payload, not season). Surfaced as the "PC"
+    /// column in the box-score pitching table; nil → "—".
+    let pitchCount: Int?
 }
 
 // MARK: - Live feed (/api/v1.1/game/{pk}/feed/live)
@@ -860,6 +864,7 @@ private func boxPlayerFromStatRow(
         wins:           s.wins,
         losses:         s.losses,
         saves:          s.saves,
+        pitchCount:     s.pitchCount,
     )
     // BDL doesn't ship OPS — derive from OBP + SLG.
     let opsValue: Double? = (s.obp != nil && s.slg != nil) ? (s.obp! + s.slg!) : nil
@@ -899,6 +904,7 @@ private func boxPlayerFromStatRow(
         wins:           nil,
         losses:         nil,
         saves:          nil,
+        pitchCount:     nil,
     ) : nil
     // Position: lineup row wins (carries the game-specific DH
     // override for two-way starters); fall back to the stat row's
@@ -1012,6 +1018,7 @@ private func placeholderPitcherBoxPlayer(
         wins:           0,
         losses:         0,
         saves:          0,
+        pitchCount:     0,
     )
     let eraString: String = formatMLBEra(seasonStat?.pitchingEra) ?? "—"
     let blankSeasonPitching = BoxPitching(
@@ -1026,6 +1033,7 @@ private func placeholderPitcherBoxPlayer(
         wins:           seasonStat?.pitchingW,
         losses:         seasonStat?.pitchingL,
         saves:          seasonStat?.pitchingSv,
+        pitchCount:     nil,
     )
     return BoxPlayer(
         person:             PlayerInfo(id: entry.player.id, fullName: entry.player.fullName),
@@ -1053,10 +1061,74 @@ private func mergeBoxPlayer(_ existing: BoxPlayer?, _ incoming: BoxPlayer) -> Bo
             pitching: incoming.stats?.pitching ?? existing.stats?.pitching,
         ),
         seasonStats: BoxStats(
-            batting:  incoming.seasonStats?.batting  ?? existing.seasonStats?.batting,
-            pitching: incoming.seasonStats?.pitching ?? existing.seasonStats?.pitching,
+            batting:  mergeSeasonBatting(
+                existing: existing.seasonStats?.batting,
+                incoming: incoming.seasonStats?.batting,
+            ),
+            pitching: mergeSeasonPitching(
+                existing: existing.seasonStats?.pitching,
+                incoming: incoming.seasonStats?.pitching,
+            ),
         ),
         stats_battingOrder: incoming.stats_battingOrder ?? existing.stats_battingOrder,
+    )
+}
+
+/// Field-aware season-batting merge. When both sides exist, prefer
+/// the incoming row's non-nil values per field; otherwise fall back
+/// to the existing aggregate's. Keeps placeholder-loaded values
+/// (e.g. season AVG/OPS pulled from `/season_stats` before the
+/// player batted) from being clobbered by an incoming per-game row
+/// that lacks those rates.
+private func mergeSeasonBatting(
+    existing: BoxBatting?, incoming: BoxBatting?,
+) -> BoxBatting? {
+    guard let e = existing else { return incoming }
+    guard let i = incoming else { return e }
+    return BoxBatting(
+        atBats:               i.atBats               ?? e.atBats,
+        runs:                 i.runs                 ?? e.runs,
+        hits:                 i.hits                 ?? e.hits,
+        doubles:              i.doubles              ?? e.doubles,
+        triples:              i.triples              ?? e.triples,
+        homeRuns:             i.homeRuns             ?? e.homeRuns,
+        rbi:                  i.rbi                  ?? e.rbi,
+        baseOnBalls:          i.baseOnBalls          ?? e.baseOnBalls,
+        strikeOuts:           i.strikeOuts           ?? e.strikeOuts,
+        stolenBases:          i.stolenBases          ?? e.stolenBases,
+        caughtStealing:       i.caughtStealing       ?? e.caughtStealing,
+        hitByPitch:           i.hitByPitch           ?? e.hitByPitch,
+        sacFlies:             i.sacFlies             ?? e.sacFlies,
+        sacBunts:             i.sacBunts             ?? e.sacBunts,
+        groundIntoDoublePlay: i.groundIntoDoublePlay ?? e.groundIntoDoublePlay,
+        avg:                  i.avg                  ?? e.avg,
+        ops:                  i.ops                  ?? e.ops,
+    )
+}
+
+/// Field-aware season-pitching merge. Same intent as
+/// `mergeSeasonBatting` — the placeholder's season ERA / W / L / SV
+/// (pulled from `/season_stats` for the lineup's probable starter)
+/// must survive a subsequent per-game stats row that only carries
+/// the in-game counts and clobbers everything else.
+private func mergeSeasonPitching(
+    existing: BoxPitching?, incoming: BoxPitching?,
+) -> BoxPitching? {
+    guard let e = existing else { return incoming }
+    guard let i = incoming else { return e }
+    return BoxPitching(
+        inningsPitched: i.inningsPitched ?? e.inningsPitched,
+        hits:           i.hits           ?? e.hits,
+        runs:           i.runs           ?? e.runs,
+        earnedRuns:     i.earnedRuns     ?? e.earnedRuns,
+        baseOnBalls:    i.baseOnBalls    ?? e.baseOnBalls,
+        strikeOuts:     i.strikeOuts     ?? e.strikeOuts,
+        homeRuns:       i.homeRuns       ?? e.homeRuns,
+        era:            i.era            ?? e.era,
+        wins:           i.wins           ?? e.wins,
+        losses:         i.losses         ?? e.losses,
+        saves:          i.saves          ?? e.saves,
+        pitchCount:     i.pitchCount     ?? e.pitchCount,
     )
 }
 

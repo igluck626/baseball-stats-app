@@ -694,10 +694,63 @@ struct BoxScoreView: View {
                     ForEach(rows, id: \.person.id) { player in
                         battingRow(player)
                     }
+                    if !rows.isEmpty {
+                        Divider().opacity(0.6)
+                        battingTotalsRow(rows: rows)
+                    }
                 }
             }
             notableBlock(rows: rows)
         }
+    }
+
+    /// Team totals row anchoring the bottom of the batting table.
+    /// AB / R / H / RBI / BB / SO are direct sums; team AVG is
+    /// total H / total AB. OPS is left "—" — a meaningful team OPS
+    /// would need OBP/SLG components and the table's compact width
+    /// doesn't earn its keep.
+    private func battingTotalsRow(rows: [BoxPlayer]) -> some View {
+        var AB = 0, R = 0, H = 0, RBI = 0, BB = 0, SO = 0
+        for p in rows {
+            guard let b = p.stats?.batting else { continue }
+            AB  += b.atBats      ?? 0
+            R   += b.runs        ?? 0
+            H   += b.hits        ?? 0
+            RBI += b.rbi         ?? 0
+            BB  += b.baseOnBalls ?? 0
+            SO  += b.strikeOuts  ?? 0
+        }
+        let avgStr: String = AB > 0
+            ? formatTeamAVG(Double(H) / Double(AB))
+            : "—"
+        return HStack(spacing: 0) {
+            Text("Totals")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: BattingCol.name, alignment: .leading)
+            totalsCell(AB,  width: BattingCol.ab)
+            totalsCell(R,   width: BattingCol.r)
+            totalsCell(H,   width: BattingCol.h)
+            totalsCell(RBI, width: BattingCol.rbi)
+            totalsCell(BB,  width: BattingCol.bb)
+            totalsCell(SO,  width: BattingCol.so)
+            Text(avgStr)
+                .font(.caption.weight(.semibold))
+                .monospacedDigit()
+                .frame(width: BattingCol.avg, alignment: .trailing)
+            Text("—")
+                .font(.caption.weight(.semibold))
+                .monospacedDigit()
+                .frame(width: BattingCol.ops, alignment: .trailing)
+        }
+        .padding(.vertical, 2)
+    }
+
+    /// `0.235` → `".235"` — MLB convention for rate stats drops
+    /// the leading zero.
+    private func formatTeamAVG(_ v: Double) -> String {
+        let s = String(format: "%.3f", v)
+        return s.hasPrefix("0.") ? String(s.dropFirst()) : s
     }
 
     /// Per-column widths for the batting table. Kept in one place
@@ -825,13 +878,17 @@ struct BoxScoreView: View {
         // box-score load). Today's game count is on `bp.stats.batting`.
         // Display = pre-game + today, so a player who hit his 5th HR
         // today shows "(5)" rather than the pre-game "(4)".
+        // When `today > 1` (e.g. a 2-HR game) we surface the per-game
+        // count inline: "Ohtani 2 (14)" rather than "Ohtani (14)" so
+        // a multi-event game stays visible at a glance.
         let pieces: [String] = players.map { bp in
             let last = lastName(bp.person.fullName)
-            guard let preGame = vm.seasonTotals[bp.person.id]?[keyPath: totalKey] else {
-                return last
-            }
             let today = bp.stats?.batting?[keyPath: gameKey] ?? 0
-            return "\(last) (\(preGame + today))"
+            let prefix = today > 1 ? "\(last) \(today)" : last
+            guard let preGame = vm.seasonTotals[bp.person.id]?[keyPath: totalKey] else {
+                return prefix
+            }
+            return "\(prefix) (\(preGame + today))"
         }
         return (Text("\(label): ").font(.caption2.weight(.bold))
                 + Text(pieces.joined(separator: ", ")).font(.caption2))
@@ -848,6 +905,23 @@ struct BoxScoreView: View {
         full.split(separator: " ").last.map(String.init) ?? full
     }
 
+    /// Per-column widths for the pitching table. Name column matches
+    /// `BattingCol.name` so the IP column starts at the same x as
+    /// AB in the batting table — both tables read as a single wide
+    /// scoreboard. Stat-column widths are tuned to common values
+    /// (IP "10.2", ERA "12.34", PC "123") at caption-monospaced.
+    private enum PitchingCol {
+        static let name: CGFloat = BattingCol.name  // 96
+        static let ip:   CGFloat = 32
+        static let h:    CGFloat = 22
+        static let r:    CGFloat = 22
+        static let er:   CGFloat = 22
+        static let bb:   CGFloat = 22
+        static let so:   CGFloat = 22
+        static let era:  CGFloat = 40
+        static let pc:   CGFloat = 32
+    }
+
     private func pitchingTable(team: BoxScoreTeam) -> some View {
         let rows = team.pitchers.compactMap { id -> BoxPlayer? in
             team.players["ID\(id)"]
@@ -861,6 +935,10 @@ struct BoxScoreView: View {
                     ForEach(rows, id: \.person.id) { player in
                         pitchingRow(player)
                     }
+                    if !rows.isEmpty {
+                        Divider().opacity(0.6)
+                        pitchingTotalsRow(rows: rows)
+                    }
                 }
             }
         }
@@ -868,38 +946,183 @@ struct BoxScoreView: View {
 
     private var pitchingHeader: some View {
         HStack(spacing: 0) {
-            Text("").frame(width: 140, alignment: .leading)
-            ForEach(["IP", "H", "R", "ER", "BB", "SO", "ERA"], id: \.self) { c in
-                Text(c)
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: c == "ERA" ? 44 : 28, alignment: .trailing)
-                    .monospacedDigit()
-            }
+            Text("").frame(width: PitchingCol.name, alignment: .leading)
+            pitchingHeaderCell("IP",  width: PitchingCol.ip)
+            pitchingHeaderCell("H",   width: PitchingCol.h)
+            pitchingHeaderCell("R",   width: PitchingCol.r)
+            pitchingHeaderCell("ER",  width: PitchingCol.er)
+            pitchingHeaderCell("BB",  width: PitchingCol.bb)
+            pitchingHeaderCell("SO",  width: PitchingCol.so)
+            pitchingHeaderCell("ERA", width: PitchingCol.era)
+            pitchingHeaderCell("PC",  width: PitchingCol.pc)
         }
+    }
+
+    private func pitchingHeaderCell(_ label: String, width: CGFloat) -> some View {
+        Text(label)
+            .font(.caption2.weight(.bold))
+            .foregroundStyle(.secondary)
+            .frame(width: width, alignment: .trailing)
+            .monospacedDigit()
     }
 
     private func pitchingRow(_ p: BoxPlayer) -> some View {
         let pit = p.stats?.pitching
         let era = p.seasonStats?.pitching?.era ?? "—"
+        let decisionTag = pitcherDecisionTag(for: p)
         return Button { tapPlayer(id: p.person.id, name: p.person.fullName) } label: {
             HStack(spacing: 0) {
-                playerLabel(p, isPitcher: true)
-                    .frame(width: 140, alignment: .leading)
-                Text(pit?.inningsPitched ?? "-").font(.caption).monospacedDigit()
-                    .frame(width: 28, alignment: .trailing)
-                cell(pit?.hits)
-                cell(pit?.runs)
-                cell(pit?.earnedRuns)
-                cell(pit?.baseOnBalls)
-                cell(pit?.strikeOuts)
+                pitcherLabel(p, decisionTag: decisionTag)
+                    .frame(width: PitchingCol.name, alignment: .leading)
+                Text(Self.formatPitcherIP(pit?.inningsPitched))
+                    .font(.caption).monospacedDigit()
+                    .frame(width: PitchingCol.ip, alignment: .trailing)
+                cell(pit?.hits,        width: PitchingCol.h)
+                cell(pit?.runs,        width: PitchingCol.r)
+                cell(pit?.earnedRuns,  width: PitchingCol.er)
+                cell(pit?.baseOnBalls, width: PitchingCol.bb)
+                cell(pit?.strikeOuts,  width: PitchingCol.so)
                 Text(era).font(.caption).monospacedDigit()
-                    .frame(width: 44, alignment: .trailing)
+                    .frame(width: PitchingCol.era, alignment: .trailing)
+                cell(pit?.pitchCount,  width: PitchingCol.pc)
             }
             .padding(.vertical, 2)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+
+    /// "5.2" → "5.2"; "1" → "1.0"; "" → "-". Box-score IPs lacking
+    /// a decimal (zero-out outings, or BDL shipping a bare whole
+    /// number) get a ".0" tacked on for visual consistency.
+    private static func formatPitcherIP(_ s: String?) -> String {
+        guard let s, !s.isEmpty else { return "-" }
+        return s.contains(".") ? s : "\(s).0"
+    }
+
+    /// Pitcher name + position with the game decision tag inline:
+    /// "C. Sale (W 8-3)" / "G. Cole (L 5-4)" / "K. Jansen (SV 12)".
+    /// The decision flag (`stats.pitching.wins == 1` etc.) is on the
+    /// per-game row; the season record (`seasonStats.pitching.wins`)
+    /// rides along thanks to the field-aware merge in Scores.swift.
+    private func pitcherLabel(_ p: BoxPlayer, decisionTag: String?) -> some View {
+        HStack(spacing: 4) {
+            Text(shortName(p.person.fullName))
+                .font(.caption.weight(.medium))
+                .lineLimit(1)
+            if let tag = decisionTag {
+                Text(tag)
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// Returns "W 8-3" / "L 5-4" / "SV 12" when this pitcher earned
+    /// today's decision; nil otherwise. Per-game decision flags
+    /// (`stats.pitching.wins/losses/saves`) ship as 0/1 from BDL.
+    /// Season W-L-SV are looked up from `seasonStats.pitching` — set
+    /// by the lineup-placeholder pre-load (probable starter) and
+    /// preserved across the merge with the per-game row.
+    private func pitcherDecisionTag(for p: BoxPlayer) -> String? {
+        let game = p.stats?.pitching
+        let season = p.seasonStats?.pitching
+        if (game?.wins ?? 0) > 0 {
+            if let w = season?.wins, let l = season?.losses {
+                return "(W \(w)-\(l))"
+            }
+            return "(W)"
+        }
+        if (game?.losses ?? 0) > 0 {
+            if let w = season?.wins, let l = season?.losses {
+                return "(L \(w)-\(l))"
+            }
+            return "(L)"
+        }
+        if (game?.saves ?? 0) > 0 {
+            if let sv = season?.saves {
+                return "(SV \(sv))"
+            }
+            return "(SV)"
+        }
+        return nil
+    }
+
+    /// Team totals row anchoring the bottom of the pitching table.
+    /// Counting stats are direct sums; IP is summed in true-decimal
+    /// (parsing each baseball-notation cell) then re-rendered in
+    /// baseball notation; ERA is computed from total ER × 9 / IP.
+    private func pitchingTotalsRow(rows: [BoxPlayer]) -> some View {
+        var ipDec: Double = 0
+        var H = 0, R = 0, ER = 0, BB = 0, SO = 0
+        var pcTotal = 0
+        var pcAny = false
+        for p in rows {
+            guard let pit = p.stats?.pitching else { continue }
+            ipDec += Self.ipStringToDecimal(pit.inningsPitched)
+            H  += pit.hits        ?? 0
+            R  += pit.runs        ?? 0
+            ER += pit.earnedRuns  ?? 0
+            BB += pit.baseOnBalls ?? 0
+            SO += pit.strikeOuts  ?? 0
+            if let pc = pit.pitchCount { pcAny = true; pcTotal += pc }
+        }
+        let eraStr: String = ipDec > 0
+            ? String(format: "%.2f", Double(ER) * 9 / ipDec)
+            : "—"
+        return HStack(spacing: 0) {
+            Text("Totals")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: PitchingCol.name, alignment: .leading)
+            Text(Self.decimalIPToBaseball(ipDec))
+                .font(.caption.weight(.semibold))
+                .monospacedDigit()
+                .frame(width: PitchingCol.ip, alignment: .trailing)
+            totalsCell(H,  width: PitchingCol.h)
+            totalsCell(R,  width: PitchingCol.r)
+            totalsCell(ER, width: PitchingCol.er)
+            totalsCell(BB, width: PitchingCol.bb)
+            totalsCell(SO, width: PitchingCol.so)
+            Text(eraStr)
+                .font(.caption.weight(.semibold))
+                .monospacedDigit()
+                .frame(width: PitchingCol.era, alignment: .trailing)
+            Text(pcAny ? String(pcTotal) : "—")
+                .font(.caption.weight(.semibold))
+                .monospacedDigit()
+                .frame(width: PitchingCol.pc, alignment: .trailing)
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func totalsCell(_ v: Int, width: CGFloat) -> some View {
+        Text(String(v))
+            .font(.caption.weight(.semibold))
+            .monospacedDigit()
+            .frame(width: width, alignment: .trailing)
+    }
+
+    /// Parse baseball notation ("5.2" = 5⅔) to decimal (5.667).
+    /// Empty / nil / unparseable → 0.
+    private static func ipStringToDecimal(_ s: String?) -> Double {
+        guard let s, !s.isEmpty else { return 0 }
+        if let dot = s.firstIndex(of: ".") {
+            let whole = Double(s[..<dot]) ?? 0
+            let frac = Double(s[s.index(after: dot)...]) ?? 0
+            return whole + frac / 3.0
+        }
+        return Double(s) ?? 0
+    }
+
+    /// Render a true-decimal IP back in baseball notation:
+    /// 5.667 → "5.2", 9.0 → "9.0".
+    private static func decimalIPToBaseball(_ d: Double) -> String {
+        guard d > 0 else { return "0.0" }
+        let whole = Int(d)
+        let outs = Int(((d - Double(whole)) * 3).rounded())
+        if outs >= 3 { return "\(whole + 1).0" }
+        return "\(whole).\(outs)"
     }
 
     private func playerLabel(_ p: BoxPlayer, isPitcher: Bool) -> some View {

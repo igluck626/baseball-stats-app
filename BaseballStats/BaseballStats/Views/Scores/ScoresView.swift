@@ -26,6 +26,28 @@
 import Combine
 import SwiftUI
 
+/// Division rank + label payload for an expanded game card.
+/// `rank` is 1-based within the (league, division) bucket; the
+/// view formats as "1st AL East" via `ordinal(_:)`.
+struct TeamStandingInfo: Hashable {
+    let rank: Int
+    /// Pre-formatted like "AL East" / "NL Central". The view
+    /// prepends the rank ordinal.
+    let divisionLabel: String
+
+    /// "1st" / "2nd" / "3rd" / "4th" / "5th". 0 → "—".
+    var displayString: String {
+        let ord: String
+        switch rank {
+        case 1: ord = "1st"
+        case 2: ord = "2nd"
+        case 3: ord = "3rd"
+        default: ord = "\(rank)th"
+        }
+        return "\(ord) \(divisionLabel)"
+    }
+}
+
 @MainActor
 final class ScoresViewModel: ObservableObject {
     /// Currently selected calendar day. Starts at today (local time).
@@ -40,6 +62,11 @@ final class ScoresViewModel: ObservableObject {
     /// from `getStandings(season:)`. Cards look up records by the
     /// per-game `bdlAwayTeamId` / `bdlHomeTeamId`.
     @Published var teamRecords: [Int: TeamRecord] = [:]
+    /// BDL team id → (division rank, label like "AL East").
+    /// Derived from the same standings payload `teamRecords`
+    /// uses — rank is computed within the team's (league, division)
+    /// bucket sorted by wins desc then losses asc.
+    @Published var teamStandings: [Int: TeamStandingInfo] = [:]
 
     private let bdl: BallDontLieClient
     private var refreshTask: Task<Void, Never>?
@@ -70,7 +97,8 @@ final class ScoresViewModel: ObservableObject {
         // to an empty dict when standings fail or BDL ships an
         // empty payload — records just won't render that tick.
         let standings = (await standingsTask) ?? []
-        self.teamRecords = Self.recordsByBDLTeamId(standings)
+        self.teamRecords   = Self.recordsByBDLTeamId(standings)
+        self.teamStandings = Self.standingsByBDLTeamId(standings)
         isLoading = false
         didLoad = true
     }
@@ -97,7 +125,8 @@ final class ScoresViewModel: ObservableObject {
             // the screen on a transient pull-to-refresh hiccup.
         }
         if let standings = await standingsTask {
-            self.teamRecords = Self.recordsByBDLTeamId(standings)
+            self.teamRecords   = Self.recordsByBDLTeamId(standings)
+            self.teamStandings = Self.standingsByBDLTeamId(standings)
         }
     }
 
@@ -112,7 +141,8 @@ final class ScoresViewModel: ObservableObject {
         let year = Calendar.current.component(.year, from: selectedDate)
         do {
             let standings = try await bdl.getStandings(season: year, bypassCache: true)
-            self.teamRecords = Self.recordsByBDLTeamId(standings)
+            self.teamRecords   = Self.recordsByBDLTeamId(standings)
+            self.teamStandings = Self.standingsByBDLTeamId(standings)
             NotificationCenter.default.post(name: .standingsShouldRefresh, object: nil)
         } catch {
             // Silent — the dict keeps its previous values; the next
@@ -132,6 +162,57 @@ final class ScoresViewModel: ObservableObject {
             )
         }
         return dict
+    }
+
+    /// Build `{bdl_team_id: (rank, "AL East")}` from a BDL standings
+    /// response. Ranks are computed within each (league, division)
+    /// bucket — sorted by wins desc, losses asc — so the leading
+    /// team in each division gets rank 1 ("1st AL East") and so on.
+    /// Teams missing a league / division code (BDL data quirk) are
+    /// skipped.
+    private static func standingsByBDLTeamId(
+        _ standings: [BDLStandingsEntry],
+    ) -> [Int: TeamStandingInfo] {
+        var buckets: [String: [BDLStandingsEntry]] = [:]
+        for s in standings {
+            guard let lg = leagueCode(s.team.league),
+                  let div = divisionCode(s.team.division) else { continue }
+            buckets["\(lg) \(div)", default: []].append(s)
+        }
+        var out: [Int: TeamStandingInfo] = [:]
+        for (divisionLabel, entries) in buckets {
+            let sorted = entries.sorted {
+                if $0.wins != $1.wins { return $0.wins > $1.wins }
+                return $0.losses < $1.losses
+            }
+            for (i, e) in sorted.enumerated() {
+                out[e.team.id] = TeamStandingInfo(
+                    rank:          i + 1,
+                    divisionLabel: divisionLabel,
+                )
+            }
+        }
+        return out
+    }
+
+    /// "American" → "AL", "National" → "NL". nil for unknown values
+    /// so the caller can skip standings for malformed standings rows.
+    private static func leagueCode(_ s: String?) -> String? {
+        switch s {
+        case "American": return "AL"
+        case "National": return "NL"
+        default:         return nil
+        }
+    }
+
+    /// "East" / "Central" / "West" — pass through. nil otherwise.
+    private static func divisionCode(_ s: String?) -> String? {
+        switch s {
+        case "East":    return "East"
+        case "Central": return "Central"
+        case "West":    return "West"
+        default:        return nil
+        }
     }
 
     /// Spin up a polling task that re-runs `load(date:)` every 30s
@@ -374,7 +455,11 @@ struct ScoresView: View {
                     sectionHeader("Live")
                     ForEach(live) { game in
                         NavigationLink(value: game) {
-                            LiveGameCard(game: game, records: vm.teamRecords)
+                            LiveGameCard(
+                                game:      game,
+                                records:   vm.teamRecords,
+                                standings: vm.teamStandings,
+                            )
                         }
                         .buttonStyle(.plain)
                     }
@@ -396,9 +481,10 @@ struct ScoresView: View {
                         // button inside the expanded view, so the
                         // outer cell doesn't wrap a NavigationLink.
                         FinalGameCard(
-                            game:    game,
-                            records: vm.teamRecords,
-                            path:    $navigationPath,
+                            game:      game,
+                            records:   vm.teamRecords,
+                            standings: vm.teamStandings,
+                            path:      $navigationPath,
                         )
                     }
                 }
@@ -615,6 +701,7 @@ private struct GameCard: View {
 private struct FinalGameCard: View {
     let game: Game
     let records: [Int: TeamRecord]
+    let standings: [Int: TeamStandingInfo]
     @Binding var path: NavigationPath
     @State private var isExpanded = false
     /// Lazily-fetched box score for the expanded view. Loaded the
@@ -639,6 +726,7 @@ private struct FinalGameCard: View {
                 }
             if isExpanded {
                 Divider()
+                teamStandingsRow
                 linescore
                 if hasAnyDecision {
                     Divider()
@@ -653,6 +741,52 @@ private struct FinalGameCard: View {
         .frame(maxWidth: .infinity)
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
         .shadow(color: .black.opacity(0.06), radius: 6, x: 0, y: 2)
+    }
+
+    /// Per-team record + division standing label rendered as a
+    /// two-row column inside the expanded body. Falls back silently
+    /// when the dicts haven't been populated yet (early-season cold
+    /// start, or a standings fetch that failed).
+    @ViewBuilder
+    private var teamStandingsRow: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            standingsLine(side: game.teams.away, bdlTeamId: game.bdlAwayTeamId)
+            standingsLine(side: game.teams.home, bdlTeamId: game.bdlHomeTeamId)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func standingsLine(side: GameTeam, bdlTeamId: Int?) -> some View {
+        let abbr = side.team.abbreviation
+            ?? String(side.team.name.prefix(3)).uppercased()
+        let recordText: String? = {
+            if let r = bdlTeamId.flatMap({ records[$0] }),
+               let w = r.wins, let l = r.losses {
+                return "(\(w)-\(l))"
+            }
+            return nil
+        }()
+        let standingText: String? = bdlTeamId
+            .flatMap { standings[$0] }
+            .map { $0.displayString }
+        return HStack(spacing: 6) {
+            Text(abbr)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.secondary)
+                .frame(width: 36, alignment: .leading)
+            if let recordText {
+                Text(recordText)
+                    .font(.caption)
+                    .foregroundStyle(.primary)
+                    .monospacedDigit()
+            }
+            if let standingText {
+                Text(standingText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
     }
 
     private func fetchBoxScore() async {
@@ -930,6 +1064,7 @@ private struct FinalGameCard: View {
 private struct LiveGameCard: View {
     let game: Game
     let records: [Int: TeamRecord]
+    let standings: [Int: TeamStandingInfo]
     @StateObject private var feed = LiveFeedViewModel()
 
     var body: some View {
@@ -971,19 +1106,31 @@ private struct LiveGameCard: View {
     }
 
     private func teamRow(side: GameTeam, bdlTeamId: Int?) -> some View {
-        HStack(spacing: 10) {
+        let standingText: String? = bdlTeamId
+            .flatMap { standings[$0] }
+            .map { $0.displayString }
+        return HStack(spacing: 10) {
             TeamLogoView(team: side.team, size: 28)
 
-            Text(side.team.abbreviation ?? String(side.team.name.prefix(3)).uppercased())
-                .font(.subheadline.weight(.semibold))
-                .lineLimit(1)
-
-            if let w = bdlTeamId.flatMap({ records[$0] })?.wins,
-               let l = bdlTeamId.flatMap({ records[$0] })?.losses {
-                Text("(\(w)-\(l))")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 6) {
+                    Text(side.team.abbreviation ?? String(side.team.name.prefix(3)).uppercased())
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                    if let w = bdlTeamId.flatMap({ records[$0] })?.wins,
+                       let l = bdlTeamId.flatMap({ records[$0] })?.losses {
+                        Text("(\(w)-\(l))")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                }
+                if let standingText {
+                    Text(standingText)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
 
             Spacer()
