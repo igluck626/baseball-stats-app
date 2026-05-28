@@ -115,11 +115,15 @@ struct BDLPlayerStat: Codable, Hashable {
     let plateAppearances: Int?
 
     // Pitching line
-    /// BDL ships `ip` in MLB baseball notation as a string —
-    /// "5.2" = 5⅔ innings, "0.1" = ⅓ inning — NOT as a true
-    /// decimal. Decoding as `String?` preserves the original form;
-    /// callers run it through `parseInningsString` (or similar)
-    /// to convert "5.2" → 5.667 when arithmetic is needed.
+    /// BDL ships `ip` polymorphically:
+    ///   • Pitcher rows: `"5.2"` — MLB baseball notation as a string
+    ///     ("5.2" = 5⅔ innings, "0.1" = ⅓ inning).
+    ///   • Batter rows: `0` (Int) or `null` — no pitching activity.
+    ///
+    /// We surface it as `String?` so the pitcher rows preserve their
+    /// original baseball-notation form for downstream conversion via
+    /// `parseInningsString`; batter rows collapse to `nil`. The custom
+    /// `init(from:)` below handles all three encodings.
     let ip: String?
     let pHits: Int?
     let pRuns: Int?
@@ -134,6 +138,59 @@ struct BDLPlayerStat: Codable, Hashable {
     let holds: Int?
     let pitchCount: Int?
     let gamesStarted: Int?
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.player           = try c.decode(BDLPlayer.self, forKey: .player)
+        self.gameId           = try c.decode(Int.self,       forKey: .gameId)
+        self.teamName         = try c.decodeIfPresent(String.self, forKey: .teamName)
+        self.atBats           = try c.decodeIfPresent(Int.self,    forKey: .atBats)
+        self.runs             = try c.decodeIfPresent(Int.self,    forKey: .runs)
+        self.hits             = try c.decodeIfPresent(Int.self,    forKey: .hits)
+        self.rbi              = try c.decodeIfPresent(Int.self,    forKey: .rbi)
+        self.hr               = try c.decodeIfPresent(Int.self,    forKey: .hr)
+        self.bb               = try c.decodeIfPresent(Int.self,    forKey: .bb)
+        self.k                = try c.decodeIfPresent(Int.self,    forKey: .k)
+        self.avg              = try c.decodeIfPresent(Double.self, forKey: .avg)
+        self.obp              = try c.decodeIfPresent(Double.self, forKey: .obp)
+        self.slg              = try c.decodeIfPresent(Double.self, forKey: .slg)
+        self.doubles          = try c.decodeIfPresent(Int.self,    forKey: .doubles)
+        self.triples          = try c.decodeIfPresent(Int.self,    forKey: .triples)
+        self.stolenBases      = try c.decodeIfPresent(Int.self,    forKey: .stolenBases)
+        self.caughtStealing   = try c.decodeIfPresent(Int.self,    forKey: .caughtStealing)
+        self.hitByPitch       = try c.decodeIfPresent(Int.self,    forKey: .hitByPitch)
+        self.sacFlies         = try c.decodeIfPresent(Int.self,    forKey: .sacFlies)
+        self.plateAppearances = try c.decodeIfPresent(Int.self,    forKey: .plateAppearances)
+
+        // ip — try String first (pitcher rows), then Int / Double
+        // (batter rows often ship 0). A numeric 0 collapses to nil
+        // since "no innings" is a stronger signal than "0.0". Any
+        // non-zero numeric (shouldn't happen, but defensive) gets
+        // stringified so `parseInningsString` can handle it.
+        if let s = try? c.decode(String.self, forKey: .ip) {
+            self.ip = s.isEmpty ? nil : s
+        } else if let i = try? c.decode(Int.self, forKey: .ip) {
+            self.ip = i == 0 ? nil : String(i)
+        } else if let d = try? c.decode(Double.self, forKey: .ip) {
+            self.ip = d == 0 ? nil : String(d)
+        } else {
+            self.ip = nil
+        }
+
+        self.pHits        = try c.decodeIfPresent(Int.self,    forKey: .pHits)
+        self.pRuns        = try c.decodeIfPresent(Int.self,    forKey: .pRuns)
+        self.er           = try c.decodeIfPresent(Int.self,    forKey: .er)
+        self.pBb          = try c.decodeIfPresent(Int.self,    forKey: .pBb)
+        self.pK           = try c.decodeIfPresent(Int.self,    forKey: .pK)
+        self.pHr          = try c.decodeIfPresent(Int.self,    forKey: .pHr)
+        self.era          = try c.decodeIfPresent(Double.self, forKey: .era)
+        self.wins         = try c.decodeIfPresent(Int.self,    forKey: .wins)
+        self.losses       = try c.decodeIfPresent(Int.self,    forKey: .losses)
+        self.saves        = try c.decodeIfPresent(Int.self,    forKey: .saves)
+        self.holds        = try c.decodeIfPresent(Int.self,    forKey: .holds)
+        self.pitchCount   = try c.decodeIfPresent(Int.self,    forKey: .pitchCount)
+        self.gamesStarted = try c.decodeIfPresent(Int.self,    forKey: .gamesStarted)
+    }
 }
 
 // MARK: - Lineups
