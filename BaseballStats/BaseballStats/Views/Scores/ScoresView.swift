@@ -282,6 +282,7 @@ struct ScoresView: View {
                 BoxScoreView(
                     game:           game,
                     teamStandings:  vm.teamStandings,
+                    teamRecords:    vm.teamRecords,
                     path:           $navigationPath,
                 )
             }

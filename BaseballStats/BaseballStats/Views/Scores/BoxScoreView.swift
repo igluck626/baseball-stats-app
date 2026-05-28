@@ -326,6 +326,10 @@ struct BoxScoreView: View {
     /// the dict here keeps the box-score view's data flow obvious
     /// (no `@EnvironmentObject` indirection through the standings).
     let teamStandings: [Int: TeamStandingInfo]
+    /// BDL team id → current-season W-L, same source the score
+    /// cards use. Threaded in alongside `teamStandings` so the
+    /// header sub-label reads "(21-27) • 3rd AL East".
+    let teamRecords: [Int: TeamRecord]
     /// Parent (`ScoresView`) owns the NavigationStack path; we append
     /// to it when the user taps a player so the existing
     /// `.navigationDestination(for: PlayerSearchResult.self)` on
@@ -349,10 +353,12 @@ struct BoxScoreView: View {
     init(
         game: Game,
         teamStandings: [Int: TeamStandingInfo] = [:],
+        teamRecords: [Int: TeamRecord] = [:],
         path: Binding<NavigationPath>,
     ) {
         _vm = StateObject(wrappedValue: BoxScoreViewModel(game: game))
         self.teamStandings = teamStandings
+        self.teamRecords = teamRecords
         _path = path
     }
 
@@ -564,9 +570,27 @@ struct BoxScoreView: View {
     }
 
     private func teamHeader(side: GameTeam, bdlTeamId: Int?) -> some View {
+        // Build a single sub-label under the score that reads
+        // "(21-27) • 3rd AL East". Each segment is independently
+        // optional — if BDL hasn't shipped a record or standing for
+        // this team yet, the sub-label collapses to whichever piece
+        // we do have, or hides entirely.
+        let recordText: String? = {
+            guard let r = bdlTeamId.flatMap({ teamRecords[$0] }),
+                  let w = r.wins, let l = r.losses else { return nil }
+            return "(\(w)-\(l))"
+        }()
         let standingText: String? = bdlTeamId
             .flatMap { teamStandings[$0] }
             .map { $0.displayString }
+        let subLabel: String? = {
+            switch (recordText, standingText) {
+            case let (r?, s?): return "\(r) • \(s)"
+            case let (r?, nil): return r
+            case let (nil, s?): return s
+            case (nil, nil): return nil
+            }
+        }()
         return VStack(spacing: 4) {
             TeamLogoView(team: side.team, size: 56)
             Text(side.team.abbreviation ?? String(side.team.name.prefix(3)).uppercased())
@@ -574,11 +598,12 @@ struct BoxScoreView: View {
             Text(side.score.map(String.init) ?? "—")
                 .font(.title.weight(.bold))
                 .monospacedDigit()
-            if let standingText {
-                Text(standingText)
+            if let subLabel {
+                Text(subLabel)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                    .monospacedDigit()
             }
         }
     }
