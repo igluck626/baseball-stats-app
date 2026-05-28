@@ -2730,26 +2730,32 @@ fileprivate func makeEffectiveBatting(
     //    = (H - 2B - 3B - HR) + 2*2B + 3*3B + 4*HR
     //    = H + 2B + 2*3B + 3*HR
     let TB  = H + d2 + 2 * d3 + 3 * HR
-    let avg: Double? = AB > 0 ? Double(H) / Double(AB) : nil
+    // Rate stats: prefer BDL's own season-to-date numbers when
+    // present on the recent line. BDL computes them off their
+    // server-side season counts (which already include today's
+    // PAs), so using them straight from the wire eliminates the
+    // ~3rd-decimal drift you'd get re-deriving from
+    // `overnight + this-game-counts` on the client. Fall back to
+    // the integer-count formula when BDL didn't ship the rate
+    // (early-season cold start, or qualifying gates not met).
+    let computedAVG: Double? = AB > 0 ? Double(H) / Double(AB) : nil
     let obpNum = H + BB + HBP
     let obpDen = AB + BB + HBP + SF
-    let obp: Double? = obpDen > 0 ? Double(obpNum) / Double(obpDen) : nil
-    let slg: Double? = AB > 0 ? Double(TB) / Double(AB) : nil
-    // OPS direct from the integer counts rather than `obp + slg`,
-    // so the displayed value never reflects a rounded intermediate.
-    // Mathematically identical to OBP + SLG when both rates are
-    // computable; the fallback to `obp + slg` only fires when the
-    // denominators are zero, which means OPS is genuinely undefined
-    // anyway.
-    let ops: Double? = {
+    let computedOBP: Double? = obpDen > 0 ? Double(obpNum) / Double(obpDen) : nil
+    let computedSLG: Double? = AB > 0 ? Double(TB) / Double(AB) : nil
+    let computedOPS: Double? = {
         if AB > 0, obpDen > 0 {
             let obpPart = Double(H + BB + HBP) / Double(obpDen)
             let slgPart = Double(H + d2 + 2 * d3 + 3 * HR) / Double(AB)
             return obpPart + slgPart
         }
-        guard let obp, let slg else { return nil }
-        return obp + slg
+        guard let computedOBP, let computedSLG else { return nil }
+        return computedOBP + computedSLG
     }()
+    let avg = recent.seasonAVG ?? computedAVG
+    let obp = recent.seasonOBP ?? computedOBP
+    let slg = recent.seasonSLG ?? computedSLG
+    let ops = recent.seasonOPS ?? computedOPS
     return EffectiveBatting(
         WAR: war,
         AVG: avg, OBP: obp, SLG: slg, OPS: ops,

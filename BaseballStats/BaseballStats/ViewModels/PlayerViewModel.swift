@@ -41,6 +41,18 @@ struct BoxBattingLine: Hashable {
     var HBP:     Int = 0
     var SF:      Int = 0
 
+    /// Season-to-date rate stats as BDL has them after THIS game.
+    /// Authoritative for display — BDL computes them off their own
+    /// season counts (which already include today's PA), so using
+    /// them avoids the rounding drift you get when the overlay
+    /// recomputes from `overnight + this-game-counts`. nil when
+    /// BDL didn't ship them on this row (early-season cold-start
+    /// or the player has zero qualifying PAs).
+    var seasonAVG: Double? = nil
+    var seasonOBP: Double? = nil
+    var seasonSLG: Double? = nil
+    var seasonOPS: Double? = nil
+
     /// Plate appearances — approximated as AB + BB + HBP + SF. SH
     /// (sacrifice bunts) is omitted; rare enough at modern usage
     /// that the one-PA imprecision is acceptable for this overlay.
@@ -53,13 +65,21 @@ struct BoxBattingLine: Hashable {
 
     /// Accumulator — sum another box-score line into this one.
     /// Used when the player appeared in more than one game today
-    /// (i.e. a doubleheader).
+    /// (i.e. a doubleheader). For the season rate stats we take
+    /// whichever side has non-nil values — BDL's second-game
+    /// rates already reflect the first game's contributions, so
+    /// "most recent non-nil wins" gives the right cumulative
+    /// view.
     mutating func add(_ o: BoxBattingLine) {
         games += o.games
         AB += o.AB; R += o.R; H += o.H
         doubles += o.doubles; triples += o.triples; HR += o.HR
         RBI += o.RBI; BB += o.BB; SO += o.SO; SB += o.SB
         HBP += o.HBP; SF += o.SF
+        if let v = o.seasonAVG { seasonAVG = v }
+        if let v = o.seasonOBP { seasonOBP = v }
+        if let v = o.seasonSLG { seasonSLG = v }
+        if let v = o.seasonOPS { seasonOPS = v }
     }
 }
 
@@ -498,6 +518,13 @@ final class PlayerViewModel: ObservableObject {
         // gates the overlay sum, so an all-zeros row would no-op
         // anyway — but bailing here avoids a wasted `add()`.
         if ab == 0, bb == 0, pa == 0 { return nil }
+        // BDL's per-game row carries season-to-date AVG / OBP /
+        // SLG as of (and including) this game. OPS isn't shipped
+        // directly — derive from OBP + SLG when both are present
+        // (the same convention the box-score synthesizer uses).
+        let opsValue: Double? = (s.obp != nil && s.slg != nil)
+            ? (s.obp! + s.slg!)
+            : nil
         return BoxBattingLine(
             games:   1,
             AB:      ab,
@@ -511,7 +538,11 @@ final class PlayerViewModel: ObservableObject {
             SO:      s.k              ?? 0,
             SB:      s.stolenBases    ?? 0,
             HBP:     s.hitByPitch     ?? 0,
-            SF:      s.sacFlies       ?? 0
+            SF:      s.sacFlies       ?? 0,
+            seasonAVG: s.avg,
+            seasonOBP: s.obp,
+            seasonSLG: s.slg,
+            seasonOPS: opsValue
         )
     }
 
