@@ -851,29 +851,57 @@ def run_catchup_update() -> dict:
     log.info(f"[catchup] {len(games)} final games to scan")
 
     # 2. Collect every MLBAM player_id who appeared in those games.
-    #    `fetch_bdl_game_stats` returns buckets already keyed by MLBAM,
-    #    skipping unmapped BDL ids silently — which is fine here: an
-    #    unmapped player can't be reconciled against our DB anyway.
+    #    Inline-paginate `/stats` rather than going through
+    #    `fetch_bdl_game_stats` (which silently drops unmapped BDL
+    #    ids before we can see them) so the diagnostic logs can
+    #    show raw row counts + every BDL id we observed.
     with connection.get_session() as db:
         bdl_to_mlbam = data_service._bdl_to_mlbam_map(db)
+    log.info(f"[catchup] bdl_to_mlbam map has {len(bdl_to_mlbam)} entries")
+    seen_bdl_ids: set[int] = set()
     seen_pids: set[int] = set()
     for g in games:
         game_id = g.get("id")
         if not game_id:
             continue
-        try:
-            bat_by_pid, pit_by_pid = data_service.fetch_bdl_game_stats(
-                game_id, bdl_to_mlbam, ctx={},
-            )
-        except Exception as exc:
-            log.warning(f"[catchup] game {game_id} stats fetch failed: {exc}")
-            continue
-        seen_pids |= set(bat_by_pid.keys())
-        seen_pids |= set(pit_by_pid.keys())
+        stat_rows: list[dict] = []
+        cursor = None
+        while True:
+            params: dict = {"game_ids[]": [game_id], "per_page": 100}
+            if cursor is not None:
+                params["cursor"] = cursor
+            try:
+                data = data_service._bdl_get_json("stats", params)
+            except Exception as exc:
+                log.warning(f"[catchup] game {game_id} stats fetch failed: {exc}")
+                break
+            rows = data.get("data") or []
+            stat_rows.extend(rows)
+            cursor = (data.get("meta") or {}).get("next_cursor")
+            if not cursor:
+                break
+        log.info(f"[catchup] game {game_id} returned {len(stat_rows)} stat rows")
+        for row in stat_rows:
+            bdl_pid_raw = (row.get("player") or {}).get("id")
+            if bdl_pid_raw is None:
+                continue
+            try:
+                bdl_pid = int(bdl_pid_raw)
+            except (TypeError, ValueError):
+                continue
+            seen_bdl_ids.add(bdl_pid)
+            mlbam = bdl_to_mlbam.get(bdl_pid)
+            if mlbam is not None:
+                seen_pids.add(mlbam)
         _time.sleep(data_service._BDL_RATE_LIMIT_SLEEP)
+    log.info(
+        f"[catchup] collected {len(seen_bdl_ids)} unique BDL player IDs "
+        f"across all games"
+    )
+    log.info(f"[catchup] {len(seen_pids)} MLBAM IDs resolved from BDL IDs")
     counts["players_seen"] = len(seen_pids)
     if not seen_pids:
-        log.info("[catchup] no players appeared (all unmapped?)")
+        log.info("[catchup] no players resolved to MLBAM ids — nothing to reconcile")
         return {"status": "ok", **counts}
     log.info(f"[catchup] {len(seen_pids)} unique players appeared")
 
