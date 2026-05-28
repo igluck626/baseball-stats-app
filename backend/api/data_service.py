@@ -10,6 +10,8 @@ They are used by bulk_load.py and nightly_update.py only.
 
 import csv
 import datetime
+import hashlib
+import io
 import json
 import logging
 import math
@@ -280,16 +282,89 @@ def _batting_bref(year: int) -> pd.DataFrame:
     )
 
 
-def _bwar_bat_all() -> pd.DataFrame:
+# bref publishes the full historical WAR CSVs at these two stable
+# URLs. Direct HTTP download is faster and more transparent than
+# pybaseball's wrapper — we get the raw text to hash for freshness
+# detection, the request timeout is ours to set, and there's no
+# pybaseball cache layer in the middle that we can't introspect.
+_BWAR_BAT_URL   = "https://www.baseball-reference.com/data/war_daily_bat.txt"
+_BWAR_PITCH_URL = "https://www.baseball-reference.com/data/war_daily_pitch.txt"
+
+# Module-level snapshot of the most recently observed CSV hash per
+# side. Updated by `_download_bref_war_csv` on every successful
+# download; the catch-up reads this BEFORE its own download to
+# detect whether bref has shipped new data since the last call
+# (the morning nightly, typically). Survives across thread
+# invocations within the same Python process; resets on restart.
+_last_war_hashes: dict[str, Optional[str]] = {"bat": None, "pitch": None}
+
+
+def get_last_war_hash(side: str) -> Optional[str]:
+    """Most recently observed bref WAR CSV hash for `side` ('bat'
+    or 'pitch'). Returns None if no successful download has run
+    in this process yet — callers should treat that as "assume
+    updated" rather than as "matches"."""
+    return _last_war_hashes.get(side)
+
+
+def _download_bref_war_csv(url: str, side: str) -> dict:
+    """Download one bref WAR CSV directly. Returns a dict with:
+
+      df:            parsed DataFrame
+      text:          raw CSV text (for hashing / freshness check)
+      hash:          md5 of the raw text
+      downloaded_at: ISO-8601 UTC timestamp of the download
+      rows:          row count (mirrors len(df), convenient for status)
+
+    Side-effect: stamps `_last_war_hashes[side]` so subsequent
+    callers can detect whether bref has updated since this download.
+    """
+    label = f"bwar_{side}"
+    log.info("Downloading bref %s from %s", label, url)
+    response = requests.get(url, timeout=30)
+    response.raise_for_status()
+    text = response.text
+    df = pd.read_csv(io.StringIO(text))
+    h = hashlib.md5(text.encode("utf-8")).hexdigest()
+    now_iso = datetime.datetime.utcnow().isoformat() + "Z"
+    log.info(
+        "bref %s: %d rows, %d bytes, md5=%s downloaded_at=%s",
+        label, len(df), len(text), h[:8], now_iso,
+    )
+    _last_war_hashes[side] = h
+    return {
+        "df":            df,
+        "text":          text,
+        "hash":          h,
+        "downloaded_at": now_iso,
+        "rows":          len(df),
+    }
+
+
+def _bwar_bat_all_meta() -> dict:
+    """Cached metadata-rich accessor: returns the full
+    `{df, text, hash, downloaded_at, rows}` dict so callers that
+    care about freshness (catch-up, status endpoint) can read it.
+
+    Retry-with-stale-fallback is preserved: `_bref_war_with_retry`
+    handles `ReadTimeout` / `ConnectionError` 3× with 30s sleeps;
+    `_cached(fall_back_to_stale_on_error=True)` serves the previous
+    cached dict if every retry fails."""
     return _cached(
         "bwar_bat_all",
         lambda: _bref_war_with_retry(
-            lambda: pybaseball.bwar_bat(return_all=True),
+            lambda: _download_bref_war_csv(_BWAR_BAT_URL, "bat"),
             "bwar_bat",
         ),
         ttl=_TTL_CURRENT,
         fall_back_to_stale_on_error=True,
     )
+
+
+def _bwar_bat_all() -> pd.DataFrame:
+    """DataFrame-only view for back-compat with callers that
+    don't care about freshness metadata."""
+    return _bwar_bat_all_meta()["df"]
 
 
 def _pitching_bref(year: int) -> pd.DataFrame:
@@ -301,16 +376,22 @@ def _pitching_bref(year: int) -> pd.DataFrame:
     )
 
 
-def _bwar_pitch_all() -> pd.DataFrame:
+def _bwar_pitch_all_meta() -> dict:
+    """Pitcher counterpart to `_bwar_bat_all_meta` — same shape
+    and same retry / stale-fallback semantics."""
     return _cached(
         "bwar_pitch_all",
         lambda: _bref_war_with_retry(
-            lambda: pybaseball.bwar_pitch(return_all=True),
+            lambda: _download_bref_war_csv(_BWAR_PITCH_URL, "pitch"),
             "bwar_pitch",
         ),
         ttl=_TTL_CURRENT,
         fall_back_to_stale_on_error=True,
     )
+
+
+def _bwar_pitch_all() -> pd.DataFrame:
+    return _bwar_pitch_all_meta()["df"]
 
 
 def _ip_to_decimal(ip) -> float:

@@ -1106,6 +1106,61 @@ def admin_discover_from_rosters():
     return data_service.sync_all_player_teams_from_rosters(current_year)
 
 
+@app.get("/admin/bref-war-status")
+def admin_bref_war_status():
+    """Snapshot of the bref WAR CSV state per side. Surfaces the
+    download timestamp, row count, content hash, and a sample of
+    the most-recent year's data so an operator can confirm whether
+    bref has updated since the morning nightly. The
+    `updated_since_last_seen` flag compares the just-fetched hash
+    against the module-level `_last_war_hashes` snapshot taken
+    BEFORE this call — useful to verify that the next catch-up
+    will actually refresh WAR rather than skip it.
+    """
+    def _side_status(side: str, fetch_meta) -> dict:
+        prior_hash = data_service.get_last_war_hash(side)
+        try:
+            meta = fetch_meta()
+        except Exception as exc:
+            return {"status": "error", "error": str(exc), "prior_hash": prior_hash}
+        df = meta["df"]
+        recent_entry = None
+        recent_year_rows = None
+        if "year_ID" in df.columns and not df.empty:
+            try:
+                recent_year = int(df["year_ID"].max())
+                recent_slice = df[df["year_ID"] == recent_year]
+                recent_year_rows = int(len(recent_slice))
+                if not recent_slice.empty:
+                    r = recent_slice.iloc[0]
+                    recent_entry = {
+                        "year_ID":     recent_year,
+                        "name_common": str(r["name_common"]) if "name_common" in df.columns else None,
+                        "team_ID":     str(r["team_ID"]) if "team_ID" in df.columns else None,
+                        "PA":          (int(r["PA"]) if "PA" in df.columns and pd.notna(r["PA"]) else None),
+                        "WAR":         (float(r["WAR"]) if "WAR" in df.columns and pd.notna(r["WAR"]) else None),
+                    }
+            except (ValueError, TypeError) as exc:
+                # Defensive — surface the failure rather than 500
+                # the whole endpoint if a column has unexpected dtype.
+                recent_entry = {"error": f"recent-entry probe failed: {exc}"}
+        return {
+            "status":                 "ok",
+            "downloaded_at":          meta.get("downloaded_at"),
+            "hash":                   meta.get("hash"),
+            "rows":                   meta.get("rows"),
+            "recent_entry":           recent_entry,
+            "recent_year_rows":       recent_year_rows,
+            "prior_hash":             prior_hash,
+            "updated_since_last_seen": (prior_hash is None) or (prior_hash != meta.get("hash")),
+        }
+
+    return {
+        "batting":  _side_status("bat",   data_service._bwar_bat_all_meta),
+        "pitching": _side_status("pitch", data_service._bwar_pitch_all_meta),
+    }
+
+
 @app.get("/admin/check-gamelog-duplicates")
 def admin_check_gamelog_duplicates():
     """Diagnostic: summarize duplicate patterns in the gamelog

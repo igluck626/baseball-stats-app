@@ -840,7 +840,83 @@ def run_catchup_update() -> dict:
         "already_current":  0,
         "no_bdl_mapping":   0,
         "failed":           0,
+        "war_updated":      0,
     }
+
+    # bref WAR — by 2pm PT, baseball-reference.com has consistently
+    # updated the WAR CSVs from the previous night's games. Before
+    # downloading, snapshot the hash from the last successful fetch
+    # (set by the morning nightly, typically) so we can detect
+    # whether bref has shipped new data since then. If the hash is
+    # unchanged, applying a "fresh" WAR is a no-op write — skip it.
+    log.info("[catchup] fetching bref WAR CSVs...")
+    prior_bat_hash   = data_service.get_last_war_hash("bat")
+    prior_pitch_hash = data_service.get_last_war_hash("pitch")
+
+    bat_meta: dict | None = None
+    pit_meta: dict | None = None
+    try:
+        bat_meta = data_service._bwar_bat_all_meta()
+    except Exception as exc:
+        log.warning(f"[catchup] bwar_bat fetch failed, continuing with empty: {exc}")
+    try:
+        pit_meta = data_service._bwar_pitch_all_meta()
+    except Exception as exc:
+        log.warning(f"[catchup] bwar_pitch fetch failed, continuing with empty: {exc}")
+
+    def _war_updated(prior: str | None, meta: dict | None) -> bool:
+        """A side counts as 'updated' when bref's current hash
+        differs from the hash recorded by the last successful
+        fetch — OR when there's no prior hash to compare against
+        (first run after restart; assume the data is fresh)."""
+        if meta is None:
+            return False
+        if prior is None:
+            return True
+        return prior != meta["hash"]
+
+    bat_updated   = _war_updated(prior_bat_hash,   bat_meta)
+    pitch_updated = _war_updated(prior_pitch_hash, pit_meta)
+    if not bat_updated and not pitch_updated:
+        log.info("[catchup] bref WAR CSV not yet updated — skipping WAR refresh in catch-up")
+    else:
+        log.info(
+            "[catchup] bref WAR fresh: bat=%s pitch=%s",
+            "yes" if bat_updated else "no",
+            "yes" if pitch_updated else "no",
+        )
+
+    empty_bwar = _pd.DataFrame(columns=["mlb_ID", "year_ID", "stint_ID"])
+
+    def _slice_current(df):
+        if "year_ID" in df.columns and not df.empty:
+            return df[df["year_ID"] == current_year]
+        return df
+
+    # Per-side WAR slice: real bref data only when that side's CSV
+    # has actually moved since the prior baseline. Otherwise the
+    # build helpers see an empty DataFrame and leave WAR fields
+    # untouched (preserving whatever the morning nightly wrote).
+    bwar_bat_current = (
+        _slice_current(bat_meta["df"]) if bat_updated and bat_meta is not None
+        else empty_bwar
+    )
+    bwar_pitch_current = (
+        _slice_current(pit_meta["df"]) if pitch_updated and pit_meta is not None
+        else empty_bwar
+    )
+
+    def _covered_pids(df) -> set[int]:
+        if "mlb_ID" not in df.columns or df.empty:
+            return set()
+        return set(int(x) for x in df["mlb_ID"].dropna().astype(int))
+
+    bwar_bat_pids   = _covered_pids(bwar_bat_current)
+    bwar_pitch_pids = _covered_pids(bwar_pitch_current)
+    log.info(
+        f"[catchup] bwar covers {len(bwar_bat_pids)} batters and "
+        f"{len(bwar_pitch_pids)} pitchers for {current_year}"
+    )
 
     # 1. Yesterday's final games.
     games = data_service.fetch_bdl_games_for_date(date_str, finals_only=True)
@@ -957,11 +1033,12 @@ def run_catchup_update() -> dict:
         for bdl_id, row in raw_batch.items()
     }
 
-    # 5. Per-player decision + (when needed) save. Empty-shaped bwar
-    #    DataFrame keeps the build helpers from KeyError on a
-    #    column lookup; WAR / OPS+ / ERA+ stay at whatever the morning
-    #    nightly stamped — they refresh on the next full run.
-    empty_bwar = _pd.DataFrame(columns=["mlb_ID", "year_ID", "stint_ID"])
+    # 5. Per-player decision + (when needed) save. `bwar_bat_current` /
+    #    `bwar_pitch_current` are the current-year slices we fetched
+    #    above; the build helpers will read them per-player. WAR is
+    #    only refreshed if bref had a row for the player (tracked via
+    #    `bwar_bat_pids` / `bwar_pitch_pids` set membership for the
+    #    `war_updated` counter).
 
     with connection.get_session() as db:
         for player_id in sorted(seen_pids):
@@ -984,7 +1061,7 @@ def run_catchup_update() -> dict:
                         if bdl_g > db_g:
                             try:
                                 entry = _build_current_batter_entry(
-                                    player_id, bdl_id, empty_bwar,
+                                    player_id, bdl_id, bwar_bat_current,
                                     current_year,
                                     bdl_stats=bdl_stats,
                                     mlb_debut=bat_debut_map.get(player_id),
@@ -992,6 +1069,8 @@ def run_catchup_update() -> dict:
                                 if entry is not None:
                                     crud.save_player_seasons(db, player_id, [entry])
                                     counts["updated"] += 1
+                                    if player_id in bwar_bat_pids:
+                                        counts["war_updated"] += 1
                                 else:
                                     counts["failed"] += 1
                             except Exception as exc:
@@ -1015,7 +1094,7 @@ def run_catchup_update() -> dict:
                         if bdl_g > db_g:
                             try:
                                 entry = _build_current_pitcher_entry(
-                                    player_id, bdl_id, empty_bwar,
+                                    player_id, bdl_id, bwar_pitch_current,
                                     current_year,
                                     bdl_stats=bdl_stats,
                                     mlb_debut=pit_debut_map.get(player_id),
@@ -1023,6 +1102,8 @@ def run_catchup_update() -> dict:
                                 if entry is not None:
                                     crud.save_pitcher_seasons(db, player_id, [entry])
                                     counts["updated"] += 1
+                                    if player_id in bwar_pitch_pids:
+                                        counts["war_updated"] += 1
                                 else:
                                     counts["failed"] += 1
                             except Exception as exc:
