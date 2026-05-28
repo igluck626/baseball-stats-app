@@ -233,11 +233,6 @@ final class BallDontLieClient: @unchecked Sendable {
             URLQueryItem(name: "game_ids[]", value: String(gameId)),
             URLQueryItem(name: "per_page",   value: "100"),
         ]
-        // Diagnostic — log the full URL so a decode error or unexpected
-        // response can be re-curled exactly.
-        var diagComps = URLComponents(string: baseURL + "/mlb/v1/stats")
-        diagComps?.queryItems = items
-        print("[BDL] getGameStats url=\(diagComps?.url?.absoluteString ?? "nil")")
         let envelope: BDLDataEnvelope<BDLPlayerStat> = try await fetch(
             path: "/mlb/v1/stats", query: items,
         )
@@ -451,14 +446,6 @@ final class BallDontLieClient: @unchecked Sendable {
             do {
                 return try decoder.decode(T.self, from: data)
             } catch {
-                // Diagnostic — surface the full error (including
-                // codingPath for `DecodingError` cases) AND the
-                // first 500 bytes of raw response. Lets us tell
-                // "BDL added a new required field" apart from
-                // "BDL changed an existing field's type" without
-                // a second curl.
-                print("[BDL decode error] type=\(T.self) error=\(error)")
-                print("[BDL decode error] raw response=\(String(data: data, encoding: .utf8)?.prefix(500) ?? "nil")")
                 throw BallDontLieError.decodingError(String(describing: error))
             }
         }
