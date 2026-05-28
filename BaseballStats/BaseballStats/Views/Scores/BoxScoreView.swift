@@ -705,10 +705,11 @@ struct BoxScoreView: View {
     }
 
     /// Team totals row anchoring the bottom of the batting table.
-    /// AB / R / H / RBI / BB / SO are direct sums; team AVG is
-    /// total H / total AB. OPS is left "—" — a meaningful team OPS
-    /// would need OBP/SLG components and the table's compact width
-    /// doesn't earn its keep.
+    /// Counting-only — AVG and OPS are intentionally left "—".
+    /// A "team AVG" from row totals is rarely the number you want
+    /// (it weights the leadoff hitter's 5 PAs the same as the 9-hole
+    /// hitter's 4), and team OPS needs OBP/SLG components the
+    /// table's compact columns don't surface.
     private func battingTotalsRow(rows: [BoxPlayer]) -> some View {
         var AB = 0, R = 0, H = 0, RBI = 0, BB = 0, SO = 0
         for p in rows {
@@ -720,9 +721,6 @@ struct BoxScoreView: View {
             BB  += b.baseOnBalls ?? 0
             SO  += b.strikeOuts  ?? 0
         }
-        let avgStr: String = AB > 0
-            ? formatTeamAVG(Double(H) / Double(AB))
-            : "—"
         return HStack(spacing: 0) {
             Text("Totals")
                 .font(.caption.weight(.semibold))
@@ -734,7 +732,7 @@ struct BoxScoreView: View {
             totalsCell(RBI, width: BattingCol.rbi)
             totalsCell(BB,  width: BattingCol.bb)
             totalsCell(SO,  width: BattingCol.so)
-            Text(avgStr)
+            Text("—")
                 .font(.caption.weight(.semibold))
                 .monospacedDigit()
                 .frame(width: BattingCol.avg, alignment: .trailing)
@@ -746,28 +744,21 @@ struct BoxScoreView: View {
         .padding(.vertical, 2)
     }
 
-    /// `0.235` → `".235"` — MLB convention for rate stats drops
-    /// the leading zero.
-    private func formatTeamAVG(_ v: Double) -> String {
-        let s = String(format: "%.3f", v)
-        return s.hasPrefix("0.") ? String(s.dropFirst()) : s
-    }
-
     /// Per-column widths for the batting table. Kept in one place
     /// so header + row stay aligned and the total stays under the
     /// iPhone safe-width — `nameCol + sum(statCols)` should clear
     /// ~360pt with room for safe-area padding so OPS lands without
     /// horizontal scrolling.
     private enum BattingCol {
-        static let name: CGFloat = 96
-        static let ab:   CGFloat = 22
-        static let r:    CGFloat = 22
-        static let h:    CGFloat = 22
+        static let name: CGFloat = 110
+        static let ab:   CGFloat = 24
+        static let r:    CGFloat = 24
+        static let h:    CGFloat = 24
         static let rbi:  CGFloat = 28
-        static let bb:   CGFloat = 22
-        static let so:   CGFloat = 22
-        static let avg:  CGFloat = 36
-        static let ops:  CGFloat = 36
+        static let bb:   CGFloat = 24
+        static let so:   CGFloat = 24
+        static let avg:  CGFloat = 34
+        static let ops:  CGFloat = 34
     }
 
     private var battingHeader: some View {
@@ -911,15 +902,15 @@ struct BoxScoreView: View {
     /// scoreboard. Stat-column widths are tuned to common values
     /// (IP "10.2", ERA "12.34", PC "123") at caption-monospaced.
     private enum PitchingCol {
-        static let name: CGFloat = BattingCol.name  // 96
-        static let ip:   CGFloat = 32
+        static let name: CGFloat = BattingCol.name  // 110
+        static let ip:   CGFloat = 34
         static let h:    CGFloat = 22
         static let r:    CGFloat = 22
         static let er:   CGFloat = 22
         static let bb:   CGFloat = 22
         static let so:   CGFloat = 22
-        static let era:  CGFloat = 40
-        static let pc:   CGFloat = 32
+        static let era:  CGFloat = 38
+        static let pc:   CGFloat = 28
     }
 
     private func pitchingTable(team: BoxScoreTeam) -> some View {
@@ -1021,27 +1012,30 @@ struct BoxScoreView: View {
     /// Returns "W 8-3" / "L 5-4" / "SV 12" when this pitcher earned
     /// today's decision; nil otherwise. Per-game decision flags
     /// (`stats.pitching.wins/losses/saves`) ship as 0/1 from BDL.
-    /// Season W-L-SV are looked up from `seasonStats.pitching` — set
-    /// by the lineup-placeholder pre-load (probable starter) and
-    /// preserved across the merge with the per-game row.
+    /// Season W-L-SV come from `seasonStats.pitching` (set by the
+    /// lineup-placeholder pre-load and preserved across the merge),
+    /// but those are the *pre-game* totals — when this pitcher earned
+    /// today's decision we bump the matching counter by 1 so the
+    /// tag reads the post-game record. The non-decision counters
+    /// stay at season-to-date.
     private func pitcherDecisionTag(for p: BoxPlayer) -> String? {
         let game = p.stats?.pitching
         let season = p.seasonStats?.pitching
         if (game?.wins ?? 0) > 0 {
             if let w = season?.wins, let l = season?.losses {
-                return "(W \(w)-\(l))"
+                return "(W \(w + 1)-\(l))"
             }
             return "(W)"
         }
         if (game?.losses ?? 0) > 0 {
             if let w = season?.wins, let l = season?.losses {
-                return "(L \(w)-\(l))"
+                return "(L \(w)-\(l + 1))"
             }
             return "(L)"
         }
         if (game?.saves ?? 0) > 0 {
             if let sv = season?.saves {
-                return "(SV \(sv))"
+                return "(SV \(sv + 1))"
             }
             return "(SV)"
         }
@@ -1049,9 +1043,9 @@ struct BoxScoreView: View {
     }
 
     /// Team totals row anchoring the bottom of the pitching table.
-    /// Counting stats are direct sums; IP is summed in true-decimal
-    /// (parsing each baseball-notation cell) then re-rendered in
-    /// baseball notation; ERA is computed from total ER × 9 / IP.
+    /// Counting-only — ERA is intentionally left "—". A row-sum
+    /// "team ERA" weights mop-up relief equally with the starter's
+    /// 6 IP, which is misleading more often than it's useful.
     private func pitchingTotalsRow(rows: [BoxPlayer]) -> some View {
         var ipDec: Double = 0
         var H = 0, R = 0, ER = 0, BB = 0, SO = 0
@@ -1067,9 +1061,6 @@ struct BoxScoreView: View {
             SO += pit.strikeOuts  ?? 0
             if let pc = pit.pitchCount { pcAny = true; pcTotal += pc }
         }
-        let eraStr: String = ipDec > 0
-            ? String(format: "%.2f", Double(ER) * 9 / ipDec)
-            : "—"
         return HStack(spacing: 0) {
             Text("Totals")
                 .font(.caption.weight(.semibold))
@@ -1084,7 +1075,7 @@ struct BoxScoreView: View {
             totalsCell(ER, width: PitchingCol.er)
             totalsCell(BB, width: PitchingCol.bb)
             totalsCell(SO, width: PitchingCol.so)
-            Text(eraStr)
+            Text("—")
                 .font(.caption.weight(.semibold))
                 .monospacedDigit()
                 .frame(width: PitchingCol.era, alignment: .trailing)

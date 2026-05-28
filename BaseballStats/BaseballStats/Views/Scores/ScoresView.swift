@@ -468,7 +468,11 @@ struct ScoresView: View {
                     sectionHeader("Upcoming")
                     ForEach(upcoming) { game in
                         NavigationLink(value: game) {
-                            GameCard(game: game, records: vm.teamRecords)
+                            GameCard(
+                                game:      game,
+                                records:   vm.teamRecords,
+                                standings: vm.teamStandings,
+                            )
                         }
                         .buttonStyle(.plain)
                     }
@@ -532,6 +536,7 @@ struct ScoresView: View {
 private struct GameCard: View {
     let game: Game
     let records: [Int: TeamRecord]
+    let standings: [Int: TeamStandingInfo]
 
     var body: some View {
         HStack(alignment: .center, spacing: 14) {
@@ -580,7 +585,10 @@ private struct GameCard: View {
     }
 
     private func teamRow(side: GameTeam, winner: Bool, bdlTeamId: Int?) -> some View {
-        HStack(spacing: 10) {
+        let standingText: String? = bdlTeamId
+            .flatMap { standings[$0] }
+            .map { $0.displayString }
+        return HStack(spacing: 10) {
             TeamLogoView(team: side.team, size: 28)
 
             Text(side.team.abbreviation ?? abbreviate(side.team.name))
@@ -594,6 +602,14 @@ private struct GameCard: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
+            }
+
+            if let standingText {
+                Text("• \(standingText)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
 
             Spacer()
@@ -726,7 +742,6 @@ private struct FinalGameCard: View {
                 }
             if isExpanded {
                 Divider()
-                teamStandingsRow
                 linescore
                 if hasAnyDecision {
                     Divider()
@@ -741,52 +756,6 @@ private struct FinalGameCard: View {
         .frame(maxWidth: .infinity)
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
         .shadow(color: .black.opacity(0.06), radius: 6, x: 0, y: 2)
-    }
-
-    /// Per-team record + division standing label rendered as a
-    /// two-row column inside the expanded body. Falls back silently
-    /// when the dicts haven't been populated yet (early-season cold
-    /// start, or a standings fetch that failed).
-    @ViewBuilder
-    private var teamStandingsRow: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            standingsLine(side: game.teams.away, bdlTeamId: game.bdlAwayTeamId)
-            standingsLine(side: game.teams.home, bdlTeamId: game.bdlHomeTeamId)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func standingsLine(side: GameTeam, bdlTeamId: Int?) -> some View {
-        let abbr = side.team.abbreviation
-            ?? String(side.team.name.prefix(3)).uppercased()
-        let recordText: String? = {
-            if let r = bdlTeamId.flatMap({ records[$0] }),
-               let w = r.wins, let l = r.losses {
-                return "(\(w)-\(l))"
-            }
-            return nil
-        }()
-        let standingText: String? = bdlTeamId
-            .flatMap { standings[$0] }
-            .map { $0.displayString }
-        return HStack(spacing: 6) {
-            Text(abbr)
-                .font(.caption.weight(.bold))
-                .foregroundStyle(.secondary)
-                .frame(width: 36, alignment: .leading)
-            if let recordText {
-                Text(recordText)
-                    .font(.caption)
-                    .foregroundStyle(.primary)
-                    .monospacedDigit()
-            }
-            if let standingText {
-                Text(standingText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 0)
-        }
     }
 
     private func fetchBoxScore() async {
@@ -824,6 +793,9 @@ private struct FinalGameCard: View {
     private func teamRow(side: GameTeam, bdlTeamId: Int?) -> some View {
         let isWinner = side.isWinner == true
         let dimmed = !isWinner
+        let standingText: String? = bdlTeamId
+            .flatMap { standings[$0] }
+            .map { $0.displayString }
         return HStack(spacing: 10) {
             TeamLogoView(team: side.team, size: 28)
 
@@ -838,6 +810,14 @@ private struct FinalGameCard: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
+            }
+
+            if let standingText {
+                Text("• \(standingText)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
 
             Spacer()
