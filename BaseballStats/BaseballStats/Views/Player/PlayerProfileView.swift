@@ -2735,7 +2735,18 @@ fileprivate func makeEffectiveBatting(
     let obpDen = AB + BB + HBP + SF
     let obp: Double? = obpDen > 0 ? Double(obpNum) / Double(obpDen) : nil
     let slg: Double? = AB > 0 ? Double(TB) / Double(AB) : nil
+    // OPS direct from the integer counts rather than `obp + slg`,
+    // so the displayed value never reflects a rounded intermediate.
+    // Mathematically identical to OBP + SLG when both rates are
+    // computable; the fallback to `obp + slg` only fires when the
+    // denominators are zero, which means OPS is genuinely undefined
+    // anyway.
     let ops: Double? = {
+        if AB > 0, obpDen > 0 {
+            let obpPart = Double(H + BB + HBP) / Double(obpDen)
+            let slgPart = Double(H + d2 + 2 * d3 + 3 * HR) / Double(AB)
+            return obpPart + slgPart
+        }
         guard let obp, let slg else { return nil }
         return obp + slg
     }()

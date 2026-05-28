@@ -115,7 +115,12 @@ struct BDLPlayerStat: Codable, Hashable {
     let plateAppearances: Int?
 
     // Pitching line
-    let ip: Double?
+    /// BDL ships `ip` in MLB baseball notation as a string —
+    /// "5.2" = 5⅔ innings, "0.1" = ⅓ inning — NOT as a true
+    /// decimal. Decoding as `String?` preserves the original form;
+    /// callers run it through `parseInningsString` (or similar)
+    /// to convert "5.2" → 5.667 when arithmetic is needed.
+    let ip: String?
     let pHits: Int?
     let pRuns: Int?
     let er: Int?

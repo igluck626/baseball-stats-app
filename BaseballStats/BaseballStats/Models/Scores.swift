@@ -846,7 +846,10 @@ private func boxPlayerFromStatRow(
         ops:                  nil,
     )
     let pitching: BoxPitching? = !isPitcher ? nil : BoxPitching(
-        inningsPitched: ipToBaseballNotation(s.ip),
+        // BDL already ships `ip` in baseball notation ("5.2" = 5⅔),
+        // which is the same shape `BoxPitching.inningsPitched`
+        // wants — pass through directly.
+        inningsPitched: s.ip,
         hits:           s.pHits,
         runs:           s.pRuns,
         earnedRuns:     s.er,

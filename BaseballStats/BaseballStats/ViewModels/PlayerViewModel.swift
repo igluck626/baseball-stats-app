@@ -518,7 +518,13 @@ final class PlayerViewModel: ObservableObject {
     /// BDL `BDLPlayerStat` → pitching line. Returns nil when the
     /// row has no pitching activity.
     nonisolated private static func bdlPitchingLine(_ s: BDLPlayerStat) -> BoxPitchingLine? {
-        guard let ip = s.ip, ip > 0 else { return nil }
+        // BDL's per-game `ip` is a baseball-notation string ("5.2"
+        // = 5⅔, "0.1" = ⅓), NOT a decimal — parse to true decimal
+        // before any arithmetic. Skip the row when the pitcher
+        // didn't record an out (empty string or "0.0").
+        guard let ipStr = s.ip, !ipStr.isEmpty else { return nil }
+        let ip = Self.parseInningsString(ipStr)
+        guard ip > 0 else { return nil }
         return BoxPitchingLine(
             games: 1,
             IP:    ip,
@@ -579,40 +585,6 @@ final class PlayerViewModel: ObservableObject {
         refreshTask = nil
     }
 
-    private static func parseBatting(_ b: BoxBatting) -> BoxBattingLine {
-        BoxBattingLine(
-            games:   1,
-            AB:      b.atBats         ?? 0,
-            R:       b.runs           ?? 0,
-            H:       b.hits           ?? 0,
-            doubles: b.doubles        ?? 0,
-            triples: b.triples        ?? 0,
-            HR:      b.homeRuns       ?? 0,
-            RBI:     b.rbi            ?? 0,
-            BB:      b.baseOnBalls    ?? 0,
-            SO:      b.strikeOuts     ?? 0,
-            SB:      b.stolenBases    ?? 0,
-            HBP:     b.hitByPitch     ?? 0,
-            SF:      b.sacFlies       ?? 0
-        )
-    }
-
-    private static func parsePitching(_ p: BoxPitching) -> BoxPitchingLine {
-        BoxPitchingLine(
-            games: 1,
-            IP:    Self.parseInningsString(p.inningsPitched),
-            H:     p.hits         ?? 0,
-            R:     p.runs         ?? 0,
-            ER:    p.earnedRuns   ?? 0,
-            BB:    p.baseOnBalls  ?? 0,
-            SO:    p.strikeOuts   ?? 0,
-            HR:    p.homeRuns     ?? 0,
-            W:     p.wins         ?? 0,
-            L:     p.losses       ?? 0,
-            SV:    p.saves        ?? 0
-        )
-    }
-
     /// `yyyy-MM-dd` in local timezone for BDL's `dates[]` filter.
     /// `yyyy-MM-dd` for today, anchored to US Eastern time. MLB
     /// schedules games off ET, and the BDL client's `getTeamGames`
@@ -632,10 +604,12 @@ final class PlayerViewModel: ObservableObject {
         return f
     }()
 
-    /// MLB box scores ship innings as "5.2" → 5 and ⅔ innings, NOT
+    /// MLB conventions ship innings as "5.2" → 5 and ⅔ innings, NOT
     /// 5.2 in decimal. Convert to true decimal (5.667) so it can be
     /// added to the overnight Float-stored IP without distortion.
-    private static func parseInningsString(_ s: String?) -> Double {
+    /// `nonisolated` so the nonisolated `bdlPitchingLine` in this
+    /// `@MainActor` class can call it without an actor hop.
+    nonisolated private static func parseInningsString(_ s: String?) -> Double {
         guard let s, !s.isEmpty else { return 0 }
         if let dot = s.firstIndex(of: ".") {
             let whole = Double(s[..<dot]) ?? 0
