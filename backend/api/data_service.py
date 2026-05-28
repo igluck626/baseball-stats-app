@@ -1783,10 +1783,21 @@ def _parse_bdl_batter_row(s: dict) -> dict:
 def _parse_bdl_pitcher_row(s: dict) -> dict:
     """Normalize one BDL season_stats row to the `pitcher_seasons`
     field shape. ERA / WHIP / K/9 are rounded to 2 dp at this
-    boundary — BDL ships those with 4-decimal precision. FIP is
-    NOT taken from BDL (their `fielding_fip` field is a fielding
-    metric, not pitching FIP) — `_build_pitcher_season_entry`
-    derives FIP from the HR/BB/SO components instead."""
+    boundary — BDL ships those with 4-decimal precision.
+
+    `pitching_ip` arrives in MLB baseball notation (e.g. `22.2`
+    meaning 22⅔ innings, NOT 22.2 decimal). Confirmed by re-
+    deriving ERA from `pitching_er * 9 / IP` — only the baseball-
+    notation interpretation matches BDL's own `pitching_era`.
+    BDL also echoes the same value as true decimal in
+    `fielding_fip` (their field name is a misnomer — it's the
+    decimal IP, not Fielding-Independent Pitching). Run through
+    `_ip_str_to_decimal` so the DB stores the true decimal
+    (22.667) and downstream rate calcs aren't ~2% off.
+
+    FIP is NOT taken from BDL — `_build_pitcher_season_entry`
+    derives FIP from the HR/BB/SO components instead.
+    """
     return {
         "G":      _to_int(s.get("pitching_gp")),
         "GS":     _to_int(s.get("pitching_gs")),
@@ -1794,7 +1805,7 @@ def _parse_bdl_pitcher_row(s: dict) -> dict:
         "L":      _to_int(s.get("pitching_l")),
         "SV":     _to_int(s.get("pitching_sv")),
         "HLD":    _to_int(s.get("pitching_hld")),
-        "IP":     _safe_rate(s.get("pitching_ip")),
+        "IP":     _ip_str_to_decimal(s.get("pitching_ip")),
         "H":      _to_int(s.get("pitching_h")),
         "ER":     _to_int(s.get("pitching_er")),
         "HR":     _to_int(s.get("pitching_hr")),
@@ -2983,10 +2994,11 @@ def repair_null_stats(current_year: int) -> dict:
 
 
 def repair_ip_decimals(current_year: int) -> dict:
-    """One-shot fix for `pitcher_seasons` rows whose `IP` is stored
-    as baseball notation (10.2 meaning 10 ⅔ innings) rather than
-    true decimal (10.667). Caused by an older bref-path bug; the
-    write path is fixed going forward, but existing rows persist
+    """One-shot fix for `pitcher_seasons` AND `pitching_gamelogs`
+    rows whose `IP` is stored as baseball notation (10.2 meaning
+    10⅔ innings) rather than true decimal (10.667). Caused by
+    both the legacy bref-path bug and the BDL parser's
+    `float(ip)` cast (since fixed) — but existing rows persist
     the corrupted value until corrected here.
 
     Detection: a baseball-notation IP has tenths digit ∈ {1, 2}
@@ -2999,6 +3011,20 @@ def repair_ip_decimals(current_year: int) -> dict:
     treat tenths as outs (1 or 2), add outs/3 back as the true
     fractional part.
     """
+    seasons = _repair_ip_decimals_pitcher_seasons(current_year)
+    gamelogs = _repair_ip_decimals_pitching_gamelogs(current_year)
+    return {
+        "status":            "ok",
+        "year":              current_year,
+        "pitcher_seasons":   seasons,
+        "pitching_gamelogs": gamelogs,
+    }
+
+
+def _repair_ip_decimals_pitcher_seasons(current_year: int) -> dict:
+    """Internal: per-season pitcher row repair. Updates
+    `pitcher_seasons.IP` in place and stamps `last_updated` so the
+    overlay-vs-overnight gate knows the row was just touched."""
     now = datetime.datetime.utcnow()
     repaired: list[dict] = []
     examined = 0
@@ -3029,14 +3055,54 @@ def repair_ip_decimals(current_year: int) -> dict:
             r.last_updated = now
         if repaired:
             db.commit()
-
     return {
-        "status":        "ok",
-        "year":          current_year,
         "examined":      examined,
         "rows_repaired": len(repaired),
         # First 10 examples so a curl can confirm the conversion
         # is doing the right thing without dumping every row.
+        "examples":      repaired[:10],
+    }
+
+
+def _repair_ip_decimals_pitching_gamelogs(current_year: int) -> dict:
+    """Internal: per-game pitching gamelog row repair. Mirrors the
+    pitcher_seasons repair — same tenths-digit heuristic, same
+    conversion arithmetic. The gamelog table doesn't carry a
+    `last_updated` column so the only mutation is to `IP` itself.
+    Scoped by `season` (the gamelog's per-row year column)."""
+    from database.models import PitchingGameLog as _PitchingGameLog
+    repaired: list[dict] = []
+    examined = 0
+    with connection.get_session() as db:
+        rows = (
+            db.query(_PitchingGameLog)
+            .filter(_PitchingGameLog.season == current_year,
+                    _PitchingGameLog.IP.isnot(None))
+            .all()
+        )
+        for r in rows:
+            ip = r.IP
+            if ip is None:
+                continue
+            examined += 1
+            tenths = round(float(ip) * 10) % 10
+            if tenths not in (1, 2):
+                continue
+            whole = int(float(ip))
+            outs = tenths
+            fixed = round(whole + outs / 3, 3)
+            repaired.append({
+                "player_id": r.player_id,
+                "game_id":   r.game_id,
+                "from":      float(ip),
+                "to":        fixed,
+            })
+            r.IP = fixed
+        if repaired:
+            db.commit()
+    return {
+        "examined":      examined,
+        "rows_repaired": len(repaired),
         "examples":      repaired[:10],
     }
 
@@ -3681,13 +3747,22 @@ def _parse_bdl_batting_gamelog(stat: dict, ctx: dict) -> Optional[dict]:
 
 def _parse_bdl_pitching_gamelog(stat: dict, ctx: dict) -> Optional[dict]:
     """BDL `/stats` row → `pitching_gamelogs` row dict. Returns
-    None when the row has no pitching activity (IP is null)."""
+    None when the row has no pitching activity (IP is null) or
+    the IP string can't be parsed.
+
+    BDL ships `ip` in MLB baseball notation ("5.2" = 5⅔ innings,
+    "0.1" = ⅓ inning) — confirmed for both the season-stats and
+    per-game stats endpoints (`pitching_era * IP_decimal / 9` only
+    reconciles with reported ERA under the baseball-notation
+    interpretation). Run through `_ip_str_to_decimal` so DB rows
+    store the true decimal (5.667) and downstream rate math isn't
+    ~2% off.
+    """
     ip = stat.get("ip")
     if ip is None:
         return None
-    try:
-        ip_dec = float(ip)
-    except (TypeError, ValueError):
+    ip_dec = _ip_str_to_decimal(ip)
+    if ip_dec is None:
         return None
     if ip_dec <= 0 and (_to_int(stat.get("p_k")) or 0) == 0:
         return None
@@ -3713,8 +3788,9 @@ def _parse_bdl_pitching_gamelog(stat: dict, ctx: dict) -> Optional[dict]:
         "opponent":  opp_abbr,
         "home_away": "H" if is_home else "A",
         "result":    result,
-        # BDL ships IP as true decimal already (no `_ip_str_to_decimal`
-        # baseball-notation conversion needed here).
+        # ip_dec was already converted from BDL's baseball-notation
+        # form ("5.2" = 5⅔) to true decimal (5.667) at the top of
+        # this function via `_ip_str_to_decimal`.
         "IP":        ip_dec,
         "H":         _to_int(stat.get("p_hits")),
         "R":         _to_int(stat.get("p_runs")),
