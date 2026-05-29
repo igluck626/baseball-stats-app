@@ -1008,30 +1008,15 @@ private struct FinalGameCard: View {
             return nil
         }()
         return HStack(spacing: 6) {
-            Image(systemName: Self.decisionSymbol(tag))
-                .font(.caption2.weight(.bold))
-                .foregroundStyle(.secondary)
-                .frame(width: 14, alignment: .leading)
             Text("\(tag):")
                 .font(.caption.weight(.bold))
                 .foregroundStyle(.secondary)
-                .frame(width: 22, alignment: .leading)
+                .frame(width: 28, alignment: .leading)
                 .monospacedDigit()
             Text(pitcher.person.fullName + (recordText.map { " \($0)" } ?? ""))
                 .font(.caption)
                 .foregroundStyle(.primary)
                 .lineLimit(1)
-        }
-    }
-
-    /// SF Symbol chosen per tag to distinguish at a glance:
-    /// trophy for W, x-circle for L, lock for SV (preserved lead).
-    private static func decisionSymbol(_ tag: String) -> String {
-        switch tag {
-        case "W":  return "trophy.fill"
-        case "L":  return "xmark.circle"
-        case "SV": return "lock.fill"
-        default:   return "circle"
         }
     }
 

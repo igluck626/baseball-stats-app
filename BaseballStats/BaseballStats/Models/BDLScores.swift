@@ -250,6 +250,11 @@ struct BDLSeasonStat: Codable, Hashable {
     /// already absorbed today's game — when BDL's G matches our DB's
     /// G, we don't apply the overlay (would double-count).
     let battingGp:  Int?
+    /// Season HR / doubles / triples — used to populate the
+    /// placeholder batter's `seasonStats.batting` counts so the
+    /// final-game-card HR / 2B / 3B summary renders "(N)" with the
+    /// actual season total instead of "(0)".
+    let battingHr:  Int?
 
     let pitchingEra: Double?
     let pitchingW:   Int?
