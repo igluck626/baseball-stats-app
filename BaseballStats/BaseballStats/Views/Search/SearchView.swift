@@ -253,10 +253,12 @@ private struct BrowseCard: View {
 
     /// "OF · NYY" / "RF" / "Team" — same precedence the row uses
     /// (position first, then team code), just compacted for the
-    /// 116-pt card width.
+    /// 116-pt card width. Lahman codes (`LAN`, `NYA`, `SLN`, …) get
+    /// resolved to fan-facing abbreviations via the same lookup the
+    /// Leaderboards tab uses, so the card never reads "LAN".
     private var detailLine: String? {
         let pos = player.position?.browseNonEmpty
-        let team = player.teamCode?.browseNonEmpty
+        let team = player.teamCode?.browseNonEmpty.map { teamAbbreviation(for: $0) }
         switch (pos, team) {
         case let (p?, t?): return "\(p) · \(t)"
         case let (p?, nil): return p
