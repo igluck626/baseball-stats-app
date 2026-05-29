@@ -975,8 +975,9 @@ private struct FinalGameCard: View {
     /// W: / L: / SV: lines, each with the decision pitcher's
     /// post-game record. Season W-L-SV come from the lineup's
     /// season-stats pre-load (carried on `seasonStats.pitching` and
-    /// preserved across the merge) plus a `+1` to the matching
-    /// counter for today's decision. nil season stats → bare name.
+    /// preserved across the merge). BDL's per-game `seasonStats`
+    /// already reflects the post-game total, so today's decision is
+    /// included without a manual `+1`. nil season stats → bare name.
     private var decisions: some View {
         let d = decisionPitchers
         return VStack(alignment: .leading, spacing: 4) {
@@ -991,17 +992,13 @@ private struct FinalGameCard: View {
         let season = pitcher.seasonStats?.pitching
         let recordText: String? = {
             switch tag {
-            case "W":
+            case "W", "L":
                 if let w = season?.wins, let l = season?.losses {
-                    return "(\(w + 1)-\(l))"
-                }
-            case "L":
-                if let w = season?.wins, let l = season?.losses {
-                    return "(\(w)-\(l + 1))"
+                    return "(\(w)-\(l))"
                 }
             case "SV":
                 if let sv = season?.saves {
-                    return "(\(sv + 1))"
+                    return "(\(sv))"
                 }
             default: break
             }
