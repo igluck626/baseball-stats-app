@@ -40,9 +40,10 @@ final class AppNavigation: ObservableObject {
         case search    = 1
         case standings = 2
         case leaders   = 3
+        case home      = 4
     }
 
-    @Published var selectedTab: Tab = .scores
+    @Published var selectedTab: Tab = .home
     /// One-shot deeplink slot. Set by callers wanting to push state
     /// into the Leaderboards tab; consumed (and cleared) by
     /// LeaderboardsView on appear / on change. Optional so the

@@ -17,6 +17,12 @@ struct ContentView: View {
 
     var body: some View {
         TabView(selection: $navigation.selectedTab) {
+            HomeView()
+                .tabItem {
+                    Label("Home", systemImage: "house.fill")
+                }
+                .tag(AppNavigation.Tab.home)
+
             ScoresView()
                 .tabItem {
                     Label("Scores", systemImage: "baseball.diamond.bases")
