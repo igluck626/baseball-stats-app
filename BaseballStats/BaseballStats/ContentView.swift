@@ -25,7 +25,7 @@ struct ContentView: View {
                     // we ever drop back to a pre-iOS-15 deployment
                     // target, but the project's deployment target is
                     // well past that floor today.
-                    Label("Scores", systemImage: "baseball.fill")
+                    Label("Scores", systemImage: "baseball.diamond.bases")
                 }
                 .tag(AppNavigation.Tab.scores)
 

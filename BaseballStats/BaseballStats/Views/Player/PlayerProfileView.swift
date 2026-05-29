@@ -1719,11 +1719,11 @@ private struct HeaderAwardsWrap: View {
     /// compile error.
     private static let displayOrder: [(key: String, label: String, sf: String)] = [
         ("MVP",              "MVP",    "medal.fill"),
-        ("CY Young",         "CY",     "trophy.fill"),
+        ("CY Young",         "CY",     "baseball.fill"),
         ("ROY",              "ROY",    "rosette"),
         ("All-Star",         "AS",     "star.fill"),
-        ("Gold Glove",       "GG",     "figure.baseball"),
-        ("Silver Slugger",   "SS",     "baseball.diamond.bases"),
+        ("Gold Glove",       "GG",     "hand.raised.fill"),
+        ("Silver Slugger",   "SS",     "figure.baseball"),
         ("World Series MVP", "WS MVP", "crown.fill"),
     ]
 
