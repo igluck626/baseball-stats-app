@@ -479,13 +479,19 @@ def dedupe_gamelog_duplicates(table: str, quality_columns: list[str]) -> int:
     written under a Lahman id won't get accidentally compared
     against a modern numeric id for the same date.
 
-    **Doubleheader caveat**: this still treats two legitimate
-    same-date games (a true doubleheader, both stored under
-    numeric ids) as duplicates and keeps only one. Doubleheaders
-    are rare enough that the cross-format-id reconciliation is
-    worth the tradeoff — but if BDL ever starts populating game
-    logs from doubleheaders we'd need a stricter key (e.g. include
-    game_id when both are non-null and numeric).
+    **Doubleheader gate — `min_game_id < 1_000_000`**: the dedupe
+    DELETE only fires on partitions where the smallest numeric
+    game_id is below one million. MLB Stats API ids are ~6 digits
+    (e.g. `"775296"`); BDL ids are ~7 digits and well above 4M
+    (e.g. `"5058484"`). So a partition with at least one Stats API
+    id and at least one BDL id is the cross-format duplicate we
+    want to collapse, while a partition containing two BDL ids
+    (a true doubleheader — both games ingested via BDL) keeps
+    both rows untouched. Two Stats API ids on the same date
+    (a doubleheader ingested entirely pre-BDL) still get collapsed
+    by the original-quality keep — that's the pre-existing
+    behavior and the operator can re-fetch via the backfill
+    endpoint if needed.
 
     Postgres-only — relies on `ctid` + `num_nonnulls()` + the
     POSIX-regex `~` operator. SQLite skips, same convention as
@@ -515,7 +521,10 @@ def dedupe_gamelog_duplicates(table: str, quality_columns: list[str]) -> int:
                    ROW_NUMBER() OVER (
                        PARTITION BY player_id, game_date
                        ORDER BY {quality_expr} DESC, ctid ASC
-                   ) AS rn
+                   ) AS rn,
+                   MIN(CAST(game_id AS BIGINT)) OVER (
+                       PARTITION BY player_id, game_date
+                   ) AS min_game_id
             FROM {table}
             WHERE game_id ~ '^[0-9]+$'
         )
@@ -523,6 +532,7 @@ def dedupe_gamelog_duplicates(table: str, quality_columns: list[str]) -> int:
         USING ranked r
         WHERE t.ctid = r.ctid
           AND r.rn > 1
+          AND r.min_game_id < 1000000
     """)
     with _engine.begin() as conn:
         result = conn.execute(sql)
