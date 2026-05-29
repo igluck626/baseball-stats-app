@@ -1112,33 +1112,107 @@ def admin_sync_player_active_status():
 
 @app.post("/admin/backfill-bdl-gamelogs")
 def admin_backfill_bdl_gamelogs(
-    start_date: str = Query(..., description="Inclusive start date, yyyy-mm-dd"),
-    end_date:   str = Query(..., description="Inclusive end date, yyyy-mm-dd"),
+    start_date:   str | None = Query(None, description="Inclusive start date, yyyy-mm-dd. Mutually exclusive with start_season."),
+    end_date:     str | None = Query(None, description="Inclusive end date, yyyy-mm-dd. Mutually exclusive with end_season."),
+    start_season: int | None = Query(None, description="Inclusive start season year. Pairs with end_season for multi-year backfills."),
+    end_season:   int | None = Query(None, description="Inclusive end season year. Pairs with start_season."),
 ):
     """One-shot history backfill of batting + pitching gamelogs
     via BallDontLie's game-centric `/stats?game_id={id}` endpoint.
-    Walks every date in [start_date, end_date], fetches all finals,
-    and upserts player game rows.
+
+    Two input modes (exactly one must be supplied):
+    - **Date range** (`start_date` + `end_date`) — walks every date
+      in [start_date, end_date], fetches all finals, upserts.
+    - **Season range** (`start_season` + `end_season`) — iterates
+      each year in [start_season, end_season] and backfills
+      `{year}-03-01` through `{year}-11-30` (covers spring openers
+      through the regular-season finale). The current season is
+      skipped because the nightly already covers it and re-running
+      would be wasted work.
 
     Idempotent — the gamelog tables use (player_id, game_id) PKs,
     so re-running on a date range that's already loaded is a
     no-op upsert. Rate-limited at the BDL 5/sec ceiling between
     games. Backfills the entire history we used to fill via per-
     player MLB-Stats-API calls in roughly one BDL call per 25
-    player-game rows."""
+    player-game rows.
+
+    Auto-dedups at the tail (same gate as `/admin/dedupe-gamelogs`)
+    so cross-format MLB-Stats-API × BDL duplicates from past
+    ingests are collapsed in the same pass."""
     if not connection.db_available():
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
-    try:
-        result = data_service.backfill_bdl_gamelogs(start_date, end_date)
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
-    # Auto-dedup after a manual backfill, same rationale as the
-    # nightly's dedup phase: a re-ingest on a date range that
-    # already had MLB-Stats-API rows leaves cross-format duplicates
-    # behind, and the operator shouldn't need to chase them with
-    # a follow-up `/admin/dedupe-gamelogs` call. Doubleheaders
-    # (two BDL ids on the same date) are preserved by the helper's
-    # `min_game_id < 1_000_000` gate.
+    has_dates   = start_date   is not None and end_date   is not None
+    has_seasons = start_season is not None and end_season is not None
+    if has_dates == has_seasons:
+        # Both pairs or neither — ambiguous request.
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Provide exactly one input mode: either "
+                "start_date+end_date or start_season+end_season."
+            ),
+        )
+
+    if has_dates:
+        try:
+            result = data_service.backfill_bdl_gamelogs(start_date, end_date)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
+    else:
+        # Season mode. Current-year skip uses `_current_year()` so
+        # the behavior tracks the calendar instead of hardcoding a
+        # year that would silently start re-fetching in 2027.
+        if end_season < start_season:
+            raise HTTPException(
+                status_code=400,
+                detail="end_season must be >= start_season",
+            )
+        current_year = data_service._current_year()
+        per_season: list[dict] = []
+        skipped: list[int] = []
+        total_games = 0
+        total_bat   = 0
+        total_pit   = 0
+        for year in range(start_season, end_season + 1):
+            if year == current_year:
+                skipped.append(year)
+                continue
+            try:
+                r = data_service.backfill_bdl_gamelogs(
+                    f"{year}-03-01", f"{year}-11-30",
+                )
+            except RuntimeError as exc:
+                raise HTTPException(status_code=503, detail=str(exc))
+            games_n = int(r.get("total_games")    or 0)
+            bat_n   = int(r.get("total_bat_rows") or 0)
+            pit_n   = int(r.get("total_pit_rows") or 0)
+            per_season.append({
+                "season":   year,
+                "games":    games_n,
+                "bat_rows": bat_n,
+                "pit_rows": pit_n,
+            })
+            total_games += games_n
+            total_bat   += bat_n
+            total_pit   += pit_n
+        result = {
+            "status":         "ok",
+            "mode":           "season",
+            "start_season":   start_season,
+            "end_season":     end_season,
+            "skipped_seasons": skipped,
+            "total_games":    total_games,
+            "total_bat_rows": total_bat,
+            "total_pit_rows": total_pit,
+            "per_season":     per_season,
+        }
+
+    # Auto-dedup tail. Runs once after the full backfill (date or
+    # multi-season) finishes — calling per-iteration in season mode
+    # would just repeat O(table) work without finding new dupes.
+    # Doubleheaders (two BDL ids on the same date) are preserved by
+    # the helper's `min_game_id < 1_000_000` gate.
     try:
         bat_removed = connection.dedupe_gamelog_duplicates(
             "batting_gamelogs",
