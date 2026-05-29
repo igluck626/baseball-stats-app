@@ -2897,15 +2897,25 @@ def sync_player_active_status_from_bdl(current_year: int) -> dict:
     chunk via `meta.next_cursor`. Roughly `N / 50` BDL requests for
     `N` mapped players, well within the 5/sec ceiling.
 
-    GP guard on the retired path. BDL flips `active` to false the
-    moment a player is DFA'd or optioned to AAA, but their season
-    stats still carry the GP they accumulated before the move.
-    Stamping `mlb_last_season` on those players would mark live
-    rostered-elsewhere vets as retired. Before any stamp, we
-    batch-fetch `/season_stats` for the candidate set and require
-    the side-appropriate `gp` field (`batting_gp` for batters,
-    `pitching_gp` for pitchers) to be zero or null. Otherwise the
-    row is left untouched and counted under `skipped_due_to_gp`.
+    Dual-source GP guard on the retired path. BDL flips `active`
+    to false the moment a player is DFA'd or optioned to AAA, but
+    their season stats still carry the GP they accumulated before
+    the move. Stamping `mlb_last_season` on those players would
+    mark live rostered-elsewhere vets as retired. Before any stamp,
+    we apply two checks:
+
+    1. Batch-fetch `/season_stats` for the candidate set and require
+       the side-appropriate `gp` field (`batting_gp` for batters,
+       `pitching_gp` for pitchers) to be zero or null.
+    2. Cross-check our own `batting_gamelogs` / `pitching_gamelogs`
+       table for any row in the current season. BDL has been
+       observed to under-report `batting_gp` for some active
+       players (Vlad Jr. bdl_id=1410), so our nightly-ingested
+       gamelogs are the tie-breaker.
+
+    Both must show zero before the stamp lands. Any survivor is
+    counted under `skipped_due_to_gp` regardless of which source
+    rescued them.
 
     Returns a `counts` dict with `total_checked / activated / retired
     / skipped_due_to_gp / team_updated / no_data / failed`. `no_data`
@@ -2915,7 +2925,9 @@ def sync_player_active_status_from_bdl(current_year: int) -> dict:
     """
     _get_bdl_key()
 
+    from database.models import BattingGameLog as _BattingGameLog
     from database.models import Pitcher as _Pitcher
+    from database.models import PitchingGameLog as _PitchingGameLog
     from database.models import Player as _Player
 
     counts: dict[str, int] = {
@@ -3045,8 +3057,30 @@ def sync_player_active_status_from_bdl(current_year: int) -> dict:
                 gp_field = (
                     "pitching_gp" if side == "pitcher" else "batting_gp"
                 )
-                gp = stat_row.get(gp_field) or 0
-                if gp > 0:
+                bdl_gp = stat_row.get(gp_field) or 0
+                if bdl_gp > 0:
+                    counts["skipped_due_to_gp"] += 1
+                    continue
+                # Second source of truth — our own gamelog tables.
+                # BDL has been observed to under-report season GP
+                # for some active players (Vlad Jr. bdl_id=1410 →
+                # `batting_gp = 0` despite a full season of rows).
+                # Trust our nightly-ingested gamelogs as the
+                # tie-breaker: any current-season row for this
+                # player means they've actually played, and the
+                # retirement stamp would be wrong regardless of
+                # what BDL reports.
+                gamelog_model = (
+                    _PitchingGameLog if side == "pitcher"
+                    else _BattingGameLog
+                )
+                our_gp = (
+                    db.query(func.count(gamelog_model.game_id))
+                    .filter(gamelog_model.player_id == player_id,
+                            gamelog_model.season   == current_year)
+                    .scalar()
+                ) or 0
+                if our_gp > 0:
                     counts["skipped_due_to_gp"] += 1
                     continue
                 row.mlb_last_season = current_year - 1
