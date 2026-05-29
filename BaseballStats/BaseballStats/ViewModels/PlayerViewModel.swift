@@ -422,6 +422,20 @@ final class PlayerViewModel: ObservableObject {
             var etCal = Calendar(identifier: .gregorian)
             etCal.timeZone = TimeZone(identifier: "America/New_York")
                 ?? TimeZone.current
+            // Latest nightly stamp across both sides. ISO-8601 UTC.
+            // If the nightly ran after a candidate game's end, that
+            // game's already in our DB and an overlay would double-
+            // count it.
+            let lastUpdated: Date? = {
+                let raw = [
+                    currentBatting?.stats_last_updated,
+                    currentPitching?.stats_last_updated,
+                ].compactMap { $0 }
+                let dates = raw.compactMap {
+                    try? Date($0, strategy: .iso8601)
+                }
+                return dates.max()
+            }()
             if let yest = etCal.date(byAdding: .day, value: -1, to: Date()) {
                 let yString = Self.dateOnly.string(from: yest)
                 let yGames = (try? await bdl.getTeamGames(
@@ -431,6 +445,14 @@ final class PlayerViewModel: ObservableObject {
                     guard let start = g.startDate else { continue }
                     let hour = etCal.component(.hour, from: start)
                     guard hour >= 18 else { continue }
+                    // 4-hour buffer is generous for a 9-inning regular
+                    // game (~3hr median). Skip when the nightly stamp
+                    // is past that buffer — we'd be overlaying a game
+                    // already in the DB.
+                    if let lastUpdated,
+                       lastUpdated > start.addingTimeInterval(4 * 3600) {
+                        continue
+                    }
                     hasFinal = true
                     eligible.append((g.id, false))
                 }
