@@ -757,7 +757,11 @@ private func buildBoxScoreTeam(
     // both. ---
     for s in stats {
         let key = "ID\(s.player.id)"
-        let increment = boxPlayerFromStatRow(s, lineupRow: lineupByPid[s.player.id])
+        let increment = boxPlayerFromStatRow(
+            s,
+            lineupRow:  lineupByPid[s.player.id],
+            seasonStat: seasonStatsByPid[s.player.id],
+        )
         players[key] = mergeBoxPlayer(players[key], increment)
     }
 
@@ -826,7 +830,8 @@ private func lineupEntryIsPitcher(_ e: BDLGameLineup) -> Bool {
 /// running aggregate via `mergeBoxPlayer`.
 private func boxPlayerFromStatRow(
     _ s: BDLPlayerStat,
-    lineupRow: BDLGameLineup?,
+    lineupRow:  BDLGameLineup?,
+    seasonStat: BDLSeasonStat? = nil,
 ) -> BoxPlayer {
     let pid = s.player.id
     let isPitcher = bdlStatIsPitcher(s)
@@ -892,7 +897,12 @@ private func boxPlayerFromStatRow(
         avg:                  formatMLBRate(s.avg),
         ops:                  formatMLBRate(opsValue),
     ) : nil
-    let seasonPitching: BoxPitching? = s.era != nil ? BoxPitching(
+    // Season W/L/SV come from the season-stats endpoint (BDL's
+    // per-game `/stats` rows don't ship them), so they're only
+    // available when the caller hands us a `seasonStat` row.
+    // Without one, the field-aware merge in `mergeSeasonPitching`
+    // preserves whatever the pitcher placeholder already set.
+    let seasonPitching: BoxPitching? = (s.era != nil || seasonStat != nil) ? BoxPitching(
         inningsPitched: nil,
         hits:           nil,
         runs:           nil,
@@ -901,9 +911,9 @@ private func boxPlayerFromStatRow(
         strikeOuts:     nil,
         homeRuns:       nil,
         era:            formatMLBEra(s.era),
-        wins:           nil,
-        losses:         nil,
-        saves:          nil,
+        wins:           seasonStat?.pitchingW,
+        losses:         seasonStat?.pitchingL,
+        saves:          seasonStat?.pitchingSv,
         pitchCount:     nil,
     ) : nil
     // Position: lineup row wins (carries the game-specific DH

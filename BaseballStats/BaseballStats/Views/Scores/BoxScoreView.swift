@@ -116,11 +116,16 @@ final class BoxScoreViewModel: ObservableObject {
             return
         }
 
-        // Season-stats fetch depends on the lineup ids; runs after
-        // lineup lands but doesn't gate the box-score render.
+        // Season-stats fetch covers BOTH lineup ids AND any player
+        // who shows up in the stats payload (relievers / pinch
+        // hitters not in the lineup). Without the stats-side pids,
+        // a reliever who earned today's decision shows "(W)" with
+        // no record because their season W/L isn't fetched.
         // Failures degrade to "—" placeholders rather than
         // blocking the box score.
-        let seasonStatsByPid = await loadLineupSeasonStats(lineup: lineup)
+        let seasonStatsByPid = await loadSeasonStats(
+            lineup: lineup, stats: stats,
+        )
 
         // Resolve which BDL team object pairs with each side of
         // the game. When resolution fails (BDL team id not in our
@@ -141,15 +146,20 @@ final class BoxScoreViewModel: ObservableObject {
         self.error = nil
     }
 
-    /// Bulk-fetch season AVG / OPS / ERA for every player in the
-    /// starting lineup. Used by the placeholder rows so a starter
-    /// who hasn't batted yet still shows their season rate stats.
-    /// Returns an empty dict on failure (placeholders fall back to
-    /// "—" via the synthesizer's nil-coalesce).
-    private func loadLineupSeasonStats(
+    /// Bulk-fetch season AVG / OPS / ERA / W-L-SV for every player
+    /// who could appear in the box score: union of the starting
+    /// lineup and every pid from the per-game stats payload. The
+    /// stats-side union catches relievers and pinch hitters who
+    /// aren't in the lineup but need their season W-L-SV to render
+    /// a complete decision tag. Returns an empty dict on failure
+    /// (placeholders fall back to "—" via the synthesizer's
+    /// nil-coalesce).
+    private func loadSeasonStats(
         lineup: [BDLGameLineup],
+        stats:  [BDLPlayerStat],
     ) async -> [Int: BDLSeasonStat] {
-        let ids = Array(Set(lineup.map(\.player.id)))
+        let ids = Array(Set(lineup.map(\.player.id))
+                              .union(stats.map(\.player.id)))
         guard !ids.isEmpty else { return [:] }
         // BDL standings / season stats are season-keyed; use the
         // year the game was actually played in (game.startDate falls

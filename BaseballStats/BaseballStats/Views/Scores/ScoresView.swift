@@ -762,11 +762,17 @@ private struct FinalGameCard: View {
         let lineup = (try? await lineupTask) ?? []
         guard let stats = try? await statsTask else { return }
 
-        let lineupPids = Array(Set(lineup.map(\.player.id)))
+        // Cover lineup pids AND stats-side pids (relievers / pinch
+        // hitters not in the lineup) so the decisions section has
+        // each pitcher's season W-L-SV available. Without the
+        // stats-side union, a reliever who got the W shows "(W)"
+        // with no record.
+        let pids = Array(Set(lineup.map(\.player.id))
+                              .union(stats.map(\.player.id)))
         let season = Calendar.current.component(.year, from: game.startDate ?? Date())
         let seasonByPid: [Int: BDLSeasonStat] = await {
-            guard !lineupPids.isEmpty else { return [:] }
-            if let rows = try? await bdl.getSeasonStats(playerIds: lineupPids, season: season) {
+            guard !pids.isEmpty else { return [:] }
+            if let rows = try? await bdl.getSeasonStats(playerIds: pids, season: season) {
                 return Dictionary(rows.map { ($0.player.id, $0) }, uniquingKeysWith: { a, _ in a })
             }
             return [:]
