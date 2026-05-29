@@ -262,3 +262,259 @@ struct LiveBadge: View {
         .accessibilityLabel("Live")
     }
 }
+
+// MARK: - Plays
+
+/// Expandable plays section for the box score. Shows a `Plays ▾`
+/// header row that toggles between collapsed (just the header) and
+/// expanded (segmented Scoring/All picker + the play list).
+///
+/// All plays-related state lives here — mode pick, set of expanded
+/// half-innings in All-mode, the "user has manually toggled" guard.
+/// The parent passes in the raw `BDLPlay` stream and the two team
+/// abbreviations for the score-line formatting.
+///
+/// `autoExpandOnScoring` (true for live games): when a new scoring
+/// play arrives we auto-expand AND flip to Scoring mode — once. The
+/// user-toggle guard prevents the section from re-popping open
+/// after they've collapsed it.
+struct PlaysView: View {
+    let plays: [BDLPlay]
+    let awayAbbr: String
+    let homeAbbr: String
+    let autoExpandOnScoring: Bool
+
+    @State private var isExpanded = false
+    @State private var playsMode: PlaysMode = .scoring
+    @State private var expandedHalfInnings: Set<String> = []
+    /// `true` once the user has tapped the header, so subsequent
+    /// scoring-play arrivals don't fight whatever state they chose.
+    @State private var hasUserToggled = false
+    /// `true` after we've auto-populated `expandedHalfInnings` with
+    /// the most-recent half-inning. Prevents re-collapsing the
+    /// user's manual expansions on every live-poll tick.
+    @State private var didAutoExpandHalfInning = false
+    /// Tracks the previous scoring-play count so we only react to
+    /// the LATCH from N → N+1, not to every plays update.
+    @State private var prevScoringCount = 0
+
+    enum PlaysMode: String, Hashable, Identifiable, CaseIterable {
+        case scoring = "Scoring"
+        case all     = "All"
+        var id: String { rawValue }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                hasUserToggled = true
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isExpanded.toggle()
+                }
+            } label: {
+                HStack {
+                    Text("Plays")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    Spacer()
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 4)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if isExpanded {
+                Divider().opacity(0.4)
+                Picker("", selection: $playsMode) {
+                    ForEach(PlaysMode.allCases) { mode in
+                        Text(mode.rawValue).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                if plays.isEmpty {
+                    Text("Play-by-play not yet available")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    switch playsMode {
+                    case .scoring: scoringPlaysList
+                    case .all:     allPlaysList
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
+        .shadow(color: .black.opacity(0.06), radius: 6, x: 0, y: 2)
+        .onChange(of: plays) { _, new in
+            let newScoringCount = new.filter(\.scoringPlay).count
+            defer { prevScoringCount = newScoringCount }
+            // Auto-populate the All-mode expansion ONCE so the most
+            // recent inning is visible without scrolling.
+            if !didAutoExpandHalfInning, !new.isEmpty,
+               let last = new.last, let type = last.inningType {
+                expandedHalfInnings = [Self.halfInningKey(inningType: type, inning: last.inning)]
+                didAutoExpandHalfInning = true
+            }
+            // Auto-expand on scoring-play arrival for live games,
+            // unless the user has already toggled the section.
+            if autoExpandOnScoring,
+               !hasUserToggled,
+               newScoringCount > prevScoringCount {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isExpanded = true
+                    playsMode  = .scoring
+                }
+            }
+        }
+    }
+
+    // MARK: Scoring mode
+
+    private var scoringPlaysList: some View {
+        let scoring = plays.filter(\.scoringPlay)
+        return Group {
+            if scoring.isEmpty {
+                Text("No scoring plays yet")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                LazyVStack(alignment: .leading, spacing: 8) {
+                    ForEach(scoring, id: \.order) { p in
+                        scoringPlayRow(p)
+                    }
+                }
+            }
+        }
+    }
+
+    private func scoringPlayRow(_ p: BDLPlay) -> some View {
+        let arrow = (p.inningType ?? "").hasPrefix("Top") ? "▲" : "▼"
+        let ord = Self.ordinalInning(p.inning)
+        return VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .top, spacing: 8) {
+                Text("\(arrow)\(ord)")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.red)
+                    .frame(width: 38, alignment: .leading)
+                Text(p.text ?? "")
+                    .font(.caption)
+                    .foregroundStyle(.primary)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Text(scoreLineText(awayScore: p.awayScore, homeScore: p.homeScore))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .padding(.leading, 46)
+                .monospacedDigit()
+        }
+    }
+
+    // MARK: All mode
+
+    private var allPlaysList: some View {
+        let groups = Self.groupedHalfInnings(plays)
+        return LazyVStack(alignment: .leading, spacing: 0) {
+            ForEach(groups, id: \.id) { half in
+                halfInningSection(half: half)
+            }
+        }
+    }
+
+    private func halfInningSection(half: HalfInning) -> some View {
+        let isHalfExpanded = expandedHalfInnings.contains(half.id)
+        let arrow = half.inningType.hasPrefix("Top") ? "▲" : "▼"
+        let ord = Self.ordinalInning(half.inning)
+        return VStack(alignment: .leading, spacing: 4) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    if isHalfExpanded { expandedHalfInnings.remove(half.id) }
+                    else              { expandedHalfInnings.insert(half.id) }
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    Text("\(arrow) \(ord)")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.red)
+                    Text("(\(half.plays.count) play\(half.plays.count == 1 ? "" : "s"))")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Image(systemName: isHalfExpanded ? "chevron.down" : "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 6)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if isHalfExpanded {
+                ForEach(half.plays, id: \.order) { play in
+                    Text(play.text ?? "")
+                        .font(.caption)
+                        .foregroundStyle(.primary)
+                        .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.leading, 12)
+                        .padding(.bottom, 4)
+                }
+            }
+            Divider().opacity(0.3)
+        }
+    }
+
+    // MARK: Helpers
+
+    private func scoreLineText(awayScore: Int, homeScore: Int) -> String {
+        "\(awayAbbr) \(awayScore), \(homeAbbr) \(homeScore)"
+    }
+
+    private struct HalfInning: Identifiable, Hashable {
+        let id: String
+        let inning: Int
+        let inningType: String
+        let plays: [BDLPlay]
+    }
+
+    private static func groupedHalfInnings(_ plays: [BDLPlay]) -> [HalfInning] {
+        var order: [String] = []
+        var bucket: [String: (inning: Int, type: String, plays: [BDLPlay])] = [:]
+        for p in plays {
+            let type = p.inningType ?? "?"
+            let key = halfInningKey(inningType: type, inning: p.inning)
+            if bucket[key] == nil {
+                order.append(key)
+                bucket[key] = (p.inning, type, [p])
+            } else {
+                bucket[key]?.plays.append(p)
+            }
+        }
+        return order.compactMap { key in
+            guard let b = bucket[key] else { return nil }
+            return HalfInning(id: key, inning: b.inning, inningType: b.type, plays: b.plays)
+        }
+    }
+
+    fileprivate static func halfInningKey(inningType: String, inning: Int) -> String {
+        "\(inningType)-\(inning)"
+    }
+
+    private static func ordinalInning(_ n: Int) -> String {
+        switch n {
+        case 1:  return "1st"
+        case 2:  return "2nd"
+        case 3:  return "3rd"
+        default: return "\(n)th"
+        }
+    }
+}

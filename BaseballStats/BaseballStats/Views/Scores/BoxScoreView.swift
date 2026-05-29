@@ -288,30 +288,12 @@ struct BoxScoreView: View {
     /// → use `defaultSide` (home for final, offensive team for
     /// live). The actual rendered side is `currentSide`.
     @State private var selectedSide: TeamSide?
-    /// "Scoring" — only plays where `scoringPlay == true`.
-    /// "All"     — every play grouped by half-inning, expandable.
-    @State private var playsMode: PlaysMode = .scoring
-    /// Set of `"Top-3"` / `"Bottom-7"` keys whose half-inning is
-    /// currently expanded in the All-Plays view. Auto-populated
-    /// with the most-recent half-inning on first play load via
-    /// `.onChange(of: vm.plays)`.
-    @State private var expandedHalfInnings: Set<String> = []
-    /// One-shot flag so `expandedHalfInnings` is auto-populated only
-    /// on the FIRST plays load — subsequent live-poll updates don't
-    /// re-collapse what the user has manually expanded.
-    @State private var didAutoExpand = false
 
     /// Which team's batting + pitching table to render. The view
     /// shows one team at a time instead of stacking both — toggled
     /// via the segmented control at the top.
     enum TeamSide: String, Hashable, Identifiable, CaseIterable {
         case away, home
-        var id: String { rawValue }
-    }
-
-    enum PlaysMode: String, Hashable, Identifiable, CaseIterable {
-        case scoring = "Scoring"
-        case all     = "All"
         var id: String { rawValue }
     }
 
@@ -361,9 +343,14 @@ struct BoxScoreView: View {
                 }
                 if let bs = vm.boxScore {
                     linescoreCard
+                    PlaysView(
+                        plays:               vm.plays,
+                        awayAbbr:            teamAbbr(vm.game.teams.away.team),
+                        homeAbbr:            teamAbbr(vm.game.teams.home.team),
+                        autoExpandOnScoring: vm.game.phase == .live,
+                    )
                     teamPicker(bs: bs)
                     teamSection(side: currentSide, bs: bs)
-                    playsSection
                 } else if vm.isLoading {
                     ProgressView().controlSize(.large)
                         .frame(maxWidth: .infinity, minHeight: 120)
@@ -392,17 +379,6 @@ struct BoxScoreView: View {
             vm.startLivePolling()
         }
         .onDisappear { vm.stopLivePolling() }
-        .onChange(of: vm.plays) { _, plays in
-            // Auto-expand the most-recent half-inning the first
-            // time plays land. Subsequent updates (live polling)
-            // leave whatever's currently in `expandedHalfInnings`
-            // alone so the user's manual collapses stick.
-            guard !didAutoExpand, !plays.isEmpty,
-                  let last = plays.last,
-                  let type = last.inningType else { return }
-            expandedHalfInnings = [Self.halfInningKey(inningType: type, inning: last.inning)]
-            didAutoExpand = true
-        }
         .overlay(alignment: .top) {
             VStack(spacing: 6) {
                 if pendingPlayerLookup != nil {
@@ -1168,196 +1144,10 @@ struct BoxScoreView: View {
             .frame(width: width, alignment: .trailing)
     }
 
-    // MARK: - Plays section
-
-    @ViewBuilder
-    private var playsSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .center) {
-                Text("PLAYS")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Picker("", selection: $playsMode) {
-                    ForEach(PlaysMode.allCases) { mode in
-                        Text(mode.rawValue).tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .frame(maxWidth: 160)
-            }
-            if vm.plays.isEmpty {
-                Text("Play-by-play not yet available")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            } else {
-                switch playsMode {
-                case .scoring: scoringPlaysList
-                case .all:     allPlaysList
-                }
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
-        .shadow(color: .black.opacity(0.06), radius: 6, x: 0, y: 2)
-    }
-
-    /// Scoring-plays mode: flat list of `scoringPlay == true` rows.
-    /// Each row carries the half-inning marker, the play text, and
-    /// the running score after the play.
-    private var scoringPlaysList: some View {
-        let scoring = vm.plays.filter(\.scoringPlay)
-        return Group {
-            if scoring.isEmpty {
-                Text("No scoring plays yet")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            } else {
-                LazyVStack(alignment: .leading, spacing: 8) {
-                    ForEach(scoring, id: \.order) { p in
-                        scoringPlayRow(p)
-                    }
-                }
-            }
-        }
-    }
-
-    private func scoringPlayRow(_ p: BDLPlay) -> some View {
-        let arrow = (p.inningType ?? "").hasPrefix("Top") ? "▲" : "▼"
-        let ord = Self.ordinalInning(p.inning)
-        return VStack(alignment: .leading, spacing: 2) {
-            HStack(alignment: .top, spacing: 8) {
-                Text("\(arrow)\(ord)")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(.red)
-                    .frame(width: 38, alignment: .leading)
-                Text(p.text ?? "")
-                    .font(.caption)
-                    .foregroundStyle(.primary)
-                    .lineLimit(3)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Text(scoreLineText(awayScore: p.awayScore, homeScore: p.homeScore))
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .padding(.leading, 46)
-                .monospacedDigit()
-        }
-    }
-
-    /// All-plays mode: every half-inning gets a tappable header row.
-    /// Expanded sections list the plays beneath the header; collapsed
-    /// sections just show the marker. Backed by `expandedHalfInnings`.
-    private var allPlaysList: some View {
-        let groups = Self.groupedHalfInnings(vm.plays)
-        return LazyVStack(alignment: .leading, spacing: 0) {
-            ForEach(groups, id: \.id) { half in
-                halfInningSection(half: half)
-            }
-        }
-    }
-
-    private func halfInningSection(half: HalfInning) -> some View {
-        let isExpanded = expandedHalfInnings.contains(half.id)
-        let arrow = half.inningType.hasPrefix("Top") ? "▲" : "▼"
-        let ord = Self.ordinalInning(half.inning)
-        return VStack(alignment: .leading, spacing: 4) {
-            Button {
-                withAnimation(.easeInOut(duration: 0.18)) {
-                    if isExpanded { expandedHalfInnings.remove(half.id) }
-                    else          { expandedHalfInnings.insert(half.id) }
-                }
-            } label: {
-                HStack(spacing: 8) {
-                    Text("\(arrow) \(ord)")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.red)
-                    Text("(\(half.plays.count) play\(half.plays.count == 1 ? "" : "s"))")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.vertical, 6)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            if isExpanded {
-                ForEach(half.plays, id: \.order) { play in
-                    Text(play.text ?? "")
-                        .font(.caption)
-                        .foregroundStyle(.primary)
-                        .lineLimit(3)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.leading, 12)
-                        .padding(.bottom, 4)
-                }
-            }
-            Divider().opacity(0.3)
-        }
-    }
-
-    /// "NYY 2, TOR 0" — runs the away abbreviation, then home.
-    /// Anchored on `vm.game.teams.{away,home}.team.abbreviation`,
-    /// falls back to the team name's first three letters if absent.
-    private func scoreLineText(awayScore: Int, homeScore: Int) -> String {
-        let away = vm.game.teams.away.team.abbreviation
-            ?? String(vm.game.teams.away.team.name.prefix(3)).uppercased()
-        let home = vm.game.teams.home.team.abbreviation
-            ?? String(vm.game.teams.home.team.name.prefix(3)).uppercased()
-        return "\(away) \(awayScore), \(home) \(homeScore)"
-    }
-
-    /// Half-inning grouping for the All-Plays view. Preserves the
-    /// chronological order of plays — plays in the same half-inning
-    /// stay contiguous because BDL returns them in order anyway.
-    private struct HalfInning: Identifiable, Hashable {
-        let id: String              // "Top-3", "Bottom-7", ...
-        let inning: Int
-        let inningType: String
-        let plays: [BDLPlay]
-    }
-
-    private static func groupedHalfInnings(_ plays: [BDLPlay]) -> [HalfInning] {
-        var order: [String] = []
-        var bucket: [String: (inning: Int, type: String, plays: [BDLPlay])] = [:]
-        for p in plays {
-            let type = p.inningType ?? "?"
-            let key = halfInningKey(inningType: type, inning: p.inning)
-            if bucket[key] == nil {
-                order.append(key)
-                bucket[key] = (p.inning, type, [p])
-            } else {
-                bucket[key]?.plays.append(p)
-            }
-        }
-        return order.compactMap { key in
-            guard let b = bucket[key] else { return nil }
-            return HalfInning(id: key, inning: b.inning, inningType: b.type, plays: b.plays)
-        }
-    }
-
-    /// Stable key for the `expandedHalfInnings` set — must match
-    /// what `groupedHalfInnings` emits so the toggle lines up.
-    private static func halfInningKey(inningType: String, inning: Int) -> String {
-        "\(inningType)-\(inning)"
-    }
-
-    /// "1st" / "2nd" / "3rd" / "4th" — for inning labels.
-    private static func ordinalInning(_ n: Int) -> String {
-        switch n {
-        case 1:  return "1st"
-        case 2:  return "2nd"
-        case 3:  return "3rd"
-        default: return "\(n)th"
-        }
+    /// Team abbreviation with a name-prefix fallback so the plays
+    /// score line ("NYY 2, TOR 0") never reads "nil".
+    private func teamAbbr(_ info: TeamInfo) -> String {
+        info.abbreviation ?? String(info.name.prefix(3)).uppercased()
     }
 
     private func shortName(_ full: String) -> String {
