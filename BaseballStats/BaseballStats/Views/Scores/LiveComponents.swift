@@ -461,19 +461,34 @@ struct PlaysView: View {
 
     /// Walk the play stream once tracking the running away/home
     /// score. When a scoring play is hit, record which side's
-    /// score advanced. Catches both single-side scoring (normal)
-    /// and the rare both-sides edge case.
+    /// score advanced. BDL is inconsistent about whether the
+    /// score increment lands ON the scoring play or on the NEXT
+    /// play, so we fall back to comparing against the following
+    /// play when the immediate delta is zero.
     private func scoringRowsWithDelta() -> [ScoringRow] {
         var rows: [ScoringRow] = []
         var prevHome = 0
         var prevAway = 0
-        for p in plays {
+        for i in plays.indices {
+            let p = plays[i]
             if p.scoringPlay {
+                var scoredHome = p.homeScore > prevHome
+                var scoredAway = p.awayScore > prevAway
+                if !scoredHome, !scoredAway, i + 1 < plays.count {
+                    let next = plays[i + 1]
+                    scoredHome = next.homeScore > p.homeScore
+                    scoredAway = next.awayScore > p.awayScore
+                }
+                print(
+                    "[scoring] order=\(p.order) prevH=\(prevHome) prevA=\(prevAway) "
+                    + "thisH=\(p.homeScore) thisA=\(p.awayScore) "
+                    + "scoredH=\(scoredHome) scoredA=\(scoredAway)"
+                )
                 rows.append(ScoringRow(
                     id:         p.order,
                     play:       p,
-                    scoredHome: p.homeScore > prevHome,
-                    scoredAway: p.awayScore > prevAway,
+                    scoredHome: scoredHome,
+                    scoredAway: scoredAway,
                 ))
             }
             prevHome = p.homeScore
@@ -629,16 +644,21 @@ struct PlaysView: View {
     }
 
     private static func groupedHalfInnings(_ plays: [BDLPlay]) -> [HalfInning] {
-        // First pass: bucket by (inningType, inning), preserving
-        // BDL's chronological order.
+        // First pass: bucket by (normalized inningType, inning),
+        // preserving BDL's chronological order. Store the
+        // NORMALIZED `Top` / `Bottom` so the half-inning header's
+        // arrow lookup (`hasPrefix("Top")`) doesn't get fooled by
+        // BDL casing variants or transition markers.
         var keys: [String] = []
         var buckets: [String: (inning: Int, type: String, plays: [BDLPlay])] = [:]
         for p in plays {
-            let type = p.inningType ?? "?"
-            let key = halfInningKey(inningType: type, inning: p.inning)
+            let rawType = p.inningType ?? "?"
+            let key = halfInningKey(inningType: rawType, inning: p.inning)
+            let normalized = normalizedInningType(rawType)
             if buckets[key] == nil {
                 keys.append(key)
-                buckets[key] = (p.inning, type, [p])
+                print("[plays] new half-inning bucket key=\(key) raw=\(rawType) normalized=\(normalized) inning=\(p.inning)")
+                buckets[key] = (p.inning, normalized, [p])
             } else {
                 buckets[key]?.plays.append(p)
             }
@@ -722,8 +742,25 @@ struct PlaysView: View {
         return text
     }
 
+    /// Normalize the `inningType` to a stable `"Top"` / `"Bottom"`
+    /// label before keying. Without this, BDL's casing variants
+    /// (`"Top"` vs `"TOP"` vs `"top"`) and mid-inning marker
+    /// types (`"Mid-Top"`, `"End-Bottom"`, `""`) build separate
+    /// buckets for what's really the same half-inning, producing
+    /// three "▼ 1st" headers in the UI.
     fileprivate static func halfInningKey(inningType: String, inning: Int) -> String {
-        "\(inningType)-\(inning)"
+        "\(normalizedInningType(inningType))-\(inning)"
+    }
+
+    private static func normalizedInningType(_ raw: String) -> String {
+        let lower = raw.lowercased()
+        if lower.contains("top") { return "Top" }
+        if lower.contains("bot") { return "Bottom" }
+        // Mid-inning transition markers ("Middle of 7th") and
+        // unknowns fall through to "Top" — they're filtered out of
+        // the display by `shouldDisplay` anyway, so the bucket
+        // membership only matters for grouping.
+        return "Top"
     }
 
     private static func ordinalInning(_ n: Int) -> String {
