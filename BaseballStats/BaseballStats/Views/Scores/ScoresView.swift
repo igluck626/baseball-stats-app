@@ -1052,15 +1052,13 @@ private struct FinalGameCard: View {
             for id in team.batters {
                 guard let p = team.players["ID\(id)"] else { continue }
                 guard let hr = p.stats?.batting?.homeRuns, hr > 0 else { continue }
-                // BDL ships season HR pre-game (the placeholder pulled
-                // it from `/season_stats`, taken before today's slate).
-                // Add this-game HR so the parenthetical reads post-game,
-                // matching `notableLine` in BoxScoreView.
-                let preGame = p.seasonStats?.batting?.homeRuns ?? 0
-                let season = preGame + hr
+                // BDL's `/season_stats` row reflects the post-game
+                // cumulative when fetched after the box score lands,
+                // so the placeholder's `seasonStats.batting.homeRuns`
+                // already includes today's HR. Don't add `hr` again.
+                let season = p.seasonStats?.batting?.homeRuns ?? 0
                 let last = lastNameWithSuffix(p.person.fullName)
-                let prefix = hr > 1 ? "\(last) \(hr)" : last
-                out.append("\(prefix) (\(season))")
+                out.append("\(last) (\(season))")
             }
         }
         return out
