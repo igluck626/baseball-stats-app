@@ -4017,6 +4017,108 @@ def backfill_bdl_gamelogs(start_date: str, end_date: str) -> dict:
     }
 
 
+def find_missing_doubleheaders(season: int) -> dict:
+    """Scan BDL's `/games` for `season`, group by
+    `(date, away_team, home_team)`, surface any matchup BDL shipped
+    more than once for the same date — those are doubleheaders —
+    and report whether each doubleheader's BDL game ids are present
+    in our `batting_gamelogs` table.
+
+    Drives a targeted re-backfill: the operator passes any
+    `missing_dates` to `POST /admin/backfill-bdl-gamelogs` to
+    re-ingest only the dates we know are short a game. Idempotent
+    — safe to call any time, no DB writes.
+
+    Paginates `/games` via `meta.next_cursor` with `per_page=100`.
+    Filters to `season_type == "regular"`; spring training and
+    postseason aren't in our gamelog scope.
+    """
+    if not connection.db_available():
+        raise RuntimeError("DATABASE_URL is not configured")
+
+    games: list[dict] = []
+    cursor: Optional[int] = None
+    page = 0
+    while True:
+        page += 1
+        params: dict = {"seasons[]": [season], "per_page": 100}
+        if cursor is not None:
+            params["cursor"] = cursor
+        try:
+            data = _bdl_get_json("games", params)
+        except Exception as exc:
+            log.exception(
+                "find_missing_doubleheaders: /games page %d failed: %s",
+                page, exc,
+            )
+            break
+        page_rows = data.get("data") or []
+        games.extend(
+            g for g in page_rows if g.get("season_type") == "regular"
+        )
+        cursor = (data.get("meta") or {}).get("next_cursor")
+        if cursor is None:
+            break
+
+    # Group by (date, away_team_name, home_team_name). BDL ships
+    # `date` as an ISO-8601 UTC timestamp; the YYYY-MM-DD prefix is
+    # sufficient for matchup grouping (a doubleheader's two games
+    # share the same calendar date).
+    by_match: dict[tuple, list[dict]] = {}
+    for g in games:
+        date = (g.get("date") or "")[:10]
+        away = (g.get("away_team") or {}).get("name")
+        home = (g.get("home_team") or {}).get("name")
+        if not (date and away and home):
+            continue
+        by_match.setdefault((date, away, home), []).append(g)
+    dh_groups = {k: v for k, v in by_match.items() if len(v) > 1}
+
+    # Look up which DH game ids are already in batting_gamelogs.
+    all_dh_ids: set[str] = set()
+    for v in dh_groups.values():
+        for g in v:
+            gid = g.get("id")
+            if gid is not None:
+                all_dh_ids.add(str(gid))
+    present: set[str] = set()
+    if all_dh_ids:
+        from sqlalchemy import bindparam, text
+        stmt = text(
+            "SELECT DISTINCT game_id FROM batting_gamelogs "
+            "WHERE game_id IN :ids"
+        ).bindparams(bindparam("ids", expanding=True))
+        with connection.get_session() as db:
+            rows = db.execute(stmt, {"ids": list(all_dh_ids)})
+            present = {row[0] for row in rows}
+
+    doubleheaders: list[dict] = []
+    missing_dates: set[str] = set()
+    for (date, away, home), group in sorted(dh_groups.items()):
+        ids = [str(g.get("id")) for g in group if g.get("id") is not None]
+        missing = [i for i in ids if i not in present]
+        doubleheaders.append({
+            "date":              date,
+            "away_team":         away,
+            "home_team":         home,
+            "game_ids":          ids,
+            "missing_game_ids":  missing,
+        })
+        if missing:
+            missing_dates.add(date)
+
+    return {
+        "season":                          season,
+        "total_games_scanned":             len(games),
+        "doubleheaders_found":             len(doubleheaders),
+        "doubleheaders_with_missing_rows": sum(
+            1 for d in doubleheaders if d["missing_game_ids"]
+        ),
+        "missing_dates":                   sorted(missing_dates),
+        "doubleheaders":                   doubleheaders,
+    }
+
+
 
 
 # ---------------------------------------------------------------------------

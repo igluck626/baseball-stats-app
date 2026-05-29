@@ -1088,6 +1088,30 @@ def admin_backfill_bdl_gamelogs(
         raise HTTPException(status_code=503, detail=str(exc))
 
 
+@app.get("/admin/find-missing-doubleheaders")
+def admin_find_missing_doubleheaders(
+    season: int = Query(
+        ..., description="Season year to scan, e.g. 2026",
+    ),
+):
+    """Read-only diagnostic. Walks BDL's `/games` for `season`,
+    groups by `(date, away_team, home_team)`, flags any matchup
+    BDL ships twice for the same date (= doubleheader), and
+    reports which of those games are missing from our
+    `batting_gamelogs` table.
+
+    Designed to drive a targeted re-backfill after the doubleheader
+    dedup fix: pass any returned `missing_dates` to
+    `POST /admin/backfill-bdl-gamelogs?start_date=&end_date=` to
+    re-ingest just those dates. No DB writes here."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    try:
+        return data_service.find_missing_doubleheaders(season)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+
 @app.post("/admin/discover-from-rosters")
 def admin_discover_from_rosters():
     """Walk MLB Stats API's 30 active rosters and insert bio rows
