@@ -26,6 +26,7 @@ struct HomeView: View {
     @State private var navigationPath = NavigationPath()
     @State private var showingPicker = false
     @State private var showingAddPlayer = false
+    @State private var showingSchedule = false
     @State private var isEditingFavorites = false
 
     var body: some View {
@@ -56,6 +57,16 @@ struct HomeView: View {
             .sheet(isPresented: $showingAddPlayer) {
                 AddFavoritePlayerSheet { picked in
                     favoritesStore.add(picked.player_id)
+                }
+            }
+            .sheet(isPresented: $showingSchedule) {
+                if let bdlId = store.bdlTeamId,
+                   let entry = MLBTeamCatalog.entry(forBDLId: bdlId) {
+                    ScheduleSheet(
+                        favorite:      entry,
+                        teamStandings: vm.teamStandings,
+                        teamRecords:   vm.teamRecords,
+                    )
                 }
             }
         }
@@ -112,7 +123,7 @@ struct HomeView: View {
                     lastGame:     vm.lastGame,
                     nextGame:     vm.nextGame,
                     onSettings:   { showingPicker = true },
-                    onSchedule:   {},   // Phase-1 stub
+                    onSchedule:   { showingSchedule = true },
                 )
 
                 RecentUpcomingStrip(

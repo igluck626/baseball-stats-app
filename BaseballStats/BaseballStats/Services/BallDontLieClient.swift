@@ -218,6 +218,32 @@ final class BallDontLieClient: @unchecked Sendable {
         return filtered
     }
 
+    /// Full regular-season schedule for one team. Walks `/games`
+    /// with `seasons[]=X & team_ids[]=Y` paginated via `next_cursor`
+    /// and filters spring training / postseason / exhibition out
+    /// client-side. Cached for 5 minutes — the schedule is
+    /// essentially static once the season is set, and the Schedule
+    /// sheet is the only consumer right now.
+    func getTeamSeasonGames(
+        season: Int, teamId: Int, bypassCache: Bool = false,
+    ) async throws -> [BDLGame] {
+        let key = "team_season_games:\(season):\(teamId)"
+        if !bypassCache, let cached: [BDLGame] = cachedValue(key) {
+            return cached
+        }
+        let items: [URLQueryItem] = [
+            URLQueryItem(name: "seasons[]",  value: String(season)),
+            URLQueryItem(name: "team_ids[]", value: String(teamId)),
+            URLQueryItem(name: "per_page",   value: "100"),
+        ]
+        let games: [BDLGame] = try await fetchAllPages(
+            path: "/mlb/v1/games", baseQuery: items,
+        )
+        let regular = games.filter { $0.seasonType == "regular" }
+        storeInCache(key, regular, ttl: 300)
+        return regular
+    }
+
     // MARK: - Box score
 
     /// Per-player batting + pitching lines for one game. Returns a
