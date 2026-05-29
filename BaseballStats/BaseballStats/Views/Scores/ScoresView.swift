@@ -1046,21 +1046,21 @@ private struct FinalGameCard: View {
     /// the line surfaces every HR in the game, not just the
     /// winners'.
     private func hrSegments(from bs: BoxScoreResponse) -> [String] {
-        // BDL `/season_stats` snapshot includes past games but NOT
-        // today's just-finished one. Same gate as `notableLine` in
-        // BoxScoreView: today → preGame + this-game; past → season
-        // value as-is.
-        let isToday = isGameToday
+        // `seasonStats.batting.homeRuns` is BDL's authoritative
+        // post-game cumulative — display directly. When the player
+        // hit more than one HR in this game, prefix the per-game
+        // count ("Alvarez 2 (20)") so a multi-HR game stays
+        // visible without expanding.
         let teams = [bs.teams.away, bs.teams.home]
         var out: [String] = []
         for team in teams {
             for id in team.batters {
                 guard let p = team.players["ID\(id)"] else { continue }
                 guard let hr = p.stats?.batting?.homeRuns, hr > 0 else { continue }
-                let preGame = p.seasonStats?.batting?.homeRuns ?? 0
-                let total = isToday ? preGame + hr : preGame
+                let season = p.seasonStats?.batting?.homeRuns ?? 0
                 let last = lastNameWithSuffix(p.person.fullName)
-                out.append("\(last) (\(total))")
+                let prefix = hr > 1 ? "\(last) \(hr)" : last
+                out.append("\(prefix) (\(season))")
             }
         }
         return out

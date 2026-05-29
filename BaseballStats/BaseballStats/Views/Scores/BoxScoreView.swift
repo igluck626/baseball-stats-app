@@ -838,17 +838,16 @@ struct BoxScoreView: View {
         let doubles  = rows.filter { ($0.stats?.batting?.doubles  ?? 0) > 0 }
         let triples  = rows.filter { ($0.stats?.batting?.triples  ?? 0) > 0 }
         let homeRuns = rows.filter { ($0.stats?.batting?.homeRuns ?? 0) > 0 }
-        let isToday  = isGameToday
         if !doubles.isEmpty || !triples.isEmpty || !homeRuns.isEmpty {
             VStack(alignment: .leading, spacing: 2) {
                 if !doubles.isEmpty {
-                    notableLine(label: "2B", players: doubles, totalKey: \.doubles, isToday: isToday)
+                    notableLine(label: "2B", players: doubles, totalKey: \.doubles)
                 }
                 if !triples.isEmpty {
-                    notableLine(label: "3B", players: triples, totalKey: \.triples, isToday: isToday)
+                    notableLine(label: "3B", players: triples, totalKey: \.triples)
                 }
                 if !homeRuns.isEmpty {
-                    notableLine(label: "HR", players: homeRuns, totalKey: \.homeRuns, isToday: isToday)
+                    notableLine(label: "HR", players: homeRuns, totalKey: \.homeRuns)
                 }
             }
             .padding(.top, 4)
@@ -859,32 +858,22 @@ struct BoxScoreView: View {
         label: String,
         players: [BoxPlayer],
         totalKey: KeyPath<BoxBatting, Int?>,
-        isToday: Bool,
     ) -> some View {
-        // `seasonStats.batting.{homeRuns,doubles,triples}` was seeded
-        // from BDL's `/season_stats` row at box-score load. BDL's
-        // season totals at that endpoint reflect the value as of the
-        // most recent NIGHTLY-equivalent snapshot — they include
-        // completed past games but NOT today's in-progress / just-
-        // finished one. So:
-        //   • Today's game: post-game = preGame + this-game count.
-        //   • Past games:   the season value already includes the
-        //                   game's contribution; adding would double.
-        // The `isToday` gate comes from `BoxScoreViewModel.game.startDate`
-        // vs today's ET-local date.
+        // `seasonStats.batting.{homeRuns,doubles,triples}` is BDL's
+        // authoritative post-game cumulative for the player (seeded
+        // from `/season_stats` at box-score load), so we display it
+        // directly with no addition. The per-game count from
+        // `stats.batting` becomes a multi-occurrence prefix when
+        // > 1 ("Alvarez 2 (20)") so a 2-HR game stays visible at
+        // a glance.
         let pieces: [String] = players.map { bp in
             let last = lastName(bp.person.fullName)
-            guard let preGame = bp.seasonStats?.batting?[keyPath: totalKey] else {
-                return last
+            let gameCount = bp.stats?.batting?[keyPath: totalKey] ?? 0
+            let prefix = gameCount > 1 ? "\(last) \(gameCount)" : last
+            guard let season = bp.seasonStats?.batting?[keyPath: totalKey] else {
+                return prefix
             }
-            let total: Int
-            if isToday {
-                let today = bp.stats?.batting?[keyPath: totalKey] ?? 0
-                total = preGame + today
-            } else {
-                total = preGame
-            }
-            return "\(last) (\(total))"
+            return "\(prefix) (\(season))"
         }
         return (Text("\(label): ").font(.caption2.weight(.bold))
                 + Text(pieces.joined(separator: ", ")).font(.caption2))
