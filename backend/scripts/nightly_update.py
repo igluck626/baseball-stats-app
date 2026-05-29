@@ -832,16 +832,59 @@ def run_catchup_update() -> dict:
     log.info(f"[catchup] yesterday ET = {date_str}")
 
     counts = {
-        "date":             date_str,
-        "games_checked":    0,
-        "players_seen":     0,
-        "checked":          0,
-        "updated":          0,
-        "already_current":  0,
-        "no_bdl_mapping":   0,
-        "failed":           0,
-        "war_updated":      0,
+        "date":                            date_str,
+        "games_checked":                   0,
+        "players_seen":                    0,
+        "checked":                         0,
+        "updated":                         0,
+        "already_current":                 0,
+        "no_bdl_mapping":                  0,
+        "failed":                          0,
+        "war_updated":                     0,
+        "doubleheader_dates_checked":      0,
+        "doubleheader_dates_backfilled":   0,
     }
+
+    def _run_dh_catchup() -> None:
+        """Scan this season's BDL `/games` for any matchup BDL ships
+        twice on the same date (doubleheader), check which of those
+        game ids are missing from `batting_gamelogs`, and re-ingest
+        the affected dates. Restricted to past dates within the last
+        14 days — older misses may no longer be retrievable, and
+        today's still-live games are out of scope. Mutates `counts`
+        in place; logs and swallows network/DB failures so the rest
+        of the catch-up isn't disturbed."""
+        log.info("[catchup] scanning for missing doubleheaders this season")
+        try:
+            dh = data_service.find_missing_doubleheaders(current_year)
+        except Exception as exc:
+            log.warning(f"[catchup] doubleheader scan failed: {exc}")
+            return
+        today_et = datetime.datetime.now(
+            data_service._MLB_LOCAL_TZ,
+        ).date()
+        cutoff_et = today_et - datetime.timedelta(days=14)
+        candidates: list[str] = []
+        for d_str in (dh.get("missing_dates") or []):
+            try:
+                d = datetime.date.fromisoformat(d_str)
+            except ValueError:
+                continue
+            if cutoff_et <= d < today_et:
+                candidates.append(d_str)
+        counts["doubleheader_dates_checked"] = len(candidates)
+        for d_str in candidates:
+            log.info(
+                f"[catchup] backfilling missing doubleheader date {d_str}"
+            )
+            try:
+                r = data_service.save_bdl_gamelogs_for_date(d_str)
+                if r.get("status") == "ok" and (r.get("games") or 0) > 0:
+                    counts["doubleheader_dates_backfilled"] += 1
+            except Exception as exc:
+                log.warning(
+                    f"[catchup] doubleheader backfill {d_str} failed: {exc}"
+                )
 
     # bref WAR — by 2pm PT, baseball-reference.com has consistently
     # updated the WAR CSVs from the previous night's games. Before
@@ -923,6 +966,7 @@ def run_catchup_update() -> dict:
     counts["games_checked"] = len(games)
     if not games:
         log.info("[catchup] no final games yesterday — nothing to do")
+        _run_dh_catchup()
         return {"status": "ok", **counts}
     log.info(f"[catchup] {len(games)} final games to scan")
 
@@ -978,6 +1022,7 @@ def run_catchup_update() -> dict:
     counts["players_seen"] = len(seen_pids)
     if not seen_pids:
         log.info("[catchup] no players resolved to MLBAM ids — nothing to reconcile")
+        _run_dh_catchup()
         return {"status": "ok", **counts}
     log.info(f"[catchup] {len(seen_pids)} unique players appeared")
 
@@ -1113,6 +1158,7 @@ def run_catchup_update() -> dict:
                             counts["already_current"] += 1
         db.commit()
 
+    _run_dh_catchup()
     log.info(f"[catchup] done: {counts}")
     return {"status": "ok", **counts}
 
