@@ -461,41 +461,61 @@ struct PlaysView: View {
 
     /// Two-pass scorer attribution.
     ///
-    /// Pass 1 walks the entire play stream and records the index
-    /// of every play where homeScore or awayScore changed vs the
-    /// previous play. That gives a timeline of *score-change*
-    /// events, decoupled from BDL's `scoringPlay` flag.
+    /// Pass 1 builds a MONOTONIC score-increase timeline. BDL
+    /// ships intermediate plays with peek-then-revert scores
+    /// (a "Start Batter/Pitcher" play often previews the AB's
+    /// eventual score, then mid-AB pitches dip back to the
+    /// pre-AB score, then the result play matches the peek).
+    /// The `max(...)` filter drops the noise — we only record a
+    /// timeline entry when either side's score actually exceeds
+    /// the running max.
     ///
-    /// Pass 2 walks the plays flagged `scoringPlay`. For each, we
-    /// find the first score-change event at-or-after the scoring
-    /// play's index and use that as the post-play score. Whichever
-    /// side's score advanced vs the previous resolved score is
-    /// the scorer. This handles BDL's habit of landing the
-    /// score-update several plays AFTER the scoringPlay marker —
-    /// the 5-play look-ahead missed those.
+    /// Pass 2 matches each `scoringPlay` to the LATEST timeline
+    /// entry at-or-BEFORE this scoring play's index. BDL
+    /// typically lands the score increment on the
+    /// "Start Batter/Pitcher" play preceding the at-bat-result
+    /// play that gets the scoring flag, so the right match is
+    /// the most recent backward change. Forward fallback covers
+    /// the rare case where BDL delays the score update; the
+    /// scoring play's own score is the final fallback.
     private func scoringRowsWithDelta() -> [ScoringRow] {
         guard !plays.isEmpty else { return [] }
 
-        // Pass 1: timeline of score-change events.
+        // Pass 1: monotonic score-increase timeline.
         var scoreChanges: [(index: Int, home: Int, away: Int)] = []
-        var lastHome = 0
-        var lastAway = 0
+        var maxHome = 0
+        var maxAway = 0
         for (i, play) in plays.enumerated() {
-            if play.homeScore != lastHome || play.awayScore != lastAway {
-                scoreChanges.append((i, play.homeScore, play.awayScore))
-                lastHome = play.homeScore
-                lastAway = play.awayScore
+            let newHome = max(maxHome, play.homeScore)
+            let newAway = max(maxAway, play.awayScore)
+            if newHome > maxHome || newAway > maxAway {
+                scoreChanges.append((i, newHome, newAway))
+                maxHome = newHome
+                maxAway = newAway
             }
         }
 
-        // Pass 2: match each scoring play to the next score change.
+        // Pass 2: prefer backward, then forward, then scoring
+        // play's own score.
         var rows: [ScoringRow] = []
         var prevHome = 0
         var prevAway = 0
         for (idx, play) in plays.enumerated() where play.scoringPlay {
-            let nextChange = scoreChanges.first { $0.index >= idx }
-            let resolvedHome = nextChange?.home ?? prevHome
-            let resolvedAway = nextChange?.away ?? prevAway
+            let backward = scoreChanges.last(where: { $0.index <= idx })
+            let forward = scoreChanges.first(where: { $0.index > idx })
+
+            let resolvedHome: Int
+            let resolvedAway: Int
+            if let b = backward, b.home > prevHome || b.away > prevAway {
+                resolvedHome = b.home
+                resolvedAway = b.away
+            } else if let f = forward, f.home > prevHome || f.away > prevAway {
+                resolvedHome = f.home
+                resolvedAway = f.away
+            } else {
+                resolvedHome = max(prevHome, play.homeScore)
+                resolvedAway = max(prevAway, play.awayScore)
+            }
             let scoredHome = resolvedHome > prevHome
             let scoredAway = resolvedAway > prevAway
             rows.append(ScoringRow(
@@ -504,10 +524,8 @@ struct PlaysView: View {
                 scoredHome: scoredHome,
                 scoredAway: scoredAway,
             ))
-            if let change = nextChange {
-                prevHome = change.home
-                prevAway = change.away
-            }
+            prevHome = resolvedHome
+            prevAway = resolvedAway
         }
         return rows
     }
