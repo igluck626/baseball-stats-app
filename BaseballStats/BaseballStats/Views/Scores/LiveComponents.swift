@@ -460,11 +460,13 @@ struct PlaysView: View {
     }
 
     /// Walk the play stream once tracking the running away/home
-    /// score. When a scoring play is hit, record which side's
-    /// score advanced. BDL is inconsistent about whether the
-    /// score increment lands ON the scoring play or on the NEXT
-    /// play, so we fall back to comparing against the following
-    /// play when the immediate delta is zero.
+    /// score. When a scoring play is hit, find the side whose
+    /// score subsequently advances — BDL frequently lands the
+    /// score increment several plays AFTER the scoring play
+    /// itself (the play with `scoringPlay == true` still carries
+    /// the pre-play score). The 5-play look-ahead window catches
+    /// the typical delay; if even that doesn't surface a delta we
+    /// fall back to comparing against the running pre-play score.
     private func scoringRowsWithDelta() -> [ScoringRow] {
         var rows: [ScoringRow] = []
         var prevHome = 0
@@ -472,18 +474,27 @@ struct PlaysView: View {
         for i in plays.indices {
             let p = plays[i]
             if p.scoringPlay {
-                var scoredHome = p.homeScore > prevHome
-                var scoredAway = p.awayScore > prevAway
-                if !scoredHome, !scoredAway, i + 1 < plays.count {
-                    let next = plays[i + 1]
-                    scoredHome = next.homeScore > p.homeScore
-                    scoredAway = next.awayScore > p.awayScore
+                var scoredHome = false
+                var scoredAway = false
+                var foundDelta = false
+                for j in (i + 1)..<min(i + 6, plays.count) {
+                    if plays[j].homeScore > p.homeScore {
+                        scoredHome = true
+                        foundDelta = true
+                        break
+                    }
+                    if plays[j].awayScore > p.awayScore {
+                        scoredAway = true
+                        foundDelta = true
+                        break
+                    }
                 }
-                print(
-                    "[scoring] order=\(p.order) prevH=\(prevHome) prevA=\(prevAway) "
-                    + "thisH=\(p.homeScore) thisA=\(p.awayScore) "
-                    + "scoredH=\(scoredHome) scoredA=\(scoredAway)"
-                )
+                if !foundDelta {
+                    scoredHome = p.homeScore > prevHome
+                        || (i + 1 < plays.count && plays[i + 1].homeScore > prevHome)
+                    scoredAway = p.awayScore > prevAway
+                        || (i + 1 < plays.count && plays[i + 1].awayScore > prevAway)
+                }
                 rows.append(ScoringRow(
                     id:         p.order,
                     play:       p,
@@ -657,7 +668,6 @@ struct PlaysView: View {
             let normalized = normalizedInningType(rawType)
             if buckets[key] == nil {
                 keys.append(key)
-                print("[plays] new half-inning bucket key=\(key) raw=\(rawType) normalized=\(normalized) inning=\(p.inning)")
                 buckets[key] = (p.inning, normalized, [p])
             } else {
                 buckets[key]?.plays.append(p)
