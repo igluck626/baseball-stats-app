@@ -226,28 +226,31 @@ final class HomeViewModel: ObservableObject {
         isLoadingLeaders = false
     }
 
+    /// Minimum innings pitched for ERA to count. The backend already
+    /// applies a pro-rated 162-IP qualifier, but in the first weeks
+    /// of a season the pro-rated quota can drop below 10 (4-5 IP
+    /// over one start), and a 0.00 ERA on 3 IP isn't a meaningful
+    /// "team leader". 10 is a conservative floor — a closer 2 weeks
+    /// in will be qualified, a one-start spot starter won't.
+    nonisolated private static let eraMinimumIP: Double = 10
+
     nonisolated private static func fetchLeaderRow(
         stats: [String], year: Int, playerType: String,
         team: String, api: APIClient,
     ) async -> [LeaderCard] {
         await withTaskGroup(of: (Int, LeaderCard?).self) { group in
             for (i, stat) in stats.enumerated() {
+                let capturedStat = stat   // explicit capture so the
+                let capturedIdx  = i      // task sees this iter's value
                 group.addTask {
-                    // `try? await` on `async throws -> LeaderboardResponse?`
-                    // yields a `LeaderboardResponse??`; flatten before
-                    // pulling out the first row.
-                    let outer = try? await api.getLeaderboard(
-                        stat: stat, year: year,
+                    let card = await fetchOneLeaderCard(
+                        stat:       capturedStat,
+                        year:       year,
                         playerType: playerType,
-                        team: team, limit: 1,
+                        team:       team,
+                        api:        api,
                     )
-                    let inner: LeaderboardResponse? = outer ?? nil
-                    guard let top = inner?.leaders.first else { return (i, nil) }
-                    return (i, LeaderCard(
-                        stat:   stat,
-                        value:  top.value,
-                        player: top.player,
-                    ))
+                    return (capturedIdx, card)
                 }
             }
             var pairs: [(Int, LeaderCard)] = []
@@ -256,6 +259,40 @@ final class HomeViewModel: ObservableObject {
             }
             return pairs.sorted { $0.0 < $1.0 }.map { $0.1 }
         }
+    }
+
+    nonisolated private static func fetchOneLeaderCard(
+        stat: String, year: Int, playerType: String,
+        team: String, api: APIClient,
+    ) async -> LeaderCard? {
+        // ERA gets a separate path: fetch a deeper top-10 slice and
+        // walk it until we find a pitcher who clears the IP floor.
+        // The other stats are pure top-1 lookups.
+        let limit = (stat == "ERA") ? 10 : 1
+        let outer = try? await api.getLeaderboard(
+            stat: stat, year: year,
+            playerType: playerType,
+            team: team, limit: limit,
+        )
+        let inner: LeaderboardResponse? = outer ?? nil
+        let candidates = inner?.leaders ?? []
+        guard !candidates.isEmpty else { return nil }
+        if stat == "ERA" {
+            for candidate in candidates {
+                let cs = (try? await api.getPitcherCurrentStats(
+                    playerId: candidate.player.player_id,
+                )) ?? nil
+                let ip = cs?.standard?.IP ?? 0
+                if ip >= eraMinimumIP {
+                    return LeaderCard(
+                        stat: stat, value: candidate.value, player: candidate.player,
+                    )
+                }
+            }
+            return nil
+        }
+        let top = candidates[0]
+        return LeaderCard(stat: stat, value: top.value, player: top.player)
     }
 
     // MARK: - Favorite Players
