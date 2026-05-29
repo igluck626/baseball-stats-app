@@ -343,12 +343,6 @@ struct BoxScoreView: View {
                 }
                 if let bs = vm.boxScore {
                     linescoreCard
-                    PlaysView(
-                        plays:               vm.plays,
-                        awayAbbr:            teamAbbr(vm.game.teams.away.team),
-                        homeAbbr:            teamAbbr(vm.game.teams.home.team),
-                        autoExpandOnScoring: vm.game.phase == .live,
-                    )
                     teamPicker(bs: bs)
                     teamSection(side: currentSide, bs: bs)
                 } else if vm.isLoading {
@@ -507,6 +501,14 @@ struct BoxScoreView: View {
                     .lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
+            Divider().opacity(0.4)
+            PlaysView(
+                plays:               vm.plays,
+                awayAbbr:            teamAbbr(vm.game.teams.away.team),
+                homeAbbr:            teamAbbr(vm.game.teams.home.team),
+                autoExpandOnScoring: true,
+                isEmbedded:          true,
+            )
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 14)
@@ -608,6 +610,20 @@ struct BoxScoreView: View {
                     )
                 }
                 .padding(.horizontal, 4)
+            }
+            // Live games render the plays expander inside the
+            // situation card above this one; final / preview games
+            // get it here so it's always reachable from somewhere
+            // above the team picker.
+            if vm.game.phase != .live {
+                Divider().opacity(0.4)
+                PlaysView(
+                    plays:               vm.plays,
+                    awayAbbr:            teamAbbr(vm.game.teams.away.team),
+                    homeAbbr:            teamAbbr(vm.game.teams.home.team),
+                    autoExpandOnScoring: false,
+                    isEmbedded:          true,
+                )
             }
         }
         .padding(.horizontal, 14)

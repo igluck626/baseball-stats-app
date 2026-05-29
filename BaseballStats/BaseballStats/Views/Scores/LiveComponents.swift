@@ -283,6 +283,10 @@ struct PlaysView: View {
     let awayAbbr: String
     let homeAbbr: String
     let autoExpandOnScoring: Bool
+    /// When true, render the header + expanded body inline without
+    /// the standalone glass-card wrapper. The caller is responsible
+    /// for providing the container (live situation / linescore card).
+    var isEmbedded: Bool = false
 
     @State private var isExpanded = false
     @State private var playsMode: PlaysMode = .scoring
@@ -305,7 +309,7 @@ struct PlaysView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let content = VStack(alignment: .leading, spacing: 8) {
             Button {
                 hasUserToggled = true
                 withAnimation(.easeInOut(duration: 0.2)) {
@@ -348,11 +352,18 @@ struct PlaysView: View {
                 }
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
-        .shadow(color: .black.opacity(0.06), radius: 6, x: 0, y: 2)
+        return Group {
+            if isEmbedded {
+                content
+            } else {
+                content
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
+                    .shadow(color: .black.opacity(0.06), radius: 6, x: 0, y: 2)
+            }
+        }
         .onChange(of: plays) { _, new in
             let newScoringCount = new.filter(\.scoringPlay).count
             defer { prevScoringCount = newScoringCount }
