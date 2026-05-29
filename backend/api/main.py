@@ -1064,6 +1064,25 @@ def admin_sync_all_player_teams():
     return data_service.sync_all_player_teams_from_rosters(current_year)
 
 
+@app.post("/admin/sync-player-active-status")
+def admin_sync_player_active_status():
+    """Reconcile every mapped player's retired / active state against
+    BDL. Clears stale `mlb_last_season` on returning players
+    (Pomeranz) and stamps `current_year - 1` on players BDL flags
+    as inactive (Kershaw). Updates the current-year season `team`
+    in the same pass for any active player whose BDL team resolves
+    to a Lahman code.
+
+    Read-mostly — only writes when BDL disagrees with our row, so
+    safe to re-run any time. Returns
+    `{status, counts: {total_checked, activated, retired,
+    team_updated, no_data, failed}}`."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    current_year = datetime.datetime.utcnow().year
+    return data_service.sync_player_active_status_from_bdl(current_year)
+
+
 @app.post("/admin/backfill-bdl-gamelogs")
 def admin_backfill_bdl_gamelogs(
     start_date: str = Query(..., description="Inclusive start date, yyyy-mm-dd"),

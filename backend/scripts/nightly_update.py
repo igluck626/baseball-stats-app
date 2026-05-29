@@ -1209,6 +1209,26 @@ def main() -> None:
     except Exception as exc:
         log.error(f"Team reconcile FAILED (non-fatal): {exc}")
 
+    # Phase 5b — active-status sync via BDL `/players?player_ids[]=`.
+    # The roster walk above only sees players currently on a 40-man,
+    # so it can't detect retirements (player BDL knows is inactive)
+    # or comebacks (Lahman still says retired even though BDL
+    # rosters them). This pass reconciles `mlb_last_season` against
+    # BDL's `active` flag for every player_id we have a `bdl_id`
+    # mapping for. Non-fatal — degrades silently if BDL is down.
+    try:
+        active_sync = data_service.sync_player_active_status_from_bdl(current_year)
+        ac = active_sync.get("counts") or {}
+        log.info(
+            f"Active-status reconciled — activated: {ac.get('activated', 0)}, "
+            f"retired: {ac.get('retired', 0)}, "
+            f"team_updated: {ac.get('team_updated', 0)}, "
+            f"no_data: {ac.get('no_data', 0)}, "
+            f"failed: {ac.get('failed', 0)}"
+        )
+    except Exception as exc:
+        log.error(f"Active-status reconcile FAILED (non-fatal): {exc}")
+
     log.info("=" * 52)
     log.info(
         f"Batters   — updated: {bat_updated}, skipped: {bat_skipped}, failed: {len(bat_failed)}"

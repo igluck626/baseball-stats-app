@@ -2865,6 +2865,155 @@ def sync_all_player_teams_from_rosters(current_year: int) -> dict:
     }
 
 
+def sync_player_active_status_from_bdl(current_year: int) -> dict:
+    """Reconcile each player/pitcher bio row's retired/active state
+    against BDL. Walks every `player_id` with a `bdl_id`, batch-
+    fetches their BDL profile via `/players?player_ids[]=...`, and
+    applies two-way edits to `mlb_last_season`:
+
+    - BDL active + `mlb_last_season IS NOT NULL` → clear it
+      (Pomeranz-style comeback — Lahman's `finalGame` year is stale
+      because the player was out of MLB long enough to be retired
+      then returned).
+    - BDL inactive + `mlb_last_season IS NULL` → stamp it with
+      `current_year - 1` (Kershaw-style retirement — Lahman still
+      shows the player as active on their last season's roster).
+
+    BDL also ships the player's current team object. When BDL is
+    active and the team resolves to a Lahman code, the per-season
+    `team` column on the current-year row is updated in the same
+    pass (same path `sync_all_player_teams_from_rosters` takes from
+    the roster-walk side). Inactive players' team rows aren't
+    touched — leaving stale offseason DFA / minor-league assignment
+    teams in place is safer than a destructive nil.
+
+    Complements (doesn't replace) `sync_all_player_teams_from_rosters`:
+    that one walks 30 BDL active-roster endpoints (one per team and
+    misses players who left the league entirely between snapshots).
+    This one queries by player id, so it catches retirements and
+    comebacks the roster walk can't see by definition.
+
+    Batched: chunks BDL ids into groups of 50 and paginates each
+    chunk via `meta.next_cursor`. Roughly `N / 50` BDL requests for
+    `N` mapped players, well within the 5/sec ceiling.
+
+    Returns a `counts` dict with `total_checked / activated / retired
+    / team_updated / no_data / failed`. `no_data` is the count of
+    targets BDL didn't return a profile for (e.g., a stale bdl_id
+    BDL has since removed); treat as inconclusive — the DB stays as-is.
+    """
+    _get_bdl_key()
+
+    from database.models import Pitcher as _Pitcher
+    from database.models import Player as _Player
+
+    counts: dict[str, int] = {
+        "total_checked":  0,
+        "activated":      0,   # mlb_last_season cleared
+        "retired":        0,   # mlb_last_season stamped
+        "team_updated":   0,   # current-year season row's team changed
+        "no_data":        0,   # BDL didn't return a profile for this id
+        "failed":         0,   # request blew up for this id's batch
+    }
+
+    with connection.get_session() as db:
+        targets: list[tuple[str, int, int]] = []  # (side, player_id, bdl_id)
+        for r in db.query(_Player).filter(_Player.bdl_id.isnot(None)).all():
+            targets.append(("batter", int(r.player_id), int(r.bdl_id)))
+        for r in db.query(_Pitcher).filter(_Pitcher.bdl_id.isnot(None)).all():
+            targets.append(("pitcher", int(r.player_id), int(r.bdl_id)))
+        counts["total_checked"] = len(targets)
+
+        # Two-way players (Ohtani) share a bdl_id across both sides;
+        # one fetch covers both. Sort for deterministic batching.
+        unique_bdl_ids = sorted({t[2] for t in targets})
+        by_bdl_id: dict[int, dict] = {}
+        batch_size = 50
+        for start in range(0, len(unique_bdl_ids), batch_size):
+            chunk = unique_bdl_ids[start:start + batch_size]
+            cursor: Optional[str] = None
+            while True:
+                params: dict = {
+                    "player_ids[]": chunk,
+                    "per_page":     100,
+                }
+                if cursor:
+                    params["cursor"] = cursor
+                try:
+                    data = _bdl_get_json("players", params)
+                except Exception as exc:
+                    log.warning(
+                        "sync_player_active_status: batch starting at "
+                        "%d (size %d) failed: %s", start, len(chunk), exc,
+                    )
+                    counts["failed"] += len(chunk)
+                    break
+                for row in (data.get("data") or []):
+                    pid = row.get("id")
+                    if pid is None:
+                        continue
+                    by_bdl_id[int(pid)] = row
+                cursor = (data.get("meta") or {}).get("next_cursor")
+                if not cursor:
+                    break
+            time.sleep(_BDL_RATE_LIMIT_SLEEP)
+
+        for side, player_id, bdl_id in targets:
+            p = by_bdl_id.get(bdl_id)
+            if p is None:
+                counts["no_data"] += 1
+                continue
+            # BDL ships an explicit `active` bool on recent responses.
+            # When missing (older payload shape), use team presence
+            # as a proxy: a non-null team object means the player is
+            # currently rostered somewhere.
+            active_field = p.get("active")
+            if isinstance(active_field, bool):
+                is_active = active_field
+            else:
+                is_active = (p.get("team") or {}).get("id") is not None
+
+            row = (
+                db.get(_Player,  player_id) if side == "batter"
+                else db.get(_Pitcher, player_id)
+            )
+            if row is None:
+                continue
+
+            if is_active and row.mlb_last_season is not None:
+                row.mlb_last_season = None
+                counts["activated"] += 1
+            elif not is_active and row.mlb_last_season is None:
+                row.mlb_last_season = current_year - 1
+                counts["retired"] += 1
+
+            # Sync current team only for active players. Inactive
+            # players' stale season teams are left alone — a DFA'd
+            # vet's last team is still our best guess until next
+            # season's row is written.
+            if is_active:
+                team_bdl_id = (p.get("team") or {}).get("id")
+                team_code = (
+                    _BDL_TO_LAHMAN_TEAM_MAP.get(team_bdl_id)
+                    if team_bdl_id else None
+                )
+                if team_code:
+                    actions = _apply_team_to_season_rows(
+                        db,
+                        player_id=player_id,
+                        year=current_year,
+                        abbr=team_code,
+                        create_pitcher=(side == "pitcher"),
+                        create_batter=(side == "batter"),
+                    )
+                    if any("updated" in a or "created" in a for a in actions):
+                        counts["team_updated"] += 1
+
+        db.commit()
+
+    return {"status": "ok", "counts": counts}
+
+
 def repair_null_stats(current_year: int) -> dict:
     """Find every current-year season row with `last_updated IS NULL`
     — those are placeholder rows the Phase 5 roster sync created but
