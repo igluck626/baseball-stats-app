@@ -2897,10 +2897,21 @@ def sync_player_active_status_from_bdl(current_year: int) -> dict:
     chunk via `meta.next_cursor`. Roughly `N / 50` BDL requests for
     `N` mapped players, well within the 5/sec ceiling.
 
+    GP guard on the retired path. BDL flips `active` to false the
+    moment a player is DFA'd or optioned to AAA, but their season
+    stats still carry the GP they accumulated before the move.
+    Stamping `mlb_last_season` on those players would mark live
+    rostered-elsewhere vets as retired. Before any stamp, we
+    batch-fetch `/season_stats` for the candidate set and require
+    the side-appropriate `gp` field (`batting_gp` for batters,
+    `pitching_gp` for pitchers) to be zero or null. Otherwise the
+    row is left untouched and counted under `skipped_due_to_gp`.
+
     Returns a `counts` dict with `total_checked / activated / retired
-    / team_updated / no_data / failed`. `no_data` is the count of
-    targets BDL didn't return a profile for (e.g., a stale bdl_id
-    BDL has since removed); treat as inconclusive — the DB stays as-is.
+    / skipped_due_to_gp / team_updated / no_data / failed`. `no_data`
+    is the count of targets BDL didn't return a profile for (stale
+    bdl_id BDL has since removed); treat as inconclusive — the DB
+    stays as-is.
     """
     _get_bdl_key()
 
@@ -2908,12 +2919,13 @@ def sync_player_active_status_from_bdl(current_year: int) -> dict:
     from database.models import Player as _Player
 
     counts: dict[str, int] = {
-        "total_checked":  0,
-        "activated":      0,   # mlb_last_season cleared
-        "retired":        0,   # mlb_last_season stamped
-        "team_updated":   0,   # current-year season row's team changed
-        "no_data":        0,   # BDL didn't return a profile for this id
-        "failed":         0,   # request blew up for this id's batch
+        "total_checked":      0,
+        "activated":          0,   # mlb_last_season cleared
+        "retired":            0,   # mlb_last_season stamped
+        "skipped_due_to_gp":  0,   # BDL says inactive but season GP > 0
+        "team_updated":       0,   # current-year season row's team changed
+        "no_data":            0,   # BDL didn't return a profile for this id
+        "failed":             0,   # request blew up for this id's batch
     }
 
     with connection.get_session() as db:
@@ -2958,6 +2970,13 @@ def sync_player_active_status_from_bdl(current_year: int) -> dict:
                     break
             time.sleep(_BDL_RATE_LIMIT_SLEEP)
 
+        # Defer the retired-stamp decision into a candidate list.
+        # BDL's `active` flag goes false the moment a player is DFA'd
+        # or sent to AAA, but they may already have current-season GP
+        # — stamping `mlb_last_season` on them would mark live players
+        # as retired. We resolve below via a season-stats batch fetch
+        # gated on the side-appropriate `gp` field.
+        retirement_candidates: list[tuple[str, int, int, object]] = []
         for side, player_id, bdl_id in targets:
             p = by_bdl_id.get(bdl_id)
             if p is None:
@@ -2984,8 +3003,8 @@ def sync_player_active_status_from_bdl(current_year: int) -> dict:
                 row.mlb_last_season = None
                 counts["activated"] += 1
             elif not is_active and row.mlb_last_season is None:
-                row.mlb_last_season = current_year - 1
-                counts["retired"] += 1
+                # Hold off — needs the GP check below before stamping.
+                retirement_candidates.append((side, player_id, bdl_id, row))
 
             # Sync current team only for active players. Inactive
             # players' stale season teams are left alone — a DFA'd
@@ -3008,6 +3027,30 @@ def sync_player_active_status_from_bdl(current_year: int) -> dict:
                     )
                     if any("updated" in a or "created" in a for a in actions):
                         counts["team_updated"] += 1
+
+        # GP guard: batch-fetch season_stats for every candidate's
+        # bdl_id. If the side-appropriate `gp` field is > 0, the
+        # player has played this season — don't stamp them retired
+        # regardless of what BDL's `active` flag says. Pitchers
+        # check `pitching_gp`; batters check `batting_gp`; two-way
+        # players (Ohtani) get one fetch per bdl_id and each side
+        # checks the field that's relevant to its bio table.
+        if retirement_candidates:
+            candidate_bdl_ids = list({c[2] for c in retirement_candidates})
+            gp_rows = _fetch_bdl_batch_stats(
+                candidate_bdl_ids, current_year,
+            )
+            for side, player_id, bdl_id, row in retirement_candidates:
+                stat_row = gp_rows.get(bdl_id) or {}
+                gp_field = (
+                    "pitching_gp" if side == "pitcher" else "batting_gp"
+                )
+                gp = stat_row.get(gp_field) or 0
+                if gp > 0:
+                    counts["skipped_due_to_gp"] += 1
+                    continue
+                row.mlb_last_season = current_year - 1
+                counts["retired"] += 1
 
         db.commit()
 

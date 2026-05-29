@@ -1514,6 +1514,55 @@ def admin_set_bdl_id(
         }
 
 
+@app.post("/admin/set-player-active/{player_id}")
+def admin_set_player_active(
+    player_id: int,
+    bio_type: str = Query(..., pattern="^(batter|pitcher)$",
+                          description="Which bio table to update — 'batter' "
+                                      "(`players`) or 'pitcher' (`pitchers`). "
+                                      "Two-way players need one call per side."),
+):
+    """One-off override that clears `mlb_last_season` on a bio row,
+    flipping the player to "active" for the iOS retired-check
+    (`PlayerViewModel.isRetired` reads this field directly).
+
+    Used when the BDL active-status sync (or the original Lahman
+    `finalGame` import) incorrectly stamped a returning / mid-
+    season vet as retired. The dedicated GP guard in
+    `sync_player_active_status_from_bdl` should catch most of
+    these on the next nightly, but this endpoint is the manual
+    override when an operator already knows the answer.
+
+    Returns the previous and new `mlb_last_season` values so the
+    caller can confirm the row was actually stamped before the
+    clear (vs. a no-op call against an already-active row)."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    bio_model = Player if bio_type == "batter" else Pitcher
+    with connection.get_session() as db:
+        row = (
+            db.query(bio_model)
+            .filter(bio_model.player_id == player_id)
+            .one_or_none()
+        )
+        if row is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No {bio_type} found with player_id {player_id}",
+            )
+        previous = row.mlb_last_season
+        row.mlb_last_season = None
+        db.commit()
+        return {
+            "status":                  "ok",
+            "player_id":               player_id,
+            "name":                    row.name,
+            "bio_type":                bio_type,
+            "previous_mlb_last_season": previous,
+            "new_mlb_last_season":      None,
+        }
+
+
 @app.post("/admin/backfill-player-history/{player_id}")
 def admin_backfill_player_history(
     player_id: int,
