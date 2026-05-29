@@ -411,6 +411,32 @@ final class PlayerViewModel: ObservableObject {
         // they appear.
         teamHasLiveGame = liveOnSchedule
 
+        // Post-midnight-ET fallback. When nothing landed under
+        // "today ET", a player's evening West-Coast game may have
+        // shipped under yesterday's ET date (10pm PT == 1am ET ==
+        // yesterday's date in ET's calendar). Pull yesterday's finals
+        // and keep only the ones that started at or after 18:00 ET —
+        // afternoon games are already in our nightly DB, so the cutoff
+        // avoids re-overlaying them.
+        if eligible.isEmpty {
+            var etCal = Calendar(identifier: .gregorian)
+            etCal.timeZone = TimeZone(identifier: "America/New_York")
+                ?? TimeZone.current
+            if let yest = etCal.date(byAdding: .day, value: -1, to: Date()) {
+                let yString = Self.dateOnly.string(from: yest)
+                let yGames = (try? await bdl.getTeamGames(
+                    date: yString, teamId: bdlTeamId,
+                )) ?? []
+                for g in yGames where g.status == "STATUS_FINAL" {
+                    guard let start = g.startDate else { continue }
+                    let hour = etCal.component(.hour, from: start)
+                    guard hour >= 18 else { continue }
+                    hasFinal = true
+                    eligible.append((g.id, false))
+                }
+            }
+        }
+
         guard !eligible.isEmpty else { return }
         // BDL player id is the join key on the stats response. If
         // we don't have one (mapping bootstrap hasn't reached this
