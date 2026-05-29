@@ -260,13 +260,37 @@ struct BDLSeasonStat: Codable, Hashable {
     let battingHr:  Int?
     let batting2B:  Int?
     let batting3B:  Int?
+    /// Full season counting fields used by the BDL-direct overlay
+    /// path when BDL has absorbed a final our DB hasn't (i.e.
+    /// `bdl_G > db_G`). Each corresponds to BDL's `batting_*` JSON
+    /// key. Empty for players outside their relevant side; HBP / SF
+    /// aren't shipped by BDL so PA must be derived as AB + BB.
+    let battingAb:  Int?
+    let battingR:   Int?
+    let battingH:   Int?
+    let battingRbi: Int?
+    let battingBb:  Int?
+    let battingSo:  Int?
+    let battingSb:  Int?
 
-    let pitchingEra: Double?
-    let pitchingW:   Int?
-    let pitchingL:   Int?
-    let pitchingSv:  Int?
+    let pitchingEra:   Double?
+    let pitchingWhip:  Double?
+    let pitchingKPer9: Double?
+    let pitchingW:     Int?
+    let pitchingL:     Int?
+    let pitchingSv:    Int?
     /// Pitcher counterpart to `battingGp`.
-    let pitchingGp:  Int?
+    let pitchingGp:    Int?
+    let pitchingGs:    Int?
+    /// BDL ships `pitching_ip` as a baseball-notation NUMBER on this
+    /// endpoint (e.g. `22.2` meaning 22⅔). Decoded as Double; callers
+    /// must convert via the parser before doing arithmetic.
+    let pitchingIp:    Double?
+    let pitchingH:     Int?
+    let pitchingEr:    Int?
+    let pitchingBb:    Int?
+    let pitchingK:     Int?
+    let pitchingHr:    Int?
 }
 
 // MARK: - Name utilities

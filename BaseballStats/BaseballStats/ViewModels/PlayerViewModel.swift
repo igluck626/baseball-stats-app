@@ -101,6 +101,10 @@ struct BoxPitchingLine: Hashable {
     var W:  Int    = 0
     var L:  Int    = 0
     var SV: Int    = 0
+    /// Games started. Only meaningful on the BDL-direct path
+    /// (`BDLSeasonStat.pitchingGs`); per-game stats rows ship the
+    /// flag too but the existing overlay path doesn't propagate it.
+    var GS: Int    = 0
 
     var appeared: Bool { IP > 0 }
 
@@ -110,6 +114,7 @@ struct BoxPitchingLine: Hashable {
         H  += o.H;  R  += o.R;  ER += o.ER
         BB += o.BB; SO += o.SO; HR += o.HR
         W  += o.W;  L  += o.L;  SV += o.SV
+        GS += o.GS
     }
 }
 
@@ -140,6 +145,14 @@ final class PlayerViewModel: ObservableObject {
     /// silent stat update behavior but NOT the LIVE badge; see
     /// `hasLiveGame` for that.
     @Published var recentStatsLoaded: Bool = false
+    /// True when the overlay is showing BDL's full season totals
+    /// rather than a per-game delta on top of overnight. Set when
+    /// `bdl_G > db_G` — BDL has absorbed a final our backend's
+    /// nightly hasn't yet, so DB stats are stale. The renderer
+    /// (`makeEffectiveBatting`/`makeEffectivePitching`) consults
+    /// this flag to REPLACE the overnight stats with `recentBatting`
+    /// / `recentPitching` rather than adding them on top.
+    @Published var usesBDLDirectStats: Bool = false
     /// True iff at least one of the games whose stats were folded
     /// into the overlay is currently in-progress. Final-only
     /// overlays (today's already-completed game) don't flip this.
@@ -359,6 +372,9 @@ final class PlayerViewModel: ObservableObject {
     /// fill stats silently.
     func loadRecentGameStats() async {
         guard !isRetired else { return }
+        // Reset the BDL-direct flag at the top of every call —
+        // it's recomputed below per the games-played comparison.
+        usesBDLDirectStats = false
         // BDL team id is the hop the team-scoped game query needs.
         // Falls back silently when the player's Lahman teamCode
         // isn't in the BDL map (extreme edge case — rebranded
@@ -402,16 +418,26 @@ final class PlayerViewModel: ObservableObject {
         // overnight totals as-is.
         guard let bdlPlayerId = player.bdl_id else { return }
 
-        // Games-played gate for Final games. The rule (deliberately
-        // simple): overlay the Final games ONLY when BDL's season
-        // games-played count exactly matches our DB's. That's the
-        // window where BDL has flipped the game to STATUS_FINAL but
-        // hasn't yet incremented `batting_gp` / `pitching_gp` — the
-        // box-score data exists but neither BDL nor our DB has
-        // absorbed it. Once BDL increments (bdl_gp > db.G), the
-        // nightly will catch up; until then we deliberately skip
-        // the overlay to avoid double-counting. Live games bypass
-        // this — they're never in the nightly by definition.
+        // Games-played gate for Final games. Three resolutions:
+        //
+        // • bdl_G == db_G  → overlay finals normally (the box-score
+        //   data exists but neither BDL nor our DB has absorbed
+        //   it yet).
+        // • bdl_G  > db_G  → BDL has absorbed a final our nightly
+        //   hasn't. Fetch BDL's full season totals and use them as
+        //   the displayed stats via the `usesBDLDirectStats` flag,
+        //   so the user sees current numbers instead of stale DB.
+        // • Otherwise → skip finals (would double-count) but keep
+        //   live games. Two-way needs the rule satisfied on the
+        //   relevant side(s).
+        //
+        // Live games are never in the nightly by definition; they
+        // bypass the gate.
+        var totalBat = BoxBattingLine()
+        var totalPit = BoxPitchingLine()
+        var sawBat = false
+        var sawPit = false
+
         if hasFinal {
             let season = Calendar.current.component(.year, from: Date())
             let rows = (try? await bdl.getSeasonStats(
@@ -430,10 +456,14 @@ final class PlayerViewModel: ObservableObject {
                 if let db = dbPitchingG, let p = bdlPitchingG { return db == p }
                 return false
             }()
-            // Two-way (Ohtani): overlay needs BOTH sides equal,
-            // otherwise the side BDL already incremented would
-            // double-count when the box-score line lands. Pure
-            // batter / pure pitcher consult only their own side.
+            let battingBDLAhead: Bool = {
+                if let db = dbBattingG, let b = bdlBattingG { return b > db }
+                return false
+            }()
+            let pitchingBDLAhead: Bool = {
+                if let db = dbPitchingG, let p = bdlPitchingG { return p > db }
+                return false
+            }()
             let shouldOverlayFinals: Bool = {
                 if hasMeaningfulBatting && hasMeaningfulPitching {
                     return battingEqual && pitchingEqual
@@ -442,9 +472,48 @@ final class PlayerViewModel: ObservableObject {
                 if hasMeaningfulPitching { return pitchingEqual }
                 return false
             }()
+            let shouldUseBDLDirect: Bool = {
+                guard !shouldOverlayFinals, bdlSeason != nil else { return false }
+                if hasMeaningfulBatting && battingBDLAhead { return true }
+                if hasMeaningfulPitching && pitchingBDLAhead { return true }
+                return false
+            }()
+            if shouldUseBDLDirect, let bdlSeason {
+                // Seed totalBat/totalPit with BDL's full season
+                // totals. Live games (if any) will accumulate on
+                // top via the existing per-game add() loop —
+                // BDL's snapshot is post-final, today's live game
+                // is separate. usesBDLDirectStats tells the
+                // renderer to REPLACE the overnight stats rather
+                // than add to them.
+                if hasMeaningfulBatting {
+                    totalBat = bdlSeason.toBattingLine()
+                    sawBat = true
+                }
+                if hasMeaningfulPitching {
+                    totalPit = bdlSeason.toPitchingLine()
+                    sawPit = true
+                }
+                usesBDLDirectStats = true
+            }
             if !shouldOverlayFinals {
+                // BDL-direct or not, finals shouldn't go through
+                // the per-game add() — BDL totals already cover
+                // them (BDL-direct path) OR they'd double-count
+                // (non-BDL-direct path).
                 eligible.removeAll { !$0.isLive }
-                if eligible.isEmpty { return }
+                if eligible.isEmpty {
+                    // No live games remain. Publish whatever
+                    // BDL-direct totals we computed (or do nothing
+                    // when neither side qualified).
+                    if sawBat || sawPit {
+                        recentBatting    = sawBat ? totalBat : nil
+                        recentPitching   = sawPit ? totalPit : nil
+                        recentStatsLoaded = true
+                        hasLiveGame      = false
+                    }
+                    return
+                }
             }
         }
 
@@ -488,10 +557,6 @@ final class PlayerViewModel: ObservableObject {
                 return hits.map { (bat: $0.0, pit: $0.1, isLive: $0.2) }
             }
 
-        var totalBat = BoxBattingLine()
-        var totalPit = BoxPitchingLine()
-        var sawBat = false
-        var sawPit = false
         var anyLive = false
 
         for entry in perGame {
@@ -710,5 +775,69 @@ final class PlayerViewModel: ObservableObject {
         if self.error == nil {
             self.error = error.localizedDescription
         }
+    }
+}
+
+
+// MARK: - BDL season stats → BoxBattingLine / BoxPitchingLine
+
+extension BDLSeasonStat {
+    /// Convert BDL's season totals to a `BoxBattingLine` carrying
+    /// the FULL season counts (not a delta). Used by the
+    /// `usesBDLDirectStats` path when BDL is ahead of the DB and
+    /// the renderer needs to replace overnight stats. BDL doesn't
+    /// ship HBP / SF; they're left at 0 (PA derivation downstream
+    /// is forced to use AB + BB only).
+    func toBattingLine() -> BoxBattingLine {
+        var line = BoxBattingLine()
+        line.games   = battingGp  ?? 0
+        line.AB      = battingAb  ?? 0
+        line.R       = battingR   ?? 0
+        line.H       = battingH   ?? 0
+        line.doubles = batting2B  ?? 0
+        line.triples = batting3B  ?? 0
+        line.HR      = battingHr  ?? 0
+        line.RBI     = battingRbi ?? 0
+        line.BB      = battingBb  ?? 0
+        line.SO      = battingSo  ?? 0
+        line.SB      = battingSb  ?? 0
+        line.HBP     = 0
+        line.SF      = 0
+        line.seasonAVG = battingAvg
+        line.seasonOBP = battingObp
+        line.seasonSLG = battingSlg
+        line.seasonOPS = battingOps
+        return line
+    }
+
+    /// Pitcher counterpart to `toBattingLine`. BDL's
+    /// `pitching_ip` is in baseball notation (22.2 = 22⅔) so the
+    /// converter promotes it to true decimal before storing on
+    /// `BoxPitchingLine.IP`. R isn't shipped on the season-stats
+    /// endpoint; ER is the relevant counter for ERA anyway.
+    func toPitchingLine() -> BoxPitchingLine {
+        var line = BoxPitchingLine()
+        line.games = pitchingGp ?? 0
+        line.IP    = BDLSeasonStat.ipBaseballToDecimal(pitchingIp)
+        line.H     = pitchingH  ?? 0
+        line.R     = 0
+        line.ER    = pitchingEr ?? 0
+        line.BB    = pitchingBb ?? 0
+        line.SO    = pitchingK  ?? 0
+        line.HR    = pitchingHr ?? 0
+        line.W     = pitchingW  ?? 0
+        line.L     = pitchingL  ?? 0
+        line.SV    = pitchingSv ?? 0
+        line.GS    = pitchingGs ?? 0
+        return line
+    }
+
+    /// Baseball notation → true decimal: 22.2 → 22.667.
+    /// nil / non-positive → 0.
+    private static func ipBaseballToDecimal(_ v: Double?) -> Double {
+        guard let v, v > 0 else { return 0 }
+        let whole = Int(v)
+        let outs  = Int(((v - Double(whole)) * 10).rounded())
+        return Double(whole) + Double(outs) / 3.0
     }
 }

@@ -603,7 +603,9 @@ struct PlayerProfileView: View {
             // score, so it stays overnight.
             let ranks = battingRanksVM.byStat
             let effective = makeEffectiveBatting(
-                overnight: stats, recent: viewModel.recentBatting
+                overnight: stats,
+                recent: viewModel.recentBatting,
+                usesBDLDirectStats: viewModel.usesBDLDirectStats
             )
             currentSeasonGridCard(
                 title: "\(String(stats.season)) Season",
@@ -656,7 +658,9 @@ struct PlayerProfileView: View {
             // overnight; decisions arrive late and updating them
             // mid-game would lie about an unfinished game.
             let effective = makeEffectivePitching(
-                overnight: stats, recent: viewModel.recentPitching
+                overnight: stats,
+                recent: viewModel.recentPitching,
+                usesBDLDirectStats: viewModel.usesBDLDirectStats
             )
             currentSeasonGridCard(
                 title: "\(String(stats.season)) Season",
@@ -2708,14 +2712,24 @@ fileprivate struct EffectivePitching {
 /// WAR isn't updated — box scores don't ship game WAR.
 fileprivate func makeEffectiveBatting(
     overnight stats: PlayerCurrentStats,
-    recent: BoxBattingLine?
+    recent: BoxBattingLine?,
+    usesBDLDirectStats: Bool = false
 ) -> EffectiveBatting {
-    let s = stats.standard
+    // When `usesBDLDirectStats` is true, the recent line carries
+    // BDL's FULL season totals (not a per-game delta), so the
+    // overnight stats should be ignored entirely — we treat them
+    // as zero, and the existing `(s ?? 0) + recent` formulas
+    // resolve to recent's values directly.
+    let s = usesBDLDirectStats ? nil : stats.standard
     let war = stats.advanced?.WAR
     guard let recent else {
         return EffectiveBatting(
-            WAR: war, AVG: s?.BA, OBP: s?.OBP, SLG: s?.SLG, OPS: s?.OPS,
-            G: s?.G, HR: s?.HR, RBI: s?.RBI, SB: s?.SB, PA: s?.PA
+            WAR: war,
+            AVG: stats.standard?.BA,  OBP: stats.standard?.OBP,
+            SLG: stats.standard?.SLG, OPS: stats.standard?.OPS,
+            G:   stats.standard?.G,   HR:  stats.standard?.HR,
+            RBI: stats.standard?.RBI, SB:  stats.standard?.SB,
+            PA:  stats.standard?.PA
         )
     }
     let H   = (s?.H   ?? 0) + recent.H
@@ -2774,17 +2788,25 @@ fileprivate func makeEffectiveBatting(
 /// assert an outcome that isn't yet final.
 fileprivate func makeEffectivePitching(
     overnight stats: PitcherCurrentStats,
-    recent: BoxPitchingLine?
+    recent: BoxPitchingLine?,
+    usesBDLDirectStats: Bool = false
 ) -> EffectivePitching {
-    let s = stats.standard
+    // See `makeEffectiveBatting` — same pattern. When
+    // `usesBDLDirectStats` is true, the recent line IS the full
+    // season totals from BDL; the overnight stats are treated as
+    // zero so the formulas resolve to recent's values.
+    let s = usesBDLDirectStats ? nil : stats.standard
     let war = stats.advanced?.WAR
     guard let recent else {
         return EffectivePitching(
             WAR: war,
-            W:  s?.W, L: s?.L,
-            ERA: s?.ERA, WHIP: s?.WHIP, K_per9: s?.K_per9,
-            G:  s?.G, GS: s?.GS, SV: s?.SV,
-            IP: s?.IP, SO: s?.SO, BB: s?.BB
+            W:  stats.standard?.W, L: stats.standard?.L,
+            ERA: stats.standard?.ERA, WHIP: stats.standard?.WHIP,
+            K_per9: stats.standard?.K_per9,
+            G:  stats.standard?.G, GS: stats.standard?.GS,
+            SV: stats.standard?.SV,
+            IP: stats.standard?.IP, SO: stats.standard?.SO,
+            BB: stats.standard?.BB
         )
     }
     let IP = (s?.IP ?? 0) + recent.IP
@@ -2805,7 +2827,7 @@ fileprivate func makeEffectivePitching(
         L:  (s?.L  ?? 0) + recent.L,
         ERA: era, WHIP: whip, K_per9: k9,
         G:  (s?.G ?? 0) + recent.games,
-        GS: s?.GS,
+        GS: usesBDLDirectStats ? recent.GS : stats.standard?.GS,
         SV: (s?.SV ?? 0) + recent.SV,
         IP: IP, SO: SO, BB: BB
     )
