@@ -291,6 +291,11 @@ struct PlaysView: View {
     @State private var isExpanded = false
     @State private var playsMode: PlaysMode = .scoring
     @State private var expandedHalfInnings: Set<String> = []
+    /// Set of `AtBat.id` keys whose individual pitch list is
+    /// currently expanded inside the All-mode view. Empty by
+    /// default — every at-bat starts collapsed to just the
+    /// outcome headline.
+    @State private var expandedAtBats: Set<String> = []
     /// `true` once the user has tapped the header, so subsequent
     /// scoring-play arrivals don't fight whatever state they chose.
     @State private var hasUserToggled = false
@@ -390,32 +395,56 @@ struct PlaysView: View {
     // MARK: Scoring mode
 
     private var scoringPlaysList: some View {
-        let scoring = plays.filter(\.scoringPlay)
+        let rows = scoringRowsWithDelta()
         return Group {
-            if scoring.isEmpty {
+            if rows.isEmpty {
                 Text("No scoring plays yet")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 LazyVStack(alignment: .leading, spacing: 8) {
-                    ForEach(scoring, id: \.order) { p in
-                        scoringPlayRow(p)
+                    ForEach(rows) { row in
+                        scoringPlayRow(row)
                     }
                 }
             }
         }
     }
 
-    private func scoringPlayRow(_ p: BDLPlay) -> some View {
+    private func scoringPlayRow(_ row: ScoringRow) -> some View {
+        let p = row.play
         let arrow = (p.inningType ?? "").hasPrefix("Top") ? "▲" : "▼"
         let ord = Self.ordinalInning(p.inning)
+        // Pick the scoring team's abbreviation. Both-sides scoring
+        // is rare (a single play that scores for both teams) but
+        // possible on extremely weird sequences — fall back to a
+        // generic label if neither side's delta resolves.
+        let scoringAbbr: String? = {
+            if row.scoredHome { return homeAbbr }
+            if row.scoredAway { return awayAbbr }
+            return nil
+        }()
         return VStack(alignment: .leading, spacing: 2) {
             HStack(alignment: .top, spacing: 8) {
                 Text("\(arrow)\(ord)")
                     .font(.caption.weight(.bold))
                     .foregroundStyle(.red)
                     .frame(width: 38, alignment: .leading)
+                if let abbr = scoringAbbr {
+                    Text(abbr)
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(
+                            Capsule().fill(
+                                row.scoredHome
+                                    ? Color.blue.opacity(0.8)
+                                    : Color.orange.opacity(0.85)
+                            )
+                        )
+                }
                 Text(p.text ?? "")
                     .font(.caption)
                     .foregroundStyle(.primary)
@@ -430,12 +459,42 @@ struct PlaysView: View {
         }
     }
 
-    // MARK: All mode
+    /// Walk the play stream once tracking the running away/home
+    /// score. When a scoring play is hit, record which side's
+    /// score advanced. Catches both single-side scoring (normal)
+    /// and the rare both-sides edge case.
+    private func scoringRowsWithDelta() -> [ScoringRow] {
+        var rows: [ScoringRow] = []
+        var prevHome = 0
+        var prevAway = 0
+        for p in plays {
+            if p.scoringPlay {
+                rows.append(ScoringRow(
+                    id:         p.order,
+                    play:       p,
+                    scoredHome: p.homeScore > prevHome,
+                    scoredAway: p.awayScore > prevAway,
+                ))
+            }
+            prevHome = p.homeScore
+            prevAway = p.awayScore
+        }
+        return rows
+    }
+
+    private struct ScoringRow: Identifiable, Hashable {
+        let id: Int          // BDLPlay.order — unique within a game
+        let play: BDLPlay
+        let scoredHome: Bool
+        let scoredAway: Bool
+    }
+
+    // MARK: All mode (PA-grouped)
 
     private var allPlaysList: some View {
         let groups = Self.groupedHalfInnings(plays)
         return LazyVStack(alignment: .leading, spacing: 0) {
-            ForEach(groups, id: \.id) { half in
+            ForEach(groups) { half in
                 halfInningSection(half: half)
             }
         }
@@ -445,6 +504,7 @@ struct PlaysView: View {
         let isHalfExpanded = expandedHalfInnings.contains(half.id)
         let arrow = half.inningType.hasPrefix("Top") ? "▲" : "▼"
         let ord = Self.ordinalInning(half.inning)
+        let atBatCount = half.atBats.count
         return VStack(alignment: .leading, spacing: 4) {
             Button {
                 withAnimation(.easeInOut(duration: 0.18)) {
@@ -456,7 +516,7 @@ struct PlaysView: View {
                     Text("\(arrow) \(ord)")
                         .font(.caption.weight(.bold))
                         .foregroundStyle(.red)
-                    Text("(\(half.plays.count) play\(half.plays.count == 1 ? "" : "s"))")
+                    Text("(\(atBatCount) AB\(atBatCount == 1 ? "" : "s"))")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                     Spacer()
@@ -469,19 +529,74 @@ struct PlaysView: View {
             }
             .buttonStyle(.plain)
             if isHalfExpanded {
-                ForEach(half.plays, id: \.order) { play in
-                    Text(play.text ?? "")
-                        .font(.caption)
-                        .foregroundStyle(.primary)
-                        .lineLimit(3)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.leading, 12)
-                        .padding(.bottom, 4)
+                ForEach(half.atBats) { ab in
+                    atBatRow(ab)
                 }
             }
             Divider().opacity(0.3)
         }
+    }
+
+    private func atBatRow(_ ab: AtBat) -> some View {
+        let isPAExpanded = expandedAtBats.contains(ab.id)
+        // Earlier pitches are the intermediate ball/strike/foul
+        // calls; the LAST play in the PA is the outcome and gets
+        // promoted to the headline. The expand-pitches button only
+        // shows when there's something to expand beyond the
+        // outcome row.
+        let pitchCount = max(0, ab.plays.count - 1)
+        let resultText = ab.plays.last?.text ?? ab.batterText
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .top, spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    if let batter = ab.batterText {
+                        Text(batter)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Text(resultText ?? "—")
+                        .font(.caption)
+                        .foregroundStyle(.primary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+                if pitchCount > 0 {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.18)) {
+                            if isPAExpanded { expandedAtBats.remove(ab.id) }
+                            else            { expandedAtBats.insert(ab.id) }
+                        }
+                    } label: {
+                        HStack(spacing: 2) {
+                            Image(systemName: isPAExpanded ? "chevron.down" : "chevron.right")
+                                .font(.caption2.weight(.semibold))
+                            Text("\(pitchCount) pitch\(pitchCount == 1 ? "" : "es")")
+                                .font(.caption2)
+                        }
+                        .foregroundStyle(.secondary)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.leading, 12)
+            if isPAExpanded, pitchCount > 0 {
+                // Show the leading intermediate pitches (everything
+                // up to but not including the final outcome).
+                ForEach(ab.plays.dropLast(), id: \.order) { pitch in
+                    Text(pitch.text ?? "")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.leading, 28)
+                }
+            }
+        }
+        .padding(.vertical, 2)
     }
 
     // MARK: Helpers
@@ -494,26 +609,117 @@ struct PlaysView: View {
         let id: String
         let inning: Int
         let inningType: String
+        let atBats: [AtBat]
+    }
+
+    private struct AtBat: Identifiable, Hashable {
+        /// Stable key combining the half-inning id with the order
+        /// of the at-bat's first play, so SwiftUI's diffing keeps
+        /// state aligned across live-poll updates.
+        let id: String
+        /// Parsed batter name from the "Start Batter/Pitcher" marker
+        /// ("Quintana pitches to McCutchen" → "McCutchen"). nil if
+        /// the marker text didn't follow the expected shape or if
+        /// the half-inning began without one.
+        let batterText: String?
+        /// Every displayed play in this PA, in order. The LAST one
+        /// is treated as the at-bat result; earlier ones are the
+        /// intermediate pitches surfaced by the expand button.
         let plays: [BDLPlay]
     }
 
     private static func groupedHalfInnings(_ plays: [BDLPlay]) -> [HalfInning] {
-        var order: [String] = []
-        var bucket: [String: (inning: Int, type: String, plays: [BDLPlay])] = [:]
+        // First pass: bucket by (inningType, inning), preserving
+        // BDL's chronological order.
+        var keys: [String] = []
+        var buckets: [String: (inning: Int, type: String, plays: [BDLPlay])] = [:]
         for p in plays {
             let type = p.inningType ?? "?"
             let key = halfInningKey(inningType: type, inning: p.inning)
-            if bucket[key] == nil {
-                order.append(key)
-                bucket[key] = (p.inning, type, [p])
+            if buckets[key] == nil {
+                keys.append(key)
+                buckets[key] = (p.inning, type, [p])
             } else {
-                bucket[key]?.plays.append(p)
+                buckets[key]?.plays.append(p)
             }
         }
-        return order.compactMap { key in
-            guard let b = bucket[key] else { return nil }
-            return HalfInning(id: key, inning: b.inning, inningType: b.type, plays: b.plays)
+        // Second pass: split each bucket into at-bats by walking
+        // the play list and using "Start Batter/Pitcher" markers
+        // as PA boundaries. Inning-transition plays and
+        // start/end markers are dropped from the display set.
+        return keys.compactMap { key in
+            guard let b = buckets[key] else { return nil }
+            let atBats = atBats(in: b.plays, halfInningKey: key)
+            return HalfInning(
+                id:         key,
+                inning:     b.inning,
+                inningType: b.type,
+                atBats:     atBats,
+            )
         }
+    }
+
+    private static func atBats(in plays: [BDLPlay], halfInningKey: String) -> [AtBat] {
+        var result: [AtBat] = []
+        var currentBatter: String? = nil
+        var currentPlays: [BDLPlay] = []
+        var firstOrder: Int? = nil
+
+        func flush() {
+            guard !currentPlays.isEmpty || currentBatter != nil else { return }
+            let orderKey = firstOrder.map(String.init) ?? "x\(result.count)"
+            result.append(AtBat(
+                id:         "\(halfInningKey)/\(orderKey)",
+                batterText: currentBatter,
+                plays:      currentPlays,
+            ))
+            currentBatter = nil
+            currentPlays = []
+            firstOrder = nil
+        }
+
+        for p in plays {
+            if p.type == "Start Batter/Pitcher" {
+                flush()
+                currentBatter = parseBatter(from: p.text)
+                firstOrder = p.order
+                continue
+            }
+            if !shouldDisplay(p) { continue }
+            currentPlays.append(p)
+            if firstOrder == nil { firstOrder = p.order }
+        }
+        flush()
+        return result
+    }
+
+    /// True iff the play should appear in the All-mode display.
+    /// Filters out inning markers and Start/End Batter/Pitcher
+    /// transitions, plus the textual variants BDL sometimes ships
+    /// without the structured type ("Middle of the 7th").
+    private static func shouldDisplay(_ p: BDLPlay) -> Bool {
+        let excludedTypes: Set<String> = [
+            "Start Inning", "End Inning",
+            "Start Batter/Pitcher", "End Batter/Pitcher",
+        ]
+        if let t = p.type, excludedTypes.contains(t) { return false }
+        if let text = p.text {
+            if text.hasPrefix("Middle of") { return false }
+            if text.hasPrefix("End of")    { return false }
+            if text.hasPrefix("Start of")  { return false }
+        }
+        return true
+    }
+
+    /// "Quintana pitches to McCutchen" → "McCutchen".
+    /// Falls back to the raw text if the " to " separator isn't
+    /// found.
+    private static func parseBatter(from text: String?) -> String? {
+        guard let text = text else { return nil }
+        if let range = text.range(of: " to ") {
+            return String(text[range.upperBound...])
+        }
+        return text
     }
 
     fileprivate static func halfInningKey(inningType: String, inning: Int) -> String {
