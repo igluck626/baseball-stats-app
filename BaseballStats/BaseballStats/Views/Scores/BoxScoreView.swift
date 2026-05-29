@@ -791,22 +791,17 @@ struct BoxScoreView: View {
         let doubles  = rows.filter { ($0.stats?.batting?.doubles  ?? 0) > 0 }
         let triples  = rows.filter { ($0.stats?.batting?.triples  ?? 0) > 0 }
         let homeRuns = rows.filter { ($0.stats?.batting?.homeRuns ?? 0) > 0 }
+        let isToday  = isGameToday
         if !doubles.isEmpty || !triples.isEmpty || !homeRuns.isEmpty {
             VStack(alignment: .leading, spacing: 2) {
-                // Season totals are fetched lazily by the view-
-                // model (two-hop via /by-bdl-id + /stats/current).
-                // Until they arrive (or for unresolved players),
-                // the parenthetical is omitted — names render
-                // alone. Once `vm.seasonTotals` updates with a
-                // hit, the SwiftUI re-render adds "(N)".
                 if !doubles.isEmpty {
-                    notableLine(label: "2B", players: doubles, totalKey: \.doubles)
+                    notableLine(label: "2B", players: doubles, totalKey: \.doubles, isToday: isToday)
                 }
                 if !triples.isEmpty {
-                    notableLine(label: "3B", players: triples, totalKey: \.triples)
+                    notableLine(label: "3B", players: triples, totalKey: \.triples, isToday: isToday)
                 }
                 if !homeRuns.isEmpty {
-                    notableLine(label: "HR", players: homeRuns, totalKey: \.homeRuns)
+                    notableLine(label: "HR", players: homeRuns, totalKey: \.homeRuns, isToday: isToday)
                 }
             }
             .padding(.top, 4)
@@ -817,19 +812,30 @@ struct BoxScoreView: View {
         label: String,
         players: [BoxPlayer],
         totalKey: KeyPath<BoxBatting, Int?>,
+        isToday: Bool,
     ) -> some View {
-        // BDL's `/season_stats` ships the post-game cumulative total
-        // and we seeded `seasonStats.batting.{homeRuns,doubles,triples}`
-        // off it via the lineup-placeholder. Reading directly off the
-        // BoxPlayer avoids the staleness of the secondary backend
-        // fetch and keeps the box-score and final-game-card numbers
-        // consistent. nil → omit the parenthetical (placeholder
-        // skipped for pinch-hitters / substitutes who aren't in the
-        // starting lineup).
+        // `seasonStats.batting.{homeRuns,doubles,triples}` was seeded
+        // from BDL's `/season_stats` row at box-score load. BDL's
+        // season totals at that endpoint reflect the value as of the
+        // most recent NIGHTLY-equivalent snapshot — they include
+        // completed past games but NOT today's in-progress / just-
+        // finished one. So:
+        //   • Today's game: post-game = preGame + this-game count.
+        //   • Past games:   the season value already includes the
+        //                   game's contribution; adding would double.
+        // The `isToday` gate comes from `BoxScoreViewModel.game.startDate`
+        // vs today's ET-local date.
         let pieces: [String] = players.map { bp in
             let last = lastName(bp.person.fullName)
-            guard let total = bp.seasonStats?.batting?[keyPath: totalKey] else {
+            guard let preGame = bp.seasonStats?.batting?[keyPath: totalKey] else {
                 return last
+            }
+            let total: Int
+            if isToday {
+                let today = bp.stats?.batting?[keyPath: totalKey] ?? 0
+                total = preGame + today
+            } else {
+                total = preGame
             }
             return "\(last) (\(total))"
         }
@@ -839,6 +845,26 @@ struct BoxScoreView: View {
             .lineLimit(2)
             .fixedSize(horizontal: false, vertical: true)
     }
+
+    /// True iff `vm.game.startDate` falls on today's ET-local
+    /// calendar day. MLB schedules its slate off Eastern, so the
+    /// gate has to anchor there — comparing against the device's
+    /// local timezone would put a 10pm PT first-pitch on the wrong
+    /// day half the time.
+    private var isGameToday: Bool {
+        guard let start = vm.game.startDate else { return false }
+        let f = Self.etDateFormatter
+        return f.string(from: start) == f.string(from: Date())
+    }
+
+    private static let etDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.calendar = .init(identifier: .gregorian)
+        f.timeZone = TimeZone(identifier: "America/New_York") ?? .current
+        f.locale   = .init(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
 
     /// "Acuña Jr." — keep the last token of a hyphenated/multi-word
     /// surname (handles Vladimir Guerrero Jr., Ronald Acuña Jr.,

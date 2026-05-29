@@ -1046,23 +1046,44 @@ private struct FinalGameCard: View {
     /// the line surfaces every HR in the game, not just the
     /// winners'.
     private func hrSegments(from bs: BoxScoreResponse) -> [String] {
+        // BDL `/season_stats` snapshot includes past games but NOT
+        // today's just-finished one. Same gate as `notableLine` in
+        // BoxScoreView: today → preGame + this-game; past → season
+        // value as-is.
+        let isToday = isGameToday
         let teams = [bs.teams.away, bs.teams.home]
         var out: [String] = []
         for team in teams {
             for id in team.batters {
                 guard let p = team.players["ID\(id)"] else { continue }
                 guard let hr = p.stats?.batting?.homeRuns, hr > 0 else { continue }
-                // BDL's `/season_stats` row reflects the post-game
-                // cumulative when fetched after the box score lands,
-                // so the placeholder's `seasonStats.batting.homeRuns`
-                // already includes today's HR. Don't add `hr` again.
-                let season = p.seasonStats?.batting?.homeRuns ?? 0
+                let preGame = p.seasonStats?.batting?.homeRuns ?? 0
+                let total = isToday ? preGame + hr : preGame
                 let last = lastNameWithSuffix(p.person.fullName)
-                out.append("\(last) (\(season))")
+                out.append("\(last) (\(total))")
             }
         }
         return out
     }
+
+    /// True iff `game.startDate` falls on today's ET-local
+    /// calendar day. Anchored to ET because MLB schedules its slate
+    /// there — a 10pm PT first-pitch crosses midnight UTC but
+    /// belongs to "tonight's slate" in ET.
+    private var isGameToday: Bool {
+        guard let start = game.startDate else { return false }
+        let f = Self.etDateFormatter
+        return f.string(from: start) == f.string(from: Date())
+    }
+
+    private static let etDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.calendar = .init(identifier: .gregorian)
+        f.timeZone = TimeZone(identifier: "America/New_York") ?? .current
+        f.locale   = .init(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
 
     // MARK: Expanded — box score nav
 
