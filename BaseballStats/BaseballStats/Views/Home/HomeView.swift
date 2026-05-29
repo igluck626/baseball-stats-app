@@ -22,8 +22,11 @@ import SwiftUI
 struct HomeView: View {
     @StateObject private var vm = HomeViewModel()
     @ObservedObject private var store = FavoriteTeamStore.shared
+    @ObservedObject private var favoritesStore = FavoritePlayersStore.shared
     @State private var navigationPath = NavigationPath()
     @State private var showingPicker = false
+    @State private var showingAddPlayer = false
+    @State private var isEditingFavorites = false
 
     var body: some View {
         NavigationStack(path: $navigationPath) {
@@ -50,6 +53,11 @@ struct HomeView: View {
             .sheet(isPresented: $showingPicker) {
                 TeamPickerView { _ in showingPicker = false }
             }
+            .sheet(isPresented: $showingAddPlayer) {
+                AddFavoritePlayerSheet { picked in
+                    favoritesStore.add(picked.player_id)
+                }
+            }
         }
         .task(id: store.bdlTeamId) {
             // Re-runs whenever the favorite changes — initial mount,
@@ -57,7 +65,13 @@ struct HomeView: View {
             // through here.
             guard let bdlId = store.bdlTeamId else { return }
             await vm.load(bdlTeamId: bdlId)
+            await vm.loadTeamLeaders(bdlTeamId: bdlId)
             vm.startAutoRefresh(bdlTeamId: bdlId)
+        }
+        .task(id: favoritesStore.playerIds) {
+            // Re-runs whenever the favorites list changes — initial
+            // mount or any add/remove via the sheet / edit mode.
+            await vm.loadFavoritePlayers(ids: favoritesStore.playerIds)
         }
         .onDisappear { vm.stopAutoRefresh() }
     }
@@ -105,6 +119,25 @@ struct HomeView: View {
                     games:    vm.recentAndUpcoming,
                     favorite: entry,
                     onTap:    { game in navigationPath.append(game) },
+                )
+
+                TeamLeadersSection(
+                    leaders:     vm.teamLeaders,
+                    isLoading:   vm.isLoadingLeaders,
+                    onTapPlayer: { player in
+                        navigationPath.append(player)
+                    },
+                )
+
+                FavoritePlayersSection(
+                    favorites:    vm.favoritePlayers,
+                    isLoading:    vm.isLoadingFavorites,
+                    isEditing:    $isEditingFavorites,
+                    onAdd:        { showingAddPlayer = true },
+                    onRemove:     { id in favoritesStore.remove(id) },
+                    onTapPlayer:  { player in
+                        navigationPath.append(player)
+                    },
                 )
             }
             // Larger top inset now that the nav title is gone — gives
@@ -578,6 +611,367 @@ enum HomeGameUtils {
         f.dateFormat = "EEE MMM d"
         return f
     }()
+}
+
+// MARK: - Team Leaders Section
+
+private struct TeamLeadersSection: View {
+    let leaders: TeamLeaders?
+    let isLoading: Bool
+    let onTapPlayer: (PlayerSearchResult) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            sectionHeader(title: "Team Leaders", trailing: nil)
+
+            leaderRow(title: "Batting", cards: leaders?.batting)
+            leaderRow(title: "Pitching", cards: leaders?.pitching)
+        }
+    }
+
+    @ViewBuilder
+    private func leaderRow(title: String, cards: [LeaderCard]?) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title.uppercased())
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 16)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    if let cards, !cards.isEmpty {
+                        ForEach(cards) { card in
+                            Button { onTapPlayer(card.player) } label: {
+                                LeaderTile(card: card)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    } else if isLoading {
+                        ForEach(0..<4, id: \.self) { _ in LeaderTile.placeholder }
+                    } else {
+                        Text("No leaders yet")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 6)
+                    }
+                }
+                .padding(.horizontal, 16)
+            }
+        }
+    }
+}
+
+private struct LeaderTile: View {
+    let card: LeaderCard
+
+    var body: some View {
+        VStack(spacing: 6) {
+            headshot(url: card.player.largeHeadshotURL)
+            Text(card.stat.uppercased())
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(.secondary)
+            Text(LeaderTile.formatValue(card.value, stat: card.stat))
+                .font(.title3.weight(.bold))
+                .foregroundStyle(.primary)
+                .monospacedDigit()
+            Text(LeaderTile.lastName(from: card.player.name))
+                .font(.caption.weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+        .padding(.vertical, 10)
+        .padding(.horizontal, 8)
+        .frame(width: 104, height: 148)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(.ultraThinMaterial)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(.quaternary, lineWidth: 0.5)
+        )
+    }
+
+    /// Skeleton tile while leader fetches are in flight.
+    static var placeholder: some View {
+        VStack(spacing: 6) {
+            Circle().fill(Color(.systemGray5)).frame(width: 44, height: 44)
+            RoundedRectangle(cornerRadius: 4).fill(Color(.systemGray5)).frame(width: 28, height: 8)
+            RoundedRectangle(cornerRadius: 4).fill(Color(.systemGray5)).frame(width: 56, height: 14)
+            RoundedRectangle(cornerRadius: 4).fill(Color(.systemGray5)).frame(width: 64, height: 10)
+        }
+        .padding(.vertical, 10)
+        .padding(.horizontal, 8)
+        .frame(width: 104, height: 148)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(.ultraThinMaterial)
+        )
+    }
+
+    private func headshot(url: URL?) -> some View {
+        AsyncImage(url: url) { phase in
+            switch phase {
+            case .success(let image): image.resizable().scaledToFill()
+            default:
+                Image(systemName: "person.crop.circle.fill")
+                    .resizable().scaledToFit()
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .frame(width: 44, height: 44)
+        .background(Circle().fill(.ultraThinMaterial))
+        .clipShape(Circle())
+        .overlay(Circle().strokeBorder(.quaternary, lineWidth: 0.5))
+    }
+
+    /// Same precision rules the Leaderboards tab uses — keeps the
+    /// Home strip aligned with the canonical formatting elsewhere
+    /// in the app. Unknown stat → 1-decimal as a safe default.
+    static func formatValue(_ v: Double?, stat: String) -> String {
+        guard let v else { return "—" }
+        switch stat {
+        case "AVG", "OBP", "SLG", "OPS":
+            return String(format: "%.3f", v)
+        case "ERA", "WHIP", "FIP":
+            return String(format: "%.2f", v)
+        case "HR", "RBI", "SO", "W", "L", "SV", "H", "BB", "R", "SB":
+            return String(Int(v.rounded()))
+        default:
+            return String(format: "%.1f", v)
+        }
+    }
+
+    static func lastName(from full: String) -> String {
+        lastNameWithSuffix(full)
+    }
+}
+
+// MARK: - Favorite Players Section
+
+private struct FavoritePlayersSection: View {
+    let favorites: [FavoritePlayerDisplay]
+    let isLoading: Bool
+    @Binding var isEditing: Bool
+    let onAdd: () -> Void
+    let onRemove: (Int) -> Void
+    let onTapPlayer: (PlayerSearchResult) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            sectionHeader(
+                title: "My Players",
+                trailing: trailingControl,
+            )
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    if isLoading && favorites.isEmpty {
+                        ForEach(0..<3, id: \.self) { _ in
+                            FavoritePlayerTile.placeholder
+                        }
+                    }
+                    ForEach(favorites) { fav in
+                        favoriteCard(fav)
+                    }
+                    AddFavoriteTile(onAdd: onAdd)
+                }
+                .padding(.horizontal, 16)
+            }
+        }
+    }
+
+    private var trailingControl: AnyView {
+        // Hide Edit when nothing's added yet — no point offering a
+        // mode that has nothing to act on.
+        guard !favorites.isEmpty else { return AnyView(EmptyView()) }
+        return AnyView(
+            Button(isEditing ? "Done" : "Edit") {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    isEditing.toggle()
+                }
+            }
+            .font(.subheadline.weight(.semibold))
+        )
+    }
+
+    /// Edit mode disables the navigation push so the tap is owned by
+    /// the minus badge. Regular mode wraps the tile in a button that
+    /// pushes the profile.
+    @ViewBuilder
+    private func favoriteCard(_ fav: FavoritePlayerDisplay) -> some View {
+        if isEditing {
+            FavoritePlayerTile(fav: fav, showRemoveBadge: true, onRemove: {
+                onRemove(fav.player.player_id)
+            })
+        } else {
+            Button { onTapPlayer(fav.player) } label: {
+                FavoritePlayerTile(fav: fav, showRemoveBadge: false, onRemove: {})
+            }
+            .buttonStyle(.plain)
+        }
+    }
+}
+
+private struct FavoritePlayerTile: View {
+    let fav: FavoritePlayerDisplay
+    let showRemoveBadge: Bool
+    let onRemove: () -> Void
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            VStack(spacing: 6) {
+                headshot
+                Text(displayName)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                Text(positionLine)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Text(fav.statLine)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                    .padding(.top, 2)
+            }
+            .padding(.vertical, 10)
+            .padding(.horizontal, 8)
+            .frame(width: 132, height: 156)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(.ultraThinMaterial)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(.quaternary, lineWidth: 0.5)
+            )
+
+            if showRemoveBadge {
+                Button(action: onRemove) {
+                    Image(systemName: "minus.circle.fill")
+                        .symbolRenderingMode(.palette)
+                        .foregroundStyle(.white, Color.red)
+                        .font(.system(size: 22))
+                        .padding(4)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .offset(x: -6, y: -6)
+            }
+        }
+    }
+
+    static var placeholder: some View {
+        VStack(spacing: 6) {
+            Circle().fill(Color(.systemGray5)).frame(width: 50, height: 50)
+            RoundedRectangle(cornerRadius: 4).fill(Color(.systemGray5)).frame(width: 80, height: 12)
+            RoundedRectangle(cornerRadius: 4).fill(Color(.systemGray5)).frame(width: 56, height: 10)
+            RoundedRectangle(cornerRadius: 4).fill(Color(.systemGray5)).frame(width: 100, height: 10)
+        }
+        .padding(.vertical, 10)
+        .padding(.horizontal, 8)
+        .frame(width: 132, height: 156)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(.ultraThinMaterial)
+        )
+    }
+
+    private var headshot: some View {
+        AsyncImage(url: fav.player.largeHeadshotURL) { phase in
+            switch phase {
+            case .success(let image): image.resizable().scaledToFill()
+            default:
+                Image(systemName: "person.crop.circle.fill")
+                    .resizable().scaledToFit()
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .frame(width: 50, height: 50)
+        .background(Circle().fill(.ultraThinMaterial))
+        .clipShape(Circle())
+        .overlay(Circle().strokeBorder(.quaternary, lineWidth: 0.5))
+    }
+
+    /// "S. Ohtani" / "M. Trout". Hangs the last-name suffix
+    /// (Jr./Sr./II/…) onto the trailing part via the existing
+    /// helper used elsewhere in the app.
+    private var displayName: String {
+        let parts = fav.player.name.split(separator: " ", maxSplits: 1)
+        guard let first = parts.first, parts.count > 1 else {
+            return fav.player.name
+        }
+        let last = lastNameWithSuffix(fav.player.name)
+        return "\(first.prefix(1)). \(last)"
+    }
+
+    /// "RF · NYY" / "RF" / "NYY" / "—" depending on what's known.
+    /// Falls back gracefully so the line never reads "nil · nil".
+    private var positionLine: String {
+        let pos = fav.player.position.flatMap { $0.isEmpty ? nil : $0 }
+        let team = fav.player.teamCode.flatMap { $0.isEmpty ? nil : teamAbbreviation(for: $0) }
+        switch (pos, team) {
+        case let (p?, t?): return "\(p) · \(t)"
+        case let (p?, nil): return p
+        case let (nil, t?): return t
+        default: return "—"
+        }
+    }
+}
+
+private struct AddFavoriteTile: View {
+    let onAdd: () -> Void
+
+    var body: some View {
+        Button(action: onAdd) {
+            VStack(spacing: 8) {
+                Image(systemName: "plus.circle.fill")
+                    .font(.system(size: 36))
+                    .foregroundStyle(Color.accentColor)
+                Text("Add Player")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.primary)
+            }
+            .frame(width: 132, height: 156)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(.ultraThinMaterial)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(
+                        Color.accentColor.opacity(0.35),
+                        style: StrokeStyle(lineWidth: 1, dash: [4, 4]),
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Shared section header
+
+/// Used by Team Leaders and My Players. Centralized so both sections
+/// stay visually identical when the spec changes (font tweak,
+/// trailing-button placement, etc.).
+@ViewBuilder
+private func sectionHeader(
+    title: String,
+    trailing: AnyView?,
+) -> some View {
+    HStack {
+        Text(title)
+            .font(.title3.weight(.bold))
+        Spacer()
+        trailing
+    }
+    .padding(.horizontal, 16)
+    .padding(.top, 4)
+    Divider()
+        .opacity(0.35)
+        .padding(.horizontal, 16)
 }
 
 #Preview {

@@ -32,11 +32,25 @@ final class HomeViewModel: ObservableObject {
     @Published var teamRecords: [Int: TeamRecord] = [:]
     @Published var teamStandings: [Int: TeamStandingInfo] = [:]
 
+    /// Team-leader cards for the four batting + four pitching stats.
+    /// nil before the first fetch; an empty inner array means the
+    /// fetch landed but the leaderboard returned no qualifying rows.
+    @Published var teamLeaders: TeamLeaders?
+    @Published var isLoadingLeaders: Bool = false
+
+    /// Hydrated bio + summary stat line for each id in
+    /// `FavoritePlayersStore.shared.playerIds`, preserving the
+    /// store's order. Refetched whenever the id list changes.
+    @Published var favoritePlayers: [FavoritePlayerDisplay] = []
+    @Published var isLoadingFavorites: Bool = false
+
     private let bdl: BallDontLieClient
+    private let api: APIClient
     private var refreshTask: Task<Void, Never>?
 
-    init(bdl: BallDontLieClient = .shared) {
+    init(bdl: BallDontLieClient = .shared, api: APIClient = .shared) {
         self.bdl = bdl
+        self.api = api
     }
 
     /// Full reload: ±5 days of team games + standings. Cheap on
@@ -183,4 +197,164 @@ final class HomeViewModel: ObservableObject {
         default: return nil
         }
     }
+
+    // MARK: - Team Leaders
+
+    /// Stats surfaced on the Home tab's leader strip. Order in the
+    /// arrays drives the on-screen order of the cards.
+    private static let battingLeaderStats:  [String] = ["AVG", "HR", "RBI", "OPS"]
+    private static let pitchingLeaderStats: [String] = ["ERA", "W", "SO", "WHIP"]
+
+    /// Fetch the top-1 row for each of the eight stat keys, scoped to
+    /// the favorite team. Each call is a single `/leaderboards` hit
+    /// with `team=<Lahman code>&limit=1`. Fans them out in parallel
+    /// via task group; preserves input order via index pairs.
+    func loadTeamLeaders(bdlTeamId: Int) async {
+        guard let lahmanCode = bdlToLahmanTeamId[bdlTeamId] else { return }
+        let year = Calendar.current.component(.year, from: Date())
+        isLoadingLeaders = true
+        async let batting  = Self.fetchLeaderRow(
+            stats: Self.battingLeaderStats, year: year,
+            playerType: "batter", team: lahmanCode, api: api,
+        )
+        async let pitching = Self.fetchLeaderRow(
+            stats: Self.pitchingLeaderStats, year: year,
+            playerType: "pitcher", team: lahmanCode, api: api,
+        )
+        let (b, p) = await (batting, pitching)
+        teamLeaders = TeamLeaders(batting: b, pitching: p)
+        isLoadingLeaders = false
+    }
+
+    nonisolated private static func fetchLeaderRow(
+        stats: [String], year: Int, playerType: String,
+        team: String, api: APIClient,
+    ) async -> [LeaderCard] {
+        await withTaskGroup(of: (Int, LeaderCard?).self) { group in
+            for (i, stat) in stats.enumerated() {
+                group.addTask {
+                    // `try? await` on `async throws -> LeaderboardResponse?`
+                    // yields a `LeaderboardResponse??`; flatten before
+                    // pulling out the first row.
+                    let outer = try? await api.getLeaderboard(
+                        stat: stat, year: year,
+                        playerType: playerType,
+                        team: team, limit: 1,
+                    )
+                    let inner: LeaderboardResponse? = outer ?? nil
+                    guard let top = inner?.leaders.first else { return (i, nil) }
+                    return (i, LeaderCard(
+                        stat:   stat,
+                        value:  top.value,
+                        player: top.player,
+                    ))
+                }
+            }
+            var pairs: [(Int, LeaderCard)] = []
+            for await (i, card) in group {
+                if let c = card { pairs.append((i, c)) }
+            }
+            return pairs.sorted { $0.0 < $1.0 }.map { $0.1 }
+        }
+    }
+
+    // MARK: - Favorite Players
+
+    /// Hydrate every id in `ids` in parallel. Each pid spawns two
+    /// fetches — bio + current-side stats — so the strip can render
+    /// name/team/position alongside a per-side stat summary. Order
+    /// is preserved via index pairs; missing pids (404 / network)
+    /// are silently dropped so one stale id doesn't blank the strip.
+    func loadFavoritePlayers(ids: [Int]) async {
+        guard !ids.isEmpty else {
+            favoritePlayers = []
+            return
+        }
+        isLoadingFavorites = true
+        let displays = await withTaskGroup(
+            of: (Int, FavoritePlayerDisplay?).self,
+        ) { group in
+            for (i, id) in ids.enumerated() {
+                group.addTask { [api] in
+                    guard let player = (try? await api.getPlayerByMlbId(id)) ?? nil
+                    else { return (i, nil) }
+                    let isPitcher = Self.deriveIsPitcher(player: player)
+                    let line = await Self.buildStatLine(
+                        player: player, isPitcher: isPitcher, api: api,
+                    )
+                    return (i, FavoritePlayerDisplay(
+                        player:    player,
+                        isPitcher: isPitcher,
+                        statLine:  line,
+                    ))
+                }
+            }
+            var pairs: [(Int, FavoritePlayerDisplay)] = []
+            for await (i, d) in group {
+                if let d { pairs.append((i, d)) }
+            }
+            return pairs.sorted { $0.0 < $1.0 }.map { $0.1 }
+        }
+        favoritePlayers = displays
+        isLoadingFavorites = false
+    }
+
+    /// Two-way players (Ohtani) — we route them through the pitcher
+    /// summary line. Most "two-way" entries are starters whose bio
+    /// position field is "P" anyway; for the edge case where the
+    /// bio explicitly carries `is_pitcher = true`, that flag wins.
+    nonisolated private static func deriveIsPitcher(player: PlayerSearchResult) -> Bool {
+        if let explicit = player.is_pitcher { return explicit }
+        switch (player.position ?? "").uppercased() {
+        case "P", "SP", "RP": return true
+        default: return false
+        }
+    }
+
+    nonisolated private static func buildStatLine(
+        player: PlayerSearchResult, isPitcher: Bool, api: APIClient,
+    ) async -> String {
+        if isPitcher {
+            let stats = (try? await api.getPitcherCurrentStats(
+                playerId: player.player_id,
+            )) ?? nil
+            let s = stats?.standard
+            let era = s?.ERA.map { String(format: "%.2f", $0) } ?? "—"
+            let w   = s?.W.map(String.init) ?? "—"
+            let so  = s?.SO.map(String.init) ?? "—"
+            return "ERA \(era) · W \(w) · SO \(so)"
+        } else {
+            let stats = (try? await api.getPlayerCurrentStats(
+                playerId: player.player_id,
+            )) ?? nil
+            let s = stats?.standard
+            let avg = s?.BA.map { String(format: "%.3f", $0) } ?? "—"
+            let hr  = s?.HR.map(String.init) ?? "—"
+            let rbi = s?.RBI.map(String.init) ?? "—"
+            return "AVG \(avg) · HR \(hr) · RBI \(rbi)"
+        }
+    }
+}
+
+// MARK: - Display types
+
+struct LeaderCard: Identifiable, Hashable {
+    let stat: String          // "AVG" / "HR" / "ERA" / "WHIP" / …
+    let value: Double?
+    let player: PlayerSearchResult
+    var id: String { "\(stat)-\(player.player_id)" }
+}
+
+struct TeamLeaders: Hashable {
+    let batting:  [LeaderCard]
+    let pitching: [LeaderCard]
+}
+
+struct FavoritePlayerDisplay: Identifiable, Hashable {
+    let player: PlayerSearchResult
+    let isPitcher: Bool
+    /// Pre-formatted "AVG .305 · HR 12 · RBI 32" or
+    /// "ERA 2.87 · W 5 · SO 64", rendered on the card under the name.
+    let statLine: String
+    var id: Int { player.player_id }
 }
