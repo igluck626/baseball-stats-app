@@ -445,6 +445,33 @@ def _run_nightly_update() -> None:
             f"batters_failed={gl['batters_failed']} "
             f"pitchers_failed={gl['pitchers_failed']}"
         )
+
+        # Auto-dedup. The gamelogs phase often surfaces cross-format
+        # duplicates — same logical game written once under an MLB
+        # Stats API id and once under a BDL id. The dedup helper's
+        # `min_game_id < 1_000_000` gate is what spares legitimate
+        # BDL-only doubleheaders. Running this nightly removes the
+        # need for manual `/admin/dedupe-gamelogs` after most ingests.
+        log.info("[nightly] starting dedup phase")
+        try:
+            bat_removed = connection.dedupe_gamelog_duplicates(
+                "batting_gamelogs",
+                connection._BATTING_GAMELOGS_QUALITY_COLUMNS,
+            )
+            pit_removed = connection.dedupe_gamelog_duplicates(
+                "pitching_gamelogs",
+                connection._PITCHING_GAMELOGS_QUALITY_COLUMNS,
+            )
+            log.info(
+                f"[nightly] dedup phase done: "
+                f"batting_removed={bat_removed} "
+                f"pitching_removed={pit_removed}"
+            )
+        except Exception as exc:
+            # Non-fatal — the nightly's stat-write phases already
+            # committed, so a dedup failure is recoverable on the
+            # next run / via the manual endpoint.
+            log.error(f"[nightly] dedup phase FAILED (non-fatal): {exc}")
     except Exception as exc:
         # Log the full traceback so silent thread crashes are visible in
         # Railway's log stream. The previous handler stored only str(exc),
@@ -1102,9 +1129,33 @@ def admin_backfill_bdl_gamelogs(
     if not connection.db_available():
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
     try:
-        return data_service.backfill_bdl_gamelogs(start_date, end_date)
+        result = data_service.backfill_bdl_gamelogs(start_date, end_date)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
+    # Auto-dedup after a manual backfill, same rationale as the
+    # nightly's dedup phase: a re-ingest on a date range that
+    # already had MLB-Stats-API rows leaves cross-format duplicates
+    # behind, and the operator shouldn't need to chase them with
+    # a follow-up `/admin/dedupe-gamelogs` call. Doubleheaders
+    # (two BDL ids on the same date) are preserved by the helper's
+    # `min_game_id < 1_000_000` gate.
+    try:
+        bat_removed = connection.dedupe_gamelog_duplicates(
+            "batting_gamelogs",
+            connection._BATTING_GAMELOGS_QUALITY_COLUMNS,
+        )
+        pit_removed = connection.dedupe_gamelog_duplicates(
+            "pitching_gamelogs",
+            connection._PITCHING_GAMELOGS_QUALITY_COLUMNS,
+        )
+        result["batting_dedup_removed"]  = bat_removed
+        result["pitching_dedup_removed"] = pit_removed
+    except Exception as exc:
+        # Non-fatal — the backfill rows already committed. Log and
+        # surface so the caller knows the dedup tail didn't run.
+        log.error(f"backfill auto-dedup FAILED (non-fatal): {exc}")
+        result["dedup_error"] = str(exc)
+    return result
 
 
 @app.get("/admin/find-missing-doubleheaders")
