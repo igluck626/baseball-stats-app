@@ -973,13 +973,14 @@ private func placeholderBatterBoxPlayer(
         atBats:               nil,
         runs:                 nil,
         hits:                 nil,
-        doubles:              nil,
-        triples:              nil,
-        // Season HR pulled from BDL's `/season_stats` row so the
-        // final-game-card HR summary line reads "Judge (12)"
-        // instead of "Judge (0)". The field-aware merge below
-        // preserves this value when the per-game stats row lands
-        // (BDL doesn't ship season HR on the per-game payload).
+        // Season HR / 2B / 3B pulled from BDL's `/season_stats` row
+        // so the box-score notable-plays section and the score-card
+        // HR summary read "(N)" with the actual season total instead
+        // of "(0)". The field-aware merge below preserves these
+        // values when the per-game stats row lands (BDL doesn't ship
+        // season counting stats on the per-game payload).
+        doubles:              seasonStat?.batting2B,
+        triples:              seasonStat?.batting3B,
         homeRuns:             seasonStat?.battingHr,
         rbi:                  nil,
         baseOnBalls:          nil,

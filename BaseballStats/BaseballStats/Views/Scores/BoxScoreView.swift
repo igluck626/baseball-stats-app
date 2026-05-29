@@ -15,17 +15,6 @@
 import Combine
 import SwiftUI
 
-/// Season counting-stat totals for one player, keyed off BDL id
-/// in `BoxScoreViewModel.seasonTotals`. Populated lazily after
-/// the box-score load for the small set of batters who had a
-/// notable play (HR / 2B / 3B) in this game — the notable lines
-/// render "(N)" off these numbers.
-struct PlayerSeasonTotals {
-    let hr:      Int
-    let doubles: Int
-    let triples: Int
-}
-
 @MainActor
 final class BoxScoreViewModel: ObservableObject {
     let game: Game
@@ -37,12 +26,6 @@ final class BoxScoreViewModel: ObservableObject {
     /// view falls back to "—" placeholders in the live situation
     /// card until Stage C lands.
     @Published var live: LiveFeedResponse?
-    /// Season totals for batters who had a HR / 2B / 3B in this
-    /// game. Keyed by BDL player id (the id the box score uses
-    /// for `BoxPlayer.person.id`). Populated by `loadNotableSeasonTotals`
-    /// after `loadBoxScore` lands, so the notable-plays section
-    /// renders "(N)" instead of just names.
-    @Published var seasonTotals: [Int: PlayerSeasonTotals] = [:]
     @Published var isLoading = false
     @Published var error: String?
 
@@ -74,67 +57,6 @@ final class BoxScoreViewModel: ObservableObject {
             await loadBoxScore()
         }
         isLoading = false
-        // Kick off the season-totals fetch in the background once
-        // the box score has landed. Doesn't block the main view —
-        // notable lines render names-only until totals arrive,
-        // then re-render with the parenthetical.
-        await loadNotableSeasonTotals()
-    }
-
-    /// For each batter with a HR / 2B / 3B in this game, look up
-    /// their season totals via the two-hop backend bridge:
-    /// BDL id → MLBAM id (via `resolveBDLPlayerId`) → season stats
-    /// (via `getPlayerCurrentStats`). Runs all fetches in parallel.
-    /// Silent on per-player failures — the notable line just shows
-    /// names-only for unresolved players.
-    private func loadNotableSeasonTotals() async {
-        guard let bs = boxScore else { return }
-        // Collect BDL ids for batters with a notable play across
-        // both teams. De-duped via Set.
-        var ids: Set<Int> = []
-        for side in [bs.teams.away, bs.teams.home] {
-            for (_, bp) in side.players {
-                let b = bp.stats?.batting
-                if (b?.homeRuns ?? 0) > 0
-                    || (b?.doubles ?? 0) > 0
-                    || (b?.triples ?? 0) > 0 {
-                    ids.insert(bp.person.id)
-                }
-            }
-        }
-        guard !ids.isEmpty else { return }
-
-        let fetched: [(Int, PlayerSeasonTotals)] = await withTaskGroup(
-            of: (Int, PlayerSeasonTotals?).self
-        ) { group in
-            for bdlId in ids {
-                group.addTask { [bdl, api] in
-                    do {
-                        // Two hops: BDL → MLBAM → backend stats.
-                        let player = try await bdl.resolveBDLPlayerId(bdlId)
-                        let stats  = try await api.getPlayerCurrentStats(
-                            playerId: player.player_id,
-                        )
-                        guard let s = stats?.standard else { return (bdlId, nil) }
-                        return (bdlId, PlayerSeasonTotals(
-                            hr:      s.HR      ?? 0,
-                            doubles: s.doubles ?? 0,
-                            triples: s.triples ?? 0,
-                        ))
-                    } catch {
-                        return (bdlId, nil)
-                    }
-                }
-            }
-            var out: [(Int, PlayerSeasonTotals)] = []
-            for await (bdlId, totals) in group {
-                if let t = totals { out.append((bdlId, t)) }
-            }
-            return out
-        }
-        for (bdlId, totals) in fetched {
-            self.seasonTotals[bdlId] = totals
-        }
     }
 
     private func loadLiveState() async {
@@ -884,7 +806,7 @@ struct BoxScoreView: View {
                     notableLine(label: "3B", players: triples, totalKey: \.triples)
                 }
                 if !homeRuns.isEmpty {
-                    notableLine(label: "HR", players: homeRuns, totalKey: \.hr)
+                    notableLine(label: "HR", players: homeRuns, totalKey: \.homeRuns)
                 }
             }
             .padding(.top, 4)
@@ -894,18 +816,19 @@ struct BoxScoreView: View {
     private func notableLine(
         label: String,
         players: [BoxPlayer],
-        totalKey: KeyPath<PlayerSeasonTotals, Int>,
+        totalKey: KeyPath<BoxBatting, Int?>,
     ) -> some View {
-        // `vm.seasonTotals[bdl_id]` is the authoritative season
-        // total — already post-game when the box score is open
-        // (BDL ships the cumulative number on the per-game stats
-        // payload our backend feeds off). Display it directly;
-        // no addition needed. When the lookup misses (unresolved
-        // player, fetch still in flight), the parenthetical is
-        // omitted and the line shows just the name.
+        // BDL's `/season_stats` ships the post-game cumulative total
+        // and we seeded `seasonStats.batting.{homeRuns,doubles,triples}`
+        // off it via the lineup-placeholder. Reading directly off the
+        // BoxPlayer avoids the staleness of the secondary backend
+        // fetch and keeps the box-score and final-game-card numbers
+        // consistent. nil → omit the parenthetical (placeholder
+        // skipped for pinch-hitters / substitutes who aren't in the
+        // starting lineup).
         let pieces: [String] = players.map { bp in
             let last = lastName(bp.person.fullName)
-            guard let total = vm.seasonTotals[bp.person.id]?[keyPath: totalKey] else {
+            guard let total = bp.seasonStats?.batting?[keyPath: totalKey] else {
                 return last
             }
             return "\(last) (\(total))"

@@ -253,8 +253,13 @@ struct BDLSeasonStat: Codable, Hashable {
     /// Season HR / doubles / triples — used to populate the
     /// placeholder batter's `seasonStats.batting` counts so the
     /// final-game-card HR / 2B / 3B summary renders "(N)" with the
-    /// actual season total instead of "(0)".
+    /// actual season total instead of "(0)". `batting2B` / `batting3B`
+    /// rely on `convertFromSnakeCase` mapping `batting_2b` /
+    /// `batting_3b` → these Swift names (`"2b".capitalized == "2B"`,
+    /// verified empirically).
     let battingHr:  Int?
+    let batting2B:  Int?
+    let batting3B:  Int?
 
     let pitchingEra: Double?
     let pitchingW:   Int?
