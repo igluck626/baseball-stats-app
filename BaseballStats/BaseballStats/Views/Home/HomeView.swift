@@ -31,8 +31,11 @@ struct HomeView: View {
                 backgroundGradient
                 content
             }
-            .navigationTitle("Home")
-            .navigationBarTitleDisplayMode(.large)
+            // No nav title — the hero card is the visual anchor for
+            // this tab. Inline display mode keeps the bar collapsed so
+            // the toolbar slot stays available for future controls
+            // without occupying vertical space.
+            .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: Game.self) { game in
                 BoxScoreView(
                     game:           game,
@@ -104,7 +107,11 @@ struct HomeView: View {
                     onTap:    { game in navigationPath.append(game) },
                 )
             }
-            .padding(.vertical, 12)
+            // Larger top inset now that the nav title is gone — gives
+            // the hero card breathing room from the status bar's
+            // safe-area edge instead of sitting flush against it.
+            .padding(.top, 20)
+            .padding(.bottom, 12)
         }
         .refreshable {
             if let bdlId = store.bdlTeamId {
