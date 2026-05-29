@@ -459,51 +459,55 @@ struct PlaysView: View {
         }
     }
 
-    /// Walk the play stream once tracking the running away/home
-    /// score. When a scoring play is hit, find the side whose
-    /// score subsequently advances — BDL frequently lands the
-    /// score increment several plays AFTER the scoring play
-    /// itself (the play with `scoringPlay == true` still carries
-    /// the pre-play score). The 5-play look-ahead window catches
-    /// the typical delay; if even that doesn't surface a delta we
-    /// fall back to comparing against the running pre-play score.
+    /// Two-pass scorer attribution.
+    ///
+    /// Pass 1 walks the entire play stream and records the index
+    /// of every play where homeScore or awayScore changed vs the
+    /// previous play. That gives a timeline of *score-change*
+    /// events, decoupled from BDL's `scoringPlay` flag.
+    ///
+    /// Pass 2 walks the plays flagged `scoringPlay`. For each, we
+    /// find the first score-change event at-or-after the scoring
+    /// play's index and use that as the post-play score. Whichever
+    /// side's score advanced vs the previous resolved score is
+    /// the scorer. This handles BDL's habit of landing the
+    /// score-update several plays AFTER the scoringPlay marker —
+    /// the 5-play look-ahead missed those.
     private func scoringRowsWithDelta() -> [ScoringRow] {
+        guard !plays.isEmpty else { return [] }
+
+        // Pass 1: timeline of score-change events.
+        var scoreChanges: [(index: Int, home: Int, away: Int)] = []
+        var lastHome = 0
+        var lastAway = 0
+        for (i, play) in plays.enumerated() {
+            if play.homeScore != lastHome || play.awayScore != lastAway {
+                scoreChanges.append((i, play.homeScore, play.awayScore))
+                lastHome = play.homeScore
+                lastAway = play.awayScore
+            }
+        }
+
+        // Pass 2: match each scoring play to the next score change.
         var rows: [ScoringRow] = []
         var prevHome = 0
         var prevAway = 0
-        for i in plays.indices {
-            let p = plays[i]
-            if p.scoringPlay {
-                var scoredHome = false
-                var scoredAway = false
-                var foundDelta = false
-                for j in (i + 1)..<min(i + 6, plays.count) {
-                    if plays[j].homeScore > p.homeScore {
-                        scoredHome = true
-                        foundDelta = true
-                        break
-                    }
-                    if plays[j].awayScore > p.awayScore {
-                        scoredAway = true
-                        foundDelta = true
-                        break
-                    }
-                }
-                if !foundDelta {
-                    scoredHome = p.homeScore > prevHome
-                        || (i + 1 < plays.count && plays[i + 1].homeScore > prevHome)
-                    scoredAway = p.awayScore > prevAway
-                        || (i + 1 < plays.count && plays[i + 1].awayScore > prevAway)
-                }
-                rows.append(ScoringRow(
-                    id:         p.order,
-                    play:       p,
-                    scoredHome: scoredHome,
-                    scoredAway: scoredAway,
-                ))
+        for (idx, play) in plays.enumerated() where play.scoringPlay {
+            let nextChange = scoreChanges.first { $0.index >= idx }
+            let resolvedHome = nextChange?.home ?? prevHome
+            let resolvedAway = nextChange?.away ?? prevAway
+            let scoredHome = resolvedHome > prevHome
+            let scoredAway = resolvedAway > prevAway
+            rows.append(ScoringRow(
+                id:         play.order,
+                play:       play,
+                scoredHome: scoredHome,
+                scoredAway: scoredAway,
+            ))
+            if let change = nextChange {
+                prevHome = change.home
+                prevAway = change.away
             }
-            prevHome = p.homeScore
-            prevAway = p.awayScore
         }
         return rows
     }
