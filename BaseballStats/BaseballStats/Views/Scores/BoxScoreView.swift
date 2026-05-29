@@ -878,28 +878,13 @@ struct BoxScoreView: View {
                 // alone. Once `vm.seasonTotals` updates with a
                 // hit, the SwiftUI re-render adds "(N)".
                 if !doubles.isEmpty {
-                    notableLine(
-                        label:    "2B",
-                        players:  doubles,
-                        totalKey: \.doubles,
-                        gameKey:  \.doubles,
-                    )
+                    notableLine(label: "2B", players: doubles, totalKey: \.doubles)
                 }
                 if !triples.isEmpty {
-                    notableLine(
-                        label:    "3B",
-                        players:  triples,
-                        totalKey: \.triples,
-                        gameKey:  \.triples,
-                    )
+                    notableLine(label: "3B", players: triples, totalKey: \.triples)
                 }
                 if !homeRuns.isEmpty {
-                    notableLine(
-                        label:    "HR",
-                        players:  homeRuns,
-                        totalKey: \.hr,
-                        gameKey:  \.homeRuns,
-                    )
+                    notableLine(label: "HR", players: homeRuns, totalKey: \.hr)
                 }
             }
             .padding(.top, 4)
@@ -910,24 +895,20 @@ struct BoxScoreView: View {
         label: String,
         players: [BoxPlayer],
         totalKey: KeyPath<PlayerSeasonTotals, Int>,
-        gameKey:  KeyPath<BoxBatting,         Int?>,
     ) -> some View {
-        // `vm.seasonTotals[bdl_id]` holds the PRE-game season total
-        // (snapshot from our backend, taken at the start of the
-        // box-score load). Today's game count is on `bp.stats.batting`.
-        // Display = pre-game + today, so a player who hit his 5th HR
-        // today shows "(5)" rather than the pre-game "(4)".
-        // When `today > 1` (e.g. a 2-HR game) we surface the per-game
-        // count inline: "Ohtani 2 (14)" rather than "Ohtani (14)" so
-        // a multi-event game stays visible at a glance.
+        // `vm.seasonTotals[bdl_id]` is the authoritative season
+        // total — already post-game when the box score is open
+        // (BDL ships the cumulative number on the per-game stats
+        // payload our backend feeds off). Display it directly;
+        // no addition needed. When the lookup misses (unresolved
+        // player, fetch still in flight), the parenthetical is
+        // omitted and the line shows just the name.
         let pieces: [String] = players.map { bp in
             let last = lastName(bp.person.fullName)
-            let today = bp.stats?.batting?[keyPath: gameKey] ?? 0
-            let prefix = today > 1 ? "\(last) \(today)" : last
-            guard let preGame = vm.seasonTotals[bp.person.id]?[keyPath: totalKey] else {
-                return prefix
+            guard let total = vm.seasonTotals[bp.person.id]?[keyPath: totalKey] else {
+                return last
             }
-            return "\(prefix) (\(preGame + today))"
+            return "\(last) (\(total))"
         }
         return (Text("\(label): ").font(.caption2.weight(.bold))
                 + Text(pieces.joined(separator: ", ")).font(.caption2))
