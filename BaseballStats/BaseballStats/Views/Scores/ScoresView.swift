@@ -1052,9 +1052,15 @@ private struct FinalGameCard: View {
             for id in team.batters {
                 guard let p = team.players["ID\(id)"] else { continue }
                 guard let hr = p.stats?.batting?.homeRuns, hr > 0 else { continue }
-                let season = p.seasonStats?.batting?.homeRuns ?? 0
+                // BDL ships season HR pre-game (the placeholder pulled
+                // it from `/season_stats`, taken before today's slate).
+                // Add this-game HR so the parenthetical reads post-game,
+                // matching `notableLine` in BoxScoreView.
+                let preGame = p.seasonStats?.batting?.homeRuns ?? 0
+                let season = preGame + hr
                 let last = lastNameWithSuffix(p.person.fullName)
-                out.append("\(last) (\(season))")
+                let prefix = hr > 1 ? "\(last) \(hr)" : last
+                out.append("\(prefix) (\(season))")
             }
         }
         return out
