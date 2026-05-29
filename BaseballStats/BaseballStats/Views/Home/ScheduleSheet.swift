@@ -110,6 +110,7 @@ struct ScheduleSheet: View {
                                 ScheduleRow(
                                     game:          game,
                                     favoriteBDLId: favorite.bdlTeamId,
+                                    teamColor:     teamColor,
                                     onTap:         { path.append(game) },
                                 )
                                 .id(game.id)
@@ -182,6 +183,7 @@ struct ScheduleSheet: View {
 private struct ScheduleRow: View {
     let game: Game
     let favoriteBDLId: Int
+    let teamColor: Color
     let onTap: () -> Void
 
     private var opponent: GameTeam {
@@ -216,16 +218,39 @@ private struct ScheduleRow: View {
         .buttonStyle(.plain)
     }
 
+    /// True iff this game falls on today's ET calendar date. MLB
+    /// schedules everything off America/New_York, so an ET date
+    /// comparison is what callers expect even on a PT device — a
+    /// 10pm PT game (1am ET next day) reads as "tomorrow" the
+    /// moment ET rolls over, the same way the existing
+    /// `BallDontLieClient.easternDateString(for:)` filter buckets
+    /// games for the rest of the app.
+    private var isTodayET: Bool {
+        guard let start = game.startDate else { return false }
+        return Self.etDateFormatter.string(from: start)
+            == Self.etDateFormatter.string(from: Date())
+    }
+
+    @ViewBuilder
     private var dateColumn: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(Self.weekdayFormatter.string(from: game.startDate ?? Date()))
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-            Text(Self.dateFormatter.string(from: game.startDate ?? Date()))
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.primary)
+        if isTodayET {
+            // Single-line "Today" pill in team color — same column
+            // width as the weekday + date layout below, so rows align.
+            Text("Today")
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(teamColor)
+                .frame(width: 64, alignment: .leading)
+        } else {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(Self.weekdayFormatter.string(from: game.startDate ?? Date()))
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text(Self.dateFormatter.string(from: game.startDate ?? Date()))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+            }
+            .frame(width: 64, alignment: .leading)
         }
-        .frame(width: 64, alignment: .leading)
     }
 
     private var indicatorColumn: some View {
@@ -298,6 +323,19 @@ private struct ScheduleRow: View {
         let f = DateFormatter()
         f.timeZone = .current
         f.dateFormat = "MMM d"
+        return f
+    }()
+
+    /// ET-anchored `yyyy-MM-dd`. Used only for the "is today?"
+    /// check — comparing the game's start to `Date()` via the
+    /// same calendar pair keeps the verdict consistent with the
+    /// rest of the app's ET-based date filters.
+    private static let etDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.calendar = .init(identifier: .gregorian)
+        f.timeZone = TimeZone(identifier: "America/New_York") ?? .current
+        f.locale   = .init(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd"
         return f
     }()
 }
