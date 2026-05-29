@@ -18,10 +18,7 @@ struct SearchView: View {
                 backgroundGradient
                 content
             }
-            .navigationTitle("⚾ BaseballStats")
-            .navigationBarTitleDisplayMode(.large)
-            .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
+            .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: PlayerSearchResult.self) { player in
                 PlayerProfileView(player: player)
             }
@@ -32,6 +29,7 @@ struct SearchView: View {
             )
             .textInputAutocapitalization(.words)
             .autocorrectionDisabled()
+            .task { await viewModel.loadActiveStars() }
         }
     }
 
@@ -56,12 +54,19 @@ struct SearchView: View {
 
     @ViewBuilder
     private var content: some View {
+        let trimmed = viewModel.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         if viewModel.isLoading && viewModel.results.isEmpty {
             loadingState
         } else if let message = viewModel.errorMessage, viewModel.results.isEmpty {
             errorState(message)
+        } else if trimmed.count < 2 {
+            // Idle landing — no query (or below the 2-char floor that
+            // would trigger a fetch). Show the curated browse shelf
+            // instead of a blank "type something" placeholder.
+            browseLanding
         } else if viewModel.results.isEmpty {
-            emptyState
+            // Query is at-or-above the fetch floor but matched nothing.
+            ContentUnavailableView.search(text: trimmed)
         } else {
             resultsList
         }
@@ -86,20 +91,6 @@ struct SearchView: View {
         }
     }
 
-    @ViewBuilder
-    private var emptyState: some View {
-        let trimmed = viewModel.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.count < 2 {
-            ContentUnavailableView {
-                Label("Search players", systemImage: "magnifyingglass")
-            } description: {
-                Text("Type at least 2 characters to find a player.")
-            }
-        } else {
-            ContentUnavailableView.search(text: trimmed)
-        }
-    }
-
     private var resultsList: some View {
         List(viewModel.results) { player in
             // Hidden NavigationLink behind the row so we keep the row's
@@ -115,6 +106,172 @@ struct SearchView: View {
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
     }
+
+    // MARK: - Browse landing
+
+    @ViewBuilder
+    private var browseLanding: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                browseShelf(
+                    title: "Active Stars",
+                    players: viewModel.activeStars,
+                )
+            }
+            .padding(.top, 16)
+            .padding(.bottom, 24)
+        }
+        .scrollIndicators(.hidden)
+    }
+
+    private func browseShelf(
+        title: String,
+        players: [PlayerSearchResult],
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title)
+                .font(.title3.weight(.semibold))
+                .padding(.horizontal, 16)
+
+            if players.isEmpty {
+                // The fetch hasn't landed yet (or every id failed).
+                // Render a row of skeleton cards so the layout doesn't
+                // pop on first paint.
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        ForEach(0..<6, id: \.self) { _ in
+                            BrowseCard.placeholder
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                }
+                .disabled(true)
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        ForEach(players) { player in
+                            NavigationLink(value: player) {
+                                BrowseCard(player: player)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - BrowseCard
+
+/// Compact horizontally-scrollable card for the discover shelf.
+/// Glass background to match the row's headshot ring and the rest of
+/// the app's ultra-thin-material cards.
+private struct BrowseCard: View {
+    let player: PlayerSearchResult
+
+    var body: some View {
+        VStack(spacing: 8) {
+            headshot
+            Text(player.name)
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+                .multilineTextAlignment(.center)
+            Text(detailLine ?? " ")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .frame(width: 116)
+        .padding(.vertical, 12)
+        .padding(.horizontal, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(.ultraThinMaterial)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(.quaternary, lineWidth: 0.5)
+        )
+        .foregroundStyle(.primary)
+    }
+
+    /// Skeleton card — neutral material with a shimmering disc in
+    /// place of the headshot. Used while the parallel fetch is in
+    /// flight; the layout matches a real card so the swap is silent.
+    static var placeholder: some View {
+        VStack(spacing: 8) {
+            Circle()
+                .fill(Color(.systemGray5))
+                .frame(width: 64, height: 64)
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                .fill(Color(.systemGray5))
+                .frame(width: 80, height: 12)
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                .fill(Color(.systemGray5))
+                .frame(width: 56, height: 10)
+        }
+        .frame(width: 116)
+        .padding(.vertical, 12)
+        .padding(.horizontal, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(.ultraThinMaterial)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(.quaternary, lineWidth: 0.5)
+        )
+    }
+
+    private var headshot: some View {
+        AsyncImage(url: player.largeHeadshotURL) { phase in
+            switch phase {
+            case .success(let image):
+                image
+                    .resizable()
+                    .scaledToFill()
+            case .empty, .failure:
+                Image(systemName: "person.crop.circle.fill")
+                    .resizable()
+                    .scaledToFit()
+                    .foregroundStyle(.tertiary)
+            @unknown default:
+                Image(systemName: "person.crop.circle.fill")
+                    .resizable()
+                    .scaledToFit()
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .frame(width: 64, height: 64)
+        .background(Circle().fill(.ultraThinMaterial))
+        .clipShape(Circle())
+        .overlay(Circle().strokeBorder(.quaternary, lineWidth: 0.5))
+    }
+
+    /// "OF · NYY" / "RF" / "Team" — same precedence the row uses
+    /// (position first, then team code), just compacted for the
+    /// 116-pt card width.
+    private var detailLine: String? {
+        let pos = player.position?.browseNonEmpty
+        let team = player.teamCode?.browseNonEmpty
+        switch (pos, team) {
+        case let (p?, t?): return "\(p) · \(t)"
+        case let (p?, nil): return p
+        case let (nil, t?): return t
+        default: return nil
+        }
+    }
+}
+
+private extension String {
+    /// Returns nil when the string is empty; otherwise self. Prefixed
+    /// to avoid colliding with the row's private `nonEmpty` in the
+    /// neighboring file (Swift extensions don't conflict across
+    /// files but the duplicate name is confusing to readers).
+    var browseNonEmpty: String? { isEmpty ? nil : self }
 }
 
 #Preview {

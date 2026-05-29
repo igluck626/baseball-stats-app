@@ -17,6 +17,25 @@ final class SearchViewModel: ObservableObject {
     @Published var results: [PlayerSearchResult] = []
     @Published var isLoading: Bool = false
     @Published var errorMessage: String? = nil
+    /// Curated discover-shelf for the idle landing state. Order is
+    /// preserved across the parallel fetch via re-keying by MLBAM id.
+    @Published var activeStars: [PlayerSearchResult] = []
+
+    /// MLBAM ids the browse shelf renders, in display order. Hand-
+    /// curated so the shelf doesn't drift with stat changes — keeps
+    /// the landing screen stable across deploys.
+    private static let activeStarIds: [Int] = [
+        660271, // Shohei Ohtani
+        592450, // Aaron Judge
+        660670, // Ronald Acuña Jr.
+        665742, // Juan Soto
+        605141, // Mookie Betts
+        518692, // Freddie Freeman
+        545361, // Mike Trout
+        677951, // Bobby Witt Jr.
+        673357, // Julio Rodríguez
+        650333, // Luis Arraez
+    ]
 
     private let api: APIClient
     private var cancellables = Set<AnyCancellable>()
@@ -60,6 +79,35 @@ final class SearchViewModel: ObservableObject {
             results = []
             isLoading = false
         }
+    }
+
+    /// Fan out parallel `/players/by-mlb-id/{id}` fetches for the
+    /// curated active-star ids and publish them in the canonical
+    /// display order. No-op if already loaded so view-appear retries
+    /// don't churn the API. Silently skips any id whose fetch failed
+    /// — a missing bio shouldn't blank the whole shelf.
+    func loadActiveStars() async {
+        guard activeStars.isEmpty else { return }
+        let ids = Self.activeStarIds
+        let pairs: [(Int, PlayerSearchResult)] = await withTaskGroup(
+            of: (Int, PlayerSearchResult)?.self
+        ) { group in
+            for id in ids {
+                group.addTask { [api] in
+                    guard let p = try? await api.getPlayerByMlbId(id) else {
+                        return nil
+                    }
+                    return (id, p)
+                }
+            }
+            var hits: [(Int, PlayerSearchResult)] = []
+            for await maybe in group {
+                if let m = maybe { hits.append(m) }
+            }
+            return hits
+        }
+        let byId = Dictionary(uniqueKeysWithValues: pairs)
+        activeStars = ids.compactMap { byId[$0] }
     }
 
     private func handleQueryChange(_ text: String) {

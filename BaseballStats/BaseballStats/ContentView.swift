@@ -18,22 +18,10 @@ struct ContentView: View {
     var body: some View {
         TabView(selection: $navigation.selectedTab) {
             ScoresView()
-                .tabItem { 
-                    // `baseball.fill` ships in iOS 15+ and reads as a
-                    // baseball at tab-bar resolution. `figure.baseball`
-                    // (batter silhouette) is the documented fallback if
-                    // we ever drop back to a pre-iOS-15 deployment
-                    // target, but the project's deployment target is
-                    // well past that floor today.
+                .tabItem {
                     Label("Scores", systemImage: "baseball.diamond.bases")
                 }
                 .tag(AppNavigation.Tab.scores)
-
-            SearchView()
-                .tabItem {
-                    Label("Search", systemImage: "magnifyingglass")
-                }
-                .tag(AppNavigation.Tab.search)
 
             StandingsView()
                 .tabItem {
@@ -46,6 +34,15 @@ struct ContentView: View {
                     Label("Leaders", systemImage: "trophy")
                 }
                 .tag(AppNavigation.Tab.leaders)
+
+            // Search lives last — the browse sections give it a
+            // discover-style landing screen rather than the chrome-
+            // first layout it had when it opened the app.
+            SearchView()
+                .tabItem {
+                    Label("Search", systemImage: "magnifyingglass")
+                }
+                .tag(AppNavigation.Tab.search)
         }
         .toolbarBackground(.ultraThinMaterial, for: .tabBar)
         .toolbarBackground(.visible, for: .tabBar)
