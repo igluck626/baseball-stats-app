@@ -797,19 +797,34 @@ def _update_gamelogs(current_year: int) -> dict:
 # up those lagging rows without the cost of a full re-run.
 
 def run_catchup_update() -> dict:
-    """Lightweight refresh: refetch BDL season stats only for players
-    who appeared in yesterday's games AND whose DB `G` is still
-    behind BDL's `batting_gp` / `pitching_gp`.
+    """Lightweight refresh: refetch BDL season stats for every
+    bdl-mapped active player whose DB `G` is still behind BDL's
+    `batting_gp` / `pitching_gp`.
 
-    Sized for the late-day refresh window — typically 20-50 players
-    whose late West Coast games slipped past the morning nightly's
-    BDL data lag. Skips bref WAR / standings / game logs / roster
-    sync entirely; those can wait for tomorrow's full nightly.
+    Operates on the full active roster rather than a date slice.
+    The previous design pulled `seen_pids` from yesterday's BDL
+    `/stats` payload, which silently dropped players whose game
+    rows weren't returned (off-day for some teams, late-PT data
+    lag, BDL bucketing quirks). The new design queries
+    `players` / `pitchers` for `bdl_id IS NOT NULL AND
+    mlb_last_season IS NULL`, batch-fetches `/season_stats` for
+    every active bdl_id, and compares against the current
+    `player_seasons` / `pitcher_seasons` G column. No game-row
+    iteration; no dependence on which date BDL files a late game
+    under.
 
-    Returns counts: `{date, games_checked, players_seen, checked,
-    updated, already_current, no_bdl_mapping, failed}`. `checked`
-    counts unique (player_id, side) decisions made; `updated` is
-    how many of those triggered a write.
+    Same per-player decision the date-based path used: bump on
+    `bdl_g > db_g`, otherwise mark `already_current`. Two-way
+    players (Ohtani) are processed once per side and each side
+    is independently advanced.
+
+    Keeps the bref WAR refresh and doubleheader catch-up phases
+    intact; only the stats-update phase is rewritten.
+
+    Returns counts: `{active_batters_checked,
+    active_pitchers_checked, updated, already_current, no_bdl_data,
+    failed, war_updated, doubleheader_dates_checked,
+    doubleheader_dates_backfilled}`.
     """
     if not connection.db_available():
         return {"status": "no_db"}
@@ -821,25 +836,13 @@ def run_catchup_update() -> dict:
     import pandas as _pd
 
     current_year = data_service._current_year()
-    # ET-local yesterday — same calendar boundary the gamelog ingest
-    # uses (`_MLB_LOCAL_TZ`), so a 10pm PT game is counted under its
-    # ET date rather than the next UTC day's slate.
-    yesterday_et = (
-        datetime.datetime.now(data_service._MLB_LOCAL_TZ).date()
-        - datetime.timedelta(days=1)
-    )
-    date_str = yesterday_et.isoformat()
-    log.info(f"[catchup] yesterday ET = {date_str}")
-    log.info("[catchup-debug] checking yesterday ET date: %s", date_str)
 
     counts = {
-        "date":                            date_str,
-        "games_checked":                   0,
-        "players_seen":                    0,
-        "checked":                         0,
+        "active_batters_checked":          0,
+        "active_pitchers_checked":         0,
         "updated":                         0,
         "already_current":                 0,
-        "no_bdl_mapping":                  0,
+        "no_bdl_data":                     0,
         "failed":                          0,
         "war_updated":                     0,
         "doubleheader_dates_checked":      0,
@@ -962,124 +965,60 @@ def run_catchup_update() -> dict:
         f"{len(bwar_pitch_pids)} pitchers for {current_year}"
     )
 
-    # 1. Yesterday's final games.
-    games = data_service.fetch_bdl_games_for_date(date_str, finals_only=True)
-    counts["games_checked"] = len(games)
-    if not games:
-        log.info("[catchup] no final games yesterday — nothing to do")
-        _run_dh_catchup()
-        return {"status": "ok", **counts}
-    log.info(f"[catchup] {len(games)} final games to scan")
-
-    # 2. Collect every MLBAM player_id who appeared in those games.
-    #    Inline-paginate `/stats` rather than going through
-    #    `fetch_bdl_game_stats` (which silently drops unmapped BDL
-    #    ids before we can see them) so the diagnostic logs can
-    #    show raw row counts + every BDL id we observed.
-    with connection.get_session() as db:
-        bdl_to_mlbam = data_service._bdl_to_mlbam_map(db)
-    log.info(f"[catchup] bdl_to_mlbam map has {len(bdl_to_mlbam)} entries")
-    seen_bdl_ids: set[int] = set()
-    seen_pids: set[int] = set()
-    for g in games:
-        game_id = g.get("id")
-        if not game_id:
-            continue
-        stat_rows: list[dict] = []
-        cursor = None
-        while True:
-            params: dict = {"game_ids[]": [game_id], "per_page": 100}
-            if cursor is not None:
-                params["cursor"] = cursor
-            try:
-                data = data_service._bdl_get_json("stats", params)
-            except Exception as exc:
-                log.warning(f"[catchup] game {game_id} stats fetch failed: {exc}")
-                break
-            rows = data.get("data") or []
-            stat_rows.extend(rows)
-            cursor = (data.get("meta") or {}).get("next_cursor")
-            if not cursor:
-                break
-        log.info(f"[catchup] game {game_id} returned {len(stat_rows)} stat rows")
-        for row in stat_rows:
-            bdl_pid_raw = (row.get("player") or {}).get("id")
-            if bdl_pid_raw is None:
-                continue
-            try:
-                bdl_pid = int(bdl_pid_raw)
-            except (TypeError, ValueError):
-                continue
-            seen_bdl_ids.add(bdl_pid)
-            mlbam = bdl_to_mlbam.get(bdl_pid)
-            if mlbam is not None:
-                seen_pids.add(mlbam)
-        _time.sleep(data_service._BDL_RATE_LIMIT_SLEEP)
-    log.info(
-        f"[catchup] collected {len(seen_bdl_ids)} unique BDL player IDs "
-        f"across all games"
-    )
-    log.info(f"[catchup] {len(seen_pids)} MLBAM IDs resolved from BDL IDs")
-    log.info("[catchup-debug] Ohtani in seen_pids: %s", 660271 in seen_pids)
-    log.info("[catchup-debug] Ohtani bdl_id 208 in seen_bdl_ids: %s", 208 in seen_bdl_ids)
-    counts["players_seen"] = len(seen_pids)
-    if not seen_pids:
-        log.info("[catchup] no players resolved to MLBAM ids — nothing to reconcile")
-        _run_dh_catchup()
-        return {"status": "ok", **counts}
-    log.info(f"[catchup] {len(seen_pids)} unique players appeared")
-
-    # 3. Pre-load bdl_id maps + current DB G values for the seen set.
+    # 1. Pull every bdl-mapped active player from the DB. Active =
+    #    `mlb_last_season IS NULL` (same retired flag iOS reads).
+    #    Mapped   = `bdl_id IS NOT NULL` so the batch fetch below
+    #    actually has something to query against. Two-way players
+    #    (Ohtani) carry the same bdl_id on both bio tables; the
+    #    union de-dupes at fetch time.
     with connection.get_session() as db:
         bat_bio = (
             db.query(_Player.player_id, _Player.bdl_id, _Player.mlb_debut)
-              .filter(_Player.player_id.in_(seen_pids))
+              .filter(_Player.bdl_id.isnot(None))
+              .filter(_Player.mlb_last_season.is_(None))
               .all()
         )
         pit_bio = (
             db.query(_Pitcher.player_id, _Pitcher.bdl_id, _Pitcher.mlb_debut)
-              .filter(_Pitcher.player_id.in_(seen_pids))
+              .filter(_Pitcher.bdl_id.isnot(None))
+              .filter(_Pitcher.mlb_last_season.is_(None))
               .all()
         )
         bat_g_rows = (
             db.query(PlayerSeason.player_id, PlayerSeason.G)
-              .filter(PlayerSeason.player_id.in_(seen_pids))
               .filter(PlayerSeason.year == current_year)
               .all()
         )
         pit_g_rows = (
             db.query(PitcherSeason.player_id, PitcherSeason.G)
-              .filter(PitcherSeason.player_id.in_(seen_pids))
               .filter(PitcherSeason.year == current_year)
               .all()
         )
-    bat_bdl_map: dict[int, int | None]   = {r.player_id: r.bdl_id    for r in bat_bio}
-    bat_debut_map: dict[int, int | None] = {r.player_id: r.mlb_debut for r in bat_bio}
-    pit_bdl_map: dict[int, int | None]   = {r.player_id: r.bdl_id    for r in pit_bio}
-    pit_debut_map: dict[int, int | None] = {r.player_id: r.mlb_debut for r in pit_bio}
+    bat_bdl_map: dict[int, int]          = {r.player_id: int(r.bdl_id) for r in bat_bio}
+    bat_debut_map: dict[int, int | None] = {r.player_id: r.mlb_debut   for r in bat_bio}
+    pit_bdl_map: dict[int, int]          = {r.player_id: int(r.bdl_id) for r in pit_bio}
+    pit_debut_map: dict[int, int | None] = {r.player_id: r.mlb_debut   for r in pit_bio}
     bat_db_g: dict[int, int | None] = {r.player_id: r.G for r in bat_g_rows}
     pit_db_g: dict[int, int | None] = {r.player_id: r.G for r in pit_g_rows}
+
+    counts["active_batters_checked"]  = len(bat_bdl_map)
+    counts["active_pitchers_checked"] = len(pit_bdl_map)
     log.info(
-        "[catchup-debug] Ohtani bdl_id in bat_bdl_map: %s",
-        208 in {v: k for k, v in bat_bdl_map.items()},
-    )
-    log.info(
-        "[catchup-debug] Ohtani bdl_id in pit_bdl_map: %s",
-        208 in {v: k for k, v in pit_bdl_map.items()},
-    )
-    log.info(
-        "[catchup-debug] Ohtani bat_db_g: %s pit_db_g: %s",
-        bat_db_g.get(660271), pit_db_g.get(660271),
+        "[catchup] active mapped players: batters=%d pitchers=%d",
+        len(bat_bdl_map), len(pit_bdl_map),
     )
 
-    # 4. Bulk-fetch BDL season stats for every bdl-mapped seen player.
+    # 2. Batch-fetch BDL season stats for every active bdl_id.
+    #    Union across sides so a two-way player's single profile
+    #    powers both decisions. `_fetch_bdl_batch_stats` chunks
+    #    in 50s and paginates each chunk; rate-limits between
+    #    chunks via `_BDL_RATE_LIMIT_SLEEP`.
     bdl_ids_to_fetch: set[int] = set()
-    for d in (bat_bdl_map, pit_bdl_map):
-        for v in d.values():
-            if v is not None:
-                bdl_ids_to_fetch.add(v)
+    bdl_ids_to_fetch.update(bat_bdl_map.values())
+    bdl_ids_to_fetch.update(pit_bdl_map.values())
     if not bdl_ids_to_fetch:
-        log.warning("[catchup] no BDL-mapped players among seen pids")
+        log.warning("[catchup] no active mapped players — nothing to check")
+        _run_dh_catchup()
         return {"status": "ok", **counts}
     raw_batch = data_service._fetch_bdl_batch_stats(
         sorted(bdl_ids_to_fetch), current_year,
@@ -1093,105 +1032,79 @@ def run_catchup_update() -> dict:
         for bdl_id, row in raw_batch.items()
     }
     log.info(
-        "[catchup-debug] Ohtani in bat_parsed: %s pit_parsed: %s",
-        208 in bat_parsed, 208 in pit_parsed,
+        "[catchup] BDL returned rows for %d/%d active bdl_ids",
+        len(raw_batch), len(bdl_ids_to_fetch),
     )
-    if 208 in bat_parsed:
-        log.info(
-            "[catchup-debug] Ohtani bat_parsed['G']: %s",
-            bat_parsed[208].get("G"),
-        )
 
-    # 5. Per-player decision + (when needed) save. `bwar_bat_current` /
-    #    `bwar_pitch_current` are the current-year slices we fetched
-    #    above; the build helpers will read them per-player. WAR is
-    #    only refreshed if bref had a row for the player (tracked via
-    #    `bwar_bat_pids` / `bwar_pitch_pids` set membership for the
-    #    `war_updated` counter).
-
+    # 3. Per-player compare-and-write. Decision logic mirrors the
+    #    old date-based path: bdl_g > db_g → rebuild the season
+    #    entry and save; otherwise the DB is at-or-ahead of BDL
+    #    and we tick `already_current`. Two-way players hit both
+    #    branches and each side is advanced independently. `no_bdl_data`
+    #    catches the case where BDL has the bdl_id mapped but
+    #    didn't ship a season_stats row this year (rookie call-up
+    #    not yet stamped, IL stash with 0 GP, etc.).
+    all_pids = sorted(set(bat_bdl_map.keys()) | set(pit_bdl_map.keys()))
     with connection.get_session() as db:
-        for player_id in sorted(seen_pids):
+        for player_id in all_pids:
             # --- Batter side ---
             if player_id in bat_bdl_map:
                 bdl_id = bat_bdl_map[player_id]
-                if bdl_id is None:
-                    counts["no_bdl_mapping"] += 1
+                bdl_stats = bat_parsed.get(bdl_id)
+                if bdl_stats is None:
+                    counts["no_bdl_data"] += 1
                 else:
-                    bdl_stats = bat_parsed.get(bdl_id)
-                    if bdl_stats is None:
-                        # BDL didn't ship a row for this bdl_id —
-                        # might be a player without batting activity
-                        # (pure pitcher), skip silently.
-                        pass
-                    else:
-                        counts["checked"] += 1
-                        bdl_g = bdl_stats.get("G") or 0
-                        db_g  = bat_db_g.get(player_id) or 0
-                        if player_id == 660271:
-                            log.info(
-                                "[catchup-debug] Ohtani batter: db_g=%s bdl_g=%s → %s",
-                                db_g, bdl_g,
-                                "update" if bdl_g > db_g else "skip",
+                    bdl_g = bdl_stats.get("G") or 0
+                    db_g  = bat_db_g.get(player_id) or 0
+                    if bdl_g > db_g:
+                        try:
+                            entry = _build_current_batter_entry(
+                                player_id, bdl_id, bwar_bat_current,
+                                current_year,
+                                bdl_stats=bdl_stats,
+                                mlb_debut=bat_debut_map.get(player_id),
                             )
-                        if bdl_g > db_g:
-                            try:
-                                entry = _build_current_batter_entry(
-                                    player_id, bdl_id, bwar_bat_current,
-                                    current_year,
-                                    bdl_stats=bdl_stats,
-                                    mlb_debut=bat_debut_map.get(player_id),
-                                )
-                                if entry is not None:
-                                    crud.save_player_seasons(db, player_id, [entry])
-                                    counts["updated"] += 1
-                                    if player_id in bwar_bat_pids:
-                                        counts["war_updated"] += 1
-                                else:
-                                    counts["failed"] += 1
-                            except Exception as exc:
-                                log.error(f"[catchup] batter {player_id} build/save FAILED: {exc}")
+                            if entry is not None:
+                                crud.save_player_seasons(db, player_id, [entry])
+                                counts["updated"] += 1
+                                if player_id in bwar_bat_pids:
+                                    counts["war_updated"] += 1
+                            else:
                                 counts["failed"] += 1
-                        else:
-                            counts["already_current"] += 1
+                        except Exception as exc:
+                            log.error(f"[catchup] batter {player_id} build/save FAILED: {exc}")
+                            counts["failed"] += 1
+                    else:
+                        counts["already_current"] += 1
             # --- Pitcher side ---
             if player_id in pit_bdl_map:
                 bdl_id = pit_bdl_map[player_id]
-                if bdl_id is None:
-                    counts["no_bdl_mapping"] += 1
+                bdl_stats = pit_parsed.get(bdl_id)
+                if bdl_stats is None:
+                    counts["no_bdl_data"] += 1
                 else:
-                    bdl_stats = pit_parsed.get(bdl_id)
-                    if bdl_stats is None:
-                        pass
-                    else:
-                        counts["checked"] += 1
-                        bdl_g = bdl_stats.get("G") or 0
-                        db_g  = pit_db_g.get(player_id) or 0
-                        if player_id == 660271:
-                            log.info(
-                                "[catchup-debug] Ohtani pitcher: db_g=%s bdl_g=%s → %s",
-                                db_g, bdl_g,
-                                "update" if bdl_g > db_g else "skip",
+                    bdl_g = bdl_stats.get("G") or 0
+                    db_g  = pit_db_g.get(player_id) or 0
+                    if bdl_g > db_g:
+                        try:
+                            entry = _build_current_pitcher_entry(
+                                player_id, bdl_id, bwar_pitch_current,
+                                current_year,
+                                bdl_stats=bdl_stats,
+                                mlb_debut=pit_debut_map.get(player_id),
                             )
-                        if bdl_g > db_g:
-                            try:
-                                entry = _build_current_pitcher_entry(
-                                    player_id, bdl_id, bwar_pitch_current,
-                                    current_year,
-                                    bdl_stats=bdl_stats,
-                                    mlb_debut=pit_debut_map.get(player_id),
-                                )
-                                if entry is not None:
-                                    crud.save_pitcher_seasons(db, player_id, [entry])
-                                    counts["updated"] += 1
-                                    if player_id in bwar_pitch_pids:
-                                        counts["war_updated"] += 1
-                                else:
-                                    counts["failed"] += 1
-                            except Exception as exc:
-                                log.error(f"[catchup] pitcher {player_id} build/save FAILED: {exc}")
+                            if entry is not None:
+                                crud.save_pitcher_seasons(db, player_id, [entry])
+                                counts["updated"] += 1
+                                if player_id in bwar_pitch_pids:
+                                    counts["war_updated"] += 1
+                            else:
                                 counts["failed"] += 1
-                        else:
-                            counts["already_current"] += 1
+                        except Exception as exc:
+                            log.error(f"[catchup] pitcher {player_id} build/save FAILED: {exc}")
+                            counts["failed"] += 1
+                    else:
+                        counts["already_current"] += 1
         db.commit()
 
     _run_dh_catchup()
