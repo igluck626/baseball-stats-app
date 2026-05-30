@@ -97,6 +97,30 @@ final class APIClient {
         return try await getOptional(url)
     }
 
+    /// `GET /players/{id}/pitcher-record-at-date?game_date=YYYY-MM-DD`.
+    /// Returns the pitcher's cumulative W/L/SV through (and including)
+    /// `gameDate`, counted from `pitching_gamelogs` for the season
+    /// the date falls in. Used by the box-score and score-card views
+    /// to render an accurate AS-OF record next to a decision pitcher,
+    /// independent of any later games that may have updated BDL's
+    /// season-stats snapshot.
+    func getPitcherRecordAtDate(
+        playerId: Int, gameDate: String,
+    ) async throws -> PitcherRecord? {
+        let url = try buildURL(
+            path: "/players/\(playerId)/pitcher-record-at-date",
+            query: [URLQueryItem(name: "game_date", value: gameDate)],
+        )
+        guard let resp: PitcherRecordResponse = try await getOptional(url) else {
+            return nil
+        }
+        return PitcherRecord(
+            wins:   resp.wins,
+            losses: resp.losses,
+            saves:  resp.saves,
+        )
+    }
+
     /// `GET /players/{id}/stats/career`. Returns nil on 404.
     func getPlayerCareerStats(playerId: Int) async throws -> PlayerCareerStats? {
         let url = try buildURL(path: "/players/\(playerId)/stats/career")
@@ -299,4 +323,27 @@ final class APIClient {
 private struct SearchResponseEnvelope: Decodable {
     let query: String
     let results: [PlayerSearchResult]
+}
+
+/// Pitcher's cumulative W/L/SV through a given date — three plain
+/// counters extracted from a `pitching_gamelogs` row scan on the
+/// backend. The fewer fields the better here: view sites consume
+/// `wins`/`losses`/`saves` directly and never need the round-trip
+/// metadata.
+struct PitcherRecord: Codable, Hashable {
+    let wins:   Int
+    let losses: Int
+    let saves:  Int
+}
+
+/// Raw shape `GET /players/{id}/pitcher-record-at-date` returns.
+/// `player_id` and `game_date` are passed-through echoes from the
+/// query; we extract just the three counters into `PitcherRecord`
+/// at the API-client boundary so call sites don't depend on them.
+private struct PitcherRecordResponse: Decodable {
+    let player_id: Int
+    let game_date: String
+    let wins:      Int
+    let losses:    Int
+    let saves:     Int
 }

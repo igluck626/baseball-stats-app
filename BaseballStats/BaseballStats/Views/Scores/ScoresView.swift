@@ -714,6 +714,12 @@ private struct FinalGameCard: View {
     /// expand/collapse cycles don't re-hit the API.
     @State private var boxScore: BoxScoreResponse?
     @State private var isLoadingBoxScore = false
+    /// Cumulative W-L-SV through this game's ET date for each
+    /// decision pitcher, keyed by BDL player id. Fetched after
+    /// `boxScore` lands; lets `decisionLine` render the post-game
+    /// record without leaning on BDL's possibly-stale season-stats
+    /// snapshot.
+    @State private var pitcherRecordsByBDL: [Int: PitcherRecord] = [:]
 
     var body: some View {
         VStack(spacing: 10) {
@@ -798,6 +804,59 @@ private struct FinalGameCard: View {
             lineup:           lineup,
             seasonStatsByPid: seasonByPid,
         )
+        await loadPitcherRecords()
+    }
+
+    /// Same shape as `BoxScoreViewModel.loadPitcherRecords` — keeps
+    /// the expand-on-tap card honest when BDL's season snapshot is
+    /// post-absorption stale. Stored only by BDL id since this card
+    /// renders by BDL id throughout.
+    private func loadPitcherRecords() async {
+        guard let bs = boxScore else { return }
+        guard let gameDate = Self.etDateString(from: game.startDate) else { return }
+        var decisionBdlIds: Set<Int> = []
+        for team in [bs.teams.away, bs.teams.home] {
+            for (_, p) in team.players {
+                guard let g = p.stats?.pitching else { continue }
+                if (g.wins ?? 0) > 0 || (g.losses ?? 0) > 0 || (g.saves ?? 0) > 0 {
+                    decisionBdlIds.insert(p.person.id)
+                }
+            }
+        }
+        guard !decisionBdlIds.isEmpty else { return }
+        let bdl = BallDontLieClient.shared
+        let api = APIClient.shared
+        let pairs = await withTaskGroup(
+            of: (Int, PitcherRecord)?.self,
+        ) { group in
+            for bdlId in decisionBdlIds {
+                group.addTask {
+                    guard let player = try? await bdl.resolveBDLPlayerId(bdlId)
+                    else { return nil }
+                    let outer = try? await api.getPitcherRecordAtDate(
+                        playerId: player.player_id, gameDate: gameDate,
+                    )
+                    guard let record = outer ?? nil else { return nil }
+                    return (bdlId, record)
+                }
+            }
+            var out: [(Int, PitcherRecord)] = []
+            for await m in group {
+                if let pair = m { out.append(pair) }
+            }
+            return out
+        }
+        var dict: [Int: PitcherRecord] = [:]
+        for (bdlId, rec) in pairs { dict[bdlId] = rec }
+        self.pitcherRecordsByBDL = dict
+    }
+
+    /// Wrap the existing `etDateFormatter` (defined alongside
+    /// `isGameToday` later in this struct) into a nil-safe helper
+    /// so the records loader can stay concise.
+    private static func etDateString(from date: Date?) -> String? {
+        guard let date else { return nil }
+        return etDateFormatter.string(from: date)
     }
 
     private static func stubBDLTeam(from info: TeamInfo, bdlTeamId: Int?) -> BDLTeam {
@@ -996,15 +1055,19 @@ private struct FinalGameCard: View {
 
     private func decisionLine(tag: String, pitcher: BoxPlayer) -> some View {
         let season = pitcher.seasonStats?.pitching
-        // Same isGameToday increment as `hrSegments`. The placeholder
-        // `seasonStats.pitching` is BDL's pre-game W/L/SV — for
-        // today's slate we bump the relevant counter so the display
-        // reflects the post-game record immediately. Each tag bumps
-        // its own field (W → wins+1, L → losses+1, SV → saves+1);
-        // the non-decision counter stays unchanged so the W's L
-        // column still reads the player's actual losses on the year.
+        // Prefer the contextual record from
+        // `/players/{id}/pitcher-record-at-date` — always honest about
+        // the post-game W-L-SV. Falls through to the placeholder
+        // + isGameToday bump when the record isn't loaded yet.
         let bump = isGameToday ? 1 : 0
         let recordText: String? = {
+            if let rec = pitcherRecordsByBDL[pitcher.person.id] {
+                switch tag {
+                case "W", "L": return "(\(rec.wins)-\(rec.losses))"
+                case "SV":     return "(\(rec.saves))"
+                default:       return nil
+                }
+            }
             switch tag {
             case "W":
                 if let w = season?.wins, let l = season?.losses {

@@ -20,6 +20,15 @@ final class BoxScoreViewModel: ObservableObject {
     let game: Game
 
     @Published var boxScore: BoxScoreResponse?
+    /// Cumulative W-L-SV through this game's date for each decision
+    /// pitcher, keyed by MLBAM id (per the contextual record endpoint).
+    /// Populated by `loadPitcherRecords` after the box score lands.
+    @Published var pitcherRecords: [Int: PitcherRecord] = [:]
+    /// Same records, keyed by BDL player id — convenience for the
+    /// view layer, which only has `BoxPlayer.person.id` (BDL) on hand
+    /// and would otherwise need to walk the bdl→mlbam mapping per
+    /// render.
+    @Published var pitcherRecordsByBDL: [Int: PitcherRecord] = [:]
     /// Live-game synthesized snapshot — Stage C of the BDL migration
     /// will populate this from BDL plays + plate appearances.
     /// Stage A (this commit) leaves it nil for live games; the
@@ -70,8 +79,84 @@ final class BoxScoreViewModel: ObservableObject {
             _ = await boxTask
             _ = await playsTask
         }
+        // Pitcher records depend on the box score (need decisions),
+        // so this fires after the box-score branch resolves. Doesn't
+        // gate `isLoading = false` strictly speaking — the records
+        // are an add-on detail, but waiting keeps the UI consistent
+        // and the small extra latency is bounded by the per-pitcher
+        // fan-out below.
+        await loadPitcherRecords()
         isLoading = false
     }
+
+    /// Resolve each decision pitcher's MLBAM id (via the backend's
+    /// bdl→mlbam endpoint) and fetch their cumulative record through
+    /// the game's date. Stores both an MLBAM-keyed and a BDL-keyed
+    /// view of the same records — the BDL key is what the view layer
+    /// has on hand without walking the resolution map per render.
+    /// Failures degrade silently to the placeholder + isGameToday
+    /// fallback (the previous behavior).
+    func loadPitcherRecords() async {
+        guard let bs = boxScore else { return }
+        guard let gameDate = Self.etDateString(from: game.startDate) else { return }
+        var decisionBdlIds: Set<Int> = []
+        for team in [bs.teams.away, bs.teams.home] {
+            for (_, p) in team.players {
+                guard let g = p.stats?.pitching else { continue }
+                if (g.wins ?? 0) > 0 || (g.losses ?? 0) > 0 || (g.saves ?? 0) > 0 {
+                    decisionBdlIds.insert(p.person.id)
+                }
+            }
+        }
+        guard !decisionBdlIds.isEmpty else { return }
+        let triples = await withTaskGroup(
+            of: (bdlId: Int, mlbam: Int, record: PitcherRecord)?.self,
+        ) { group in
+            for bdlId in decisionBdlIds {
+                group.addTask { [bdl, api] in
+                    guard let player = try? await bdl.resolveBDLPlayerId(bdlId)
+                    else { return nil }
+                    let mlbam = player.player_id
+                    let outer = try? await api.getPitcherRecordAtDate(
+                        playerId: mlbam, gameDate: gameDate,
+                    )
+                    guard let record = outer ?? nil else { return nil }
+                    return (bdlId, mlbam, record)
+                }
+            }
+            var out: [(Int, Int, PitcherRecord)] = []
+            for await maybe in group {
+                if let m = maybe { out.append(m) }
+            }
+            return out
+        }
+        var byMlbam: [Int: PitcherRecord] = [:]
+        var byBdl:   [Int: PitcherRecord] = [:]
+        for (bdlId, mlbam, record) in triples {
+            byMlbam[mlbam] = record
+            byBdl[bdlId]   = record
+        }
+        self.pitcherRecords      = byMlbam
+        self.pitcherRecordsByBDL = byBdl
+    }
+
+    /// ET-anchored `yyyy-MM-dd` for the pitcher-record endpoint's
+    /// `game_date` param. MLB schedules off Eastern, so a 10pm PT
+    /// game has to file under its ET date or the gamelog scan
+    /// returns the wrong day's games.
+    private static func etDateString(from date: Date?) -> String? {
+        guard let date else { return nil }
+        return etDateFormatter.string(from: date)
+    }
+
+    private static let etDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.calendar = .init(identifier: .gregorian)
+        f.timeZone = TimeZone(identifier: "America/New_York") ?? .current
+        f.locale   = .init(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
 
     /// One-shot plays fetch for non-live games. Final games don't
     /// poll; the play stream is frozen, so a single call covers it.
@@ -1053,6 +1138,25 @@ struct BoxScoreView: View {
     /// double-count.
     private func pitcherDecisionTag(for p: BoxPlayer) -> String? {
         let game = p.stats?.pitching
+        // Prefer the contextual record from
+        // `/players/{id}/pitcher-record-at-date` — that endpoint
+        // counts gamelog rows up to and including this game's date,
+        // so it always reflects the player's true post-game W-L-SV
+        // regardless of whether BDL has absorbed today into its
+        // season-stats snapshot. Falls through to the placeholder
+        // + isGameToday bump when the resolve/fetch hasn't landed.
+        if let rec = vm.pitcherRecordsByBDL[p.person.id] {
+            if (game?.wins ?? 0) > 0 {
+                return "(W \(rec.wins)-\(rec.losses))"
+            }
+            if (game?.losses ?? 0) > 0 {
+                return "(L \(rec.wins)-\(rec.losses))"
+            }
+            if (game?.saves ?? 0) > 0 {
+                return "(SV \(rec.saves))"
+            }
+            return nil
+        }
         let season = p.seasonStats?.pitching
         let bump = isGameToday ? 1 : 0
         if (game?.wins ?? 0) > 0 {
