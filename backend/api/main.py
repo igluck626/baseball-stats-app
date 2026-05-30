@@ -801,6 +801,53 @@ def player_gamelogs_pitching(
     return response
 
 
+@app.get("/players/{player_id}/pitcher-record-at-date")
+def player_pitcher_record_at_date(
+    player_id: int,
+    game_date: datetime.date = Query(
+        ...,
+        description="Cumulative through this date (inclusive). yyyy-mm-dd.",
+    ),
+):
+    """Pitcher's cumulative W-L-SV through `game_date` (inclusive),
+    counted from this player's `pitching_gamelogs` rows for the
+    season the date falls in. Used by the box-score and score-card
+    expanded views to render a pitcher's record AS OF the game
+    they're displaying — independent of any later games BDL has
+    since absorbed into season stats.
+
+    `pitching_gamelogs` doesn't have boolean win/loss/save columns;
+    the decision is stored under the `result: String` column with
+    values `"W" / "L" / "S" / "H" / "ND"`. We aggregate by string
+    match so the totals always reflect what the per-game pipeline
+    actually wrote.
+
+    Returns `{player_id, game_date, wins, losses, saves}`. Zeros
+    for a player with no qualifying gamelog rows (rookie debuting
+    on `game_date` with no prior games will read 0-0-0)."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    season = game_date.year
+    with connection.get_session() as db:
+        rows = (
+            db.query(PitchingGameLog.result)
+              .filter(PitchingGameLog.player_id == player_id)
+              .filter(PitchingGameLog.season    == season)
+              .filter(PitchingGameLog.game_date <= game_date)
+              .all()
+        )
+    wins   = sum(1 for r in rows if r.result == "W")
+    losses = sum(1 for r in rows if r.result == "L")
+    saves  = sum(1 for r in rows if r.result == "S")
+    return {
+        "player_id": player_id,
+        "game_date": game_date.isoformat(),
+        "wins":      wins,
+        "losses":    losses,
+        "saves":     saves,
+    }
+
+
 @app.get("/players/{player_id}/headshot")
 def player_headshot(player_id: int):
     """Return MLB Stats API headshot URL plus a generic-silhouette fallback.
