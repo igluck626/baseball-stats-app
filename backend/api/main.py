@@ -866,6 +866,67 @@ def player_pitcher_record_at_date(
     }
 
 
+@app.get("/players/{player_id}/batter-stats-at-date")
+def player_batter_stats_at_date(
+    player_id: int,
+    game_date: datetime.date = Query(
+        ...,
+        description="Cumulative through this date (inclusive). yyyy-mm-dd.",
+    ),
+):
+    """Batter's cumulative HR / 2B / 3B through `game_date`
+    (inclusive), counted from this player's `batting_gamelogs`
+    rows for the season the date falls in. Sister endpoint to
+    `/pitcher-record-at-date`; used by the box-score and score-
+    card notable-plays lines to render an accurate "(N)" total
+    AS OF the game being displayed, independent of any later
+    games BDL has since absorbed into season stats.
+
+    `includes_today` reports whether any row in the result set
+    falls on today's Eastern-local calendar date. Callers (iOS)
+    use this to decide whether to fold today's just-hit HR/2B/3B
+    into the displayed total: when `false` the gamelog ingest
+    hasn't reached today yet (mid-game or before the next catch-
+    up run) and the per-game count needs to be added. When
+    `true` the nightly already absorbed today and the total
+    already includes it.
+
+    Returns `{player_id, game_date, home_runs, doubles, triples,
+    includes_today}`. Zeros + `false` for a player with no
+    qualifying gamelog rows."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    season = game_date.year
+    with connection.get_session() as db:
+        rows = (
+            db.query(
+                BattingGameLog.HR,
+                BattingGameLog.doubles,
+                BattingGameLog.triples,
+                BattingGameLog.game_date,
+            )
+              .filter(BattingGameLog.player_id == player_id)
+              .filter(BattingGameLog.season    == season)
+              .filter(BattingGameLog.game_date <= game_date)
+              .all()
+        )
+    home_runs = sum((r.HR      or 0) for r in rows)
+    doubles   = sum((r.doubles or 0) for r in rows)
+    triples   = sum((r.triples or 0) for r in rows)
+    today_et = datetime.datetime.now(
+        data_service._MLB_LOCAL_TZ,
+    ).date()
+    includes_today = any(r.game_date == today_et for r in rows)
+    return {
+        "player_id":      player_id,
+        "game_date":      game_date.isoformat(),
+        "home_runs":      home_runs,
+        "doubles":        doubles,
+        "triples":        triples,
+        "includes_today": includes_today,
+    }
+
+
 @app.get("/players/{player_id}/headshot")
 def player_headshot(player_id: int):
     """Return MLB Stats API headshot URL plus a generic-silhouette fallback.
