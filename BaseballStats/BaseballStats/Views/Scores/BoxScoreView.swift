@@ -869,21 +869,28 @@ struct BoxScoreView: View {
         players: [BoxPlayer],
         totalKey: KeyPath<BoxBatting, Int?>,
     ) -> some View {
-        // `seasonStats.batting.{homeRuns,doubles,triples}` is BDL's
-        // authoritative post-game cumulative for the player (seeded
-        // from `/season_stats` at box-score load), so we display it
-        // directly with no addition. The per-game count from
-        // `stats.batting` becomes a multi-occurrence prefix when
-        // > 1 ("Alvarez 2 (20)") so a 2-HR game stays visible at
-        // a glance.
+        // `seasonStats.batting.{homeRuns,doubles,triples}` is the
+        // PRE-game cumulative loaded once from BDL's `/season_stats`
+        // at box-score open. Per-game `stats.batting.{…}` is just
+        // this game's count. When the game is today's slate the
+        // box-score header should read the LIVE post-game total
+        // (pre-game season + this-game count); the placeholder
+        // value alone goes stale the instant the player connects.
+        // For historical games we trust the pre-game value as
+        // already post-game on BDL's side and don't double-count.
+        //
+        // The per-game count also doubles as a multi-occurrence
+        // prefix when > 1 ("Alvarez 2 (21)") so a 2-HR night stays
+        // visible at a glance.
         let pieces: [String] = players.map { bp in
             let last = lastName(bp.person.fullName)
             let gameCount = bp.stats?.batting?[keyPath: totalKey] ?? 0
             let prefix = gameCount > 1 ? "\(last) \(gameCount)" : last
+            let liveIncrement = isGameToday ? gameCount : 0
             guard let season = bp.seasonStats?.batting?[keyPath: totalKey] else {
                 return prefix
             }
-            return "\(prefix) (\(season))"
+            return "\(prefix) (\(season + liveIncrement))"
         }
         return (Text("\(label): ").font(.caption2.weight(.bold))
                 + Text(pieces.joined(separator: ", ")).font(.caption2))
