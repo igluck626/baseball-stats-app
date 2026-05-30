@@ -720,6 +720,10 @@ private struct FinalGameCard: View {
     /// record without leaning on BDL's possibly-stale season-stats
     /// snapshot.
     @State private var pitcherRecordsByBDL: [Int: PitcherRecord] = [:]
+    /// Point-in-time HR / 2B / 3B totals for each batter with a
+    /// notable hit in the game. Same key scheme + lifecycle as
+    /// `pitcherRecordsByBDL`. Drives the HR summary line.
+    @State private var batterStatsAtDateByBDL: [Int: BatterStatsAtDate] = [:]
 
     var body: some View {
         VStack(spacing: 10) {
@@ -804,7 +808,55 @@ private struct FinalGameCard: View {
             lineup:           lineup,
             seasonStatsByPid: seasonByPid,
         )
-        await loadPitcherRecords()
+        async let p: Void = loadPitcherRecords()
+        async let b: Void = loadBatterStatsAtDate()
+        _ = await p
+        _ = await b
+    }
+
+    /// Same shape + fail-soft semantics as `loadPitcherRecords`.
+    /// Picks the batters with HR / 2B / 3B > 0 in this game and
+    /// fetches their point-in-time totals through `game.startDate`.
+    private func loadBatterStatsAtDate() async {
+        guard let bs = boxScore else { return }
+        guard let gameDate = Self.etDateString(from: game.startDate) else { return }
+        var notableBdlIds: Set<Int> = []
+        for team in [bs.teams.away, bs.teams.home] {
+            for (_, p) in team.players {
+                guard let bat = p.stats?.batting else { continue }
+                if (bat.homeRuns ?? 0) > 0
+                    || (bat.doubles  ?? 0) > 0
+                    || (bat.triples  ?? 0) > 0 {
+                    notableBdlIds.insert(p.person.id)
+                }
+            }
+        }
+        guard !notableBdlIds.isEmpty else { return }
+        let bdl = BallDontLieClient.shared
+        let api = APIClient.shared
+        let pairs = await withTaskGroup(
+            of: (Int, BatterStatsAtDate)?.self,
+        ) { group in
+            for bdlId in notableBdlIds {
+                group.addTask {
+                    guard let player = try? await bdl.resolveBDLPlayerId(bdlId)
+                    else { return nil }
+                    let outer = try? await api.getBatterStatsAtDate(
+                        playerId: player.player_id, gameDate: gameDate,
+                    )
+                    guard let stats = outer ?? nil else { return nil }
+                    return (bdlId, stats)
+                }
+            }
+            var out: [(Int, BatterStatsAtDate)] = []
+            for await m in group {
+                if let pair = m { out.append(pair) }
+            }
+            return out
+        }
+        var dict: [Int: BatterStatsAtDate] = [:]
+        for (bdlId, s) in pairs { dict[bdlId] = s }
+        self.batterStatsAtDateByBDL = dict
     }
 
     /// Same shape as `BoxScoreViewModel.loadPitcherRecords` — keeps
@@ -1149,11 +1201,16 @@ private struct FinalGameCard: View {
             for id in team.batters {
                 guard let p = team.players["ID\(id)"] else { continue }
                 guard let hr = p.stats?.batting?.homeRuns, hr > 0 else { continue }
-                let season = p.seasonStats?.batting?.homeRuns ?? 0
-                let liveIncrement = isToday ? hr : 0
                 let last = lastNameWithSuffix(p.person.fullName)
                 let prefix = hr > 1 ? "\(last) \(hr)" : last
-                out.append("\(prefix) (\(season + liveIncrement))")
+                if let stats = batterStatsAtDateByBDL[p.person.id] {
+                    let bump = (isToday && !stats.includesToday) ? hr : 0
+                    out.append("\(prefix) (\(stats.homeRuns + bump))")
+                } else {
+                    let season = p.seasonStats?.batting?.homeRuns ?? 0
+                    let liveIncrement = isToday ? hr : 0
+                    out.append("\(prefix) (\(season + liveIncrement))")
+                }
             }
         }
         return out

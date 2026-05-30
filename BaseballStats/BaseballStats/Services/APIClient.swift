@@ -97,6 +97,32 @@ final class APIClient {
         return try await getOptional(url)
     }
 
+    /// `GET /players/{id}/batter-stats-at-date?game_date=YYYY-MM-DD`.
+    /// Returns the batter's cumulative HR / 2B / 3B through (and
+    /// including) `gameDate`, plus an `includes_today` signal the
+    /// caller can use to decide whether to add today's just-hit
+    /// counts on top. Same shape and motivation as the pitcher
+    /// endpoint — point-in-time totals from our own game logs so
+    /// notable-plays lines stay accurate even when BDL's season-stats
+    /// snapshot is stale.
+    func getBatterStatsAtDate(
+        playerId: Int, gameDate: String,
+    ) async throws -> BatterStatsAtDate? {
+        let url = try buildURL(
+            path: "/players/\(playerId)/batter-stats-at-date",
+            query: [URLQueryItem(name: "game_date", value: gameDate)],
+        )
+        guard let resp: BatterStatsAtDateResponse = try await getOptional(url) else {
+            return nil
+        }
+        return BatterStatsAtDate(
+            homeRuns:      resp.home_runs,
+            doubles:       resp.doubles,
+            triples:       resp.triples,
+            includesToday: resp.includes_today,
+        )
+    }
+
     /// `GET /players/{id}/pitcher-record-at-date?game_date=YYYY-MM-DD`.
     /// Returns the pitcher's cumulative W/L/SV through (and including)
     /// `gameDate`, counted from `pitching_gamelogs` for the season
@@ -353,5 +379,31 @@ private struct PitcherRecordResponse: Decodable {
     let wins:           Int
     let losses:         Int
     let saves:          Int
+    let includes_today: Bool
+}
+
+/// Sister to `PitcherRecord` — batter's cumulative HR / 2B / 3B
+/// through a given date, plus the `includesToday` signal callers
+/// use to decide whether to add today's per-game counts on top
+/// (true → already counted, false → caller should add).
+struct BatterStatsAtDate: Codable, Hashable {
+    let homeRuns:      Int
+    let doubles:       Int
+    let triples:       Int
+    /// True iff at least one gamelog row in the response falls on
+    /// today's Eastern-local calendar date. Same semantics as
+    /// `PitcherRecord.includesToday`.
+    let includesToday: Bool
+}
+
+/// Raw shape `GET /players/{id}/batter-stats-at-date` returns.
+/// snake_case mirrors the wire format (the shared decoder doesn't
+/// apply `convertFromSnakeCase`).
+private struct BatterStatsAtDateResponse: Decodable {
+    let player_id:      Int
+    let game_date:      String
+    let home_runs:      Int
+    let doubles:        Int
+    let triples:        Int
     let includes_today: Bool
 }

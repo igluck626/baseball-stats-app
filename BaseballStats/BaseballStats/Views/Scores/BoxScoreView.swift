@@ -29,6 +29,12 @@ final class BoxScoreViewModel: ObservableObject {
     /// and would otherwise need to walk the bdl→mlbam mapping per
     /// render.
     @Published var pitcherRecordsByBDL: [Int: PitcherRecord] = [:]
+    /// Point-in-time HR / 2B / 3B totals for every batter with a
+    /// notable hit in this game, keyed by BDL player id. Mirrors
+    /// the pitcher-record dict; populated by `loadBatterStatsAtDate`
+    /// after the box score lands and the notable batters can be
+    /// identified.
+    @Published var batterStatsAtDate: [Int: BatterStatsAtDate] = [:]
     /// Live-game synthesized snapshot — Stage C of the BDL migration
     /// will populate this from BDL plays + plate appearances.
     /// Stage A (this commit) leaves it nil for live games; the
@@ -79,13 +85,15 @@ final class BoxScoreViewModel: ObservableObject {
             _ = await boxTask
             _ = await playsTask
         }
-        // Pitcher records depend on the box score (need decisions),
-        // so this fires after the box-score branch resolves. Doesn't
-        // gate `isLoading = false` strictly speaking — the records
-        // are an add-on detail, but waiting keeps the UI consistent
-        // and the small extra latency is bounded by the per-pitcher
-        // fan-out below.
-        await loadPitcherRecords()
+        // Pitcher records + batter point-in-time totals both depend
+        // on the box score (need decisions / notable hits) and are
+        // independent of each other, so fan them out in parallel.
+        // The small extra latency is bounded by the per-player
+        // fan-outs below.
+        async let pitcherRecordsTask = loadPitcherRecords()
+        async let batterStatsTask    = loadBatterStatsAtDate()
+        _ = await pitcherRecordsTask
+        _ = await batterStatsTask
         isLoading = false
     }
 
@@ -138,6 +146,51 @@ final class BoxScoreViewModel: ObservableObject {
         }
         self.pitcherRecords      = byMlbam
         self.pitcherRecordsByBDL = byBdl
+    }
+
+    /// Sister to `loadPitcherRecords` — picks every batter with
+    /// HR / 2B / 3B > 0 in this game and fetches their point-in-time
+    /// totals from `/batter-stats-at-date`. Stored by BDL id so the
+    /// view layer can read it without re-running the bdl→mlbam
+    /// resolution per render.
+    func loadBatterStatsAtDate() async {
+        guard let bs = boxScore else { return }
+        guard let gameDate = Self.etDateString(from: game.startDate) else { return }
+        var notableBdlIds: Set<Int> = []
+        for team in [bs.teams.away, bs.teams.home] {
+            for (_, p) in team.players {
+                guard let b = p.stats?.batting else { continue }
+                if (b.homeRuns ?? 0) > 0
+                    || (b.doubles  ?? 0) > 0
+                    || (b.triples  ?? 0) > 0 {
+                    notableBdlIds.insert(p.person.id)
+                }
+            }
+        }
+        guard !notableBdlIds.isEmpty else { return }
+        let pairs = await withTaskGroup(
+            of: (Int, BatterStatsAtDate)?.self,
+        ) { group in
+            for bdlId in notableBdlIds {
+                group.addTask { [bdl, api] in
+                    guard let player = try? await bdl.resolveBDLPlayerId(bdlId)
+                    else { return nil }
+                    let outer = try? await api.getBatterStatsAtDate(
+                        playerId: player.player_id, gameDate: gameDate,
+                    )
+                    guard let stats = outer ?? nil else { return nil }
+                    return (bdlId, stats)
+                }
+            }
+            var out: [(Int, BatterStatsAtDate)] = []
+            for await maybe in group {
+                if let p = maybe { out.append(p) }
+            }
+            return out
+        }
+        var dict: [Int: BatterStatsAtDate] = [:]
+        for (bdlId, stats) in pairs { dict[bdlId] = stats }
+        self.batterStatsAtDate = dict
     }
 
     /// ET-anchored `yyyy-MM-dd` for the pitcher-record endpoint's
@@ -971,6 +1024,20 @@ struct BoxScoreView: View {
             let last = lastName(bp.person.fullName)
             let gameCount = bp.stats?.batting?[keyPath: totalKey] ?? 0
             let prefix = gameCount > 1 ? "\(last) \(gameCount)" : last
+            // Prefer the contextual total from
+            // `/players/{id}/batter-stats-at-date` — counts gamelog
+            // rows up to this game's date. Bump only when the game
+            // is today AND the log hasn't absorbed today yet
+            // (`includesToday=false`), mirroring the pitcher path.
+            if let stats = vm.batterStatsAtDate[bp.person.id] {
+                let atDate: Int
+                if      totalKey == \BoxBatting.homeRuns { atDate = stats.homeRuns }
+                else if totalKey == \BoxBatting.doubles  { atDate = stats.doubles }
+                else if totalKey == \BoxBatting.triples  { atDate = stats.triples }
+                else                                     { atDate = 0 }
+                let bump = (isGameToday && !stats.includesToday) ? gameCount : 0
+                return "\(prefix) (\(atDate + bump))"
+            }
             let liveIncrement = isGameToday ? gameCount : 0
             guard let season = bp.seasonStats?.batting?[keyPath: totalKey] else {
                 return prefix
