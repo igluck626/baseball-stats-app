@@ -996,15 +996,27 @@ private struct FinalGameCard: View {
 
     private func decisionLine(tag: String, pitcher: BoxPlayer) -> some View {
         let season = pitcher.seasonStats?.pitching
+        // Same isGameToday increment as `hrSegments`. The placeholder
+        // `seasonStats.pitching` is BDL's pre-game W/L/SV — for
+        // today's slate we bump the relevant counter so the display
+        // reflects the post-game record immediately. Each tag bumps
+        // its own field (W → wins+1, L → losses+1, SV → saves+1);
+        // the non-decision counter stays unchanged so the W's L
+        // column still reads the player's actual losses on the year.
+        let bump = isGameToday ? 1 : 0
         let recordText: String? = {
             switch tag {
-            case "W", "L":
+            case "W":
                 if let w = season?.wins, let l = season?.losses {
-                    return "(\(w)-\(l))"
+                    return "(\(w + bump)-\(l))"
+                }
+            case "L":
+                if let w = season?.wins, let l = season?.losses {
+                    return "(\(w)-\(l + bump))"
                 }
             case "SV":
                 if let sv = season?.saves {
-                    return "(\(sv))"
+                    return "(\(sv + bump))"
                 }
             default: break
             }

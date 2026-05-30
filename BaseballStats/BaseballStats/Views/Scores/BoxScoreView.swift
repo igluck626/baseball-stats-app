@@ -1043,28 +1043,33 @@ struct BoxScoreView: View {
     /// Returns "W 8-3" / "L 5-4" / "SV 12" when this pitcher earned
     /// today's decision; nil otherwise. Per-game decision flags
     /// (`stats.pitching.wins/losses/saves`) ship as 0/1 from BDL.
-    /// Season W-L-SV come from `seasonStats.pitching` (set by the
-    /// lineup-placeholder pre-load and preserved across the merge);
-    /// BDL's per-game `seasonStats` already reflects the post-game
-    /// total, so no manual `+1` is needed for today's decision.
+    ///
+    /// `seasonStats.pitching` is the PRE-game W-L-SV pulled once from
+    /// BDL's `/season_stats` at box-score open. For today's slate
+    /// the displayed line has to fold today's decision in — a W
+    /// reads as "(W 9-3)" within seconds of the final out instead
+    /// of staying at "(W 8-3)" until BDL re-publishes. Historical
+    /// games trust the placeholder as already post-game and don't
+    /// double-count.
     private func pitcherDecisionTag(for p: BoxPlayer) -> String? {
         let game = p.stats?.pitching
         let season = p.seasonStats?.pitching
+        let bump = isGameToday ? 1 : 0
         if (game?.wins ?? 0) > 0 {
             if let w = season?.wins, let l = season?.losses {
-                return "(W \(w)-\(l))"
+                return "(W \(w + bump)-\(l))"
             }
             return "(W)"
         }
         if (game?.losses ?? 0) > 0 {
             if let w = season?.wins, let l = season?.losses {
-                return "(L \(w)-\(l))"
+                return "(L \(w)-\(l + bump))"
             }
             return "(L)"
         }
         if (game?.saves ?? 0) > 0 {
             if let sv = season?.saves {
-                return "(SV \(sv))"
+                return "(SV \(sv + bump))"
             }
             return "(SV)"
         }
