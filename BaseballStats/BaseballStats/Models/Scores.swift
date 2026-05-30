@@ -1101,13 +1101,21 @@ private func mergeSeasonBatting(
 ) -> BoxBatting? {
     guard let e = existing else { return incoming }
     guard let i = incoming else { return e }
+    // doubles / triples / homeRuns invert the precedence: BDL's
+    // per-game `/stats` row carries those counts as "this game's
+    // 2B / 3B / HR" — they're zero or the per-game delta, never
+    // season totals. The placeholder pre-fetched the season totals
+    // from `/season_stats`, so when both sides exist we want the
+    // existing value to survive. Other fields keep the
+    // "incoming wins on non-nil" semantics because their per-game
+    // values ARE the season-to-date stamp BDL ships on each row.
     return BoxBatting(
         atBats:               i.atBats               ?? e.atBats,
         runs:                 i.runs                 ?? e.runs,
         hits:                 i.hits                 ?? e.hits,
-        doubles:              i.doubles              ?? e.doubles,
-        triples:              i.triples              ?? e.triples,
-        homeRuns:             i.homeRuns             ?? e.homeRuns,
+        doubles:              e.doubles              ?? i.doubles,
+        triples:              e.triples              ?? i.triples,
+        homeRuns:             e.homeRuns             ?? i.homeRuns,
         rbi:                  i.rbi                  ?? e.rbi,
         baseOnBalls:          i.baseOnBalls          ?? e.baseOnBalls,
         strikeOuts:           i.strikeOuts           ?? e.strikeOuts,
