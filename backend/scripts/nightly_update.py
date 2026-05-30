@@ -830,6 +830,7 @@ def run_catchup_update() -> dict:
     )
     date_str = yesterday_et.isoformat()
     log.info(f"[catchup] yesterday ET = {date_str}")
+    log.info("[catchup-debug] checking yesterday ET date: %s", date_str)
 
     counts = {
         "date":                            date_str,
@@ -1019,6 +1020,8 @@ def run_catchup_update() -> dict:
         f"across all games"
     )
     log.info(f"[catchup] {len(seen_pids)} MLBAM IDs resolved from BDL IDs")
+    log.info("[catchup-debug] Ohtani in seen_pids: %s", 660271 in seen_pids)
+    log.info("[catchup-debug] Ohtani bdl_id 208 in seen_bdl_ids: %s", 208 in seen_bdl_ids)
     counts["players_seen"] = len(seen_pids)
     if not seen_pids:
         log.info("[catchup] no players resolved to MLBAM ids — nothing to reconcile")
@@ -1056,6 +1059,18 @@ def run_catchup_update() -> dict:
     pit_debut_map: dict[int, int | None] = {r.player_id: r.mlb_debut for r in pit_bio}
     bat_db_g: dict[int, int | None] = {r.player_id: r.G for r in bat_g_rows}
     pit_db_g: dict[int, int | None] = {r.player_id: r.G for r in pit_g_rows}
+    log.info(
+        "[catchup-debug] Ohtani bdl_id in bat_bdl_map: %s",
+        208 in {v: k for k, v in bat_bdl_map.items()},
+    )
+    log.info(
+        "[catchup-debug] Ohtani bdl_id in pit_bdl_map: %s",
+        208 in {v: k for k, v in pit_bdl_map.items()},
+    )
+    log.info(
+        "[catchup-debug] Ohtani bat_db_g: %s pit_db_g: %s",
+        bat_db_g.get(660271), pit_db_g.get(660271),
+    )
 
     # 4. Bulk-fetch BDL season stats for every bdl-mapped seen player.
     bdl_ids_to_fetch: set[int] = set()
@@ -1077,6 +1092,15 @@ def run_catchup_update() -> dict:
         bdl_id: data_service._parse_bdl_pitcher_row(row)
         for bdl_id, row in raw_batch.items()
     }
+    log.info(
+        "[catchup-debug] Ohtani in bat_parsed: %s pit_parsed: %s",
+        208 in bat_parsed, 208 in pit_parsed,
+    )
+    if 208 in bat_parsed:
+        log.info(
+            "[catchup-debug] Ohtani bat_parsed['G']: %s",
+            bat_parsed[208].get("G"),
+        )
 
     # 5. Per-player decision + (when needed) save. `bwar_bat_current` /
     #    `bwar_pitch_current` are the current-year slices we fetched
@@ -1103,6 +1127,12 @@ def run_catchup_update() -> dict:
                         counts["checked"] += 1
                         bdl_g = bdl_stats.get("G") or 0
                         db_g  = bat_db_g.get(player_id) or 0
+                        if player_id == 660271:
+                            log.info(
+                                "[catchup-debug] Ohtani batter: db_g=%s bdl_g=%s → %s",
+                                db_g, bdl_g,
+                                "update" if bdl_g > db_g else "skip",
+                            )
                         if bdl_g > db_g:
                             try:
                                 entry = _build_current_batter_entry(
@@ -1136,6 +1166,12 @@ def run_catchup_update() -> dict:
                         counts["checked"] += 1
                         bdl_g = bdl_stats.get("G") or 0
                         db_g  = pit_db_g.get(player_id) or 0
+                        if player_id == 660271:
+                            log.info(
+                                "[catchup-debug] Ohtani pitcher: db_g=%s bdl_g=%s → %s",
+                                db_g, bdl_g,
+                                "update" if bdl_g > db_g else "skip",
+                            )
                         if bdl_g > db_g:
                             try:
                                 entry = _build_current_pitcher_entry(
