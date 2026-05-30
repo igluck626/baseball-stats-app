@@ -822,15 +822,25 @@ def player_pitcher_record_at_date(
     match so the totals always reflect what the per-game pipeline
     actually wrote.
 
-    Returns `{player_id, game_date, wins, losses, saves}`. Zeros
-    for a player with no qualifying gamelog rows (rookie debuting
-    on `game_date` with no prior games will read 0-0-0)."""
+    `includes_today` reports whether any row in the result set
+    falls on today's Eastern-local calendar date. Callers (iOS)
+    use this to decide whether to add a `+1` for today's just-
+    happened decision: when `false` the gamelog ingest hasn't
+    reached today yet (mid-game or before the next catch-up run),
+    and the displayed record needs the bump. When `true` the
+    nightly or catch-up already absorbed today and the record
+    already counts it — no bump.
+
+    Returns `{player_id, game_date, wins, losses, saves,
+    includes_today}`. Zeros + `false` for a player with no
+    qualifying gamelog rows (rookie debuting on `game_date` with
+    no prior games will read 0-0-0 / false)."""
     if not connection.db_available():
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
     season = game_date.year
     with connection.get_session() as db:
         rows = (
-            db.query(PitchingGameLog.result)
+            db.query(PitchingGameLog.result, PitchingGameLog.game_date)
               .filter(PitchingGameLog.player_id == player_id)
               .filter(PitchingGameLog.season    == season)
               .filter(PitchingGameLog.game_date <= game_date)
@@ -839,12 +849,20 @@ def player_pitcher_record_at_date(
     wins   = sum(1 for r in rows if r.result == "W")
     losses = sum(1 for r in rows if r.result == "L")
     saves  = sum(1 for r in rows if r.result == "S")
+    # Today is keyed off the same ET clock the catch-up / gamelog
+    # ingest uses (`_MLB_LOCAL_TZ`) so the comparison matches what
+    # the writer would have stamped on the row.
+    today_et = datetime.datetime.now(
+        data_service._MLB_LOCAL_TZ,
+    ).date()
+    includes_today = any(r.game_date == today_et for r in rows)
     return {
-        "player_id": player_id,
-        "game_date": game_date.isoformat(),
-        "wins":      wins,
-        "losses":    losses,
-        "saves":     saves,
+        "player_id":      player_id,
+        "game_date":      game_date.isoformat(),
+        "wins":           wins,
+        "losses":         losses,
+        "saves":          saves,
+        "includes_today": includes_today,
     }
 
 

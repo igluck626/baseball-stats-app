@@ -1146,14 +1146,20 @@ struct BoxScoreView: View {
         // season-stats snapshot. Falls through to the placeholder
         // + isGameToday bump when the resolve/fetch hasn't landed.
         if let rec = vm.pitcherRecordsByBDL[p.person.id] {
+            // Bump only when the game is today AND our log scan
+            // didn't already absorb today's row. `includesToday`
+            // tracks the latter; flip the bump off as soon as the
+            // catch-up writes today's gamelog row so the displayed
+            // record doesn't double-count this decision.
+            let bump = (isGameToday && !rec.includesToday) ? 1 : 0
             if (game?.wins ?? 0) > 0 {
-                return "(W \(rec.wins)-\(rec.losses))"
+                return "(W \(rec.wins + bump)-\(rec.losses))"
             }
             if (game?.losses ?? 0) > 0 {
-                return "(L \(rec.wins)-\(rec.losses))"
+                return "(L \(rec.wins)-\(rec.losses + bump))"
             }
             if (game?.saves ?? 0) > 0 {
-                return "(SV \(rec.saves))"
+                return "(SV \(rec.saves + bump))"
             }
             return nil
         }

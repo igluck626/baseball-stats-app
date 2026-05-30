@@ -1062,10 +1062,17 @@ private struct FinalGameCard: View {
         let bump = isGameToday ? 1 : 0
         let recordText: String? = {
             if let rec = pitcherRecordsByBDL[pitcher.person.id] {
+                // Same gate as the box-score's `pitcherDecisionTag`:
+                // add 1 for today's decision only when the gamelog
+                // ingest hasn't reached today yet. `includesToday`
+                // flips false → true once the catch-up writes today's
+                // row, at which point the bump becomes a double-count.
+                let recBump = (isGameToday && !rec.includesToday) ? 1 : 0
                 switch tag {
-                case "W", "L": return "(\(rec.wins)-\(rec.losses))"
-                case "SV":     return "(\(rec.saves))"
-                default:       return nil
+                case "W":  return "(\(rec.wins + recBump)-\(rec.losses))"
+                case "L":  return "(\(rec.wins)-\(rec.losses + recBump))"
+                case "SV": return "(\(rec.saves + recBump))"
+                default:   return nil
                 }
             }
             switch tag {

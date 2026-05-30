@@ -115,9 +115,10 @@ final class APIClient {
             return nil
         }
         return PitcherRecord(
-            wins:   resp.wins,
-            losses: resp.losses,
-            saves:  resp.saves,
+            wins:          resp.wins,
+            losses:        resp.losses,
+            saves:         resp.saves,
+            includesToday: resp.includes_today,
         )
     }
 
@@ -327,23 +328,30 @@ private struct SearchResponseEnvelope: Decodable {
 
 /// Pitcher's cumulative W/L/SV through a given date — three plain
 /// counters extracted from a `pitching_gamelogs` row scan on the
-/// backend. The fewer fields the better here: view sites consume
-/// `wins`/`losses`/`saves` directly and never need the round-trip
-/// metadata.
+/// backend, plus the `includesToday` signal callers use to decide
+/// whether to manually fold today's just-decided game into the
+/// record (true → already counted, false → caller should bump).
 struct PitcherRecord: Codable, Hashable {
-    let wins:   Int
-    let losses: Int
-    let saves:  Int
+    let wins:          Int
+    let losses:        Int
+    let saves:         Int
+    /// True iff at least one gamelog row in the response falls on
+    /// today's Eastern-local calendar date. False means the
+    /// nightly / catch-up hasn't reached today yet and the caller
+    /// needs to manually add the pitcher's current-game decision.
+    let includesToday: Bool
 }
 
 /// Raw shape `GET /players/{id}/pitcher-record-at-date` returns.
 /// `player_id` and `game_date` are passed-through echoes from the
-/// query; we extract just the three counters into `PitcherRecord`
-/// at the API-client boundary so call sites don't depend on them.
+/// query; we extract just the counters + `includes_today` into
+/// `PitcherRecord` at the API-client boundary so call sites don't
+/// depend on the round-trip metadata.
 private struct PitcherRecordResponse: Decodable {
-    let player_id: Int
-    let game_date: String
-    let wins:      Int
-    let losses:    Int
-    let saves:     Int
+    let player_id:      Int
+    let game_date:      String
+    let wins:           Int
+    let losses:         Int
+    let saves:          Int
+    let includes_today: Bool
 }
