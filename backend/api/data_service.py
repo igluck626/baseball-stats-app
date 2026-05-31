@@ -1900,6 +1900,114 @@ def _parse_bdl_player_bio(p: dict) -> dict:
     }
 
 
+_MLB_STATS_API_BASE = "https://statsapi.mlb.com/api/v1"
+
+
+def _resolve_mlbam_id_by_name(full_name: str) -> Optional[int]:
+    """Search the MLB Stats API for a player by full name and return
+    their MLBAM `id`, or None when the lookup can't pin down a
+    unique match. Used to bootstrap brand-new BDL roster players
+    into our MLBAM-keyed `players` / `pitchers` tables.
+
+    Acceptance rules: a single hit is accepted directly; multiple
+    hits are accepted only when exactly one has a `fullName` that
+    exactly matches (case-insensitive). Ambiguous matches (e.g.
+    "Jose Rodriguez") return None so the operator can hand-map via
+    `/admin/set-bdl-id` or wait for the next discover pass with
+    more bio data.
+    """
+    if not full_name or not full_name.strip():
+        return None
+    try:
+        qs = urllib.parse.urlencode({"names": full_name, "sportId": 1})
+        url = f"{_MLB_STATS_API_BASE}/people/search?{qs}"
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "baseball-stats-app/1.0",
+            "Accept":     "application/json",
+        })
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:
+        log.warning(
+            "_resolve_mlbam_id_by_name(%r): MLB Stats API search failed: %s",
+            full_name, exc,
+        )
+        return None
+    people = data.get("people") or []
+    if not people:
+        return None
+    if len(people) == 1:
+        return _to_int(people[0].get("id"))
+    target = full_name.strip().lower()
+    exact = [
+        p for p in people
+        if (p.get("fullName") or "").strip().lower() == target
+    ]
+    if len(exact) == 1:
+        return _to_int(exact[0].get("id"))
+    return None
+
+
+def _create_bio_from_bdl(
+    db,
+    bdl_id: int,
+    full_name: str,
+    lahman_code: Optional[str],
+    current_year: int,
+) -> tuple[Optional[str], Optional[int]]:
+    """Discover-and-insert path. Resolves a BDL roster player to an
+    MLBAM id via the MLB Stats API name search, fetches their full
+    BDL bio, infers pitcher-vs-batter from the position, inserts a
+    new `players` or `pitchers` row keyed on the MLBAM id, and
+    stamps the current-year season row's team.
+
+    Returns `("pitcher"|"batter", mlbam_id)` on success or
+    `(None, None)` on any failure. The caller is responsible for
+    incrementing the appropriate counter, committing the session,
+    and (optionally) triggering a same-year stats backfill via
+    `backfill_player_seasons(mlbam_id, current_year, current_year)`
+    AFTER the session is committed (that helper opens its own
+    session and won't see uncommitted inserts).
+    """
+    mlbam_id = _resolve_mlbam_id_by_name(full_name)
+    if mlbam_id is None:
+        return None, None
+    bio = fetch_bdl_player_bio(bdl_id)
+    if bio is None:
+        return None, None
+    bio.pop("_team_code", None)
+    bio["player_id"] = mlbam_id
+    raw_position = (bio.get("position") or "").strip().lower()
+    is_pitcher = raw_position in _BDL_PITCHER_POSITIONS
+    try:
+        if is_pitcher:
+            crud.save_pitcher(db, bio)
+        else:
+            crud.save_player(db, bio)
+    except Exception as exc:
+        log.error(
+            "_create_bio_from_bdl(bdl_id=%d, name=%r): save failed: %s",
+            bdl_id, full_name, exc,
+        )
+        return None, None
+    if lahman_code:
+        try:
+            _apply_team_to_season_rows(
+                db,
+                player_id=mlbam_id,
+                year=current_year,
+                abbr=lahman_code,
+                create_pitcher=is_pitcher,
+                create_batter=not is_pitcher,
+            )
+        except Exception as exc:
+            log.warning(
+                "_create_bio_from_bdl(%d): team-stamp failed: %s",
+                mlbam_id, exc,
+            )
+    return ("pitcher" if is_pitcher else "batter"), mlbam_id
+
+
 def _parse_bdl_bats_throws(s: Optional[str]) -> tuple[Optional[str], Optional[str]]:
     """\"R/R\" → (\"R\", \"R\"). Tolerant of whitespace and missing
     halves; returns (None, None) on unparseable input."""
@@ -2733,6 +2841,16 @@ def sync_all_player_teams_from_rosters(current_year: int) -> dict:
         # search (we can't insert without the PK).
         "pitchers_bio:created":     0,
         "players_bio:created":      0,
+        # NEW: end-to-end discover-and-insert path counters. These
+        # track the players who used to land in the `unresolved`
+        # bucket and now get a real bio + same-season stats
+        # backfill on the spot. `new_players_failed` includes both
+        # "MLBAM lookup didn't pin a unique match" and "BDL bio
+        # fetch / insert errored" cases — the operator can grep
+        # the application logs for specifics.
+        "new_players_created":      0,
+        "new_pitchers_created":     0,
+        "new_players_failed":       0,
         # `mlb_last_season` cleared on existing bios when the player
         # shows up on an active roster — Lahman's `finalGame` year
         # sticks around even after a player returns from a gap year.
@@ -2746,6 +2864,11 @@ def sync_all_player_teams_from_rosters(current_year: int) -> dict:
     bio_failed: list[int] = []
     failed_teams: list[str] = []
     unresolved: list[dict] = []
+    # Newly-created (side, mlbam_id) tuples — post-loop we'll fire
+    # a same-season stats backfill for each. Done after the main
+    # session commits because `backfill_player_seasons` opens its
+    # own session and would otherwise miss our uncommitted inserts.
+    new_discoveries: list[tuple[str, int]] = []
 
     with connection.get_session() as db:
         for lahman_code, bdl_team_id in _BDL_TEAM_ID_MAP.items():
@@ -2805,15 +2928,33 @@ def sync_all_player_teams_from_rosters(current_year: int) -> dict:
 
                 # 3. Still no match — genuinely new BDL player not
                 #    cross-referenced to our MLBAM-keyed schema.
-                #    Without an MLBAM, we can't insert (our PK).
-                #    Record them so the operator can hand-curate the
-                #    entry if needed; skip otherwise.
+                #    Try to discover the MLBAM id via name search
+                #    against the MLB Stats API, fetch the BDL bio,
+                #    and insert a new row. Failures fall through to
+                #    the `unresolved` bucket the same way they did
+                #    before, so the operator can still hand-curate
+                #    the remaining cases.
                 if pit_row is None and bat_row is None:
-                    unresolved.append({
-                        "bdl_id":    bdl_player_id,
-                        "full_name": full_name,
-                        "team":      lahman_code,
-                    })
+                    side, new_pid = _create_bio_from_bdl(
+                        db,
+                        bdl_id=bdl_player_id,
+                        full_name=full_name or "",
+                        lahman_code=lahman_code,
+                        current_year=current_year,
+                    )
+                    if new_pid is not None:
+                        new_discoveries.append((side or "batter", new_pid))
+                        if side == "pitcher":
+                            counts["new_pitchers_created"] += 1
+                        else:
+                            counts["new_players_created"] += 1
+                    else:
+                        counts["new_players_failed"] += 1
+                        unresolved.append({
+                            "bdl_id":    bdl_player_id,
+                            "full_name": full_name,
+                            "team":      lahman_code,
+                        })
                     continue
 
                 # 4. Clear stale mlb_last_season — the player is on
@@ -2850,19 +2991,62 @@ def sync_all_player_teams_from_rosters(current_year: int) -> dict:
 
         db.commit()
 
+    # Post-loop: same-season stats backfill for each newly-created
+    # bio. `backfill_player_seasons` opens its own session and uses
+    # the MLB Stats API, so we have to call it AFTER the outer
+    # commit above. Failures are logged and counted but don't roll
+    # back the bio insert — better to have the bio without stats
+    # than no bio at all.
+    backfill_results: list[dict] = []
+    for _, new_pid in new_discoveries:
+        try:
+            r = backfill_player_seasons(new_pid, current_year, current_year)
+            backfill_results.append({"player_id": new_pid, **r})
+        except Exception as exc:
+            log.warning(
+                "discover: backfill_player_seasons(%d) FAILED: %s",
+                new_pid, exc,
+            )
+            backfill_results.append({
+                "player_id": new_pid,
+                "status":    f"backfill_failed: {exc}",
+            })
+
     total = sum(counts.values())
     return {
-        "status":       "ok",
-        "total":        total,
-        "counts":       counts,
-        "failed_teams": failed_teams,
+        "status":            "ok",
+        "total":             total,
+        "counts":            counts,
+        "failed_teams":      failed_teams,
         # Players BDL knows about that we couldn't insert because
-        # the MLB Stats API name search didn't surface a single
-        # MLBAM match. Manual hand-mapping required for these
-        # (rare — minor-league call-ups with name collisions).
-        "unresolved":   unresolved,
-        "bio_failed":   bio_failed,
+        # the MLB Stats API name search didn't pin a unique MLBAM
+        # match. Hand-mapping (`/admin/set-bdl-id`) is the
+        # workaround — rare, mostly minor-league call-ups with
+        # name collisions against retired veterans.
+        "unresolved":        unresolved,
+        "bio_failed":        bio_failed,
+        # Same-season backfill outcomes for each newly-discovered
+        # MLBAM id. One entry per new bio; carries the underlying
+        # `backfill_player_seasons` response (or `backfill_failed`
+        # when the helper itself blew up).
+        "backfill_results":  backfill_results,
     }
+
+
+def discover_new_players(current_year: int) -> dict:
+    """Thin wrapper that runs the full active-roster walk and
+    surfaces just the discovery-related counts. Intended for an
+    on-demand call after a known call-up (rookie debut, mid-season
+    trade in from an unaffiliated league) so the operator doesn't
+    have to wait for the next nightly.
+
+    Delegates to `sync_all_player_teams_from_rosters` since the
+    discover path is now embedded there — same roster walk, same
+    BDL rate limit budget. Returns the full response from that
+    helper so the caller can also see the team-sync metrics if
+    they're interested.
+    """
+    return sync_all_player_teams_from_rosters(current_year)
 
 
 def sync_player_active_status_from_bdl(current_year: int) -> dict:

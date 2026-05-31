@@ -1217,6 +1217,28 @@ def admin_sync_all_player_teams():
     return data_service.sync_all_player_teams_from_rosters(current_year)
 
 
+@app.post("/admin/discover-new-players")
+def admin_discover_new_players():
+    """On-demand call-up discovery. Walks BDL's 30 active rosters,
+    surfaces players we don't have in `players` / `pitchers` yet,
+    looks each one up by name on the MLB Stats API to resolve
+    their MLBAM id, fetches the BDL bio, and inserts a new row.
+    Same-year stats backfill fires automatically after each insert.
+
+    Useful right after a notable rookie call-up so the new bio +
+    headshot land in iOS without waiting for the next nightly.
+    Idempotent — players already in the DB are a no-op (their
+    `bdl_id` and current-year team get reconciled along the way).
+    Returns the same envelope as `/admin/sync-all-player-teams`,
+    so the operator can also see how many new bios were created
+    (`new_players_created` / `new_pitchers_created`) and how many
+    name-search misses landed in `unresolved` for hand-curation."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    current_year = datetime.datetime.utcnow().year
+    return data_service.discover_new_players(current_year)
+
+
 @app.post("/admin/sync-player-active-status")
 def admin_sync_player_active_status():
     """Reconcile every mapped player's retired / active state against
