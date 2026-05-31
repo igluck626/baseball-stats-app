@@ -730,11 +730,19 @@ private struct FinalGameCard: View {
             collapsedBody
                 .contentShape(Rectangle())
                 .onTapGesture {
+                    // Fire the fetch BEFORE the expand animation so
+                    // the network round-trip starts while the 0.22s
+                    // animation is still running. Without this, the
+                    // expanded view paints with empty dicts, then the
+                    // fetch lands ~0.5s later and the values pop in
+                    // — visible flash. Predicate uses `!isExpanded`
+                    // because we kick off the fetch only when the
+                    // tap transitions collapsed → expanded.
+                    if !isExpanded && boxScore == nil && !isLoadingBoxScore {
+                        Task { await fetchBoxScore() }
+                    }
                     withAnimation(.easeInOut(duration: 0.22)) {
                         isExpanded.toggle()
-                    }
-                    if isExpanded && boxScore == nil && !isLoadingBoxScore {
-                        Task { await fetchBoxScore() }
                     }
                 }
             if isExpanded {
@@ -1103,46 +1111,34 @@ private struct FinalGameCard: View {
             if let s = d.saver  { decisionLine(tag: "SV", pitcher: s) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        // Animate the `(—)` → `(W X-Y)` swap when the pitcher-
+        // record fetch lands. Same value-driven animation as
+        // `hrSummary` so the two transitions line up visually.
+        .animation(
+            .easeIn(duration: 0.2),
+            value: pitcherRecordsByBDL,
+        )
     }
 
     private func decisionLine(tag: String, pitcher: BoxPlayer) -> some View {
-        let season = pitcher.seasonStats?.pitching
-        // Prefer the contextual record from
-        // `/players/{id}/pitcher-record-at-date` — always honest about
-        // the post-game W-L-SV. Falls through to the placeholder
-        // + isGameToday bump when the record isn't loaded yet.
-        let bump = isGameToday ? 1 : 0
+        // While the contextual record is still loading, show "(—)"
+        // rather than the BDL placeholder + bump. Same rationale
+        // as `hrSegments` — the flash of a wrong intermediate
+        // value is worse than a brief dash. Animated below.
         let recordText: String? = {
-            if let rec = pitcherRecordsByBDL[pitcher.person.id] {
-                // Same gate as the box-score's `pitcherDecisionTag`:
-                // add 1 for today's decision only when the gamelog
-                // ingest hasn't reached today yet. `includesToday`
-                // flips false → true once the catch-up writes today's
-                // row, at which point the bump becomes a double-count.
-                let recBump = (isGameToday && !rec.includesToday) ? 1 : 0
-                switch tag {
-                case "W":  return "(\(rec.wins + recBump)-\(rec.losses))"
-                case "L":  return "(\(rec.wins)-\(rec.losses + recBump))"
-                case "SV": return "(\(rec.saves + recBump))"
-                default:   return nil
-                }
+            guard let rec = pitcherRecordsByBDL[pitcher.person.id] else {
+                return "(—)"
             }
+            // `includesToday` gate matches the box-score's
+            // `pitcherDecisionTag`: bump only when this is today's
+            // game AND the gamelog ingest hasn't reached today yet.
+            let recBump = (isGameToday && !rec.includesToday) ? 1 : 0
             switch tag {
-            case "W":
-                if let w = season?.wins, let l = season?.losses {
-                    return "(\(w + bump)-\(l))"
-                }
-            case "L":
-                if let w = season?.wins, let l = season?.losses {
-                    return "(\(w)-\(l + bump))"
-                }
-            case "SV":
-                if let sv = season?.saves {
-                    return "(\(sv + bump))"
-                }
-            default: break
+            case "W":  return "(\(rec.wins + recBump)-\(rec.losses))"
+            case "L":  return "(\(rec.wins)-\(rec.losses + recBump))"
+            case "SV": return "(\(rec.saves + recBump))"
+            default:   return nil
             }
-            return nil
         }()
         return HStack(spacing: 6) {
             Text("\(tag):")
@@ -1174,6 +1170,14 @@ private struct FinalGameCard: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.top, 4)
+                    // Animate the `(—)` → `(N)` swap when the
+                    // batter-stats-at-date fetch lands. Keyed off
+                    // the dict so additional players appearing
+                    // mid-fetch also slide in instead of popping.
+                    .animation(
+                        .easeIn(duration: 0.2),
+                        value: batterStatsAtDateByBDL,
+                    )
             }
         }
     }
@@ -1203,13 +1207,15 @@ private struct FinalGameCard: View {
                 guard let hr = p.stats?.batting?.homeRuns, hr > 0 else { continue }
                 let last = lastNameWithSuffix(p.person.fullName)
                 let prefix = hr > 1 ? "\(last) \(hr)" : last
+                // While the point-in-time fetch is still in flight,
+                // render `(—)` rather than the stale placeholder
+                // total. Eliminates the flash of e.g. "(20)" → "(21)"
+                // on a 21st-HR-of-the-year night. Animated below.
                 if let stats = batterStatsAtDateByBDL[p.person.id] {
                     let bump = (isToday && !stats.includesToday) ? hr : 0
                     out.append("\(prefix) (\(stats.homeRuns + bump))")
                 } else {
-                    let season = p.seasonStats?.batting?.homeRuns ?? 0
-                    let liveIncrement = isToday ? hr : 0
-                    out.append("\(prefix) (\(season + liveIncrement))")
+                    out.append("\(prefix) (—)")
                 }
             }
         }
