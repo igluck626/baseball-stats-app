@@ -2872,12 +2872,22 @@ def sync_player_active_status_from_bdl(current_year: int) -> dict:
     applies two-way edits to `mlb_last_season`:
 
     - BDL active + `mlb_last_season IS NOT NULL` → clear it
-      (Pomeranz-style comeback — Lahman's `finalGame` year is stale
-      because the player was out of MLB long enough to be retired
-      then returned).
+      **unconditionally**. No GP guard on the activation path.
+      Comeback-from-multi-year-absence cases (Chris Murphy 2024-
+      2025 → 2026, Pomeranz, Kershaw-style un-retirement) need
+      to flip back to active the moment BDL signals it, even
+      though their `batting_gamelogs` / `pitching_gamelogs` rows
+      for the current season may not exist yet.
     - BDL inactive + `mlb_last_season IS NULL` → stamp it with
-      `current_year - 1` (Kershaw-style retirement — Lahman still
-      shows the player as active on their last season's roster).
+      `current_year - 1`, **gated by the dual-source GP check**
+      described below.
+
+    The guard is direction-asymmetric on purpose: false positives
+    for retirement (wrongly marking an active player retired) are
+    a worse failure mode than briefly delaying retirement of an
+    actually-retired player. False positives for activation are
+    cheap (a retired player accidentally flipped to active just
+    means a `mlb_last_season` stamp gets re-applied next pass).
 
     BDL also ships the player's current team object. When BDL is
     active and the team resolves to a Lahman code, the per-season
@@ -2897,12 +2907,13 @@ def sync_player_active_status_from_bdl(current_year: int) -> dict:
     chunk via `meta.next_cursor`. Roughly `N / 50` BDL requests for
     `N` mapped players, well within the 5/sec ceiling.
 
-    Dual-source GP guard on the retired path. BDL flips `active`
-    to false the moment a player is DFA'd or optioned to AAA, but
-    their season stats still carry the GP they accumulated before
-    the move. Stamping `mlb_last_season` on those players would
-    mark live rostered-elsewhere vets as retired. Before any stamp,
-    we apply two checks:
+    Dual-source GP guard on the **retirement path only** (does NOT
+    apply to activation — see the asymmetry note above). BDL flips
+    `active` to false the moment a player is DFA'd or optioned to
+    AAA, but their season stats still carry the GP they accumulated
+    before the move. Stamping `mlb_last_season` on those players
+    would mark live rostered-elsewhere vets as retired. Before any
+    stamp, we apply two checks:
 
     1. Batch-fetch `/season_stats` for the candidate set and require
        the side-appropriate `gp` field (`batting_gp` for batters,
@@ -3012,6 +3023,15 @@ def sync_player_active_status_from_bdl(current_year: int) -> dict:
                 continue
 
             if is_active and row.mlb_last_season is not None:
+                # Activation is UNCONDITIONAL — no GP guard. If BDL
+                # flags the player active (or ships them with a team),
+                # we trust that signal regardless of whether our
+                # gamelog tables have rows for them yet. This is what
+                # lets multi-year-absence returners (Chris Murphy
+                # 2024-2025 → 2026) flip back to active on their
+                # first ingest, before any of their 2026 games have
+                # been written. The GP guard below applies ONLY in
+                # the retirement direction; do not extend it here.
                 row.mlb_last_season = None
                 counts["activated"] += 1
             elif not is_active and row.mlb_last_season is None:
