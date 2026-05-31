@@ -1903,6 +1903,50 @@ def _parse_bdl_player_bio(p: dict) -> dict:
 _MLB_STATS_API_BASE = "https://statsapi.mlb.com/api/v1"
 
 
+# -----------------------------------------------------------------------------
+# MLB Stats API usage — single touch-point
+# -----------------------------------------------------------------------------
+# This function is the ONLY place in the backend that hits
+# statsapi.mlb.com. Every other external data source is BallDontLie
+# (`api.balldontlie.io`, gated on `BDL_KEY`) or Baseball-Reference
+# (`www.baseball-reference.com/data/war_daily_*.txt`, direct CSV
+# downloads via `requests`). Search "_MLB_STATS_API_BASE" before
+# adding new callers — keeping the surface this small simplifies
+# any future migration.
+#
+# Why MLB Stats API here:
+#   We need the MLBAM player id (our PK across `players` /
+#   `pitchers` / every season + gamelog table) for a brand-new BDL
+#   roster player that doesn't exist in our DB yet. BDL doesn't
+#   ship the MLBAM cross-reference, and the Lahman / Chadwick
+#   bridge lags real-time call-ups. The MLB Stats API
+#   `/people/search?names=<full_name>&sportId=1` endpoint maps
+#   `(name → MLBAM id)` — pure identity / PK resolution, no game
+#   data, no rate-stat retrieval, no integration with bref.
+#
+# The endpoint is unauthenticated (no API key required, no licensing
+# tier gating it for our usage). The response is the standard
+# `{people: [{id, fullName, ...}]}` envelope; we read only `id`
+# and `fullName`. We do not consult `firstLastName`, birth date,
+# team, position, or any stats blocks the response may also carry.
+#
+# Future replacement paths if commercial licensing on
+# statsapi.mlb.com ever becomes a concern:
+#   - DOB + name match against the bref WAR CSVs we already
+#     download nightly. Each bref row carries `name_common` and
+#     `mlb_ID`; a brand-new player generally appears in
+#     `war_daily_bat.txt` within ~24h of their MLB debut, so a
+#     bref-side lookup would lag at most one nightly cycle.
+#   - Hand-maintained `name→mlbam` mapping stamped into a small
+#     `manual_mlbam_overrides.csv` shipped in `backend/data/`,
+#     consulted as a first-pass shortcut before any HTTP call.
+#   - Chadwick Register's `chadwick_mlb.csv` (already shipped in
+#     `backend/data/lahman/`) — keyed by `bbref_id`, but a
+#     name-only column is also present.
+# Any of these would be a drop-in replacement for the body of this
+# function; the caller (`_create_bio_from_bdl`) only sees the
+# `Optional[int]` MLBAM result.
+# -----------------------------------------------------------------------------
 def _resolve_mlbam_id_by_name(full_name: str) -> Optional[int]:
     """Search the MLB Stats API for a player by full name and return
     their MLBAM `id`, or None when the lookup can't pin down a
