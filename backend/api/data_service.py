@@ -2868,8 +2868,21 @@ def sync_all_player_teams_from_rosters(current_year: int) -> dict:
 def sync_player_active_status_from_bdl(current_year: int) -> dict:
     """Reconcile each player/pitcher bio row's retired/active state
     against BDL. Walks every `player_id` with a `bdl_id`, batch-
-    fetches their BDL profile via `/players?player_ids[]=...`, and
-    applies two-way edits to `mlb_last_season`:
+    fetches their BDL profile via `/players?player_ids[]=...`,
+    AND prefetches the full active-roster firehose
+    (`/players/active`) plus the injury list (`/player_injuries`),
+    then applies two-way edits to `mlb_last_season`:
+
+    Three-source "known active" check. A player counts as active
+    if ANY of:
+      1. Their bdl_id is in `/players/active`'s response,
+      2. Their bdl_id appears in `/player_injuries`,
+      3. The per-profile `active` flag (or team object presence)
+         from `/players?player_ids[]=...` says active.
+    The per-profile fetch alone misses IL-stashed vets (BDL drops
+    `active=True` for injured players even though they're still on
+    a 40-man) and mid-roster transitions where the per-profile
+    cache is stale; the other two sources fill those gaps.
 
     - BDL active + `mlb_last_season IS NOT NULL` → clear it
       **unconditionally**. No GP guard on the activation path.
@@ -2929,10 +2942,14 @@ def sync_player_active_status_from_bdl(current_year: int) -> dict:
     rescued them.
 
     Returns a `counts` dict with `total_checked / activated / retired
-    / skipped_due_to_gp / team_updated / no_data / failed`. `no_data`
-    is the count of targets BDL didn't return a profile for (stale
-    bdl_id BDL has since removed); treat as inconclusive — the DB
-    stays as-is.
+    / skipped_due_to_gp / injured_protected / team_updated / no_data
+    / failed`. `no_data` is the count of targets BDL didn't return a
+    profile for (stale bdl_id BDL has since removed); treat as
+    inconclusive — the DB stays as-is. `injured_protected` is the
+    count of would-be retirement candidates where the injury list
+    was the ONLY source that saved them (per-profile + active-roster
+    both said inactive); useful for verifying the injury source is
+    pulling its weight.
     """
     _get_bdl_key()
 
@@ -2946,10 +2963,65 @@ def sync_player_active_status_from_bdl(current_year: int) -> dict:
         "activated":          0,   # mlb_last_season cleared
         "retired":            0,   # mlb_last_season stamped
         "skipped_due_to_gp":  0,   # BDL says inactive but season GP > 0
+        "injured_protected":  0,   # would-be retirement, saved by injury list
         "team_updated":       0,   # current-year season row's team changed
         "no_data":            0,   # BDL didn't return a profile for this id
         "failed":             0,   # request blew up for this id's batch
     }
+
+    # Three-source "known active" signal. The per-player `/players`
+    # fetch alone misses two real-world states where a player IS in
+    # MLB but BDL's per-profile `active` flag goes false:
+    #   • IL stash — BDL drops `active=True` for injured players,
+    #     even though they're still on a 40-man and rehabbing.
+    #   • Brief mid-roster transitions — DFA-then-reinstate the same
+    #     day can leave the per-profile cache stale for hours.
+    # Both `/players/active` (the active-roster firehose) and
+    # `/player_injuries` (the injury list) catch these. Either
+    # presence is enough to flip a player into the "known active"
+    # bucket below. Both paginate via `meta.next_cursor`; failures
+    # log and degrade silently so a flaky BDL endpoint can't block
+    # the rest of the sync.
+    def _paginate_ids(path: str, id_picker) -> set[int]:
+        out: set[int] = set()
+        cursor: Optional[str] = None
+        while True:
+            params: dict = {"per_page": 100}
+            if cursor:
+                params["cursor"] = cursor
+            try:
+                data = _bdl_get_json(path, params)
+            except Exception as exc:
+                log.warning(
+                    "sync_active_status: %s page failed: %s", path, exc,
+                )
+                break
+            for entry in (data.get("data") or []):
+                pid = id_picker(entry)
+                if pid is not None:
+                    try:
+                        out.add(int(pid))
+                    except (TypeError, ValueError):
+                        continue
+            cursor = (data.get("meta") or {}).get("next_cursor")
+            if not cursor:
+                break
+            time.sleep(_BDL_RATE_LIMIT_SLEEP)
+        return out
+
+    active_bdl_ids = _paginate_ids(
+        "players/active",
+        lambda e: e.get("id"),
+    )
+    injured_bdl_ids = _paginate_ids(
+        "player_injuries",
+        lambda e: (e.get("player") or {}).get("id"),
+    )
+    log.info(
+        "sync_active_status: %d active roster players, "
+        "%d injured players from BDL",
+        len(active_bdl_ids), len(injured_bdl_ids),
+    )
 
     with connection.get_session() as db:
         targets: list[tuple[str, int, int]] = []  # (side, player_id, bdl_id)
@@ -3007,13 +3079,21 @@ def sync_player_active_status_from_bdl(current_year: int) -> dict:
                 continue
             # BDL ships an explicit `active` bool on recent responses.
             # When missing (older payload shape), use team presence
-            # as a proxy: a non-null team object means the player is
-            # currently rostered somewhere.
+            # as a proxy. This is the PER-PROFILE signal; the two
+            # roster sources below are the additional safety nets.
             active_field = p.get("active")
             if isinstance(active_field, bool):
-                is_active = active_field
+                bdl_active = active_field
             else:
-                is_active = (p.get("team") or {}).get("id") is not None
+                bdl_active = (p.get("team") or {}).get("id") is not None
+
+            on_active_roster = bdl_id in active_bdl_ids
+            on_injured_list  = bdl_id in injured_bdl_ids
+            # "Known active" = present in any of the three sources.
+            # Per-profile alone misses IL-stashed vets (BDL drops
+            # `active=True` for them) and mid-roster transitions
+            # where the cache is stale.
+            known_active = on_active_roster or on_injured_list or bdl_active
 
             row = (
                 db.get(_Player,  player_id) if side == "batter"
@@ -3022,27 +3102,45 @@ def sync_player_active_status_from_bdl(current_year: int) -> dict:
             if row is None:
                 continue
 
-            if is_active and row.mlb_last_season is not None:
-                # Activation is UNCONDITIONAL — no GP guard. If BDL
-                # flags the player active (or ships them with a team),
-                # we trust that signal regardless of whether our
-                # gamelog tables have rows for them yet. This is what
-                # lets multi-year-absence returners (Chris Murphy
-                # 2024-2025 → 2026) flip back to active on their
-                # first ingest, before any of their 2026 games have
-                # been written. The GP guard below applies ONLY in
-                # the retirement direction; do not extend it here.
+            if known_active and row.mlb_last_season is not None:
+                # Activation is UNCONDITIONAL — no GP guard. Three
+                # sources agree-or-any-one-says-active flips a
+                # retired-in-DB player back to active. Lets multi-
+                # year-absence returners (Chris Murphy 2024-2025
+                # → 2026) flip back on their first ingest, even
+                # before their current-season gamelog rows land.
+                # The GP guard below applies ONLY in the retirement
+                # direction; do not extend it here.
                 row.mlb_last_season = None
                 counts["activated"] += 1
-            elif not is_active and row.mlb_last_season is None:
-                # Hold off — needs the GP check below before stamping.
+            elif (
+                not on_active_roster
+                and not on_injured_list
+                and not bdl_active
+                and row.mlb_last_season is None
+            ):
+                # All three sources say inactive AND the DB has the
+                # player as currently active. Defer to the GP-guarded
+                # retirement check below.
                 retirement_candidates.append((side, player_id, bdl_id, row))
+            elif (
+                on_injured_list
+                and not on_active_roster
+                and not bdl_active
+                and row.mlb_last_season is None
+            ):
+                # Injured-list-only save: the per-profile flag AND
+                # the active-roster firehose both said inactive;
+                # only the injury list rescued this player from
+                # retirement candidacy. Track it so the operator
+                # can verify the injury source is doing useful work.
+                counts["injured_protected"] += 1
 
-            # Sync current team only for active players. Inactive
-            # players' stale season teams are left alone — a DFA'd
-            # vet's last team is still our best guess until next
-            # season's row is written.
-            if is_active:
+            # Sync current team only when the per-profile fetch
+            # actually carries a team object. The active-roster /
+            # injured signals confirm "still in MLB" but don't
+            # ship a team column to write through.
+            if bdl_active:
                 team_bdl_id = (p.get("team") or {}).get("id")
                 team_code = (
                     _BDL_TO_LAHMAN_TEAM_MAP.get(team_bdl_id)
