@@ -1178,6 +1178,66 @@ def main() -> None:
     except Exception as exc:
         log.error(f"Active-status reconcile FAILED (non-fatal): {exc}")
 
+    # Phase 5c — call-up discovery via BDL's active-roster walk.
+    # Same 30-team walk that Phase 5 uses, but here we care about
+    # the new-bio side: any BDL roster player without a matching
+    # MLBAM-keyed row in `players` / `pitchers` gets resolved via
+    # MLB Stats API name search and inserted on the spot, plus a
+    # same-season stats backfill. Catches fresh call-ups so iOS
+    # sees a real bio + headshot the morning after their debut
+    # rather than waiting for the next Lahman archive drop.
+    # Non-fatal — discovery failures don't roll back the rest of
+    # the nightly.
+    dc: dict = {}
+    try:
+        discover_result = data_service.discover_new_players(current_year)
+        dc = discover_result.get("counts") or {}
+        log.info(
+            "[nightly] discover phase: %d new batters, "
+            "%d new pitchers, %d failed",
+            dc.get("new_players_created", 0),
+            dc.get("new_pitchers_created", 0),
+            dc.get("new_players_failed", 0),
+        )
+    except Exception as exc:
+        log.error(f"Discover phase FAILED (non-fatal): {exc}")
+
+    # Phase 5d — same-season gamelog backfill for newly-discovered
+    # players. Only fires when Phase 5c actually inserted at least
+    # one new bio — the operation walks every BDL final from
+    # March 25 through today, which is ~900 games for a typical
+    # full season and not worth running on quiet nights. The
+    # backfill is idempotent (PK upsert) so we can re-scan dates
+    # that already have rows; the cost is the BDL API budget.
+    # Auto-dedup tail runs inside `backfill_bdl_gamelogs` already.
+    new_bios = (
+        dc.get("new_players_created",  0)
+        + dc.get("new_pitchers_created", 0)
+    )
+    if new_bios > 0:
+        try:
+            today_et = datetime.datetime.now(
+                data_service._MLB_LOCAL_TZ,
+            ).date().isoformat()
+            start_date = f"{current_year}-03-25"
+            log.info(
+                "[nightly] new player gamelog backfill: "
+                "%d new bios → walking %s..%s",
+                new_bios, start_date, today_et,
+            )
+            bf = data_service.backfill_bdl_gamelogs(start_date, today_et)
+            log.info(
+                "[nightly] new player game log backfill: "
+                "%d games, %d bat_rows, %d pit_rows",
+                bf.get("total_games",    0),
+                bf.get("total_bat_rows", 0),
+                bf.get("total_pit_rows", 0),
+            )
+        except Exception as exc:
+            log.error(
+                f"New-player gamelog backfill FAILED (non-fatal): {exc}"
+            )
+
     log.info("=" * 52)
     log.info(
         f"Batters   — updated: {bat_updated}, skipped: {bat_skipped}, failed: {len(bat_failed)}"
