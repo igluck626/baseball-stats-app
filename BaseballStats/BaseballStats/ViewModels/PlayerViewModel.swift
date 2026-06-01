@@ -416,26 +416,29 @@ final class PlayerViewModel: ObservableObject {
         // shipped under yesterday's ET date (10pm PT == 1am ET ==
         // yesterday's date in ET's calendar). Pull yesterday's finals
         // and keep only the ones that started at or after 18:00 ET —
-        // afternoon games are already in our nightly DB, so the cutoff
-        // avoids re-overlaying them.
+        // afternoon games are unambiguously yesterday's slate, so
+        // the cutoff screens out games that don't belong to the
+        // late-night carry-over window.
+        //
+        // No timestamp-based freshness gate here. The previous
+        // implementation skipped games when `stats_last_updated`
+        // was past the game's end + 4h, but `stats_last_updated`
+        // tracks WHEN we last fetched BDL — not whether BDL had
+        // absorbed the game by then. The 1am PT catch-up bumps
+        // the stamp to ~4am ET regardless of whether BDL ingested
+        // the late game yet, which caused false skips.
+        //
+        // Whether the DB actually absorbed the game is answered
+        // by the downstream GP comparison (`shouldOverlayFinals`
+        // / `shouldUseBDLDirect`) inside the `if hasFinal` block
+        // below: dbG > bdlG → DB already absorbed, finals drop;
+        // dbG == bdlG → DB still pre-game, overlay applies;
+        // bdlG > dbG → BDL ahead, switch to direct totals. That
+        // comparison is GP-truthful and timing-independent.
         if eligible.isEmpty {
             var etCal = Calendar(identifier: .gregorian)
             etCal.timeZone = TimeZone(identifier: "America/New_York")
                 ?? TimeZone.current
-            // Latest nightly stamp across both sides. ISO-8601 UTC.
-            // If the nightly ran after a candidate game's end, that
-            // game's already in our DB and an overlay would double-
-            // count it.
-            let lastUpdated: Date? = {
-                let raw = [
-                    currentBatting?.stats_last_updated,
-                    currentPitching?.stats_last_updated,
-                ].compactMap { $0 }
-                let dates = raw.compactMap {
-                    try? Date($0, strategy: .iso8601)
-                }
-                return dates.max()
-            }()
             if let yest = etCal.date(byAdding: .day, value: -1, to: Date()) {
                 let yString = Self.dateOnly.string(from: yest)
                 let yGames = (try? await bdl.getTeamGames(
@@ -445,14 +448,6 @@ final class PlayerViewModel: ObservableObject {
                     guard let start = g.startDate else { continue }
                     let hour = etCal.component(.hour, from: start)
                     guard hour >= 18 else { continue }
-                    // 4-hour buffer is generous for a 9-inning regular
-                    // game (~3hr median). Skip when the nightly stamp
-                    // is past that buffer — we'd be overlaying a game
-                    // already in the DB.
-                    if let lastUpdated,
-                       lastUpdated > start.addingTimeInterval(4 * 3600) {
-                        continue
-                    }
                     hasFinal = true
                     eligible.append((g.id, false))
                 }
