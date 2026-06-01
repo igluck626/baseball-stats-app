@@ -393,6 +393,14 @@ final class PlayerViewModel: ObservableObject {
         var eligible: [(gameId: Int, isLive: Bool)] = []
         var liveOnSchedule = false
         var hasFinal = false
+        // ET-formatted `yyyy-MM-dd` of any STATUS_FINAL game we've
+        // enqueued. Used downstream as the `game_date` param on the
+        // `/batter-stats-at-date` and `/pitcher-record-at-date`
+        // calls — those drive the `includesToday` gate that tells
+        // us whether the game is already absorbed into our gamelog
+        // tables. First-wins because doubleheader finals share a
+        // date and we only need one to fix the absorption signal.
+        var finalGameDateET: String? = nil
         for g in todayGames {
             switch g.status {
             case "STATUS_IN_PROGRESS", "STATUS_DELAYED":
@@ -401,6 +409,7 @@ final class PlayerViewModel: ObservableObject {
             case "STATUS_FINAL":
                 hasFinal = true
                 eligible.append((g.id, false))
+                if finalGameDateET == nil { finalGameDateET = today }
             default:
                 break
             }
@@ -439,6 +448,7 @@ final class PlayerViewModel: ObservableObject {
                     guard g.startDate != nil else { continue }
                     hasFinal = true
                     eligible.append((g.id, false))
+                    if finalGameDateET == nil { finalGameDateET = yString }
                 }
             }
         }
@@ -496,12 +506,45 @@ final class PlayerViewModel: ObservableObject {
                 if let db = dbPitchingG, let p = bdlPitchingG { return p > db }
                 return false
             }()
+            // Absorption signal from our own gamelog tables.
+            // `dbG == bdlG` alone is ambiguous: it can mean
+            // "neither side absorbed yet" (overlay should fire) OR
+            // "both sides absorbed" (overlay would double-count).
+            // `includesToday` from `/batter-stats-at-date` /
+            // `/pitcher-record-at-date` answers the GP-equal
+            // ambiguity directly: true → the game is already in
+            // batting_gamelogs / pitching_gamelogs, so the
+            // overnight totals already cover it. Fetches are
+            // best-effort — any failure falls back to the
+            // historical behavior (treat as not-absorbed,
+            // fire the overlay).
+            var batterIncludesToday = false
+            var pitcherIncludesToday = false
+            if let date = finalGameDateET {
+                if hasMeaningfulBatting {
+                    let outer = try? await api.getBatterStatsAtDate(
+                        playerId: player.player_id, gameDate: date,
+                    )
+                    batterIncludesToday = (outer ?? nil)?.includesToday ?? false
+                }
+                if hasMeaningfulPitching {
+                    let outer = try? await api.getPitcherRecordAtDate(
+                        playerId: player.player_id, gameDate: date,
+                    )
+                    pitcherIncludesToday = (outer ?? nil)?.includesToday ?? false
+                }
+            }
             let shouldOverlayFinals: Bool = {
                 if hasMeaningfulBatting && hasMeaningfulPitching {
-                    return battingEqual && pitchingEqual
+                    return (battingEqual && !batterIncludesToday)
+                        && (pitchingEqual && !pitcherIncludesToday)
                 }
-                if hasMeaningfulBatting  { return battingEqual }
-                if hasMeaningfulPitching { return pitchingEqual }
+                if hasMeaningfulBatting  {
+                    return battingEqual && !batterIncludesToday
+                }
+                if hasMeaningfulPitching {
+                    return pitchingEqual && !pitcherIncludesToday
+                }
                 return false
             }()
             let shouldUseBDLDirect: Bool = {
