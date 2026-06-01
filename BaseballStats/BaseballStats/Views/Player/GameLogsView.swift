@@ -386,7 +386,7 @@ struct GameLogsView: View {
     // MARK: - Season picker
 
     private var seasonPicker: some View {
-        let years = Array((2008...GameLogsViewModel.currentYear).reversed())
+        let years = Array((2000...GameLogsViewModel.currentYear).reversed())
         return HStack {
             Text("Season")
                 .font(.subheadline)
