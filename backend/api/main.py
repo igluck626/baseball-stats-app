@@ -828,12 +828,12 @@ def player_pitcher_record_at_date(
     actually wrote.
 
     `includes_today` reports whether any row in the result set
-    falls on today's Eastern-local calendar date. Callers (iOS)
-    use this to decide whether to add a `+1` for today's just-
+    falls on the queried `game_date`. Callers (iOS) use this to
+    decide whether to add a `+1` for the displayed game's just-
     happened decision: when `false` the gamelog ingest hasn't
-    reached today yet (mid-game or before the next catch-up run),
-    and the displayed record needs the bump. When `true` the
-    nightly or catch-up already absorbed today and the record
+    absorbed this game yet (mid-game or before the next catch-up
+    run), and the displayed record needs the bump. When `true`
+    the nightly or catch-up already absorbed it and the record
     already counts it — no bump.
 
     Returns `{player_id, game_date, wins, losses, saves,
@@ -854,13 +854,7 @@ def player_pitcher_record_at_date(
     wins   = sum(1 for r in rows if r.result == "W")
     losses = sum(1 for r in rows if r.result == "L")
     saves  = sum(1 for r in rows if r.result == "S")
-    # Today is keyed off the same ET clock the catch-up / gamelog
-    # ingest uses (`_MLB_LOCAL_TZ`) so the comparison matches what
-    # the writer would have stamped on the row.
-    today_et = datetime.datetime.now(
-        data_service._MLB_LOCAL_TZ,
-    ).date()
-    includes_today = any(r.game_date == today_et for r in rows)
+    includes_today = any(r.game_date == game_date for r in rows)
     return {
         "player_id":      player_id,
         "game_date":      game_date.isoformat(),
@@ -888,13 +882,13 @@ def player_batter_stats_at_date(
     games BDL has since absorbed into season stats.
 
     `includes_today` reports whether any row in the result set
-    falls on today's Eastern-local calendar date. Callers (iOS)
-    use this to decide whether to fold today's just-hit HR/2B/3B
+    falls on the queried `game_date`. Callers (iOS) use this to
+    decide whether to fold the displayed game's just-hit HR/2B/3B
     into the displayed total: when `false` the gamelog ingest
-    hasn't reached today yet (mid-game or before the next catch-
-    up run) and the per-game count needs to be added. When
-    `true` the nightly already absorbed today and the total
-    already includes it.
+    hasn't absorbed this game yet (mid-game or before the next
+    catch-up run) and the per-game count needs to be added. When
+    `true` the nightly already absorbed it and the total already
+    includes it.
 
     Returns `{player_id, game_date, home_runs, doubles, triples,
     includes_today}`. Zeros + `false` for a player with no
@@ -918,10 +912,7 @@ def player_batter_stats_at_date(
     home_runs = sum((r.HR      or 0) for r in rows)
     doubles   = sum((r.doubles or 0) for r in rows)
     triples   = sum((r.triples or 0) for r in rows)
-    today_et = datetime.datetime.now(
-        data_service._MLB_LOCAL_TZ,
-    ).date()
-    includes_today = any(r.game_date == today_et for r in rows)
+    includes_today = any(r.game_date == game_date for r in rows)
     return {
         "player_id":      player_id,
         "game_date":      game_date.isoformat(),
