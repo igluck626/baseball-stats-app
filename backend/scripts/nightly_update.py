@@ -657,6 +657,32 @@ def _update_standings(current_year: int) -> tuple[int, int]:
             r.pop("_division_gb", None)
             rows_to_save.append(r)
 
+    # Wild-card games back. BDL doesn't ship this so we derive it
+    # locally. Per-league: division leaders (rank == 1) sit above the
+    # WC race and get "-". Among the remaining teams, the one with the
+    # highest win pct is the WC leader (gets "-"); every other non-DL
+    # team's WCGB is the standard formula
+    #     ((wc_W - team_W) + (team_L - wc_L)) / 2
+    # so a team tied with the leader reads 0 ("-"), and the next slot
+    # back reads 0.5, 1, 1.5, ... matching MLB's published WCGB column.
+    rows_by_league: dict[str, list[dict]] = {}
+    for r in rows_to_save:
+        rows_by_league.setdefault(r["league"], []).append(r)
+    for league_rows in rows_by_league.values():
+        non_dl = [r for r in league_rows if r["rank"] != 1]
+        if non_dl:
+            non_dl.sort(key=lambda r: r["win_pct"] or 0.0, reverse=True)
+            wc_leader = non_dl[0]
+            wc_W = wc_leader["W"] or 0
+            wc_L = wc_leader["L"] or 0
+            wc_leader["wild_card_games_back"] = "-"
+            for r in non_dl[1:]:
+                gb_f = ((wc_W - (r["W"] or 0)) + ((r["L"] or 0) - wc_L)) / 2.0
+                r["wild_card_games_back"] = "-" if gb_f == 0 else f"{gb_f:g}"
+    for r in rows_to_save:
+        if r["rank"] == 1:
+            r["wild_card_games_back"] = "-"
+
     if rows_to_save:
         with connection.get_session() as db:
             crud.save_team_seasons(db, rows_to_save)
