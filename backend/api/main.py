@@ -308,6 +308,85 @@ def _run_backfill_gamelogs(
 
 
 # ---------------------------------------------------------------------------
+# MLB Stats API async gamelog-backfill state (separate from the BDL
+# async backfill above so a long-running historical MLB load doesn't
+# block the BDL date/season backfill, and vice versa).
+# ---------------------------------------------------------------------------
+# Historical loader fed by statsapi.mlb.com — used to fill pre-2010
+# seasons where BDL `/stats?game_id=` has no coverage. Rate-limited
+# deliberately (1s/game, 2s/date) so multi-year runs stay well within
+# MLB Stats API's tolerance.
+_mlb_backfill_state: dict = {
+    "running":         False,
+    "start_season":    None,
+    "end_season":      None,
+    "current_season":  None,
+    "current_date":    None,
+    "total_games":     0,
+    "total_bat_rows":  0,
+    "total_pit_rows":  0,
+    "error":           None,
+    "last_updated":    None,
+    "last_run":        None,
+}
+_mlb_backfill_lock = threading.Lock()
+
+
+def _run_mlb_backfill_gamelogs(start_season: int, end_season: int) -> None:
+    """Background thread: walk every regular-season date from
+    `{year}-03-25` through `{year}-11-01` for each year in
+    `[start_season, end_season]`, hitting MLB Stats API for schedule
+    + boxscores. Sleep 1s after each boxscore and 2s after each
+    date's schedule (the inter-date pause sits inside this loop;
+    `mlb_save_gamelogs_for_date` only paces between boxscores)."""
+    def _now_iso() -> str:
+        return datetime.datetime.utcnow().isoformat() + "Z"
+    try:
+        known_pids = data_service.get_known_player_ids()
+        log.info(f"[mlb-backfill] loaded {len(known_pids)} known player_ids")
+        for year in range(start_season, end_season + 1):
+            with _mlb_backfill_lock:
+                _mlb_backfill_state["current_season"] = year
+                _mlb_backfill_state["last_updated"]   = _now_iso()
+            d   = datetime.date(year, 3, 25)
+            end = datetime.date(year, 11, 1)
+            while d <= end:
+                date_iso = d.isoformat()
+                with _mlb_backfill_lock:
+                    _mlb_backfill_state["current_date"] = date_iso
+                    _mlb_backfill_state["last_updated"] = _now_iso()
+                try:
+                    r = data_service.mlb_save_gamelogs_for_date(
+                        date_iso, known_pids, sleep_between_games=1.0,
+                    )
+                    with _mlb_backfill_lock:
+                        _mlb_backfill_state["total_games"]    += int(r.get("games")    or 0)
+                        _mlb_backfill_state["total_bat_rows"] += int(r.get("bat_rows") or 0)
+                        _mlb_backfill_state["total_pit_rows"] += int(r.get("pit_rows") or 0)
+                except Exception as exc:
+                    log.error(
+                        f"[mlb-backfill] {date_iso} failed (skipping): {exc}",
+                        exc_info=True,
+                    )
+                d += datetime.timedelta(days=1)
+                # Inter-date pause sits outside `mlb_save_gamelogs_for_date`
+                # so it applies whether the date had games or not.
+                time.sleep(2.0)
+    except Exception as exc:
+        tb = traceback.format_exc()
+        with _mlb_backfill_lock:
+            _mlb_backfill_state["error"] = f"{exc}\n{tb}"
+        log.error(f"[mlb-backfill] FAILED: {exc}", exc_info=True)
+    finally:
+        with _mlb_backfill_lock:
+            _mlb_backfill_state["running"]        = False
+            _mlb_backfill_state["current_season"] = None
+            _mlb_backfill_state["current_date"]   = None
+            _mlb_backfill_state["last_run"]       = datetime.datetime.utcnow().isoformat() + "Z"
+            _mlb_backfill_state["last_updated"]   = _mlb_backfill_state["last_run"]
+
+
+# ---------------------------------------------------------------------------
 # Nightly-update state (shared between background thread and status endpoint)
 # ---------------------------------------------------------------------------
 _nightly_state: dict = {
@@ -1805,6 +1884,99 @@ def admin_backfill_gamelogs_status():
     last-run summary is still readable until the next run starts."""
     with _backfill_lock:
         return dict(_backfill_state)
+
+
+@app.post("/admin/backfill-mlb-gamelogs-async")
+def admin_backfill_mlb_gamelogs_async(
+    start_season: int = Query(..., description="Inclusive start season year."),
+    end_season:   int = Query(..., description="Inclusive end season year."),
+):
+    """Historical gamelog backfill from MLB Stats API, run in a
+    background thread. Walks every date from March 25 → November 1
+    in each requested season, fetching schedule + boxscore from
+    `statsapi.mlb.com` (rate-limited: 1s after each boxscore, 2s
+    after each date's schedule).
+
+    Used to fill seasons BDL `/stats?game_id=` doesn't cover
+    (pre-2010). Idempotent — re-runs are no-op upserts. Poll
+    `/admin/backfill-mlb-gamelogs-status` for progress."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    if end_season < start_season:
+        raise HTTPException(
+            status_code=400,
+            detail="end_season must be >= start_season",
+        )
+
+    with _mlb_backfill_lock:
+        if _mlb_backfill_state["running"]:
+            return {
+                "status":  "already_running",
+                "task_id": "backfill_mlb_gamelogs",
+                **_mlb_backfill_state,
+            }
+        _mlb_backfill_state.update(
+            running=True,
+            start_season=start_season,
+            end_season=end_season,
+            current_season=None,
+            current_date=None,
+            total_games=0,
+            total_bat_rows=0,
+            total_pit_rows=0,
+            error=None,
+            last_updated=datetime.datetime.utcnow().isoformat() + "Z",
+        )
+
+    t = threading.Thread(
+        target=_run_mlb_backfill_gamelogs,
+        kwargs={"start_season": start_season, "end_season": end_season},
+        daemon=True,
+        name="backfill-mlb-gamelogs-async",
+    )
+    t.start()
+    return {
+        "status":  "started",
+        "task_id": "backfill_mlb_gamelogs",
+        "message": "MLB Stats API backfill running in background",
+    }
+
+
+@app.get("/admin/backfill-mlb-gamelogs-status")
+def admin_backfill_mlb_gamelogs_status():
+    """Live progress for the async MLB Stats API gamelog backfill."""
+    with _mlb_backfill_lock:
+        return dict(_mlb_backfill_state)
+
+
+@app.post("/admin/delete-historical-gamelogs")
+def admin_delete_historical_gamelogs(
+    confirm: bool = Query(False, description="Must be true to proceed."),
+):
+    """DELETE every row from `batting_gamelogs` and `pitching_gamelogs`
+    where `season < 2026`. Used to wipe a partial BDL backfill before
+    running the full MLB Stats API historical re-load. Requires
+    `?confirm=true` to prevent accidental fire."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    if not confirm:
+        raise HTTPException(
+            status_code=400,
+            detail="Add ?confirm=true to confirm destructive deletion.",
+        )
+    with connection.get_session() as db:
+        bat_removed = db.execute(
+            _sa_text("DELETE FROM batting_gamelogs WHERE season < 2026")
+        ).rowcount or 0
+        pit_removed = db.execute(
+            _sa_text("DELETE FROM pitching_gamelogs WHERE season < 2026")
+        ).rowcount or 0
+        db.commit()
+    return {
+        "status":           "ok",
+        "batting_removed":  int(bat_removed),
+        "pitching_removed": int(pit_removed),
+    }
 
 
 @app.get("/admin/gamelog-year-coverage")

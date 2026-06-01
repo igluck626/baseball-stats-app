@@ -4921,6 +4921,298 @@ def backfill_bdl_gamelogs(start_date: str, end_date: str) -> dict:
     }
 
 
+# -----------------------------------------------------------------------------
+# MLB Stats API historical gamelog backfill
+# -----------------------------------------------------------------------------
+# Second MLB Stats API use case (see the single-touchpoint comment near
+# `_resolve_mlbam_id_by_name` for the production-runtime caller). BDL's
+# `/stats?game_id=` coverage stops short of pre-2010 seasons; statsapi
+# reaches back through 2000+ unauthenticated, so it's the only practical
+# source for that history. One-time backfill — once the historical load
+# is complete, this path goes idle and the nightly continues to drive
+# new rows through BDL.
+# -----------------------------------------------------------------------------
+
+def _mlb_stats_get_json(
+    url: str,
+    max_429_retries: int = 1,
+) -> Optional[dict]:
+    """GET `url` against the MLB Stats API with a polite User-Agent.
+    On HTTP 429, sleep 60s + retry once; on any other error log and
+    return None so the caller can skip-and-continue. Used only by the
+    historical gamelog backfill."""
+    try:
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "baseball-stats-app/1.0",
+            "Accept":     "application/json",
+        })
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        if exc.code == 429 and max_429_retries > 0:
+            log.warning("MLB Stats API 429 — sleeping 60s and retrying once")
+            time.sleep(60)
+            return _mlb_stats_get_json(url, max_429_retries=0)
+        log.warning(f"MLB Stats API HTTPError {exc.code} for {url}")
+        return None
+    except Exception as exc:
+        log.warning(f"MLB Stats API fetch failed for {url}: {exc}")
+        return None
+
+
+def _parse_ip_string(ip: object) -> Optional[float]:
+    """Convert MLB Stats API IP string ("6.1" = 6 innings + 1 out) to
+    decimal innings (6.333). Returns None on malformed input."""
+    if ip is None:
+        return None
+    try:
+        s = str(ip)
+        if "." in s:
+            whole, frac = s.split(".", 1)
+            return int(whole) + int(frac) / 3.0
+        return float(s)
+    except (TypeError, ValueError):
+        return None
+
+
+def get_known_player_ids() -> set[int]:
+    """Union of `player_id` values in the `players` and `pitchers`
+    tables. Used by the MLB Stats API backfill to filter boxscore
+    rows to players we already have bio rows for — anyone else is
+    silently skipped (no orphan gamelog rows)."""
+    if not connection.db_available():
+        return set()
+    from database.models import Pitcher as _Pitcher
+    from database.models import Player as _Player
+    with connection.get_session() as db:
+        bat_ids = [r[0] for r in db.query(_Player.player_id).all()]
+        pit_ids = [r[0] for r in db.query(_Pitcher.player_id).all()]
+    return set(bat_ids) | set(pit_ids)
+
+
+def _mlb_parse_box(
+    game_meta: dict,
+    box: dict,
+    known_pids: set[int],
+) -> tuple[list[dict], list[dict]]:
+    """Parse one MLB Stats API boxscore into batting + pitching row
+    dicts ready for `crud.save_batting_gamelogs` / `save_pitching_
+    gamelogs`. Filters to player IDs present in `known_pids` so we
+    never insert orphan rows. Returns (bat_rows, pit_rows). The PK
+    `game_id` is prefixed `"mlb-{gamePk}"` to keep MLB-sourced rows
+    distinguishable from BDL-sourced rows on the same date."""
+    game_pk   = game_meta["game_pk"]
+    game_date = game_meta["game_date"]
+    season    = game_date.year if game_date else None
+
+    teams      = box.get("teams") or {}
+    home       = teams.get("home") or {}
+    away       = teams.get("away") or {}
+    home_abbr  = (home.get("team") or {}).get("abbreviation")
+    away_abbr  = (away.get("team") or {}).get("abbreviation")
+    home_score = game_meta.get("home_score")
+    away_score = game_meta.get("away_score")
+    # Fall back to teamStats.batting.runs when the schedule envelope
+    # didn't carry a score (rare; mostly archived suspended games).
+    if home_score is None:
+        home_score = ((home.get("teamStats") or {})
+                          .get("batting") or {}).get("runs")
+    if away_score is None:
+        away_score = ((away.get("teamStats") or {})
+                          .get("batting") or {}).get("runs")
+
+    decisions = box.get("decisions") or {}
+    win_id  = (decisions.get("winner") or {}).get("id")
+    loss_id = (decisions.get("loser")  or {}).get("id")
+    save_id = (decisions.get("save")   or {}).get("id")
+
+    bat_rows: list[dict] = []
+    pit_rows: list[dict] = []
+
+    sides = [
+        ("H", home, away_abbr, home_score, away_score),
+        ("A", away, home_abbr, away_score, home_score),
+    ]
+    for ha, side, opp_abbr, team_score, opp_score in sides:
+        # Result string used by every batter on this side and the
+        # no-decision pitcher rows. Ties default to "T".
+        if team_score is None or opp_score is None:
+            team_result: Optional[str] = None
+        elif team_score > opp_score:
+            team_result = "W"
+        elif team_score < opp_score:
+            team_result = "L"
+        else:
+            team_result = "T"
+
+        players = side.get("players") or {}
+
+        # Batters: anyone with battingOrder set actually appeared in
+        # the lineup. Pinch-hitters/runners also carry battingOrder
+        # (under the "1xx" hundreds-block convention), so the filter
+        # captures every game-day batter without including bench
+        # players who never entered.
+        for _key, p in players.items():
+            pid = (p.get("person") or {}).get("id")
+            if pid is None or pid not in known_pids:
+                continue
+            if not p.get("battingOrder"):
+                continue
+            bs = (p.get("stats") or {}).get("batting") or {}
+            bat_rows.append({
+                "player_id":  pid,
+                "game_id":    f"mlb-{game_pk}",
+                "game_date":  game_date,
+                "season":     season,
+                "opponent":   opp_abbr,
+                "home_away":  ha,
+                "result":     team_result,
+                "team_score": team_score,
+                "opp_score":  opp_score,
+                "AB":         bs.get("atBats"),
+                "R":          bs.get("runs"),
+                "H":          bs.get("hits"),
+                "doubles":    bs.get("doubles"),
+                "triples":    bs.get("triples"),
+                "HR":         bs.get("homeRuns"),
+                "RBI":        bs.get("rbi"),
+                "BB":         bs.get("baseOnBalls"),
+                "IBB":        bs.get("intentionalWalks"),
+                "SO":         bs.get("strikeOuts"),
+                "SB":         bs.get("stolenBases"),
+                "CS":         bs.get("caughtStealing"),
+                "HBP":        bs.get("hitByPitch"),
+                "SF":         bs.get("sacFlies"),
+            })
+
+        # Pitchers: top-level "pitchers" array on each side lists the
+        # MLBAM ids of every pitcher who appeared, in order.
+        for pid in side.get("pitchers") or []:
+            if pid not in known_pids:
+                continue
+            p  = players.get(f"ID{pid}") or {}
+            ps = (p.get("stats") or {}).get("pitching") or {}
+            if pid == win_id:
+                pit_result = "W"
+            elif pid == loss_id:
+                pit_result = "L"
+            elif pid == save_id:
+                pit_result = "S"
+            elif (ps.get("holds") or 0) > 0:
+                pit_result = "H"
+            else:
+                pit_result = "ND"
+            pit_rows.append({
+                "player_id": pid,
+                "game_id":   f"mlb-{game_pk}",
+                "game_date": game_date,
+                "season":    season,
+                "opponent":  opp_abbr,
+                "home_away": ha,
+                "result":    pit_result,
+                "IP":        _parse_ip_string(ps.get("inningsPitched")),
+                "H":         ps.get("hits"),
+                "R":         ps.get("runs"),
+                "ER":        ps.get("earnedRuns"),
+                "BB":        ps.get("baseOnBalls"),
+                "SO":        ps.get("strikeOuts"),
+                "HR":        ps.get("homeRuns"),
+                "HBP":       ps.get("hitBatsmen"),
+                "WP":        ps.get("wildPitches"),
+                "pitches":   ps.get("pitchesThrown"),
+                "strikes":   ps.get("strikes"),
+            })
+
+    return bat_rows, pit_rows
+
+
+def mlb_save_gamelogs_for_date(
+    date_iso: str,
+    known_pids: set[int],
+    sleep_between_games: float = 1.0,
+) -> dict:
+    """Fetch the MLB Stats API schedule for `date_iso`, then fetch each
+    Final regular-season game's boxscore, parse batting + pitching
+    rows for every player in `known_pids`, and upsert into the
+    gamelog tables. Skips unknown players silently. Sleeps
+    `sleep_between_games` seconds after each boxscore fetch (except
+    the last on the date, so the caller can apply its own inter-date
+    pause without compounding).
+
+    Returns `{games, bat_rows, pit_rows}` for the day. Schedule-fetch
+    failures return zeros + a warning log, never raise — the parent
+    multi-day loop continues with the next date."""
+    if not connection.db_available():
+        return {"games": 0, "bat_rows": 0, "pit_rows": 0}
+    base = _MLB_STATS_API_BASE
+    sched_url = (
+        f"{base}/schedule?sportId=1&gameType=R"
+        f"&startDate={date_iso}&endDate={date_iso}"
+    )
+    payload = _mlb_stats_get_json(sched_url)
+    if not payload:
+        return {"games": 0, "bat_rows": 0, "pit_rows": 0}
+
+    games_meta: list[dict] = []
+    for d in payload.get("dates") or []:
+        for g in d.get("games") or []:
+            status = (g.get("status") or {}).get("abstractGameState")
+            if status != "Final":
+                continue
+            game_pk = g.get("gamePk")
+            if not game_pk:
+                continue
+            game_dt_str = g.get("gameDate")
+            try:
+                game_dt = datetime.datetime.fromisoformat(
+                    game_dt_str.replace("Z", "+00:00")
+                ) if game_dt_str else None
+            except (TypeError, ValueError):
+                game_dt = None
+            game_date = (
+                game_dt.astimezone(_MLB_LOCAL_TZ).date()
+                if game_dt is not None
+                else datetime.date.fromisoformat(date_iso)
+            )
+            teams = g.get("teams") or {}
+            games_meta.append({
+                "game_pk":    game_pk,
+                "game_date":  game_date,
+                "home_score": (teams.get("home") or {}).get("score"),
+                "away_score": (teams.get("away") or {}).get("score"),
+            })
+
+    bat_total = 0
+    pit_total = 0
+    for i, gm in enumerate(games_meta):
+        game_pk = gm["game_pk"]
+        box = _mlb_stats_get_json(f"{base}/game/{game_pk}/boxscore")
+        if box:
+            try:
+                bat_rows, pit_rows = _mlb_parse_box(gm, box, known_pids)
+                if bat_rows or pit_rows:
+                    with connection.get_session() as db:
+                        for r in bat_rows:
+                            crud.save_batting_gamelogs(db, r["player_id"], [r])
+                        for r in pit_rows:
+                            crud.save_pitching_gamelogs(db, r["player_id"], [r])
+                bat_total += len(bat_rows)
+                pit_total += len(pit_rows)
+            except Exception as exc:
+                log.warning(
+                    f"MLB box parse/upsert failed for game {game_pk}: {exc}",
+                    exc_info=True,
+                )
+        if i < len(games_meta) - 1:
+            time.sleep(sleep_between_games)
+
+    return {
+        "games":    len(games_meta),
+        "bat_rows": bat_total,
+        "pit_rows": pit_total,
+    }
+
+
 def find_missing_doubleheaders(season: int) -> dict:
     """Scan BDL's `/games` for `season`, group by
     `(date, away_team, home_team)`, surface any matchup BDL shipped
