@@ -13,7 +13,7 @@ import pandas as pd
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
-from sqlalchemy import inspect as _sa_inspect, text as _sa_text
+from sqlalchemy import inspect as _sa_inspect, or_ as _sa_or, text as _sa_text
 
 import sys
 
@@ -1200,6 +1200,89 @@ def admin_sync_player_team(mlb_id: int):
     if not connection.db_available():
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
     return data_service.sync_player_current_team(mlb_id)
+
+
+@app.get("/admin/dob-coverage")
+def admin_dob_coverage():
+    """Diagnostic: report birth-date completeness across both bio
+    tables. Useful for sizing the gap between BDL roster discovery
+    and what we actually have stored — recent call-ups often land
+    in `players` / `pitchers` with NULL DOB because BDL's
+    `/players/{id}` payload is sparse for them, while established
+    veterans should all have a full DOB from the Lahman import.
+
+    For each side (`players`, `pitchers`):
+      • `active_total`   — `mlb_last_season IS NULL`
+      • `with_full_dob`  — also has `birth_year/month/day` all set
+      • `missing_dob`    — active_total - with_full_dob
+      • `sample_missing` — up to 5 example rows with name / team /
+                           position so the operator can eyeball
+                           whether the gap is real call-ups or a
+                           data-write bug worth chasing.
+
+    Team is read from the current-year `player_seasons` /
+    `pitcher_seasons` row (`team` column). nil when the player
+    isn't on a current-year roster yet."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    current_year = datetime.datetime.utcnow().year
+
+    def _side_summary(bio_model, season_model) -> dict:
+        with connection.get_session() as db:
+            active_total = (
+                db.query(bio_model.player_id)
+                  .filter(bio_model.mlb_last_season.is_(None))
+                  .count()
+            )
+            with_full_dob = (
+                db.query(bio_model.player_id)
+                  .filter(bio_model.mlb_last_season.is_(None))
+                  .filter(bio_model.birth_year.isnot(None))
+                  .filter(bio_model.birth_month.isnot(None))
+                  .filter(bio_model.birth_day.isnot(None))
+                  .count()
+            )
+            sample_rows = (
+                db.query(
+                    bio_model.player_id,
+                    bio_model.name,
+                    bio_model.position,
+                )
+                  .filter(bio_model.mlb_last_season.is_(None))
+                  .filter(_sa_or(
+                      bio_model.birth_year.is_(None),
+                      bio_model.birth_month.is_(None),
+                      bio_model.birth_day.is_(None),
+                  ))
+                  .limit(5)
+                  .all()
+            )
+            sample: list[dict] = []
+            for r in sample_rows:
+                team_row = (
+                    db.query(season_model.team)
+                      .filter(season_model.player_id == r.player_id)
+                      .filter(season_model.year      == current_year)
+                      .one_or_none()
+                )
+                sample.append({
+                    "player_id": r.player_id,
+                    "name":      r.name,
+                    "team":      team_row.team if team_row else None,
+                    "position":  r.position,
+                })
+        return {
+            "active_total":   active_total,
+            "with_full_dob":  with_full_dob,
+            "missing_dob":    active_total - with_full_dob,
+            "sample_missing": sample,
+        }
+
+    return {
+        "current_year": current_year,
+        "players":      _side_summary(Player,  PlayerSeason),
+        "pitchers":     _side_summary(Pitcher, PitcherSeason),
+    }
 
 
 @app.post("/admin/sync-all-player-teams")
