@@ -1812,7 +1812,11 @@ def admin_gamelog_year_coverage():
     """Temporary diagnostic: row count in `batting_gamelogs` and
     `pitching_gamelogs` grouped by season year. Used to verify a
     multi-year backfill actually landed data for every year in the
-    requested range. Returned in descending season order."""
+    requested range. Returned in descending season order.
+
+    Also returns up to 3 sample rows from `batting_gamelogs` for
+    season=2006 so we can eyeball game_id shape + opponent values
+    that landed during the historical BDL backfill."""
     if not connection.db_available():
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
     with connection.get_session() as db:
@@ -1828,9 +1832,29 @@ def admin_gamelog_year_coverage():
               .order_by(PitchingGameLog.season.desc())
               .all()
         )
+        sample_2006 = (
+            db.query(
+                BattingGameLog.player_id,
+                BattingGameLog.game_id,
+                BattingGameLog.game_date,
+                BattingGameLog.opponent,
+            )
+              .filter(BattingGameLog.season == 2006)
+              .limit(3)
+              .all()
+        )
     return {
         "batting":  [{"season": s, "rows": int(c)} for s, c in bat_rows],
         "pitching": [{"season": s, "rows": int(c)} for s, c in pit_rows],
+        "sample_2006_batting": [
+            {
+                "player_id": r.player_id,
+                "game_id":   r.game_id,
+                "game_date": r.game_date.isoformat() if r.game_date else None,
+                "opponent":  r.opponent,
+            }
+            for r in sample_2006
+        ],
     }
 
 
