@@ -2161,41 +2161,28 @@ def _score_bdl_candidate(bdl_player: dict, db_player: dict) -> int:
     return score
 
 
-def test_bdl_mapping(current_year: int) -> dict:
-    """READ-ONLY diagnostic. Walks all 30 BDL active rosters and
-    scores each player against our `players` / `pitchers` tables
-    using the five-signal rubric in `_score_bdl_candidate`.
-    Reports how many players we could auto-match, how many tied
-    (need review), and how many had no high-confidence candidate.
-    No DB writes. Operator inspects the report to decide whether
-    the rubric is reliable enough to drive an actual mapping pass.
+def _build_bio_candidate_index(
+    db,
+) -> tuple[dict[str, list[dict]], set[int]]:
+    """Build the `{normalized_last_name → [candidate]}` index used by
+    both `test_bdl_mapping` (read-only diagnostic) and
+    `sync_all_player_teams_from_rosters` (the write path that
+    actually stamps `bdl_id` based on the score).
 
-    Classification per BDL player:
-      * `already_mapped`   — bdl_id is already stamped in one of
-        the bio tables (mostly the common case).
-      * `auto_match`       — top score >= 70 AND strictly greater
-        than the runner-up; safe to auto-map.
-      * `needs_review`     — top score >= 70 but tied with the
-        runner-up. Two equally plausible matches; operator must
-        hand-resolve.
-      * `low_confidence`   — top score < 70. Either no DB row for
-        this player at all (will need `_create_bio_from_bdl`) or
-        the rubric couldn't tell.
+    Loads every row from both bio tables in two queries; each
+    candidate dict carries the bio fields the scorer reads plus
+    pre-normalized first/last names so the scoring inner loop is a
+    hash lookup + arithmetic. Also returns `mapped_bdl_ids` — the
+    set of bdl_ids already stamped somewhere in our DB, which the
+    caller uses to skip BDL roster entries we've already matched.
     """
-    _get_bdl_key()
-
     from database.models import Pitcher as _Pitcher
     from database.models import Player as _Player
 
-    # Build a {normalized_last_name → [candidate_dict]} index so
-    # the per-BDL-player lookup is O(candidates_with_this_last).
-    # Each candidate dict carries the bio fields the scorer needs,
-    # plus pre-normalized first/last names so we don't re-normalize
-    # ~850 times per BDL player.
     index: dict[str, list[dict]] = {}
     mapped_bdl_ids: set[int] = set()
 
-    def _add_to_index(rows, side_pitcher: bool) -> None:
+    def _add(rows, side_pitcher: bool) -> None:
         for r in rows:
             if r.bdl_id is not None:
                 mapped_bdl_ids.add(int(r.bdl_id))
@@ -2221,19 +2208,45 @@ def test_bdl_mapping(current_year: int) -> dict:
                 "_side":           "pitcher" if side_pitcher else "batter",
             })
 
+    bat_rows = db.query(
+        _Player.player_id, _Player.name, _Player.position,
+        _Player.bdl_id, _Player.mlb_last_season,
+        _Player.birth_year, _Player.birth_month, _Player.birth_day,
+    ).all()
+    pit_rows = db.query(
+        _Pitcher.player_id, _Pitcher.name, _Pitcher.position,
+        _Pitcher.bdl_id, _Pitcher.mlb_last_season,
+        _Pitcher.birth_year, _Pitcher.birth_month, _Pitcher.birth_day,
+    ).all()
+    _add(bat_rows, side_pitcher=False)
+    _add(pit_rows, side_pitcher=True)
+    return index, mapped_bdl_ids
+
+
+def test_bdl_mapping(current_year: int) -> dict:
+    """READ-ONLY diagnostic. Walks all 30 BDL active rosters and
+    scores each player against our `players` / `pitchers` tables
+    using the five-signal rubric in `_score_bdl_candidate`.
+    Reports how many players we could auto-match, how many tied
+    (need review), and how many had no high-confidence candidate.
+    No DB writes. Operator inspects the report to decide whether
+    the rubric is reliable enough to drive an actual mapping pass.
+
+    Classification per BDL player:
+      * `already_mapped`   — bdl_id is already stamped in one of
+        the bio tables (mostly the common case).
+      * `auto_match`       — top score >= 70 AND strictly greater
+        than the runner-up; safe to auto-map.
+      * `needs_review`     — top score >= 70 but tied with the
+        runner-up. Two equally plausible matches; operator must
+        hand-resolve.
+      * `low_confidence`   — top score < 70. Either no DB row for
+        this player at all (will need `_create_bio_from_bdl`) or
+        the rubric couldn't tell.
+    """
+    _get_bdl_key()
     with connection.get_session() as db:
-        bat_rows = db.query(
-            _Player.player_id, _Player.name, _Player.position,
-            _Player.bdl_id, _Player.mlb_last_season,
-            _Player.birth_year, _Player.birth_month, _Player.birth_day,
-        ).all()
-        pit_rows = db.query(
-            _Pitcher.player_id, _Pitcher.name, _Pitcher.position,
-            _Pitcher.bdl_id, _Pitcher.mlb_last_season,
-            _Pitcher.birth_year, _Pitcher.birth_month, _Pitcher.birth_day,
-        ).all()
-    _add_to_index(bat_rows, side_pitcher=False)
-    _add_to_index(pit_rows, side_pitcher=True)
+        index, mapped_bdl_ids = _build_bio_candidate_index(db)
 
     auto_match:     list[dict] = []
     needs_review:   list[dict] = []
@@ -3173,6 +3186,10 @@ def sync_all_player_teams_from_rosters(current_year: int) -> dict:
     new_discoveries: list[tuple[str, int]] = []
 
     with connection.get_session() as db:
+        # Build the score-rubric candidate index ONCE up front. The
+        # walk over 30 BDL active rosters reuses the same dict for
+        # every lookup; rebuilding per-team would be N×.
+        bio_index, _mapped_set = _build_bio_candidate_index(db)
         for lahman_code, bdl_team_id in _BDL_TEAM_ID_MAP.items():
             try:
                 roster_resp = _bdl_get_json(
@@ -3187,8 +3204,6 @@ def sync_all_player_teams_from_rosters(current_year: int) -> dict:
                 bdl_player_id = entry.get("id")
                 if not bdl_player_id:
                     continue
-                position = (entry.get("position") or "").strip().lower()
-                is_pitcher_hint = position in _BDL_PITCHER_POSITIONS
                 full_name = entry.get("full_name")
 
                 # 1. Find existing rows by bdl_id (post-mapping
@@ -3204,29 +3219,88 @@ def sync_all_player_teams_from_rosters(current_year: int) -> dict:
                     .first()
                 )
 
-                # 2. No bdl_id match — try a name-match against
-                #    bdl_id-less rows and stamp the bdl_id when
-                #    found. Catches anyone the mapping bootstrap
-                #    didn't reach plus brand-new BDL ids whose
-                #    name already exists in our DB under MLBAM.
+                # 2. No bdl_id match — score every candidate whose
+                #    normalized last name matches, then stamp
+                #    bdl_id on the winner if the score clears the
+                #    confidence bar. The rubric (DOB + first + last
+                #    + role + active) handles the cases the old
+                #    name-only `_stamp_bdl_id_by_name` got wrong:
+                #    Jose Ramirez SP (retired, 1990 DOB) vs Jose
+                #    Ramirez 3B (active, 1992 DOB) now resolves to
+                #    the 3B; Drew Smith dad-vs-son separates on
+                #    DOB; etc. Candidates whose `bdl_id` is already
+                #    set are excluded — we're filling holes, not
+                #    overwriting existing stamps.
                 if pit_row is None and bat_row is None and full_name:
-                    stamped_side = _stamp_bdl_id_by_name(
-                        db, full_name, bdl_player_id, is_pitcher_hint,
+                    norm_last = _normalize_player_name(
+                        entry.get("last_name"),
                     )
-                    if stamped_side == "pitcher":
-                        pit_row = (
-                            db.query(_Pitcher)
-                            .filter(_Pitcher.bdl_id == bdl_player_id)
-                            .first()
-                        )
-                        counts["bdl_id:stamped"] += 1
-                    elif stamped_side == "batter":
-                        bat_row = (
-                            db.query(_Player)
-                            .filter(_Player.bdl_id == bdl_player_id)
-                            .first()
-                        )
-                        counts["bdl_id:stamped"] += 1
+                    open_candidates = [
+                        c for c in bio_index.get(norm_last, [])
+                        if c.get("bdl_id") is None
+                    ]
+                    scored = [
+                        (_score_bdl_candidate(entry, c), c)
+                        for c in open_candidates
+                    ]
+                    scored.sort(key=lambda x: x[0], reverse=True)
+                    top_score = scored[0][0] if scored else 0
+                    runner_up = scored[1][0] if len(scored) > 1 else 0
+                    if top_score >= 70 and top_score > runner_up:
+                        winner = scored[0][1]
+                        winner_pid = winner["player_id"]
+                        # Stamp the matched side. Then mirror to
+                        # the OTHER bio table if a row exists for
+                        # the same player_id with no bdl_id (two-
+                        # way players like Ohtani: same bdl_id
+                        # belongs on both rows).
+                        if winner["_side"] == "pitcher":
+                            cand_pit = (
+                                db.query(_Pitcher)
+                                .filter(_Pitcher.player_id == winner_pid)
+                                .first()
+                            )
+                            if cand_pit is not None and cand_pit.bdl_id is None:
+                                cand_pit.bdl_id = bdl_player_id
+                                counts["bdl_id:stamped"] += 1
+                                pit_row = cand_pit
+                                # Keep the in-memory index honest so
+                                # a later BDL roster entry can't
+                                # re-target the same row.
+                                winner["bdl_id"] = bdl_player_id
+                            mirror_bat = (
+                                db.query(_Player)
+                                .filter(_Player.player_id == winner_pid)
+                                .first()
+                            )
+                            if mirror_bat is not None and mirror_bat.bdl_id is None:
+                                mirror_bat.bdl_id = bdl_player_id
+                                bat_row = mirror_bat
+                        else:
+                            cand_bat = (
+                                db.query(_Player)
+                                .filter(_Player.player_id == winner_pid)
+                                .first()
+                            )
+                            if cand_bat is not None and cand_bat.bdl_id is None:
+                                cand_bat.bdl_id = bdl_player_id
+                                counts["bdl_id:stamped"] += 1
+                                bat_row = cand_bat
+                                winner["bdl_id"] = bdl_player_id
+                            mirror_pit = (
+                                db.query(_Pitcher)
+                                .filter(_Pitcher.player_id == winner_pid)
+                                .first()
+                            )
+                            if mirror_pit is not None and mirror_pit.bdl_id is None:
+                                mirror_pit.bdl_id = bdl_player_id
+                                pit_row = mirror_pit
+                    # Ties (top >= 70 but not strictly greater) and
+                    # low-confidence misses (top < 70) intentionally
+                    # fall through to `_create_bio_from_bdl` below —
+                    # a brand-new player BDL just started shipping
+                    # is the more likely explanation than a name-
+                    # twin collision we're guessing at.
 
                 # 3. Still no match — genuinely new BDL player not
                 #    cross-referenced to our MLBAM-keyed schema.
