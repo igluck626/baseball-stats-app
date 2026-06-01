@@ -414,27 +414,18 @@ final class PlayerViewModel: ObservableObject {
         // Post-midnight-ET fallback. When nothing landed under
         // "today ET", a player's evening West-Coast game may have
         // shipped under yesterday's ET date (10pm PT == 1am ET ==
-        // yesterday's date in ET's calendar). Pull yesterday's finals
-        // and keep only the ones that started at or after 18:00 ET —
-        // afternoon games are unambiguously yesterday's slate, so
-        // the cutoff screens out games that don't belong to the
-        // late-night carry-over window.
+        // yesterday's date in ET's calendar).
         //
-        // No timestamp-based freshness gate here. The previous
-        // implementation skipped games when `stats_last_updated`
-        // was past the game's end + 4h, but `stats_last_updated`
-        // tracks WHEN we last fetched BDL — not whether BDL had
-        // absorbed the game by then. The 1am PT catch-up bumps
-        // the stamp to ~4am ET regardless of whether BDL ingested
-        // the late game yet, which caused false skips.
-        //
-        // Whether the DB actually absorbed the game is answered
-        // by the downstream GP comparison (`shouldOverlayFinals`
-        // / `shouldUseBDLDirect`) inside the `if hasFinal` block
-        // below: dbG > bdlG → DB already absorbed, finals drop;
-        // dbG == bdlG → DB still pre-game, overlay applies;
-        // bdlG > dbG → BDL ahead, switch to direct totals. That
-        // comparison is GP-truthful and timing-independent.
+        // No time-of-day or timestamp gate here. The downstream
+        // GP comparison (`shouldOverlayFinals` / `shouldUseBDLDirect`
+        // inside the `if hasFinal` block below) is the authoritative
+        // signal for whether a game has been absorbed:
+        //   dbG > bdlG → DB already absorbed, finals drop;
+        //   dbG == bdlG → DB still pre-game, overlay applies;
+        //   bdlG > dbG → BDL ahead, switch to direct totals.
+        // That comparison is GP-truthful and timing-independent —
+        // it works for an afternoon yesterday-game just as well as
+        // for a late-night carry-over.
         if eligible.isEmpty {
             var etCal = Calendar(identifier: .gregorian)
             etCal.timeZone = TimeZone(identifier: "America/New_York")
@@ -445,9 +436,7 @@ final class PlayerViewModel: ObservableObject {
                     date: yString, teamId: bdlTeamId,
                 )) ?? []
                 for g in yGames where g.status == "STATUS_FINAL" {
-                    guard let start = g.startDate else { continue }
-                    let hour = etCal.component(.hour, from: start)
-                    guard hour >= 18 else { continue }
+                    guard g.startDate != nil else { continue }
                     hasFinal = true
                     eligible.append((g.id, false))
                 }
