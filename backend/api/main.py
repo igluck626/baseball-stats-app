@@ -1807,6 +1807,33 @@ def admin_backfill_gamelogs_status():
         return dict(_backfill_state)
 
 
+@app.get("/admin/gamelog-year-coverage")
+def admin_gamelog_year_coverage():
+    """Temporary diagnostic: row count in `batting_gamelogs` and
+    `pitching_gamelogs` grouped by season year. Used to verify a
+    multi-year backfill actually landed data for every year in the
+    requested range. Returned in descending season order."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    with connection.get_session() as db:
+        bat_rows = (
+            db.query(BattingGameLog.season, _sa_func.count())
+              .group_by(BattingGameLog.season)
+              .order_by(BattingGameLog.season.desc())
+              .all()
+        )
+        pit_rows = (
+            db.query(PitchingGameLog.season, _sa_func.count())
+              .group_by(PitchingGameLog.season)
+              .order_by(PitchingGameLog.season.desc())
+              .all()
+        )
+    return {
+        "batting":  [{"season": s, "rows": int(c)} for s, c in bat_rows],
+        "pitching": [{"season": s, "rows": int(c)} for s, c in pit_rows],
+    }
+
+
 @app.get("/admin/find-missing-doubleheaders")
 def admin_find_missing_doubleheaders(
     season: int = Query(
