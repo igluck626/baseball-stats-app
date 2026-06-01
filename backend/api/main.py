@@ -13,7 +13,12 @@ import pandas as pd
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
-from sqlalchemy import inspect as _sa_inspect, or_ as _sa_or, text as _sa_text
+from sqlalchemy import (
+    func as _sa_func,
+    inspect as _sa_inspect,
+    or_ as _sa_or,
+    text as _sa_text,
+)
 
 import sys
 
@@ -1282,6 +1287,156 @@ def admin_dob_coverage():
         "current_year": current_year,
         "players":      _side_summary(Player,  PlayerSeason),
         "pitchers":     _side_summary(Pitcher, PitcherSeason),
+    }
+
+
+@app.get("/admin/duplicate-bdl-ids")
+def admin_duplicate_bdl_ids():
+    """Diagnostic: surface every case where the same `bdl_id` is
+    stamped on more than one bio row. These are signs of either:
+
+      • Old name-only mapping bug putting the wrong bdl_id on a
+        retired veteran (Jose Ramirez SP took the active 3B's id
+        before the scoring rubric landed).
+      • Two BDL ids collapsing onto the same MLBAM — rare; usually
+        a BDL-side duplicate-entry that needs hand-curation.
+      • Cross-table mismatch: same bdl_id on a `players` row for
+        MLBAM X and a `pitchers` row for MLBAM Y. The two-way
+        path expects the SAME player_id on both sides; different
+        player_ids means one of the stamps is wrong.
+
+    Returns three buckets plus a summary count. Two-way players
+    (Ohtani: same bdl_id on both tables for the same player_id)
+    are NOT flagged — that's the correct shape.
+
+    Each duplicate group: `{bdl_id, players: [{player_id, name,
+    dob, position, active, team, side?}]}`. `side` is added only
+    on cross-table entries so the operator can tell which row was
+    in which table.
+    """
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    current_year = datetime.datetime.utcnow().year
+
+    def _dob_str(by, bm, bd):
+        if by is None or bm is None or bd is None:
+            return None
+        return f"{by:04d}-{bm:02d}-{bd:02d}"
+
+    def _enrich(rows, season_model, db) -> list[dict]:
+        out: list[dict] = []
+        for r in rows:
+            team_row = (
+                db.query(season_model.team)
+                  .filter(season_model.player_id == r.player_id)
+                  .filter(season_model.year      == current_year)
+                  .one_or_none()
+            )
+            out.append({
+                "player_id": r.player_id,
+                "name":      r.name,
+                "dob":       _dob_str(r.birth_year, r.birth_month, r.birth_day),
+                "position":  r.position,
+                "active":    r.mlb_last_season is None,
+                "team":      team_row.team if team_row else None,
+            })
+        return out
+
+    def _same_table_dupes(bio_model, season_model, db) -> list[dict]:
+        # bdl_ids appearing on more than one row in this bio table.
+        bdl_ids = [
+            r[0] for r in
+            db.query(bio_model.bdl_id)
+              .filter(bio_model.bdl_id.isnot(None))
+              .group_by(bio_model.bdl_id)
+              .having(_sa_func.count(bio_model.player_id) > 1)
+              .all()
+        ]
+        groups: list[dict] = []
+        for bdl_id in bdl_ids:
+            rows = (
+                db.query(
+                    bio_model.player_id, bio_model.name,
+                    bio_model.birth_year, bio_model.birth_month, bio_model.birth_day,
+                    bio_model.position, bio_model.mlb_last_season,
+                )
+                .filter(bio_model.bdl_id == bdl_id)
+                .all()
+            )
+            groups.append({
+                "bdl_id":  int(bdl_id),
+                "players": _enrich(rows, season_model, db),
+            })
+        return groups
+
+    with connection.get_session() as db:
+        bat_dupes = _same_table_dupes(Player,  PlayerSeason,  db)
+        pit_dupes = _same_table_dupes(Pitcher, PitcherSeason, db)
+
+        # Cross-table: same bdl_id appears in BOTH tables with
+        # different player_ids. Build {bdl_id → player_id} for each
+        # side first so the diff is a simple intersection check.
+        # Skip nulls; multi-stamped bdl_ids inside one table are
+        # already surfaced above and would key inconsistently here.
+        bat_map: dict[int, int] = {}
+        for r in (
+            db.query(Player.player_id, Player.bdl_id)
+              .filter(Player.bdl_id.isnot(None))
+              .all()
+        ):
+            bat_map.setdefault(int(r.bdl_id), int(r.player_id))
+        pit_map: dict[int, int] = {}
+        for r in (
+            db.query(Pitcher.player_id, Pitcher.bdl_id)
+              .filter(Pitcher.bdl_id.isnot(None))
+              .all()
+        ):
+            pit_map.setdefault(int(r.bdl_id), int(r.player_id))
+
+        cross_dupes: list[dict] = []
+        for bdl_id, bat_pid in bat_map.items():
+            if bdl_id not in pit_map:
+                continue
+            if bat_pid == pit_map[bdl_id]:
+                # Same player_id on both sides — two-way player
+                # (Ohtani-style), the correct shape. Skip.
+                continue
+            bat_rows = (
+                db.query(
+                    Player.player_id, Player.name,
+                    Player.birth_year, Player.birth_month, Player.birth_day,
+                    Player.position, Player.mlb_last_season,
+                )
+                .filter(Player.bdl_id == bdl_id)
+                .all()
+            )
+            pit_rows = (
+                db.query(
+                    Pitcher.player_id, Pitcher.name,
+                    Pitcher.birth_year, Pitcher.birth_month, Pitcher.birth_day,
+                    Pitcher.position, Pitcher.mlb_last_season,
+                )
+                .filter(Pitcher.bdl_id == bdl_id)
+                .all()
+            )
+            bat_enriched = _enrich(bat_rows, PlayerSeason,  db)
+            pit_enriched = _enrich(pit_rows, PitcherSeason, db)
+            for p in bat_enriched:
+                p["side"] = "batter"
+            for p in pit_enriched:
+                p["side"] = "pitcher"
+            cross_dupes.append({
+                "bdl_id":  bdl_id,
+                "players": bat_enriched + pit_enriched,
+            })
+
+    total = len(bat_dupes) + len(pit_dupes) + len(cross_dupes)
+    return {
+        "current_year":              current_year,
+        "player_table_duplicates":   bat_dupes,
+        "pitcher_table_duplicates":  pit_dupes,
+        "cross_table_duplicates":    cross_dupes,
+        "total_issues":              total,
     }
 
 
