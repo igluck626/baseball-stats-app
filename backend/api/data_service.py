@@ -2052,6 +2052,264 @@ def _create_bio_from_bdl(
     return ("pitcher" if is_pitcher else "batter"), mlbam_id
 
 
+# -----------------------------------------------------------------------------
+# BDL-to-DB candidate scoring (diagnostic only — see
+# `test_bdl_mapping` and `/admin/test-bdl-mapping`)
+# -----------------------------------------------------------------------------
+# These helpers exist to drive a read-only walk of BDL active rosters
+# that scores potential matches against our `players` / `pitchers`
+# tables WITHOUT writing anything. The scoring rubric (DOB + name
+# + role + active status) is what we'll plumb into the actual
+# mapping path once the report shows it's reliable enough.
+
+_NICKNAME_MAP: dict[str, str] = {
+    "mike":  "michael", "bill":  "william", "bob":   "robert",
+    "jim":   "james",   "joe":   "joseph",  "tom":   "thomas",
+    "nick":  "nicholas","alex":  "alexander","will": "william",
+    "ben":   "benjamin","dan":   "daniel",  "matt":  "matthew",
+    "chris": "christopher","andy":"andrew", "tony":  "anthony",
+    "rick":  "richard", "rob":   "robert",  "brad":  "bradley",
+}
+
+_NAME_SUFFIXES = (" jr", " sr", " ii", " iii", " iv")
+
+
+def _normalize_player_name(name: Optional[str]) -> str:
+    """Lowercase, strip accents, drop punctuation + trailing
+    suffixes. Used by the scoring rubric so "Fernández" matches
+    "Fernandez" and "Tatis Jr." matches "Tatis"."""
+    if not name:
+        return ""
+    s = unicodedata.normalize("NFD", name)
+    s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+    s = s.lower().replace(".", "").replace(",", "")
+    for suf in _NAME_SUFFIXES:
+        if s.endswith(suf):
+            s = s[: -len(suf)]
+    return s.strip()
+
+
+def _are_nickname_match(a: str, b: str) -> bool:
+    """`("mike", "michael")` → True. Symmetric."""
+    return (
+        _NICKNAME_MAP.get(a) == b
+        or _NICKNAME_MAP.get(b) == a
+        or (a in _NICKNAME_MAP and b in _NICKNAME_MAP
+            and _NICKNAME_MAP[a] == _NICKNAME_MAP[b])
+    )
+
+
+# Free-form position strings BDL ships that mean "pitcher".
+# Covers the abbreviation set used by `_BDL_PITCHER_POSITIONS`
+# plus the full-name variants the `/players/active` payload
+# sometimes carries instead of the short codes.
+_BDL_PITCHER_POSITION_LABELS = {
+    "p", "sp", "rp", "cl",
+    "pitcher", "starting pitcher", "relief pitcher",
+}
+
+_DB_PITCHER_POSITIONS = {"P", "SP", "RP"}
+
+
+def _score_bdl_candidate(bdl_player: dict, db_player: dict) -> int:
+    """Apply the five-signal rubric (DOB / last / first / role /
+    active) to one candidate. Higher = better. Caller picks the
+    top scorer per BDL player and gates on >=70."""
+    score = 0
+    # Signal 1: DOB match (+50). Strongest single signal.
+    by, bm, bd = _parse_bdl_dob(bdl_player.get("dob"))
+    if (by is not None and bm is not None and bd is not None
+        and db_player.get("birth_year")  == by
+        and db_player.get("birth_month") == bm
+        and db_player.get("birth_day")   == bd):
+        score += 50
+
+    # Signal 2: last-name exact match (+20). Pre-normalized on
+    # the DB side (the index key) so this is essentially a hash hit.
+    bdl_last = _normalize_player_name(bdl_player.get("last_name"))
+    db_last = db_player.get("_norm_last", "")
+    if bdl_last and bdl_last == db_last:
+        score += 20
+
+    # Signal 3: first-name match (+15 exact, +8 nickname/initial).
+    bdl_first = _normalize_player_name(bdl_player.get("first_name"))
+    db_first  = db_player.get("_norm_first", "")
+    if bdl_first and bdl_first == db_first:
+        score += 15
+    elif bdl_first and db_first:
+        if bdl_first[0] == db_first[0] or _are_nickname_match(bdl_first, db_first):
+            score += 8
+
+    # Signal 4: role consistency (±10).
+    raw_pos = (bdl_player.get("position") or "").strip().lower()
+    bdl_is_pitcher = raw_pos in _BDL_PITCHER_POSITION_LABELS
+    db_is_pitcher = (db_player.get("position") or "") in _DB_PITCHER_POSITIONS
+    if bdl_is_pitcher == db_is_pitcher:
+        score += 10
+    else:
+        score -= 10
+
+    # Signal 5: active-status sanity (+10 active, -20 retired).
+    # A DB row marked retired matching a current BDL roster
+    # entry is suspicious — likely a name-twin collision
+    # (Drew Smith dad-vs-son etc.) — so we penalize harder than
+    # we reward the active-active case.
+    if db_player.get("mlb_last_season") is None:
+        score += 10
+    else:
+        score -= 20
+    return score
+
+
+def test_bdl_mapping(current_year: int) -> dict:
+    """READ-ONLY diagnostic. Walks all 30 BDL active rosters and
+    scores each player against our `players` / `pitchers` tables
+    using the five-signal rubric in `_score_bdl_candidate`.
+    Reports how many players we could auto-match, how many tied
+    (need review), and how many had no high-confidence candidate.
+    No DB writes. Operator inspects the report to decide whether
+    the rubric is reliable enough to drive an actual mapping pass.
+
+    Classification per BDL player:
+      * `already_mapped`   — bdl_id is already stamped in one of
+        the bio tables (mostly the common case).
+      * `auto_match`       — top score >= 70 AND strictly greater
+        than the runner-up; safe to auto-map.
+      * `needs_review`     — top score >= 70 but tied with the
+        runner-up. Two equally plausible matches; operator must
+        hand-resolve.
+      * `low_confidence`   — top score < 70. Either no DB row for
+        this player at all (will need `_create_bio_from_bdl`) or
+        the rubric couldn't tell.
+    """
+    _get_bdl_key()
+
+    from database.models import Pitcher as _Pitcher
+    from database.models import Player as _Player
+
+    # Build a {normalized_last_name → [candidate_dict]} index so
+    # the per-BDL-player lookup is O(candidates_with_this_last).
+    # Each candidate dict carries the bio fields the scorer needs,
+    # plus pre-normalized first/last names so we don't re-normalize
+    # ~850 times per BDL player.
+    index: dict[str, list[dict]] = {}
+    mapped_bdl_ids: set[int] = set()
+
+    def _add_to_index(rows, side_pitcher: bool) -> None:
+        for r in rows:
+            if r.bdl_id is not None:
+                mapped_bdl_ids.add(int(r.bdl_id))
+            name = r.name or ""
+            parts = name.split()
+            last = parts[-1] if parts else ""
+            first = parts[0] if parts else ""
+            norm_last = _normalize_player_name(last)
+            norm_first = _normalize_player_name(first)
+            if not norm_last:
+                continue
+            index.setdefault(norm_last, []).append({
+                "player_id":       int(r.player_id),
+                "name":            name,
+                "position":        r.position,
+                "bdl_id":          r.bdl_id,
+                "mlb_last_season": r.mlb_last_season,
+                "birth_year":      r.birth_year,
+                "birth_month":     r.birth_month,
+                "birth_day":       r.birth_day,
+                "_norm_last":      norm_last,
+                "_norm_first":     norm_first,
+                "_side":           "pitcher" if side_pitcher else "batter",
+            })
+
+    with connection.get_session() as db:
+        bat_rows = db.query(
+            _Player.player_id, _Player.name, _Player.position,
+            _Player.bdl_id, _Player.mlb_last_season,
+            _Player.birth_year, _Player.birth_month, _Player.birth_day,
+        ).all()
+        pit_rows = db.query(
+            _Pitcher.player_id, _Pitcher.name, _Pitcher.position,
+            _Pitcher.bdl_id, _Pitcher.mlb_last_season,
+            _Pitcher.birth_year, _Pitcher.birth_month, _Pitcher.birth_day,
+        ).all()
+    _add_to_index(bat_rows, side_pitcher=False)
+    _add_to_index(pit_rows, side_pitcher=True)
+
+    auto_match:     list[dict] = []
+    needs_review:   list[dict] = []
+    low_confidence: list[dict] = []
+    already_mapped_count = 0
+    total = 0
+    roster_errors: list[str] = []
+
+    for lahman_code, bdl_team_id in _BDL_TEAM_ID_MAP.items():
+        try:
+            resp = _bdl_get_json(
+                "players/active",
+                {"team_ids[]": bdl_team_id, "per_page": 100},
+            )
+        except Exception as exc:
+            log.warning(
+                "test_bdl_mapping: %s active fetch failed: %s",
+                lahman_code, exc,
+            )
+            roster_errors.append(lahman_code)
+            continue
+        for entry in (resp.get("data") or []):
+            total += 1
+            bdl_id = entry.get("id")
+            if bdl_id is None:
+                continue
+            if int(bdl_id) in mapped_bdl_ids:
+                already_mapped_count += 1
+                continue
+            norm_last = _normalize_player_name(entry.get("last_name"))
+            candidates = index.get(norm_last, [])
+            scored: list[tuple[int, dict]] = [
+                (_score_bdl_candidate(entry, c), c)
+                for c in candidates
+            ]
+            scored.sort(key=lambda x: x[0], reverse=True)
+            top_score = scored[0][0] if scored else 0
+            runner_up = scored[1][0] if len(scored) > 1 else 0
+            top_candidate = scored[0][1] if scored else None
+            detail = {
+                "bdl_id":            bdl_id,
+                "bdl_name":          entry.get("full_name"),
+                "bdl_dob":           entry.get("dob"),
+                "bdl_team":          lahman_code,
+                "bdl_position":      entry.get("position"),
+                "matched_player_id": (top_candidate or {}).get("player_id"),
+                "matched_name":      (top_candidate or {}).get("name"),
+                "matched_side":      (top_candidate or {}).get("_side"),
+                "score":             top_score,
+                "runner_up_score":   runner_up,
+            }
+            if top_score >= 70:
+                if top_score > runner_up:
+                    auto_match.append(detail)
+                else:
+                    needs_review.append(detail)
+            else:
+                low_confidence.append(detail)
+        time.sleep(_BDL_RATE_LIMIT_SLEEP)
+
+    return {
+        "current_year":       current_year,
+        "total_bdl_active":   total,
+        "already_mapped":     already_mapped_count,
+        "auto_match":         len(auto_match),
+        "needs_review":       len(needs_review),
+        "low_confidence":     len(low_confidence),
+        "roster_fetch_errors": roster_errors,
+        "details": {
+            "auto_match":     auto_match,
+            "needs_review":   needs_review,
+            "low_confidence": low_confidence,
+        },
+    }
+
+
 def _parse_bdl_bats_throws(s: Optional[str]) -> tuple[Optional[str], Optional[str]]:
     """\"R/R\" → (\"R\", \"R\"). Tolerant of whitespace and missing
     halves; returns (None, None) on unparseable input."""

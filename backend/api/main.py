@@ -1285,6 +1285,27 @@ def admin_dob_coverage():
     }
 
 
+@app.get("/admin/test-bdl-mapping")
+def admin_test_bdl_mapping():
+    """READ-ONLY diagnostic. Walks every BDL active roster and scores
+    each player against our `players` / `pitchers` bio tables using
+    the five-signal rubric (DOB / last / first / role / active).
+    Reports auto-match candidates, ties needing review, and low-
+    confidence cases. No DB writes — the operator inspects the
+    results before deciding whether to wire the rubric into the
+    actual mapping path.
+
+    Returns a summary plus per-bucket detail lists. Each detail
+    entry carries `{bdl_id, bdl_name, bdl_dob, bdl_team,
+    bdl_position, matched_player_id, matched_name, matched_side,
+    score, runner_up_score}` so the operator can spot the
+    classification reason at a glance."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    current_year = datetime.datetime.utcnow().year
+    return data_service.test_bdl_mapping(current_year)
+
+
 @app.post("/admin/sync-all-player-teams")
 def admin_sync_all_player_teams():
     """Bulk team-reconcile pass against MLB Stats API's 30 active
