@@ -490,24 +490,6 @@ final class PlayerViewModel: ObservableObject {
             let dbPitchingG  = currentPitching?.standard?.G
             let bdlBattingG  = bdlSeason?.battingGp
             let bdlPitchingG = bdlSeason?.pitchingGp
-            print("[overlay] \(player.name) hasMeaningfulBatting=\(hasMeaningfulBatting) hasMeaningfulPitching=\(hasMeaningfulPitching)")
-            let battingEqual: Bool = {
-                if let db = dbBattingG, let b = bdlBattingG { return db == b }
-                return false
-            }()
-            let pitchingEqual: Bool = {
-                if let db = dbPitchingG, let p = bdlPitchingG { return db == p }
-                return false
-            }()
-            print("[overlay] \(player.name) dbPitchingG=\(dbPitchingG ?? -1) bdlPitchingG=\(bdlPitchingG ?? -1) pitchingEqual=\(pitchingEqual)")
-            let battingBDLAhead: Bool = {
-                if let db = dbBattingG, let b = bdlBattingG { return b > db }
-                return false
-            }()
-            let pitchingBDLAhead: Bool = {
-                if let db = dbPitchingG, let p = bdlPitchingG { return p > db }
-                return false
-            }()
             // Absorption signal from our own gamelog tables.
             // `dbG == bdlG` alone is ambiguous — it could mean
             // "neither side absorbed yet" (overlay should fire) OR
@@ -541,7 +523,6 @@ final class PlayerViewModel: ObservableObject {
                     pitcherIncludesToday = (outer ?? nil)?.includesToday ?? false
                 }
             }
-            print("[overlay] \(player.name) pitcherIncludesToday=\(pitcherIncludesToday)")
             // Nil-aware per-side gates. Each side's gate returns:
             //   • `true` when there's no GP data on that side
             //     (`dbG == nil` OR `bdlG == nil`) — the side has
@@ -601,7 +582,6 @@ final class PlayerViewModel: ObservableObject {
                 }
                 return false
             }()
-            print("[overlay] \(player.name) shouldOverlayFinals=\(shouldOverlayFinals) shouldUseBDLDirect=\(shouldUseBDLDirect)")
             if shouldUseBDLDirect, let bdlSeason {
                 // Seed totalBat/totalPit with BDL's full season
                 // totals — but ONLY on sides where BDL is actually
@@ -634,7 +614,6 @@ final class PlayerViewModel: ObservableObject {
                 // them (BDL-direct path) OR they'd double-count
                 // (non-BDL-direct path).
                 eligible.removeAll { !$0.isLive }
-                print("[overlay] \(player.name) eligible count after prune=\(eligible.count)")
                 if eligible.isEmpty {
                     // No live games remain. Publish whatever
                     // BDL-direct totals we computed (or do nothing
