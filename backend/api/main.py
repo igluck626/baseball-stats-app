@@ -209,7 +209,102 @@ def _run_backfill_war() -> None:
 # Use `POST /admin/backfill-bdl-gamelogs?start_date=&end_date=`
 # instead; it's faster (~15 BDL calls per day vs ~2,400 per-player
 # MLB calls) and is the only supported gamelog-history loader now.
+# For multi-year loads use `POST /admin/backfill-gamelogs-async` so
+# the HTTP request doesn't have to stay open for hours.
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Async gamelog-backfill state (shared between background thread and status endpoint)
+# ---------------------------------------------------------------------------
+# Lets a multi-season BDL gamelog backfill (which can run hours for
+# 2000→present) kick off from one HTTP call without holding the
+# request connection open. POST starts a thread + returns immediately;
+# GET reports live progress.
+_backfill_state: dict = {
+    "running":         False,
+    "mode":            None,   # "date" | "season" | None
+    "start_season":    None,
+    "end_season":      None,
+    "start_date":      None,
+    "end_date":        None,
+    "current_season":  None,   # season currently being worked (season mode)
+    "total_games":     0,
+    "total_bat_rows":  0,
+    "total_pit_rows":  0,
+    "error":           None,
+    "last_updated":    None,
+    "last_run":        None,
+}
+_backfill_lock = threading.Lock()
+
+
+def _run_backfill_gamelogs(
+    start_season: int | None,
+    end_season:   int | None,
+    start_date:   str | None,
+    end_date:     str | None,
+) -> None:
+    """Background thread: same pipeline as `/admin/backfill-bdl-gamelogs`
+    (dates OR seasons) but reports progress to `_backfill_state` so a
+    long multi-year run isn't gated on the HTTP connection.
+    """
+    def _now_iso() -> str:
+        return datetime.datetime.utcnow().isoformat() + "Z"
+
+    has_dates = start_date is not None and end_date is not None
+    try:
+        if has_dates:
+            result = data_service.backfill_bdl_gamelogs(start_date, end_date)
+            with _backfill_lock:
+                _backfill_state["total_games"]    = int(result.get("total_games")    or 0)
+                _backfill_state["total_bat_rows"] = int(result.get("total_bat_rows") or 0)
+                _backfill_state["total_pit_rows"] = int(result.get("total_pit_rows") or 0)
+                _backfill_state["last_updated"]   = _now_iso()
+        else:
+            # Season-mode loop: same current-year skip + per-year
+            # window as the sync endpoint. Progress is published
+            # after each year so the status endpoint can show which
+            # season is being worked and the running totals.
+            current_year = data_service._current_year()
+            for year in range(start_season, end_season + 1):
+                if year == current_year:
+                    continue
+                with _backfill_lock:
+                    _backfill_state["current_season"] = year
+                    _backfill_state["last_updated"]   = _now_iso()
+                r = data_service.backfill_bdl_gamelogs(
+                    f"{year}-03-01", f"{year}-11-30",
+                )
+                with _backfill_lock:
+                    _backfill_state["total_games"]    += int(r.get("total_games")    or 0)
+                    _backfill_state["total_bat_rows"] += int(r.get("total_bat_rows") or 0)
+                    _backfill_state["total_pit_rows"] += int(r.get("total_pit_rows") or 0)
+                    _backfill_state["last_updated"]   = _now_iso()
+        # Auto-dedup tail — same gate as the sync endpoint. Non-fatal:
+        # backfill rows have already committed, so log + continue.
+        try:
+            connection.dedupe_gamelog_duplicates(
+                "batting_gamelogs",
+                connection._BATTING_GAMELOGS_QUALITY_COLUMNS,
+            )
+            connection.dedupe_gamelog_duplicates(
+                "pitching_gamelogs",
+                connection._PITCHING_GAMELOGS_QUALITY_COLUMNS,
+            )
+        except Exception as exc:
+            log.error(f"async backfill auto-dedup FAILED (non-fatal): {exc}")
+    except Exception as exc:
+        tb = traceback.format_exc()
+        with _backfill_lock:
+            _backfill_state["error"] = f"{exc}\n{tb}"
+        log.error(f"async backfill FAILED: {exc}", exc_info=True)
+    finally:
+        with _backfill_lock:
+            _backfill_state["running"]        = False
+            _backfill_state["current_season"] = None
+            _backfill_state["last_run"]       = _now_iso()
+            _backfill_state["last_updated"]   = _backfill_state["last_run"]
 
 
 # ---------------------------------------------------------------------------
@@ -1628,6 +1723,88 @@ def admin_backfill_bdl_gamelogs(
         log.error(f"backfill auto-dedup FAILED (non-fatal): {exc}")
         result["dedup_error"] = str(exc)
     return result
+
+
+@app.post("/admin/backfill-gamelogs-async")
+def admin_backfill_gamelogs_async(
+    start_date:   str | None = Query(None, description="Inclusive start date, yyyy-mm-dd. Mutually exclusive with start_season."),
+    end_date:     str | None = Query(None, description="Inclusive end date, yyyy-mm-dd. Mutually exclusive with end_season."),
+    start_season: int | None = Query(None, description="Inclusive start season year. Pairs with end_season."),
+    end_season:   int | None = Query(None, description="Inclusive end season year. Pairs with start_season."),
+):
+    """Same pipeline as `/admin/backfill-bdl-gamelogs` but kicked off
+    in a background thread so the HTTP request returns immediately.
+    Poll `/admin/backfill-gamelogs-status` for live progress.
+
+    Designed for multi-year history loads (e.g. 2000-2025) that run
+    for hours — the sync endpoint would otherwise require holding
+    the curl connection open the whole time."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    has_dates   = start_date   is not None and end_date   is not None
+    has_seasons = start_season is not None and end_season is not None
+    if has_dates == has_seasons:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Provide exactly one input mode: either "
+                "start_date+end_date or start_season+end_season."
+            ),
+        )
+    if has_seasons and end_season < start_season:
+        raise HTTPException(
+            status_code=400,
+            detail="end_season must be >= start_season",
+        )
+
+    with _backfill_lock:
+        if _backfill_state["running"]:
+            return {
+                "status":  "already_running",
+                "task_id": "backfill_gamelogs",
+                **_backfill_state,
+            }
+        _backfill_state.update(
+            running=True,
+            mode=("date" if has_dates else "season"),
+            start_season=start_season,
+            end_season=end_season,
+            start_date=start_date,
+            end_date=end_date,
+            current_season=None,
+            total_games=0,
+            total_bat_rows=0,
+            total_pit_rows=0,
+            error=None,
+            last_updated=datetime.datetime.utcnow().isoformat() + "Z",
+        )
+
+    t = threading.Thread(
+        target=_run_backfill_gamelogs,
+        kwargs={
+            "start_season": start_season,
+            "end_season":   end_season,
+            "start_date":   start_date,
+            "end_date":     end_date,
+        },
+        daemon=True,
+        name="backfill-gamelogs-async",
+    )
+    t.start()
+    return {
+        "status":  "started",
+        "task_id": "backfill_gamelogs",
+        "message": "Backfill running in background",
+    }
+
+
+@app.get("/admin/backfill-gamelogs-status")
+def admin_backfill_gamelogs_status():
+    """Live progress for the async gamelog backfill. Same shape on
+    every call — fields stay populated after completion so the
+    last-run summary is still readable until the next run starts."""
+    with _backfill_lock:
+        return dict(_backfill_state)
 
 
 @app.get("/admin/find-missing-doubleheaders")
