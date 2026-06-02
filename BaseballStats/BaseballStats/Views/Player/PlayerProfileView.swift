@@ -234,10 +234,9 @@ struct PlayerProfileView: View {
 
             // Floating Compare bar pinned to the bottom of the
             // career tab. Appears whenever 2+ rows are selected and
-            // the Career tab is on-screen. Tapping Compare opens
+            // the Career tab is on-screen. Tapping Compare presents
             // the aggregate sheet; Clear empties the set (which
-            // also hides the bar). zIndex 0 so the column-filter
-            // modal (zIndex 1/2) still sits above when both are up.
+            // also hides the bar).
             if selectedTab == .career && selectedSeasons.count >= 2 {
                 compareBar
                     .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -272,7 +271,7 @@ struct PlayerProfileView: View {
                 selectedYears:   selectedSeasons,
                 tint:            selectionTint
             )
-            .presentationDetents([.height(220)])
+            .presentationDetents([.height(320)])
             .presentationDragIndicator(.visible)
         }
     }
@@ -2745,11 +2744,12 @@ private func careerRowBackground(
 
 // MARK: - Multi-year selection summary sheet
 
-/// Sheet presented when 2+ Career-tab rows are selected. Title shows
-/// the year range + count; X (or drag-down) dismisses, which clears
-/// the parent's selection set. Sheets manage their own sizing, so
-/// the horizontal ScrollView inside is laid out cleanly — the
-/// previous in-ZStack floating card kept collapsing vertically.
+/// Sheet presented when the user taps Compare on the floating
+/// selection bar. Single-line title pairs the year range (bold) with
+/// a secondary season count; horizontal ScrollView holds uppercase
+/// column headers above the aggregate values. Dismissal (drag-down
+/// or in-sheet X) only closes the sheet — the parent keeps
+/// `selectedSeasons` populated.
 private struct MultiYearSummarySheet: View {
     let showingBatting:  Bool
     let battingSeasons:  [CareerSeason]
@@ -2759,14 +2759,27 @@ private struct MultiYearSummarySheet: View {
 
     @Environment(\.dismiss) private var dismiss
 
+    // Row-height constants used by both the frozen label column on
+    // the left and the scrollable stats grid on the right — same
+    // numbers in both places so the three data rows line up across
+    // the divider boundary.
+    private let headerRowHeight: CGFloat = 22
+    private let dividerSlotHeight: CGFloat = 9
+    private let dataRowHeight: CGFloat = 28
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 10) {
+            // Compact single-line title: team-color dot, bold range,
+            // secondary count, trailing X.
             HStack(spacing: 8) {
                 Circle()
                     .fill(tint)
-                    .frame(width: 10, height: 10)
-                Text(headerText)
-                    .font(.headline)
+                    .frame(width: 8, height: 8)
+                Text(rangeText)
+                    .font(.headline.weight(.bold))
+                Text(countText)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
                 Spacer()
                 Button(action: { dismiss() }) {
                     Image(systemName: "xmark.circle.fill")
@@ -2778,47 +2791,95 @@ private struct MultiYearSummarySheet: View {
                 .accessibilityLabel("Dismiss")
             }
 
-            // Plain ScrollView at the top level of the sheet body —
-            // no surrounding material/glass wrappers, no nested
-            // height constraints. Sheet sizing comes from
-            // `.presentationDetents` on the caller.
-            ScrollView(.horizontal, showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 16) {
-                        ForEach(cols, id: \.self) { col in
-                            Text(col)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .frame(minWidth: 40, alignment: .trailing)
-                        }
-                    }
-                    Divider()
-                    HStack(spacing: 16) {
-                        // `enumerated()` + `id: \.offset` so duplicate
-                        // value strings (two stats both "0") don't
-                        // collide in the ForEach identity.
-                        ForEach(Array(values.enumerated()), id: \.offset) { _, val in
-                            Text(val)
-                                .font(.system(size: 15, weight: .semibold))
-                                .monospacedDigit()
-                                .frame(minWidth: 40, alignment: .trailing)
-                        }
+            Divider()
+
+            // Frozen label column on the left, scrollable stats grid
+            // on the right. Both columns use the same row-height
+            // constants so the three data rows align across the
+            // divider boundary.
+            HStack(alignment: .top, spacing: 8) {
+                frozenLabelColumn
+                ScrollView(.horizontal, showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        headerRow
+                        Divider()
+                            .padding(.vertical, 4)
+                        dataRow(values: totalValues)
+                        dataRow(values: perSeasonValues)
+                        dataRow(values: per162Values)
                     }
                 }
             }
 
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 20)
-        .padding(.top, 12)
+        .padding(.horizontal, 18)
+        .padding(.top, 10)
+        .padding(.bottom, 8)
     }
 
-    private var headerText: String {
+    private var frozenLabelColumn: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Spacer to clear the header row + divider on the right
+            // pane. Using Color.clear keeps the slots in the layout
+            // tree (so the row-height stack matches) without
+            // rendering anything.
+            Color.clear.frame(height: headerRowHeight)
+            Color.clear.frame(height: dividerSlotHeight)
+            rowLabel("Total")
+            rowLabel("Per Season")
+            rowLabel("Per 162")
+        }
+        .frame(width: 70, alignment: .leading)
+    }
+
+    private func rowLabel(_ s: String) -> some View {
+        Text(s)
+            .font(.caption2.weight(.semibold))
+            .textCase(.uppercase)
+            .tracking(0.5)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(height: dataRowHeight, alignment: .center)
+    }
+
+    private var headerRow: some View {
+        HStack(spacing: 16) {
+            ForEach(cols, id: \.self) { col in
+                Text(col)
+                    .font(.caption2.weight(.semibold))
+                    .textCase(.uppercase)
+                    .tracking(0.5)
+                    .foregroundStyle(.secondary)
+                    .frame(minWidth: 40, alignment: .trailing)
+            }
+        }
+        .frame(height: headerRowHeight, alignment: .center)
+    }
+
+    private func dataRow(values: [String]) -> some View {
+        HStack(spacing: 16) {
+            // `enumerated()` + `id: \.offset` so duplicate value
+            // strings (two stats both "0") don't collide on identity.
+            ForEach(Array(values.enumerated()), id: \.offset) { _, val in
+                Text(val)
+                    .font(.system(size: 14, weight: .semibold))
+                    .monospacedDigit()
+                    .frame(minWidth: 40, alignment: .trailing)
+            }
+        }
+        .frame(height: dataRowHeight, alignment: .center)
+    }
+
+    private var rangeText: String {
         let years = selectedYears.sorted()
         guard let first = years.first, let last = years.last else { return "" }
-        let count = years.count
-        let range = first == last ? "\(first)" : "\(first)–\(last)"
-        return "\(range) · \(count) season\(count == 1 ? "" : "s")"
+        return first == last ? "\(first)" : "\(first)–\(last)"
+    }
+
+    private var countText: String {
+        let n = selectedYears.count
+        return "· \(n) season\(n == 1 ? "" : "s")"
     }
 
     private var cols: [String] {
@@ -2827,12 +2888,18 @@ private struct MultiYearSummarySheet: View {
             : ["WAR","W","L","ERA","G","GS","IP","SO","BB","WHIP"]
     }
 
-    private var values: [String] {
+    // MARK: Value rows
+    //
+    // Total: counting stats summed across selected seasons,
+    //        rate stats recomputed from those totals.
+    // Per Season: counting stats divided by # of selected seasons,
+    //             rate stats unchanged (rates don't average over years).
+    // Per 162: counting stats scaled by 162/totalG for batters,
+    //          162/totalIP for pitchers; rate stats unchanged.
+
+    private var totalValues: [String] {
         if showingBatting {
-            let filtered = battingSeasons.filter {
-                $0.year.map(selectedYears.contains) ?? false
-            }
-            let agg = BattingCareerAgg.compute(seasons: filtered)
+            let agg = battingAgg
             return [
                 formatWAR(agg.war),
                 formatCount(agg.g),
@@ -2849,10 +2916,7 @@ private struct MultiYearSummarySheet: View {
                 format3(agg.ops),
             ]
         } else {
-            let filtered = pitchingSeasons.filter {
-                $0.year.map(selectedYears.contains) ?? false
-            }
-            let agg = PitchingCareerAgg.compute(seasons: filtered)
+            let agg = pitchingAgg
             return [
                 formatWAR(agg.war),
                 formatCount(agg.w),
@@ -2866,6 +2930,107 @@ private struct MultiYearSummarySheet: View {
                 format2(agg.whip),
             ]
         }
+    }
+
+    private var perSeasonValues: [String] {
+        let n = Double(max(selectedYears.count, 1))
+        if showingBatting {
+            let agg = battingAgg
+            return [
+                format1(agg.war / n),
+                format1(Double(agg.g)   / n),
+                format1(Double(agg.ab)  / n),
+                format1(Double(agg.r)   / n),
+                format1(Double(agg.h)   / n),
+                format1(Double(agg.hr)  / n),
+                format1(Double(agg.rbi) / n),
+                format1(Double(agg.bb)  / n),
+                format1(Double(agg.so)  / n),
+                format3(agg.avg),
+                format3(agg.obp),
+                format3(agg.slg),
+                format3(agg.ops),
+            ]
+        } else {
+            let agg = pitchingAgg
+            return [
+                format1(agg.war / n),
+                format1(Double(agg.w)  / n),
+                format1(Double(agg.l)  / n),
+                format2(agg.era),
+                format1(Double(agg.g)  / n),
+                format1(Double(agg.gs) / n),
+                format1(agg.ip / n),
+                format1(Double(agg.so) / n),
+                format1(Double(agg.bb) / n),
+                format2(agg.whip),
+            ]
+        }
+    }
+
+    private var per162Values: [String] {
+        if showingBatting {
+            let agg = battingAgg
+            // Batters scale to 162 games. `totalG == 0` falls back
+            // to "—" rather than producing inf/NaN.
+            guard agg.g > 0 else {
+                return Array(repeating: "—", count: cols.count)
+            }
+            let scale = 162.0 / Double(agg.g)
+            return [
+                format1(agg.war * scale),
+                format1(Double(agg.g)   * scale),  // always 162.0
+                format1(Double(agg.ab)  * scale),
+                format1(Double(agg.r)   * scale),
+                format1(Double(agg.h)   * scale),
+                format1(Double(agg.hr)  * scale),
+                format1(Double(agg.rbi) * scale),
+                format1(Double(agg.bb)  * scale),
+                format1(Double(agg.so)  * scale),
+                format3(agg.avg),
+                format3(agg.obp),
+                format3(agg.slg),
+                format3(agg.ops),
+            ]
+        } else {
+            let agg = pitchingAgg
+            // Pitchers scale to 162 IP. `totalIP == 0` falls back
+            // to "—" rather than producing inf/NaN.
+            guard agg.ip > 0 else {
+                return Array(repeating: "—", count: cols.count)
+            }
+            let scale = 162.0 / agg.ip
+            return [
+                format1(agg.war * scale),
+                format1(Double(agg.w)  * scale),
+                format1(Double(agg.l)  * scale),
+                format2(agg.era),
+                format1(Double(agg.g)  * scale),
+                format1(Double(agg.gs) * scale),
+                format1(agg.ip * scale),  // always 162.0
+                format1(Double(agg.so) * scale),
+                format1(Double(agg.bb) * scale),
+                format2(agg.whip),
+            ]
+        }
+    }
+
+    private var battingAgg: BattingCareerAgg {
+        let filtered = battingSeasons.filter {
+            $0.year.map(selectedYears.contains) ?? false
+        }
+        return BattingCareerAgg.compute(seasons: filtered)
+    }
+
+    private var pitchingAgg: PitchingCareerAgg {
+        let filtered = pitchingSeasons.filter {
+            $0.year.map(selectedYears.contains) ?? false
+        }
+        return PitchingCareerAgg.compute(seasons: filtered)
+    }
+
+    private func format1(_ value: Double) -> String {
+        String(format: "%.1f", value)
     }
 }
 

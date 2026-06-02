@@ -31,7 +31,7 @@ struct ContentView: View {
 
             StandingsView()
                 .tabItem {
-                    Label("Standings", systemImage: "list.bullet")
+                xr    Label("Standings", systemImage: "list.bullet")
                 }
                 .tag(AppNavigation.Tab.standings)
 
