@@ -22,6 +22,16 @@ final class HomeViewModel: ObservableObject {
     @Published var nextGame: Game?
     @Published var teamRecord: TeamRecord?
     @Published var teamStanding: TeamStandingInfo?
+
+    /// Favorite team's current streak ("W2" / "L3") + last-ten record
+    /// (e.g. (6, 4) for L10 6-4). Pulled from our backend's
+    /// `/teams/standings?year=N` endpoint — BDL's standings response
+    /// only carries W/L, not these dynamic fields. Optional everywhere
+    /// because pre-current-season + cold-start scenarios leave them
+    /// nil; the hero card hides the row when they are.
+    @Published var teamStreakCode: String?
+    @Published var teamLastTenW: Int?
+    @Published var teamLastTenL: Int?
     @Published var isLoading: Bool = false
     @Published var didLoad: Bool = false
     @Published var error: String?
@@ -108,6 +118,21 @@ final class HomeViewModel: ObservableObject {
             self.teamStandings = Self.standingsByBDLTeamId(standings)
             self.teamRecord    = self.teamRecords[bdlTeamId]
             self.teamStanding  = self.teamStandings[bdlTeamId]
+        }
+
+        // Streak + last-ten come from our backend (BDL doesn't ship
+        // them on `/standings`). Best-effort: failures leave the
+        // fields nil and the hero card just hides the secondary
+        // line. Fired AFTER the primary state lands so the card can
+        // paint everything else without waiting on this.
+        if let lahmanCode = bdlToLahmanTeamId[bdlTeamId] {
+            let year = cal.component(.year, from: today)
+            if let resp = (try? await api.getStandings(year: year)) ?? nil,
+               let row = resp.standings?.first(where: { $0.team_id == lahmanCode }) {
+                self.teamStreakCode = row.streak_code
+                self.teamLastTenW   = row.last_ten_w
+                self.teamLastTenL   = row.last_ten_l
+            }
         }
 
         isLoading = false

@@ -4,13 +4,12 @@
 //
 //  Home tab root. Two states:
 //  - No favorite team yet → embedded TeamPickerView.
-//  - Favorite team set → hero card + recent/upcoming game strip.
+//  - Favorite team set → hero card + recent/upcoming game strip +
+//    team leaders + favorite players.
 //
-//  Hero card surfaces the team's record + division standing + last
-//  result + next game. Strip is a horizontal scroll of up to 7
-//  cards spanning recent finals through the next handful of
-//  upcoming games, auto-scrolled so today's game (or the most
-//  recent one) sits roughly in the center on first paint.
+//  Settings (team picker) lives in a trailing toolbar button; the
+//  inline navigation title shows the team logo + city/name so the
+//  user always knows whose context is on screen.
 //
 //  Navigation: tapping any strip card pushes a BoxScoreView via
 //  the same `.navigationDestination(for: Game.self)` pattern the
@@ -35,11 +34,8 @@ struct HomeView: View {
                 backgroundGradient
                 content
             }
-            // No nav title — the hero card is the visual anchor for
-            // this tab. Inline display mode keeps the bar collapsed so
-            // the toolbar slot stays available for future controls
-            // without occupying vertical space.
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar { toolbarContent }
             .navigationDestination(for: Game.self) { game in
                 BoxScoreView(
                     game:           game,
@@ -71,17 +67,12 @@ struct HomeView: View {
             }
         }
         .task(id: store.bdlTeamId) {
-            // Re-runs whenever the favorite changes — initial mount,
-            // first-time pick, or change-via-settings all funnel
-            // through here.
             guard let bdlId = store.bdlTeamId else { return }
             await vm.load(bdlTeamId: bdlId)
             await vm.loadTeamLeaders(bdlTeamId: bdlId)
             vm.startAutoRefresh(bdlTeamId: bdlId)
         }
         .task(id: favoritesStore.playerIds) {
-            // Re-runs whenever the favorites list changes — initial
-            // mount or any add/remove via the sheet / edit mode.
             await vm.loadFavoritePlayers(ids: favoritesStore.playerIds)
         }
         .onDisappear { vm.stopAutoRefresh() }
@@ -97,12 +88,38 @@ struct HomeView: View {
         .ignoresSafeArea()
     }
 
+    /// Toolbar payload — inline title (logo + name) on the leading
+    /// edge, gear on the trailing edge. Both hide when there's no
+    /// favorite team picked yet (the embedded picker is the whole UI).
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        ToolbarItem(placement: .principal) {
+            if let bdlId = store.bdlTeamId,
+               let entry = MLBTeamCatalog.entry(forBDLId: bdlId) {
+                HStack(spacing: 6) {
+                    TeamLogoView(team: entry.teamInfo, size: 22)
+                    Text(entry.fullName)
+                        .font(.headline.weight(.semibold))
+                        .lineLimit(1)
+                }
+            }
+        }
+        ToolbarItem(placement: .topBarTrailing) {
+            if store.bdlTeamId != nil {
+                Button {
+                    showingPicker = true
+                } label: {
+                    Image(systemName: "gearshape")
+                        .font(.body.weight(.semibold))
+                }
+                .accessibilityLabel("Settings")
+            }
+        }
+    }
+
     @ViewBuilder
     private var content: some View {
         if store.bdlTeamId == nil {
-            // First-launch / cleared-favorite state. Embedding the
-            // picker inline (rather than sheet-only) avoids an extra
-            // tap before the user can do anything on the tab.
             TeamPickerView()
         } else if vm.isLoading && !vm.didLoad {
             loadingSkeleton
@@ -114,27 +131,32 @@ struct HomeView: View {
 
     @ViewBuilder
     private func loadedContent(entry: MLBTeamCatalog.Entry) -> some View {
+        let tint = TeamColors.color(for: entry.lahmanCode) ?? .accentColor
         ScrollView {
-            VStack(spacing: 16) {
+            VStack(spacing: 14) {
                 TeamHeroCard(
                     entry:        entry,
                     record:       vm.teamRecord,
                     standing:     vm.teamStanding,
+                    streakCode:   vm.teamStreakCode,
+                    lastTenW:     vm.teamLastTenW,
+                    lastTenL:     vm.teamLastTenL,
                     lastGame:     vm.lastGame,
                     nextGame:     vm.nextGame,
-                    onSettings:   { showingPicker = true },
                     onSchedule:   { showingSchedule = true },
                 )
 
                 RecentUpcomingStrip(
                     games:    vm.recentAndUpcoming,
                     favorite: entry,
+                    tint:     tint,
                     onTap:    { game in navigationPath.append(game) },
                 )
 
                 TeamLeadersSection(
                     leaders:     vm.teamLeaders,
                     isLoading:   vm.isLoadingLeaders,
+                    tint:        tint,
                     onTapPlayer: { player in
                         navigationPath.append(player)
                     },
@@ -144,6 +166,7 @@ struct HomeView: View {
                     favorites:    vm.favoritePlayers,
                     isLoading:    vm.isLoadingFavorites,
                     isEditing:    $isEditingFavorites,
+                    tint:         tint,
                     onAdd:        { showingAddPlayer = true },
                     onRemove:     { id in favoritesStore.remove(id) },
                     onTapPlayer:  { player in
@@ -151,11 +174,8 @@ struct HomeView: View {
                     },
                 )
             }
-            // Larger top inset now that the nav title is gone — gives
-            // the hero card breathing room from the status bar's
-            // safe-area edge instead of sitting flush against it.
-            .padding(.top, 20)
-            .padding(.bottom, 12)
+            .padding(.top, 12)
+            .padding(.bottom, 16)
         }
         .refreshable {
             if let bdlId = store.bdlTeamId {
@@ -165,17 +185,17 @@ struct HomeView: View {
     }
 
     private var loadingSkeleton: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 14) {
             RoundedRectangle(cornerRadius: 18)
                 .fill(Color(.systemGray5))
-                .frame(height: 220)
+                .frame(height: 240)
                 .padding(.horizontal, 16)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 12) {
                     ForEach(0..<5, id: \.self) { _ in
                         RoundedRectangle(cornerRadius: 14)
                             .fill(Color(.systemGray5))
-                            .frame(width: 132, height: 132)
+                            .frame(width: 150, height: 138)
                     }
                 }
                 .padding(.horizontal, 16)
@@ -188,16 +208,19 @@ struct HomeView: View {
 
 // MARK: - Team Hero Card
 
-/// The big card at the top of the Home tab. Logo + record on top,
-/// last result + next game on the bottom, settings gear in the
-/// top-right corner.
+/// Top-of-tab card. Big logo + team name + record + division
+/// standing + a subtle L10/streak line, with last/next game rows
+/// below. The settings gear has been promoted to the nav toolbar
+/// so this card is purely informational.
 private struct TeamHeroCard: View {
     let entry: MLBTeamCatalog.Entry
     let record: TeamRecord?
     let standing: TeamStandingInfo?
+    let streakCode: String?
+    let lastTenW: Int?
+    let lastTenL: Int?
     let lastGame: Game?
     let nextGame: Game?
-    let onSettings: () -> Void
     let onSchedule: () -> Void
 
     private var teamColor: Color {
@@ -205,18 +228,33 @@ private struct TeamHeroCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 12) {
             header
+            if hasL10OrStreak {
+                streakLine
+            }
             Divider().opacity(0.4)
             lastGameRow
             nextGameRow
+            scheduleLink
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
+        .background {
+            // Two-layer background: glass material first, team-color
+            // gradient laid on top at very low opacity. The gradient
+            // anchors the card to the favorite's identity without
+            // overwhelming the readable content above it.
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(.ultraThinMaterial)
-        )
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [teamColor.opacity(0.08), .clear],
+                        startPoint: .topLeading, endPoint: .bottomTrailing,
+                    )
+                )
+        }
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .strokeBorder(teamColor.opacity(0.25), lineWidth: 1)
@@ -226,68 +264,92 @@ private struct TeamHeroCard: View {
     }
 
     private var header: some View {
-        HStack(alignment: .center, spacing: 14) {
-            TeamLogoView(team: entry.teamInfo, size: 72)
+        HStack(alignment: .center, spacing: 16) {
+            TeamLogoView(team: entry.teamInfo, size: 88)
+                .shadow(color: .black.opacity(0.1), radius: 4, y: 2)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(entry.fullName)
                     .font(.title3.weight(.bold))
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
-                Text(recordAndStandingLine)
-                    .font(.subheadline)
+                Text(recordText)
+                    .font(.title2.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .monospacedDigit()
+                Text(divisionText)
+                    .font(.subheadline.weight(.medium))
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
             }
-
-            Spacer(minLength: 4)
-
-            VStack(alignment: .trailing, spacing: 8) {
-                Button(action: onSettings) {
-                    Image(systemName: "gear")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .padding(6)
-                        .contentShape(Rectangle())
-                }
-                Button(action: onSchedule) {
-                    HStack(spacing: 2) {
-                        Text("Schedule")
-                        Image(systemName: "chevron.right")
-                            .font(.caption2.weight(.bold))
-                    }
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(teamColor)
-                }
-            }
+            Spacer(minLength: 0)
         }
     }
 
-    /// "(32-19) · 1st NL West" — collapses gracefully when either
-    /// piece is missing (early-spring / standings fetch failed).
-    private var recordAndStandingLine: String {
-        let recordPart: String? = {
-            guard let w = record?.wins, let l = record?.losses else { return nil }
-            return "(\(w)-\(l))"
-        }()
-        let standingPart = standing?.displayString
-        switch (recordPart, standingPart) {
-        case let (r?, s?): return "\(r) · \(s)"
-        case let (r?, nil): return r
-        case let (nil, s?): return s
-        default: return "—"
+    private var hasL10OrStreak: Bool {
+        streakCode != nil || (lastTenW != nil && lastTenL != nil)
+    }
+
+    private var streakLine: some View {
+        HStack(spacing: 12) {
+            if let w = lastTenW, let l = lastTenL {
+                pill(label: "L10", value: "\(w)-\(l)")
+            }
+            if let code = streakCode, !code.isEmpty {
+                pill(
+                    label: "STREAK",
+                    value: code,
+                    tint: code.hasPrefix("W") ? .green : .red,
+                )
+            }
+            Spacer(minLength: 0)
         }
+    }
+
+    private func pill(label: String, value: String, tint: Color? = nil) -> some View {
+        HStack(spacing: 4) {
+            Text(label)
+                .font(.caption2.weight(.bold))
+                .tracking(0.5)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.caption.weight(.bold))
+                .monospacedDigit()
+                .foregroundStyle(tint ?? .primary)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+            Capsule().fill(Color(.systemFill).opacity(0.5))
+        )
+    }
+
+    /// "(32-19)" — collapses to "—" when wins/losses aren't loaded
+    /// yet (early-spring or standings fetch failed).
+    private var recordText: String {
+        guard let w = record?.wins, let l = record?.losses else { return "—" }
+        return "\(w)-\(l)"
+    }
+
+    /// "1st NL West" — collapses to "—" when standing isn't loaded.
+    private var divisionText: String {
+        standing?.displayString ?? "—"
     }
 
     @ViewBuilder
     private var lastGameRow: some View {
         if let last = lastGame {
             let didWin = HomeGameUtils.favoriteWon(game: last, favoriteBDLId: entry.bdlTeamId)
-            HStack(spacing: 8) {
+            HStack(spacing: 10) {
                 resultBadge(text: didWin ? "W" : "L", color: didWin ? .green : .red)
-                Text(HomeGameUtils.lastGameLine(game: last, favoriteBDLId: entry.bdlTeamId))
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.primary)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Last Game")
+                        .font(.caption2.weight(.semibold))
+                        .tracking(0.5)
+                        .foregroundStyle(.secondary)
+                    Text(HomeGameUtils.lastGameLine(game: last, favoriteBDLId: entry.bdlTeamId))
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                }
                 Spacer()
                 Text(HomeGameUtils.shortRelativeDate(game: last))
                     .font(.caption)
@@ -303,15 +365,26 @@ private struct TeamHeroCard: View {
     @ViewBuilder
     private var nextGameRow: some View {
         if let next = nextGame {
-            HStack(spacing: 8) {
+            HStack(spacing: 10) {
                 Image(systemName: next.phase == .live ? "dot.radiowaves.left.and.right" : "calendar")
-                    .font(.subheadline.weight(.semibold))
+                    .font(.body.weight(.semibold))
                     .foregroundStyle(next.phase == .live ? .red : teamColor)
-                    .frame(width: 22)
-                Text(HomeGameUtils.nextGameLine(game: next, favoriteBDLId: entry.bdlTeamId))
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
+                    .frame(width: 26, height: 26)
+                    .background(
+                        Circle().fill(
+                            (next.phase == .live ? Color.red : teamColor).opacity(0.12)
+                        )
+                    )
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(next.phase == .live ? "Live" : "Next Game")
+                        .font(.caption2.weight(.semibold))
+                        .tracking(0.5)
+                        .foregroundStyle(.secondary)
+                    Text(HomeGameUtils.nextGameLine(game: next, favoriteBDLId: entry.bdlTeamId))
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                }
                 Spacer()
             }
         } else {
@@ -321,12 +394,58 @@ private struct TeamHeroCard: View {
         }
     }
 
+    private var scheduleLink: some View {
+        HStack {
+            Spacer()
+            Button(action: onSchedule) {
+                HStack(spacing: 3) {
+                    Text("Full Schedule")
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.bold))
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(teamColor)
+            }
+        }
+    }
+
     private func resultBadge(text: String, color: Color) -> some View {
         Text(text)
             .font(.caption.weight(.bold))
             .foregroundStyle(.white)
-            .frame(width: 22, height: 22)
+            .frame(width: 26, height: 26)
             .background(Circle().fill(color))
+    }
+}
+
+// MARK: - Section header (shared)
+
+/// Single source of truth for the section-header look across the
+/// Home tab. A team-color accent bar on the left + bold title +
+/// optional trailing control. Every section adopts this so the
+/// rhythm down the page stays uniform.
+private struct HomeSectionHeader<Trailing: View>: View {
+    let title: String
+    let tint: Color
+    @ViewBuilder let trailing: Trailing
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Capsule()
+                .fill(tint)
+                .frame(width: 4, height: 18)
+            Text(title)
+                .font(.title3.weight(.bold))
+            Spacer()
+            trailing
+        }
+        .padding(.horizontal, 16)
+    }
+}
+
+extension HomeSectionHeader where Trailing == EmptyView {
+    init(title: String, tint: Color) {
+        self.init(title: title, tint: tint) { EmptyView() }
     }
 }
 
@@ -335,14 +454,12 @@ private struct TeamHeroCard: View {
 private struct RecentUpcomingStrip: View {
     let games: [Game]
     let favorite: MLBTeamCatalog.Entry
+    let tint: Color
     let onTap: (Game) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Recent & Upcoming")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 16)
+            HomeSectionHeader(title: "Recent & Upcoming", tint: tint)
 
             if games.isEmpty {
                 Text("No games in window")
@@ -367,9 +484,6 @@ private struct RecentUpcomingStrip: View {
                         .padding(.horizontal, 16)
                     }
                     .onAppear {
-                        // Center on the most relevant card: live game
-                        // if any, else the first game whose date is
-                        // today or future, else the latest final.
                         if let target = anchorGame() {
                             withAnimation(.easeOut(duration: 0.25)) {
                                 proxy.scrollTo(target.id, anchor: .center)
@@ -398,8 +512,6 @@ private struct GameStripCard: View {
     let favoriteBDLId: Int
 
     private var opponent: GameTeam {
-        // The non-favorite side is the opponent. `bdl{Away,Home}TeamId`
-        // gives us the authoritative BDL ids on the synthesized Game.
         if game.bdlHomeTeamId == favoriteBDLId {
             return game.teams.away
         }
@@ -421,7 +533,7 @@ private struct GameStripCard: View {
                 Text(isHomeGame ? "vs" : "@")
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(.secondary)
-                TeamLogoView(team: opponent.team, size: 28)
+                TeamLogoView(team: opponent.team, size: 30)
                 Text(opponent.team.abbreviation ?? String(opponent.team.name.prefix(3)).uppercased())
                     .font(.caption.weight(.semibold))
                     .lineLimit(1)
@@ -432,7 +544,7 @@ private struct GameStripCard: View {
         }
         .padding(.vertical, 10)
         .padding(.horizontal, 10)
-        .frame(width: 132, height: 132)
+        .frame(width: 150, height: 138)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(.ultraThinMaterial)
@@ -503,7 +615,11 @@ private struct GameStripCard: View {
     }
 
     private var upcomingContent: some View {
-        VStack(spacing: 4) {
+        // Probable pitcher would render below the time when available;
+        // BDL doesn't ship it on the team-games endpoint today, so the
+        // `?? nil` keeps the row absent rather than empty-spacing.
+        let pitcher = opponent.probablePitcher?.fullName
+        return VStack(spacing: 4) {
             Text(HomeGameUtils.shortRelativeDate(game: game))
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(teamColor)
@@ -514,16 +630,19 @@ private struct GameStripCard: View {
             Text(HomeGameUtils.timezoneAbbreviation())
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+            if let pitcher {
+                Text("vs \(lastNameWithSuffix(pitcher))")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .padding(.top, 1)
+            }
         }
     }
 }
 
 // MARK: - Shared game-projection helpers
 
-/// Display helpers shared between the hero card and the strip
-/// cards. Anchored on the favorite's BDL id so the same routine
-/// can answer "who's the opponent" / "did we win" / etc. without
-/// each call site duplicating the home/away branching.
 enum HomeGameUtils {
     static func favoriteWon(game: Game, favoriteBDLId: Int) -> Bool {
         let favScore = (game.bdlHomeTeamId == favoriteBDLId)
@@ -546,21 +665,18 @@ enum HomeGameUtils {
         return opp.team.abbreviation ?? String(opp.team.name.prefix(3)).uppercased()
     }
 
-    /// "W 5-4 vs SD" / "L 2-7 @ LAA" for a final game.
     static func lastGameLine(game: Game, favoriteBDLId: Int) -> String {
         let (fav, opp) = scores(game: game, favoriteBDLId: favoriteBDLId)
         let prefix = (game.bdlHomeTeamId == favoriteBDLId) ? "vs" : "@"
         return "\(fav ?? 0)-\(opp ?? 0) \(prefix) \(opponentAbbr(game: game, favoriteBDLId: favoriteBDLId))"
     }
 
-    /// "Tonight 7:10 PM PT vs COL" / "Tomorrow 1:10 PM PT @ COL" /
-    /// "Live · vs COL · Top 5".
     static func nextGameLine(game: Game, favoriteBDLId: Int) -> String {
         let venue  = (game.bdlHomeTeamId == favoriteBDLId) ? "vs" : "@"
         let opp    = opponentAbbr(game: game, favoriteBDLId: favoriteBDLId)
         switch game.phase {
         case .live:
-            return "Live · \(venue) \(opp) · \(inningLine(game: game))"
+            return "\(venue) \(opp) · \(inningLine(game: game))"
         case .preview, .other:
             let when = relativeDayLabel(game: game)
             let time = localTime(game: game)
@@ -570,9 +686,6 @@ enum HomeGameUtils {
         }
     }
 
-    /// "Today" / "Tomorrow" / "Mon May 18" — used by the hero
-    /// row's next-game line. Falls back to "Soon" when the game's
-    /// startDate can't be parsed.
     static func relativeDayLabel(game: Game) -> String {
         guard let start = game.startDate else { return "Soon" }
         let cal = Calendar.current
@@ -581,8 +694,6 @@ enum HomeGameUtils {
         return shortDateFormatter.string(from: start)
     }
 
-    /// Compact strip-card date label: "Today" / "Yesterday" /
-    /// "Tomorrow" / "Mon May 18".
     static func shortRelativeDate(game: Game) -> String {
         guard let start = game.startDate else { return "—" }
         let cal = Calendar.current
@@ -597,7 +708,6 @@ enum HomeGameUtils {
         return timeFormatter.string(from: start)
     }
 
-    /// Inning-state line for a live card: "Top 5" / "Bot 9".
     static func inningLine(game: Game) -> String {
         guard let l = game.linescore, let inning = l.currentInning else { return "Live" }
         let state = (l.inningState ?? "").lowercased()
@@ -629,12 +739,12 @@ enum HomeGameUtils {
 private struct TeamLeadersSection: View {
     let leaders: TeamLeaders?
     let isLoading: Bool
+    let tint: Color
     let onTapPlayer: (PlayerSearchResult) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            sectionHeader(title: "Team Leaders", trailing: nil)
-
+        VStack(alignment: .leading, spacing: 10) {
+            HomeSectionHeader(title: "Team Leaders", tint: tint)
             leaderRow(title: "Batting", cards: leaders?.batting)
             leaderRow(title: "Pitching", cards: leaders?.pitching)
         }
@@ -644,7 +754,8 @@ private struct TeamLeadersSection: View {
     private func leaderRow(title: String, cards: [LeaderCard]?) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title.uppercased())
-                .font(.caption2.weight(.semibold))
+                .font(.caption2.weight(.bold))
+                .tracking(0.5)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 16)
 
@@ -703,7 +814,6 @@ private struct LeaderTile: View {
         )
     }
 
-    /// Skeleton tile while leader fetches are in flight.
     static var placeholder: some View {
         VStack(spacing: 6) {
             Circle().fill(Color(.systemGray5)).frame(width: 44, height: 44)
@@ -736,9 +846,6 @@ private struct LeaderTile: View {
         .overlay(Circle().strokeBorder(.quaternary, lineWidth: 0.5))
     }
 
-    /// Same precision rules the Leaderboards tab uses — keeps the
-    /// Home strip aligned with the canonical formatting elsewhere
-    /// in the app. Unknown stat → 1-decimal as a safe default.
     static func formatValue(_ v: Double?, stat: String) -> String {
         guard let v else { return "—" }
         switch stat {
@@ -764,17 +871,16 @@ private struct FavoritePlayersSection: View {
     let favorites: [FavoritePlayerDisplay]
     let isLoading: Bool
     @Binding var isEditing: Bool
+    let tint: Color
     let onAdd: () -> Void
     let onRemove: (Int) -> Void
     let onTapPlayer: (PlayerSearchResult) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            sectionHeader(
-                title: "My Players",
-                trailing: trailingControl,
-            )
-
+        VStack(alignment: .leading, spacing: 10) {
+            HomeSectionHeader(title: "My Players", tint: tint) {
+                trailingControl
+            }
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
                     if isLoading && favorites.isEmpty {
@@ -792,23 +898,18 @@ private struct FavoritePlayersSection: View {
         }
     }
 
-    private var trailingControl: AnyView {
-        // Hide Edit when nothing's added yet — no point offering a
-        // mode that has nothing to act on.
-        guard !favorites.isEmpty else { return AnyView(EmptyView()) }
-        return AnyView(
+    @ViewBuilder
+    private var trailingControl: some View {
+        if !favorites.isEmpty {
             Button(isEditing ? "Done" : "Edit") {
                 withAnimation(.easeInOut(duration: 0.15)) {
                     isEditing.toggle()
                 }
             }
             .font(.subheadline.weight(.semibold))
-        )
+        }
     }
 
-    /// Edit mode disables the navigation push so the tap is owned by
-    /// the minus badge. Regular mode wraps the tile in a button that
-    /// pushes the profile.
     @ViewBuilder
     private func favoriteCard(_ fav: FavoritePlayerDisplay) -> some View {
         if isEditing {
@@ -906,9 +1007,6 @@ private struct FavoritePlayerTile: View {
         .overlay(Circle().strokeBorder(.quaternary, lineWidth: 0.5))
     }
 
-    /// "S. Ohtani" / "M. Trout". Hangs the last-name suffix
-    /// (Jr./Sr./II/…) onto the trailing part via the existing
-    /// helper used elsewhere in the app.
     private var displayName: String {
         let parts = fav.player.name.split(separator: " ", maxSplits: 1)
         guard let first = parts.first, parts.count > 1 else {
@@ -918,8 +1016,6 @@ private struct FavoritePlayerTile: View {
         return "\(first.prefix(1)). \(last)"
     }
 
-    /// "RF · NYY" / "RF" / "NYY" / "—" depending on what's known.
-    /// Falls back gracefully so the line never reads "nil · nil".
     private var positionLine: String {
         let pos = fav.player.position.flatMap { $0.isEmpty ? nil : $0 }
         let team = fav.player.teamCode.flatMap { $0.isEmpty ? nil : teamAbbreviation(for: $0) }
@@ -960,29 +1056,6 @@ private struct AddFavoriteTile: View {
         }
         .buttonStyle(.plain)
     }
-}
-
-// MARK: - Shared section header
-
-/// Used by Team Leaders and My Players. Centralized so both sections
-/// stay visually identical when the spec changes (font tweak,
-/// trailing-button placement, etc.).
-@ViewBuilder
-private func sectionHeader(
-    title: String,
-    trailing: AnyView?,
-) -> some View {
-    HStack {
-        Text(title)
-            .font(.title3.weight(.bold))
-        Spacer()
-        trailing
-    }
-    .padding(.horizontal, 16)
-    .padding(.top, 4)
-    Divider()
-        .opacity(0.35)
-        .padding(.horizontal, 16)
 }
 
 #Preview {
