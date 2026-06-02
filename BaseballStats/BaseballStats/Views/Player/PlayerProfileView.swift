@@ -2766,6 +2766,16 @@ private struct MultiYearSummarySheet: View {
     private let headerRowHeight: CGFloat = 22
     private let dividerSlotHeight: CGFloat = 9
     private let dataRowHeight: CGFloat = 28
+    // Fixed cell width used by header + all three data rows. Using
+    // a *fixed* width (not `minWidth`) is the alignment-critical
+    // bit: `minWidth` lets per-row content widen its own cell ("1,234"
+    // is wider than "82.3"), which drifts every column to its right
+    // out of vertical alignment with the other rows. A fixed width
+    // pins all rows to the same column rhythm regardless of content.
+    // 56pt comfortably fits "1.000", "10,000", "162.0", "—" at 14pt
+    // semibold monospaced — extreme career totals like Pete Rose's
+    // 14,053 ABs ("14,053") still fit.
+    private let cellWidth: CGFloat = 56
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -2844,28 +2854,28 @@ private struct MultiYearSummarySheet: View {
     }
 
     private var headerRow: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 8) {
             ForEach(cols, id: \.self) { col in
                 Text(col)
                     .font(.caption2.weight(.semibold))
                     .textCase(.uppercase)
                     .tracking(0.5)
                     .foregroundStyle(.secondary)
-                    .frame(minWidth: 40, alignment: .trailing)
+                    .frame(width: cellWidth, alignment: .trailing)
             }
         }
         .frame(height: headerRowHeight, alignment: .center)
     }
 
     private func dataRow(values: [String]) -> some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 8) {
             // `enumerated()` + `id: \.offset` so duplicate value
             // strings (two stats both "0") don't collide on identity.
             ForEach(Array(values.enumerated()), id: \.offset) { _, val in
                 Text(val)
                     .font(.system(size: 14, weight: .semibold))
                     .monospacedDigit()
-                    .frame(minWidth: 40, alignment: .trailing)
+                    .frame(width: cellWidth, alignment: .trailing)
             }
         }
         .frame(height: dataRowHeight, alignment: .center)
