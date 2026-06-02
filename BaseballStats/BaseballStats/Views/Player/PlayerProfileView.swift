@@ -62,6 +62,14 @@ struct PlayerProfileView: View {
     /// re-opens the sheet with the new (award, year, league).
     @State private var presentingVoting: AwardVotingDestination?
 
+    /// Career-table multi-season selection. Tapping a row's body
+    /// (any cell except Year/Age) flips the year in and out of this
+    /// set; once 2+ years are selected, the floating aggregate-
+    /// summary card slides up at the bottom of the screen. Cleared
+    /// on role flip so a batting-side selection doesn't bleed into
+    /// the pitching table (or vice versa).
+    @State private var selectedSeasons: Set<Int> = []
+
     /// Tracks light vs. dark so the header's team-color backdrop can
     /// nudge its opacity up in dark mode (the tint reads weaker
     /// against the system dark background otherwise).
@@ -215,8 +223,35 @@ struct PlayerProfileView: View {
                     .transition(.move(edge: .bottom))
                     .zIndex(2)
             }
+
+            // Floating aggregate-summary card for multi-season
+            // selection on the Career tab. 2+ seasons reveals it; the
+            // X clears the set. Sits below the column-filter z-stack
+            // so it doesn't render over the filter modal when both
+            // states happen to be active at once.
+            if selectedTab == .career && selectedSeasons.count >= 2 {
+                SelectedSeasonsSummaryCard(
+                    showingBatting:         showingBatting,
+                    battingSeasons:         viewModel.careerBatting?.seasons ?? [],
+                    pitchingSeasons:        viewModel.careerPitching?.seasons ?? [],
+                    selectedYears:          selectedSeasons,
+                    visibleBattingColumns:  visibleBattingColumns,
+                    visiblePitchingColumns: visiblePitchingColumns,
+                    tint:                   selectionTint,
+                    onDismiss:              { selectedSeasons.removeAll() }
+                )
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .zIndex(0)
+            }
         }
+        .animation(.spring(response: 0.3), value: selectedSeasons.count)
         .animation(.spring(response: 0.42, dampingFraction: 0.88), value: showingColumnFilter)
+        // Clearing selection on role flip — a "2018-2021 batting agg"
+        // doesn't translate to pitching even when the years line up
+        // (Ohtani et al.), so we reset rather than reinterpret.
+        .onChange(of: showingBatting) { _, _ in
+            selectedSeasons.removeAll()
+        }
         // Award-voting sheet — driven off the per-row chiclet tap.
         // Re-presents whenever `presentingVoting` becomes non-nil
         // with a different (award, year, league), so consecutive
@@ -481,6 +516,24 @@ struct PlayerProfileView: View {
     }
 
     // MARK: - Tab routing
+
+    /// Team-color tint used as the per-row selection highlight on the
+    /// Career table and the accent on the floating summary card.
+    /// Falls back to `.accentColor` for codes that don't map to a
+    /// franchise (rare — old defunct clubs etc.).
+    private var selectionTint: Color {
+        TeamColors.color(for: player.teamCode) ?? .accentColor
+    }
+
+    /// Flip a year in/out of `selectedSeasons`. Wired to row taps on
+    /// every cell except Year/Age (those still jump to game logs).
+    private func toggleSeasonSelection(_ year: Int) {
+        if selectedSeasons.contains(year) {
+            selectedSeasons.remove(year)
+        } else {
+            selectedSeasons.insert(year)
+        }
+    }
 
     /// Decides which role's content to show. With `showsRoleSelector`
     /// gated on meaningful batting AND pitching, this branch table
@@ -1052,13 +1105,17 @@ struct PlayerProfileView: View {
                 BattingCareerFrozenHeader(sort: $battingSort)
                 Divider()
                 ForEach(Array(sorted.enumerated()), id: \.offset) { index, season in
+                    let isSelected = season.year.map(selectedSeasons.contains) ?? false
                     BattingCareerFrozenSeasonRow(
                         season: season,
                         birthYear:  player.birth_year,
                         birthMonth: player.birth_month,
                         birthDay:   player.birth_day,
                         alternate:  !index.isMultiple(of: 2),
-                        onTap:      { season.year.map(jumpToGameLogs(year:)) }
+                        isSelected: isSelected,
+                        tint:       selectionTint,
+                        onTapYearCell:  { season.year.map(jumpToGameLogs(year:)) },
+                        onSelectToggle: { season.year.map(toggleSeasonSelection) }
                     )
                     if index != sorted.indices.last {
                         Divider().opacity(0.4)
@@ -1078,12 +1135,15 @@ struct PlayerProfileView: View {
                     BattingCareerScrollableHeader(visible: visibleBattingColumns, sort: $battingSort)
                     Divider()
                     ForEach(Array(sorted.enumerated()), id: \.offset) { index, season in
+                        let isSelected = season.year.map(selectedSeasons.contains) ?? false
                         BattingCareerScrollableSeasonRow(
                             season: season,
                             alternate: !index.isMultiple(of: 2),
                             visible: visibleBattingColumns,
                             awardYear: season.year.flatMap { viewModel.awardsByYear[$0] },
-                            onTap: { season.year.map(jumpToGameLogs(year:)) },
+                            isSelected: isSelected,
+                            tint:       selectionTint,
+                            onSelectToggle: { season.year.map(toggleSeasonSelection) },
                             onAwardTap: { presentingVoting = $0 }
                         )
                         if index != sorted.indices.last {
@@ -1114,13 +1174,17 @@ struct PlayerProfileView: View {
                 PitchingCareerFrozenHeader(sort: $pitchingSort)
                 Divider()
                 ForEach(Array(sorted.enumerated()), id: \.offset) { index, season in
+                    let isSelected = season.year.map(selectedSeasons.contains) ?? false
                     PitchingCareerFrozenSeasonRow(
                         season: season,
                         birthYear:  player.birth_year,
                         birthMonth: player.birth_month,
                         birthDay:   player.birth_day,
                         alternate:  !index.isMultiple(of: 2),
-                        onTap:      { season.year.map(jumpToGameLogs(year:)) }
+                        isSelected: isSelected,
+                        tint:       selectionTint,
+                        onTapYearCell:  { season.year.map(jumpToGameLogs(year:)) },
+                        onSelectToggle: { season.year.map(toggleSeasonSelection) }
                     )
                     if index != sorted.indices.last {
                         Divider().opacity(0.4)
@@ -1140,12 +1204,15 @@ struct PlayerProfileView: View {
                     PitchingCareerScrollableHeader(visible: visiblePitchingColumns, sort: $pitchingSort)
                     Divider()
                     ForEach(Array(sorted.enumerated()), id: \.offset) { index, season in
+                        let isSelected = season.year.map(selectedSeasons.contains) ?? false
                         PitchingCareerScrollableSeasonRow(
                             season: season,
                             alternate: !index.isMultiple(of: 2),
                             visible: visiblePitchingColumns,
                             awardYear: season.year.flatMap { viewModel.awardsByYear[$0] },
-                            onTap: { season.year.map(jumpToGameLogs(year:)) },
+                            isSelected: isSelected,
+                            tint:       selectionTint,
+                            onSelectToggle: { season.year.map(toggleSeasonSelection) },
                             onAwardTap: { presentingVoting = $0 }
                         )
                         if index != sorted.indices.last {
@@ -1873,22 +1940,36 @@ private struct BattingCareerFrozenSeasonRow: View {
     let birthMonth: Int?
     let birthDay:   Int?
     let alternate:  Bool
-    /// Invoked when the user taps anywhere in the row. The parent
-    /// jumps the Game Logs tab to this season's year.
-    let onTap: () -> Void
+    /// Reflects whether this year is in the parent's `selectedSeasons`.
+    /// Drives the team-color row tint; doesn't change tap behavior.
+    let isSelected: Bool
+    /// Team-color selection wash applied at 15% opacity when
+    /// `isSelected`. Same source as the page-level header tint.
+    let tint: Color
+    /// Year + Age cluster tap. Parent jumps the Game Logs tab to
+    /// this season's year.
+    let onTapYearCell: () -> Void
+    /// Team cell tap (and every non-Year/Age cell across the row).
+    /// Toggles this year in the parent's selection set.
+    let onSelectToggle: () -> Void
 
     var body: some View {
         HStack(spacing: 0) {
-            Text(formatYear(season.year))
-                .frame(width: BattingCareerColumn.year, alignment: .leading)
-                .padding(.horizontal, 2)
-            Text(formatAge(seasonYear: season.year,
-                           birthYear: birthYear,
-                           birthMonth: birthMonth,
-                           birthDay: birthDay))
-                .frame(width: BattingCareerColumn.age, alignment: .trailing)
-                .monospacedDigit()
-                .padding(.horizontal, 2)
+            HStack(spacing: 0) {
+                Text(formatYear(season.year))
+                    .frame(width: BattingCareerColumn.year, alignment: .leading)
+                    .padding(.horizontal, 2)
+                Text(formatAge(seasonYear: season.year,
+                               birthYear: birthYear,
+                               birthMonth: birthMonth,
+                               birthDay: birthDay))
+                    .frame(width: BattingCareerColumn.age, alignment: .trailing)
+                    .monospacedDigit()
+                    .padding(.horizontal, 2)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { onTapYearCell() }
+
             Color.clear.frame(width: BattingCareerColumn.ageTeamGap)
             // Lahman → modern code lookup with league disambiguation
             // for two-team cities ("Los Angeles" + AL → "LAA" vs +NL
@@ -1899,13 +1980,16 @@ private struct BattingCareerFrozenSeasonRow: View {
                 .truncationMode(.tail)
                 .frame(width: BattingCareerColumn.team, alignment: .leading)
                 .padding(.horizontal, 2)
+                .contentShape(Rectangle())
+                .onTapGesture { onSelectToggle() }
         }
         .font(.system(size: 11))
         .padding(.leading, 12)
         .frame(height: 28)
-        .background(alternate ? Color(.systemGray6).opacity(0.5) : Color.clear)
-        .contentShape(Rectangle())
-        .onTapGesture { onTap() }
+        .background(careerRowBackground(
+            isSelected: isSelected, tint: tint, alternate: alternate
+        ))
+        .animation(.easeInOut(duration: 0.15), value: isSelected)
     }
 }
 
@@ -1986,9 +2070,14 @@ private struct BattingCareerScrollableSeasonRow: View {
     let alternate: Bool
     let visible: Set<String>
     let awardYear: PlayerAwardYear?
-    /// Tap-to-jump-to-game-logs. Both halves of the split-pane row
-    /// receive their own onTap; either side fires the same callback.
-    let onTap: () -> Void
+    /// Reflects whether this year is in the parent's `selectedSeasons`.
+    let isSelected: Bool
+    /// Team-color selection wash (15% opacity when `isSelected`).
+    let tint: Color
+    /// Toggle this season's selection. Fires from a tap anywhere on
+    /// the scrollable half of the row (award-chip taps win on their
+    /// own subview so they don't accidentally flip selection).
+    let onSelectToggle: () -> Void
     /// Invoked when the user taps an MVP / CY / ROY chip in the
     /// awards cell. Parent presents AwardVotingView.
     let onAwardTap: (AwardVotingDestination) -> Void
@@ -2037,9 +2126,12 @@ private struct BattingCareerScrollableSeasonRow: View {
         .font(.system(size: 11))
         .padding(.trailing, 12)
         .frame(height: 28)
-        .background(alternate ? Color(.systemGray6).opacity(0.5) : Color.clear)
+        .background(careerRowBackground(
+            isSelected: isSelected, tint: tint, alternate: alternate
+        ))
         .contentShape(Rectangle())
-        .onTapGesture { onTap() }
+        .onTapGesture { onSelectToggle() }
+        .animation(.easeInOut(duration: 0.15), value: isSelected)
     }
 }
 
@@ -2176,33 +2268,46 @@ private struct PitchingCareerFrozenSeasonRow: View {
     let birthMonth: Int?
     let birthDay:   Int?
     let alternate:  Bool
-    let onTap: () -> Void
+    /// Same selection plumbing as the batting variant — Year/Age
+    /// keeps its game-logs jump, Team toggles selection.
+    let isSelected: Bool
+    let tint: Color
+    let onTapYearCell: () -> Void
+    let onSelectToggle: () -> Void
 
     var body: some View {
         HStack(spacing: 0) {
-            Text(formatYear(season.year))
-                .frame(width: PitchingCareerColumn.year, alignment: .leading)
-                .padding(.horizontal, 2)
-            Text(formatAge(seasonYear: season.year,
-                           birthYear: birthYear,
-                           birthMonth: birthMonth,
-                           birthDay: birthDay))
-                .frame(width: PitchingCareerColumn.age, alignment: .trailing)
-                .monospacedDigit()
-                .padding(.horizontal, 2)
+            HStack(spacing: 0) {
+                Text(formatYear(season.year))
+                    .frame(width: PitchingCareerColumn.year, alignment: .leading)
+                    .padding(.horizontal, 2)
+                Text(formatAge(seasonYear: season.year,
+                               birthYear: birthYear,
+                               birthMonth: birthMonth,
+                               birthDay: birthDay))
+                    .frame(width: PitchingCareerColumn.age, alignment: .trailing)
+                    .monospacedDigit()
+                    .padding(.horizontal, 2)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { onTapYearCell() }
+
             Color.clear.frame(width: PitchingCareerColumn.ageTeamGap)
             Text(displayTeamCode(season.team, league: season.league))
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .frame(width: PitchingCareerColumn.team, alignment: .leading)
                 .padding(.horizontal, 2)
+                .contentShape(Rectangle())
+                .onTapGesture { onSelectToggle() }
         }
         .font(.system(size: 11))
         .padding(.leading, 12)
         .frame(height: 28)
-        .background(alternate ? Color(.systemGray6).opacity(0.5) : Color.clear)
-        .contentShape(Rectangle())
-        .onTapGesture { onTap() }
+        .background(careerRowBackground(
+            isSelected: isSelected, tint: tint, alternate: alternate
+        ))
+        .animation(.easeInOut(duration: 0.15), value: isSelected)
     }
 }
 
@@ -2285,7 +2390,9 @@ private struct PitchingCareerScrollableSeasonRow: View {
     let alternate: Bool
     let visible: Set<String>
     let awardYear: PlayerAwardYear?
-    let onTap: () -> Void
+    let isSelected: Bool
+    let tint: Color
+    let onSelectToggle: () -> Void
     let onAwardTap: (AwardVotingDestination) -> Void
 
     var body: some View {
@@ -2354,9 +2461,12 @@ private struct PitchingCareerScrollableSeasonRow: View {
         .font(.system(size: 11))
         .padding(.trailing, 12)
         .frame(height: 28)
-        .background(alternate ? Color(.systemGray6).opacity(0.5) : Color.clear)
+        .background(careerRowBackground(
+            isSelected: isSelected, tint: tint, alternate: alternate
+        ))
         .contentShape(Rectangle())
-        .onTapGesture { onTap() }
+        .onTapGesture { onSelectToggle() }
+        .animation(.easeInOut(duration: 0.15), value: isSelected)
     }
 }
 
@@ -2554,6 +2664,143 @@ private func winPctValue(w: Int?, l: Int?) -> Double? {
     let total = wins + losses
     guard total > 0 else { return nil }
     return Double(wins) / Double(total)
+}
+
+/// Shared background for every career-table season row. Selected
+/// rows get a tinted wash that wins over the zebra-striping; otherwise
+/// the row falls back to its alternate-row gray (or transparent on
+/// even rows). Pulled out so the batting + pitching, frozen +
+/// scrollable variants all render identical backgrounds for the same
+/// state.
+@ViewBuilder
+private func careerRowBackground(
+    isSelected: Bool,
+    tint: Color,
+    alternate: Bool,
+) -> some View {
+    if isSelected {
+        tint.opacity(0.15)
+    } else if alternate {
+        Color(.systemGray6).opacity(0.5)
+    } else {
+        Color.clear
+    }
+}
+
+// MARK: - Selected seasons summary card
+
+/// Floating glass card that appears at the bottom of the screen when
+/// 2+ Career-tab rows are selected. Header shows the year range +
+/// count + an X to clear; the body re-renders the table's frozen +
+/// scrollable layout with a single aggregate row computed over the
+/// selected subset.
+private struct SelectedSeasonsSummaryCard: View {
+    let showingBatting: Bool
+    let battingSeasons:  [CareerSeason]
+    let pitchingSeasons: [PitcherCareerSeason]
+    let selectedYears:   Set<Int>
+    let visibleBattingColumns:  Set<String>
+    let visiblePitchingColumns: Set<String>
+    let tint: Color
+    let onDismiss: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            Divider()
+            statsRow
+        }
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(tint.opacity(0.35), lineWidth: 0.75)
+        )
+        .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
+        .padding(.horizontal, 12)
+        .padding(.bottom, 12)
+    }
+
+    private var header: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(tint)
+                .frame(width: 8, height: 8)
+            Text(headerText)
+                .font(.subheadline.weight(.semibold))
+            Spacer()
+            Button(action: onDismiss) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 20))
+                    .foregroundStyle(.secondary)
+                    .symbolRenderingMode(.hierarchical)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Clear season selection")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+
+    private var headerText: String {
+        let years = selectedYears.sorted()
+        guard let first = years.first, let last = years.last else { return "" }
+        let count = years.count
+        let range = first == last ? "\(first)" : "\(first)–\(last)"
+        return "\(range) · \(count) season\(count == 1 ? "" : "s")"
+    }
+
+    @ViewBuilder
+    private var statsRow: some View {
+        if showingBatting {
+            let filtered = battingSeasons.filter {
+                $0.year.map(selectedYears.contains) ?? false
+            }
+            let agg = BattingCareerAgg.compute(seasons: filtered)
+            HStack(spacing: 0) {
+                frozenLabel(count: filtered.count)
+                    .frame(width: careerFrozenPaneWidth, alignment: .leading)
+                    .padding(.leading, 12)
+                    .frame(height: 28)
+                    .background(.ultraThinMaterial)
+                    .shadow(color: .black.opacity(0.06), radius: 4, x: 2, y: 0)
+                    .zIndex(1)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    BattingCareerScrollableTotalsRow(
+                        agg: agg,
+                        totals: nil,
+                        visible: visibleBattingColumns
+                    )
+                }
+            }
+        } else {
+            let filtered = pitchingSeasons.filter {
+                $0.year.map(selectedYears.contains) ?? false
+            }
+            let agg = PitchingCareerAgg.compute(seasons: filtered)
+            HStack(spacing: 0) {
+                frozenLabel(count: filtered.count)
+                    .frame(width: careerFrozenPaneWidth, alignment: .leading)
+                    .padding(.leading, 12)
+                    .frame(height: 28)
+                    .background(.ultraThinMaterial)
+                    .shadow(color: .black.opacity(0.06), radius: 4, x: 2, y: 0)
+                    .zIndex(1)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    PitchingCareerScrollableTotalsRow(
+                        agg: agg,
+                        totals: nil,
+                        visible: visiblePitchingColumns
+                    )
+                }
+            }
+        }
+    }
+
+    private func frozenLabel(count: Int) -> some View {
+        Text("\(count) Sel")
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(.secondary)
+    }
 }
 
 /// Sortable career-table header cell. Tap toggles direction when the
