@@ -1372,6 +1372,62 @@ def admin_sync_player_team(mlb_id: int):
     return data_service.sync_player_current_team(mlb_id)
 
 
+@app.post("/admin/reset-player-season/{player_id}")
+def admin_reset_player_season(
+    player_id: int,
+    season:    int = Query(..., description="Season year to reset, e.g. 2026."),
+    team_code: str = Query(..., description="Team code to re-pin to (e.g. 'ATH')."),
+):
+    """Reset a single player's `player_seasons` row for `season` and
+    re-pin them to `team_code` so the API-derived bio fields
+    (`current_team` / `team_code`) resolve to the new team.
+
+    Schema note: `current_team` and `team_code` are NOT stored on
+    the `players` bio table — they're derived at response time from
+    the latest `player_seasons.team` (see `_latest_team_info` in
+    `data_service.py`). "Update the bio" therefore means rewriting
+    the season row whose `team` the bio derivation reads from.
+
+    Steps:
+      1. DELETE FROM player_seasons WHERE player_id=? AND year=?
+      2. INSERT a stub player_seasons row with `team = team_code`;
+         every stat column is left NULL. The next nightly run will
+         repopulate the stats from BDL under the corrected team.
+
+    Use case: BDL ingested a player under the wrong team (mid-
+    season trade BDL didn't catch). Resetting wipes the bad stats
+    and pins the bio to the correct team while we wait for the
+    nightly to re-fill the row."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+
+    with connection.get_session() as db:
+        deleted = (
+            db.query(PlayerSeason)
+              .filter(PlayerSeason.player_id == player_id)
+              .filter(PlayerSeason.year      == season)
+              .delete(synchronize_session=False)
+        )
+        db.add(PlayerSeason(
+            player_id = player_id,
+            year      = season,
+            team      = team_code,
+        ))
+        db.commit()
+
+    return {
+        "status":       "ok",
+        "player_id":    player_id,
+        "season":       season,
+        "deleted_rows": int(deleted),
+        "inserted_row": {
+            "player_id": player_id,
+            "year":      season,
+            "team":      team_code,
+        },
+    }
+
+
 @app.get("/admin/dob-coverage")
 def admin_dob_coverage():
     """Diagnostic: report birth-date completeness across both bio
