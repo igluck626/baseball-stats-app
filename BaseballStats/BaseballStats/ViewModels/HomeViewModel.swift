@@ -48,6 +48,12 @@ final class HomeViewModel: ObservableObject {
     @Published var teamLeaders: TeamLeaders?
     @Published var isLoadingLeaders: Bool = false
 
+    /// Last stat the user tapped on the See-All Team Leaders sheet.
+    /// Persisted on the VM so re-opening the sheet returns to the
+    /// same column. nil before any selection is made — the sheet
+    /// falls back to its own default in that case.
+    @Published var selectedLeaderStat: String?
+
     /// Hydrated bio + summary stat line for each id in
     /// `FavoritePlayersStore.shared.playerIds`, preserving the
     /// store's order. Refetched whenever the id list changes.
@@ -318,6 +324,34 @@ final class HomeViewModel: ObservableObject {
         }
         let top = candidates[0]
         return LeaderCard(stat: stat, value: top.value, player: top.player)
+    }
+
+    /// Fetch the top-10 leaderboard rows for a single stat, scoped to
+    /// the user's favorite team (same Lahman code resolution the
+    /// hero-card team-leaders fetch uses). Used by the See-All sheet
+    /// — returns an empty list when there's no favorite team set,
+    /// the Lahman code can't be resolved, or the backend ships no
+    /// qualifying rows. ERA does NOT get the special IP-floor walk
+    /// the top-1 card path uses; a 10-row list surfaces the leaders
+    /// at a glance and the user can judge minimums in-context.
+    func loadTeamLeaderboard(
+        stat: String, playerType: String,
+    ) async -> [LeaderCard] {
+        guard let bdlTeamId = FavoriteTeamStore.shared.bdlTeamId,
+              let lahmanCode = bdlToLahmanTeamId[bdlTeamId] else {
+            return []
+        }
+        let year = Calendar.current.component(.year, from: Date())
+        let outer = try? await api.getLeaderboard(
+            stat: stat, year: year,
+            playerType: playerType,
+            team: lahmanCode, limit: 10,
+        )
+        let inner: LeaderboardResponse? = outer ?? nil
+        let candidates = inner?.leaders ?? []
+        return candidates.map {
+            LeaderCard(stat: stat, value: $0.value, player: $0.player)
+        }
     }
 
     // MARK: - Favorite Players

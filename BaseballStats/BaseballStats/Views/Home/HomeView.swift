@@ -26,6 +26,7 @@ struct HomeView: View {
     @State private var showingPicker = false
     @State private var showingAddPlayer = false
     @State private var showingSchedule = false
+    @State private var showingLeadersSheet = false
     @State private var isEditingFavorites = false
 
     var body: some View {
@@ -63,6 +64,25 @@ struct HomeView: View {
                         teamStandings: vm.teamStandings,
                         teamRecords:   vm.teamRecords,
                     )
+                }
+            }
+            .sheet(isPresented: $showingLeadersSheet) {
+                if let bdlId = store.bdlTeamId,
+                   let entry = MLBTeamCatalog.entry(forBDLId: bdlId) {
+                    TeamLeadersSheet(
+                        entry: entry,
+                        vm:    vm,
+                        // Close the sheet first, then push the
+                        // profile onto the nav stack. SwiftUI's
+                        // sheet-dismiss + path-append on the same
+                        // tick reliably resolves to "sheet slides
+                        // away, profile pushes in" without a flicker.
+                        onTapPlayer: { player in
+                            showingLeadersSheet = false
+                            navigationPath.append(player)
+                        }
+                    )
+                    .presentationDetents([.large])
                 }
             }
         }
@@ -157,6 +177,7 @@ struct HomeView: View {
                     leaders:     vm.teamLeaders,
                     isLoading:   vm.isLoadingLeaders,
                     tint:        tint,
+                    onSeeAll:    { showingLeadersSheet = true },
                     onTapPlayer: { player in
                         navigationPath.append(player)
                     },
@@ -728,11 +749,22 @@ private struct TeamLeadersSection: View {
     let leaders: TeamLeaders?
     let isLoading: Bool
     let tint: Color
+    let onSeeAll: () -> Void
     let onTapPlayer: (PlayerSearchResult) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HomeSectionHeader(title: "Team Leaders", tint: tint)
+            HomeSectionHeader(title: "Team Leaders", tint: tint) {
+                Button(action: onSeeAll) {
+                    HStack(spacing: 3) {
+                        Text("See All")
+                        Image(systemName: "chevron.right")
+                            .font(.caption2.weight(.bold))
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(tint)
+                }
+            }
             leaderRow(title: "Batting", cards: leaders?.batting)
             leaderRow(title: "Pitching", cards: leaders?.pitching)
         }
