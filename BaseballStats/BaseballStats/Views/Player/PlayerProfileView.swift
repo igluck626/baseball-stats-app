@@ -231,14 +231,12 @@ struct PlayerProfileView: View {
             // states happen to be active at once.
             if selectedTab == .career && selectedSeasons.count >= 2 {
                 SelectedSeasonsSummaryCard(
-                    showingBatting:         showingBatting,
-                    battingSeasons:         viewModel.careerBatting?.seasons ?? [],
-                    pitchingSeasons:        viewModel.careerPitching?.seasons ?? [],
-                    selectedYears:          selectedSeasons,
-                    visibleBattingColumns:  visibleBattingColumns,
-                    visiblePitchingColumns: visiblePitchingColumns,
-                    tint:                   selectionTint,
-                    onDismiss:              { selectedSeasons.removeAll() }
+                    showingBatting:  showingBatting,
+                    battingSeasons:  viewModel.careerBatting?.seasons ?? [],
+                    pitchingSeasons: viewModel.careerPitching?.seasons ?? [],
+                    selectedYears:   selectedSeasons,
+                    tint:            selectionTint,
+                    onDismiss:       { selectedSeasons.removeAll() }
                 )
                 .transition(.move(edge: .bottom).combined(with: .opacity))
                 .zIndex(0)
@@ -2699,8 +2697,6 @@ private struct SelectedSeasonsSummaryCard: View {
     let battingSeasons:  [CareerSeason]
     let pitchingSeasons: [PitcherCareerSeason]
     let selectedYears:   Set<Int>
-    let visibleBattingColumns:  Set<String>
-    let visiblePitchingColumns: Set<String>
     let tint: Color
     let onDismiss: () -> Void
 
@@ -2769,6 +2765,13 @@ private struct SelectedSeasonsSummaryCard: View {
                     Divider()
                     battingStatsRow(agg: agg)
                 }
+                // Without `fixedSize(vertical: true)` the inner VStack
+                // collapses to zero height inside the ScrollView's
+                // unconstrained vertical proposal, which is what was
+                // hiding the header row. Locking the vertical axis to
+                // intrinsic content size lets the rows actually claim
+                // the height they ask for.
+                .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 12)
             }
         } else {
@@ -2782,6 +2785,7 @@ private struct SelectedSeasonsSummaryCard: View {
                     Divider()
                     pitchingStatsRow(agg: agg)
                 }
+                .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 12)
             }
         }
@@ -2807,7 +2811,7 @@ private struct SelectedSeasonsSummaryCard: View {
             headerCell("SLG", width: BattingCareerColumn.slg)
             headerCell("OPS", width: BattingCareerColumn.ops)
         }
-        .frame(height: 22)
+        .padding(.vertical, 8)
     }
 
     private func battingStatsRow(agg: BattingCareerAgg) -> some View {
@@ -2852,7 +2856,7 @@ private struct SelectedSeasonsSummaryCard: View {
             // shorter user-facing label.
             headerCell("K/9",  width: PitchingCareerColumn.soPer9)
         }
-        .frame(height: 22)
+        .padding(.vertical, 8)
     }
 
     private func pitchingStatsRow(agg: PitchingCareerAgg) -> some View {
