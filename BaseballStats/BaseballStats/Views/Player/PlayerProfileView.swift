@@ -2751,20 +2751,31 @@ private struct SelectedSeasonsSummaryCard: View {
 
     @ViewBuilder
     private var statsRow: some View {
+        // No frozen pane in the summary card — the aggregate is
+        // identity-less ("which season" doesn't apply), so giving
+        // the full card width to the stats columns reads better than
+        // a leading blank gutter. Headers + agg row scroll together
+        // inside one ScrollView so column labels align with their
+        // numeric cells regardless of horizontal scroll position.
+        //
+        // Headers reuse the existing `…ScrollableHeader` structs so
+        // labels + widths + font track the career table exactly.
+        // Sort binding is `.constant(noSort)` and the header subtree
+        // is hit-test-disabled — the card is a passive summary, not
+        // a sortable view, so the chevron + tap affordance stays off.
         if showingBatting {
             let filtered = battingSeasons.filter {
                 $0.year.map(selectedYears.contains) ?? false
             }
             let agg = BattingCareerAgg.compute(seasons: filtered)
-            HStack(spacing: 0) {
-                frozenLabel(count: filtered.count)
-                    .frame(width: careerFrozenPaneWidth, alignment: .leading)
-                    .padding(.leading, 12)
-                    .frame(height: 28)
-                    .background(.ultraThinMaterial)
-                    .shadow(color: .black.opacity(0.06), radius: 4, x: 2, y: 0)
-                    .zIndex(1)
-                ScrollView(.horizontal, showsIndicators: false) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                VStack(spacing: 0) {
+                    BattingCareerScrollableHeader(
+                        visible: visibleBattingColumns,
+                        sort: .constant(Self.noSort)
+                    )
+                    .allowsHitTesting(false)
+                    Divider()
                     BattingCareerScrollableTotalsRow(
                         agg: agg,
                         totals: nil,
@@ -2777,15 +2788,14 @@ private struct SelectedSeasonsSummaryCard: View {
                 $0.year.map(selectedYears.contains) ?? false
             }
             let agg = PitchingCareerAgg.compute(seasons: filtered)
-            HStack(spacing: 0) {
-                frozenLabel(count: filtered.count)
-                    .frame(width: careerFrozenPaneWidth, alignment: .leading)
-                    .padding(.leading, 12)
-                    .frame(height: 28)
-                    .background(.ultraThinMaterial)
-                    .shadow(color: .black.opacity(0.06), radius: 4, x: 2, y: 0)
-                    .zIndex(1)
-                ScrollView(.horizontal, showsIndicators: false) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                VStack(spacing: 0) {
+                    PitchingCareerScrollableHeader(
+                        visible: visiblePitchingColumns,
+                        sort: .constant(Self.noSort)
+                    )
+                    .allowsHitTesting(false)
+                    Divider()
                     PitchingCareerScrollableTotalsRow(
                         agg: agg,
                         totals: nil,
@@ -2796,11 +2806,10 @@ private struct SelectedSeasonsSummaryCard: View {
         }
     }
 
-    private func frozenLabel(count: Int) -> some View {
-        Text("\(count) Sel")
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(.secondary)
-    }
+    /// Sentinel sort handed to the (non-interactive) header structs.
+    /// Key doesn't match any real column, so no header renders the
+    /// "active sort" chevron — the headers read as plain labels.
+    private static let noSort = CareerSort(key: "__none__", direction: .descending)
 }
 
 /// Sortable career-table header cell. Tap toggles direction when the
