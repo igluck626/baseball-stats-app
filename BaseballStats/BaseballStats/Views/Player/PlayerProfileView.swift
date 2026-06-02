@@ -2894,8 +2894,12 @@ private struct MultiYearSummarySheet: View {
 
     private var cols: [String] {
         showingBatting
-            ? ["WAR","G","AB","R","H","HR","RBI","BB","SO","AVG","OBP","SLG","OPS"]
-            : ["WAR","W","L","ERA","G","GS","IP","SO","BB","WHIP"]
+            ? ["WAR","G","PA","AB","R","H","2B","3B","HR","RBI","SB","CS",
+               "BB","SO","BA","OBP","SLG","OPS","OPS+","TB","GIDP","HBP",
+               "SH","SF","IBB"]
+            : ["WAR","W","L","W-L%","ERA","G","GS","GF","CG","SHO","SV",
+               "IP","H","R","ER","HR","BB","IBB","SO","HBP","BK","WP","BF",
+               "ERA+","FIP","WHIP","H/9","HR/9","BB/9","SO/9","SO/BB"]
     }
 
     // MARK: Value rows
@@ -2906,6 +2910,10 @@ private struct MultiYearSummarySheet: View {
     //             rate stats unchanged (rates don't average over years).
     // Per 162: counting stats scaled by 162/totalG for batters,
     //          162/totalIP for pitchers; rate stats unchanged.
+    // OPS+ / ERA+ are league-context numbers we don't have client-
+    // side, so they read "—" in all three rows. FIP is computable
+    // locally (PitchingCareerAgg.fip uses the standard 3.10 constant)
+    // and shares one value across all three rows.
 
     private var totalValues: [String] {
         if showingBatting {
@@ -2913,17 +2921,29 @@ private struct MultiYearSummarySheet: View {
             return [
                 formatWAR(agg.war),
                 formatCount(agg.g),
+                formatCount(agg.pa),
                 formatCount(agg.ab),
                 formatCount(agg.r),
                 formatCount(agg.h),
+                formatCount(agg.dbl),
+                formatCount(agg.trp),
                 formatCount(agg.hr),
                 formatCount(agg.rbi),
+                formatCount(agg.sb),
+                formatCount(agg.cs),
                 formatCount(agg.bb),
                 formatCount(agg.so),
                 format3(agg.avg),
                 format3(agg.obp),
                 format3(agg.slg),
                 format3(agg.ops),
+                "—",                        // OPS+
+                formatCount(agg.tb),
+                formatCount(agg.gidp),
+                formatCount(agg.hbp),
+                formatCount(agg.sh),
+                formatCount(agg.sf),
+                formatCount(agg.ibb),
             ]
         } else {
             let agg = pitchingAgg
@@ -2931,13 +2951,34 @@ private struct MultiYearSummarySheet: View {
                 formatWAR(agg.war),
                 formatCount(agg.w),
                 formatCount(agg.l),
+                format3(agg.winPct),
                 format2(agg.era),
                 formatCount(agg.g),
                 formatCount(agg.gs),
+                formatCount(agg.gf),
+                formatCount(agg.cg),
+                formatCount(agg.sho),
+                formatCount(agg.sv),
                 formatIP(agg.ip),
-                formatCount(agg.so),
+                formatCount(agg.h),
+                formatCount(agg.r),
+                formatCount(agg.er),
+                formatCount(agg.hr),
                 formatCount(agg.bb),
+                formatCount(agg.ibb),
+                formatCount(agg.so),
+                formatCount(agg.hbp),
+                formatCount(agg.bk),
+                formatCount(agg.wp),
+                formatCount(agg.bf),
+                "—",                        // ERA+
+                format2(agg.fip),
                 format2(agg.whip),
+                format2(agg.hPer9),
+                format2(agg.hrPer9),
+                format2(agg.careerBB9),
+                format2(agg.kPer9),
+                format2(agg.soBB),
             ]
         }
     }
@@ -2947,33 +2988,66 @@ private struct MultiYearSummarySheet: View {
         if showingBatting {
             let agg = battingAgg
             return [
-                format1(agg.war / n),
-                format1(Double(agg.g)   / n),
-                format1(Double(agg.ab)  / n),
-                format1(Double(agg.r)   / n),
-                format1(Double(agg.h)   / n),
-                format1(Double(agg.hr)  / n),
-                format1(Double(agg.rbi) / n),
-                format1(Double(agg.bb)  / n),
-                format1(Double(agg.so)  / n),
+                local1(agg.war / n),
+                local1(Double(agg.g)    / n),
+                local1(Double(agg.pa)   / n),
+                local1(Double(agg.ab)   / n),
+                local1(Double(agg.r)    / n),
+                local1(Double(agg.h)    / n),
+                local1(Double(agg.dbl)  / n),
+                local1(Double(agg.trp)  / n),
+                local1(Double(agg.hr)   / n),
+                local1(Double(agg.rbi)  / n),
+                local1(Double(agg.sb)   / n),
+                local1(Double(agg.cs)   / n),
+                local1(Double(agg.bb)   / n),
+                local1(Double(agg.so)   / n),
                 format3(agg.avg),
                 format3(agg.obp),
                 format3(agg.slg),
                 format3(agg.ops),
+                "—",                        // OPS+
+                local1(Double(agg.tb)   / n),
+                local1(Double(agg.gidp) / n),
+                local1(Double(agg.hbp)  / n),
+                local1(Double(agg.sh)   / n),
+                local1(Double(agg.sf)   / n),
+                local1(Double(agg.ibb)  / n),
             ]
         } else {
             let agg = pitchingAgg
             return [
-                format1(agg.war / n),
-                format1(Double(agg.w)  / n),
-                format1(Double(agg.l)  / n),
+                local1(agg.war / n),
+                local1(Double(agg.w)   / n),
+                local1(Double(agg.l)   / n),
+                format3(agg.winPct),
                 format2(agg.era),
-                format1(Double(agg.g)  / n),
-                format1(Double(agg.gs) / n),
-                format1(agg.ip / n),
-                format1(Double(agg.so) / n),
-                format1(Double(agg.bb) / n),
+                local1(Double(agg.g)   / n),
+                local1(Double(agg.gs)  / n),
+                local1(Double(agg.gf)  / n),
+                local1(Double(agg.cg)  / n),
+                local1(Double(agg.sho) / n),
+                local1(Double(agg.sv)  / n),
+                local1(agg.ip / n),
+                local1(Double(agg.h)   / n),
+                local1(Double(agg.r)   / n),
+                local1(Double(agg.er)  / n),
+                local1(Double(agg.hr)  / n),
+                local1(Double(agg.bb)  / n),
+                local1(Double(agg.ibb) / n),
+                local1(Double(agg.so)  / n),
+                local1(Double(agg.hbp) / n),
+                local1(Double(agg.bk)  / n),
+                local1(Double(agg.wp)  / n),
+                local1(Double(agg.bf)  / n),
+                "—",                        // ERA+
+                format2(agg.fip),
                 format2(agg.whip),
+                format2(agg.hPer9),
+                format2(agg.hrPer9),
+                format2(agg.careerBB9),
+                format2(agg.kPer9),
+                format2(agg.soBB),
             ]
         }
     }
@@ -2986,21 +3060,33 @@ private struct MultiYearSummarySheet: View {
             guard agg.g > 0 else {
                 return Array(repeating: "—", count: cols.count)
             }
-            let scale = 162.0 / Double(agg.g)
+            let s = 162.0 / Double(agg.g)
             return [
-                format1(agg.war * scale),
-                format1(Double(agg.g)   * scale),  // always 162.0
-                format1(Double(agg.ab)  * scale),
-                format1(Double(agg.r)   * scale),
-                format1(Double(agg.h)   * scale),
-                format1(Double(agg.hr)  * scale),
-                format1(Double(agg.rbi) * scale),
-                format1(Double(agg.bb)  * scale),
-                format1(Double(agg.so)  * scale),
+                local1(agg.war * s),
+                local1(Double(agg.g)    * s),     // always 162.0
+                local1(Double(agg.pa)   * s),
+                local1(Double(agg.ab)   * s),
+                local1(Double(agg.r)    * s),
+                local1(Double(agg.h)    * s),
+                local1(Double(agg.dbl)  * s),
+                local1(Double(agg.trp)  * s),
+                local1(Double(agg.hr)   * s),
+                local1(Double(agg.rbi)  * s),
+                local1(Double(agg.sb)   * s),
+                local1(Double(agg.cs)   * s),
+                local1(Double(agg.bb)   * s),
+                local1(Double(agg.so)   * s),
                 format3(agg.avg),
                 format3(agg.obp),
                 format3(agg.slg),
                 format3(agg.ops),
+                "—",                              // OPS+
+                local1(Double(agg.tb)   * s),
+                local1(Double(agg.gidp) * s),
+                local1(Double(agg.hbp)  * s),
+                local1(Double(agg.sh)   * s),
+                local1(Double(agg.sf)   * s),
+                local1(Double(agg.ibb)  * s),
             ]
         } else {
             let agg = pitchingAgg
@@ -3009,18 +3095,39 @@ private struct MultiYearSummarySheet: View {
             guard agg.ip > 0 else {
                 return Array(repeating: "—", count: cols.count)
             }
-            let scale = 162.0 / agg.ip
+            let s = 162.0 / agg.ip
             return [
-                format1(agg.war * scale),
-                format1(Double(agg.w)  * scale),
-                format1(Double(agg.l)  * scale),
+                local1(agg.war * s),
+                local1(Double(agg.w)   * s),
+                local1(Double(agg.l)   * s),
+                format3(agg.winPct),
                 format2(agg.era),
-                format1(Double(agg.g)  * scale),
-                format1(Double(agg.gs) * scale),
-                format1(agg.ip * scale),  // always 162.0
-                format1(Double(agg.so) * scale),
-                format1(Double(agg.bb) * scale),
+                local1(Double(agg.g)   * s),
+                local1(Double(agg.gs)  * s),
+                local1(Double(agg.gf)  * s),
+                local1(Double(agg.cg)  * s),
+                local1(Double(agg.sho) * s),
+                local1(Double(agg.sv)  * s),
+                local1(agg.ip * s),               // always 162.0
+                local1(Double(agg.h)   * s),
+                local1(Double(agg.r)   * s),
+                local1(Double(agg.er)  * s),
+                local1(Double(agg.hr)  * s),
+                local1(Double(agg.bb)  * s),
+                local1(Double(agg.ibb) * s),
+                local1(Double(agg.so)  * s),
+                local1(Double(agg.hbp) * s),
+                local1(Double(agg.bk)  * s),
+                local1(Double(agg.wp)  * s),
+                local1(Double(agg.bf)  * s),
+                "—",                              // ERA+
+                format2(agg.fip),
                 format2(agg.whip),
+                format2(agg.hPer9),
+                format2(agg.hrPer9),
+                format2(agg.careerBB9),
+                format2(agg.kPer9),
+                format2(agg.soBB),
             ]
         }
     }
@@ -3039,7 +3146,12 @@ private struct MultiYearSummarySheet: View {
         return PitchingCareerAgg.compute(seasons: filtered)
     }
 
-    private func format1(_ value: Double) -> String {
+    // Local helper for Per Season / Per 162 cells — takes non-
+    // optional `Double` from division/multiplication of agg fields,
+    // returns 1-decimal formatted string. Named `local1` to avoid
+    // colliding with the file-level `format1(_ value: Double?)`
+    // which has different nil-handling semantics.
+    private func local1(_ value: Double) -> String {
         String(format: "%.1f", value)
     }
 }
