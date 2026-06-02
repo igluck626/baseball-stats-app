@@ -2751,18 +2751,13 @@ private struct SelectedSeasonsSummaryCard: View {
 
     @ViewBuilder
     private var statsRow: some View {
-        // No frozen pane in the summary card — the aggregate is
-        // identity-less ("which season" doesn't apply), so giving
-        // the full card width to the stats columns reads better than
-        // a leading blank gutter. Headers + agg row scroll together
-        // inside one ScrollView so column labels align with their
-        // numeric cells regardless of horizontal scroll position.
-        //
-        // Headers reuse the existing `…ScrollableHeader` structs so
-        // labels + widths + font track the career table exactly.
-        // Sort binding is `.constant(noSort)` and the header subtree
-        // is hit-test-disabled — the card is a passive summary, not
-        // a sortable view, so the chevron + tap affordance stays off.
+        // Hardcoded header + stats row keeps the summary self-
+        // contained: the same fixed column list always renders
+        // regardless of the user's table column-filter selection,
+        // so header labels are guaranteed to sit directly above
+        // their numeric cells. The width constants come straight
+        // from the career table's column enums so the visual rhythm
+        // matches what's above.
         if showingBatting {
             let filtered = battingSeasons.filter {
                 $0.year.map(selectedYears.contains) ?? false
@@ -2770,18 +2765,11 @@ private struct SelectedSeasonsSummaryCard: View {
             let agg = BattingCareerAgg.compute(seasons: filtered)
             ScrollView(.horizontal, showsIndicators: false) {
                 VStack(spacing: 0) {
-                    BattingCareerScrollableHeader(
-                        visible: visibleBattingColumns,
-                        sort: .constant(Self.noSort)
-                    )
-                    .allowsHitTesting(false)
+                    battingHeaderRow
                     Divider()
-                    BattingCareerScrollableTotalsRow(
-                        agg: agg,
-                        totals: nil,
-                        visible: visibleBattingColumns
-                    )
+                    battingStatsRow(agg: agg)
                 }
+                .padding(.horizontal, 12)
             }
         } else {
             let filtered = pitchingSeasons.filter {
@@ -2790,26 +2778,118 @@ private struct SelectedSeasonsSummaryCard: View {
             let agg = PitchingCareerAgg.compute(seasons: filtered)
             ScrollView(.horizontal, showsIndicators: false) {
                 VStack(spacing: 0) {
-                    PitchingCareerScrollableHeader(
-                        visible: visiblePitchingColumns,
-                        sort: .constant(Self.noSort)
-                    )
-                    .allowsHitTesting(false)
+                    pitchingHeaderRow
                     Divider()
-                    PitchingCareerScrollableTotalsRow(
-                        agg: agg,
-                        totals: nil,
-                        visible: visiblePitchingColumns
-                    )
+                    pitchingStatsRow(agg: agg)
                 }
+                .padding(.horizontal, 12)
             }
         }
     }
 
-    /// Sentinel sort handed to the (non-interactive) header structs.
-    /// Key doesn't match any real column, so no header renders the
-    /// "active sort" chevron — the headers read as plain labels.
-    private static let noSort = CareerSort(key: "__none__", direction: .descending)
+    private var battingHeaderRow: some View {
+        HStack(spacing: 0) {
+            headerCell("WAR", width: BattingCareerColumn.war)
+            headerCell("G",   width: BattingCareerColumn.g)
+            headerCell("PA",  width: BattingCareerColumn.pa)
+            headerCell("AB",  width: BattingCareerColumn.ab)
+            headerCell("R",   width: BattingCareerColumn.r)
+            headerCell("H",   width: BattingCareerColumn.h)
+            headerCell("2B",  width: BattingCareerColumn.doubles)
+            headerCell("3B",  width: BattingCareerColumn.triples)
+            headerCell("HR",  width: BattingCareerColumn.hr)
+            headerCell("RBI", width: BattingCareerColumn.rbi)
+            headerCell("BB",  width: BattingCareerColumn.bb)
+            headerCell("SO",  width: BattingCareerColumn.so)
+            headerCell("SB",  width: BattingCareerColumn.sb)
+            headerCell("AVG", width: BattingCareerColumn.ba)
+            headerCell("OBP", width: BattingCareerColumn.obp)
+            headerCell("SLG", width: BattingCareerColumn.slg)
+            headerCell("OPS", width: BattingCareerColumn.ops)
+        }
+        .frame(height: 22)
+    }
+
+    private func battingStatsRow(agg: BattingCareerAgg) -> some View {
+        HStack(spacing: 0) {
+            statCell(formatWAR(agg.war),    width: BattingCareerColumn.war)
+            statCell(formatCount(agg.g),    width: BattingCareerColumn.g)
+            statCell(formatCount(agg.pa),   width: BattingCareerColumn.pa)
+            statCell(formatCount(agg.ab),   width: BattingCareerColumn.ab)
+            statCell(formatCount(agg.r),    width: BattingCareerColumn.r)
+            statCell(formatCount(agg.h),    width: BattingCareerColumn.h)
+            statCell(formatCount(agg.dbl),  width: BattingCareerColumn.doubles)
+            statCell(formatCount(agg.trp),  width: BattingCareerColumn.triples)
+            statCell(formatCount(agg.hr),   width: BattingCareerColumn.hr)
+            statCell(formatCount(agg.rbi),  width: BattingCareerColumn.rbi)
+            statCell(formatCount(agg.bb),   width: BattingCareerColumn.bb)
+            statCell(formatCount(agg.so),   width: BattingCareerColumn.so)
+            statCell(formatCount(agg.sb),   width: BattingCareerColumn.sb)
+            statCell(format3(agg.avg),      width: BattingCareerColumn.ba)
+            statCell(format3(agg.obp),      width: BattingCareerColumn.obp)
+            statCell(format3(agg.slg),      width: BattingCareerColumn.slg)
+            statCell(format3(agg.ops),      width: BattingCareerColumn.ops)
+        }
+        .frame(height: 28)
+    }
+
+    private var pitchingHeaderRow: some View {
+        HStack(spacing: 0) {
+            headerCell("WAR",  width: PitchingCareerColumn.war)
+            headerCell("W",    width: PitchingCareerColumn.w)
+            headerCell("L",    width: PitchingCareerColumn.l)
+            headerCell("ERA",  width: PitchingCareerColumn.era)
+            headerCell("G",    width: PitchingCareerColumn.g)
+            headerCell("GS",   width: PitchingCareerColumn.gs)
+            headerCell("IP",   width: PitchingCareerColumn.ip)
+            headerCell("H",    width: PitchingCareerColumn.h)
+            headerCell("ER",   width: PitchingCareerColumn.er)
+            headerCell("BB",   width: PitchingCareerColumn.bb)
+            headerCell("SO",   width: PitchingCareerColumn.so)
+            headerCell("HR",   width: PitchingCareerColumn.hr)
+            headerCell("WHIP", width: PitchingCareerColumn.whip)
+            // K/9 maps to the existing SO/9 column width — same stat,
+            // shorter user-facing label.
+            headerCell("K/9",  width: PitchingCareerColumn.soPer9)
+        }
+        .frame(height: 22)
+    }
+
+    private func pitchingStatsRow(agg: PitchingCareerAgg) -> some View {
+        HStack(spacing: 0) {
+            statCell(formatWAR(agg.war),   width: PitchingCareerColumn.war)
+            statCell(formatCount(agg.w),   width: PitchingCareerColumn.w)
+            statCell(formatCount(agg.l),   width: PitchingCareerColumn.l)
+            statCell(format2(agg.era),     width: PitchingCareerColumn.era)
+            statCell(formatCount(agg.g),   width: PitchingCareerColumn.g)
+            statCell(formatCount(agg.gs),  width: PitchingCareerColumn.gs)
+            statCell(formatIP(agg.ip),     width: PitchingCareerColumn.ip)
+            statCell(formatCount(agg.h),   width: PitchingCareerColumn.h)
+            statCell(formatCount(agg.er),  width: PitchingCareerColumn.er)
+            statCell(formatCount(agg.bb),  width: PitchingCareerColumn.bb)
+            statCell(formatCount(agg.so),  width: PitchingCareerColumn.so)
+            statCell(formatCount(agg.hr),  width: PitchingCareerColumn.hr)
+            statCell(format2(agg.whip),    width: PitchingCareerColumn.whip)
+            statCell(format2(agg.kPer9),   width: PitchingCareerColumn.soPer9)
+        }
+        .frame(height: 28)
+    }
+
+    private func headerCell(_ label: String, width: CGFloat) -> some View {
+        Text(label)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .frame(width: width, alignment: .trailing)
+            .padding(.horizontal, 2)
+    }
+
+    private func statCell(_ value: String, width: CGFloat) -> some View {
+        Text(value)
+            .font(.system(size: 11, weight: .semibold))
+            .monospacedDigit()
+            .frame(width: width, alignment: .trailing)
+            .padding(.horizontal, 2)
+    }
 }
 
 /// Sortable career-table header cell. Tap toggles direction when the
