@@ -64,11 +64,19 @@ struct PlayerProfileView: View {
 
     /// Career-table multi-season selection. Tapping a row's body
     /// (any cell except Year/Age) flips the year in and out of this
-    /// set; once 2+ years are selected, the floating aggregate-
-    /// summary card slides up at the bottom of the screen. Cleared
-    /// on role flip so a batting-side selection doesn't bleed into
-    /// the pitching table (or vice versa).
+    /// set; 2+ selected years reveals the floating Compare bar at
+    /// the bottom of the page, and tapping Compare opens the
+    /// aggregate-summary sheet. Cleared on role flip so a batting-
+    /// side selection doesn't bleed into the pitching table (or
+    /// vice versa) and by the Clear button on the floating bar.
     @State private var selectedSeasons: Set<Int> = []
+
+    /// Drives the multi-year compare sheet. Decoupled from
+    /// `selectedSeasons` so dismissing the sheet (drag-down or X)
+    /// only closes the sheet — the selection stays intact and the
+    /// floating Compare bar remains visible, ready to re-open with
+    /// the same set or to be modified by toggling more rows.
+    @State private var showingCompareSheet: Bool = false
 
     /// Tracks light vs. dark so the header's team-color backdrop can
     /// nudge its opacity up in dark mode (the tint reads weaker
@@ -224,25 +232,19 @@ struct PlayerProfileView: View {
                     .zIndex(2)
             }
 
-            // Floating aggregate-summary card for multi-season
-            // selection on the Career tab. 2+ seasons reveals it; the
-            // X clears the set. Sits below the column-filter z-stack
-            // so it doesn't render over the filter modal when both
-            // states happen to be active at once.
+            // Floating Compare bar pinned to the bottom of the
+            // career tab. Appears whenever 2+ rows are selected and
+            // the Career tab is on-screen. Tapping Compare opens
+            // the aggregate sheet; Clear empties the set (which
+            // also hides the bar). zIndex 0 so the column-filter
+            // modal (zIndex 1/2) still sits above when both are up.
             if selectedTab == .career && selectedSeasons.count >= 2 {
-                SelectedSeasonsSummaryCard(
-                    showingBatting:  showingBatting,
-                    battingSeasons:  viewModel.careerBatting?.seasons ?? [],
-                    pitchingSeasons: viewModel.careerPitching?.seasons ?? [],
-                    selectedYears:   selectedSeasons,
-                    tint:            selectionTint,
-                    onDismiss:       { selectedSeasons.removeAll() }
-                )
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-                .zIndex(0)
+                compareBar
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .zIndex(0)
             }
         }
-        .animation(.spring(response: 0.3), value: selectedSeasons.count)
+        .animation(.spring(response: 0.3), value: selectedSeasons.count >= 2)
         .animation(.spring(response: 0.42, dampingFraction: 0.88), value: showingColumnFilter)
         // Clearing selection on role flip — a "2018-2021 batting agg"
         // doesn't translate to pitching even when the years line up
@@ -258,6 +260,62 @@ struct PlayerProfileView: View {
         .sheet(item: $presentingVoting) { destination in
             AwardVotingView(destination: destination)
         }
+        // Multi-year aggregate sheet. Explicit toggle binding —
+        // dismissal (drag-down or in-sheet X) just closes the sheet
+        // and leaves `selectedSeasons` untouched; the user clears
+        // selection via the Clear button on the floating bar.
+        .sheet(isPresented: $showingCompareSheet) {
+            MultiYearSummarySheet(
+                showingBatting:  showingBatting,
+                battingSeasons:  viewModel.careerBatting?.seasons ?? [],
+                pitchingSeasons: viewModel.careerPitching?.seasons ?? [],
+                selectedYears:   selectedSeasons,
+                tint:            selectionTint
+            )
+            .presentationDetents([.height(220)])
+            .presentationDragIndicator(.visible)
+        }
+    }
+
+    /// Glass bar that floats above the bottom of the screen when 2+
+    /// Career-tab rows are selected. "{N} seasons selected" label on
+    /// the leading edge, Clear + Compare buttons on the trailing.
+    private var compareBar: some View {
+        HStack(spacing: 10) {
+            Circle()
+                .fill(selectionTint)
+                .frame(width: 8, height: 8)
+            Text("\(selectedSeasons.count) seasons selected")
+                .font(.subheadline.weight(.medium))
+            Spacer()
+            Button("Clear") {
+                selectedSeasons.removeAll()
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            Button {
+                showingCompareSheet = true
+            } label: {
+                HStack(spacing: 4) {
+                    Text("Compare")
+                    Image(systemName: "arrow.right")
+                        .font(.caption.weight(.semibold))
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .tint(selectionTint)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(selectionTint.opacity(0.3), lineWidth: 0.5)
+        )
+        .shadow(color: .black.opacity(0.12), radius: 10, y: 3)
+        .padding(.horizontal, 12)
+        .padding(.bottom, 12)
     }
 
     /// Bridges the showingBatting state to the right catalog + binding
@@ -2685,56 +2743,74 @@ private func careerRowBackground(
     }
 }
 
-// MARK: - Selected seasons summary card
+// MARK: - Multi-year selection summary sheet
 
-/// Floating glass card that appears at the bottom of the screen when
-/// 2+ Career-tab rows are selected. Header shows the year range +
-/// count + an X to clear; the body re-renders the table's frozen +
-/// scrollable layout with a single aggregate row computed over the
-/// selected subset.
-private struct SelectedSeasonsSummaryCard: View {
-    let showingBatting: Bool
+/// Sheet presented when 2+ Career-tab rows are selected. Title shows
+/// the year range + count; X (or drag-down) dismisses, which clears
+/// the parent's selection set. Sheets manage their own sizing, so
+/// the horizontal ScrollView inside is laid out cleanly — the
+/// previous in-ZStack floating card kept collapsing vertically.
+private struct MultiYearSummarySheet: View {
+    let showingBatting:  Bool
     let battingSeasons:  [CareerSeason]
     let pitchingSeasons: [PitcherCareerSeason]
     let selectedYears:   Set<Int>
     let tint: Color
-    let onDismiss: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            statsRow
-        }
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(tint.opacity(0.35), lineWidth: 0.75)
-        )
-        .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
-        .padding(.horizontal, 12)
-        .padding(.bottom, 12)
-    }
-
-    private var header: some View {
-        HStack(spacing: 8) {
-            Circle()
-                .fill(tint)
-                .frame(width: 8, height: 8)
-            Text(headerText)
-                .font(.subheadline.weight(.semibold))
-            Spacer()
-            Button(action: onDismiss) {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 20))
-                    .foregroundStyle(.secondary)
-                    .symbolRenderingMode(.hierarchical)
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(tint)
+                    .frame(width: 10, height: 10)
+                Text(headerText)
+                    .font(.headline)
+                Spacer()
+                Button(action: { dismiss() }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                        .symbolRenderingMode(.hierarchical)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Dismiss")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Clear season selection")
+
+            // Plain ScrollView at the top level of the sheet body —
+            // no surrounding material/glass wrappers, no nested
+            // height constraints. Sheet sizing comes from
+            // `.presentationDetents` on the caller.
+            ScrollView(.horizontal, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 16) {
+                        ForEach(cols, id: \.self) { col in
+                            Text(col)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .frame(minWidth: 40, alignment: .trailing)
+                        }
+                    }
+                    Divider()
+                    HStack(spacing: 16) {
+                        // `enumerated()` + `id: \.offset` so duplicate
+                        // value strings (two stats both "0") don't
+                        // collide in the ForEach identity.
+                        ForEach(Array(values.enumerated()), id: \.offset) { _, val in
+                            Text(val)
+                                .font(.system(size: 15, weight: .semibold))
+                                .monospacedDigit()
+                                .frame(minWidth: 40, alignment: .trailing)
+                        }
+                    }
+                }
+            }
+
+            Spacer(minLength: 0)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 20)
+        .padding(.top, 12)
     }
 
     private var headerText: String {
@@ -2745,154 +2821,51 @@ private struct SelectedSeasonsSummaryCard: View {
         return "\(range) · \(count) season\(count == 1 ? "" : "s")"
     }
 
-    @ViewBuilder
-    private var statsRow: some View {
-        // Hardcoded header + stats row keeps the summary self-
-        // contained: the same fixed column list always renders
-        // regardless of the user's table column-filter selection,
-        // so header labels are guaranteed to sit directly above
-        // their numeric cells. The width constants come straight
-        // from the career table's column enums so the visual rhythm
-        // matches what's above.
+    private var cols: [String] {
+        showingBatting
+            ? ["WAR","G","AB","R","H","HR","RBI","BB","SO","AVG","OBP","SLG","OPS"]
+            : ["WAR","W","L","ERA","G","GS","IP","SO","BB","WHIP"]
+    }
+
+    private var values: [String] {
         if showingBatting {
             let filtered = battingSeasons.filter {
                 $0.year.map(selectedYears.contains) ?? false
             }
             let agg = BattingCareerAgg.compute(seasons: filtered)
-            ScrollView(.horizontal, showsIndicators: false) {
-                VStack(spacing: 0) {
-                    battingHeaderRow
-                    Divider()
-                    battingStatsRow(agg: agg)
-                }
-                // Without `fixedSize(vertical: true)` the inner VStack
-                // collapses to zero height inside the ScrollView's
-                // unconstrained vertical proposal, which is what was
-                // hiding the header row. Locking the vertical axis to
-                // intrinsic content size lets the rows actually claim
-                // the height they ask for.
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 12)
-            }
+            return [
+                formatWAR(agg.war),
+                formatCount(agg.g),
+                formatCount(agg.ab),
+                formatCount(agg.r),
+                formatCount(agg.h),
+                formatCount(agg.hr),
+                formatCount(agg.rbi),
+                formatCount(agg.bb),
+                formatCount(agg.so),
+                format3(agg.avg),
+                format3(agg.obp),
+                format3(agg.slg),
+                format3(agg.ops),
+            ]
         } else {
             let filtered = pitchingSeasons.filter {
                 $0.year.map(selectedYears.contains) ?? false
             }
             let agg = PitchingCareerAgg.compute(seasons: filtered)
-            ScrollView(.horizontal, showsIndicators: false) {
-                VStack(spacing: 0) {
-                    pitchingHeaderRow
-                    Divider()
-                    pitchingStatsRow(agg: agg)
-                }
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 12)
-            }
+            return [
+                formatWAR(agg.war),
+                formatCount(agg.w),
+                formatCount(agg.l),
+                format2(agg.era),
+                formatCount(agg.g),
+                formatCount(agg.gs),
+                formatIP(agg.ip),
+                formatCount(agg.so),
+                formatCount(agg.bb),
+                format2(agg.whip),
+            ]
         }
-    }
-
-    private var battingHeaderRow: some View {
-        HStack(spacing: 0) {
-            headerCell("WAR", width: BattingCareerColumn.war)
-            headerCell("G",   width: BattingCareerColumn.g)
-            headerCell("PA",  width: BattingCareerColumn.pa)
-            headerCell("AB",  width: BattingCareerColumn.ab)
-            headerCell("R",   width: BattingCareerColumn.r)
-            headerCell("H",   width: BattingCareerColumn.h)
-            headerCell("2B",  width: BattingCareerColumn.doubles)
-            headerCell("3B",  width: BattingCareerColumn.triples)
-            headerCell("HR",  width: BattingCareerColumn.hr)
-            headerCell("RBI", width: BattingCareerColumn.rbi)
-            headerCell("BB",  width: BattingCareerColumn.bb)
-            headerCell("SO",  width: BattingCareerColumn.so)
-            headerCell("SB",  width: BattingCareerColumn.sb)
-            headerCell("AVG", width: BattingCareerColumn.ba)
-            headerCell("OBP", width: BattingCareerColumn.obp)
-            headerCell("SLG", width: BattingCareerColumn.slg)
-            headerCell("OPS", width: BattingCareerColumn.ops)
-        }
-        .padding(.vertical, 8)
-    }
-
-    private func battingStatsRow(agg: BattingCareerAgg) -> some View {
-        HStack(spacing: 0) {
-            statCell(formatWAR(agg.war),    width: BattingCareerColumn.war)
-            statCell(formatCount(agg.g),    width: BattingCareerColumn.g)
-            statCell(formatCount(agg.pa),   width: BattingCareerColumn.pa)
-            statCell(formatCount(agg.ab),   width: BattingCareerColumn.ab)
-            statCell(formatCount(agg.r),    width: BattingCareerColumn.r)
-            statCell(formatCount(agg.h),    width: BattingCareerColumn.h)
-            statCell(formatCount(agg.dbl),  width: BattingCareerColumn.doubles)
-            statCell(formatCount(agg.trp),  width: BattingCareerColumn.triples)
-            statCell(formatCount(agg.hr),   width: BattingCareerColumn.hr)
-            statCell(formatCount(agg.rbi),  width: BattingCareerColumn.rbi)
-            statCell(formatCount(agg.bb),   width: BattingCareerColumn.bb)
-            statCell(formatCount(agg.so),   width: BattingCareerColumn.so)
-            statCell(formatCount(agg.sb),   width: BattingCareerColumn.sb)
-            statCell(format3(agg.avg),      width: BattingCareerColumn.ba)
-            statCell(format3(agg.obp),      width: BattingCareerColumn.obp)
-            statCell(format3(agg.slg),      width: BattingCareerColumn.slg)
-            statCell(format3(agg.ops),      width: BattingCareerColumn.ops)
-        }
-        .frame(height: 28)
-    }
-
-    private var pitchingHeaderRow: some View {
-        HStack(spacing: 0) {
-            headerCell("WAR",  width: PitchingCareerColumn.war)
-            headerCell("W",    width: PitchingCareerColumn.w)
-            headerCell("L",    width: PitchingCareerColumn.l)
-            headerCell("ERA",  width: PitchingCareerColumn.era)
-            headerCell("G",    width: PitchingCareerColumn.g)
-            headerCell("GS",   width: PitchingCareerColumn.gs)
-            headerCell("IP",   width: PitchingCareerColumn.ip)
-            headerCell("H",    width: PitchingCareerColumn.h)
-            headerCell("ER",   width: PitchingCareerColumn.er)
-            headerCell("BB",   width: PitchingCareerColumn.bb)
-            headerCell("SO",   width: PitchingCareerColumn.so)
-            headerCell("HR",   width: PitchingCareerColumn.hr)
-            headerCell("WHIP", width: PitchingCareerColumn.whip)
-            // K/9 maps to the existing SO/9 column width — same stat,
-            // shorter user-facing label.
-            headerCell("K/9",  width: PitchingCareerColumn.soPer9)
-        }
-        .padding(.vertical, 8)
-    }
-
-    private func pitchingStatsRow(agg: PitchingCareerAgg) -> some View {
-        HStack(spacing: 0) {
-            statCell(formatWAR(agg.war),   width: PitchingCareerColumn.war)
-            statCell(formatCount(agg.w),   width: PitchingCareerColumn.w)
-            statCell(formatCount(agg.l),   width: PitchingCareerColumn.l)
-            statCell(format2(agg.era),     width: PitchingCareerColumn.era)
-            statCell(formatCount(agg.g),   width: PitchingCareerColumn.g)
-            statCell(formatCount(agg.gs),  width: PitchingCareerColumn.gs)
-            statCell(formatIP(agg.ip),     width: PitchingCareerColumn.ip)
-            statCell(formatCount(agg.h),   width: PitchingCareerColumn.h)
-            statCell(formatCount(agg.er),  width: PitchingCareerColumn.er)
-            statCell(formatCount(agg.bb),  width: PitchingCareerColumn.bb)
-            statCell(formatCount(agg.so),  width: PitchingCareerColumn.so)
-            statCell(formatCount(agg.hr),  width: PitchingCareerColumn.hr)
-            statCell(format2(agg.whip),    width: PitchingCareerColumn.whip)
-            statCell(format2(agg.kPer9),   width: PitchingCareerColumn.soPer9)
-        }
-        .frame(height: 28)
-    }
-
-    private func headerCell(_ label: String, width: CGFloat) -> some View {
-        Text(label)
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .frame(width: width, alignment: .trailing)
-            .padding(.horizontal, 2)
-    }
-
-    private func statCell(_ value: String, width: CGFloat) -> some View {
-        Text(value)
-            .font(.system(size: 11, weight: .semibold))
-            .monospacedDigit()
-            .frame(width: width, alignment: .trailing)
-            .padding(.horizontal, 2)
     }
 }
 
