@@ -235,12 +235,18 @@ struct TeamLeadersSheet: View {
     }
 
     /// Same precision rules the Home Team Leaders strip uses, so the
-    /// see-all sheet renders identical numbers to the cards above.
+    /// see-all sheet renders identical numbers to the cards above —
+    /// except batting rate stats strip the leading "0." for the
+    /// baseball convention (".305" rather than "0.305"). Negative
+    /// values are passed through with the minus sign intact.
     static func formatValue(_ v: Double?, stat: String) -> String {
         guard let v else { return "—" }
         switch stat {
         case "AVG", "OBP", "SLG", "OPS":
-            return String(format: "%.3f", v)
+            let s = String(format: "%.3f", v)
+            if s.hasPrefix("0.")  { return String(s.dropFirst()) }
+            if s.hasPrefix("-0.") { return "-" + String(s.dropFirst(2)) }
+            return s
         case "ERA", "WHIP", "FIP":
             return String(format: "%.2f", v)
         case "HR", "RBI", "SO", "W", "L", "SV", "H", "BB", "R", "SB":
