@@ -2496,12 +2496,12 @@ private struct PitchingCareerScrollableSeasonRow: View {
             if visible.contains("WHIP")  { leaderCell(format2(season.WHIP),         label: "WHIP",  leaders: l, width: PitchingCareerColumn.whip) }
             // H/9 isn't stored — derive on-device, no leader lookup.
             if visible.contains("H/9")   {
-                Text(format2(perNine(season.H, ip: season.IP)))
+                Text(format1(perNine(season.H, ip: season.IP)))
                     .frame(width: PitchingCareerColumn.hPer9, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             }
             if visible.contains("HR/9")  { leaderCell(format2(season.HR_per9),      label: "HR/9",  leaders: l, width: PitchingCareerColumn.hrPer9) }
-            if visible.contains("BB/9")  { leaderCell(format2(season.BB_per9),      label: "BB/9",  leaders: l, width: PitchingCareerColumn.bbPer9) }
-            if visible.contains("SO/9")  { leaderCell(format2(season.K_per9),       label: "SO/9",  leaders: l, width: PitchingCareerColumn.soPer9) }
+            if visible.contains("BB/9")  { leaderCell(format1(season.BB_per9),      label: "BB/9",  leaders: l, width: PitchingCareerColumn.bbPer9) }
+            if visible.contains("SO/9")  { leaderCell(format1(season.K_per9),       label: "SO/9",  leaders: l, width: PitchingCareerColumn.soPer9) }
             if visible.contains("SO/BB") {
                 Text(format2(soBBRatio(so: season.SO, bb: season.BB)))
                     .frame(width: PitchingCareerColumn.soBB, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
@@ -2582,10 +2582,10 @@ private struct PitchingCareerScrollableTotalsRow: View {
                     .monospacedDigit().padding(.horizontal, 2)
             }
             if visible.contains("WHIP")  { Text(format2(agg.whip)).frame(width: PitchingCareerColumn.whip, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
-            if visible.contains("H/9")   { Text(format2(agg.hPer9)).frame(width: PitchingCareerColumn.hPer9, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("H/9")   { Text(format1(agg.hPer9)).frame(width: PitchingCareerColumn.hPer9, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
             if visible.contains("HR/9")  { Text(format2(agg.hrPer9)).frame(width: PitchingCareerColumn.hrPer9, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
-            if visible.contains("BB/9")  { Text(format2(agg.careerBB9)).frame(width: PitchingCareerColumn.bbPer9, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
-            if visible.contains("SO/9")  { Text(format2(agg.kPer9)).frame(width: PitchingCareerColumn.soPer9, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("BB/9")  { Text(format1(agg.careerBB9)).frame(width: PitchingCareerColumn.bbPer9, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("SO/9")  { Text(format1(agg.kPer9)).frame(width: PitchingCareerColumn.soPer9, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
             if visible.contains("SO/BB") { Text(format2(agg.soBB)).frame(width: PitchingCareerColumn.soBB, alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
             Color.clear.frame(width: careerAwardsCellWidth)
                 .padding(.horizontal, 2)
@@ -2974,10 +2974,10 @@ private struct MultiYearSummarySheet: View {
                 "—",                        // ERA+
                 format2(agg.fip),
                 format2(agg.whip),
-                format2(agg.hPer9),
+                format1(agg.hPer9),
                 format2(agg.hrPer9),
-                format2(agg.careerBB9),
-                format2(agg.kPer9),
+                format1(agg.careerBB9),
+                format1(agg.kPer9),
                 format2(agg.soBB),
             ]
         }
@@ -3043,10 +3043,10 @@ private struct MultiYearSummarySheet: View {
                 "—",                        // ERA+
                 format2(agg.fip),
                 format2(agg.whip),
-                format2(agg.hPer9),
+                format1(agg.hPer9),
                 format2(agg.hrPer9),
-                format2(agg.careerBB9),
-                format2(agg.kPer9),
+                format1(agg.careerBB9),
+                format1(agg.kPer9),
                 format2(agg.soBB),
             ]
         }
@@ -3123,10 +3123,10 @@ private struct MultiYearSummarySheet: View {
                 "—",                              // ERA+
                 format2(agg.fip),
                 format2(agg.whip),
-                format2(agg.hPer9),
+                format1(agg.hPer9),
                 format2(agg.hrPer9),
-                format2(agg.careerBB9),
-                format2(agg.kPer9),
+                format1(agg.careerBB9),
+                format1(agg.kPer9),
                 format2(agg.soBB),
             ]
         }
