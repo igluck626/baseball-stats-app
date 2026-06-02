@@ -341,15 +341,9 @@ private struct TeamHeroCard: View {
             let didWin = HomeGameUtils.favoriteWon(game: last, favoriteBDLId: entry.bdlTeamId)
             HStack(spacing: 10) {
                 resultBadge(text: didWin ? "W" : "L", color: didWin ? .green : .red)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Last Game")
-                        .font(.caption2.weight(.semibold))
-                        .tracking(0.5)
-                        .foregroundStyle(.secondary)
-                    Text(HomeGameUtils.lastGameLine(game: last, favoriteBDLId: entry.bdlTeamId))
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.primary)
-                }
+                Text(HomeGameUtils.lastGameLine(game: last, favoriteBDLId: entry.bdlTeamId))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
                 Spacer()
                 Text(HomeGameUtils.shortRelativeDate(game: last))
                     .font(.caption)
@@ -375,16 +369,10 @@ private struct TeamHeroCard: View {
                             (next.phase == .live ? Color.red : teamColor).opacity(0.12)
                         )
                     )
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(next.phase == .live ? "Live" : "Next Game")
-                        .font(.caption2.weight(.semibold))
-                        .tracking(0.5)
-                        .foregroundStyle(.secondary)
-                    Text(HomeGameUtils.nextGameLine(game: next, favoriteBDLId: entry.bdlTeamId))
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                }
+                Text(HomeGameUtils.nextGameLine(game: next, favoriteBDLId: entry.bdlTeamId))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
                 Spacer()
             }
         } else {
