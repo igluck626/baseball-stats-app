@@ -1132,7 +1132,7 @@ private struct FinalGameCard: View {
             // `includesToday` gate matches the box-score's
             // `pitcherDecisionTag`: bump only when this is today's
             // game AND the gamelog ingest hasn't reached today yet.
-            let recBump = (isGameToday && !rec.includesToday) ? 1 : 0
+            let recBump = !rec.includesToday ? 1 : 0
             switch tag {
             case "W":  return "(\(rec.wins + recBump)-\(rec.losses))"
             case "L":  return "(\(rec.wins)-\(rec.losses + recBump))"
@@ -1212,7 +1212,7 @@ private struct FinalGameCard: View {
                 // total. Eliminates the flash of e.g. "(20)" → "(21)"
                 // on a 21st-HR-of-the-year night. Animated below.
                 if let stats = batterStatsAtDateByBDL[p.person.id] {
-                    let bump = (isToday && !stats.includesToday) ? hr : 0
+                    let bump = !stats.includesToday ? hr : 0
                     out.append("\(prefix) (\(stats.homeRuns + bump))")
                 } else {
                     out.append("\(prefix) (—)")

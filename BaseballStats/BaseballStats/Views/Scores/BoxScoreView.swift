@@ -1035,10 +1035,10 @@ struct BoxScoreView: View {
                 else if totalKey == \BoxBatting.doubles  { atDate = stats.doubles }
                 else if totalKey == \BoxBatting.triples  { atDate = stats.triples }
                 else                                     { atDate = 0 }
-                let bump = (isGameToday && !stats.includesToday) ? gameCount : 0
+                let bump = !stats.includesToday ? gameCount : 0
                 return "\(prefix) (\(atDate + bump))"
             }
-            let liveIncrement = isGameToday ? gameCount : 0
+            let liveIncrement = gameCount
             guard let season = bp.seasonStats?.batting?[keyPath: totalKey] else {
                 return prefix
             }
@@ -1218,7 +1218,7 @@ struct BoxScoreView: View {
             // tracks the latter; flip the bump off as soon as the
             // catch-up writes today's gamelog row so the displayed
             // record doesn't double-count this decision.
-            let bump = (isGameToday && !rec.includesToday) ? 1 : 0
+            let bump = !rec.includesToday ? 1 : 0
             if (game?.wins ?? 0) > 0 {
                 return "(W \(rec.wins + bump)-\(rec.losses))"
             }
@@ -1231,7 +1231,7 @@ struct BoxScoreView: View {
             return nil
         }
         let season = p.seasonStats?.pitching
-        let bump = isGameToday ? 1 : 0
+        let bump = 1
         if (game?.wins ?? 0) > 0 {
             if let w = season?.wins, let l = season?.losses {
                 return "(W \(w + bump)-\(l))"
