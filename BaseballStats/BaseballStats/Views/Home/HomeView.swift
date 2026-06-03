@@ -4,16 +4,12 @@
 //
 //  Home tab root. Two states:
 //  - No favorite team yet → embedded TeamPickerView.
-//  - Favorite team set → hero card + recent/upcoming game strip +
-//    team leaders + favorite players.
+//  - Favorite team set → hero card (with embedded recent/upcoming
+//    game strip) + compact team-leaders card + favorite players.
 //
 //  Settings (team picker) lives in a trailing toolbar button; the
 //  inline navigation title shows the team logo + city/name so the
 //  user always knows whose context is on screen.
-//
-//  Navigation: tapping any strip card pushes a BoxScoreView via
-//  the same `.navigationDestination(for: Game.self)` pattern the
-//  Scores tab uses.
 //
 
 import SwiftUI
@@ -72,11 +68,6 @@ struct HomeView: View {
                     TeamLeadersSheet(
                         entry: entry,
                         vm:    vm,
-                        // Close the sheet first, then push the
-                        // profile onto the nav stack. SwiftUI's
-                        // sheet-dismiss + path-append on the same
-                        // tick reliably resolves to "sheet slides
-                        // away, profile pushes in" without a flicker.
                         onTapPlayer: { player in
                             showingLeadersSheet = false
                             navigationPath.append(player)
@@ -108,9 +99,6 @@ struct HomeView: View {
         .ignoresSafeArea()
     }
 
-    /// Toolbar payload — inline title (logo + name) on the leading
-    /// edge, gear on the trailing edge. Both hide when there's no
-    /// favorite team picked yet (the embedded picker is the whole UI).
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
         ToolbarItem(placement: .principal) {
@@ -163,14 +151,9 @@ struct HomeView: View {
                     lastTenL:     vm.teamLastTenL,
                     lastGame:     vm.lastGame,
                     nextGame:     vm.nextGame,
+                    stripGames:   vm.recentAndUpcoming,
                     onSchedule:   { showingSchedule = true },
-                )
-
-                RecentUpcomingStrip(
-                    games:    vm.recentAndUpcoming,
-                    favorite: entry,
-                    tint:     tint,
-                    onTap:    { game in navigationPath.append(game) },
+                    onTapStripGame: { game in navigationPath.append(game) },
                 )
 
                 TeamLeadersSection(
@@ -209,30 +192,24 @@ struct HomeView: View {
         VStack(spacing: 14) {
             RoundedRectangle(cornerRadius: 18)
                 .fill(Color(.systemGray5))
-                .frame(height: 240)
+                .frame(height: 340)
                 .padding(.horizontal, 16)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 12) {
-                    ForEach(0..<5, id: \.self) { _ in
-                        RoundedRectangle(cornerRadius: 14)
-                            .fill(Color(.systemGray5))
-                            .frame(width: 150, height: 138)
-                    }
-                }
+            RoundedRectangle(cornerRadius: 18)
+                .fill(Color(.systemGray5))
+                .frame(height: 280)
                 .padding(.horizontal, 16)
-            }
             Spacer()
         }
         .padding(.top, 12)
     }
 }
 
-// MARK: - Team Hero Card
+// MARK: - Team Hero Card (with embedded game strip)
 
-/// Top-of-tab card. Big logo + team name + record + division
-/// standing + a subtle L10/streak line, with last/next game rows
-/// below. The settings gear has been promoted to the nav toolbar
-/// so this card is purely informational.
+/// Top-of-tab card. Hosts the team's bio block (logo + name + record
+/// + division + streak/L10), the last/next game rows, and a compact
+/// horizontal scroll of recent/upcoming games — all within a single
+/// rounded-rectangle card so the related context lives together.
 private struct TeamHeroCard: View {
     let entry: MLBTeamCatalog.Entry
     let record: TeamRecord?
@@ -242,7 +219,9 @@ private struct TeamHeroCard: View {
     let lastTenL: Int?
     let lastGame: Game?
     let nextGame: Game?
+    let stripGames: [Game]
     let onSchedule: () -> Void
+    let onTapStripGame: (Game) -> Void
 
     private var teamColor: Color {
         TeamColors.color(for: entry.lahmanCode) ?? Color.accentColor
@@ -257,15 +236,15 @@ private struct TeamHeroCard: View {
             Divider().opacity(0.4)
             lastGameRow
             nextGameRow
+            if !stripGames.isEmpty {
+                Divider().opacity(0.4)
+                gameStrip
+            }
             scheduleLink
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background {
-            // Two-layer background: glass material first, team-color
-            // gradient laid on top at very low opacity. The gradient
-            // anchors the card to the favorite's identity without
-            // overwhelming the readable content above it.
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(.ultraThinMaterial)
             RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -344,14 +323,11 @@ private struct TeamHeroCard: View {
         )
     }
 
-    /// "(32-19)" — collapses to "—" when wins/losses aren't loaded
-    /// yet (early-spring or standings fetch failed).
     private var recordText: String {
         guard let w = record?.wins, let l = record?.losses else { return "—" }
         return "\(w)-\(l)"
     }
 
-    /// "1st NL West" — collapses to "—" when standing isn't loaded.
     private var divisionText: String {
         standing?.displayString ?? "—"
     }
@@ -403,6 +379,47 @@ private struct TeamHeroCard: View {
         }
     }
 
+    /// Compact horizontal scroll of recent/upcoming games (live or
+    /// final or upcoming). On first appearance, scrolls to the
+    /// most relevant card (live → next upcoming → most recent
+    /// final). Tapping a card pushes the box-score destination on
+    /// the parent's nav stack.
+    private var gameStrip: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(stripGames) { game in
+                        Button { onTapStripGame(game) } label: {
+                            CompactGameStripCard(
+                                game:          game,
+                                favoriteBDLId: entry.bdlTeamId,
+                                tint:          teamColor,
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .id(game.id)
+                    }
+                }
+            }
+            .onAppear {
+                if let target = anchorGame() {
+                    withAnimation(.easeOut(duration: 0.25)) {
+                        proxy.scrollTo(target.id, anchor: .center)
+                    }
+                }
+            }
+        }
+    }
+
+    private func anchorGame() -> Game? {
+        if let live = stripGames.first(where: { $0.phase == .live }) { return live }
+        let today = Calendar.current.startOfDay(for: Date())
+        if let upcoming = stripGames.first(where: { ($0.startDate ?? .distantPast) >= today }) {
+            return upcoming
+        }
+        return stripGames.last
+    }
+
     private var scheduleLink: some View {
         HStack {
             Spacer()
@@ -427,12 +444,126 @@ private struct TeamHeroCard: View {
     }
 }
 
+// MARK: - Compact game strip card (embedded in hero card)
+
+/// 110×100 strip card that lives inside the hero card. Smaller than
+/// the original standalone strip card — the embedded context means
+/// the team logo and broader info are already on screen, so each
+/// card just needs to communicate opponent + result + when.
+private struct CompactGameStripCard: View {
+    let game: Game
+    let favoriteBDLId: Int
+    let tint: Color
+
+    private var opponent: GameTeam {
+        if game.bdlHomeTeamId == favoriteBDLId {
+            return game.teams.away
+        }
+        return game.teams.home
+    }
+
+    private var isHomeGame: Bool {
+        game.bdlHomeTeamId == favoriteBDLId
+    }
+
+    var body: some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 3) {
+                Text(isHomeGame ? "vs" : "@")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                TeamLogoView(team: opponent.team, size: 24)
+                Text(opponent.team.abbreviation ?? String(opponent.team.name.prefix(3)).uppercased())
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            bodyByPhase
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 8)
+        .frame(width: 110, height: 100)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(.thinMaterial)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(borderColor, lineWidth: game.phase == .live ? 1.2 : 0.5)
+        )
+    }
+
+    private var borderColor: Color {
+        game.phase == .live ? .red.opacity(0.55) : Color.gray.opacity(0.25)
+    }
+
+    @ViewBuilder
+    private var bodyByPhase: some View {
+        switch game.phase {
+        case .final:    finalContent
+        case .live:     liveContent
+        case .preview, .other: upcomingContent
+        }
+    }
+
+    private var finalContent: some View {
+        let didWin = HomeGameUtils.favoriteWon(game: game, favoriteBDLId: favoriteBDLId)
+        let (favScore, oppScore) = HomeGameUtils.scores(game: game, favoriteBDLId: favoriteBDLId)
+        return VStack(spacing: 2) {
+            Text("\(favScore ?? 0)-\(oppScore ?? 0)")
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(.primary)
+                .monospacedDigit()
+            Text(didWin ? "W" : "L")
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 1)
+                .background(Capsule().fill(didWin ? Color.green : Color.red))
+            Text(HomeGameUtils.shortRelativeDate(game: game))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var liveContent: some View {
+        let (favScore, oppScore) = HomeGameUtils.scores(game: game, favoriteBDLId: favoriteBDLId)
+        return VStack(spacing: 2) {
+            Text("\(favScore ?? 0)-\(oppScore ?? 0)")
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(.primary)
+                .monospacedDigit()
+            HStack(spacing: 3) {
+                Circle().fill(.red).frame(width: 5, height: 5)
+                Text("LIVE")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(.red)
+            }
+            Text(HomeGameUtils.inningLine(game: game))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+    }
+
+    private var upcomingContent: some View {
+        VStack(spacing: 2) {
+            Text(HomeGameUtils.localTime(game: game))
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.primary)
+                .monospacedDigit()
+            Text(HomeGameUtils.timezoneAbbreviation())
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Text(HomeGameUtils.shortRelativeDate(game: game))
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(tint)
+        }
+    }
+}
+
 // MARK: - Section header (shared)
 
-/// Single source of truth for the section-header look across the
-/// Home tab. A team-color accent bar on the left + bold title +
-/// optional trailing control. Every section adopts this so the
-/// rhythm down the page stays uniform.
 private struct HomeSectionHeader<Trailing: View>: View {
     let title: String
     let tint: Color
@@ -455,198 +586,6 @@ private struct HomeSectionHeader<Trailing: View>: View {
 extension HomeSectionHeader where Trailing == EmptyView {
     init(title: String, tint: Color) {
         self.init(title: title, tint: tint) { EmptyView() }
-    }
-}
-
-// MARK: - Recent/Upcoming Strip
-
-private struct RecentUpcomingStrip: View {
-    let games: [Game]
-    let favorite: MLBTeamCatalog.Entry
-    let tint: Color
-    let onTap: (Game) -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HomeSectionHeader(title: "Recent & Upcoming", tint: tint)
-
-            if games.isEmpty {
-                Text("No games in window")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 16)
-            } else {
-                ScrollViewReader { proxy in
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 10) {
-                            ForEach(games) { game in
-                                Button { onTap(game) } label: {
-                                    GameStripCard(
-                                        game:          game,
-                                        favoriteBDLId: favorite.bdlTeamId,
-                                    )
-                                }
-                                .buttonStyle(.plain)
-                                .id(game.id)
-                            }
-                        }
-                        .padding(.horizontal, 16)
-                    }
-                    .onAppear {
-                        if let target = anchorGame() {
-                            withAnimation(.easeOut(duration: 0.25)) {
-                                proxy.scrollTo(target.id, anchor: .center)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private func anchorGame() -> Game? {
-        if let live = games.first(where: { $0.phase == .live }) { return live }
-        let today = Calendar.current.startOfDay(for: Date())
-        if let upcoming = games.first(where: { ($0.startDate ?? .distantPast) >= today }) {
-            return upcoming
-        }
-        return games.last
-    }
-}
-
-// MARK: - Game Strip Card
-
-private struct GameStripCard: View {
-    let game: Game
-    let favoriteBDLId: Int
-
-    private var opponent: GameTeam {
-        if game.bdlHomeTeamId == favoriteBDLId {
-            return game.teams.away
-        }
-        return game.teams.home
-    }
-
-    private var isHomeGame: Bool {
-        game.bdlHomeTeamId == favoriteBDLId
-    }
-
-    private var teamColor: Color {
-        guard let lahman = bdlToLahmanTeamId[favoriteBDLId] else { return .accentColor }
-        return TeamColors.color(for: lahman) ?? .accentColor
-    }
-
-    var body: some View {
-        VStack(spacing: 6) {
-            HStack(spacing: 4) {
-                Text(isHomeGame ? "vs" : "@")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                TeamLogoView(team: opponent.team, size: 30)
-                Text(opponent.team.abbreviation ?? String(opponent.team.name.prefix(3)).uppercased())
-                    .font(.caption.weight(.semibold))
-                    .lineLimit(1)
-            }
-            .frame(maxWidth: .infinity)
-
-            bodyByPhase
-        }
-        .padding(.vertical, 10)
-        .padding(.horizontal, 10)
-        .frame(width: 150, height: 138)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(.ultraThinMaterial)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(borderColor, lineWidth: game.phase == .live ? 1.5 : 0.5)
-        )
-        .shadow(color: .black.opacity(0.05), radius: 4, x: 0, y: 2)
-    }
-
-    private var borderColor: Color {
-        game.phase == .live ? .red.opacity(0.5) : Color.gray.opacity(0.25)
-    }
-
-    @ViewBuilder
-    private var bodyByPhase: some View {
-        switch game.phase {
-        case .final:
-            finalContent
-        case .live:
-            liveContent
-        case .preview, .other:
-            upcomingContent
-        }
-    }
-
-    private var finalContent: some View {
-        let didWin = HomeGameUtils.favoriteWon(game: game, favoriteBDLId: favoriteBDLId)
-        let (favScore, oppScore) = HomeGameUtils.scores(game: game, favoriteBDLId: favoriteBDLId)
-        return VStack(spacing: 4) {
-            Text(didWin ? "W" : "L")
-                .font(.caption2.weight(.bold))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 2)
-                .background(Capsule().fill(didWin ? Color.green : Color.red))
-            Text("\(favScore ?? 0)-\(oppScore ?? 0)")
-                .font(.title3.weight(didWin ? .bold : .semibold))
-                .foregroundStyle(didWin ? .primary : .secondary)
-                .monospacedDigit()
-            Text(HomeGameUtils.shortRelativeDate(game: game))
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private var liveContent: some View {
-        let (favScore, oppScore) = HomeGameUtils.scores(game: game, favoriteBDLId: favoriteBDLId)
-        return VStack(spacing: 4) {
-            HStack(spacing: 4) {
-                Circle()
-                    .fill(.red)
-                    .frame(width: 6, height: 6)
-                Text("LIVE")
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(.red)
-            }
-            Text("\(favScore ?? 0)-\(oppScore ?? 0)")
-                .font(.title3.weight(.bold))
-                .foregroundStyle(.primary)
-                .monospacedDigit()
-            Text(HomeGameUtils.inningLine(game: game))
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-        }
-    }
-
-    private var upcomingContent: some View {
-        // Probable pitcher would render below the time when available;
-        // BDL doesn't ship it on the team-games endpoint today, so the
-        // `?? nil` keeps the row absent rather than empty-spacing.
-        let pitcher = opponent.probablePitcher?.fullName
-        return VStack(spacing: 4) {
-            Text(HomeGameUtils.shortRelativeDate(game: game))
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(teamColor)
-            Text(HomeGameUtils.localTime(game: game))
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.primary)
-                .monospacedDigit()
-            Text(HomeGameUtils.timezoneAbbreviation())
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-            if let pitcher {
-                Text("vs \(lastNameWithSuffix(pitcher))")
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .padding(.top, 1)
-            }
-        }
     }
 }
 
@@ -743,8 +682,13 @@ enum HomeGameUtils {
     }()
 }
 
-// MARK: - Team Leaders Section
+// MARK: - Team Leaders Section (compact card)
 
+/// Compact in-card team leaders: batting/pitching segmented toggle
+/// at the top, four stat subsections (HOME RUNS, BATTING AVG, …)
+/// each with the top three players on the favorite team. Tapping a
+/// row navigates to the player profile; "See All Stats ›" opens
+/// the deeper sheet with the full per-category list.
 private struct TeamLeadersSection: View {
     let leaders: TeamLeaders?
     let isLoading: Bool
@@ -752,12 +696,16 @@ private struct TeamLeadersSection: View {
     let onSeeAll: () -> Void
     let onTapPlayer: (PlayerSearchResult) -> Void
 
+    enum Role: String, Hashable { case batting, pitching }
+
+    @State private var role: Role = .batting
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             HomeSectionHeader(title: "Team Leaders", tint: tint) {
                 Button(action: onSeeAll) {
                     HStack(spacing: 3) {
-                        Text("See All")
+                        Text("See All Stats")
                         Image(systemName: "chevron.right")
                             .font(.caption2.weight(.bold))
                     }
@@ -765,89 +713,111 @@ private struct TeamLeadersSection: View {
                     .foregroundStyle(tint)
                 }
             }
-            leaderRow(title: "Batting", cards: leaders?.batting)
-            leaderRow(title: "Pitching", cards: leaders?.pitching)
+
+            VStack(spacing: 12) {
+                Picker("Role", selection: $role) {
+                    Text("Batting").tag(Role.batting)
+                    Text("Pitching").tag(Role.pitching)
+                }
+                .pickerStyle(.segmented)
+
+                if isLoading && leaders == nil {
+                    loadingRows
+                } else {
+                    let groups = (role == .batting ? leaders?.batting : leaders?.pitching) ?? []
+                    if groups.isEmpty {
+                        Text("No leaders yet")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(.vertical, 12)
+                            .frame(maxWidth: .infinity)
+                    } else {
+                        VStack(alignment: .leading, spacing: 14) {
+                            ForEach(groups) { group in
+                                statGroupSection(group)
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(14)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(.ultraThinMaterial)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(tint.opacity(0.25), lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.05), radius: 6, x: 0, y: 2)
+            .padding(.horizontal, 16)
+        }
+    }
+
+    private var loadingRows: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(0..<4, id: \.self) { _ in
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(Color(.systemGray5))
+                    .frame(height: 14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                ForEach(0..<3, id: \.self) { _ in
+                    HStack(spacing: 10) {
+                        Circle()
+                            .fill(Color(.systemGray5))
+                            .frame(width: 28, height: 28)
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(Color(.systemGray5))
+                            .frame(height: 12)
+                        Spacer()
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(Color(.systemGray5))
+                            .frame(width: 36, height: 12)
+                    }
+                }
+            }
         }
     }
 
     @ViewBuilder
-    private func leaderRow(title: String, cards: [LeaderCard]?) -> some View {
+    private func statGroupSection(_ group: StatLeaderGroup) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title.uppercased())
+            Text(statDisplayName(group.stat))
                 .font(.caption2.weight(.bold))
                 .tracking(0.5)
                 .foregroundStyle(.secondary)
-                .padding(.horizontal, 16)
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
-                    if let cards, !cards.isEmpty {
-                        ForEach(cards) { card in
-                            Button { onTapPlayer(card.player) } label: {
-                                LeaderTile(card: card)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    } else if isLoading {
-                        ForEach(0..<4, id: \.self) { _ in LeaderTile.placeholder }
-                    } else {
-                        Text("No leaders yet")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 6)
+            VStack(spacing: 4) {
+                ForEach(Array(group.cards.enumerated()), id: \.offset) { idx, card in
+                    Button {
+                        onTapPlayer(card.player)
+                    } label: {
+                        leaderRow(rank: idx + 1, card: card)
                     }
+                    .buttonStyle(.plain)
                 }
-                .padding(.horizontal, 16)
             }
         }
     }
-}
 
-private struct LeaderTile: View {
-    let card: LeaderCard
-
-    var body: some View {
-        VStack(spacing: 6) {
-            headshot(url: card.player.largeHeadshotURL)
-            Text(card.stat.uppercased())
-                .font(.caption2.weight(.bold))
-                .foregroundStyle(.secondary)
-            Text(LeaderTile.formatValue(card.value, stat: card.stat))
-                .font(.title3.weight(.bold))
-                .foregroundStyle(.primary)
+    private func leaderRow(rank: Int, card: LeaderCard) -> some View {
+        HStack(spacing: 10) {
+            Text("#\(rank)")
+                .font(.caption.weight(.bold))
                 .monospacedDigit()
-            Text(LeaderTile.lastName(from: card.player.name))
-                .font(.caption.weight(.semibold))
+                .foregroundStyle(rank == 1 ? tint : .secondary)
+                .frame(width: 24, alignment: .leading)
+            headshot(url: card.player.largeHeadshotURL)
+            Text(card.player.name)
+                .font(.subheadline.weight(.medium))
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
+            Spacer(minLength: 8)
+            Text(formatLeaderValue(card.value, stat: card.stat))
+                .font(.subheadline.weight(.bold))
+                .monospacedDigit()
+                .foregroundStyle(.primary)
         }
-        .padding(.vertical, 10)
-        .padding(.horizontal, 8)
-        .frame(width: 104, height: 148)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(.ultraThinMaterial)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(.quaternary, lineWidth: 0.5)
-        )
-    }
-
-    static var placeholder: some View {
-        VStack(spacing: 6) {
-            Circle().fill(Color(.systemGray5)).frame(width: 44, height: 44)
-            RoundedRectangle(cornerRadius: 4).fill(Color(.systemGray5)).frame(width: 28, height: 8)
-            RoundedRectangle(cornerRadius: 4).fill(Color(.systemGray5)).frame(width: 56, height: 14)
-            RoundedRectangle(cornerRadius: 4).fill(Color(.systemGray5)).frame(width: 64, height: 10)
-        }
-        .padding(.vertical, 10)
-        .padding(.horizontal, 8)
-        .frame(width: 104, height: 148)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(.ultraThinMaterial)
-        )
+        .contentShape(Rectangle())
     }
 
     private func headshot(url: URL?) -> some View {
@@ -860,50 +830,59 @@ private struct LeaderTile: View {
                     .foregroundStyle(.tertiary)
             }
         }
-        .frame(width: 44, height: 44)
+        .frame(width: 28, height: 28)
         .background(Circle().fill(.ultraThinMaterial))
         .clipShape(Circle())
         .overlay(Circle().strokeBorder(.quaternary, lineWidth: 0.5))
     }
+}
 
-    static func formatValue(_ v: Double?, stat: String) -> String {
-        guard let v else { return "—" }
-        switch stat {
-        case "AVG", "OBP", "SLG", "OPS":
-            // Baseball convention strips the leading zero — ".305"
-            // not "0.305". Matches the same strip applied in the
-            // See-All team-leaders sheet, the career table, and
-            // every other batting-rate surface in the app.
-            let s = String(format: "%.3f", v)
-            if s.hasPrefix("0.")  { return String(s.dropFirst()) }
-            if s.hasPrefix("-0.") { return "-" + String(s.dropFirst(2)) }
-            return s
-        case "ERA", "WHIP", "FIP":
-            return String(format: "%.2f", v)
-        case "HR", "RBI", "SO", "W", "L", "SV", "H", "BB", "R", "SB",
-             "2B", "3B", "CG", "SHO":
-            return String(Int(v.rounded()))
-        case "IP":
-            // Baseball-notation innings: the decimal part is OUTS,
-            // not a real fraction. 120.333 (120 + 1/3 IP) renders
-            // as "120.1"; 120.667 as "120.2"; 120.0 as "120.0".
-            // Thresholds chosen below 1/3 (0.333) and 2/3 (0.667)
-            // so a stored value rounded slightly off-target still
-            // resolves to the right outs bucket.
-            let whole = Int(v.rounded(.down))
-            let frac  = v - Double(whole)
-            let outs: String
-            if      frac < 0.17 { outs = ".0" }
-            else if frac < 0.5  { outs = ".1" }
-            else                { outs = ".2" }
-            return "\(whole)\(outs)"
-        default:
-            return String(format: "%.1f", v)
-        }
+/// Long-form display name for the compact leader section headers.
+/// Falls through to uppercased stat key for anything not in the
+/// curated list (so future additions don't crash; they just get
+/// a less-pretty label).
+private func statDisplayName(_ stat: String) -> String {
+    switch stat {
+    case "AVG":  return "BATTING AVG"
+    case "HR":   return "HOME RUNS"
+    case "RBI":  return "RBI"
+    case "OPS":  return "OPS"
+    case "ERA":  return "ERA"
+    case "W":    return "WINS"
+    case "SO":   return "STRIKEOUTS"
+    case "WHIP": return "WHIP"
+    default:     return stat.uppercased()
     }
+}
 
-    static func lastName(from full: String) -> String {
-        lastNameWithSuffix(full)
+/// Shared value formatter for the compact leader rows (and used by
+/// `TeamLeadersSheet`'s static helper too — kept in sync). Returns
+/// "—" for nil, formats batting rates without the leading zero,
+/// pitcher rates to two decimals, IP in baseball outs notation, and
+/// every counting stat as a plain integer.
+private func formatLeaderValue(_ v: Double?, stat: String) -> String {
+    guard let v else { return "—" }
+    switch stat {
+    case "AVG", "OBP", "SLG", "OPS":
+        let s = String(format: "%.3f", v)
+        if s.hasPrefix("0.")  { return String(s.dropFirst()) }
+        if s.hasPrefix("-0.") { return "-" + String(s.dropFirst(2)) }
+        return s
+    case "ERA", "WHIP", "FIP":
+        return String(format: "%.2f", v)
+    case "HR", "RBI", "SO", "W", "L", "SV", "H", "BB", "R", "SB",
+         "2B", "3B", "CG", "SHO":
+        return String(Int(v.rounded()))
+    case "IP":
+        let whole = Int(v.rounded(.down))
+        let frac  = v - Double(whole)
+        let outs: String
+        if      frac < 0.17 { outs = ".0" }
+        else if frac < 0.5  { outs = ".1" }
+        else                { outs = ".2" }
+        return "\(whole)\(outs)"
+    default:
+        return String(format: "%.1f", v)
     }
 }
 

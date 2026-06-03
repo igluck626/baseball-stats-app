@@ -231,32 +231,29 @@ final class HomeViewModel: ObservableObject {
 
     // MARK: - Team Leaders
 
-    /// Stats surfaced on the Home tab's leader strip. Order in the
-    /// arrays drives the on-screen order of the cards — the strip
-    /// scrolls horizontally so the list can be long without
-    /// crowding the page.
-    private static let battingLeaderStats:  [String] = [
-        "AVG", "HR", "RBI", "OPS", "SLG", "OBP", "SB",
-        "H", "R", "BB", "WAR", "2B", "3B", "SO",
-    ]
-    private static let pitchingLeaderStats: [String] = [
-        "ERA", "W", "SO", "WHIP", "SV", "IP", "WAR",
-        "BB", "H", "HR", "SO/9", "CG", "SHO",
-    ]
+    /// Stats surfaced on the Home tab's compact leader card. Order
+    /// drives the on-screen section order. Only four per role —
+    /// the See-All Stats sheet (`TeamLeadersSheet.battingStats`/
+    /// `pitchingStats`) carries the longer list for users who want
+    /// the deeper breakdown.
+    private static let battingLeaderStats:  [String] = ["AVG", "HR", "RBI", "OPS"]
+    private static let pitchingLeaderStats: [String] = ["ERA", "W", "SO", "WHIP"]
 
-    /// Fetch the top-1 row for each of the eight stat keys, scoped to
-    /// the favorite team. Each call is a single `/leaderboards` hit
-    /// with `team=<Lahman code>&limit=1`. Fans them out in parallel
-    /// via task group; preserves input order via index pairs.
+    /// Fetch the top-3 rows for each of the four batting + four
+    /// pitching stats, scoped to the favorite team. Each call is a
+    /// single `/leaderboards?team=<Lahman>&limit=3` hit; fans out
+    /// in parallel via task group and preserves input order so the
+    /// compact card lays the sections out under their declared
+    /// header order.
     func loadTeamLeaders(bdlTeamId: Int) async {
         guard let lahmanCode = bdlToLahmanTeamId[bdlTeamId] else { return }
         let year = Calendar.current.component(.year, from: Date())
         isLoadingLeaders = true
-        async let batting  = Self.fetchLeaderRow(
+        async let batting  = Self.fetchLeaderGroups(
             stats: Self.battingLeaderStats, year: year,
             playerType: "batter", team: lahmanCode, api: api,
         )
-        async let pitching = Self.fetchLeaderRow(
+        async let pitching = Self.fetchLeaderGroups(
             stats: Self.pitchingLeaderStats, year: year,
             playerType: "pitcher", team: lahmanCode, api: api,
         )
@@ -265,73 +262,53 @@ final class HomeViewModel: ObservableObject {
         isLoadingLeaders = false
     }
 
-    /// Minimum innings pitched for ERA to count. The backend already
-    /// applies a pro-rated 162-IP qualifier, but in the first weeks
-    /// of a season the pro-rated quota can drop below 10 (4-5 IP
-    /// over one start), and a 0.00 ERA on 3 IP isn't a meaningful
-    /// "team leader". 10 is a conservative floor — a closer 2 weeks
-    /// in will be qualified, a one-start spot starter won't.
-    nonisolated private static let eraMinimumIP: Double = 10
-
-    nonisolated private static func fetchLeaderRow(
+    nonisolated private static func fetchLeaderGroups(
         stats: [String], year: Int, playerType: String,
         team: String, api: APIClient,
-    ) async -> [LeaderCard] {
-        await withTaskGroup(of: (Int, LeaderCard?).self) { group in
+    ) async -> [StatLeaderGroup] {
+        await withTaskGroup(of: (Int, StatLeaderGroup?).self) { group in
             for (i, stat) in stats.enumerated() {
-                let capturedStat = stat   // explicit capture so the
-                let capturedIdx  = i      // task sees this iter's value
+                let capturedStat = stat
+                let capturedIdx  = i
                 group.addTask {
-                    let card = await fetchOneLeaderCard(
+                    let cards = await fetchTop3(
                         stat:       capturedStat,
                         year:       year,
                         playerType: playerType,
                         team:       team,
                         api:        api,
                     )
-                    return (capturedIdx, card)
+                    return (capturedIdx,
+                            cards.isEmpty
+                                ? nil
+                                : StatLeaderGroup(stat: capturedStat, cards: cards))
                 }
             }
-            var pairs: [(Int, LeaderCard)] = []
-            for await (i, card) in group {
-                if let c = card { pairs.append((i, c)) }
+            var pairs: [(Int, StatLeaderGroup)] = []
+            for await (i, g) in group {
+                if let g { pairs.append((i, g)) }
             }
             return pairs.sorted { $0.0 < $1.0 }.map { $0.1 }
         }
     }
 
-    nonisolated private static func fetchOneLeaderCard(
+    nonisolated private static func fetchTop3(
         stat: String, year: Int, playerType: String,
         team: String, api: APIClient,
-    ) async -> LeaderCard? {
-        // ERA gets a separate path: fetch a deeper top-10 slice and
-        // walk it until we find a pitcher who clears the IP floor.
-        // The other stats are pure top-1 lookups.
-        let limit = (stat == "ERA") ? 10 : 1
+    ) async -> [LeaderCard] {
+        // No ERA IP-floor walk in the top-3 path: surfacing three
+        // candidates with their actual values lets the user spot
+        // tiny-sample outliers themselves. The backend's pro-rated
+        // qualifier still applies; this is just a different shape.
         let outer = try? await api.getLeaderboard(
-            stat: stat, year: year,
-            playerType: playerType,
-            team: team, limit: limit,
+            stat: stat, year: year, playerType: playerType,
+            team: team, limit: 3,
         )
         let inner: LeaderboardResponse? = outer ?? nil
         let candidates = inner?.leaders ?? []
-        guard !candidates.isEmpty else { return nil }
-        if stat == "ERA" {
-            for candidate in candidates {
-                let cs = (try? await api.getPitcherCurrentStats(
-                    playerId: candidate.player.player_id,
-                )) ?? nil
-                let ip = cs?.standard?.IP ?? 0
-                if ip >= eraMinimumIP {
-                    return LeaderCard(
-                        stat: stat, value: candidate.value, player: candidate.player,
-                    )
-                }
-            }
-            return nil
+        return candidates.map {
+            LeaderCard(stat: stat, value: $0.value, player: $0.player)
         }
-        let top = candidates[0]
-        return LeaderCard(stat: stat, value: top.value, player: top.player)
     }
 
     /// Fetch the top-10 leaderboard rows for a single stat, scoped to
@@ -449,9 +426,20 @@ struct LeaderCard: Identifiable, Hashable {
     var id: String { "\(stat)-\(player.player_id)" }
 }
 
+/// Three leaders for a single stat. Used by the compact home-card
+/// section so each stat's section can render its own ordered rows.
+struct StatLeaderGroup: Identifiable, Hashable {
+    let stat: String
+    /// Up to three cards in rank order. May be empty if the backend
+    /// returned no qualifying rows for this stat (cold-start, low
+    /// PA / IP threshold, etc.).
+    let cards: [LeaderCard]
+    var id: String { stat }
+}
+
 struct TeamLeaders: Hashable {
-    let batting:  [LeaderCard]
-    let pitching: [LeaderCard]
+    let batting:  [StatLeaderGroup]
+    let pitching: [StatLeaderGroup]
 }
 
 struct FavoritePlayerDisplay: Identifiable, Hashable {
