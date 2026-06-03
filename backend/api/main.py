@@ -3150,13 +3150,43 @@ def admin_load_award_shares():
 
     started = time.time()
     try:
+        # Build the Chadwick bbref→mlbam bridge, then supplement it
+        # with rows from our own `players` and `pitchers` tables.
+        # Manually-added historical players (e.g. R.A. Dickey added
+        # via `/admin/add-historical-player`) carry a `bbref_id` on
+        # their bio row but typically don't have a Chadwick CSV entry
+        # — without the supplement, their award-share votes silently
+        # skip at `_load_award_shares`'s `bridge.get(...) is None`
+        # check. Only mappings missing from Chadwick are added so the
+        # canonical bridge stays the source of truth where it has
+        # coverage.
         bridge = lahman_load._load_chadwick_bridge()
+        supplemented_from_db = 0
+        with connection.get_session() as db:
+            for row in (
+                db.query(Player.bbref_id, Player.player_id)
+                  .filter(Player.bbref_id.isnot(None))
+                  .all()
+            ):
+                if row.bbref_id and row.bbref_id not in bridge:
+                    bridge[row.bbref_id] = row.player_id
+                    supplemented_from_db += 1
+            for row in (
+                db.query(Pitcher.bbref_id, Pitcher.player_id)
+                  .filter(Pitcher.bbref_id.isnot(None))
+                  .all()
+            ):
+                if row.bbref_id and row.bbref_id not in bridge:
+                    bridge[row.bbref_id] = row.player_id
+                    supplemented_from_db += 1
+
         rows_loaded = lahman_load._load_award_shares(bridge)
         duration = round(time.time() - started, 2)
         return {
-            "status":           "done",
-            "rows_loaded":      rows_loaded,
-            "duration_seconds": duration,
+            "status":               "done",
+            "rows_loaded":          rows_loaded,
+            "supplemented_from_db": supplemented_from_db,
+            "duration_seconds":     duration,
         }
     except Exception as exc:
         # Log to server stderr so Railway captures it AND echo the
