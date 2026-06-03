@@ -1428,6 +1428,89 @@ def admin_reset_player_season(
     }
 
 
+@app.post("/admin/add-historical-player")
+def admin_add_historical_player(
+    mlbam_id:    int  = Query(..., description="MLBAM player id (our primary key)."),
+    bbref_id:    str  = Query(..., description="Baseball Reference id, e.g. 'dickera01'."),
+    full_name:   str  = Query(..., description="Player's full name."),
+    position:    str  = Query(..., description="Position abbrev (e.g. 'SP', '1B')."),
+    bio_type:    str  = Query(..., description="'batter' or 'pitcher' — picks the bio table."),
+    debut_year:  int  = Query(..., description="MLB debut year — written to `mlb_debut`."),
+    last_season: int  = Query(..., description="Last MLB season year — written to `mlb_last_season`."),
+    birth_year:  int | None = Query(None),
+    birth_month: int | None = Query(None),
+    birth_day:   int | None = Query(None),
+    throws:      str | None = Query(None, description="'R' / 'L'."),
+    bats:        str | None = Query(None, description="'R' / 'L' / 'B'."),
+):
+    """Insert a bio row for a historical player Lahman doesn't ship
+    (e.g. R.A. Dickey, missing 19th-century players, etc.) so the
+    awards / stats / search surfaces have a record to point at.
+
+    `headshot_url` is NOT a stored column — every API response derives
+    it from the row's `player_id` via
+    `data_service._headshot_url(...)`, so the headshot lights up
+    automatically once the bio is inserted. The derived URL is
+    returned in the response body for the caller's reference.
+
+    After running this, call `/admin/backfill-player-history`
+    (career stats) or `/admin/load-award-shares` (just vote rows)
+    to populate the player's downstream tables.
+
+    Returns 409 if a bio row for this `mlbam_id` already exists in
+    the chosen table — re-running is intentionally not idempotent
+    so the caller can spot stale data.
+    """
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    if bio_type not in ("batter", "pitcher"):
+        raise HTTPException(
+            status_code=400,
+            detail="bio_type must be 'batter' or 'pitcher'",
+        )
+
+    model = Pitcher if bio_type == "pitcher" else Player
+    with connection.get_session() as db:
+        existing = db.query(model).filter(model.player_id == mlbam_id).first()
+        if existing is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"{bio_type} row already exists for mlbam_id {mlbam_id}",
+            )
+        row = model(
+            player_id       = mlbam_id,
+            name            = full_name,
+            bbref_id        = bbref_id,
+            mlb_debut       = debut_year,
+            mlb_last_season = last_season,
+            position        = position,
+            bats            = bats,
+            throws          = throws,
+            birth_year      = birth_year,
+            birth_month     = birth_month,
+            birth_day       = birth_day,
+        )
+        db.add(row)
+        db.commit()
+
+    return {
+        "status":          "ok",
+        "bio_type":        bio_type,
+        "player_id":       mlbam_id,
+        "bbref_id":        bbref_id,
+        "name":            full_name,
+        "position":        position,
+        "mlb_debut":       debut_year,
+        "mlb_last_season": last_season,
+        "birth_year":      birth_year,
+        "birth_month":     birth_month,
+        "birth_day":       birth_day,
+        "throws":          throws,
+        "bats":            bats,
+        "headshot_url":    data_service._headshot_url(mlbam_id),
+    }
+
+
 @app.get("/admin/dob-coverage")
 def admin_dob_coverage():
     """Diagnostic: report birth-date completeness across both bio
