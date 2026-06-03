@@ -883,6 +883,20 @@ private struct LeaderTile: View {
         case "HR", "RBI", "SO", "W", "L", "SV", "H", "BB", "R", "SB",
              "2B", "3B", "CG", "SHO":
             return String(Int(v.rounded()))
+        case "IP":
+            // Baseball-notation innings: the decimal part is OUTS,
+            // not a real fraction. 120.333 (120 + 1/3 IP) renders
+            // as "120.1"; 120.667 as "120.2"; 120.0 as "120.0".
+            // Thresholds chosen below 1/3 (0.333) and 2/3 (0.667)
+            // so a stored value rounded slightly off-target still
+            // resolves to the right outs bucket.
+            let whole = Int(v.rounded(.down))
+            let frac  = v - Double(whole)
+            let outs: String
+            if      frac < 0.17 { outs = ".0" }
+            else if frac < 0.5  { outs = ".1" }
+            else                { outs = ".2" }
+            return "\(whole)\(outs)"
         default:
             return String(format: "%.1f", v)
         }

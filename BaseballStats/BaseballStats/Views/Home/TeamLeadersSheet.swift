@@ -258,6 +258,18 @@ struct TeamLeadersSheet: View {
         case "HR", "RBI", "SO", "W", "L", "SV", "H", "BB", "R", "SB",
              "2B", "3B", "CG", "SHO":
             return String(Int(v.rounded()))
+        case "IP":
+            // Baseball-notation innings: the decimal is OUTS, not
+            // a true fraction. 120.333 → "120.1", 120.667 → "120.2",
+            // 120.0 → "120.0". Same conversion as the Home-tab
+            // leader strip.
+            let whole = Int(v.rounded(.down))
+            let frac  = v - Double(whole)
+            let outs: String
+            if      frac < 0.17 { outs = ".0" }
+            else if frac < 0.5  { outs = ".1" }
+            else                { outs = ".2" }
+            return "\(whole)\(outs)"
         default:
             return String(format: "%.1f", v)
         }
