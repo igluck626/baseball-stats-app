@@ -1535,19 +1535,24 @@ def admin_reload_player_lahman(player_id: int):
     if not connection.db_available():
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
 
+    # Pull the bbref_id + side flags out of the ORM rows BEFORE the
+    # session closes — touching `player_row.bbref_id` after the
+    # `with` block exits would raise `DetachedInstanceError` because
+    # SQLAlchemy expires the row's attributes on session close.
     with connection.get_session() as db:
         player_row  = db.query(Player).filter(Player.player_id == player_id).first()
         pitcher_row = db.query(Pitcher).filter(Pitcher.player_id == player_id).first()
+        if player_row is None and pitcher_row is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No bio row in players or pitchers for player_id {player_id}",
+            )
+        # `bbref_id` is the join key into Lahman's playerID column.
+        # Both bio sides carry the same one when both exist.
+        bbref_id    = (player_row.bbref_id if player_row else pitcher_row.bbref_id)
+        has_batter  = player_row  is not None
+        has_pitcher = pitcher_row is not None
 
-    if player_row is None and pitcher_row is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No bio row in players or pitchers for player_id {player_id}",
-        )
-
-    # `bbref_id` is the join key into Lahman's playerID column.
-    # Both bio sides should carry the same one when both exist.
-    bbref_id = (player_row.bbref_id if player_row else pitcher_row.bbref_id)
     if not bbref_id:
         raise HTTPException(
             status_code=400,
@@ -1563,7 +1568,7 @@ def admin_reload_player_lahman(player_id: int):
     years_batting:  list[int] = []
     years_pitching: list[int] = []
 
-    if player_row is not None:
+    if has_batter:
         seasons = _lahman_batting_seasons_for_bbref(bbref_id)
         if seasons:
             with connection.get_session() as db:
@@ -1571,7 +1576,7 @@ def admin_reload_player_lahman(player_id: int):
             batting_saved = len(seasons)
             years_batting = sorted(s["year"] for s in seasons)
 
-    if pitcher_row is not None:
+    if has_pitcher:
         seasons = _lahman_pitching_seasons_for_bbref(bbref_id)
         if seasons:
             with connection.get_session() as db:
