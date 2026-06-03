@@ -414,12 +414,6 @@ final class PlayerViewModel: ObservableObject {
                 break
             }
         }
-        // Publish the team-live signal even if there's nothing to
-        // overlay yet — gates the refresh-loop continuation so a
-        // bench player whose team is mid-game keeps polling until
-        // they appear.
-        teamHasLiveGame = liveOnSchedule
-
         // Post-midnight-ET fallback. When nothing landed under
         // "today ET", a player's evening West-Coast game may have
         // shipped under yesterday's ET date (10pm PT == 1am ET ==
@@ -467,6 +461,14 @@ final class PlayerViewModel: ObservableObject {
                 }
             }
         }
+        // Publish the team-live signal after BOTH the today-ET and
+        // yesterday-ET fallback loops have run — gates the refresh-
+        // loop continuation. A late West Coast game discovered in
+        // the fallback (10pm PT first-pitch == 1am ET == yesterday's
+        // ET date) now keeps the 60s poll alive instead of being
+        // silently dropped by a flag that had already been written
+        // before the fallback executed.
+        teamHasLiveGame = liveOnSchedule
 
         guard !eligible.isEmpty else { return }
         // BDL player id is the join key on the stats response. If
