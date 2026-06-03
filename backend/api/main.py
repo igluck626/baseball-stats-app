@@ -1,5 +1,6 @@
 """Baseball stats API."""
 
+import csv
 import datetime
 import logging
 import os
@@ -1509,6 +1510,248 @@ def admin_add_historical_player(
         "bats":            bats,
         "headshot_url":    data_service._headshot_url(mlbam_id),
     }
+
+
+@app.post("/admin/reload-player-lahman/{player_id}")
+def admin_reload_player_lahman(player_id: int):
+    """Load (or refresh) Lahman career stats for a single player by
+    `bbref_id` filter against Batting.csv / Pitching.csv. Designed as
+    the follow-up to `/admin/add-historical-player` — the bio row
+    lands first via that endpoint, then this one pulls the player's
+    actual seasons in.
+
+    Auto-detects the side to load: if a `players` row exists, scans
+    Batting.csv; if a `pitchers` row exists, scans Pitching.csv;
+    two-way bio rows on both sides get both passes (rare, but the
+    schema supports it). Returns 404 when neither bio row is found.
+
+    Stints within a year are aggregated into a single season row
+    (matches the existing `_read_batting_aggregated` /
+    `_read_pitching_aggregated` semantics). Unlike the full Lahman
+    loader, this endpoint deliberately does NOT apply CUTOFF_YEAR —
+    a manually-added historical player typically has zero bref-
+    sourced rows to collide with, and we want every Lahman season
+    they have."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+
+    with connection.get_session() as db:
+        player_row  = db.query(Player).filter(Player.player_id == player_id).first()
+        pitcher_row = db.query(Pitcher).filter(Pitcher.player_id == player_id).first()
+
+    if player_row is None and pitcher_row is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No bio row in players or pitchers for player_id {player_id}",
+        )
+
+    # `bbref_id` is the join key into Lahman's playerID column.
+    # Both bio sides should carry the same one when both exist.
+    bbref_id = (player_row.bbref_id if player_row else pitcher_row.bbref_id)
+    if not bbref_id:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"player_id {player_id} has no bbref_id — Lahman CSVs "
+                "are keyed on bbref/playerID, so we can't locate rows "
+                "without it."
+            ),
+        )
+
+    batting_saved  = 0
+    pitching_saved = 0
+    years_batting:  list[int] = []
+    years_pitching: list[int] = []
+
+    if player_row is not None:
+        seasons = _lahman_batting_seasons_for_bbref(bbref_id)
+        if seasons:
+            with connection.get_session() as db:
+                crud.save_player_seasons(db, player_id, seasons)
+            batting_saved = len(seasons)
+            years_batting = sorted(s["year"] for s in seasons)
+
+    if pitcher_row is not None:
+        seasons = _lahman_pitching_seasons_for_bbref(bbref_id)
+        if seasons:
+            with connection.get_session() as db:
+                crud.save_pitcher_seasons(db, player_id, seasons)
+            pitching_saved = len(seasons)
+            years_pitching = sorted(s["year"] for s in seasons)
+
+    return {
+        "status":          "ok",
+        "player_id":       player_id,
+        "bbref_id":        bbref_id,
+        "batting_saved":   batting_saved,
+        "pitching_saved":  pitching_saved,
+        "years_batting":   years_batting,
+        "years_pitching":  years_pitching,
+    }
+
+
+# Stint aggregation + derived-stat layout that follows
+# `lahman_load._read_batting_aggregated` and the per-row `_load_batting`
+# builder, but scoped to a single bbref id and without the CUTOFF_YEAR
+# gate. Stored here instead of as a generic helper in `lahman_load.py`
+# because the rest of that module is full-table-scan oriented; this
+# is the only single-player variant the codebase needs today.
+def _lahman_batting_seasons_for_bbref(bbref_id: str) -> list[dict]:
+    by_year: dict[int, dict] = {}
+    with open(lahman_load.BATTING_CSV, newline="", encoding="utf-8-sig") as fh:
+        for row in csv.DictReader(fh):
+            if row.get("playerID") != bbref_id:
+                continue
+            year  = int(row["yearID"])
+            stint = int(row["stint"])
+            agg = by_year.setdefault(year, {
+                "stint":   0, "teamID": "", "lgID": "",
+                "G": 0, "AB": 0, "R": 0, "H": 0, "2B": 0, "3B": 0, "HR": 0,
+                "RBI": 0.0, "SB": 0.0, "CS": 0.0, "BB": 0, "SO": 0.0,
+                "IBB": 0.0, "HBP": 0.0, "SH": 0.0, "SF": 0.0, "GIDP": 0.0,
+            })
+            agg["G"]    += lahman_load._i(row["G"])
+            agg["AB"]   += lahman_load._i(row["AB"])
+            agg["R"]    += lahman_load._i(row["R"])
+            agg["H"]    += lahman_load._i(row["H"])
+            agg["2B"]   += lahman_load._i(row["2B"])
+            agg["3B"]   += lahman_load._i(row["3B"])
+            agg["HR"]   += lahman_load._i(row["HR"])
+            agg["RBI"]  += lahman_load._f(row["RBI"])
+            agg["SB"]   += lahman_load._f(row["SB"])
+            agg["CS"]   += lahman_load._f(row["CS"])
+            agg["BB"]   += lahman_load._i(row["BB"])
+            agg["SO"]   += lahman_load._f(row["SO"])
+            agg["IBB"]  += lahman_load._f(row["IBB"])
+            agg["HBP"]  += lahman_load._f(row["HBP"])
+            agg["SH"]   += lahman_load._f(row["SH"])
+            agg["SF"]   += lahman_load._f(row["SF"])
+            agg["GIDP"] += lahman_load._f(row.get("GIDP"))
+            if stint >= agg["stint"]:
+                agg["stint"]  = stint
+                agg["teamID"] = row["teamID"]
+                agg["lgID"]   = row["lgID"]
+
+    seasons: list[dict] = []
+    for year, agg in by_year.items():
+        derived = lahman_load._batting_derived(
+            ab=agg["AB"], h=agg["H"],
+            doubles=agg["2B"], triples=agg["3B"], hr=agg["HR"],
+            bb=agg["BB"], ibb=agg["IBB"], hbp=agg["HBP"],
+            so=agg["SO"], sf=agg["SF"], sh=agg["SH"],
+        )
+        seasons.append({
+            "year":    year,
+            "team":    agg["teamID"] or None,
+            "league":  agg["lgID"] or None,
+            "G":       agg["G"],
+            "AB":      agg["AB"],
+            "R":       agg["R"],
+            "H":       agg["H"],
+            "doubles": agg["2B"],
+            "triples": agg["3B"],
+            "HR":      agg["HR"],
+            "RBI":     int(agg["RBI"]),
+            "SB":      int(agg["SB"]),
+            "CS":      int(agg["CS"]),
+            "BB":      agg["BB"],
+            "SO":      int(agg["SO"]),
+            "IBB":     int(agg["IBB"]),
+            "HBP":     int(agg["HBP"]),
+            "SH":      int(agg["SH"]),
+            "SF":      int(agg["SF"]),
+            "GIDP":    int(agg["GIDP"]),
+            "TB":      (int(agg["H"]) + int(agg["2B"])
+                        + 2 * int(agg["3B"]) + 3 * int(agg["HR"])),
+            **derived,
+        })
+    return seasons
+
+
+def _lahman_pitching_seasons_for_bbref(bbref_id: str) -> list[dict]:
+    by_year: dict[int, dict] = {}
+    with open(lahman_load.PITCHING_CSV, newline="", encoding="utf-8-sig") as fh:
+        for row in csv.DictReader(fh):
+            if row.get("playerID") != bbref_id:
+                continue
+            year  = int(row["yearID"])
+            stint = int(row["stint"])
+            agg = by_year.setdefault(year, {
+                "stint":  0, "teamID": "", "lgID": "",
+                "W": 0, "L": 0, "G": 0, "GS": 0, "CG": 0, "SHO": 0, "SV": 0,
+                "IPouts": 0, "H": 0, "ER": 0, "R": 0, "HR": 0, "BB": 0, "SO": 0,
+                "IBB": 0.0, "WP": 0, "BFP": 0.0, "HBP": 0.0, "BK": 0, "GF": 0,
+                "SH": 0.0, "SF": 0.0, "GIDP": 0.0,
+            })
+            agg["W"]      += lahman_load._i(row["W"])
+            agg["L"]      += lahman_load._i(row["L"])
+            agg["G"]      += lahman_load._i(row["G"])
+            agg["GS"]     += lahman_load._i(row["GS"])
+            agg["CG"]     += lahman_load._i(row.get("CG"))
+            agg["SHO"]    += lahman_load._i(row.get("SHO"))
+            agg["SV"]     += lahman_load._i(row.get("SV"))
+            agg["IPouts"] += lahman_load._i(row["IPouts"])
+            agg["H"]      += lahman_load._i(row["H"])
+            agg["ER"]     += lahman_load._i(row["ER"])
+            agg["R"]      += lahman_load._i(row.get("R"))
+            agg["HR"]     += lahman_load._i(row["HR"])
+            agg["BB"]     += lahman_load._i(row["BB"])
+            agg["SO"]     += lahman_load._i(row["SO"])
+            agg["IBB"]    += lahman_load._f(row.get("IBB"))
+            agg["WP"]     += lahman_load._i(row.get("WP"))
+            agg["BFP"]    += lahman_load._f(row["BFP"])
+            agg["HBP"]    += lahman_load._f(row["HBP"])
+            agg["BK"]     += lahman_load._i(row.get("BK"))
+            agg["GF"]     += lahman_load._i(row.get("GF"))
+            agg["SH"]     += lahman_load._f(row.get("SH"))
+            agg["SF"]     += lahman_load._f(row.get("SF"))
+            agg["GIDP"]   += lahman_load._f(row.get("GIDP"))
+            if stint >= agg["stint"]:
+                agg["stint"]  = stint
+                agg["teamID"] = row["teamID"]
+                agg["lgID"]   = row["lgID"]
+
+    seasons: list[dict] = []
+    for year, agg in by_year.items():
+        derived = lahman_load._pitching_derived(
+            ipouts=agg["IPouts"], h=agg["H"], hr=agg["HR"],
+            bb=agg["BB"], hbp=agg["HBP"], so=agg["SO"], bfp=agg["BFP"],
+        )
+        ip_dec = agg["IPouts"] / 3 if agg["IPouts"] > 0 else 0.0
+        era = round(agg["ER"] * 9 / ip_dec, 2) if ip_dec > 0 else None
+        ab_faced = agg["BFP"] - agg["BB"] - agg["HBP"] - agg["SH"] - agg["SF"]
+        baopp = round(agg["H"] / ab_faced, 3) if ab_faced > 0 else None
+        seasons.append({
+            "year":    year,
+            "team":    agg["teamID"] or None,
+            "league":  agg["lgID"] or None,
+            "W":       agg["W"],
+            "L":       agg["L"],
+            "G":       agg["G"],
+            "GS":      agg["GS"],
+            "CG":      agg["CG"],
+            "SHO":     agg["SHO"],
+            "SV":      agg["SV"],
+            "GF":      agg["GF"],
+            "H":       agg["H"],
+            "ER":      agg["ER"],
+            "R":       agg["R"],
+            "HR":      agg["HR"],
+            "BB":      agg["BB"],
+            "IBB":     int(agg["IBB"]),
+            "SO":      agg["SO"],
+            "HBP":     int(agg["HBP"]),
+            "WP":      agg["WP"],
+            "BK":      agg["BK"],
+            "BFP":     int(agg["BFP"]),
+            "SH":      int(agg["SH"]),
+            "SF":      int(agg["SF"]),
+            "GIDP":    int(agg["GIDP"]),
+            "ERA":     era,
+            "BAOpp":   baopp,
+            **derived,
+        })
+    return seasons
 
 
 @app.get("/admin/dob-coverage")
