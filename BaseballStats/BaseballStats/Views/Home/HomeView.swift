@@ -914,178 +914,35 @@ func formatLeaderValue(_ v: Double?, stat: String) -> String {
     }
 }
 
-// MARK: - Roster Section (compact strip)
+// MARK: - Roster Section (header-only entry point)
 
-/// Compact horizontal strip of every player on the active roster.
-/// Players are sorted into position-group buckets (SP, RP, C, IF,
-/// OF, DH) so the strip reads in baseball-rotation order rather
-/// than alphabetically. Tapping a card pushes the resolved profile
-/// onto the parent's nav path; the "See All" button opens the
-/// fuller grouped sheet. Empty / loading state hides the strip's
-/// scroll content but keeps the header (with the See-All button)
-/// visible so the user knows the section exists.
+/// Header-only entry point for the active-roster surface. Renders a
+/// `HomeSectionHeader` with a trailing "See All ›" button that opens
+/// `RosterSheet` — the sheet does the actual table rendering. We
+/// dropped the inline preview cards: they didn't add information
+/// the section header doesn't already imply.
 private struct RosterSection: View {
     let roster: [RosterPlayer]
     let isLoading: Bool
     let tint: Color
     let onSeeAll: () -> Void
+    /// Retained on the API surface to match the other sections; the
+    /// section itself doesn't push any profiles now that the inline
+    /// strip is gone (the sheet handles the navigation).
     let onTapPlayer: (PlayerSearchResult) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HomeSectionHeader(title: "Roster", tint: tint) {
-                Button(action: onSeeAll) {
-                    HStack(spacing: 3) {
-                        Text("See All")
-                        Image(systemName: "chevron.right")
-                            .font(.caption2.weight(.bold))
-                    }
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(tint)
+        HomeSectionHeader(title: "Roster", tint: tint) {
+            Button(action: onSeeAll) {
+                HStack(spacing: 3) {
+                    Text("See All")
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.bold))
                 }
-            }
-
-            if isLoading && roster.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(0..<6, id: \.self) { _ in
-                            RosterStripCard.placeholder
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                }
-            } else if roster.isEmpty {
-                Text("No roster data")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 16)
-            } else {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(sortedRoster) { player in
-                            rosterCardButton(player)
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func rosterCardButton(_ player: RosterPlayer) -> some View {
-        if let resolved = player.resolved {
-            Button { onTapPlayer(resolved) } label: {
-                RosterStripCard(player: player, tint: tint)
-            }
-            .buttonStyle(.plain)
-        } else {
-            // Unresolved player — render the card but no tap target.
-            RosterStripCard(player: player, tint: tint)
-        }
-    }
-
-    /// Sort into bucket order (SP → RP → C → IF → OF → DH), preserving
-    /// the per-bucket arrival order. Players whose position doesn't
-    /// map cleanly land in the `infield` bucket via the helper's
-    /// default — they still surface, just under IF.
-    private var sortedRoster: [RosterPlayer] {
-        let buckets = RosterPositionGroup.allCases
-        var result: [RosterPlayer] = []
-        for bucket in buckets {
-            result.append(contentsOf:
-                roster.filter { RosterPositionGroup.from($0.position) == bucket }
-            )
-        }
-        return result
-    }
-}
-
-/// 100pt-wide strip card: headshot, name, position chip, key stat.
-private struct RosterStripCard: View {
-    let player: RosterPlayer
-    let tint: Color
-
-    private var isPitcher: Bool {
-        HomeViewModel.bdlPositionIsPitcher(player.position)
-    }
-
-    var body: some View {
-        VStack(spacing: 6) {
-            headshot
-            Text(displayName(player.name))
-                .font(.caption.weight(.semibold))
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-            Text(player.position.isEmpty ? "—" : player.position)
-                .font(.caption2.weight(.bold))
+                .font(.subheadline.weight(.semibold))
                 .foregroundStyle(tint)
-            Text(keyStat)
-                .font(.caption.weight(.bold))
-                .monospacedDigit()
-                .foregroundStyle(.primary)
-                .lineLimit(1)
-        }
-        .padding(.vertical, 8)
-        .padding(.horizontal, 6)
-        .frame(width: 100, height: 124)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(.ultraThinMaterial)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(.quaternary, lineWidth: 0.5)
-        )
-    }
-
-    static var placeholder: some View {
-        VStack(spacing: 6) {
-            Circle().fill(Color(.systemGray5)).frame(width: 40, height: 40)
-            RoundedRectangle(cornerRadius: 4).fill(Color(.systemGray5)).frame(width: 64, height: 10)
-            RoundedRectangle(cornerRadius: 4).fill(Color(.systemGray5)).frame(width: 32, height: 8)
-            RoundedRectangle(cornerRadius: 4).fill(Color(.systemGray5)).frame(width: 48, height: 10)
-        }
-        .padding(.vertical, 8)
-        .padding(.horizontal, 6)
-        .frame(width: 100, height: 124)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(.ultraThinMaterial)
-        )
-    }
-
-    /// Batters: AVG; pitchers: ERA. Returns "—" when the stat is
-    /// nil — early-season or unresolved-MLBAM cases.
-    private var keyStat: String {
-        if isPitcher {
-            return formatLeaderValue(player.currentStats?.era, stat: "ERA")
-        }
-        return formatLeaderValue(player.currentStats?.avg, stat: "AVG")
-    }
-
-    private var headshot: some View {
-        AsyncImage(url: player.headshotURL) { phase in
-            switch phase {
-            case .success(let image): image.resizable().scaledToFill()
-            default:
-                Image(systemName: "person.crop.circle.fill")
-                    .resizable().scaledToFit()
-                    .foregroundStyle(.tertiary)
             }
         }
-        .frame(width: 40, height: 40)
-        .background(Circle().fill(.ultraThinMaterial))
-        .clipShape(Circle())
-        .overlay(Circle().strokeBorder(.quaternary, lineWidth: 0.5))
-    }
-
-    /// "F. Freeman" / "S. Ohtani" / "Ohtani" (single-word names).
-    private func displayName(_ full: String) -> String {
-        let parts = full.split(separator: " ", maxSplits: 1)
-        guard parts.count > 1, let first = parts.first else { return full }
-        let last = lastNameWithSuffix(full)
-        return "\(first.prefix(1)). \(last)"
     }
 }
 

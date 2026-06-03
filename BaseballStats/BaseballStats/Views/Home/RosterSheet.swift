@@ -2,11 +2,13 @@
 //  RosterSheet.swift
 //  BaseballStats
 //
-//  See-All sheet for the Home tab's Roster section. Segmented picker
-//  buckets the team's active roster into SP / RP / C / IF / OF / DH;
-//  each bucket renders as a vertical list of player rows. Tapping a
-//  row dismisses the sheet and pushes the player's profile onto the
-//  parent's nav stack via the `onTapPlayer` callback.
+//  See-All sheet for the Home tab's Roster section. Hitters /
+//  Pitchers segmented picker at the top; below it a table with
+//  team-color-accented section headers (CATCHER / INFIELD / OUTFIELD
+//  / DH on the Hitters side; STARTERS / RELIEVERS on the Pitchers
+//  side) and one row per player. Tapping a row dismisses the sheet
+//  and pushes the player's profile onto the parent's nav stack via
+//  `onTapPlayer`.
 //
 
 import SwiftUI
@@ -15,35 +17,54 @@ struct RosterSheet: View {
     let entry: MLBTeamCatalog.Entry
     let roster: [RosterPlayer]
     let isLoading: Bool
-    /// Fired with the resolved `PlayerSearchResult` (the parent
-    /// closes the sheet and appends to its own nav path). Players
-    /// without a resolved MLBAM id show up as un-tappable rows.
+    /// Fired with the resolved `PlayerSearchResult` so the parent can
+    /// close the sheet and append the profile to its nav path.
+    /// Rows for players whose BDL → MLBAM lookup failed render with
+    /// no tap target (`resolved` is nil).
     let onTapPlayer: (PlayerSearchResult) -> Void
 
     @Environment(\.dismiss) private var dismiss
-    @State private var group: RosterPositionGroup = .sp
+
+    enum RosterMode: String, Hashable { case hitters, pitchers }
+    @State private var mode: RosterMode = .hitters
+
+    /// Column-width constants shared by the column-header row and
+    /// every data row so values stack into clean columns. Name is
+    /// flex (`maxWidth: .infinity`); the four stat cells are fixed.
+    private let statCellWidth: CGFloat = 50
 
     private var tint: Color {
         TeamColors.color(for: entry.lahmanCode) ?? .accentColor
     }
 
     private var seasonLabel: String {
-        let y = Calendar.current.component(.year, from: Date())
-        return "\(y) Roster"
+        "\(Calendar.current.component(.year, from: Date())) Roster"
     }
 
-    /// Pre-bucket on every render — small list, cheap to filter.
-    private var groupedRoster: [RosterPositionGroup: [RosterPlayer]] {
-        Dictionary(grouping: roster) { RosterPositionGroup.from($0.position) }
+    /// Position-bucket order per mode. Hitters skip SP/RP; Pitchers
+    /// skip the position-player buckets. `.dh` lives at the end of
+    /// the hitters list because a designated hitter is the rarest
+    /// dedicated entry on a modern roster.
+    private var sections: [RosterPositionGroup] {
+        switch mode {
+        case .hitters:  return [.c, .infield, .outfield, .dh]
+        case .pitchers: return [.sp, .rp]
+        }
+    }
+
+    private var statColumns: [String] {
+        switch mode {
+        case .hitters:  return ["AVG", "HR",  "RBI", "OPS"]
+        case .pitchers: return ["ERA", "W",   "SO",  "WHIP"]
+        }
     }
 
     var body: some View {
         VStack(spacing: 0) {
             header
-            Picker("Position", selection: $group) {
-                ForEach(RosterPositionGroup.allCases, id: \.self) { g in
-                    Text(g.displayName).tag(g)
-                }
+            Picker("Mode", selection: $mode) {
+                Text("Hitters").tag(RosterMode.hitters)
+                Text("Pitchers").tag(RosterMode.pitchers)
             }
             .pickerStyle(.segmented)
             .padding(.horizontal, 16)
@@ -52,7 +73,7 @@ struct RosterSheet: View {
 
             Divider()
 
-            content
+            tableContent
         }
     }
 
@@ -84,7 +105,7 @@ struct RosterSheet: View {
     }
 
     @ViewBuilder
-    private var content: some View {
+    private var tableContent: some View {
         if isLoading && roster.isEmpty {
             VStack {
                 Spacer()
@@ -92,120 +113,140 @@ struct RosterSheet: View {
                 Spacer()
             }
         } else {
-            let players = groupedRoster[group] ?? []
-            if players.isEmpty {
-                VStack(spacing: 6) {
-                    Spacer()
-                    Image(systemName: "person.2.slash")
-                        .font(.title)
-                        .foregroundStyle(.tertiary)
-                    Text("No players in \(group.displayName)")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                }
-            } else {
-                List {
-                    ForEach(players) { player in
-                        rowButton(player)
-                            .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+            ScrollView {
+                VStack(spacing: 0) {
+                    columnHeaderRow
+                    Divider()
+                    ForEach(sections, id: \.self) { section in
+                        let players = playersIn(section)
+                        if !players.isEmpty {
+                            sectionHeader(section)
+                            ForEach(Array(players.enumerated()), id: \.offset) { idx, player in
+                                rowButton(player: player, alternate: idx.isMultiple(of: 2))
+                            }
+                        }
                     }
                 }
-                .listStyle(.plain)
+                .padding(.bottom, 24)
             }
         }
     }
 
+    private var columnHeaderRow: some View {
+        HStack(spacing: 0) {
+            Text("NAME")
+                .frame(maxWidth: .infinity, alignment: .leading)
+            ForEach(statColumns, id: \.self) { col in
+                Text(col)
+                    .frame(width: statCellWidth, alignment: .trailing)
+            }
+        }
+        .font(.caption2.weight(.bold))
+        .tracking(0.5)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+    }
+
+    private func sectionHeader(_ group: RosterPositionGroup) -> some View {
+        HStack(spacing: 8) {
+            Capsule()
+                .fill(tint)
+                .frame(width: 3, height: 12)
+            Text(sectionTitle(group))
+                .font(.caption.weight(.bold))
+                .tracking(0.6)
+                .foregroundStyle(.primary)
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(Color(.systemFill).opacity(0.25))
+    }
+
     @ViewBuilder
-    private func rowButton(_ player: RosterPlayer) -> some View {
+    private func rowButton(player: RosterPlayer, alternate: Bool) -> some View {
         if let resolved = player.resolved {
             Button { onTapPlayer(resolved) } label: {
-                row(player)
+                row(player, alternate: alternate)
             }
             .buttonStyle(.plain)
         } else {
-            row(player)
+            row(player, alternate: alternate)
         }
     }
 
-    private func row(_ player: RosterPlayer) -> some View {
-        HStack(spacing: 12) {
-            headshot(url: player.headshotURL)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(player.name)
-                    .font(.subheadline.weight(.semibold))
+    private func row(_ player: RosterPlayer, alternate: Bool) -> some View {
+        HStack(spacing: 0) {
+            Text(player.name)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            ForEach(Array(statValues(for: player).enumerated()), id: \.offset) { _, value in
+                Text(value)
+                    .font(.subheadline.weight(.medium))
+                    .monospacedDigit()
                     .foregroundStyle(.primary)
-                    .lineLimit(1)
-                Text(player.position.isEmpty ? "—" : player.position)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(tint)
+                    .frame(width: statCellWidth, alignment: .trailing)
             }
-            Spacer(minLength: 8)
-            statLine(player)
         }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(alternate ? Color(.systemFill).opacity(0.12) : Color.clear)
         .contentShape(Rectangle())
     }
 
-    private func headshot(url: URL?) -> some View {
-        AsyncImage(url: url) { phase in
-            switch phase {
-            case .success(let image): image.resizable().scaledToFill()
-            default:
-                Image(systemName: "person.crop.circle.fill")
-                    .resizable().scaledToFit()
-                    .foregroundStyle(.tertiary)
-            }
+    /// Long-form label for a position section. SP/RP get "STARTERS"/
+    /// "RELIEVERS" to match the user's mental model in the pitcher
+    /// table; the position-player buckets get the position name.
+    private func sectionTitle(_ group: RosterPositionGroup) -> String {
+        switch group {
+        case .sp:       return "STARTERS"
+        case .rp:       return "RELIEVERS"
+        case .c:        return "CATCHER"
+        case .infield:  return "INFIELD"
+        case .outfield: return "OUTFIELD"
+        case .dh:       return "DH"
         }
-        .frame(width: 44, height: 44)
-        .background(Circle().fill(.ultraThinMaterial))
-        .clipShape(Circle())
-        .overlay(Circle().strokeBorder(.quaternary, lineWidth: 0.5))
     }
 
-    /// "AVG · HR · RBI · OPS" for batters; "ERA · W · SO · WHIP" for
-    /// pitchers. Each cell formatted by the same shared helper used
-    /// by the Home strip + Team Leaders sheet so values render
-    /// consistently across surfaces.
-    @ViewBuilder
-    private func statLine(_ player: RosterPlayer) -> some View {
+    /// Players from `roster` that belong to the given position
+    /// bucket — uses `RosterPositionGroup.from` so the same mapping
+    /// powers the segmented strip and the table.
+    private func playersIn(_ group: RosterPositionGroup) -> [RosterPlayer] {
+        roster.filter { RosterPositionGroup.from($0.position) == group }
+    }
+
+    /// Per-row stat strings in the same order as `statColumns`.
+    /// Returns "—" placeholders for stats absent from the player's
+    /// current line (early-season, unresolved MLBAM, etc.).
+    private func statValues(for player: RosterPlayer) -> [String] {
         let s = player.currentStats
-        if HomeViewModel.bdlPositionIsPitcher(player.position) {
-            HStack(spacing: 10) {
-                stat(label: "ERA",  value: formatRosterValue(s?.era,  stat: "ERA"))
-                stat(label: "W",    value: formatRosterValue(Double(s?.w  ?? 0), stat: "W",  hasValue: s?.w  != nil))
-                stat(label: "SO",   value: formatRosterValue(Double(s?.so ?? 0), stat: "SO", hasValue: s?.so != nil))
-                stat(label: "WHIP", value: formatRosterValue(s?.whip, stat: "WHIP"))
-            }
-        } else {
-            HStack(spacing: 10) {
-                stat(label: "AVG", value: formatRosterValue(s?.avg, stat: "AVG"))
-                stat(label: "HR",  value: formatRosterValue(Double(s?.hr  ?? 0), stat: "HR",  hasValue: s?.hr  != nil))
-                stat(label: "RBI", value: formatRosterValue(Double(s?.rbi ?? 0), stat: "RBI", hasValue: s?.rbi != nil))
-                stat(label: "OPS", value: formatRosterValue(s?.ops, stat: "OPS"))
-            }
+        switch mode {
+        case .hitters:
+            return [
+                formatLeaderValue(s?.avg, stat: "AVG"),
+                formatStatInt(s?.hr),
+                formatStatInt(s?.rbi),
+                formatLeaderValue(s?.ops, stat: "OPS"),
+            ]
+        case .pitchers:
+            return [
+                formatLeaderValue(s?.era, stat: "ERA"),
+                formatStatInt(s?.w),
+                formatStatInt(s?.so),
+                formatLeaderValue(s?.whip, stat: "WHIP"),
+            ]
         }
     }
 
-    private func stat(label: String, value: String) -> some View {
-        VStack(spacing: 1) {
-            Text(value)
-                .font(.caption.weight(.bold))
-                .monospacedDigit()
-                .foregroundStyle(.primary)
-            Text(label)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .tracking(0.3)
-        }
-        .frame(minWidth: 38, alignment: .center)
+    /// "—" for nil, plain integer otherwise. Used for counting stats
+    /// where `formatLeaderValue` would need a Double conversion that
+    /// muddies the nil case.
+    private func formatStatInt(_ v: Int?) -> String {
+        guard let v else { return "—" }
+        return String(v)
     }
-}
-
-/// Local wrapper around the shared `formatLeaderValue` so the
-/// roster sheet can pass Int? sources via the `hasValue` shortcut
-/// (the shared helper only knows Double?). Falls back to "—"
-/// uniformly when the underlying value is absent.
-private func formatRosterValue(_ v: Double?, stat: String, hasValue: Bool = true) -> String {
-    guard hasValue else { return "—" }
-    return formatLeaderValue(v, stat: stat)
 }
