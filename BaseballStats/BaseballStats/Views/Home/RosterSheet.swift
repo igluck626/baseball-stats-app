@@ -57,19 +57,31 @@ struct RosterSheet: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                header
                 Picker("Mode", selection: $mode) {
                     Text("Hitters").tag(RosterMode.hitters)
                     Text("Pitchers").tag(RosterMode.pitchers)
                 }
                 .pickerStyle(.segmented)
                 .padding(.horizontal, 16)
-                .padding(.top, 8)
+                .padding(.top, 10)
                 .padding(.bottom, 8)
 
                 Divider()
 
                 tableContent
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    HStack(spacing: 6) {
+                        TeamLogoView(team: entry.teamInfo, size: 22)
+                        Text(seasonLabel)
+                            .font(.headline.weight(.semibold))
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Close") { dismiss() }
+                }
             }
             // Profiles push onto the sheet's own nav stack — back
             // returns to the table instead of dismissing the sheet.
@@ -77,33 +89,6 @@ struct RosterSheet: View {
                 PlayerProfileView(player: player)
             }
         }
-    }
-
-    private var header: some View {
-        HStack(spacing: 10) {
-            TeamLogoView(team: entry.teamInfo, size: 32)
-            VStack(alignment: .leading, spacing: 0) {
-                Text(seasonLabel)
-                    .font(.headline.weight(.bold))
-                Text(entry.fullName)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.title3)
-                    .foregroundStyle(.secondary)
-                    .symbolRenderingMode(.hierarchical)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Close")
-        }
-        .padding(.horizontal, 16)
-        .padding(.top, 14)
-        .padding(.bottom, 8)
     }
 
     @ViewBuilder

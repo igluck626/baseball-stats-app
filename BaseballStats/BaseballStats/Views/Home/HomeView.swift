@@ -819,7 +819,6 @@ private struct TeamLeadersSection: View {
                 .monospacedDigit()
                 .foregroundStyle(rank == 1 ? tint : .secondary)
                 .frame(width: 24, alignment: .leading)
-            headshot(url: card.player.largeHeadshotURL)
             Text(card.player.name)
                 .font(.subheadline.weight(.medium))
                 .lineLimit(1)
@@ -831,22 +830,6 @@ private struct TeamLeadersSection: View {
                 .foregroundStyle(.primary)
         }
         .contentShape(Rectangle())
-    }
-
-    private func headshot(url: URL?) -> some View {
-        AsyncImage(url: url) { phase in
-            switch phase {
-            case .success(let image): image.resizable().scaledToFill()
-            default:
-                Image(systemName: "person.crop.circle.fill")
-                    .resizable().scaledToFit()
-                    .foregroundStyle(.tertiary)
-            }
-        }
-        .frame(width: 28, height: 28)
-        .background(Circle().fill(.ultraThinMaterial))
-        .clipShape(Circle())
-        .overlay(Circle().strokeBorder(.quaternary, lineWidth: 0.5))
     }
 }
 

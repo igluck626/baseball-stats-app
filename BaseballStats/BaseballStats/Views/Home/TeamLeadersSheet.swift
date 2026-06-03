@@ -48,7 +48,6 @@ struct TeamLeadersSheet: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                header
                 Picker("Role", selection: $role) {
                     Text("Batting").tag(Role.batting)
                     Text("Pitching").tag(Role.pitching)
@@ -63,6 +62,19 @@ struct TeamLeadersSheet: View {
                 Divider().padding(.top, 4)
 
                 content
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    HStack(spacing: 6) {
+                        TeamLogoView(team: entry.teamInfo, size: 22)
+                        Text("Team Leaders")
+                            .font(.headline.weight(.semibold))
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Close") { dismiss() }
+                }
             }
             // Profiles push onto the sheet's own nav stack — back
             // returns to the leaderboard instead of dismissing.
@@ -92,55 +104,36 @@ struct TeamLeadersSheet: View {
         }
     }
 
-    private var header: some View {
-        HStack(spacing: 10) {
-            TeamLogoView(team: entry.teamInfo, size: 32)
-            VStack(alignment: .leading, spacing: 0) {
-                Text("Team Leaders")
-                    .font(.headline.weight(.bold))
-                Text(entry.fullName)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.title3)
-                    .foregroundStyle(.secondary)
-                    .symbolRenderingMode(.hierarchical)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Close")
-        }
-        .padding(.horizontal, 16)
-        .padding(.top, 14)
-        .padding(.bottom, 8)
-    }
-
     private var statPillRow: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 ForEach(currentStats, id: \.self) { s in
+                    let selected = (stat == s)
                     Button {
                         stat = s
                     } label: {
                         Text(s)
-                            .font(.subheadline.weight(.semibold))
-                            .padding(.horizontal, 14)
+                            .font(.footnote.weight(.semibold))
+                            .padding(.horizontal, 12)
                             .padding(.vertical, 6)
                             .background(
-                                Capsule()
-                                    .fill(stat == s ? tint : Color(.systemFill).opacity(0.6))
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(selected ? tint : Color(.systemFill).opacity(0.35))
                             )
-                            .foregroundStyle(stat == s ? .white : .primary)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .strokeBorder(
+                                        selected ? Color.clear : Color(.separator).opacity(0.5),
+                                        lineWidth: 0.5,
+                                    )
+                            )
+                            .foregroundStyle(selected ? .white : .primary)
                     }
                     .buttonStyle(.plain)
                 }
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 4)
+            .padding(.vertical, 6)
         }
     }
 
@@ -184,16 +177,11 @@ struct TeamLeadersSheet: View {
                 .monospacedDigit()
                 .foregroundStyle(rank <= 3 ? tint : .secondary)
                 .frame(width: 28, alignment: .center)
-            headshot(url: card.player.largeHeadshotURL)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(card.player.name)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                Text(positionLine(for: card.player))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
+            Text(card.player.name)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
             Spacer()
             Text(Self.formatValue(card.value, stat: card.stat))
                 .font(.title3.weight(.bold))
@@ -201,33 +189,6 @@ struct TeamLeadersSheet: View {
                 .foregroundStyle(.primary)
         }
         .contentShape(Rectangle())
-    }
-
-    private func headshot(url: URL?) -> some View {
-        AsyncImage(url: url) { phase in
-            switch phase {
-            case .success(let image): image.resizable().scaledToFill()
-            default:
-                Image(systemName: "person.crop.circle.fill")
-                    .resizable().scaledToFit()
-                    .foregroundStyle(.tertiary)
-            }
-        }
-        .frame(width: 32, height: 32)
-        .background(Circle().fill(.ultraThinMaterial))
-        .clipShape(Circle())
-        .overlay(Circle().strokeBorder(.quaternary, lineWidth: 0.5))
-    }
-
-    private func positionLine(for player: PlayerSearchResult) -> String {
-        let pos = player.position.flatMap { $0.isEmpty ? nil : $0 }
-        let team = player.teamCode.flatMap { $0.isEmpty ? nil : teamAbbreviation(for: $0) }
-        switch (pos, team) {
-        case let (p?, t?): return "\(p) · \(t)"
-        case let (p?, nil): return p
-        case let (nil, t?): return t
-        default: return "—"
-        }
     }
 
     private func load() async {
