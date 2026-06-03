@@ -411,6 +411,7 @@ final class HomeViewModel: ObservableObject {
             stats = PlayerStatLine(
                 avg: nil, hr: nil, rbi: nil, ops: nil,
                 era: s?.ERA, w: s?.W, so: s?.SO, whip: s?.WHIP,
+                g: s?.G,
             )
         } else {
             let raw = (try? await api.getPlayerCurrentStats(playerId: mlbamId)) ?? nil
@@ -418,6 +419,7 @@ final class HomeViewModel: ObservableObject {
             stats = PlayerStatLine(
                 avg: s?.BA, hr: s?.HR, rbi: s?.RBI, ops: s?.OPS,
                 era: nil, w: nil, so: nil, whip: nil,
+                g: nil,
             )
         }
         return RosterPlayer(
@@ -567,6 +569,9 @@ struct PlayerStatLine: Hashable {
     let w:    Int?
     let so:   Int?
     let whip: Double?
+    /// Games (appearances). Populated for pitchers — used by the
+    /// roster sheet to sort relievers by usage. nil for batters.
+    let g:    Int?
 }
 
 /// One row in the roster strip / sheet. Keeps both the BDL id (for

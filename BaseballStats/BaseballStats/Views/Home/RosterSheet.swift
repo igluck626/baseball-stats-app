@@ -118,7 +118,7 @@ struct RosterSheet: View {
                     columnHeaderRow
                     Divider()
                     ForEach(sections, id: \.self) { section in
-                        let players = playersIn(section)
+                        let players = sortPlayers(playersIn(section), in: section)
                         if !players.isEmpty {
                             sectionHeader(section)
                             ForEach(Array(players.enumerated()), id: \.offset) { idx, player in
@@ -178,12 +178,21 @@ struct RosterSheet: View {
 
     private func row(_ player: RosterPlayer, alternate: Bool) -> some View {
         HStack(spacing: 0) {
-            Text(player.name)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.primary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: 6) {
+                Text(player.name)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                if !player.position.isEmpty {
+                    Text(player.position.uppercased())
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .tracking(0.3)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
             ForEach(Array(statValues(for: player).enumerated()), id: \.offset) { _, value in
                 Text(value)
                     .font(.subheadline.weight(.medium))
@@ -196,6 +205,68 @@ struct RosterSheet: View {
         .padding(.vertical, 10)
         .background(alternate ? Color(.systemFill).opacity(0.12) : Color.clear)
         .contentShape(Rectangle())
+    }
+
+    /// Per-section sort. Position-player buckets sort by conventional
+    /// batting-order position (1B → 2B → SS → 3B for IF; LF → CF →
+    /// RF for OF). Pitcher buckets sort by usage signal: SP by ERA
+    /// ascending (best ERA on top); RP by games-pitched descending
+    /// (highest workload on top). nil keys fall to the end.
+    private func sortPlayers(
+        _ players: [RosterPlayer], in group: RosterPositionGroup,
+    ) -> [RosterPlayer] {
+        switch group {
+        case .infield:
+            return players.sorted {
+                infieldRank($0.position) < infieldRank($1.position)
+            }
+        case .outfield:
+            return players.sorted {
+                outfieldRank($0.position) < outfieldRank($1.position)
+            }
+        case .sp:
+            return players.sorted {
+                let a = $0.currentStats?.era ?? .greatestFiniteMagnitude
+                let b = $1.currentStats?.era ?? .greatestFiniteMagnitude
+                return a < b
+            }
+        case .rp:
+            return players.sorted {
+                let a = $0.currentStats?.g ?? Int.min
+                let b = $1.currentStats?.g ?? Int.min
+                return a > b
+            }
+        case .c, .dh:
+            return players
+        }
+    }
+
+    /// Conventional infield order: C lands first if a catcher slips
+    /// into the IF bucket (rare — `RosterPositionGroup.from` puts C
+    /// in its own bucket), then 1B → 2B → SS → 3B. Generic "IF" /
+    /// unknown sort to the end.
+    private func infieldRank(_ pos: String) -> Int {
+        switch pos.uppercased() {
+        case "C":  return 0
+        case "1B": return 1
+        case "2B": return 2
+        case "SS": return 3
+        case "3B": return 4
+        case "IF": return 5
+        default:   return 6
+        }
+    }
+
+    /// Conventional outfield order: LF → CF → RF; generic "OF" /
+    /// unknown sort to the end.
+    private func outfieldRank(_ pos: String) -> Int {
+        switch pos.uppercased() {
+        case "LF": return 0
+        case "CF": return 1
+        case "RF": return 2
+        case "OF": return 3
+        default:   return 4
+        }
     }
 
     /// Long-form label for a position section. SP/RP get "STARTERS"/
