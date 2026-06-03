@@ -232,9 +232,17 @@ final class HomeViewModel: ObservableObject {
     // MARK: - Team Leaders
 
     /// Stats surfaced on the Home tab's leader strip. Order in the
-    /// arrays drives the on-screen order of the cards.
-    private static let battingLeaderStats:  [String] = ["AVG", "HR", "RBI", "OPS"]
-    private static let pitchingLeaderStats: [String] = ["ERA", "W", "SO", "WHIP"]
+    /// arrays drives the on-screen order of the cards — the strip
+    /// scrolls horizontally so the list can be long without
+    /// crowding the page.
+    private static let battingLeaderStats:  [String] = [
+        "AVG", "HR", "RBI", "OPS", "SLG", "OBP", "SB",
+        "H", "R", "BB", "WAR", "2B", "3B", "SO",
+    ]
+    private static let pitchingLeaderStats: [String] = [
+        "ERA", "W", "SO", "WHIP", "SV", "IP", "WAR",
+        "BB", "H", "HR", "SO/9", "CG", "SHO",
+    ]
 
     /// Fetch the top-1 row for each of the eight stat keys, scoped to
     /// the favorite team. Each call is a single `/leaderboards` hit

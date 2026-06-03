@@ -880,7 +880,8 @@ private struct LeaderTile: View {
             return s
         case "ERA", "WHIP", "FIP":
             return String(format: "%.2f", v)
-        case "HR", "RBI", "SO", "W", "L", "SV", "H", "BB", "R", "SB":
+        case "HR", "RBI", "SO", "W", "L", "SV", "H", "BB", "R", "SB",
+             "2B", "3B", "CG", "SHO":
             return String(Int(v.rounded()))
         default:
             return String(format: "%.1f", v)

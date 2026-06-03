@@ -34,8 +34,14 @@ struct TeamLeadersSheet: View {
     @State private var leaders: [LeaderCard] = []
     @State private var isLoading: Bool = false
 
-    private static let battingStats:  [String] = ["AVG", "HR", "RBI", "OPS", "SB"]
-    private static let pitchingStats: [String] = ["ERA", "W", "SO", "WHIP"]
+    private static let battingStats:  [String] = [
+        "AVG", "HR", "RBI", "OPS", "SLG", "OBP", "SB",
+        "H", "R", "BB", "WAR", "2B", "3B", "SO",
+    ]
+    private static let pitchingStats: [String] = [
+        "ERA", "W", "SO", "WHIP", "SV", "IP", "WAR",
+        "BB", "H", "HR", "SO/9", "CG", "SHO",
+    ]
 
     private var currentStats: [String] {
         role == .batting ? Self.battingStats : Self.pitchingStats
@@ -249,7 +255,8 @@ struct TeamLeadersSheet: View {
             return s
         case "ERA", "WHIP", "FIP":
             return String(format: "%.2f", v)
-        case "HR", "RBI", "SO", "W", "L", "SV", "H", "BB", "R", "SB":
+        case "HR", "RBI", "SO", "W", "L", "SV", "H", "BB", "R", "SB",
+             "2B", "3B", "CG", "SHO":
             return String(Int(v.rounded()))
         default:
             return String(format: "%.1f", v)
