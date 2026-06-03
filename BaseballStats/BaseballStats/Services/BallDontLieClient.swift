@@ -407,6 +407,31 @@ final class BallDontLieClient: @unchecked Sendable {
         return result
     }
 
+    // MARK: - Active roster
+
+    /// `GET /mlb/v1/players/active?team_ids[]={teamId}&per_page=100`.
+    /// Returns the team's active roster — pitchers, position players,
+    /// and bench/IL combined into a single list (BDL doesn't surface
+    /// IL on this endpoint, so it's a clean active 26+ shape).
+    /// Paginates via `meta.next_cursor`; per_page=100 means a single
+    /// page suffices for a typical MLB roster (~26-40 players).
+    func getActivePlayers(teamId: Int) async throws -> [BDLPlayer] {
+        let key = "active-players:\(teamId)"
+        if let cached: [BDLPlayer] = cachedValue(key) { return cached }
+        let items: [URLQueryItem] = [
+            URLQueryItem(name: "team_ids[]", value: String(teamId)),
+            URLQueryItem(name: "per_page",   value: "100"),
+        ]
+        let result: [BDLPlayer] = try await fetchAllPages(
+            path: "/mlb/v1/players/active", baseQuery: items,
+        )
+        // 5-minute cache: rosters don't change often within a session,
+        // and a freshly opened Home tab + roster sheet would otherwise
+        // refetch on every entry.
+        storeInCache(key, result, ttl: 300)
+        return result
+    }
+
     // MARK: - Player resolver
 
     /// Resolve a BDL player id to our backend's player payload

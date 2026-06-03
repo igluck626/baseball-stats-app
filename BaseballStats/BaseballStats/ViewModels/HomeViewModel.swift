@@ -60,6 +60,13 @@ final class HomeViewModel: ObservableObject {
     @Published var favoritePlayers: [FavoritePlayerDisplay] = []
     @Published var isLoadingFavorites: Bool = false
 
+    /// Active roster for the favorite team — BDL's active list with
+    /// each player's MLBAM id resolved + current-season stat line
+    /// folded in. Empty before the first fetch; the compact roster
+    /// strip and the Roster sheet both read from this.
+    @Published var roster: [RosterPlayer] = []
+    @Published var isLoadingRoster: Bool = false
+
     private let bdl: BallDontLieClient
     private let api: APIClient
     private var refreshTask: Task<Void, Never>?
@@ -339,6 +346,101 @@ final class HomeViewModel: ObservableObject {
         }
     }
 
+    // MARK: - Roster
+
+    /// Fetch the favorite team's active roster from BDL, then in
+    /// parallel resolve each player's MLBAM id via our backend and
+    /// hydrate their current-season stat line. Pitchers go through
+    /// `getPitcherCurrentStats`; everyone else uses
+    /// `getPlayerCurrentStats`. Players whose BDL → MLBAM resolution
+    /// fails still appear in the list with an empty stat line — the
+    /// bio is the operator's signal that something didn't map
+    /// cleanly, and the UI shows them as "—" rather than dropping
+    /// them entirely.
+    func loadRoster(bdlTeamId: Int) async {
+        isLoadingRoster = true
+        let bdlPlayers = (try? await bdl.getActivePlayers(teamId: bdlTeamId)) ?? []
+        let players = await withTaskGroup(of: (Int, RosterPlayer?).self) { group in
+            for (i, bp) in bdlPlayers.enumerated() {
+                let capturedIdx = i
+                let capturedBp  = bp
+                group.addTask { [bdl, api] in
+                    let rp = await Self.hydrateRosterPlayer(
+                        bp: capturedBp, bdl: bdl, api: api,
+                    )
+                    return (capturedIdx, rp)
+                }
+            }
+            var pairs: [(Int, RosterPlayer)] = []
+            for await (i, rp) in group {
+                if let rp { pairs.append((i, rp)) }
+            }
+            return pairs.sorted { $0.0 < $1.0 }.map { $0.1 }
+        }
+        self.roster = players
+        isLoadingRoster = false
+    }
+
+    nonisolated private static func hydrateRosterPlayer(
+        bp: BDLPlayer, bdl: BallDontLieClient, api: APIClient,
+    ) async -> RosterPlayer? {
+        let position = bp.position ?? ""
+        let isPitcher = Self.bdlPositionIsPitcher(position)
+        // Resolve BDL → MLBAM. Failures yield a stub roster entry —
+        // we'd rather show the player with "—" stats than silently
+        // drop them.
+        let resolved = try? await bdl.resolveBDLPlayerId(bp.id)
+        let mlbamId = resolved?.player_id ?? 0
+        let headshot = resolved?.largeHeadshotURL
+        let name = resolved?.name ?? bp.fullName
+        guard mlbamId > 0 else {
+            return RosterPlayer(
+                player_id:    0,
+                name:         name,
+                bdl_id:       bp.id,
+                position:     position,
+                headshotURL:  headshot,
+                resolved:     nil,
+                currentStats: nil,
+            )
+        }
+        let stats: PlayerStatLine?
+        if isPitcher {
+            let raw = (try? await api.getPitcherCurrentStats(playerId: mlbamId)) ?? nil
+            let s = raw?.standard
+            stats = PlayerStatLine(
+                avg: nil, hr: nil, rbi: nil, ops: nil,
+                era: s?.ERA, w: s?.W, so: s?.SO, whip: s?.WHIP,
+            )
+        } else {
+            let raw = (try? await api.getPlayerCurrentStats(playerId: mlbamId)) ?? nil
+            let s = raw?.standard
+            stats = PlayerStatLine(
+                avg: s?.BA, hr: s?.HR, rbi: s?.RBI, ops: s?.OPS,
+                era: nil, w: nil, so: nil, whip: nil,
+            )
+        }
+        return RosterPlayer(
+            player_id:    mlbamId,
+            name:         name,
+            bdl_id:       bp.id,
+            position:     position,
+            headshotURL:  headshot,
+            resolved:     resolved,
+            currentStats: stats,
+        )
+    }
+
+    /// Position-string → pitcher? heuristic. BDL surfaces "SP" /
+    /// "RP" / "P" for pitchers and conventional position abbrevs
+    /// otherwise. Bare "P" defaults to pitcher.
+    nonisolated static func bdlPositionIsPitcher(_ raw: String) -> Bool {
+        switch raw.uppercased() {
+        case "P", "SP", "RP", "CL": return true
+        default:                    return false
+        }
+    }
+
     // MARK: - Favorite Players
 
     /// Hydrate every id in `ids` in parallel. Each pid spawns two
@@ -449,4 +551,86 @@ struct FavoritePlayerDisplay: Identifiable, Hashable {
     /// "ERA 2.87 · W 5 · SO 64", rendered on the card under the name.
     let statLine: String
     var id: Int { player.player_id }
+}
+
+/// Current-season stat snapshot for a roster player. Only one side
+/// (batter or pitcher) is populated for each entry — the empty side
+/// stays nil. The UI picks the right side off `position`.
+struct PlayerStatLine: Hashable {
+    // Batters
+    let avg: Double?
+    let hr:  Int?
+    let rbi: Int?
+    let ops: Double?
+    // Pitchers
+    let era:  Double?
+    let w:    Int?
+    let so:   Int?
+    let whip: Double?
+}
+
+/// One row in the roster strip / sheet. Keeps both the BDL id (for
+/// the source row) and the resolved MLBAM id (for navigation into
+/// the existing profile view). `currentStats` is nil until the
+/// hydrate task completes; the UI renders "—" placeholders while
+/// it's missing.
+struct RosterPlayer: Identifiable, Hashable {
+    /// Resolved MLBAM id. 0 means the BDL → MLBAM resolution didn't
+    /// succeed — UI should disable the tap-into-profile gesture for
+    /// these rows.
+    let player_id: Int
+    let name: String
+    let bdl_id: Int
+    /// Raw BDL position string ("SP" / "RP" / "P" / "1B" / "OF" /
+    /// "DH" / etc.). Pass through `RosterPositionGroup.from(_:)` to
+    /// bucket for the segmented picker.
+    let position: String
+    let headshotURL: URL?
+    /// The full `PlayerSearchResult` from `resolveBDLPlayerId` —
+    /// needed to push the profile destination on tap (the existing
+    /// nav route takes a `PlayerSearchResult`). nil when resolution
+    /// failed.
+    let resolved: PlayerSearchResult?
+    let currentStats: PlayerStatLine?
+    var id: Int { bdl_id }
+}
+
+/// Coarse-grained position bucket used by the Roster sheet's
+/// segmented picker and to group the compact home-tab strip.
+enum RosterPositionGroup: String, CaseIterable, Hashable {
+    case sp = "SP"   // Starting pitchers
+    case rp = "RP"   // Relief pitchers
+    case c  = "C"    // Catchers
+    case infield  = "IF"   // 1B / 2B / 3B / SS
+    case outfield = "OF"   // LF / CF / RF / OF
+    case dh = "DH"   // Designated hitter
+
+    var displayName: String {
+        switch self {
+        case .sp: return "SP"
+        case .rp: return "RP"
+        case .c:  return "C"
+        case .infield:  return "IF"
+        case .outfield: return "OF"
+        case .dh: return "DH"
+        }
+    }
+
+    /// Map a raw BDL position string to its bucket. Falls back to
+    /// `rp` for an ambiguous "P" (most roster pitchers without an
+    /// SP/RP qualifier are relievers in modern MLB rosters) and to
+    /// `infield` for generic "IF". Anything unrecognized maps to
+    /// `infield` so the player still surfaces somewhere.
+    static func from(_ raw: String) -> RosterPositionGroup {
+        switch raw.uppercased() {
+        case "SP":                                 return .sp
+        case "RP", "CL":                           return .rp
+        case "P":                                  return .rp
+        case "C":                                  return .c
+        case "1B", "2B", "3B", "SS", "IF":         return .infield
+        case "LF", "CF", "RF", "OF":               return .outfield
+        case "DH":                                 return .dh
+        default:                                   return .infield
+        }
+    }
 }
