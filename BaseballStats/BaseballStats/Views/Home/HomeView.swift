@@ -870,7 +870,14 @@ private struct LeaderTile: View {
         guard let v else { return "—" }
         switch stat {
         case "AVG", "OBP", "SLG", "OPS":
-            return String(format: "%.3f", v)
+            // Baseball convention strips the leading zero — ".305"
+            // not "0.305". Matches the same strip applied in the
+            // See-All team-leaders sheet, the career table, and
+            // every other batting-rate surface in the app.
+            let s = String(format: "%.3f", v)
+            if s.hasPrefix("0.")  { return String(s.dropFirst()) }
+            if s.hasPrefix("-0.") { return "-" + String(s.dropFirst(2)) }
+            return s
         case "ERA", "WHIP", "FIP":
             return String(format: "%.2f", v)
         case "HR", "RBI", "SO", "W", "L", "SV", "H", "BB", "R", "SB":
