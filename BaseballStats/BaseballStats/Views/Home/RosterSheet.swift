@@ -17,11 +17,6 @@ struct RosterSheet: View {
     let entry: MLBTeamCatalog.Entry
     let roster: [RosterPlayer]
     let isLoading: Bool
-    /// Fired with the resolved `PlayerSearchResult` so the parent can
-    /// close the sheet and append the profile to its nav path.
-    /// Rows for players whose BDL → MLBAM lookup failed render with
-    /// no tap target (`resolved` is nil).
-    let onTapPlayer: (PlayerSearchResult) -> Void
 
     @Environment(\.dismiss) private var dismiss
 
@@ -60,20 +55,27 @@ struct RosterSheet: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Picker("Mode", selection: $mode) {
-                Text("Hitters").tag(RosterMode.hitters)
-                Text("Pitchers").tag(RosterMode.pitchers)
+        NavigationStack {
+            VStack(spacing: 0) {
+                header
+                Picker("Mode", selection: $mode) {
+                    Text("Hitters").tag(RosterMode.hitters)
+                    Text("Pitchers").tag(RosterMode.pitchers)
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                .padding(.bottom, 8)
+
+                Divider()
+
+                tableContent
             }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
-            .padding(.bottom, 8)
-
-            Divider()
-
-            tableContent
+            // Profiles push onto the sheet's own nav stack — back
+            // returns to the table instead of dismissing the sheet.
+            .navigationDestination(for: PlayerSearchResult.self) { player in
+                PlayerProfileView(player: player)
+            }
         }
     }
 
@@ -167,7 +169,7 @@ struct RosterSheet: View {
     @ViewBuilder
     private func rowButton(player: RosterPlayer, alternate: Bool) -> some View {
         if let resolved = player.resolved {
-            Button { onTapPlayer(resolved) } label: {
+            NavigationLink(value: resolved) {
                 row(player, alternate: alternate)
             }
             .buttonStyle(.plain)

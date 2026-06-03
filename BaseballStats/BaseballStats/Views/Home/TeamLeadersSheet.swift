@@ -18,12 +18,6 @@ struct TeamLeadersSheet: View {
     /// survives a sheet re-open. Sheet reads on appear, writes on
     /// every stat tap.
     @ObservedObject var vm: HomeViewModel
-    /// Fired with the tapped player; the parent is expected to
-    /// dismiss the sheet and push the profile onto its own nav
-    /// stack. Wired up this way (vs. having the sheet host a
-    /// NavigationStack) so the profile lives in the same path as
-    /// every other Home-tab navigation destination.
-    let onTapPlayer: (PlayerSearchResult) -> Void
 
     @Environment(\.dismiss) private var dismiss
 
@@ -52,22 +46,29 @@ struct TeamLeadersSheet: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Picker("Role", selection: $role) {
-                Text("Batting").tag(Role.batting)
-                Text("Pitching").tag(Role.pitching)
+        NavigationStack {
+            VStack(spacing: 0) {
+                header
+                Picker("Role", selection: $role) {
+                    Text("Batting").tag(Role.batting)
+                    Text("Pitching").tag(Role.pitching)
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16)
+                .padding(.top, 10)
+                .padding(.bottom, 8)
+
+                statPillRow
+
+                Divider().padding(.top, 4)
+
+                content
             }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, 16)
-            .padding(.top, 10)
-            .padding(.bottom, 8)
-
-            statPillRow
-
-            Divider().padding(.top, 4)
-
-            content
+            // Profiles push onto the sheet's own nav stack — back
+            // returns to the leaderboard instead of dismissing.
+            .navigationDestination(for: PlayerSearchResult.self) { player in
+                PlayerProfileView(player: player)
+            }
         }
         .task {
             // Initial fetch — restore the user's last tapped stat
@@ -165,9 +166,7 @@ struct TeamLeadersSheet: View {
         } else {
             List {
                 ForEach(Array(leaders.enumerated()), id: \.offset) { idx, card in
-                    Button {
-                        onTapPlayer(card.player)
-                    } label: {
+                    NavigationLink(value: card.player) {
                         row(rank: idx + 1, card: card)
                     }
                     .buttonStyle(.plain)

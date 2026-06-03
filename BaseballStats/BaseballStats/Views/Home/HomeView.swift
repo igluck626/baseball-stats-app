@@ -66,28 +66,17 @@ struct HomeView: View {
             .sheet(isPresented: $showingLeadersSheet) {
                 if let bdlId = store.bdlTeamId,
                    let entry = MLBTeamCatalog.entry(forBDLId: bdlId) {
-                    TeamLeadersSheet(
-                        entry: entry,
-                        vm:    vm,
-                        onTapPlayer: { player in
-                            showingLeadersSheet = false
-                            navigationPath.append(player)
-                        }
-                    )
-                    .presentationDetents([.large])
+                    TeamLeadersSheet(entry: entry, vm: vm)
+                        .presentationDetents([.large])
                 }
             }
             .sheet(isPresented: $showingRosterSheet) {
                 if let bdlId = store.bdlTeamId,
                    let entry = MLBTeamCatalog.entry(forBDLId: bdlId) {
                     RosterSheet(
-                        entry:    entry,
-                        roster:   vm.roster,
+                        entry:     entry,
+                        roster:    vm.roster,
                         isLoading: vm.isLoadingRoster,
-                        onTapPlayer: { player in
-                            showingRosterSheet = false
-                            navigationPath.append(player)
-                        }
                     )
                     .presentationDetents([.large])
                 }
@@ -188,9 +177,6 @@ struct HomeView: View {
                     isLoading: vm.isLoadingRoster,
                     tint:      tint,
                     onSeeAll:  { showingRosterSheet = true },
-                    onTapPlayer: { player in
-                        navigationPath.append(player)
-                    },
                 )
 
                 FavoritePlayersSection(
@@ -926,10 +912,6 @@ private struct RosterSection: View {
     let isLoading: Bool
     let tint: Color
     let onSeeAll: () -> Void
-    /// Retained on the API surface to match the other sections; the
-    /// section itself doesn't push any profiles now that the inline
-    /// strip is gone (the sheet handles the navigation).
-    let onTapPlayer: (PlayerSearchResult) -> Void
 
     var body: some View {
         HomeSectionHeader(title: "Roster", tint: tint) {
