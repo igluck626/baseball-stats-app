@@ -444,11 +444,26 @@ final class PlayerViewModel: ObservableObject {
                 let yGames = (try? await bdl.getTeamGames(
                     date: yString, teamId: bdlTeamId,
                 )) ?? []
-                for g in yGames where g.status == "STATUS_FINAL" {
+                // Status branching matches the primary today-ET loop
+                // above: a late West Coast game can start before
+                // midnight ET (yesterday's BDL bucket) and still be
+                // mid-game after the user opens the profile at 1am
+                // ET. The previous filter dropped these live games
+                // entirely because it only let `STATUS_FINAL` rows
+                // through.
+                for g in yGames {
                     guard g.startDate != nil else { continue }
-                    hasFinal = true
-                    eligible.append((g.id, false))
-                    if finalGameDateET == nil { finalGameDateET = yString }
+                    switch g.status {
+                    case "STATUS_IN_PROGRESS", "STATUS_DELAYED":
+                        liveOnSchedule = true
+                        eligible.append((g.id, true))
+                    case "STATUS_FINAL":
+                        hasFinal = true
+                        eligible.append((g.id, false))
+                        if finalGameDateET == nil { finalGameDateET = yString }
+                    default:
+                        break
+                    }
                 }
             }
         }
