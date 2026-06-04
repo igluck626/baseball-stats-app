@@ -3201,6 +3201,79 @@ def admin_load_award_shares():
         }
 
 
+@app.post("/admin/load-awards")
+def admin_load_awards():
+    """Targeted backfill: load just `AwardsPlayers.csv` into
+    `player_awards`, skipping the full Lahman re-run. Sibling of
+    `/admin/load-award-shares` — the latter handles per-player MVP/
+    CY/ROY vote shares; this one handles the actual trophy-win rows
+    (Gold Gloves, Silver Sluggers, All-Star MVPs, …).
+
+    Synchronous and quick — the CSV is small. Upserts via crud's
+    save_player_awards (the merge path) so re-running is safe.
+
+    Same Chadwick-bridge-plus-DB-supplement pattern as
+    `/admin/load-award-shares`: manually-added historical players
+    (e.g. via `/admin/add-historical-player`) carry a `bbref_id` on
+    their bio row but typically don't appear in the Chadwick CSV;
+    supplementing the bridge with bbref_id→player_id rows from
+    `players` and `pitchers` lets their trophy-win records load
+    instead of silently skipping.
+
+    Diagnostic mode: returns 200 with `status: "error"` + traceback
+    in the body when the load fails — same shape as the sibling
+    endpoint — so a curl against this endpoint surfaces the root
+    cause without needing server log access.
+    """
+    import traceback
+
+    if not connection.db_available():
+        return {
+            "status":  "error",
+            "message": "DATABASE_URL is not configured",
+        }
+
+    started = time.time()
+    try:
+        bridge = lahman_load._load_chadwick_bridge()
+        supplemented_from_db = 0
+        with connection.get_session() as db:
+            for row in (
+                db.query(Player.bbref_id, Player.player_id)
+                  .filter(Player.bbref_id.isnot(None))
+                  .all()
+            ):
+                if row.bbref_id and row.bbref_id not in bridge:
+                    bridge[row.bbref_id] = row.player_id
+                    supplemented_from_db += 1
+            for row in (
+                db.query(Pitcher.bbref_id, Pitcher.player_id)
+                  .filter(Pitcher.bbref_id.isnot(None))
+                  .all()
+            ):
+                if row.bbref_id and row.bbref_id not in bridge:
+                    bridge[row.bbref_id] = row.player_id
+                    supplemented_from_db += 1
+
+        rows_loaded = lahman_load._load_awards(bridge)
+        duration = round(time.time() - started, 2)
+        return {
+            "status":               "done",
+            "rows_loaded":          rows_loaded,
+            "supplemented_from_db": supplemented_from_db,
+            "duration_seconds":     duration,
+        }
+    except Exception as exc:
+        log.exception("load-awards failed")
+        return {
+            "status":     "error",
+            "message":    str(exc),
+            "error_type": type(exc).__name__,
+            "traceback":  traceback.format_exc(),
+            "duration_seconds": round(time.time() - started, 2),
+        }
+
+
 @app.get("/admin/lahman-load/status")
 def lahman_load_status():
     with _lahman_lock:
