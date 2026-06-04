@@ -111,7 +111,7 @@ struct TeamHistorySheet: View {
                     // outside the per-year cards so it stays visible
                     // even when the user has scrolled to a non-2017
                     // year and only re-anchors at the very bottom.
-                    Text("※ 2017 World Series — Houston Astros found guilty of sign-stealing")
+                    Text("※ Houston Astros found guilty of sign-stealing in 2017")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -345,13 +345,14 @@ private struct YearCard: View {
     /// flipped to the favorite's perspective (Lahman ships wins/
     /// losses from the WINNER's perspective; if `won == false`, the
     /// favorite is the loser and the record needs to be inverted).
-    /// Appends "※" for the 2017 World Series to flag the Astros'
-    /// sign-stealing record — the footnote at the bottom of the
-    /// sheet explains the marker.
+    /// Appends "※" to any 2017 series the favorite played against
+    /// the Astros — sign-stealing tainted every Astros postseason
+    /// matchup that year (Red Sox ALDS, Yankees ALCS, Dodgers WS).
+    /// The footnote at the bottom of the sheet explains the marker.
     private var postseasonText: String {
         guard let series = deepestRound else { return "—" }
         let (favWins, favLosses) = Self.favoritePerspective(series)
-        let asterisk = (year == 2017 && series.round == "World Series") ? "※" : ""
+        let asterisk = (year == 2017 && series.opponent == "HOU") ? "※" : ""
         let rec = "(\(favWins)-\(favLosses))\(asterisk)"
         if series.round == "World Series" {
             return series.won
@@ -381,7 +382,7 @@ private struct YearCard: View {
     private func roundRow(_ series: TeamPostseasonSeries) -> some View {
         let (favWins, favLosses) = Self.favoritePerspective(series)
         let resultChar = series.won ? "W" : "L"
-        let asterisk = (year == 2017 && series.round == "World Series") ? "※" : ""
+        let asterisk = (year == 2017 && series.opponent == "HOU") ? "※" : ""
         return HStack(spacing: 6) {
             Text(series.round)
                 .font(.caption)
