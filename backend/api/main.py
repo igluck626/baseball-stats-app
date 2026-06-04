@@ -1759,6 +1759,117 @@ def _lahman_pitching_seasons_for_bbref(bbref_id: str) -> list[dict]:
     return seasons
 
 
+@app.post("/admin/update-player-bio/{player_id}")
+def admin_update_player_bio(
+    player_id:     int,
+    bio_type:      str  = Query(..., description="'batter' or 'pitcher' — picks which bio table to update."),
+    height:        int | None = Query(None, description="Height in inches."),
+    weight:        int | None = Query(None, description="Weight in pounds."),
+    birth_city:    str | None = Query(None),
+    birth_state:   str | None = Query(None),
+    birth_country: str | None = Query(None),
+    debut:         str | None = Query(None, description="ISO date string, e.g. '2001-04-22'."),
+    team_code:     str | None = Query(None, description="Lahman team code to set on the player's most-recent season row (since team_code is NOT a column on the bio — it's derived from the latest season's team)."),
+):
+    """Partial update of an existing player/pitcher bio row. Every
+    bio param is optional — only fields supplied (non-None) are
+    written.
+
+    `team_code` is a special case: the bio tables don't carry a
+    team column (the API derives `current_team` / `team_code` at
+    response time from the latest `player_seasons`/`pitcher_seasons`
+    row's `team`). When `team_code` is provided, we update the most
+    recent season row's `team` for the chosen side. If the player
+    has no season rows, `team_code` is silently ignored — there's
+    nothing to write through to, and the caller can run
+    `/admin/reload-player-lahman/{player_id}` (or insert a season
+    via `/admin/reset-player-season/{player_id}`) first.
+
+    Returns 404 if no bio row exists for `(bio_type, player_id)`.
+    """
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    if bio_type not in ("batter", "pitcher"):
+        raise HTTPException(
+            status_code=400,
+            detail="bio_type must be 'batter' or 'pitcher'",
+        )
+
+    bio_model    = Pitcher if bio_type == "pitcher" else Player
+    season_model = PitcherSeason if bio_type == "pitcher" else PlayerSeason
+
+    # Build the {column → value} update map from the non-None params.
+    # Stored separately so the response can echo exactly what changed.
+    bio_updates: dict[str, object] = {}
+    if height        is not None: bio_updates["height"]        = height
+    if weight        is not None: bio_updates["weight"]        = weight
+    if birth_city    is not None: bio_updates["birth_city"]    = birth_city
+    if birth_state   is not None: bio_updates["birth_state"]   = birth_state
+    if birth_country is not None: bio_updates["birth_country"] = birth_country
+    if debut         is not None: bio_updates["debut"]         = debut
+
+    team_code_applied_to_year: int | None = None
+    bio_snapshot: dict = {}
+
+    with connection.get_session() as db:
+        bio_row = (
+            db.query(bio_model)
+              .filter(bio_model.player_id == player_id)
+              .first()
+        )
+        if bio_row is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No {bio_type} bio row for player_id {player_id}",
+            )
+
+        for col, value in bio_updates.items():
+            setattr(bio_row, col, value)
+
+        if team_code is not None:
+            latest = (
+                db.query(season_model)
+                  .filter(season_model.player_id == player_id)
+                  .order_by(season_model.year.desc())
+                  .first()
+            )
+            if latest is not None:
+                latest.team = team_code
+                team_code_applied_to_year = latest.year
+
+        db.commit()
+        # Re-read while the session is still open so the returned
+        # snapshot reflects what's actually persisted (and avoid
+        # DetachedInstanceError on the response build).
+        db.refresh(bio_row)
+        bio_snapshot = {
+            "player_id":     bio_row.player_id,
+            "name":          bio_row.name,
+            "bbref_id":      bio_row.bbref_id,
+            "position":      bio_row.position,
+            "bats":          bio_row.bats,
+            "throws":        bio_row.throws,
+            "height":        bio_row.height,
+            "weight":        bio_row.weight,
+            "birth_year":    bio_row.birth_year,
+            "birth_month":   bio_row.birth_month,
+            "birth_day":     bio_row.birth_day,
+            "birth_city":    bio_row.birth_city,
+            "birth_state":   bio_row.birth_state,
+            "birth_country": bio_row.birth_country,
+            "debut":         bio_row.debut,
+        }
+
+    return {
+        "status":                     "ok",
+        "bio_type":                   bio_type,
+        "updated_columns":            list(bio_updates.keys()),
+        "team_code_applied":          team_code if team_code_applied_to_year is not None else None,
+        "team_code_applied_to_year":  team_code_applied_to_year,
+        "bio":                        bio_snapshot,
+    }
+
+
 @app.get("/admin/dob-coverage")
 def admin_dob_coverage():
     """Diagnostic: report birth-date completeness across both bio
