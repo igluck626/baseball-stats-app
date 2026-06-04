@@ -5,10 +5,10 @@
 //  Season-by-season history for the favorite franchise rendered as a
 //  vertical timeline of glass cards, most-recent year first. Each
 //  card carries the year, W-L, division finish badge, win %, R/RA,
-//  and the deepest postseason round (with series record). Border /
-//  tint signal milestone seasons — subtle team-color stroke for
-//  division winners or any playoff appearance, stronger stroke for
-//  World Series wins.
+//  and the deepest postseason round (with series record from the
+//  favorite's perspective). Tapping a playoff year's postseason
+//  cell expands the card to list every round the team played that
+//  October.
 //
 
 import SwiftUI
@@ -26,9 +26,22 @@ struct TeamHistorySheet: View {
 
     @Environment(\.dismiss) private var dismiss
 
+    /// Tracks which year cards have their playoff-rounds dropdown
+    /// expanded. Lives on the sheet so the open/closed state survives
+    /// scrolling the LazyVStack (each card's `@State` resets on
+    /// recycle, but a sheet-level set is stable).
+    @State private var expandedYears: Set<Int> = []
+
     private var tint: Color {
         TeamColors.color(for: entry.lahmanCode) ?? .accentColor
     }
+
+    /// World Series border tint — gold (#FFD700-ish) at 0.8 opacity.
+    /// Pulled out so the value lives in one place rather than being
+    /// scattered across YearCard's overlay logic.
+    private static let worldSeriesBorder = Color(
+        red: 1.0, green: 0.84, blue: 0.0,
+    ).opacity(0.8)
 
     var body: some View {
         NavigationStack {
@@ -73,15 +86,26 @@ struct TeamHistorySheet: View {
             ScrollView {
                 LazyVStack(spacing: 10) {
                     ForEach(history) { row in
+                        let year = row.year ?? 0
                         YearCard(
-                            row:        row,
-                            postseason: postseasonByYear[row.year ?? 0] ?? [],
-                            tint:       tint,
+                            row:           row,
+                            postseason:    postseasonByYear[year] ?? [],
+                            tint:          tint,
+                            wsBorderColor: Self.worldSeriesBorder,
+                            isExpanded:    expandedYears.contains(year),
+                            onToggleExpand: {
+                                if expandedYears.contains(year) {
+                                    expandedYears.remove(year)
+                                } else {
+                                    expandedYears.insert(year)
+                                }
+                            },
                         )
                     }
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 12)
+                .animation(.spring(response: 0.3), value: expandedYears)
             }
         }
     }
@@ -102,16 +126,21 @@ struct TeamHistorySheet: View {
 
 // MARK: - Year card
 
-/// One year's accomplishments. Two rows of info: year + W-L +
-/// finish-pill on top, win% + R/RA + postseason on the bottom.
-/// Border thickness escalates from "no border" → thin team-tint
-/// (any playoff appearance or division crown) → thicker team-tint
-/// (World Series winner) so the eye picks out trophy seasons at a
-/// glance while scrolling.
+/// One year's accomplishments. Top row: year + W-L + finish-pill.
+/// Bottom row: win% + R/RA + tappable postseason summary (when the
+/// team made the playoffs). Tapping the postseason cell expands the
+/// card with a chronological round-by-round breakdown.
+///
+/// Border policy: World Series winners get a gold border (handled
+/// here); every other year is borderless — the inner glass material
+/// + drop shadow is enough visual separation.
 private struct YearCard: View {
     let row: TeamStanding
     let postseason: [TeamPostseasonSeries]
     let tint: Color
+    let wsBorderColor: Color
+    let isExpanded: Bool
+    let onToggleExpand: () -> Void
 
     private var year: Int { row.year ?? 0 }
 
@@ -119,14 +148,20 @@ private struct YearCard: View {
         row.rank == 1 || row.division_leader == true
     }
 
-    private var deepestRound: TeamPostseasonSeries? {
-        postseason.max {
+    private var hasPostseason: Bool { !postseason.isEmpty }
+
+    /// Series the team played that October, sorted chronologically
+    /// (Wild Card first → LDS → LCS → World Series last).
+    private var orderedSeries: [TeamPostseasonSeries] {
+        postseason.sorted {
             TeamHistorySheet.depth(of: $0.round) <
             TeamHistorySheet.depth(of: $1.round)
         }
     }
 
-    private var hasPostseason: Bool { !postseason.isEmpty }
+    private var deepestRound: TeamPostseasonSeries? {
+        orderedSeries.last
+    }
 
     private var wonWorldSeries: Bool {
         deepestRound?.round == "World Series" && deepestRound?.won == true
@@ -136,6 +171,10 @@ private struct YearCard: View {
         VStack(spacing: 6) {
             topRow
             bottomRow
+            if isExpanded && hasPostseason {
+                Divider().padding(.top, 2)
+                expandedSection
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
@@ -151,11 +190,10 @@ private struct YearCard: View {
     private var borderOverlay: some View {
         if wonWorldSeries {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(tint.opacity(0.7), lineWidth: 1.5)
-        } else if isDivisionWinner || hasPostseason {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(tint.opacity(0.3), lineWidth: 1)
+                .stroke(wsBorderColor, lineWidth: 1.5)
         }
+        // All other years: no border. The glass fill + shadow are
+        // the only separators.
     }
 
     // MARK: Top row — year + W-L + finish badge
@@ -218,10 +256,7 @@ private struct YearCard: View {
                     .monospacedDigit()
             }
             Spacer(minLength: 0)
-            Text(postseasonText)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(postseasonColor)
-                .lineLimit(1)
+            postseasonCell
         }
     }
 
@@ -242,13 +277,39 @@ private struct YearCard: View {
         return "R: \(rs) RA: \(ra)"
     }
 
-    /// Compact postseason summary including series record. Picks the
-    /// deepest round reached (WS > LCS > LDS > WC). 🏆 prefix only
-    /// when the team won the World Series; everything else just gets
-    /// the round name + record.
+    // MARK: Postseason cell (tappable when there's a postseason)
+
+    @ViewBuilder
+    private var postseasonCell: some View {
+        if hasPostseason {
+            Button(action: onToggleExpand) {
+                HStack(spacing: 4) {
+                    Text(postseasonText)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(postseasonColor)
+                        .lineLimit(1)
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        } else {
+            Text("—")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color(.tertiaryLabel))
+        }
+    }
+
+    /// Deepest-round summary as `"<Round> (W-L)"` with the record
+    /// flipped to the favorite's perspective (Lahman ships wins/
+    /// losses from the WINNER's perspective; if `won == false`, the
+    /// favorite is the loser and the record needs to be inverted).
     private var postseasonText: String {
         guard let series = deepestRound else { return "—" }
-        let rec = "(\(series.wins)-\(series.losses))"
+        let (favWins, favLosses) = Self.favoritePerspective(series)
+        let rec = "(\(favWins)-\(favLosses))"
         if series.round == "World Series" {
             return series.won
                 ? "🏆 World Series \(rec)"
@@ -261,5 +322,54 @@ private struct YearCard: View {
         if wonWorldSeries          { return tint }
         if !hasPostseason          { return Color(.tertiaryLabel) }
         return .primary
+    }
+
+    // MARK: Expanded round-by-round breakdown
+
+    private var expandedSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(orderedSeries, id: \.id) { series in
+                roundRow(series)
+            }
+        }
+        .padding(.top, 2)
+    }
+
+    private func roundRow(_ series: TeamPostseasonSeries) -> some View {
+        let (favWins, favLosses) = Self.favoritePerspective(series)
+        let resultChar = series.won ? "W" : "L"
+        return HStack(spacing: 6) {
+            Text(series.round)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text("·")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+            Text("vs \(series.opponent)")
+                .font(.caption)
+                .foregroundStyle(.primary)
+            Text("·")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+            Text("\(resultChar) \(favWins)-\(favLosses)")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(series.won ? .green : .red)
+                .monospacedDigit()
+            Spacer(minLength: 0)
+        }
+    }
+
+    /// Lahman's `SeriesPost.csv` stores `wins` / `losses` from the
+    /// SERIES winner's perspective. When the favorite team is the
+    /// loser, we flip so the displayed record always reads favorite-
+    /// wins-first.
+    private static func favoritePerspective(
+        _ series: TeamPostseasonSeries,
+    ) -> (wins: Int, losses: Int) {
+        if series.won {
+            return (series.wins, series.losses)
+        } else {
+            return (series.losses, series.wins)
+        }
     }
 }
