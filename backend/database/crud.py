@@ -1,5 +1,6 @@
 import datetime
 
+from sqlalchemy import or_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -17,6 +18,7 @@ from .models import (
     PlayerPostseasonBatting,
     PlayerPostseasonPitching,
     PlayerSeason,
+    SeriesPost,
     TeamSeason,
 )
 
@@ -419,3 +421,83 @@ def save_team_seasons(db: Session, rows: list[dict]) -> None:
     now = datetime.datetime.utcnow()
     for r in rows:
         db.merge(TeamSeason(last_updated=now, **r))
+
+
+# ---------------------------------------------------------------------------
+# Series post (postseason series outcomes — Lahman SeriesPost.csv)
+# ---------------------------------------------------------------------------
+
+def save_series_post(db: Session, rows: list[dict]) -> None:
+    """Upsert series-post rows by (year, round, team_id_winner).
+    PostgreSQL takes the native `ON CONFLICT ... DO UPDATE` form
+    keyed off the `uq_series_post` unique constraint so a re-run of
+    the loader (or `/admin/load-series-post`) cleanly overwrites
+    wins/losses/ties in place. SQLite falls back to a select-then-
+    update-or-insert pattern because `db.merge` needs a primary-key
+    match — the autoincrement `id` PK isn't known at the application
+    side until the row is already saved, so merge can't help here.
+    """
+    if not rows:
+        return
+    dialect = db.bind.dialect.name if db.bind is not None else ""
+    if dialect == "postgresql":
+        for r in rows:
+            stmt = pg_insert(SeriesPost).values(**r)
+            update_cols = {
+                k: stmt.excluded[k]
+                for k in r.keys()
+                if k not in ("year", "round", "team_id_winner")
+            }
+            if update_cols:
+                stmt = stmt.on_conflict_do_update(
+                    constraint="uq_series_post",
+                    set_=update_cols,
+                )
+            else:
+                stmt = stmt.on_conflict_do_nothing(constraint="uq_series_post")
+            db.execute(stmt)
+    else:
+        for r in rows:
+            existing = (
+                db.query(SeriesPost)
+                  .filter(SeriesPost.year           == r["year"],
+                          SeriesPost.round          == r["round"],
+                          SeriesPost.team_id_winner == r["team_id_winner"])
+                  .first()
+            )
+            if existing is None:
+                db.add(SeriesPost(**r))
+            else:
+                for k, v in r.items():
+                    if k not in ("year", "round", "team_id_winner"):
+                        setattr(existing, k, v)
+
+
+def get_series_post_by_team(
+    db: Session, franch_id: str, year_from: int | None = None,
+) -> list[SeriesPost]:
+    """Return all postseason series involving any team that's
+    historically been part of `franch_id`'s franchise — either as
+    winner or loser. Resolves the team_id list off `team_seasons`
+    so a relocation/rename (e.g. MON → WSN) surfaces both sides of
+    the franchise's history in one call. Sorted by year desc, then
+    round."""
+    team_ids = [
+        r.team_id for r in
+        db.query(TeamSeason.team_id)
+          .filter(TeamSeason.franch_id == franch_id)
+          .distinct()
+          .all()
+    ]
+    if not team_ids:
+        return []
+    q = (
+        db.query(SeriesPost)
+          .filter(or_(
+              SeriesPost.team_id_winner.in_(team_ids),
+              SeriesPost.team_id_loser.in_(team_ids),
+          ))
+    )
+    if year_from is not None:
+        q = q.filter(SeriesPost.year >= year_from)
+    return q.order_by(SeriesPost.year.desc(), SeriesPost.round).all()

@@ -37,7 +37,7 @@ from database.models import (                                # noqa: E402
     BattingGameLog, Pitcher, PitcherSeason, PitchingGameLog,
     Player, PlayerAllstar, PlayerAward, PlayerFielding,
     PlayerHof, PlayerPostseasonBatting, PlayerPostseasonPitching,
-    PlayerSeason, TeamSeason,
+    PlayerSeason, SeriesPost, TeamSeason,
 )
 
 # scripts/ holds the Lahman loader, WAR backfill, and nightly update logic;
@@ -1157,6 +1157,73 @@ def team_history(team_id: str):
             detail=f"No franchise history found for team_id {team_id!r}",
         )
     return {"team_id": team_id, "history": rows}
+
+
+# Lahman round-code → display name. Doubled-up rounds in the wild-
+# card era (ALDS1/ALDS2, NLWC1/NLWC2, etc.) collapse to the bare
+# round name so the iOS card doesn't read "ALDS1" vs "ALDS2" as
+# two different things. Anything unmapped passes through unchanged.
+_POSTSEASON_ROUND_DISPLAY: dict[str, str] = {
+    "WS":    "World Series",
+    "ALCS":  "ALCS",
+    "NLCS":  "NLCS",
+    "ALDS":  "ALDS",  "ALDS1": "ALDS",  "ALDS2": "ALDS",
+    "NLDS":  "NLDS",  "NLDS1": "NLDS",  "NLDS2": "NLDS",
+    "ALWC":  "AL Wild Card", "ALWC1": "AL Wild Card", "ALWC2": "AL Wild Card",
+    "NLWC":  "NL Wild Card", "NLWC1": "NL Wild Card", "NLWC2": "NL Wild Card",
+}
+
+
+@app.get("/teams/{team_id}/postseason")
+def team_postseason(team_id: str):
+    """All postseason series this franchise has played in (winner or
+    loser side), sorted year desc / round. `team_id` accepts either
+    the Lahman teamID (e.g. "LAN") or the franchID (e.g. "LAD") —
+    same resolution path the `/history` endpoint uses, so a
+    relocation history (MON → WSN) collapses to a single franchise
+    response.
+
+    Each entry carries `won: bool` (this franchise's side) and the
+    opposing Lahman teamID, so the iOS card can render "Beat TBA 4-2
+    in the 2020 World Series" without further joins."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+
+    with connection.get_session() as db:
+        franch_id = crud.get_team_franchise(db, team_id)
+        if franch_id is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No franchise found for team_id {team_id!r}",
+            )
+        # All Lahman team_ids that share this franch_id — covers
+        # relocations and rebrands so a series won under the old
+        # code still shows up.
+        franchise_team_ids = {
+            r.team_id for r in
+            db.query(TeamSeason.team_id)
+              .filter(TeamSeason.franch_id == franch_id)
+              .distinct()
+              .all()
+        }
+        rows = crud.get_series_post_by_team(db, franch_id)
+        postseason = []
+        for r in rows:
+            won = r.team_id_winner in franchise_team_ids
+            opponent = r.team_id_loser if won else r.team_id_winner
+            postseason.append({
+                "year":     r.year,
+                "round":    _POSTSEASON_ROUND_DISPLAY.get(r.round, r.round),
+                "won":      won,
+                "opponent": opponent,
+                "wins":     r.wins,
+                "losses":   r.losses,
+            })
+
+    return {
+        "team_id":    team_id,
+        "postseason": postseason,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -3376,6 +3443,47 @@ def admin_load_awards():
         }
     except Exception as exc:
         log.exception("load-awards failed")
+        return {
+            "status":     "error",
+            "message":    str(exc),
+            "error_type": type(exc).__name__,
+            "traceback":  traceback.format_exc(),
+            "duration_seconds": round(time.time() - started, 2),
+        }
+
+
+@app.post("/admin/load-series-post")
+def admin_load_series_post():
+    """Targeted backfill: load `SeriesPost.csv` into the
+    `series_post` table without re-running the full Lahman load.
+
+    Series-post is team-keyed (Lahman teamID, not MLBAM), so unlike
+    `/admin/load-awards` / `/admin/load-award-shares` there's no
+    Chadwick bridge to build — the join against franchise history
+    happens at read time via `crud.get_series_post_by_team`.
+
+    Returns 200 with `status: "error"` + traceback on failure (same
+    diagnostic pattern as the sibling award-loader endpoints).
+    """
+    import traceback
+
+    if not connection.db_available():
+        return {
+            "status":  "error",
+            "message": "DATABASE_URL is not configured",
+        }
+
+    started = time.time()
+    try:
+        rows_loaded = lahman_load._load_series_post()
+        duration = round(time.time() - started, 2)
+        return {
+            "status":           "done",
+            "rows_loaded":      rows_loaded,
+            "duration_seconds": duration,
+        }
+    except Exception as exc:
+        log.exception("load-series-post failed")
         return {
             "status":     "error",
             "message":    str(exc),

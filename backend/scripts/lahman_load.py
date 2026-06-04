@@ -50,6 +50,7 @@ BATTING_POST_CSV        = os.path.join(LAHMAN_DIR, "BattingPost.csv")
 PITCHING_POST_CSV       = os.path.join(LAHMAN_DIR, "PitchingPost.csv")
 TEAMS_CSV               = os.path.join(LAHMAN_DIR, "Teams.csv")
 HOF_CSV                 = os.path.join(LAHMAN_DIR, "HallOfFame.csv")
+SERIES_POST_CSV         = os.path.join(LAHMAN_DIR, "SeriesPost.csv")
 
 # Load Lahman data only for years STRICTLY less than this — i.e. every
 # completed season. Pybaseball owns the current season; after it ends, Lahman
@@ -1158,6 +1159,54 @@ def _load_teams(
 
 
 # ---------------------------------------------------------------------------
+# Series post (SeriesPost.csv — postseason series outcomes)
+# ---------------------------------------------------------------------------
+# Team-keyed (Lahman teamID), so no Chadwick bridge is needed — the
+# join against franchise history happens at read time in
+# `crud.get_series_post_by_team`.
+
+def _load_series_post(
+    state: Optional[dict] = None,
+    lock: Optional[threading.Lock] = None,
+) -> int:
+    _set_state(state, lock, phase="series_post")
+    log.info(f"Reading {SERIES_POST_CSV} ...")
+
+    rows: list[dict] = []
+    with open(SERIES_POST_CSV, newline="", encoding="utf-8-sig") as fh:
+        for row in csv.DictReader(fh):
+            year = int(row["yearID"])
+            if year >= CUTOFF_YEAR:
+                continue
+            rows.append({
+                "year":             year,
+                "round":            row["round"],
+                "team_id_winner":   row["teamIDwinner"],
+                "league_id_winner": row.get("lgIDwinner") or None,
+                "team_id_loser":    row["teamIDloser"],
+                "league_id_loser":  row.get("lgIDloser") or None,
+                "wins":             _i_or_none_safe(row.get("wins")),
+                "losses":           _i_or_none_safe(row.get("losses")),
+                "ties":             _i_or_none_safe(row.get("ties")),
+            })
+
+    log.info(f"  saving {len(rows):,} series-post rows ...")
+    _set_state(state, lock, series_post_rows_total=len(rows))
+
+    saved = 0
+    BATCH = 500
+    for chunk_start in range(0, len(rows), BATCH):
+        chunk = rows[chunk_start:chunk_start + BATCH]
+        with connection.get_session() as db:
+            crud.save_series_post(db, chunk)
+            saved += len(chunk)
+        _set_state(state, lock, series_post_loaded=saved)
+
+    log.info(f"  series_post: saved {saved:,}")
+    return saved
+
+
+# ---------------------------------------------------------------------------
 # Hall of Fame (HallOfFame.csv)
 # ---------------------------------------------------------------------------
 
@@ -1273,6 +1322,7 @@ def run(
     post_bat_saved      = _load_postseason_batting(bridge, state, lock)
     post_pit_saved      = _load_postseason_pitching(bridge, state, lock)
     teams_saved         = _load_teams(state, lock)
+    series_post_saved   = _load_series_post(state, lock)
     hof_saved           = _load_hof(bridge, state, lock)
 
     _set_state(state, lock, phase="done")
@@ -1292,6 +1342,7 @@ def run(
     print(f"  Postseason batting saved     : {post_bat_saved:>7,}")
     print(f"  Postseason pitching saved    : {post_pit_saved:>7,}")
     print(f"  Team-season rows saved       : {teams_saved:>7,}")
+    print(f"  Series-post rows saved       : {series_post_saved:>7,}")
     print(f"  Hall of Fame ballots saved   : {hof_saved:>7,}")
     print(bar)
 

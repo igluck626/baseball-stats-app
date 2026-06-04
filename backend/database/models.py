@@ -1,4 +1,7 @@
-from sqlalchemy import Boolean, Column, Date, DateTime, Float, Index, Integer, String
+from sqlalchemy import (
+    Boolean, Column, Date, DateTime, Float, Index, Integer, String,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import DeclarativeBase
 
 
@@ -440,3 +443,37 @@ class TeamSeason(Base):
     clinched             = Column(Boolean)
     magic_number         = Column(String)
     elimination_number   = Column(String)
+
+
+# One row per postseason series outcome (from Lahman's SeriesPost.csv).
+# Team-keyed (Lahman team_id, not MLBAM), so there's no `bridge` step
+# in the loader — series are matched directly by `teamIDwinner` /
+# `teamIDloser` against `team_seasons.team_id`. The autoincrement
+# `id` PK + unique constraint on (year, round, team_id_winner) gives
+# the upsert path a stable conflict target while keeping the bulk
+# loader idempotent across re-runs.
+class SeriesPost(Base):
+    __tablename__ = "series_post"
+    __table_args__ = (
+        UniqueConstraint(
+            "year", "round", "team_id_winner",
+            name="uq_series_post",
+        ),
+        Index("ix_series_post_year",    "year"),
+        Index("ix_series_post_winner",  "team_id_winner"),
+        Index("ix_series_post_loser",   "team_id_loser"),
+    )
+
+    id               = Column(Integer, primary_key=True, autoincrement=True)
+    year             = Column(Integer, nullable=False)
+    # Lahman round codes: WS, ALCS, NLCS, ALDS1/ALDS2, NLDS1/NLDS2,
+    # ALWC/ALWC1/ALWC2, NLWC/NLWC1/NLWC2, etc. Stored raw so future
+    # round-code additions don't need a migration.
+    round            = Column(String,  nullable=False)
+    team_id_winner   = Column(String,  nullable=False)
+    league_id_winner = Column(String)
+    team_id_loser    = Column(String,  nullable=False)
+    league_id_loser  = Column(String)
+    wins             = Column(Integer)
+    losses           = Column(Integer)
+    ties             = Column(Integer)
