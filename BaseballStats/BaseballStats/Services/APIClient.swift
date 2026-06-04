@@ -226,6 +226,22 @@ final class APIClient {
         return try await getOptional(url)
     }
 
+    /// `GET /teams/{team_id}/history`. Returns nil on 404 — happens
+    /// only for codes the franchise-resolution can't map to any
+    /// `team_seasons` row (extreme historical typos, etc.).
+    func getTeamHistory(teamId: String) async throws -> TeamHistoryResponse? {
+        let url = try buildURL(path: "/teams/\(teamId)/history")
+        return try await getOptional(url)
+    }
+
+    /// `GET /teams/{team_id}/postseason`. Returns nil on 404. Empty
+    /// `postseason` is a valid response for a franchise with no
+    /// playoff appearances yet — the call still succeeds.
+    func getTeamPostseason(teamId: String) async throws -> TeamPostseasonResponse? {
+        let url = try buildURL(path: "/teams/\(teamId)/postseason")
+        return try await getOptional(url)
+    }
+
     /// `GET /leaderboards?stat=&year=&player_type=&league=&team=`.
     /// Returns nil on 404 (e.g. a season with no qualifying rate-stat
     /// leaders). Sort order is decided server-side: ERA / WHIP
@@ -406,4 +422,26 @@ private struct BatterStatsAtDateResponse: Decodable {
     let doubles:        Int
     let triples:        Int
     let includes_today: Bool
+}
+
+/// Response from `GET /teams/{team_id}/postseason` — every series
+/// involving any historical teamID under the franchise (winner or
+/// loser side), sorted year desc / round.
+struct TeamPostseasonResponse: Codable {
+    let team_id: String
+    let postseason: [TeamPostseasonSeries]
+}
+
+/// One row of postseason-series outcome. Round names are already in
+/// display form ("World Series", "ALDS", "AL Wild Card", …) — the
+/// backend's `_POSTSEASON_ROUND_DISPLAY` map normalizes Lahman's
+/// ALDS1/ALDS2/etc. variants down to their bare round name.
+struct TeamPostseasonSeries: Codable, Identifiable, Hashable {
+    var id: String { "\(year)-\(round)" }
+    let year: Int
+    let round: String
+    let won: Bool
+    let opponent: String
+    let wins: Int
+    let losses: Int
 }

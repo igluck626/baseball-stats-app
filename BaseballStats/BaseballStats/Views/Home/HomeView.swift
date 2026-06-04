@@ -24,6 +24,7 @@ struct HomeView: View {
     @State private var showingSchedule = false
     @State private var showingLeadersSheet = false
     @State private var showingRosterSheet = false
+    @State private var showingHistorySheet = false
     @State private var isEditingFavorites = false
 
     var body: some View {
@@ -81,12 +82,25 @@ struct HomeView: View {
                     .presentationDetents([.large])
                 }
             }
+            .sheet(isPresented: $showingHistorySheet) {
+                if let bdlId = store.bdlTeamId,
+                   let entry = MLBTeamCatalog.entry(forBDLId: bdlId) {
+                    TeamHistorySheet(
+                        entry:            entry,
+                        history:          vm.teamHistory,
+                        postseasonByYear: vm.postseasonByYear,
+                        isLoading:        vm.isLoadingHistory,
+                    )
+                    .presentationDetents([.large])
+                }
+            }
         }
         .task(id: store.bdlTeamId) {
             guard let bdlId = store.bdlTeamId else { return }
             await vm.load(bdlTeamId: bdlId)
             await vm.loadTeamLeaders(bdlTeamId: bdlId)
             await vm.loadRoster(bdlTeamId: bdlId)
+            await vm.loadTeamHistory(bdlTeamId: bdlId)
             vm.startAutoRefresh(bdlTeamId: bdlId)
         }
         .task(id: favoritesStore.playerIds) {
@@ -177,6 +191,11 @@ struct HomeView: View {
                     isLoading: vm.isLoadingRoster,
                     tint:      tint,
                     onSeeAll:  { showingRosterSheet = true },
+                )
+
+                TeamHistorySection(
+                    tint:     tint,
+                    onSeeAll: { showingHistorySheet = true },
                 )
 
                 FavoritePlayersSection(
@@ -898,6 +917,32 @@ private struct RosterSection: View {
 
     var body: some View {
         HomeSectionHeader(title: "Roster", tint: tint) {
+            Button(action: onSeeAll) {
+                HStack(spacing: 3) {
+                    Text("See All")
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.bold))
+                }
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(tint)
+            }
+        }
+    }
+}
+
+// MARK: - Team History Section (header-only entry point)
+
+/// Header-only section for the franchise's season-by-season history.
+/// Tapping "See All ›" opens `TeamHistorySheet` — there's no inline
+/// preview here because the history table only reads well at the
+/// sheet's full width, and a truncated single-row preview adds
+/// noise without information.
+private struct TeamHistorySection: View {
+    let tint: Color
+    let onSeeAll: () -> Void
+
+    var body: some View {
+        HomeSectionHeader(title: "History", tint: tint) {
             Button(action: onSeeAll) {
                 HStack(spacing: 3) {
                     Text("See All")

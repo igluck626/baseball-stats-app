@@ -67,6 +67,27 @@ final class HomeViewModel: ObservableObject {
     @Published var roster: [RosterPlayer] = []
     @Published var isLoadingRoster: Bool = false
 
+    /// Season-by-season history for the favorite franchise, most-
+    /// recent year first, filtered to `year >= 1900` so the Hub
+    /// table doesn't get cluttered with 19th-century NL/AA rows.
+    /// Uses the existing `TeamStanding` shape (shared with the
+    /// Standings tab) — it's a strict superset of what the history
+    /// sheet renders.
+    @Published var teamHistory: [TeamStanding] = []
+    /// Every postseason series the franchise has played in (winner
+    /// or loser), pulled from the SeriesPost pipeline. Used together
+    /// with `teamHistory` so the year row can display "🏆 WS" /
+    /// "NLCS" / etc. without per-row fetches.
+    @Published var teamPostseason: [TeamPostseasonSeries] = []
+    @Published var isLoadingHistory: Bool = false
+
+    /// `{year → list of series the team played that year}`. Built
+    /// off `teamPostseason` so the history table can do an O(1)
+    /// lookup per row instead of re-scanning the array per cell.
+    var postseasonByYear: [Int: [TeamPostseasonSeries]] {
+        Dictionary(grouping: teamPostseason) { $0.year }
+    }
+
     private let bdl: BallDontLieClient
     private let api: APIClient
     private var refreshTask: Task<Void, Never>?
@@ -344,6 +365,31 @@ final class HomeViewModel: ObservableObject {
         return candidates.map {
             LeaderCard(stat: stat, value: $0.value, player: $0.player)
         }
+    }
+
+    // MARK: - Team history
+
+    /// Fetch the favorite franchise's full season history + every
+    /// postseason series in parallel, then surface them on
+    /// `teamHistory` / `teamPostseason`. Both endpoints key on the
+    /// Lahman teamID (resolved from `bdlTeamId` via the existing
+    /// map). The history list is reversed at the API client side
+    /// (year asc) so we sort year desc here, and pre-1900 rows are
+    /// filtered out — those Old NL / AA / NA rows are noise for a
+    /// modern Home-tab card.
+    func loadTeamHistory(bdlTeamId: Int) async {
+        guard let lahmanCode = bdlToLahmanTeamId[bdlTeamId] else { return }
+        isLoadingHistory = true
+        async let historyTask    = (try? await api.getTeamHistory(teamId: lahmanCode)) ?? nil
+        async let postseasonTask = (try? await api.getTeamPostseason(teamId: lahmanCode)) ?? nil
+        let (historyResp, postResp) = await (historyTask, postseasonTask)
+
+        let rows = (historyResp?.history ?? [])
+            .filter { ($0.year ?? 0) >= 1900 }
+            .sorted { ($0.year ?? 0) > ($1.year ?? 0) }
+        self.teamHistory   = rows
+        self.teamPostseason = postResp?.postseason ?? []
+        self.isLoadingHistory = false
     }
 
     // MARK: - Roster
