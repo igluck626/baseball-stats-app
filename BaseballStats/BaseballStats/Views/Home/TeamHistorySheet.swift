@@ -122,6 +122,30 @@ struct TeamHistorySheet: View {
         default:                                       return 0
         }
     }
+
+    /// Lahman team_id → modern Baseball Reference / display code.
+    /// Covers every modern franchise plus the common relocation
+    /// codes Lahman uses for the same franchise across its history
+    /// (FLO → MIA, MON → WSN, ANA → LAA, etc.). Codes already in
+    /// modern form pass through via the `displayCode(_:)` fallback.
+    static let lahmanToDisplay: [String: String] = [
+        "NYA": "NYY", "NYN": "NYM", "LAN": "LAD", "SLN": "STL",
+        "SFN": "SF",  "SDN": "SD",  "KCA": "KC",  "TBA": "TB",
+        "CHA": "CWS", "CHN": "CHC", "ANA": "LAA", "LAA": "LAA",
+        "FLO": "MIA", "MIA": "MIA", "MON": "WSN", "WAS": "WSN",
+        "HOU": "HOU", "ATL": "ATL", "PHI": "PHI", "BOS": "BOS",
+        "MIN": "MIN", "CLE": "CLE", "DET": "DET", "OAK": "OAK",
+        "SEA": "SEA", "TEX": "TEX", "BAL": "BAL", "TOR": "TOR",
+        "MIL": "MIL", "CIN": "CIN", "PIT": "PIT", "ARI": "ARI",
+        "COL": "COL",
+    ]
+
+    /// Convert a Lahman team_id to a display abbreviation. Unmapped
+    /// codes pass through unchanged so historical / 19th-century
+    /// team_ids (PRO, NY4, SL4, BS1, etc.) still render legibly.
+    static func displayCode(_ lahman: String) -> String {
+        lahmanToDisplay[lahman] ?? lahman
+    }
 }
 
 // MARK: - Year card
@@ -345,7 +369,7 @@ private struct YearCard: View {
             Text("·")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
-            Text("vs \(series.opponent)")
+            Text("vs \(TeamHistorySheet.displayCode(series.opponent))")
                 .font(.caption)
                 .foregroundStyle(.primary)
             Text("·")
