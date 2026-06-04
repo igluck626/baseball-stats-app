@@ -84,8 +84,8 @@ struct TeamHistorySheet: View {
             }
         } else {
             ScrollView {
-                LazyVStack(spacing: 10) {
-                    ForEach(history) { row in
+                LazyVStack(spacing: 14) {
+                    ForEach(Array(history.enumerated()), id: \.offset) { idx, row in
                         let year = row.year ?? 0
                         YearCard(
                             row:           row,
@@ -101,10 +101,26 @@ struct TeamHistorySheet: View {
                                 }
                             },
                         )
+                        if idx < history.count - 1 {
+                            Divider().opacity(0.5)
+                                .padding(.horizontal, 12)
+                        }
                     }
+                    // Footnote — explains the ※ marker rendered next
+                    // to the 2017 Astros' World Series record. Lives
+                    // outside the per-year cards so it stays visible
+                    // even when the user has scrolled to a non-2017
+                    // year and only re-anchors at the very bottom.
+                    Text("※ 2017 World Series — Houston Astros found guilty of sign-stealing")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 12)
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 12)
+                .padding(.bottom, 12)
                 .animation(.spring(response: 0.3), value: expandedYears)
             }
         }
@@ -200,14 +216,13 @@ private struct YearCard: View {
                 expandedSection
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(.ultraThinMaterial)
+                .fill(Color(.systemBackground).opacity(0.5))
         )
         .overlay(borderOverlay)
-        .shadow(color: .black.opacity(0.08), radius: 6, y: 2)
     }
 
     @ViewBuilder
@@ -225,11 +240,11 @@ private struct YearCard: View {
     private var topRow: some View {
         HStack(spacing: 10) {
             Text(String(year))
-                .font(.title3.bold())
+                .font(.title2.bold())
                 .foregroundStyle(isDivisionWinner ? tint : .primary)
                 .monospacedDigit()
             Text(wlText)
-                .font(.subheadline.weight(.medium))
+                .font(.headline.weight(.semibold))
                 .foregroundStyle(.primary)
                 .monospacedDigit()
             Spacer(minLength: 0)
@@ -330,10 +345,14 @@ private struct YearCard: View {
     /// flipped to the favorite's perspective (Lahman ships wins/
     /// losses from the WINNER's perspective; if `won == false`, the
     /// favorite is the loser and the record needs to be inverted).
+    /// Appends "※" for the 2017 World Series to flag the Astros'
+    /// sign-stealing record — the footnote at the bottom of the
+    /// sheet explains the marker.
     private var postseasonText: String {
         guard let series = deepestRound else { return "—" }
         let (favWins, favLosses) = Self.favoritePerspective(series)
-        let rec = "(\(favWins)-\(favLosses))"
+        let asterisk = (year == 2017 && series.round == "World Series") ? "※" : ""
+        let rec = "(\(favWins)-\(favLosses))\(asterisk)"
         if series.round == "World Series" {
             return series.won
                 ? "🏆 World Series \(rec)"
@@ -362,6 +381,7 @@ private struct YearCard: View {
     private func roundRow(_ series: TeamPostseasonSeries) -> some View {
         let (favWins, favLosses) = Self.favoritePerspective(series)
         let resultChar = series.won ? "W" : "L"
+        let asterisk = (year == 2017 && series.round == "World Series") ? "※" : ""
         return HStack(spacing: 6) {
             Text(series.round)
                 .font(.caption)
@@ -375,7 +395,7 @@ private struct YearCard: View {
             Text("·")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
-            Text("\(resultChar) \(favWins)-\(favLosses)")
+            Text("\(resultChar) \(favWins)-\(favLosses)\(asterisk)")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(series.won ? .green : .red)
                 .monospacedDigit()

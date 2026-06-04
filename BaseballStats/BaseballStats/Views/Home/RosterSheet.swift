@@ -89,6 +89,7 @@ struct RosterSheet: View {
                 PlayerProfileView(player: player)
             }
         }
+        .presentationBackground(.ultraThinMaterial)
     }
 
     @ViewBuilder
@@ -109,7 +110,11 @@ struct RosterSheet: View {
                         if !players.isEmpty {
                             sectionHeader(section)
                             ForEach(Array(players.enumerated()), id: \.offset) { idx, player in
-                                rowButton(player: player, alternate: idx.isMultiple(of: 2))
+                                rowButton(player: player)
+                                if idx < players.count - 1 {
+                                    Divider().opacity(0.4)
+                                        .padding(.horizontal, 16)
+                                }
                             }
                         }
                     }
@@ -135,11 +140,16 @@ struct RosterSheet: View {
         .padding(.vertical, 8)
     }
 
+    /// Position-bucket subheader. Matches the visual language of
+    /// `HomeSectionHeader` — team-tinted capsule accent + bold label,
+    /// no shaded band underneath. Sized smaller (`.caption` label, 4×18
+    /// capsule) since these are sub-section headers inside the sheet
+    /// rather than top-level section markers on the home tab.
     private func sectionHeader(_ group: RosterPositionGroup) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 10) {
             Capsule()
                 .fill(tint)
-                .frame(width: 3, height: 12)
+                .frame(width: 4, height: 18)
             Text(sectionTitle(group))
                 .font(.caption.weight(.bold))
                 .tracking(0.6)
@@ -147,27 +157,27 @@ struct RosterSheet: View {
             Spacer()
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(Color(.systemFill).opacity(0.25))
+        .padding(.top, 16)
+        .padding(.bottom, 8)
     }
 
     @ViewBuilder
-    private func rowButton(player: RosterPlayer, alternate: Bool) -> some View {
+    private func rowButton(player: RosterPlayer) -> some View {
         if let resolved = player.resolved {
             NavigationLink(value: resolved) {
-                row(player, alternate: alternate)
+                row(player)
             }
             .buttonStyle(.plain)
         } else {
-            row(player, alternate: alternate)
+            row(player)
         }
     }
 
-    private func row(_ player: RosterPlayer, alternate: Bool) -> some View {
+    private func row(_ player: RosterPlayer) -> some View {
         HStack(spacing: 0) {
             HStack(spacing: 6) {
                 Text(player.name)
-                    .font(.subheadline.weight(.semibold))
+                    .font(.body.weight(.medium))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
@@ -189,8 +199,7 @@ struct RosterSheet: View {
             }
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(alternate ? Color(.systemFill).opacity(0.12) : Color.clear)
+        .frame(minHeight: 44)
         .contentShape(Rectangle())
     }
 
