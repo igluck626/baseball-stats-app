@@ -444,13 +444,14 @@ final class HomeViewModel: ObservableObject {
     }
 
     /// Sort key — lower number = more severe. Anything unrecognized
-    /// gets `Int.max` so it falls to the end of the list rather than
-    /// crashing the sort with a fatal default.
+    /// gets the trailing bucket so it falls to the end of the list
+    /// rather than crashing the sort with a fatal default. Match
+    /// keys are BDL's hyphenated wire format ("60-Day-IL", etc.).
     nonisolated private static func severityRank(_ status: String) -> Int {
         switch status {
-        case "60-Day IL":  return 0
-        case "15-Day IL":  return 1
-        case "10-Day IL":  return 2
+        case "60-Day-IL":  return 0
+        case "15-Day-IL":  return 1
+        case "10-Day-IL":  return 2
         case "Day-To-Day": return 3
         default:           return 4
         }

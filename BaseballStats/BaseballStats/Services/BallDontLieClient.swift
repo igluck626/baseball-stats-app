@@ -436,8 +436,8 @@ final class BallDontLieClient: @unchecked Sendable {
 
     /// `GET /mlb/v1/player_injuries?team_ids[]={teamId}&per_page=100`.
     /// Returns a flat list of injured players for a team — BDL nests
-    /// the player bio inside each row alongside `status` ("60-Day
-    /// IL" / "15-Day IL" / "10-Day IL" / "Day-To-Day"). 5-minute
+    /// the player bio inside each row alongside `status` ("60-Day-
+    /// IL" / "15-Day-IL" / "10-Day-IL" / "Day-To-Day"). 5-minute
     /// cache (the injury list churns slowly within a session).
     func getTeamInjuries(bdlTeamId: Int) async throws -> [InjuredPlayer] {
         let key = "team-injuries:\(bdlTeamId)"

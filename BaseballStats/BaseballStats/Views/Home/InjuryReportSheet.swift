@@ -29,12 +29,13 @@ struct InjuryReportSheet: View {
 
     /// Section order — most severe first. Each entry pairs the
     /// uppercase display label with the BDL status string that
-    /// matches into it. Adding a new bucket (e.g., "Bereavement
-    /// List") only needs an entry here.
+    /// matches into it. BDL ships fully-hyphenated values
+    /// ("60-Day-IL", not "60-Day IL"); the display label is just
+    /// for the header text.
     private static let sections: [(label: String, status: String)] = [
-        ("60-DAY IL",  "60-Day IL"),
-        ("15-DAY IL",  "15-Day IL"),
-        ("10-DAY IL",  "10-Day IL"),
+        ("60-DAY IL",  "60-Day-IL"),
+        ("15-DAY IL",  "15-Day-IL"),
+        ("10-DAY IL",  "10-Day-IL"),
         ("DAY-TO-DAY", "Day-To-Day"),
     ]
 
@@ -165,12 +166,13 @@ struct InjuryReportSheet: View {
 
     /// IL severity → fill color. Same palette as the previous inline
     /// card: red / orange / yellow / gray, falling through to gray
-    /// for any unrecognized BDL status string.
+    /// for any unrecognized BDL status string. Match keys are BDL's
+    /// hyphenated wire format.
     private static func color(for status: String) -> Color {
         switch status {
-        case "60-Day IL":  return .red
-        case "15-Day IL":  return .orange
-        case "10-Day IL":  return .yellow
+        case "60-Day-IL":  return .red
+        case "15-Day-IL":  return .orange
+        case "10-Day-IL":  return .yellow
         case "Day-To-Day": return Color(.systemGray)
         default:           return Color(.systemGray)
         }
