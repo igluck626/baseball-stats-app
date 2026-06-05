@@ -23,11 +23,6 @@ struct RosterSheet: View {
     enum RosterMode: String, Hashable { case hitters, pitchers }
     @State private var mode: RosterMode = .hitters
 
-    /// Column-width constants shared by the column-header row and
-    /// every data row so values stack into clean columns. Name is
-    /// flex (`maxWidth: .infinity`); the four stat cells are fixed.
-    private let statCellWidth: CGFloat = 50
-
     private var tint: Color {
         TeamColors.color(for: entry.lahmanCode) ?? .accentColor
     }
@@ -103,18 +98,12 @@ struct RosterSheet: View {
         } else {
             ScrollView {
                 VStack(spacing: 0) {
-                    columnHeaderRow
-                    Divider()
                     ForEach(sections, id: \.self) { section in
                         let players = sortPlayers(playersIn(section), in: section)
                         if !players.isEmpty {
                             sectionHeader(section)
-                            ForEach(Array(players.enumerated()), id: \.offset) { idx, player in
+                            ForEach(Array(players.enumerated()), id: \.offset) { _, player in
                                 rowButton(player: player)
-                                if idx < players.count - 1 {
-                                    Divider().opacity(0.4)
-                                        .padding(.horizontal, 16)
-                                }
                             }
                         }
                     }
@@ -124,83 +113,82 @@ struct RosterSheet: View {
         }
     }
 
-    private var columnHeaderRow: some View {
-        HStack(spacing: 0) {
-            Text("NAME")
-                .frame(maxWidth: .infinity, alignment: .leading)
-            ForEach(statColumns, id: \.self) { col in
-                Text(col)
-                    .frame(width: statCellWidth, alignment: .trailing)
-            }
-        }
-        .font(.caption2.weight(.bold))
-        .tracking(0.5)
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-    }
-
-    /// Position-bucket subheader. Matches the visual language of
-    /// `HomeSectionHeader` — team-tinted capsule accent + bold label,
-    /// no shaded band underneath. Sized smaller (`.caption` label, 4×18
-    /// capsule) since these are sub-section headers inside the sheet
-    /// rather than top-level section markers on the home tab.
+    /// Plain bold uppercase label + Divider underneath. Matches the
+    /// Leaders tab + the updated InjuryReportSheet chrome — no
+    /// capsule accent, no shaded band; the underline carries the
+    /// visual separation.
     private func sectionHeader(_ group: RosterPositionGroup) -> some View {
-        HStack(spacing: 10) {
-            Capsule()
-                .fill(tint)
-                .frame(width: 4, height: 18)
+        VStack(alignment: .leading, spacing: 4) {
             Text(sectionTitle(group))
                 .font(.caption.weight(.bold))
-                .tracking(0.6)
+                .tracking(0.8)
                 .foregroundStyle(.primary)
-            Spacer()
+            Divider()
         }
         .padding(.horizontal, 16)
-        .padding(.top, 16)
-        .padding(.bottom, 8)
+        .padding(.top, 18)
+        .padding(.bottom, 4)
     }
 
     @ViewBuilder
     private func rowButton(player: RosterPlayer) -> some View {
         if let resolved = player.resolved {
             NavigationLink(value: resolved) {
-                row(player)
+                row(player, tappable: true)
             }
             .buttonStyle(.plain)
         } else {
-            row(player)
+            row(player, tappable: false)
         }
     }
 
-    private func row(_ player: RosterPlayer) -> some View {
-        HStack(spacing: 0) {
-            HStack(spacing: 6) {
+    /// Row chrome borrowed from `LeaderboardRow`. Left side stacks
+    /// name (prominent) over position abbrev (subtitle); right side
+    /// is a compact dot-separated stat line; trailing chevron when
+    /// the row is tappable. No fixed column widths, no zebra — the
+    /// section header underline + intrinsic row spacing are the only
+    /// separators.
+    private func row(_ player: RosterPlayer, tappable: Bool) -> some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(player.name)
-                    .font(.body.weight(.medium))
-                    .foregroundStyle(.primary)
+                    .font(.title3.weight(.semibold))
                     .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                    .minimumScaleFactor(0.75)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 if !player.position.isEmpty {
                     Text(player.position.uppercased())
-                        .font(.caption2.weight(.semibold))
+                        .font(.subheadline)
                         .foregroundStyle(.secondary)
-                        .tracking(0.3)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            ForEach(Array(statValues(for: player).enumerated()), id: \.offset) { _, value in
-                Text(value)
-                    .font(.subheadline.weight(.medium))
-                    .monospacedDigit()
-                    .foregroundStyle(.primary)
-                    .frame(width: statCellWidth, alignment: .trailing)
+            Text(statLineText(for: player))
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+                .lineLimit(1)
+
+            if tappable {
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.tertiary)
             }
         }
+        .padding(.vertical, 6)
         .padding(.horizontal, 16)
-        .frame(minHeight: 44)
         .contentShape(Rectangle())
+    }
+
+    /// Compact stat string — labeled with the column key so the user
+    /// can parse "AVG .305" without an external column-header row.
+    /// `·`-separated and rendered on one line; long values shrink via
+    /// the row's `lineLimit(1)`.
+    private func statLineText(for player: RosterPlayer) -> String {
+        let labels = statColumns
+        let values = statValues(for: player)
+        return zip(labels, values).map { "\($0.0) \($0.1)" }.joined(separator: " · ")
     }
 
     /// Per-section sort. Position-player buckets sort by conventional
