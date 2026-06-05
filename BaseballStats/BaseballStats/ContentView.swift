@@ -29,7 +29,7 @@ struct ContentView: View {
                 }
                 .tag(AppNavigation.Tab.scores)
 
-            StandingsView()
+            StandingsView() 
                 .tabItem {
                     Label("Standings", systemImage: "list.bullet")
                 }
