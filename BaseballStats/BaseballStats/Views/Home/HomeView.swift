@@ -25,6 +25,7 @@ struct HomeView: View {
     @State private var showingLeadersSheet = false
     @State private var showingRosterSheet = false
     @State private var showingHistorySheet = false
+    @State private var showingInjurySheet = false
     @State private var isEditingFavorites = false
 
     var body: some View {
@@ -90,6 +91,18 @@ struct HomeView: View {
                         history:          vm.teamHistory,
                         postseasonByYear: vm.postseasonByYear,
                         isLoading:        vm.isLoadingHistory,
+                    )
+                    .presentationDetents([.large])
+                }
+            }
+            .sheet(isPresented: $showingInjurySheet) {
+                if let bdlId = store.bdlTeamId,
+                   let entry = MLBTeamCatalog.entry(forBDLId: bdlId) {
+                    InjuryReportSheet(
+                        entry:     entry,
+                        players:   vm.injuredPlayers,
+                        resolved:  vm.injuredPlayersResolved,
+                        isLoading: vm.isLoadingInjuries,
                     )
                     .presentationDetents([.large])
                 }
@@ -177,17 +190,6 @@ struct HomeView: View {
                     onTapStripGame: { game in navigationPath.append(game) },
                 )
 
-                if !vm.injuredPlayers.isEmpty {
-                    InjuryReportSection(
-                        players:     vm.injuredPlayers,
-                        resolved:    vm.injuredPlayersResolved,
-                        tint:        tint,
-                        onTapPlayer: { player in
-                            navigationPath.append(player)
-                        },
-                    )
-                }
-
                 TeamLeadersSection(
                     leaders:     vm.teamLeaders,
                     isLoading:   vm.isLoadingLeaders,
@@ -204,6 +206,14 @@ struct HomeView: View {
                     tint:      tint,
                     onSeeAll:  { showingRosterSheet = true },
                 )
+
+                if !vm.injuredPlayers.isEmpty {
+                    InjuryReportSection(
+                        count:    vm.injuredPlayers.count,
+                        tint:     tint,
+                        onSeeAll: { showingInjurySheet = true },
+                    )
+                }
 
                 TeamHistorySection(
                     tint:     tint,
@@ -968,101 +978,41 @@ private struct TeamHistorySection: View {
     }
 }
 
-// MARK: - Injury Report Section
+// MARK: - Injury Report Section (header-only entry point)
 
-/// Compact card listing every currently-injured player on the
-/// favorite team. Hidden entirely (via the caller's `if-empty`
-/// guard) when the team has no active injuries, so the section
-/// only appears when there's something to surface.
+/// Header-only entry point matching the Roster + History sections.
+/// Renders `HomeSectionHeader`-style chrome inline (so the count can
+/// sit next to the title in a separate `.secondary` color) plus a
+/// trailing "See All ›" button. The caller hides this section
+/// entirely when there are no injuries.
 private struct InjuryReportSection: View {
-    let players: [InjuredPlayer]
-    /// `{bdl_id → resolved PlayerSearchResult}`. Rows whose bdl_id
-    /// isn't in this dict render without a tap target.
-    let resolved: [Int: PlayerSearchResult]
+    let count: Int
     let tint: Color
-    let onTapPlayer: (PlayerSearchResult) -> Void
+    let onSeeAll: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HomeSectionHeader(title: "Injury Report", tint: tint)
-            card
-        }
-    }
-
-    private var card: some View {
-        VStack(spacing: 0) {
-            ForEach(Array(players.enumerated()), id: \.offset) { idx, player in
-                rowButton(player)
-                if idx < players.count - 1 {
-                    Divider().opacity(0.4)
-                        .padding(.horizontal, 14)
-                }
-            }
-        }
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(.ultraThinMaterial)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(.quaternary, lineWidth: 0.5)
-        )
-        .padding(.horizontal, 16)
-    }
-
-    @ViewBuilder
-    private func rowButton(_ player: InjuredPlayer) -> some View {
-        if let pick = resolved[player.bdl_id] {
-            Button { onTapPlayer(pick) } label: {
-                row(player)
-            }
-            .buttonStyle(.plain)
-        } else {
-            row(player)
-        }
-    }
-
-    private func row(_ player: InjuredPlayer) -> some View {
         HStack(spacing: 10) {
-            Text(player.name)
-                .font(.body.weight(.medium))
-                .foregroundStyle(.primary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.85)
-            if let pos = player.position, !pos.isEmpty {
-                Text(pos.uppercased())
-                    .font(.caption2.weight(.semibold))
-                    .tracking(0.3)
-                    .foregroundStyle(.secondary)
+            Capsule()
+                .fill(tint)
+                .frame(width: 4, height: 18)
+            Text("Injury Report")
+                .font(.title3.weight(.bold))
+            Text("(\(count))")
+                .font(.title3.weight(.bold))
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+            Spacer()
+            Button(action: onSeeAll) {
+                HStack(spacing: 3) {
+                    Text("See All")
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.bold))
+                }
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(tint)
             }
-            Spacer(minLength: 8)
-            statusBadge(for: player.status)
         }
-        .padding(.horizontal, 14)
-        .frame(minHeight: 44)
-        .contentShape(Rectangle())
-    }
-
-    private func statusBadge(for status: String) -> some View {
-        Text(status)
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(.white)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(InjuryReportSection.color(for: status), in: Capsule())
-    }
-
-    /// IL severity → fill color. Day-To-Day stays gray; unrecognized
-    /// statuses also fall to gray so an unfamiliar BDL value doesn't
-    /// crash with a missing-case mismatch.
-    private static func color(for status: String) -> Color {
-        switch status {
-        case "60-Day IL":  return .red
-        case "15-Day IL":  return .orange
-        case "10-Day IL":  return .yellow
-        case "Day-To-Day": return Color(.systemGray)
-        default:           return Color(.systemGray)
-        }
+        .padding(.horizontal, 16)
     }
 }
 
