@@ -3,12 +3,12 @@
 //  BaseballStats
 //
 //  See-All sheet for the Home tab's Injury Report section. Players
-//  are bucketed by IL designation (60-Day → 15-Day → 10-Day →
-//  Day-To-Day) and rendered as a clean table with team-color section
-//  accents. Tapping a row pushes the player's profile onto the
-//  sheet's internal nav stack (same pattern as RosterSheet and
-//  TeamLeadersSheet) so back returns to the list rather than
-//  dismissing the sheet.
+//  are bucketed by IL designation — least severe first (Day-To-Day
+//  → 10-Day → 15-Day → 60-Day) — and rendered in the same row idiom
+//  as `LeaderboardRow` (prominent name, secondary subtitle, trailing
+//  value cell). Tapping a row pushes the player's profile onto the
+//  sheet's internal nav stack so back returns to the list rather
+//  than dismissing the sheet.
 //
 
 import SwiftUI
@@ -23,20 +23,15 @@ struct InjuryReportSheet: View {
 
     @Environment(\.dismiss) private var dismiss
 
-    private var tint: Color {
-        TeamColors.color(for: entry.lahmanCode) ?? .accentColor
-    }
-
-    /// Section order — most severe first. Each entry pairs the
-    /// uppercase display label with the BDL status string that
-    /// matches into it. BDL ships fully-hyphenated values
-    /// ("60-Day-IL", not "60-Day IL"); the display label is just
-    /// for the header text.
+    /// Section order — least severe first. Each entry pairs the
+    /// uppercase display label with the BDL hyphenated wire string
+    /// that matches into it. Adding a new bucket (e.g.,
+    /// "Bereavement-List") only needs an entry here.
     private static let sections: [(label: String, status: String)] = [
-        ("60-DAY IL",  "60-Day-IL"),
-        ("15-DAY IL",  "15-Day-IL"),
-        ("10-DAY IL",  "10-Day-IL"),
         ("DAY-TO-DAY", "Day-To-Day"),
+        ("10-DAY IL",  "10-Day-IL"),
+        ("15-DAY IL",  "15-Day-IL"),
+        ("60-DAY IL",  "60-Day-IL"),
     ]
 
     var body: some View {
@@ -90,12 +85,8 @@ struct InjuryReportSheet: View {
                         let bucket = players.filter { $0.status == section.status }
                         if !bucket.isEmpty {
                             sectionHeader(section.label)
-                            ForEach(Array(bucket.enumerated()), id: \.offset) { idx, player in
+                            ForEach(Array(bucket.enumerated()), id: \.offset) { _, player in
                                 rowButton(player)
-                                if idx < bucket.count - 1 {
-                                    Divider().opacity(0.4)
-                                        .padding(.horizontal, 16)
-                                }
                             }
                         }
                     }
@@ -105,53 +96,65 @@ struct InjuryReportSheet: View {
         }
     }
 
-    /// Team-color capsule accent + bold label, no shaded band —
-    /// matches the RosterSheet's section header design.
+    /// Plain bold uppercase label + Divider underneath. Matches the
+    /// Leaders tab's chrome — no capsule accent, no shaded band; the
+    /// underline carries the visual separation.
     private func sectionHeader(_ label: String) -> some View {
-        HStack(spacing: 10) {
-            Capsule()
-                .fill(tint)
-                .frame(width: 4, height: 18)
+        VStack(alignment: .leading, spacing: 4) {
             Text(label)
                 .font(.caption.weight(.bold))
-                .tracking(0.6)
+                .tracking(0.8)
                 .foregroundStyle(.primary)
-            Spacer()
+            Divider()
         }
         .padding(.horizontal, 16)
-        .padding(.top, 16)
-        .padding(.bottom, 8)
+        .padding(.top, 18)
+        .padding(.bottom, 4)
     }
 
     @ViewBuilder
     private func rowButton(_ player: InjuredPlayer) -> some View {
         if let pick = resolved[player.bdl_id] {
             NavigationLink(value: pick) {
-                row(player)
+                row(player, tappable: true)
             }
             .buttonStyle(.plain)
         } else {
-            row(player)
+            row(player, tappable: false)
         }
     }
 
-    private func row(_ player: InjuredPlayer) -> some View {
-        HStack(spacing: 12) {
-            Text(player.name)
-                .font(.body.weight(.medium))
-                .foregroundStyle(.primary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.85)
-            if let pos = player.position, !pos.isEmpty {
-                Text(pos.uppercased())
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+    /// Row chrome borrowed from `LeaderboardRow` — name in
+    /// `.title3.weight(.semibold)`, subtitle in `.subheadline
+    /// .secondary`, trailing value cell, optional chevron for
+    /// tappable rows. The "value" here is the IL status badge.
+    private func row(_ player: InjuredPlayer, tappable: Bool) -> some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(player.name)
+                    .font(.title3.weight(.semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                let pos = Self.abbreviatePosition(player.position)
+                if !pos.isEmpty {
+                    Text(pos)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
             }
-            Spacer(minLength: 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
             statusBadge(for: player.status)
+
+            if tappable {
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
         }
+        .padding(.vertical, 6)
         .padding(.horizontal, 16)
-        .frame(minHeight: 44)
         .contentShape(Rectangle())
     }
 
@@ -164,9 +167,9 @@ struct InjuryReportSheet: View {
             .background(Self.color(for: status), in: Capsule())
     }
 
-    /// IL severity → fill color. Same palette as the previous inline
-    /// card: red / orange / yellow / gray, falling through to gray
-    /// for any unrecognized BDL status string. Match keys are BDL's
+    /// IL severity → fill color. Same palette as the previous design:
+    /// red / orange / yellow / gray, falling through to gray for any
+    /// unrecognized BDL status string. Match keys are BDL's
     /// hyphenated wire format.
     private static func color(for status: String) -> Color {
         switch status {
@@ -175,6 +178,32 @@ struct InjuryReportSheet: View {
         case "10-Day-IL":  return .yellow
         case "Day-To-Day": return Color(.systemGray)
         default:           return Color(.systemGray)
+        }
+    }
+
+    /// Normalize a BDL position string ("Starting Pitcher" / "Center
+    /// Field" / "Shortstop" / …) to its short baseball abbreviation
+    /// ("SP" / "CF" / "SS"). Returns the raw string when no mapping
+    /// exists so an unfamiliar value still renders legibly, and the
+    /// empty string when the input is nil.
+    private static func abbreviatePosition(_ pos: String?) -> String {
+        guard let pos = pos else { return "" }
+        switch pos.lowercased() {
+        case "starting pitcher", "starter":      return "SP"
+        case "relief pitcher", "reliever":       return "RP"
+        case "closing pitcher", "closer":        return "CL"
+        case "catcher":                          return "C"
+        case "first base", "first baseman":      return "1B"
+        case "second base", "second baseman":    return "2B"
+        case "third base", "third baseman":      return "3B"
+        case "shortstop":                        return "SS"
+        case "left field", "left fielder":       return "LF"
+        case "center field", "center fielder":   return "CF"
+        case "right field", "right fielder":     return "RF"
+        case "outfield", "outfielder":           return "OF"
+        case "designated hitter":                return "DH"
+        case "pitcher":                          return "P"
+        default:                                 return pos
         }
     }
 }

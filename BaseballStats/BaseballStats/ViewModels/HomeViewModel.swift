@@ -68,10 +68,10 @@ final class HomeViewModel: ObservableObject {
     @Published var isLoadingRoster: Bool = false
 
     /// Currently-injured players for the favorite team, sorted by
-    /// severity (60-Day IL → 15-Day IL → 10-Day IL → Day-To-Day).
-    /// Empty when there are no injuries OR before the first fetch
-    /// completes; the Home tab hides the whole Injury Report section
-    /// in either case.
+    /// severity ascending (Day-To-Day → 10-Day IL → 15-Day IL →
+    /// 60-Day IL). Empty when there are no injuries OR before the
+    /// first fetch completes; the Home tab hides the whole Injury
+    /// Report section in either case.
     @Published var injuredPlayers: [InjuredPlayer] = []
     /// `{bdl_id → resolved PlayerSearchResult}`. Populated in
     /// parallel with the injury fetch via `bdl.resolveBDLPlayerId`.
@@ -410,7 +410,9 @@ final class HomeViewModel: ObservableObject {
     /// Fetch the favorite team's injury list, sort by severity, and
     /// resolve each BDL id to its MLBAM bio in parallel so tap
     /// targets light up as soon as the resolutions land. Severity
-    /// order: 60-Day IL → 15-Day IL → 10-Day IL → Day-To-Day → other.
+    /// order is least-severe first: Day-To-Day → 10-Day IL →
+    /// 15-Day IL → 60-Day IL. The list reads bottom-up — heaviest
+    /// IL stints sit at the bottom of the sheet's scroll.
     func loadInjuries(bdlTeamId: Int) async {
         isLoadingInjuries = true
         let raw = (try? await bdl.getTeamInjuries(bdlTeamId: bdlTeamId)) ?? []
@@ -443,17 +445,19 @@ final class HomeViewModel: ObservableObject {
         self.isLoadingInjuries = false
     }
 
-    /// Sort key — lower number = more severe. Anything unrecognized
-    /// gets the trailing bucket so it falls to the end of the list
-    /// rather than crashing the sort with a fatal default. Match
-    /// keys are BDL's hyphenated wire format ("60-Day-IL", etc.).
+    /// Sort key — lower number = less severe so the list reads
+    /// least → most severe (Day-To-Day at top, 60-Day-IL at
+    /// bottom). Anything unrecognized gets the trailing bucket so
+    /// it falls to the end rather than crashing the sort with a
+    /// fatal default. Match keys are BDL's hyphenated wire format
+    /// ("60-Day-IL", etc.).
     nonisolated private static func severityRank(_ status: String) -> Int {
         switch status {
-        case "60-Day-IL":  return 0
-        case "15-Day-IL":  return 1
+        case "Day-To-Day": return 1
         case "10-Day-IL":  return 2
-        case "Day-To-Day": return 3
-        default:           return 4
+        case "15-Day-IL":  return 3
+        case "60-Day-IL":  return 4
+        default:           return 5
         }
     }
 
