@@ -67,6 +67,19 @@ final class HomeViewModel: ObservableObject {
     @Published var roster: [RosterPlayer] = []
     @Published var isLoadingRoster: Bool = false
 
+    /// Currently-injured players for the favorite team, sorted by
+    /// severity (60-Day IL → 15-Day IL → 10-Day IL → Day-To-Day).
+    /// Empty when there are no injuries OR before the first fetch
+    /// completes; the Home tab hides the whole Injury Report section
+    /// in either case.
+    @Published var injuredPlayers: [InjuredPlayer] = []
+    /// `{bdl_id → resolved PlayerSearchResult}`. Populated in
+    /// parallel with the injury fetch via `bdl.resolveBDLPlayerId`.
+    /// Missing entries mean the lookup failed — the corresponding
+    /// row is rendered as non-tappable.
+    @Published var injuredPlayersResolved: [Int: PlayerSearchResult] = [:]
+    @Published var isLoadingInjuries: Bool = false
+
     /// Season-by-season history for the favorite franchise, most-
     /// recent year first, filtered to `year >= 1900` so the Hub
     /// table doesn't get cluttered with 19th-century NL/AA rows.
@@ -390,6 +403,57 @@ final class HomeViewModel: ObservableObject {
         self.teamHistory   = rows
         self.teamPostseason = postResp?.postseason ?? []
         self.isLoadingHistory = false
+    }
+
+    // MARK: - Injuries
+
+    /// Fetch the favorite team's injury list, sort by severity, and
+    /// resolve each BDL id to its MLBAM bio in parallel so tap
+    /// targets light up as soon as the resolutions land. Severity
+    /// order: 60-Day IL → 15-Day IL → 10-Day IL → Day-To-Day → other.
+    func loadInjuries(bdlTeamId: Int) async {
+        isLoadingInjuries = true
+        let raw = (try? await bdl.getTeamInjuries(bdlTeamId: bdlTeamId)) ?? []
+        let sorted = raw.sorted {
+            Self.severityRank($0.status) < Self.severityRank($1.status)
+        }
+        self.injuredPlayers = sorted
+
+        // Resolve all in parallel. Misses stay absent from the dict
+        // and the UI just renders the row without a tap target.
+        let pairs = await withTaskGroup(of: (Int, PlayerSearchResult?).self) { group in
+            for player in sorted {
+                let bdlId = player.bdl_id
+                group.addTask { [bdl] in
+                    let resolved = try? await bdl.resolveBDLPlayerId(bdlId)
+                    return (bdlId, resolved)
+                }
+            }
+            var pairs: [(Int, PlayerSearchResult)] = []
+            for await (bdlId, resolved) in group {
+                if let r = resolved { pairs.append((bdlId, r)) }
+            }
+            return pairs
+        }
+        var resolved: [Int: PlayerSearchResult] = [:]
+        for (bdlId, r) in pairs {
+            resolved[bdlId] = r
+        }
+        self.injuredPlayersResolved = resolved
+        self.isLoadingInjuries = false
+    }
+
+    /// Sort key — lower number = more severe. Anything unrecognized
+    /// gets `Int.max` so it falls to the end of the list rather than
+    /// crashing the sort with a fatal default.
+    nonisolated private static func severityRank(_ status: String) -> Int {
+        switch status {
+        case "60-Day IL":  return 0
+        case "15-Day IL":  return 1
+        case "10-Day IL":  return 2
+        case "Day-To-Day": return 3
+        default:           return 4
+        }
     }
 
     // MARK: - Roster

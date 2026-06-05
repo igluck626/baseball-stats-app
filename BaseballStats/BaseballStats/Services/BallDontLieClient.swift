@@ -432,6 +432,35 @@ final class BallDontLieClient: @unchecked Sendable {
         return result
     }
 
+    // MARK: - Injuries
+
+    /// `GET /mlb/v1/player_injuries?team_ids[]={teamId}&per_page=100`.
+    /// Returns a flat list of injured players for a team — BDL nests
+    /// the player bio inside each row alongside `status` ("60-Day
+    /// IL" / "15-Day IL" / "10-Day IL" / "Day-To-Day"). 5-minute
+    /// cache (the injury list churns slowly within a session).
+    func getTeamInjuries(bdlTeamId: Int) async throws -> [InjuredPlayer] {
+        let key = "team-injuries:\(bdlTeamId)"
+        if let cached: [InjuredPlayer] = cachedValue(key) { return cached }
+        let items: [URLQueryItem] = [
+            URLQueryItem(name: "team_ids[]", value: String(bdlTeamId)),
+            URLQueryItem(name: "per_page",   value: "100"),
+        ]
+        let raw: [BDLPlayerInjuryRaw] = try await fetchAllPages(
+            path: "/mlb/v1/player_injuries", baseQuery: items,
+        )
+        let result = raw.map { r in
+            InjuredPlayer(
+                bdl_id:   r.player.id,
+                name:     r.player.fullName,
+                position: r.player.position,
+                status:   r.status ?? "Day-To-Day",
+            )
+        }
+        storeInCache(key, result, ttl: 300)
+        return result
+    }
+
     // MARK: - Player resolver
 
     /// Resolve a BDL player id to our backend's player payload
@@ -566,4 +595,32 @@ enum BallDontLieError: LocalizedError {
             return "Something went wrong — please try again"
         }
     }
+}
+
+// MARK: - Injury models
+
+/// Flat injury record surfaced to the Home tab. Decoded from BDL's
+/// nested `{player: {...}, status: "..."}` shape via
+/// `BDLPlayerInjuryRaw` so callers don't have to dig through the
+/// wire format.
+struct InjuredPlayer: Codable, Hashable, Identifiable {
+    let bdl_id: Int
+    let name: String
+    let position: String?
+    let status: String
+    var id: Int { bdl_id }
+}
+
+/// Wire shape of `/mlb/v1/player_injuries` rows. Kept private — the
+/// public surface is `InjuredPlayer`, which collapses the nested
+/// player block into flat fields.
+private struct BDLPlayerInjuryRaw: Decodable {
+    let player: BDLPlayer
+    let status: String?
+    /// Free-text description ("Strained left hamstring", etc.) —
+    /// BDL ships this on injuries but the Home card doesn't render
+    /// it today. Decoded so the field doesn't trip strict decoders
+    /// down the line if we ever turn one on.
+    let description: String?
+    let returnDate: String?
 }

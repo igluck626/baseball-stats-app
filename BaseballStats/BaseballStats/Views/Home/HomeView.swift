@@ -98,6 +98,7 @@ struct HomeView: View {
         .task(id: store.bdlTeamId) {
             guard let bdlId = store.bdlTeamId else { return }
             await vm.load(bdlTeamId: bdlId)
+            await vm.loadInjuries(bdlTeamId: bdlId)
             await vm.loadTeamLeaders(bdlTeamId: bdlId)
             await vm.loadRoster(bdlTeamId: bdlId)
             await vm.loadTeamHistory(bdlTeamId: bdlId)
@@ -175,6 +176,17 @@ struct HomeView: View {
                     onSchedule:   { showingSchedule = true },
                     onTapStripGame: { game in navigationPath.append(game) },
                 )
+
+                if !vm.injuredPlayers.isEmpty {
+                    InjuryReportSection(
+                        players:     vm.injuredPlayers,
+                        resolved:    vm.injuredPlayersResolved,
+                        tint:        tint,
+                        onTapPlayer: { player in
+                            navigationPath.append(player)
+                        },
+                    )
+                }
 
                 TeamLeadersSection(
                     leaders:     vm.teamLeaders,
@@ -952,6 +964,104 @@ private struct TeamHistorySection: View {
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(tint)
             }
+        }
+    }
+}
+
+// MARK: - Injury Report Section
+
+/// Compact card listing every currently-injured player on the
+/// favorite team. Hidden entirely (via the caller's `if-empty`
+/// guard) when the team has no active injuries, so the section
+/// only appears when there's something to surface.
+private struct InjuryReportSection: View {
+    let players: [InjuredPlayer]
+    /// `{bdl_id → resolved PlayerSearchResult}`. Rows whose bdl_id
+    /// isn't in this dict render without a tap target.
+    let resolved: [Int: PlayerSearchResult]
+    let tint: Color
+    let onTapPlayer: (PlayerSearchResult) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HomeSectionHeader(title: "Injury Report", tint: tint)
+            card
+        }
+    }
+
+    private var card: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(players.enumerated()), id: \.offset) { idx, player in
+                rowButton(player)
+                if idx < players.count - 1 {
+                    Divider().opacity(0.4)
+                        .padding(.horizontal, 14)
+                }
+            }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(.ultraThinMaterial)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(.quaternary, lineWidth: 0.5)
+        )
+        .padding(.horizontal, 16)
+    }
+
+    @ViewBuilder
+    private func rowButton(_ player: InjuredPlayer) -> some View {
+        if let pick = resolved[player.bdl_id] {
+            Button { onTapPlayer(pick) } label: {
+                row(player)
+            }
+            .buttonStyle(.plain)
+        } else {
+            row(player)
+        }
+    }
+
+    private func row(_ player: InjuredPlayer) -> some View {
+        HStack(spacing: 10) {
+            Text(player.name)
+                .font(.body.weight(.medium))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+            if let pos = player.position, !pos.isEmpty {
+                Text(pos.uppercased())
+                    .font(.caption2.weight(.semibold))
+                    .tracking(0.3)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            statusBadge(for: player.status)
+        }
+        .padding(.horizontal, 14)
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
+    }
+
+    private func statusBadge(for status: String) -> some View {
+        Text(status)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(InjuryReportSection.color(for: status), in: Capsule())
+    }
+
+    /// IL severity → fill color. Day-To-Day stays gray; unrecognized
+    /// statuses also fall to gray so an unfamiliar BDL value doesn't
+    /// crash with a missing-case mismatch.
+    private static func color(for status: String) -> Color {
+        switch status {
+        case "60-Day IL":  return .red
+        case "15-Day IL":  return .orange
+        case "10-Day IL":  return .yellow
+        case "Day-To-Day": return Color(.systemGray)
+        default:           return Color(.systemGray)
         }
     }
 }
