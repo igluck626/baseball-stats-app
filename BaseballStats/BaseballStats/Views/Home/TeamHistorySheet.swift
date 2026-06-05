@@ -110,20 +110,6 @@ struct TeamHistorySheet: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 12)
                 .animation(.spring(response: 0.3), value: expandedYears)
-
-                // Footnote — sits outside the LazyVStack so it isn't
-                // subject to the lazy stack's bottom-edge clipping
-                // (which can swallow the trailing element when the
-                // stack's content height is computed off the
-                // currently-realized rows rather than the full list).
-                // Inside the ScrollView so it scrolls with the cards.
-                Text("※ Houston Astros found guilty of sign-stealing in 2017")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 8)
-                    .padding(.bottom, 24)
             }
         }
     }
@@ -384,25 +370,40 @@ private struct YearCard: View {
     private func roundRow(_ series: TeamPostseasonSeries) -> some View {
         let (favWins, favLosses) = Self.favoritePerspective(series)
         let resultChar = series.won ? "W" : "L"
-        let asterisk = (year == 2017 && series.opponent == "HOU") ? "※" : ""
-        return HStack(spacing: 6) {
-            Text(series.round)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text("·")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-            Text("vs \(TeamHistorySheet.displayCode(series.opponent))")
-                .font(.caption)
-                .foregroundStyle(.primary)
-            Text("·")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-            Text("\(resultChar) \(favWins)-\(favLosses)\(asterisk)")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(series.won ? .green : .red)
-                .monospacedDigit()
-            Spacer(minLength: 0)
+        let astrosTainted = (year == 2017 && series.opponent == "HOU")
+        let asterisk = astrosTainted ? "※" : ""
+        return VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                Text(series.round)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("·")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                Text("vs \(TeamHistorySheet.displayCode(series.opponent))")
+                    .font(.caption)
+                    .foregroundStyle(.primary)
+                Text("·")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                Text("\(resultChar) \(favWins)-\(favLosses)\(asterisk)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(series.won ? .green : .red)
+                    .monospacedDigit()
+                Spacer(minLength: 0)
+            }
+            if astrosTainted {
+                HStack(spacing: 3) {
+                    Text("※ Astros cheated")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .italic()
+                    Image(systemName: "trash.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.leading, 8)
+            }
         }
     }
 
