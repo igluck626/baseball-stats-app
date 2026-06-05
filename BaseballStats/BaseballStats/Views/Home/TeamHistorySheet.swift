@@ -106,22 +106,24 @@ struct TeamHistorySheet: View {
                                 .padding(.horizontal, 12)
                         }
                     }
-                    // Footnote — explains the ※ marker rendered next
-                    // to the 2017 Astros' World Series record. Lives
-                    // outside the per-year cards so it stays visible
-                    // even when the user has scrolled to a non-2017
-                    // year and only re-anchors at the very bottom.
-                    Text("※ Houston Astros found guilty of sign-stealing in 2017")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 16)
-                        .padding(.top, 12)
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 12)
-                .padding(.bottom, 12)
                 .animation(.spring(response: 0.3), value: expandedYears)
+
+                // Footnote — sits outside the LazyVStack so it isn't
+                // subject to the lazy stack's bottom-edge clipping
+                // (which can swallow the trailing element when the
+                // stack's content height is computed off the
+                // currently-realized rows rather than the full list).
+                // Inside the ScrollView so it scrolls with the cards.
+                Text("※ Houston Astros found guilty of sign-stealing in 2017")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
+                    .padding(.bottom, 24)
             }
         }
     }
