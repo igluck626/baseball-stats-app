@@ -36,6 +36,13 @@ struct HomeView: View {
             }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbarContent }
+            // Subtle team-color wash on the nav bar — matches the
+            // Apple Sports app's identity treatment. The 15% tint
+            // is light enough that the system bar chrome (back
+            // chevron, principal title) still reads cleanly in
+            // both light + dark modes.
+            .toolbarBackground(teamColor.opacity(0.15), for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .navigationDestination(for: Game.self) { game in
                 BoxScoreView(
                     game:           game,
@@ -125,12 +132,42 @@ struct HomeView: View {
 
     // MARK: - Chrome
 
+    /// Team-color hex resolved off the current favorite. Falls back
+    /// to `.accentColor` when no favorite is set, the BDL id can't
+    /// be mapped to a Lahman entry, or the Lahman code isn't in the
+    /// `TeamColors` dict (extreme historical / typo cases).
+    /// Reading `store.bdlTeamId` through `@ObservedObject` makes
+    /// every consumer of `teamColor` reactively rebuild when the
+    /// user picks a different team.
+    private var teamColor: Color {
+        guard let bdlId = store.bdlTeamId,
+              let entry = MLBTeamCatalog.entry(forBDLId: bdlId),
+              let color = TeamColors.color(for: entry.lahmanCode)
+        else { return .accentColor }
+        return color
+    }
+
+    /// Full-screen wash anchored at the top with the favorite team's
+    /// color, fading to transparent past the vertical midpoint. Sits
+    /// on a `Color(.systemBackground)` base so the bottom half of
+    /// the screen stays system-neutral and doesn't bleed color
+    /// behind the tab bar. Matches the Apple Sports app's
+    /// team-tinted hero feel.
     private var backgroundGradient: some View {
-        LinearGradient(
-            colors: [Color(.systemGray6), Color(.systemBackground)],
-            startPoint: .top, endPoint: .bottom,
-        )
-        .ignoresSafeArea()
+        ZStack {
+            Color(.systemBackground)
+                .ignoresSafeArea()
+            LinearGradient(
+                colors: [
+                    teamColor.opacity(0.25),
+                    teamColor.opacity(0.08),
+                    Color(.systemBackground).opacity(0.0),
+                ],
+                startPoint: .top,
+                endPoint: .center,
+            )
+            .ignoresSafeArea()
+        }
     }
 
     @ToolbarContentBuilder
@@ -298,16 +335,16 @@ private struct TeamHeroCard: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
+        // Tinted glass: material first for the blur + frosted base,
+        // then a flat team-color wash at 0.05 on top. Replaces the
+        // earlier diagonal gradient so the card visual matches the
+        // other tinted surfaces (team-leaders card, etc.) and the
+        // gradient lives only on the full-screen background.
         .background {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(.ultraThinMaterial)
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [teamColor.opacity(0.08), .clear],
-                        startPoint: .topLeading, endPoint: .bottomTrailing,
-                    )
-                )
+                .fill(teamColor.opacity(0.05))
         }
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -795,10 +832,14 @@ private struct TeamLeadersSection: View {
                 }
             }
             .padding(14)
-            .background(
+            // Tinted glass — same recipe as the hero card so the
+            // surfaces feel like siblings on the home tab.
+            .background {
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .fill(.ultraThinMaterial)
-            )
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(tint.opacity(0.05))
+            }
             .overlay(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .strokeBorder(tint.opacity(0.25), lineWidth: 1)
