@@ -116,19 +116,19 @@ struct InjuryReportSheet: View {
     private func rowButton(_ player: InjuredPlayer) -> some View {
         if let pick = resolved[player.bdl_id] {
             NavigationLink(value: pick) {
-                row(player, tappable: true)
+                row(player)
             }
             .buttonStyle(.plain)
         } else {
-            row(player, tappable: false)
+            row(player)
         }
     }
 
     /// Row chrome borrowed from `LeaderboardRow` — name in
     /// `.title3.weight(.semibold)`, subtitle in `.subheadline
-    /// .secondary`, trailing value cell, optional chevron for
-    /// tappable rows. The "value" here is the IL status badge.
-    private func row(_ player: InjuredPlayer, tappable: Bool) -> some View {
+    /// .secondary`, trailing status badge. No navigation chevron —
+    /// rows are still tappable via the `NavigationLink` wrapper.
+    private func row(_ player: InjuredPlayer) -> some View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(player.name)
@@ -146,12 +146,6 @@ struct InjuryReportSheet: View {
             .frame(maxWidth: .infinity, alignment: .leading)
 
             statusBadge(for: player.status)
-
-            if tappable {
-                Image(systemName: "chevron.right")
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(.tertiary)
-            }
         }
         .padding(.vertical, 6)
         .padding(.horizontal, 16)

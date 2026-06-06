@@ -180,18 +180,19 @@ struct RosterSheet: View {
     private func rowButton(player: RosterPlayer) -> some View {
         if let resolved = player.resolved {
             NavigationLink(value: resolved) {
-                row(player, tappable: true)
+                row(player)
             }
             .buttonStyle(.plain)
         } else {
-            row(player, tappable: false)
+            row(player)
         }
     }
 
     /// Table row: name + position chip on the left, five fixed-width
     /// stat cells right-aligned to match the per-section column-
-    /// header row, trailing chevron when tappable.
-    private func row(_ player: RosterPlayer, tappable: Bool) -> some View {
+    /// header row. No navigation chevron — rows are still tappable
+    /// (the `NavigationLink` wrapper supplies the hit target).
+    private func row(_ player: RosterPlayer) -> some View {
         HStack(spacing: 0) {
             HStack(spacing: 6) {
                 Text(player.name)
@@ -214,13 +215,6 @@ struct RosterSheet: View {
                     .monospacedDigit()
                     .foregroundStyle(.primary)
                     .frame(width: statColumnWidth(statColumns[idx]), alignment: .trailing)
-            }
-
-            if tappable {
-                Image(systemName: "chevron.right")
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(.tertiary)
-                    .padding(.leading, 6)
             }
         }
         .padding(.horizontal, 16)
