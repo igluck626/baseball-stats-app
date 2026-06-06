@@ -215,7 +215,7 @@ final class ScoresViewModel: ObservableObject {
         }
     }
 
-    /// Spin up a polling task that re-runs `load(date:)` every 30s
+    /// Spin up a polling task that re-runs `load(date:)` every 15s
     /// while any game in `games` is live AND the selected date is
     /// today. We don't poll past dates (scores frozen) or future
     /// dates (no live state to refresh into). Cancels itself
@@ -226,7 +226,7 @@ final class ScoresViewModel: ObservableObject {
         guard games.contains(where: { $0.phase == .live }) else { return }
         refreshTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 30 * 1_000_000_000)
+                try? await Task.sleep(nanoseconds: 15 * 1_000_000_000)
                 guard !Task.isCancelled, let self else { return }
                 await self.load(date: date)
                 if !self.games.contains(where: { $0.phase == .live }) { return }
@@ -277,7 +277,7 @@ struct ScoresView: View {
                 content
             }
             .navigationTitle("Scores")
-            .navigationBarTitleDisplayMode(.large)
+            .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: Game.self) { game in
                 BoxScoreView(
                     game:           game,

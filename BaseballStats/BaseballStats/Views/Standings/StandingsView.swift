@@ -45,7 +45,7 @@ struct StandingsView: View {
                 content
             }
             .navigationTitle("Standings")
-            .navigationBarTitleDisplayMode(.large)
+            .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -663,8 +663,6 @@ private struct LeagueTable: View {
 
     private var frozenPane: some View {
         VStack(spacing: 0) {
-            FrozenIdentityHeader()
-            Divider().opacity(0.4)
             ForEach(Array(divisions.enumerated()), id: \.element.code) { idx, group in
                 if idx > 0 {
                     DivisionBreak()
@@ -672,6 +670,12 @@ private struct LeagueTable: View {
                 DivisionSectionLabel(
                     text: "\(leagueLabel) \(Self.divisionName[group.code] ?? group.code)"
                 )
+                // Per-division header row. Repeated above every group
+                // (rather than once at the top of the league) so the
+                // column labels stay visible as the user scrolls
+                // through NL East → NL Central → NL West.
+                FrozenIdentityHeader()
+                Divider().opacity(0.4)
                 ForEach(Array(group.teams.enumerated()), id: \.offset) { tIdx, team in
                     FrozenIdentityCell(team: team, isLeader: tIdx == 0)
                     if tIdx != group.teams.indices.last {
@@ -684,13 +688,17 @@ private struct LeagueTable: View {
 
     private var scrollablePane: some View {
         VStack(spacing: 0) {
-            ScrollableStatsHeader(isHistorical: isHistorical)
-            Divider().opacity(0.4)
             ForEach(Array(divisions.enumerated()), id: \.element.code) { idx, group in
                 if idx > 0 {
                     DivisionBreak()
                 }
                 DivisionSectionSpacer()
+                // Mirror of `FrozenIdentityHeader` on the scrolling
+                // side — must follow the spacer (which pairs with
+                // the frozen pane's `DivisionSectionLabel`) so the
+                // two panes' rows stay aligned at every Y position.
+                ScrollableStatsHeader(isHistorical: isHistorical)
+                Divider().opacity(0.4)
                 ForEach(Array(group.teams.enumerated()), id: \.offset) { tIdx, team in
                     ScrollableStatsRow(
                         team: team,

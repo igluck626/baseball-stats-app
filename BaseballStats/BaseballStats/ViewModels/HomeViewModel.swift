@@ -213,7 +213,7 @@ final class HomeViewModel: ObservableObject {
         return Array(recents) + Array(upcoming)
     }
 
-    /// 30s auto-refresh while the favorite team has a live game.
+    /// 15s auto-refresh while the favorite team has a live game.
     /// Matches `ScoresViewModel.startAutoRefresh`'s cadence so the
     /// hero card's live score stays in step with the Scores tab.
     /// Cancellable, weak-self loop.
@@ -222,7 +222,7 @@ final class HomeViewModel: ObservableObject {
         guard hasLiveGame else { return }
         refreshTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 30 * 1_000_000_000)
+                try? await Task.sleep(nanoseconds: 15 * 1_000_000_000)
                 guard !Task.isCancelled, let self else { return }
                 await self.load(bdlTeamId: bdlTeamId)
             }

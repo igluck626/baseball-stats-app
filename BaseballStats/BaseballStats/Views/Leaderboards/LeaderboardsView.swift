@@ -46,7 +46,7 @@ struct LeaderboardsView: View {
                 content
             }
             .navigationTitle("Leaderboards")
-            .navigationBarTitleDisplayMode(.large)
+            .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
             .navigationDestination(for: PlayerSearchResult.self) { player in
                 PlayerProfileView(player: player)

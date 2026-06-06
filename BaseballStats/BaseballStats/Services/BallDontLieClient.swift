@@ -383,10 +383,10 @@ final class BallDontLieClient: @unchecked Sendable {
             URLQueryItem(name: "per_page", value: "100"),
         ]
         let result: [BDLPlay] = try await fetchAllPages(path: "/mlb/v1/plays", baseQuery: items)
-        // Live polling loop fires every 30s; matching the cache
+        // Live polling loop fires every 15s; matching the cache
         // TTL means each user sees one network round-trip per poll
         // window even if multiple views subscribe to the same game.
-        storeInCache(key, result, ttl: 30)
+        storeInCache(key, result, ttl: 15)
         return result
     }
 
@@ -403,7 +403,7 @@ final class BallDontLieClient: @unchecked Sendable {
         let result: [BDLPlateAppearance] = try await fetchAllPages(
             path: "/mlb/v1/plate_appearances", baseQuery: items,
         )
-        storeInCache(key, result, ttl: 30)
+        storeInCache(key, result, ttl: 15)
         return result
     }
 

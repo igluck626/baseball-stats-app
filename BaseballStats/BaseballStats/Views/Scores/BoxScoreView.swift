@@ -377,7 +377,7 @@ final class BoxScoreViewModel: ObservableObject {
         )
     }
 
-    /// 30s polling loop for live games — re-fetches the box score
+    /// 15s polling loop for live games — re-fetches the box score
     /// (per-player stat lines + linescore inputs) and the live
     /// situation streams (plays + PAs → live card data). Self-
     /// terminates when the synthesized inningState reports the
@@ -387,7 +387,7 @@ final class BoxScoreViewModel: ObservableObject {
         stopLivePolling()
         liveTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 30 * 1_000_000_000)
+                try? await Task.sleep(nanoseconds: 15 * 1_000_000_000)
                 guard !Task.isCancelled, let self else { return }
                 async let boxTask  = self.loadBoxScore()
                 async let liveTask = self.loadLiveState()
@@ -851,6 +851,14 @@ struct BoxScoreView: View {
         let rows = team.batters.compactMap { id -> BoxPlayer? in
             team.players["ID\(id)"]
         }.filter { $0.stats?.batting?.atBats != nil || ($0.stats?.batting?.baseOnBalls ?? 0) > 0 }
+        let tint = teamColor(for: team)
+        // Live-feed batter id is BDL-keyed; lineup row ids
+        // (`p.person.id`) are also BDL-keyed (see Scores.swift
+        // synth), so a direct equality match in `battingRow` lands
+        // on the active hitter. Only meaningful while the game is
+        // live — when nil, every row falls through to the default
+        // (non-highlighted) branch.
+        let currentBatterId = vm.live?.liveData.linescore?.offense?.batter?.id
 
         return VStack(alignment: .leading, spacing: 4) {
             Text("BATTING").font(.caption.weight(.bold)).foregroundStyle(.secondary)
@@ -859,7 +867,9 @@ struct BoxScoreView: View {
                     battingHeader
                     Divider().opacity(0.4)
                     ForEach(rows, id: \.person.id) { player in
-                        battingRow(player)
+                        battingRow(
+                            player, tint: tint, currentBatterId: currentBatterId,
+                        )
                     }
                     if !rows.isEmpty {
                         Divider().opacity(0.6)
@@ -869,6 +879,33 @@ struct BoxScoreView: View {
             }
             notableBlock(rows: rows)
         }
+    }
+
+    /// Resolve a `BoxScoreTeam`'s `TeamColors` tint. Matches by team
+    /// abbreviation against the game's away/home sides — the box-
+    /// score's MLBAM `team.id` ships as 0 on the BDL-synthesized
+    /// shape, so an id comparison would never resolve. Once a side
+    /// is identified, we bridge through `bdl{Away,Home}TeamId` →
+    /// Lahman → `TeamColors`. Falls back to `.accentColor` whenever
+    /// any hop misses (no abbreviation on the payload, an unmapped
+    /// BDL id, or a Lahman gap for a relocated franchise).
+    private func teamColor(for team: BoxScoreTeam) -> Color {
+        guard let abbr = team.team.abbreviation?.uppercased(),
+              !abbr.isEmpty else {
+            return .accentColor
+        }
+        let bdlId: Int?
+        if vm.game.teams.away.team.abbreviation?.uppercased() == abbr {
+            bdlId = vm.game.bdlAwayTeamId
+        } else if vm.game.teams.home.team.abbreviation?.uppercased() == abbr {
+            bdlId = vm.game.bdlHomeTeamId
+        } else {
+            bdlId = nil
+        }
+        guard let bdlId, let lahman = bdlToLahmanTeamId[bdlId] else {
+            return .accentColor
+        }
+        return TeamColors.color(for: lahman) ?? .accentColor
     }
 
     /// Team totals row anchoring the bottom of the batting table.
@@ -948,26 +985,53 @@ struct BoxScoreView: View {
             .monospacedDigit()
     }
 
-    private func battingRow(_ p: BoxPlayer) -> some View {
+    private func battingRow(
+        _ p: BoxPlayer, tint: Color, currentBatterId: Int?,
+    ) -> some View {
         let b = p.stats?.batting
         let avg = p.seasonStats?.batting?.avg ?? "—"
         let ops = p.seasonStats?.batting?.ops ?? "—"
+        let isCurrent = currentBatterId != nil && p.person.id == currentBatterId
         return Button { tapPlayer(id: p.person.id, name: p.person.fullName) } label: {
             HStack(spacing: 0) {
-                playerLabel(p, isPitcher: false)
-                    .frame(width: BattingCol.name, alignment: .leading)
+                HStack(spacing: 4) {
+                    if isCurrent {
+                        Image(systemName: "figure.baseball")
+                            .font(.caption2)
+                            .foregroundStyle(tint)
+                    }
+                    playerLabel(p, isPitcher: false)
+                }
+                .frame(width: BattingCol.name, alignment: .leading)
                 cell(b?.atBats,      width: BattingCol.ab)
                 cell(b?.runs,        width: BattingCol.r)
                 cell(b?.hits,        width: BattingCol.h)
                 cell(b?.rbi,         width: BattingCol.rbi)
                 cell(b?.baseOnBalls, width: BattingCol.bb)
                 cell(b?.strikeOuts,  width: BattingCol.so)
-                Text(avg).font(.caption).monospacedDigit()
+                Text(avg)
+                    .font(.caption)
+                    .monospacedDigit()
+                    .lineLimit(1)
                     .frame(width: BattingCol.avg, alignment: .trailing)
-                Text(ops).font(.caption).monospacedDigit()
+                // AVG never exceeds .999 (".399" / ".305" — 4 chars
+                // with the dropped leading zero), so no scaling. OPS
+                // can break 1.000 (".850" → "1.023" — 5 chars), so
+                // we shrink only the 1.xxx case — keeps sub-1.000
+                // values rendering at full size next to AVG.
+                Text(ops)
+                    .font(.caption)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(ops.hasPrefix("1.") ? 0.85 : 1.0)
                     .frame(width: BattingCol.ops, alignment: .trailing)
             }
             .padding(.vertical, 2)
+            .bold(isCurrent)
+            .background(
+                isCurrent ? tint.opacity(0.15) : Color.clear,
+                in: RoundedRectangle(cornerRadius: 6),
+            )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

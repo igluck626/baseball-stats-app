@@ -491,7 +491,6 @@ private struct TeamHeroCard: View {
         let pitcherFull = linescore?.defense?.pitcher?.fullName ?? ""
 
         return VStack(spacing: 8) {
-            Divider().opacity(0.4)
             HStack(alignment: .center, spacing: 16) {
                 BaseRunnerView(
                     first: first, second: second, third: third, size: 28,

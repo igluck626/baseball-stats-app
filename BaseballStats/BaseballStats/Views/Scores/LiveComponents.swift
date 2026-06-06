@@ -37,7 +37,7 @@ final class LiveFeedViewModel: ObservableObject {
         self.bdl = bdl
     }
 
-    /// One-shot fetch + start a 30s polling loop. Idempotent — if
+    /// One-shot fetch + start a 15s polling loop. Idempotent — if
     /// the loop is already running it cancels the old one first so
     /// changing gameId (rare, but possible across re-mounts) doesn't
     /// leak a stale poller.
@@ -46,7 +46,7 @@ final class LiveFeedViewModel: ObservableObject {
         await fetch(gameId: gameId)
         task = Task { @MainActor [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 30 * 1_000_000_000)
+                try? await Task.sleep(nanoseconds: 15 * 1_000_000_000)
                 guard !Task.isCancelled, let self else { return }
                 await self.fetch(gameId: gameId)
                 // Stop polling once the game is final — no point
@@ -299,10 +299,13 @@ struct PlaysView: View {
     /// `true` once the user has tapped the header, so subsequent
     /// scoring-play arrivals don't fight whatever state they chose.
     @State private var hasUserToggled = false
-    /// `true` after we've auto-populated `expandedHalfInnings` with
-    /// the most-recent half-inning. Prevents re-collapsing the
-    /// user's manual expansions on every live-poll tick.
-    @State private var didAutoExpandHalfInning = false
+    /// The half-inning key we last auto-expanded. Initial fetch
+    /// auto-expands the latest half-inning; subsequent ticks only
+    /// auto-expand when the latest half-inning key *changes* (i.e.
+    /// the game advances to Top of the next inning, or to Bottom
+    /// after the half flips), preserving the user's manual collapse
+    /// of any inning that doesn't change.
+    @State private var lastAutoExpandedHalfInningKey: String?
     /// Tracks the previous scoring-play count so we only react to
     /// the LATCH from N → N+1, not to every plays update.
     @State private var prevScoringCount = 0
@@ -372,12 +375,19 @@ struct PlaysView: View {
         .onChange(of: plays) { _, new in
             let newScoringCount = new.filter(\.scoringPlay).count
             defer { prevScoringCount = newScoringCount }
-            // Auto-populate the All-mode expansion ONCE so the most
-            // recent inning is visible without scrolling.
-            if !didAutoExpandHalfInning, !new.isEmpty,
-               let last = new.last, let type = last.inningType {
-                expandedHalfInnings = [Self.halfInningKey(inningType: type, inning: last.inning)]
-                didAutoExpandHalfInning = true
+            // Auto-expand the latest half-inning. Triggers on every
+            // transition to a new half-inning so the action stays
+            // on-screen without scrolling; same-inning updates do
+            // not touch the expansion set (so a user collapse of
+            // the current inning stays collapsed). Prior auto-
+            // expansions are left in place rather than reset — if
+            // the user opened earlier innings, we don't fight them.
+            if let last = new.last, let type = last.inningType {
+                let latestKey = Self.halfInningKey(inningType: type, inning: last.inning)
+                if latestKey != lastAutoExpandedHalfInningKey {
+                    expandedHalfInnings.insert(latestKey)
+                    lastAutoExpandedHalfInningKey = latestKey
+                }
             }
             // Auto-expand on scoring-play arrival for live games,
             // unless the user has already toggled the section.
@@ -540,7 +550,12 @@ struct PlaysView: View {
     // MARK: All mode (PA-grouped)
 
     private var allPlaysList: some View {
-        let groups = Self.groupedHalfInnings(plays)
+        // Reverse the half-inning groupings so the most-recent
+        // half-inning lands at the top of the list. `groupedHalfInnings`
+        // preserves BDL's chronological order (oldest first); reading
+        // a long live game from the top would otherwise require
+        // scrolling all the way down to see what just happened.
+        let groups = Array(Self.groupedHalfInnings(plays).reversed())
         return LazyVStack(alignment: .leading, spacing: 0) {
             ForEach(groups) { half in
                 halfInningSection(half: half)
