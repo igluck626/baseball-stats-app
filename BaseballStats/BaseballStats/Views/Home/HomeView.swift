@@ -36,13 +36,6 @@ struct HomeView: View {
             }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbarContent }
-            // Subtle team-color wash on the nav bar — matches the
-            // Apple Sports app's identity treatment. The 15% tint
-            // is light enough that the system bar chrome (back
-            // chevron, principal title) still reads cleanly in
-            // both light + dark modes.
-            .toolbarBackground(teamColor.opacity(0.15), for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
             .navigationDestination(for: Game.self) { game in
                 BoxScoreView(
                     game:           game,
@@ -147,24 +140,26 @@ struct HomeView: View {
         return color
     }
 
-    /// Full-screen wash anchored at the top with the favorite team's
-    /// color, fading to transparent past the vertical midpoint. Sits
-    /// on a `Color(.systemBackground)` base so the bottom half of
-    /// the screen stays system-neutral and doesn't bleed color
-    /// behind the tab bar. Matches the Apple Sports app's
-    /// team-tinted hero feel.
+    /// Bold team-color wash anchored at the top, fading to
+    /// transparent ~55% down the screen. Stronger Apple Sports app
+    /// treatment than the previous 0.25-max version — the top of
+    /// the hero card now sits squarely inside the saturated tint.
+    /// Sits on a `Color(.systemBackground)` base so the lower half
+    /// stays system-neutral past the gradient endpoint and the
+    /// system tab bar doesn't get tinted.
     private var backgroundGradient: some View {
         ZStack {
             Color(.systemBackground)
                 .ignoresSafeArea()
             LinearGradient(
                 colors: [
-                    teamColor.opacity(0.25),
-                    teamColor.opacity(0.08),
+                    teamColor.opacity(0.85),
+                    teamColor.opacity(0.45),
+                    teamColor.opacity(0.15),
                     Color(.systemBackground).opacity(0.0),
                 ],
                 startPoint: .top,
-                endPoint: .center,
+                endPoint: .init(x: 0.5, y: 0.55),
             )
             .ignoresSafeArea()
         }
@@ -344,7 +339,7 @@ private struct TeamHeroCard: View {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(.ultraThinMaterial)
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(teamColor.opacity(0.05))
+                .fill(teamColor.opacity(0.12))
         }
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -838,7 +833,7 @@ private struct TeamLeadersSection: View {
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .fill(.ultraThinMaterial)
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(tint.opacity(0.05))
+                    .fill(tint.opacity(0.12))
             }
             .overlay(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
