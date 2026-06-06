@@ -103,7 +103,6 @@ struct RosterSheet: View {
                 PlayerProfileView(player: player)
             }
         }
-        .presentationBackground(.ultraThinMaterial)
     }
 
     @ViewBuilder
@@ -122,12 +121,8 @@ struct RosterSheet: View {
                         if !players.isEmpty {
                             sectionHeader(section)
                             columnHeaderRow
-                            ForEach(Array(players.enumerated()), id: \.offset) { idx, player in
+                            ForEach(players, id: \.bdl_id) { player in
                                 rowButton(player: player)
-                                if idx < players.count - 1 {
-                                    Divider().opacity(0.4)
-                                        .padding(.horizontal, 16)
-                                }
                             }
                         }
                     }
