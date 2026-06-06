@@ -140,27 +140,23 @@ struct HomeView: View {
         return color
     }
 
-    /// Full-screen team-color wash. Strong (0.85) at the top, fading
-    /// gradually through 0.45 → 0.20 → 0.08 → 0.03 so it never hits
-    /// an abrupt white cutoff and the bottom of the screen still
-    /// carries a whisper of the team's color rather than reverting
-    /// to plain system background. Sits on a `Color(.systemBackground)`
-    /// base so the very-low-opacity final stop blends to a tinted
-    /// neutral rather than transparent void.
+    /// Subtle team-color wash that only paints the top ~40% of the
+    /// screen and fades to clear. The `Color(.systemBackground)` base
+    /// shows through below the fade — so the lower half of the tab
+    /// reads as plain system surface (and the glass cards on top look
+    /// like genuine glass against it).
     private var backgroundGradient: some View {
         ZStack {
             Color(.systemBackground)
                 .ignoresSafeArea()
             LinearGradient(
                 colors: [
-                    teamColor.opacity(0.85),
-                    teamColor.opacity(0.45),
-                    teamColor.opacity(0.20),
+                    teamColor.opacity(0.25),
                     teamColor.opacity(0.08),
-                    teamColor.opacity(0.03),
+                    Color.clear,
                 ],
                 startPoint: .top,
-                endPoint: .bottom,
+                endPoint: .init(x: 0.5, y: 0.4),
             )
             .ignoresSafeArea()
         }
@@ -331,17 +327,11 @@ private struct TeamHeroCard: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        // Thin glass panel — semi-transparent `.systemBackground`
-        // wash with a fine white stroke for edge definition. Cuts
-        // the gray frosting that `.ultraThinMaterial` adds so the
-        // saturated team-color gradient bleeds through cleanly.
+        // `.ultraThinMaterial` glass — pairs with the subtle team-tint
+        // gradient at the top of the screen for the Apple Sports look.
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color(.systemBackground).opacity(0.25))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .stroke(Color.white.opacity(0.2), lineWidth: 0.5)
-                )
+                .fill(.ultraThinMaterial)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -834,15 +824,11 @@ private struct TeamLeadersSection: View {
                 }
             }
             .padding(14)
-            // Thin glass panel — same recipe as the hero card so
-            // the surfaces feel like siblings on the home tab.
+            // `.ultraThinMaterial` glass — same recipe as the hero
+            // card so the two surfaces feel like siblings on the tab.
             .background(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(Color(.systemBackground).opacity(0.25))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .stroke(Color.white.opacity(0.2), lineWidth: 0.5)
-                    )
+                    .fill(.ultraThinMaterial)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
