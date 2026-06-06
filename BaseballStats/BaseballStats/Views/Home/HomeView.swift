@@ -140,13 +140,13 @@ struct HomeView: View {
         return color
     }
 
-    /// Bold team-color wash anchored at the top, fading to
-    /// transparent ~55% down the screen. Stronger Apple Sports app
-    /// treatment than the previous 0.25-max version — the top of
-    /// the hero card now sits squarely inside the saturated tint.
-    /// Sits on a `Color(.systemBackground)` base so the lower half
-    /// stays system-neutral past the gradient endpoint and the
-    /// system tab bar doesn't get tinted.
+    /// Full-screen team-color wash. Strong (0.85) at the top, fading
+    /// gradually through 0.45 → 0.20 → 0.08 → 0.03 so it never hits
+    /// an abrupt white cutoff and the bottom of the screen still
+    /// carries a whisper of the team's color rather than reverting
+    /// to plain system background. Sits on a `Color(.systemBackground)`
+    /// base so the very-low-opacity final stop blends to a tinted
+    /// neutral rather than transparent void.
     private var backgroundGradient: some View {
         ZStack {
             Color(.systemBackground)
@@ -155,11 +155,12 @@ struct HomeView: View {
                 colors: [
                     teamColor.opacity(0.85),
                     teamColor.opacity(0.45),
-                    teamColor.opacity(0.15),
-                    Color(.systemBackground).opacity(0.0),
+                    teamColor.opacity(0.20),
+                    teamColor.opacity(0.08),
+                    teamColor.opacity(0.03),
                 ],
                 startPoint: .top,
-                endPoint: .init(x: 0.5, y: 0.55),
+                endPoint: .bottom,
             )
             .ignoresSafeArea()
         }
@@ -330,17 +331,15 @@ private struct TeamHeroCard: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        // Tinted glass: material first for the blur + frosted base,
-        // then a flat team-color wash at 0.05 on top. Replaces the
-        // earlier diagonal gradient so the card visual matches the
-        // other tinted surfaces (team-leaders card, etc.) and the
-        // gradient lives only on the full-screen background.
-        .background {
+        // Pure `.ultraThinMaterial` — no flat team-color overlay.
+        // The glass picks up the saturated team gradient bleeding
+        // through from the background layer, producing a naturally-
+        // tinted card that matches the player profile chrome
+        // without an explicit color fill on top.
+        .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(.ultraThinMaterial)
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(teamColor.opacity(0.12))
-        }
+        )
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .strokeBorder(teamColor.opacity(0.25), lineWidth: 1)
@@ -827,14 +826,12 @@ private struct TeamLeadersSection: View {
                 }
             }
             .padding(14)
-            // Tinted glass — same recipe as the hero card so the
-            // surfaces feel like siblings on the home tab.
-            .background {
+            // Pure glass — the team-color background gradient bleeds
+            // through the material for a naturally tinted surface.
+            .background(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .fill(.ultraThinMaterial)
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(tint.opacity(0.12))
-            }
+            )
             .overlay(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .strokeBorder(tint.opacity(0.25), lineWidth: 1)
