@@ -1014,20 +1014,29 @@ private struct TeamLeadersSection: View {
                             .padding(.vertical, 12)
                             .frame(maxWidth: .infinity)
                     } else {
-                        VStack(alignment: .leading, spacing: 14) {
-                            ForEach(groups) { group in
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(Array(groups.enumerated()), id: \.element.id) { idx, group in
                                 statGroupSection(group)
+                                if idx < groups.count - 1 {
+                                    Divider().opacity(0.3)
+                                }
                             }
                         }
                     }
                 }
             }
             .padding(14)
-            // `.ultraThinMaterial` glass — same recipe as the hero
-            // card so the two surfaces feel like siblings on the tab.
+            // Thin glass panel — `Color(.systemBackground)` at 25%
+            // opacity plus a fine white stroke for edge definition.
+            // Lets the saturated team-color gradient bleed through
+            // instead of frosting the surface gray.
             .background(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(.ultraThinMaterial)
+                    .fill(Color(.systemBackground).opacity(0.25))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .stroke(Color.white.opacity(0.2), lineWidth: 0.5)
+                    )
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
@@ -1067,10 +1076,10 @@ private struct TeamLeadersSection: View {
     private func statGroupSection(_ group: StatLeaderGroup) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(statDisplayName(group.stat))
-                .font(.caption2.weight(.bold))
-                .tracking(0.5)
-                .foregroundStyle(.secondary)
-            VStack(spacing: 4) {
+                .font(.caption2.weight(.semibold))
+                .tracking(0.8)
+                .foregroundStyle(.tertiary)
+            VStack(spacing: 2) {
                 ForEach(Array(group.cards.enumerated()), id: \.offset) { idx, card in
                     Button {
                         onTapPlayer(card.player)
