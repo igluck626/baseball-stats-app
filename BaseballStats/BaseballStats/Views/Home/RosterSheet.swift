@@ -23,10 +23,24 @@ struct RosterSheet: View {
     enum RosterMode: String, Hashable { case hitters, pitchers }
     @State private var mode: RosterMode = .hitters
 
-    /// Column-width constant shared by the column-header row and
-    /// every data row so values stack into clean columns. Name is
-    /// flex (`maxWidth: .infinity`); the four stat cells are fixed.
-    private let statCellWidth: CGFloat = 50
+    /// Per-stat fixed widths shared by the per-section column header
+    /// and every data row so values stack into clean columns. Name +
+    /// position is flex (`maxWidth: .infinity`); stat cells right-
+    /// align to the same width on both rows.
+    private func statColumnWidth(_ stat: String) -> CGFloat {
+        switch stat {
+        case "WAR":  return 38
+        case "AVG":  return 44
+        case "HR":   return 32
+        case "RBI":  return 36
+        case "OPS":  return 44
+        case "ERA":  return 44
+        case "W":    return 28
+        case "SO":   return 36
+        case "WHIP": return 48
+        default:     return 44
+        }
+    }
 
     private var tint: Color {
         TeamColors.color(for: entry.lahmanCode) ?? .accentColor
@@ -49,8 +63,8 @@ struct RosterSheet: View {
 
     private var statColumns: [String] {
         switch mode {
-        case .hitters:  return ["AVG", "HR",  "RBI", "OPS"]
-        case .pitchers: return ["ERA", "W",   "SO",  "WHIP"]
+        case .hitters:  return ["WAR", "AVG", "HR",  "RBI", "OPS"]
+        case .pitchers: return ["WAR", "ERA", "W",   "SO",  "WHIP"]
         }
     }
 
@@ -103,12 +117,11 @@ struct RosterSheet: View {
         } else {
             ScrollView {
                 VStack(spacing: 0) {
-                    columnHeaderRow
-                    Divider()
                     ForEach(sections, id: \.self) { section in
                         let players = sortPlayers(playersIn(section), in: section)
                         if !players.isEmpty {
                             sectionHeader(section)
+                            columnHeaderRow
                             ForEach(Array(players.enumerated()), id: \.offset) { idx, player in
                                 rowButton(player: player)
                                 if idx < players.count - 1 {
@@ -124,46 +137,43 @@ struct RosterSheet: View {
         }
     }
 
-    /// Top-of-scroll column legend. Lives once above the section
-    /// loop (rather than repeating per section) so it stays in sight
-    /// while the user scrolls — `.scrollClipDisabled()` isn't needed
-    /// because the legend re-anchors with the scrollview, but the
-    /// label set is invariant across all sections regardless.
+    /// Per-section column legend — repeats under every position
+    /// header so the user always sees what `3.2 .285 8 31 .881`
+    /// means without scrolling back to the top of the sheet. Widths
+    /// mirror `row`'s stat cells via `statColumnWidth(_:)` so the
+    /// labels line up over their values.
     private var columnHeaderRow: some View {
         HStack(spacing: 0) {
-            Text("NAME")
+            Text("")
                 .frame(maxWidth: .infinity, alignment: .leading)
             ForEach(statColumns, id: \.self) { col in
                 Text(col)
-                    .frame(width: statCellWidth, alignment: .trailing)
+                    .frame(width: statColumnWidth(col), alignment: .trailing)
             }
         }
         .font(.caption2.weight(.bold))
         .tracking(0.5)
         .foregroundStyle(.secondary)
         .padding(.horizontal, 16)
-        .padding(.vertical, 8)
+        .padding(.bottom, 6)
     }
 
-    /// Position-bucket subheader. Team-tinted capsule accent + bold
-    /// label, no shaded band underneath — matches the
-    /// `HomeSectionHeader` visual language, sized smaller
-    /// (`.caption` label, 4×18 capsule) since these are sub-section
-    /// markers inside the sheet.
+    /// Position-bucket subheader — plain bold uppercase label with a
+    /// thin divider underneath, matching the `InjuryReportSheet` /
+    /// `TeamLeadersSheet` aesthetic. The capsule-accent variant
+    /// (carried over from `HomeSectionHeader`) is gone in favor of
+    /// the sheet-internal pattern.
     private func sectionHeader(_ group: RosterPositionGroup) -> some View {
-        HStack(spacing: 10) {
-            Capsule()
-                .fill(tint)
-                .frame(width: 4, height: 18)
+        VStack(alignment: .leading, spacing: 4) {
             Text(sectionTitle(group))
                 .font(.caption.weight(.bold))
-                .tracking(0.6)
+                .tracking(0.8)
                 .foregroundStyle(.primary)
-            Spacer()
+            Divider()
         }
         .padding(.horizontal, 16)
-        .padding(.top, 16)
-        .padding(.bottom, 8)
+        .padding(.top, 18)
+        .padding(.bottom, 6)
     }
 
     @ViewBuilder
@@ -178,9 +188,9 @@ struct RosterSheet: View {
         }
     }
 
-    /// Table row: name + position chip on the left, four fixed-width
-    /// stat cells right-aligned to match the column-header row,
-    /// trailing chevron when tappable.
+    /// Table row: name + position chip on the left, five fixed-width
+    /// stat cells right-aligned to match the per-section column-
+    /// header row, trailing chevron when tappable.
     private func row(_ player: RosterPlayer, tappable: Bool) -> some View {
         HStack(spacing: 0) {
             HStack(spacing: 6) {
@@ -198,12 +208,12 @@ struct RosterSheet: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            ForEach(Array(statValues(for: player).enumerated()), id: \.offset) { _, value in
+            ForEach(Array(statValues(for: player).enumerated()), id: \.offset) { idx, value in
                 Text(value)
                     .font(.subheadline)
                     .monospacedDigit()
                     .foregroundStyle(.primary)
-                    .frame(width: statCellWidth, alignment: .trailing)
+                    .frame(width: statColumnWidth(statColumns[idx]), alignment: .trailing)
             }
 
             if tappable {
@@ -303,12 +313,15 @@ struct RosterSheet: View {
 
     /// Per-row stat strings in the same order as `statColumns`.
     /// Returns "—" placeholders for stats absent from the player's
-    /// current line (early-season, unresolved MLBAM, etc.).
+    /// current line (early-season, unresolved MLBAM, etc.). WAR
+    /// formats via the default `%.1f` branch of `formatLeaderValue`
+    /// — "3.2", "0.4", "-0.1".
     private func statValues(for player: RosterPlayer) -> [String] {
         let s = player.currentStats
         switch mode {
         case .hitters:
             return [
+                formatLeaderValue(s?.war, stat: "WAR"),
                 formatLeaderValue(s?.avg, stat: "AVG"),
                 formatStatInt(s?.hr),
                 formatStatInt(s?.rbi),
@@ -316,6 +329,7 @@ struct RosterSheet: View {
             ]
         case .pitchers:
             return [
+                formatLeaderValue(s?.war, stat: "WAR"),
                 formatLeaderValue(s?.era, stat: "ERA"),
                 formatStatInt(s?.w),
                 formatStatInt(s?.so),
