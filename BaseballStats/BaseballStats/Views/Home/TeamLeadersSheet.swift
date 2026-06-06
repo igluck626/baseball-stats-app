@@ -94,9 +94,21 @@ struct TeamLeadersSheet: View {
             await load()
         }
         .onChange(of: role) { _, _ in
-            // Reset to the new role's first stat — the previous
-            // role's stat key isn't in the new role's button row.
-            stat = currentStats.first ?? "AVG"
+            // Clear stale rows immediately so the role flip doesn't
+            // briefly show the previous side's numbers while the new
+            // fetch is in flight.
+            leaders = []
+            let newFirst = currentStats.first ?? "AVG"
+            if stat == newFirst {
+                // Same stat key on both sides (e.g. flipping role
+                // while on WAR, which heads both arrays): assigning
+                // `stat` is a no-op so the `.onChange(of: stat)`
+                // below won't fire — load directly. Without this,
+                // the rows stayed on the old role's numbers.
+                Task { await load() }
+            } else {
+                stat = newFirst
+            }
         }
         .onChange(of: stat) { _, newValue in
             vm.selectedLeaderStat = newValue
