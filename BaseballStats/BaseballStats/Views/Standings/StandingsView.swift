@@ -277,12 +277,14 @@ private enum CardStyle: Equatable {
     case wildcard(spots: Int)  // Highlight the top `spots` as wild-card holders.
 }
 
-/// One DivisionCard renders one card's worth of standings as a single
-/// unified scrollable table — header row + every team row live in one
-/// VStack inside one horizontal ScrollView, so the team identity
-/// column (logo + abbreviation + clinch / magic badges) scrolls in
-/// lockstep with the stat columns. Matches the MLB app's standings
-/// layout; supersedes the prior frozen-pane two-VStack design.
+/// One DivisionCard renders one card's worth of standings as a frozen
+/// team-identity column on the left plus a horizontally scrolling stat
+/// pane on the right. Used by the Wildcard tab, which renders one card
+/// per league (AL Wildcard / NL Wildcard) without the AL/NL three-
+/// division grouping. Mirrors `LeagueTable`'s frozen-pane pattern so
+/// both tabs read consistently — the team name stays put while the
+/// stat columns can be swiped to reveal WCGB / L10 / STRK / HOME /
+/// AWAY / RDIFF on narrower screens.
 private struct DivisionCard: View {
     let title: String
     let teams: [TeamStanding]
@@ -304,27 +306,56 @@ private struct DivisionCard: View {
             .padding(.top, 12)
             .padding(.bottom, 8)
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                VStack(spacing: 0) {
-                    UnifiedHeaderRow(isHistorical: isHistorical)
-                    Divider().opacity(0.4)
-                    ForEach(Array(teams.enumerated()), id: \.offset) { index, team in
-                        UnifiedTeamRow(
-                            team: team,
-                            leader: teams.first,
-                            isLeader: index == 0,
-                            style: style,
-                            rankInList: index,
-                            isHistorical: isHistorical
-                        )
-                        if index != teams.indices.last {
-                            Divider().opacity(0.4)
-                        }
-                    }
+            HStack(spacing: 0) {
+                frozenPane
+                    .frame(width: StandingsLayout.identityWidth)
+                    .background(.ultraThinMaterial)
+                    .shadow(color: .black.opacity(0.08), radius: 4, x: 2, y: 0)
+                    .zIndex(1)
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    scrollablePane
                 }
             }
         }
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    private var frozenPane: some View {
+        VStack(spacing: 0) {
+            FrozenIdentityHeader()
+            Divider().opacity(0.4)
+            ForEach(Array(teams.enumerated()), id: \.offset) { index, team in
+                FrozenIdentityCell(team: team, isLeader: index == 0)
+                    .background(rowBackground(
+                        style: style, isLeader: index == 0, rankInList: index,
+                    ))
+                if index != teams.indices.last {
+                    Divider().opacity(0.4)
+                }
+            }
+        }
+    }
+
+    private var scrollablePane: some View {
+        VStack(spacing: 0) {
+            ScrollableStatsHeader(isHistorical: isHistorical)
+            Divider().opacity(0.4)
+            ForEach(Array(teams.enumerated()), id: \.offset) { index, team in
+                ScrollableStatsRow(
+                    team: team,
+                    leader: teams.first,
+                    isLeader: index == 0,
+                    isHistorical: isHistorical,
+                )
+                .background(rowBackground(
+                    style: style, isLeader: index == 0, rankInList: index,
+                ))
+                if index != teams.indices.last {
+                    Divider().opacity(0.4)
+                }
+            }
+        }
     }
 }
 
@@ -358,175 +389,6 @@ private enum StandingsLayout {
     /// column boundary.
     static let divisionGapHeight: CGFloat = 14
     static let divisionRuleHeight: CGFloat = 2
-}
-
-// MARK: - Unified header + team rows
-
-/// Column labels for the unified scrolling table. Order must match
-/// `UnifiedTeamRow` cell-for-cell. In historical mode the five live-
-/// only columns (WCGB / L10 / STRK / HOME / AWAY) drop out so the
-/// header reads Team / W / L / PCT / GB / RDIFF — same set Baseball
-/// Reference shows for historical standings.
-private struct UnifiedHeaderRow: View {
-    let isHistorical: Bool
-
-    var body: some View {
-        HStack(spacing: 0) {
-            Text("Team")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .padding(.leading, 14)
-                .frame(width: StandingsLayout.identityWidth, alignment: .leading)
-
-            headerCell("W",     width: StandingsLayout.cell)
-            headerCell("L",     width: StandingsLayout.cell)
-            headerCell("PCT",   width: StandingsLayout.pct)
-            headerCell("GB",    width: StandingsLayout.gb)
-            if !isHistorical {
-                headerCell("WCGB", width: StandingsLayout.gb)
-                headerCell("L10",  width: StandingsLayout.record)
-                headerCell("STRK", width: StandingsLayout.streak)
-                headerCell("HOME", width: StandingsLayout.record)
-                headerCell("AWAY", width: StandingsLayout.record)
-            }
-            headerCell("RDIFF", width: StandingsLayout.diff)
-        }
-        .padding(.trailing, 14)
-        .frame(height: StandingsLayout.headerHeight)
-    }
-
-    private func headerCell(_ text: String, width: CGFloat) -> some View {
-        Text(text)
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(.secondary)
-            .frame(width: width, alignment: .trailing)
-    }
-}
-
-/// Unified team row — identity column (logo + abbrev + optional
-/// clinch/magic badges) and the stat columns share the same scrolling
-/// HStack. No gold-star or accent-fill on the division leader; the
-/// leader is identified by position alone, matching the MLB app's
-/// standings page.
-private struct UnifiedTeamRow: View {
-    let team: TeamStanding
-    let leader: TeamStanding?
-    let isLeader: Bool
-    let style: CardStyle
-    let rankInList: Int
-    let isHistorical: Bool
-
-    var body: some View {
-        HStack(spacing: 0) {
-            identityCell
-
-            statCell(formatInt(team.W),  width: StandingsLayout.cell)
-            statCell(formatInt(team.L),  width: StandingsLayout.cell)
-            statCell(formatPct(team.win_pct), width: StandingsLayout.pct)
-            statCell(formatGB(team: team, leader: leader, isLeader: isLeader),
-                     width: StandingsLayout.gb, dim: isLeader)
-            if !isHistorical {
-                statCell(formatGBString(team.wild_card_games_back),
-                         width: StandingsLayout.gb, dim: true)
-                statCell(formatRecord(w: team.last_ten_w, l: team.last_ten_l),
-                         width: StandingsLayout.record)
-                statCell(team.hasStreak ? (team.streak_code ?? "—") : "—",
-                         width: StandingsLayout.streak)
-                statCell(formatRecord(w: team.home_w, l: team.home_l),
-                         width: StandingsLayout.record)
-                statCell(formatRecord(w: team.away_w, l: team.away_l),
-                         width: StandingsLayout.record)
-            }
-            statCell(formatDiff(team.runDifferential),
-                     width: StandingsLayout.diff)
-        }
-        .font(.subheadline)
-        .padding(.trailing, 14)
-        .frame(height: StandingsLayout.rowHeight)
-        .background(rowBackground(style: style,
-                                  isLeader: isLeader,
-                                  rankInList: rankInList))
-    }
-
-    /// Logo + 3-letter abbreviation + optional clinch badge +
-    /// optional magic-number pill, all in a fixed-width frame so the
-    /// stat columns line up across rows even when some teams carry
-    /// badges and others don't.
-    private var identityCell: some View {
-        HStack(spacing: 6) {
-            teamLogo
-            Text(abbreviation)
-                .font(.subheadline.weight(.semibold))
-                .monospacedDigit()
-                .lineLimit(1)
-            if let badge = clinchBadge {
-                clinchBadgeView(badge)
-            }
-            // Magic-number pill — leader-only, and only when the
-            // number is close enough to be meaningful (≤ 25 ~ the
-            // final ~6 weeks of the season for a first-place team).
-            if isLeader, let magic = magicText {
-                Text("M\(magic)")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(Color.accentColor)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.leading, 14)
-        .padding(.trailing, 4)
-        .frame(width: StandingsLayout.identityWidth, alignment: .leading)
-    }
-
-    /// MLB team logo via the ESPN CDN. AsyncImage's placeholder
-    /// branch covers the cold-start network gap and the rare 404 for
-    /// unmapped historical codes (Expos / pre-1900 clubs); in those
-    /// cases the abbreviation alone carries the team identity.
-    private var teamLogo: some View {
-        AsyncImage(url: teamLogoURL(for: team.team_id)) { phase in
-            if case .success(let image) = phase {
-                image.resizable().scaledToFit()
-            } else {
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(Color(.tertiarySystemFill))
-            }
-        }
-        .frame(width: StandingsLayout.logoSize, height: StandingsLayout.logoSize)
-    }
-
-    private var abbreviation: String {
-        guard let code = team.team_id, !code.isEmpty else { return "—" }
-        return teamAbbreviation(for: code)
-    }
-
-    private var clinchBadge: (letter: String, color: Color)? {
-        clinchBadgeFor(team.clinch_indicator)
-    }
-
-    private var magicText: String? {
-        guard let m = team.magic_number, !m.isEmpty, m != "-",
-              let intVal = Int(m), intVal <= 25 else { return nil }
-        return m
-    }
-
-    private func clinchBadgeView(_ badge: (letter: String, color: Color)) -> some View {
-        Text(badge.letter)
-            .font(.caption2.weight(.bold))
-            .foregroundStyle(badge.color)
-            .padding(.horizontal, 4)
-            .padding(.vertical, 1)
-            .overlay(
-                RoundedRectangle(cornerRadius: 3)
-                    .stroke(badge.color.opacity(0.6), lineWidth: 0.5)
-            )
-    }
-
-    private func statCell(_ text: String, width: CGFloat,
-                          dim: Bool = false) -> some View {
-        Text(text)
-            .frame(width: width, alignment: .trailing)
-            .monospacedDigit()
-            .foregroundStyle(dim ? Color.secondary : Color.primary)
-    }
 }
 
 // MARK: - Row helpers
