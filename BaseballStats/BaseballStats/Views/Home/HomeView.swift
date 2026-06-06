@@ -331,14 +331,17 @@ private struct TeamHeroCard: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        // Pure `.ultraThinMaterial` — no flat team-color overlay.
-        // The glass picks up the saturated team gradient bleeding
-        // through from the background layer, producing a naturally-
-        // tinted card that matches the player profile chrome
-        // without an explicit color fill on top.
+        // Thin glass panel — semi-transparent `.systemBackground`
+        // wash with a fine white stroke for edge definition. Cuts
+        // the gray frosting that `.ultraThinMaterial` adds so the
+        // saturated team-color gradient bleeds through cleanly.
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(.ultraThinMaterial)
+                .fill(Color(.systemBackground).opacity(0.25))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .stroke(Color.white.opacity(0.2), lineWidth: 0.5)
+                )
         )
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -568,9 +571,14 @@ private struct CompactGameStripCard: View {
         .padding(.vertical, 8)
         .padding(.horizontal, 8)
         .frame(width: 110, height: 100)
+        // Thin glass panel — same recipe as the hero card.
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(.thinMaterial)
+                .fill(Color(.systemBackground).opacity(0.25))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(Color.white.opacity(0.2), lineWidth: 0.5)
+                )
         )
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -826,11 +834,15 @@ private struct TeamLeadersSection: View {
                 }
             }
             .padding(14)
-            // Pure glass — the team-color background gradient bleeds
-            // through the material for a naturally tinted surface.
+            // Thin glass panel — same recipe as the hero card so
+            // the surfaces feel like siblings on the home tab.
             .background(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(.ultraThinMaterial)
+                    .fill(Color(.systemBackground).opacity(0.25))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .stroke(Color.white.opacity(0.2), lineWidth: 0.5)
+                    )
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
@@ -1135,9 +1147,15 @@ private struct FavoritePlayerTile: View {
             .padding(.vertical, 10)
             .padding(.horizontal, 8)
             .frame(width: 132, height: 156)
+            // Thin glass panel — lets the team-color gradient bleed
+            // through instead of frosting the surface gray.
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(.ultraThinMaterial)
+                    .fill(Color(.systemBackground).opacity(0.25))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(Color.white.opacity(0.2), lineWidth: 0.5)
+                    )
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -1169,9 +1187,15 @@ private struct FavoritePlayerTile: View {
         .padding(.vertical, 10)
         .padding(.horizontal, 8)
         .frame(width: 132, height: 156)
+        // Thin glass panel — matches the live tile so the skeleton
+        // shape lines up exactly while data is loading.
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(.ultraThinMaterial)
+                .fill(Color(.systemBackground).opacity(0.25))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(Color.white.opacity(0.2), lineWidth: 0.5)
+                )
         )
     }
 
@@ -1226,9 +1250,15 @@ private struct AddFavoriteTile: View {
                     .foregroundStyle(.primary)
             }
             .frame(width: 132, height: 156)
+            // Thin glass panel — matches the player tiles. The
+            // dashed accent stroke on top is the unique signal.
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(.ultraThinMaterial)
+                    .fill(Color(.systemBackground).opacity(0.25))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(Color.white.opacity(0.2), lineWidth: 0.5)
+                    )
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
