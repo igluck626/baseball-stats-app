@@ -316,6 +316,14 @@ private struct TeamHeroCard: View {
     /// keeps animating between 1.0 and 0.4 from there.
     @State private var livePulse = false
 
+    /// Live-game runner / out / matchup feed. Reuses the Scores-tab
+    /// view model so the hero card pulls the same `/plays` +
+    /// `/plate_appearances` synthesis the box-score live header
+    /// reads. Started on appear when `liveGame` is set; restarts on
+    /// `.task(id:)` when the game changes; the VM's own 30s loop
+    /// self-terminates once the game goes final.
+    @StateObject private var liveVM = LiveFeedViewModel()
+
     private var teamColor: Color {
         TeamColors.color(for: entry.lahmanCode) ?? Color.accentColor
     }
@@ -353,6 +361,17 @@ private struct TeamHeroCard: View {
         )
         .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 3)
         .padding(.horizontal, 16)
+        // Start the live feed VM when a live game appears; restart on
+        // game change; stop when the live game disappears. The VM's
+        // own polling loop handles the 30s refresh + self-terminates
+        // on final state, so we just gate the kickoff here.
+        .task(id: liveGame?.id) {
+            if let g = liveGame {
+                await liveVM.start(gameId: g.gamePk)
+            } else {
+                liveVM.stop()
+            }
+        }
     }
 
     private var header: some View {
@@ -438,18 +457,90 @@ private struct TeamHeroCard: View {
         let isFavoriteHome = (game.bdlHomeTeamId == entry.bdlTeamId)
         let isFavoriteAway = (game.bdlAwayTeamId == entry.bdlTeamId)
 
-        HStack(alignment: .center, spacing: 0) {
-            liveTeamColumn(
-                team: away.team, score: away.score, isFavorite: isFavoriteAway,
-            )
-            Spacer(minLength: 8)
-            liveStatusColumn(game: game)
-            Spacer(minLength: 8)
-            liveTeamColumn(
-                team: home.team, score: home.score, isFavorite: isFavoriteHome,
-            )
+        VStack(spacing: 8) {
+            HStack(alignment: .center, spacing: 0) {
+                liveTeamColumn(
+                    team: away.team, score: away.score, isFavorite: isFavoriteAway,
+                )
+                Spacer(minLength: 8)
+                liveStatusColumn(game: game)
+                Spacer(minLength: 8)
+                liveTeamColumn(
+                    team: home.team, score: home.score, isFavorite: isFavoriteHome,
+                )
+            }
+            liveSituationPanel
         }
         .padding(.vertical, 8)
+    }
+
+    /// Bases + outs + current matchup, driven by `liveVM.live` (the
+    /// BDL `/plays` + `/plate_appearances` synthesis). Rendered
+    /// unconditionally beneath the score row so the layout is stable
+    /// — runners default to empty, outs to zero, and the
+    /// batter-vs-pitcher line is hidden when names aren't ready
+    /// (early-game cold start, or BDL hasn't shipped a "Start
+    /// Batter/Pitcher" event yet).
+    private var liveSituationPanel: some View {
+        let linescore = liveVM.live?.liveData.linescore
+        let outs = linescore?.outs ?? 0
+        let first  = linescore?.offense?.first  != nil
+        let second = linescore?.offense?.second != nil
+        let third  = linescore?.offense?.third  != nil
+        let batterFull  = linescore?.offense?.batter?.fullName  ?? ""
+        let pitcherFull = linescore?.defense?.pitcher?.fullName ?? ""
+
+        return VStack(spacing: 8) {
+            Divider().opacity(0.4)
+            HStack(alignment: .center, spacing: 16) {
+                BaseRunnerView(
+                    first: first, second: second, third: third, size: 28,
+                )
+                Spacer()
+                liveOutsDots(outs: outs)
+            }
+            if Self.isReadableName(batterFull),
+               Self.isReadableName(pitcherFull) {
+                HStack(spacing: 6) {
+                    Text(Self.lastNameOnly(batterFull))
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+                    Text("vs")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Text(Self.lastNameOnly(pitcherFull))
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+                }
+            }
+        }
+    }
+
+    /// 3-dot out indicator. Yellow when out is recorded; muted gray
+    /// otherwise. 10pt circles match the compact card density.
+    private func liveOutsDots(outs: Int) -> some View {
+        HStack(spacing: 6) {
+            ForEach(0..<3, id: \.self) { i in
+                Circle()
+                    .fill(i < outs ? Color.yellow : Color(.systemGray4))
+                    .frame(width: 10, height: 10)
+            }
+        }
+    }
+
+    /// Trailing space-separated token — surnames come back from BDL's
+    /// "X pitches to Y" parser already in last-name form, so this is
+    /// usually a passthrough; for full names it strips the first
+    /// name to keep the hero-card matchup line compact.
+    private static func lastNameOnly(_ full: String) -> String {
+        full.components(separatedBy: " ").last ?? full
+    }
+
+    /// Guard against the synthesizer's "—" / empty fallback when BDL
+    /// hasn't shipped a matchup-intro play yet. Keeps the
+    /// batter-vs-pitcher row from rendering "— vs —".
+    private static func isReadableName(_ s: String) -> Bool {
+        !s.isEmpty && s != "—"
     }
 
     private func liveTeamColumn(
@@ -478,7 +569,7 @@ private struct TeamHeroCard: View {
                 .background(Color.red, in: Capsule())
                 .opacity(livePulse ? 1.0 : 0.4)
                 .animation(
-                    .easeInOut(duration: 0.8).repeatForever(autoreverses: true),
+                    .easeInOut(duration: 1.8).repeatForever(autoreverses: true),
                     value: livePulse,
                 )
                 .onAppear { livePulse = true }
