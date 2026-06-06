@@ -292,8 +292,8 @@ final class HomeViewModel: ObservableObject {
     /// the See-All Stats sheet (`TeamLeadersSheet.battingStats`/
     /// `pitchingStats`) carries the longer list for users who want
     /// the deeper breakdown.
-    private static let battingLeaderStats:  [String] = ["AVG", "HR", "RBI", "OPS"]
-    private static let pitchingLeaderStats: [String] = ["ERA", "W", "SO", "WHIP"]
+    private static let battingLeaderStats:  [String] = ["WAR", "AVG", "HR", "OPS"]
+    private static let pitchingLeaderStats: [String] = ["WAR", "ERA", "SO", "WHIP"]
 
     /// Fetch the top-3 rows for each of the four batting + four
     /// pitching stats, scoped to the favorite team. Each call is a

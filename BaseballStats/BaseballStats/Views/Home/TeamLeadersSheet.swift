@@ -29,11 +29,11 @@ struct TeamLeadersSheet: View {
     @State private var isLoading: Bool = false
 
     private static let battingStats:  [String] = [
-        "AVG", "HR", "RBI", "OPS", "SLG", "OBP", "SB",
-        "H", "R", "BB", "WAR", "2B", "3B", "SO",
+        "WAR", "AVG", "HR", "RBI", "OPS", "SLG", "OBP",
+        "SB", "H", "R", "BB", "2B", "3B", "SO",
     ]
     private static let pitchingStats: [String] = [
-        "ERA", "W", "SO", "WHIP", "SV", "IP", "WAR",
+        "WAR", "ERA", "W", "SO", "WHIP", "SV", "IP",
         "BB", "H", "HR", "SO/9", "CG", "SHO",
     ]
 
