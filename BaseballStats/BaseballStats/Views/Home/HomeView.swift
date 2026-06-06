@@ -214,6 +214,7 @@ struct HomeView: View {
                     lastTenL:     vm.teamLastTenL,
                     lastGame:     vm.lastGame,
                     nextGame:     vm.nextGame,
+                    liveGame:     vm.liveGame,
                     stripGames:   vm.recentAndUpcoming,
                     onSchedule:   { showingSchedule = true },
                     onTapStripGame: { game in navigationPath.append(game) },
@@ -302,9 +303,18 @@ private struct TeamHeroCard: View {
     let lastTenL: Int?
     let lastGame: Game?
     let nextGame: Game?
+    /// Favorite team's currently-live game, if any. When non-nil, the
+    /// card replaces the last/next game rows with a live-score panel
+    /// (away logo + score · LIVE + inning · home logo + score).
+    let liveGame: Game?
     let stripGames: [Game]
     let onSchedule: () -> Void
     let onTapStripGame: (Game) -> Void
+
+    /// Drives the opacity pulse on the LIVE badge. Toggled true on
+    /// first appearance so the repeat-forever animation starts; SwiftUI
+    /// keeps animating between 1.0 and 0.4 from there.
+    @State private var livePulse = false
 
     private var teamColor: Color {
         TeamColors.color(for: entry.lahmanCode) ?? Color.accentColor
@@ -317,8 +327,12 @@ private struct TeamHeroCard: View {
                 streakLine
             }
             Divider().opacity(0.4)
-            lastGameRow
-            nextGameRow
+            if let live = liveGame {
+                liveScoreRow(game: live)
+            } else {
+                lastGameRow
+                nextGameRow
+            }
             if !stripGames.isEmpty {
                 Divider().opacity(0.4)
                 gameStrip
@@ -408,6 +422,101 @@ private struct TeamHeroCard: View {
 
     private var divisionText: String {
         standing?.displayString ?? "—"
+    }
+
+    /// Live-score panel — away column / center status / home column.
+    /// Favorite-team side reads in `.primary`; the opponent's score
+    /// drops to `.secondary` so the user's eyes land on their team
+    /// first. The center column carries a pulsing LIVE badge plus
+    /// the inning label (BDL's per-game payload only ships the
+    /// inning *number* — no top/bottom half — so we say "Inning Nth"
+    /// rather than mislabeling it "Top N").
+    @ViewBuilder
+    private func liveScoreRow(game: Game) -> some View {
+        let away = game.teams.away
+        let home = game.teams.home
+        let isFavoriteHome = (game.bdlHomeTeamId == entry.bdlTeamId)
+        let isFavoriteAway = (game.bdlAwayTeamId == entry.bdlTeamId)
+
+        HStack(alignment: .center, spacing: 0) {
+            liveTeamColumn(
+                team: away.team, score: away.score, isFavorite: isFavoriteAway,
+            )
+            Spacer(minLength: 8)
+            liveStatusColumn(game: game)
+            Spacer(minLength: 8)
+            liveTeamColumn(
+                team: home.team, score: home.score, isFavorite: isFavoriteHome,
+            )
+        }
+        .padding(.vertical, 8)
+    }
+
+    private func liveTeamColumn(
+        team: TeamInfo, score: Int?, isFavorite: Bool,
+    ) -> some View {
+        VStack(spacing: 4) {
+            TeamLogoView(team: team, size: 36)
+            Text(team.abbreviation ?? String(team.name.prefix(3)).uppercased())
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text("\(score ?? 0)")
+                .font(.title.bold())
+                .monospacedDigit()
+                .foregroundStyle(isFavorite ? .primary : .secondary)
+        }
+    }
+
+    private func liveStatusColumn(game: Game) -> some View {
+        VStack(spacing: 6) {
+            Text("LIVE")
+                .font(.caption2.weight(.bold))
+                .tracking(0.5)
+                .foregroundStyle(.white)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Color.red, in: Capsule())
+                .opacity(livePulse ? 1.0 : 0.4)
+                .animation(
+                    .easeInOut(duration: 0.8).repeatForever(autoreverses: true),
+                    value: livePulse,
+                )
+                .onAppear { livePulse = true }
+            Text(liveInningText(game: game))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    /// Inning label for the center column. Prefers
+    /// `linescore.currentInningOrdinal` when MLB Stats API supplied
+    /// it; otherwise builds an ordinal from `currentInning`. Falls
+    /// back to a bare "Live" string only when no inning is in the
+    /// payload at all (early-game / mid-transition snapshots).
+    private func liveInningText(game: Game) -> String {
+        if let ord = game.linescore?.currentInningOrdinal, !ord.isEmpty {
+            return "Inning \(ord)"
+        }
+        if let inning = game.linescore?.currentInning {
+            return "Inning \(Self.inningOrdinal(inning))"
+        }
+        return "Live"
+    }
+
+    private static func inningOrdinal(_ n: Int) -> String {
+        let last2 = n % 100
+        let suffix: String
+        if (11...13).contains(last2) {
+            suffix = "th"
+        } else {
+            switch n % 10 {
+            case 1: suffix = "st"
+            case 2: suffix = "nd"
+            case 3: suffix = "rd"
+            default: suffix = "th"
+            }
+        }
+        return "\(n)\(suffix)"
     }
 
     @ViewBuilder

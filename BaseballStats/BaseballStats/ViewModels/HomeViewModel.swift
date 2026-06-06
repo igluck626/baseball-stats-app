@@ -101,6 +101,21 @@ final class HomeViewModel: ObservableObject {
         Dictionary(grouping: teamPostseason) { $0.year }
     }
 
+    /// First live game in the favorite team's ±5-day window, if any.
+    /// `recentAndUpcoming` is already team-scoped (every entry has
+    /// the favorite in either `home` or `away`), so a plain
+    /// `phase == .live` scan is sufficient.
+    var liveGame: Game? {
+        recentAndUpcoming.first { $0.phase == .live }
+    }
+
+    /// True when the favorite team is currently in a live game.
+    /// Drives the hero card's live-score branch and the 30s auto-
+    /// refresh cadence on the polling task.
+    var hasLiveGame: Bool {
+        liveGame != nil
+    }
+
     private let bdl: BallDontLieClient
     private let api: APIClient
     private var refreshTask: Task<Void, Never>?
@@ -198,16 +213,16 @@ final class HomeViewModel: ObservableObject {
         return Array(recents) + Array(upcoming)
     }
 
-    /// 60s auto-refresh while any game in the strip is live. Mirrors
-    /// ScoresViewModel's pattern — cancellable, weak-self loop.
+    /// 30s auto-refresh while the favorite team has a live game.
+    /// Matches `ScoresViewModel.startAutoRefresh`'s cadence so the
+    /// hero card's live score stays in step with the Scores tab.
+    /// Cancellable, weak-self loop.
     func startAutoRefresh(bdlTeamId: Int) {
         stopAutoRefresh()
-        guard recentAndUpcoming.contains(where: { $0.phase == .live }) else {
-            return
-        }
+        guard hasLiveGame else { return }
         refreshTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 60 * 1_000_000_000)
+                try? await Task.sleep(nanoseconds: 30 * 1_000_000_000)
                 guard !Task.isCancelled, let self else { return }
                 await self.load(bdlTeamId: bdlTeamId)
             }
