@@ -5486,6 +5486,137 @@ def get_team_history(team_id: str) -> list[dict]:
         return [_row_to_dict(r, exclude=()) for r in rows]
 
 
+# Lahman `player_awards.award_name` → the canonical label this
+# endpoint groups by. Same source strings as `_HEADLINE_AWARD_NAMES`
+# above, but ROY keeps its full "Rookie of the Year" label here
+# (the franchise-awards payload favors the spelled-out form).
+_TEAM_AWARD_NAMES: dict[str, str] = {
+    "Most Valuable Player": "MVP",
+    "Cy Young Award":       "CY Young",
+    "Rookie of the Year":   "Rookie of the Year",
+    "Gold Glove":           "Gold Glove",
+    "Silver Slugger":       "Silver Slugger",
+}
+# Display order for the grouped `awards` array (winners within each
+# group are sorted year desc).
+_TEAM_AWARD_ORDER: list[str] = [
+    "MVP", "CY Young", "Rookie of the Year", "Gold Glove", "Silver Slugger",
+]
+
+
+def get_team_awards(team_id: str) -> Optional[dict]:
+    """Major-award winners across a franchise's whole history,
+    grouped by award type. Resolves teamID → franchID so relocations
+    (e.g. MON → WSN) collapse into one franchise — same path as
+    `/teams/{team_id}/history`.
+
+    A winner is attributed to the franchise when the player has a
+    `player_seasons` OR `pitcher_seasons` row for one of the
+    franchise's Lahman team codes in the same year as the award
+    (so a Gold Glove won the year a player was traded mid-season
+    still counts for the team he logged time with). Pitchers live in
+    `pitcher_seasons` only, so both tables are consulted.
+
+    Returns `None` when the DB is unavailable or the team_id maps to
+    no franchise; an empty `awards` list when the franchise has no
+    qualifying winners."""
+    if not connection.db_available():
+        return None
+
+    from database.models import Pitcher as _Pitcher
+    from database.models import Player as _Player
+    from database.models import PlayerAward as _PlayerAward
+    from database.models import TeamSeason as _TeamSeason
+
+    with connection.get_session() as db:
+        franch_id = crud.get_team_franchise(db, team_id)
+        if franch_id is None:
+            return None
+
+        # Every Lahman team code this franchise has worn — covers
+        # relocations and rebrands so a trophy won under the old code
+        # still attributes to the franchise.
+        team_codes = {
+            r.team_id for r in
+            db.query(_TeamSeason.team_id)
+              .filter(_TeamSeason.franch_id == franch_id)
+              .distinct()
+              .all()
+        }
+        if not team_codes:
+            return {"team_id": team_id, "awards": []}
+
+        # All major-award rows, league-agnostic. We narrow to this
+        # franchise via the season-membership check below.
+        award_rows = (
+            db.query(
+                _PlayerAward.player_id,
+                _PlayerAward.year,
+                _PlayerAward.award_name,
+                _PlayerAward.league,
+            )
+            .filter(_PlayerAward.award_name.in_(_TEAM_AWARD_NAMES.keys()))
+            .all()
+        )
+        if not award_rows:
+            return {"team_id": team_id, "awards": []}
+
+        # (player_id, year) pairs where the awarded player suited up
+        # for one of the franchise's codes — union of batting +
+        # pitching seasons, restricted to the award winners so the
+        # scan stays small.
+        award_player_ids = {r.player_id for r in award_rows}
+        season_pairs: set[tuple[int, int]] = set()
+        for model in (_PlayerSeason, _PitcherSeason):
+            rows = (
+                db.query(model.player_id, model.year)
+                  .filter(model.player_id.in_(award_player_ids))
+                  .filter(model.team.in_(team_codes))
+                  .distinct()
+                  .all()
+            )
+            season_pairs.update((r.player_id, r.year) for r in rows)
+
+        kept = [r for r in award_rows if (r.player_id, r.year) in season_pairs]
+        if not kept:
+            return {"team_id": team_id, "awards": []}
+
+        # Resolve display names. A player_id is shared across the
+        # players / pitchers tables for two-way players; pure pitchers
+        # only exist in `pitchers`, so both are consulted.
+        kept_ids = {r.player_id for r in kept}
+        name_map: dict[int, str] = {}
+        for model in (_Player, _Pitcher):
+            for pid, name in (
+                db.query(model.player_id, model.name)
+                  .filter(model.player_id.in_(kept_ids))
+                  .all()
+            ):
+                name_map.setdefault(pid, name)
+
+        grouped: dict[str, list[dict]] = {}
+        for r in kept:
+            label = _TEAM_AWARD_NAMES[r.award_name]
+            grouped.setdefault(label, []).append({
+                "year":      r.year,
+                "player_id": r.player_id,
+                "name":      name_map.get(r.player_id),
+                "league":    r.league,
+            })
+
+    awards_out: list[dict] = []
+    for label in _TEAM_AWARD_ORDER:
+        winners = grouped.get(label)
+        if not winners:
+            continue
+        # Year desc, then name as a stable tiebreaker for same-year
+        # co-winners (e.g. shared Gold Gloves at different positions).
+        winners.sort(key=lambda w: (-w["year"], w["name"] or ""))
+        awards_out.append({"award": label, "winners": winners})
+
+    return {"team_id": team_id, "awards": awards_out}
+
+
 # ---------------------------------------------------------------------------
 # Leaderboards — top N players for a given (stat, year, player_type)
 # ---------------------------------------------------------------------------

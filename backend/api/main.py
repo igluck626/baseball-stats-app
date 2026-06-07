@@ -1159,6 +1159,27 @@ def team_history(team_id: str):
     return {"team_id": team_id, "history": rows}
 
 
+@app.get("/teams/{team_id}/awards")
+def team_awards(team_id: str):
+    """Major-award winners (MVP, Cy Young, Rookie of the Year, Gold
+    Glove, Silver Slugger) across the franchise's entire history,
+    grouped by award type and sorted year-desc within each group.
+
+    `team_id` accepts either the Lahman teamID (e.g. "LAN") or the
+    franchID (e.g. "LAD") — same resolution path as `/history`, so a
+    relocation history (MON → WSN) collapses into one franchise.
+    A winner is attributed to the franchise when they logged a
+    batting or pitching season for one of the franchise's team codes
+    in the award year."""
+    result = data_service.get_team_awards(team_id)
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No franchise found for team_id {team_id!r}",
+        )
+    return result
+
+
 # Lahman round-code → display name. Doubled-up rounds in the wild-
 # card era (ALDS1/ALDS2, NLWC1/NLWC2, etc.) collapse to the bare
 # round name so the iOS card doesn't read "ALDS1" vs "ALDS2" as
