@@ -1026,23 +1026,19 @@ private struct TeamLeadersSection: View {
                 }
             }
             .padding(14)
-            // Thin glass panel — `Color(.systemBackground)` at 25%
-            // opacity plus a fine white stroke for edge definition.
-            // Lets the saturated team-color gradient bleed through
-            // instead of frosting the surface gray.
+            // `.ultraThinMaterial` glass — exact same recipe as the
+            // hero card so the two cards match in both light and dark
+            // mode (the material adapts per-mode; a translucent
+            // systemBackground wash did not).
             .background(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(Color(.systemBackground).opacity(0.25))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .stroke(Color.white.opacity(0.2), lineWidth: 0.5)
-                    )
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(.ultraThinMaterial)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .strokeBorder(tint.opacity(0.25), lineWidth: 1)
             )
-            .shadow(color: .black.opacity(0.05), radius: 6, x: 0, y: 2)
+            .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 3)
             .padding(.horizontal, 16)
         }
     }
