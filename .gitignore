@@ -40,3 +40,4 @@ backend/data/lahman/*
 !backend/data/lahman/Teams.csv
 !backend/data/lahman/HallOfFame.csv
 !backend/data/lahman/SeriesPost.csv
+*.xcuserstate
