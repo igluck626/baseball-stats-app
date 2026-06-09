@@ -62,6 +62,14 @@ struct TeamHistorySheet: View {
     /// sections push onto the same stack.
     @State private var path = NavigationPath()
 
+    /// Franchise Leaders selection — hoisted to the sheet so it
+    /// survives navigating into a player profile and back (a child
+    /// view's own `@State` would reset when its `.task` re-fired on
+    /// return, snapping the user back to WAR). Passed down as
+    /// bindings.
+    @State private var leaderRole: FranchiseLeadersSection.Role = .batting
+    @State private var leaderStat: String = "WAR"
+
     /// Tracks which year cards have their playoff-rounds dropdown
     /// expanded. Lives on the sheet so the open/closed state survives
     /// scrolling the LazyVStack (each card's `@State` resets on
@@ -124,7 +132,10 @@ struct TeamHistorySheet: View {
         case .awards:
             AwardsSection(awards: vm.teamAwards, tint: tint, path: $path)
         case .leaders:
-            FranchiseLeadersSection(entry: entry, vm: vm, tint: tint)
+            FranchiseLeadersSection(
+                entry: entry, vm: vm, tint: tint,
+                role: $leaderRole, stat: $leaderStat,
+            )
         }
     }
 
@@ -289,36 +300,56 @@ private struct AwardsSection: View {
     /// Muted silver for the Silver Slugger icon.
     private static let silver = Color(red: 0.75, green: 0.76, blue: 0.80)
 
-    /// Which stat line (if any) a given award's winners carry.
-    enum AwardKind { case batting, pitching, fielding }
-
     /// Per-winner display data resolved lazily off the player_id.
     struct WinnerEnrichment {
         var position: String = ""
+        /// True when the resolved position is a pitching role — picks
+        /// the pitching stat line + endpoint over the batting one.
+        var isPitcher: Bool = false
         /// Stat label → value for the award year. Missing keys render
         /// as "—".
         var values: [String: Double] = [:]
+        /// Cached full bio so the on-tap navigation can skip a second
+        /// lookup once the row has been enriched.
+        var resolved: PlayerSearchResult?
         var loaded: Bool = false
     }
 
-    /// Award-year stat columns (label + fixed cell width) per kind.
-    /// Fielding (Gold Glove) shows no stats — just year/name/position.
-    private static let battingColumns: [(stat: String, width: CGFloat)] = [
-        ("WAR", 40), ("AVG", 44), ("HR", 34), ("RBI", 40), ("OPS", 46),
-    ]
-    private static let pitchingColumns: [(stat: String, width: CGFloat)] = [
-        ("WAR", 40), ("ERA", 44), ("W", 30), ("SO", 40), ("WHIP", 48),
-    ]
+    /// Award-year stat lines. Which one a row uses is decided per
+    /// player (by resolved position), not per award — so a pitcher who
+    /// won an MVP / ROY shows the pitching line. Gold Glove shows no
+    /// stat line at all (handled separately).
+    private static let battingStatLabels:  [String] = ["WAR", "AVG", "HR", "RBI", "OPS"]
+    private static let pitchingStatLabels: [String] = ["WAR", "ERA", "W", "SO", "WHIP"]
 
     private var selectedGroup: TeamAwardGroup? {
         awards.first { $0.award == selectedAward } ?? awards.first
     }
 
-    private func columns(for kind: AwardKind) -> [(stat: String, width: CGFloat)] {
-        switch kind {
-        case .batting:  return Self.battingColumns
-        case .pitching: return Self.pitchingColumns
-        case .fielding: return []
+    /// Gold Glove is the only stat-less award (it's a fielding honor;
+    /// we don't surface defensive metrics here).
+    private static func isFielding(_ award: String) -> Bool {
+        award == "Gold Glove"
+    }
+
+    /// Pitching-role check against the abbreviated position the bio
+    /// resolves to (matches `RosterPositionGroup`'s pitcher buckets).
+    private static func isPitcher(_ pos: String) -> Bool {
+        switch pos.uppercased() {
+        case "SP", "RP", "P", "CL": return true
+        default:                    return false
+        }
+    }
+
+    /// Short pill label per award — keeps the filter row compact.
+    private static func pillLabel(_ award: String) -> String {
+        switch award {
+        case "MVP":                            return "MVP"
+        case "CY Young", "CY Young Award":     return "CY"
+        case "Rookie of the Year", "ROY":      return "ROY"
+        case "Gold Glove":                     return "GG"
+        case "Silver Slugger":                 return "SS"
+        default:                               return award.uppercased()
         }
     }
 
@@ -361,7 +392,7 @@ private struct AwardsSection: View {
                     Button {
                         selectedAward = group.award
                     } label: {
-                        Text(group.award.uppercased())
+                        Text("\(Self.pillLabel(group.award)) (\(group.winners.count))")
                             .font(.footnote.weight(.semibold))
                             .padding(.horizontal, 12)
                             .padding(.vertical, 6)
@@ -389,13 +420,11 @@ private struct AwardsSection: View {
     @ViewBuilder
     private var winnersList: some View {
         if let group = selectedGroup {
-            let kind = Self.kind(for: group.award)
-            let cols = columns(for: kind)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    header(for: group, columns: cols)
+                    header(for: group)
                     ForEach(group.winners) { winner in
-                        winnerRow(winner, kind: kind, columns: cols)
+                        winnerRow(winner, award: group.award)
                     }
                 }
                 .padding(.horizontal, 16)
@@ -404,113 +433,117 @@ private struct AwardsSection: View {
         }
     }
 
-    /// Award icon + name + column labels. Mirrors the roster sheet's
-    /// per-section header: the stat-column labels sit above the
-    /// fixed-width cells they head.
-    private func header(
-        for group: TeamAwardGroup, columns cols: [(stat: String, width: CGFloat)],
-    ) -> some View {
+    /// Award icon + name + winner count.
+    private func header(for group: TeamAwardGroup) -> some View {
         let style = Self.style(for: group.award, tint: tint)
-        return VStack(spacing: 6) {
-            HStack(spacing: 8) {
-                Image(systemName: style.icon)
-                    .font(.headline)
-                    .foregroundStyle(style.color)
-                Text(group.award)
-                    .font(.headline.weight(.bold))
-                Spacer()
-                Text("\(group.winners.count)")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-            }
-            if !cols.isEmpty {
-                HStack(spacing: 10) {
-                    // Year column spacer keeps the stat labels aligned
-                    // over the row cells below.
-                    Color.clear.frame(width: 44, height: 1)
-                    Spacer(minLength: 6)
-                    ForEach(cols, id: \.stat) { col in
-                        Text(col.stat)
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .frame(width: col.width, alignment: .trailing)
-                    }
-                }
-            }
+        return HStack(spacing: 8) {
+            Image(systemName: style.icon)
+                .font(.headline)
+                .foregroundStyle(style.color)
+            Text(group.award)
+                .font(.headline.weight(.bold))
+            Spacer()
+            Text("\(group.winners.count)")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
         }
-        .padding(.bottom, 6)
+        .padding(.bottom, 8)
     }
 
-    private func winnerRow(
-        _ w: TeamAwardWinner,
-        kind: AwardKind,
-        columns cols: [(stat: String, width: CGFloat)],
-    ) -> some View {
+    /// Two-line winner row: line 1 is year + full-width name +
+    /// position (so the name never gets crowded by the stat cells);
+    /// line 2 is the award-year stat line with inline labels (omitted
+    /// for Gold Glove). The stat set follows the player's role, so a
+    /// pitcher who won an MVP shows pitching numbers.
+    private func winnerRow(_ w: TeamAwardWinner, award: String) -> some View {
         let enr = enrichment[w.id]
+        let labels = (enr?.isPitcher ?? false)
+            ? Self.pitchingStatLabels
+            : Self.battingStatLabels
+        let showStats = !Self.isFielding(award)
         return Button {
             resolveAndPush(w)
         } label: {
-            HStack(spacing: 10) {
-                Text(String(w.year))
-                    .font(.subheadline.weight(.bold))
-                    .monospacedDigit()
-                    .foregroundStyle(tint)
-                    .frame(width: 44, alignment: .leading)
-                Text(w.name)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-                if let pos = enr?.position, !pos.isEmpty {
-                    Text(pos)
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 6)
-                if resolvingId == w.id {
-                    ProgressView().controlSize(.small)
-                } else {
-                    ForEach(cols, id: \.stat) { col in
-                        Text(formatTeamStatValue(enr?.values[col.stat], stat: col.stat))
-                            .font(.caption.weight(.semibold))
-                            .monospacedDigit()
-                            .foregroundStyle(.primary)
-                            .frame(width: col.width, alignment: .trailing)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 10) {
+                    Text(String(w.year))
+                        .font(.subheadline.weight(.bold))
+                        .monospacedDigit()
+                        .foregroundStyle(tint)
+                        .frame(width: 44, alignment: .leading)
+                    Text(w.name)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    if let pos = enr?.position, !pos.isEmpty {
+                        Text(pos)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
                     }
+                    Spacer(minLength: 6)
+                    if resolvingId == w.id {
+                        ProgressView().controlSize(.small)
+                    }
+                }
+                if showStats, enr?.loaded == true {
+                    statLine(labels: labels, values: enr?.values ?? [:])
+                        .padding(.leading, 54)
                 }
             }
             .padding(.vertical, 6)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .task(id: w.id) { await enrich(w, kind: kind) }
+        .task(id: w.id) { await enrich(w, award: award) }
+    }
+
+    /// Inline `LABEL value` pairs — self-describing so batter and
+    /// pitcher rows can carry different stat sets within one award.
+    private func statLine(labels: [String], values: [String: Double]) -> some View {
+        HStack(spacing: 12) {
+            ForEach(labels, id: \.self) { label in
+                HStack(spacing: 3) {
+                    Text(label)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Text(formatTeamStatValue(values[label], stat: label))
+                        .font(.caption.weight(.semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(.primary)
+                }
+            }
+            Spacer(minLength: 0)
+        }
     }
 
     /// Resolve position + award-year stats for one winner and cache
-    /// the result. Batting awards (MVP / ROY / Silver Slugger) pull
-    /// the batting career; CY Young pulls pitching; Gold Glove only
-    /// needs the bio position (no stat line). Position comes from the
-    /// career bio when we fetch stats, or a direct bio lookup for the
-    /// fielding case.
-    private func enrich(_ w: TeamAwardWinner, kind: AwardKind) async {
+    /// the result. We resolve the bio first so the player's *actual*
+    /// role decides which career endpoint to hit — a pitcher who won
+    /// an MVP / ROY (Kershaw, Newcombe, …) gets the pitching line, not
+    /// a misleading batting WAR. Gold Glove resolves position only.
+    private func enrich(_ w: TeamAwardWinner, award: String) async {
         if enrichment[w.id]?.loaded == true { return }
         var result = WinnerEnrichment()
-        switch kind {
-        case .batting:
-            if let career = (try? await APIClient.shared.getPlayerCareerStats(playerId: w.player_id)) ?? nil {
-                result.position = InjuryReportSheet.abbreviatePosition(career.bio?.position)
-                if let s = career.seasons?.first(where: { $0.year == w.year }) {
-                    result.values = [
-                        "WAR": s.WAR, "AVG": s.BA,
-                        "HR": s.HR.map(Double.init),
-                        "RBI": s.RBI.map(Double.init), "OPS": s.OPS,
-                    ].compactMapValues { $0 }
-                }
-            }
-        case .pitching:
+
+        let resolved = (try? await APIClient.shared.getPlayerByMlbId(w.player_id)) ?? nil
+        result.resolved = resolved
+        result.position = InjuryReportSheet.abbreviatePosition(resolved?.position)
+        result.isPitcher = Self.isPitcher(result.position)
+
+        // Gold Glove carries no stat line — bio/position is enough.
+        guard !Self.isFielding(award) else {
+            result.loaded = true
+            enrichment[w.id] = result
+            return
+        }
+
+        if result.isPitcher {
             if let career = (try? await APIClient.shared.getPitcherCareerStats(playerId: w.player_id)) ?? nil {
-                result.position = InjuryReportSheet.abbreviatePosition(career.bio?.position)
+                if result.position.isEmpty {
+                    result.position = InjuryReportSheet.abbreviatePosition(career.bio?.position)
+                }
                 if let s = career.seasons?.first(where: { $0.year == w.year }) {
                     result.values = [
                         "WAR": s.WAR, "ERA": s.ERA,
@@ -519,36 +552,38 @@ private struct AwardsSection: View {
                     ].compactMapValues { $0 }
                 }
             }
-        case .fielding:
-            if let p = (try? await APIClient.shared.getPlayerByMlbId(w.player_id)) ?? nil {
-                result.position = InjuryReportSheet.abbreviatePosition(p.position)
+        } else {
+            if let career = (try? await APIClient.shared.getPlayerCareerStats(playerId: w.player_id)) ?? nil {
+                if result.position.isEmpty {
+                    result.position = InjuryReportSheet.abbreviatePosition(career.bio?.position)
+                }
+                if let s = career.seasons?.first(where: { $0.year == w.year }) {
+                    result.values = [
+                        "WAR": s.WAR, "AVG": s.BA,
+                        "HR": s.HR.map(Double.init),
+                        "RBI": s.RBI.map(Double.init), "OPS": s.OPS,
+                    ].compactMapValues { $0 }
+                }
             }
         }
         result.loaded = true
         enrichment[w.id] = result
     }
 
-    /// Resolve the MLBAM id to a full `PlayerSearchResult` and push
-    /// the profile. Mirrors the resolve-on-tap pattern the injury
-    /// rows use — the awards payload only carries the id + name.
+    /// Push the player's profile. Reuses the bio cached by `enrich`
+    /// when it's already resolved; otherwise resolves the MLBAM id
+    /// on tap (the awards payload only carries id + name).
     private func resolveAndPush(_ w: TeamAwardWinner) {
+        if let cached = enrichment[w.id]?.resolved {
+            path.append(cached)
+            return
+        }
         guard resolvingId == nil else { return }
         resolvingId = w.id
         Task { @MainActor in
             let player = (try? await APIClient.shared.getPlayerByMlbId(w.player_id)) ?? nil
             if let player { path.append(player) }
             resolvingId = nil
-        }
-    }
-
-    /// Award → which stat line its winners carry. MVP / ROY / Silver
-    /// Slugger render a batting line; Cy Young a pitching line; Gold
-    /// Glove none (fielding).
-    static func kind(for award: String) -> AwardKind {
-        switch award {
-        case "CY Young":       return .pitching
-        case "Gold Glove":     return .fielding
-        default:               return .batting   // MVP, ROY, Silver Slugger
         }
     }
 
@@ -583,8 +618,10 @@ private struct FranchiseLeadersSection: View {
 
     enum Role: String, Hashable { case batting, pitching }
 
-    @State private var role: Role = .batting
-    @State private var stat: String = "WAR"
+    /// Role + stat are bindings owned by the sheet so the selection
+    /// persists across a push/pop into a player profile.
+    @Binding var role: Role
+    @Binding var stat: String
     @State private var leaders: [LeaderCard] = []
     @State private var isLoading: Bool = false
 
@@ -617,19 +654,24 @@ private struct FranchiseLeadersSection: View {
 
             content
         }
+        // Load only when we have no rows yet — on a pop-back from a
+        // profile `leaders` is still populated, so we skip the refetch
+        // and (crucially) never reset `stat`.
         .task {
-            stat = currentStats.first ?? "WAR"
-            await load()
+            if leaders.isEmpty { await load() }
         }
         .onChange(of: role) { _, _ in
             // Clear stale rows immediately so the role flip doesn't
             // flash the previous side's numbers mid-fetch.
             leaders = []
-            let newFirst = currentStats.first ?? "WAR"
-            if stat == newFirst {
+            // Keep the selected stat if it exists on the new side
+            // (e.g. WAR heads both); otherwise fall back to that
+            // side's first stat. Re-load directly when the stat
+            // didn't change (no `onChange(stat)` to ride on).
+            if currentStats.contains(stat) {
                 Task { await load() }
             } else {
-                stat = newFirst
+                stat = currentStats.first ?? "WAR"
             }
         }
         .onChange(of: stat) { _, _ in
