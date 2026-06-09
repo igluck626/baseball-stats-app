@@ -180,7 +180,11 @@ struct InjuryReportSheet: View {
     /// ("SP" / "CF" / "SS"). Returns the raw string when no mapping
     /// exists so an unfamiliar value still renders legibly, and the
     /// empty string when the input is nil.
-    private static func abbreviatePosition(_ pos: String?) -> String {
+    /// Full position name → abbreviation. `static` (not private) so
+    /// the Team History sheet's Awards section can reuse the exact
+    /// same mapping. Already-abbreviated / unknown inputs pass through
+    /// unchanged via the default branch.
+    static func abbreviatePosition(_ pos: String?) -> String {
         guard let pos = pos else { return "" }
         switch pos.lowercased() {
         case "starting pitcher", "starter":      return "SP"
