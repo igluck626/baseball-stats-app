@@ -332,13 +332,28 @@ private struct AwardsSection: View {
         award == "Gold Glove"
     }
 
-    /// Pitching-role check against the abbreviated position the bio
-    /// resolves to (matches `RosterPositionGroup`'s pitcher buckets).
-    private static func isPitcher(_ pos: String) -> Bool {
-        switch pos.uppercased() {
-        case "SP", "RP", "P", "CL": return true
-        default:                    return false
-        }
+    /// Innings-pitched floor that distinguishes a genuine pitching
+    /// season from a position player's mop-up / position-player-
+    /// pitching cameo. At/above this we render the pitching line.
+    private static let pitcherIPThreshold: Double = 10.0
+
+    /// Award-year batting line from a `CareerSeason`. Nils drop out so
+    /// missing stats render as "—".
+    private static func battingValues(_ s: CareerSeason) -> [String: Double] {
+        [
+            "WAR": s.WAR, "AVG": s.BA,
+            "HR": s.HR.map(Double.init),
+            "RBI": s.RBI.map(Double.init), "OPS": s.OPS,
+        ].compactMapValues { $0 }
+    }
+
+    /// Award-year pitching line from a `PitcherCareerSeason`.
+    private static func pitchingValues(_ s: PitcherCareerSeason) -> [String: Double] {
+        [
+            "WAR": s.WAR, "ERA": s.ERA,
+            "W": s.W.map(Double.init),
+            "SO": s.SO.map(Double.init), "WHIP": s.WHIP,
+        ].compactMapValues { $0 }
     }
 
     /// Short pill label per award — keeps the filter row compact.
@@ -519,18 +534,28 @@ private struct AwardsSection: View {
     }
 
     /// Resolve position + award-year stats for one winner and cache
-    /// the result. We resolve the bio first so the player's *actual*
-    /// role decides which career endpoint to hit — a pitcher who won
-    /// an MVP / ROY (Kershaw, Newcombe, …) gets the pitching line, not
-    /// a misleading batting WAR. Gold Glove resolves position only.
+    /// the result. We fetch BOTH the batting and pitching career for
+    /// the same MLBAM id (`w.player_id`) and decide the stat line by
+    /// the award-year's innings pitched — not by bio position, which
+    /// is unreliable for two-way / converted players. A real pitching
+    /// season (IP ≥ 10) shows the pitching line (so a pitcher-MVP /
+    /// ROY like Kershaw or Newcombe reads correctly); otherwise the
+    /// batting line. Silver Slugger is a hitting award and always uses
+    /// batting. Gold Glove carries no stat line (position only).
+    ///
+    /// Both fetches are independent and best-effort: if one side 404s
+    /// (a pure batter has no pitching career, and vice versa) we still
+    /// render whatever the other side returned, so a row with real
+    /// data never comes up blank.
     private func enrich(_ w: TeamAwardWinner, award: String) async {
         if enrichment[w.id]?.loaded == true { return }
         var result = WinnerEnrichment()
 
+        // Bio resolve drives the position label + caches the full
+        // PlayerSearchResult for on-tap navigation. Best-effort.
         let resolved = (try? await APIClient.shared.getPlayerByMlbId(w.player_id)) ?? nil
         result.resolved = resolved
         result.position = InjuryReportSheet.abbreviatePosition(resolved?.position)
-        result.isPitcher = Self.isPitcher(result.position)
 
         // Gold Glove carries no stat line — bio/position is enough.
         guard !Self.isFielding(award) else {
@@ -539,33 +564,41 @@ private struct AwardsSection: View {
             return
         }
 
-        if result.isPitcher {
-            if let career = (try? await APIClient.shared.getPitcherCareerStats(playerId: w.player_id)) ?? nil {
-                if result.position.isEmpty {
-                    result.position = InjuryReportSheet.abbreviatePosition(career.bio?.position)
-                }
-                if let s = career.seasons?.first(where: { $0.year == w.year }) {
-                    result.values = [
-                        "WAR": s.WAR, "ERA": s.ERA,
-                        "W": s.W.map(Double.init),
-                        "SO": s.SO.map(Double.init), "WHIP": s.WHIP,
-                    ].compactMapValues { $0 }
-                }
-            }
-        } else {
-            if let career = (try? await APIClient.shared.getPlayerCareerStats(playerId: w.player_id)) ?? nil {
-                if result.position.isEmpty {
-                    result.position = InjuryReportSheet.abbreviatePosition(career.bio?.position)
-                }
-                if let s = career.seasons?.first(where: { $0.year == w.year }) {
-                    result.values = [
-                        "WAR": s.WAR, "AVG": s.BA,
-                        "HR": s.HR.map(Double.init),
-                        "RBI": s.RBI.map(Double.init), "OPS": s.OPS,
-                    ].compactMapValues { $0 }
-                }
-            }
+        // Fetch both careers concurrently, keyed on the same MLBAM id.
+        async let battingTask  = APIClient.shared.getPlayerCareerStats(playerId: w.player_id)
+        async let pitchingTask = APIClient.shared.getPitcherCareerStats(playerId: w.player_id)
+        let batting  = (try? await battingTask)  ?? nil
+        let pitching = (try? await pitchingTask) ?? nil
+
+        let batSeason = batting?.seasons?.first  { $0.year == w.year }
+        let pitSeason = pitching?.seasons?.first { $0.year == w.year }
+
+        let isSilverSlugger = (award == "Silver Slugger")
+        let pitchedEnough = (pitSeason?.IP ?? 0) >= Self.pitcherIPThreshold
+
+        if !isSilverSlugger, let s = pitSeason, pitchedEnough {
+            // Genuine pitching season → pitching line.
+            result.isPitcher = true
+            result.values = Self.pitchingValues(s)
+        } else if let s = batSeason {
+            // Default (and Silver Slugger always) → batting line.
+            result.isPitcher = false
+            result.values = Self.battingValues(s)
+        } else if !isSilverSlugger, let s = pitSeason {
+            // No batting row for the year but a (sub-threshold)
+            // pitching row exists — surface it rather than a blank row.
+            result.isPitcher = true
+            result.values = Self.pitchingValues(s)
         }
+
+        // Backfill the position label from whichever career bio we got
+        // when the direct bio resolve came back empty.
+        if result.position.isEmpty {
+            result.position = InjuryReportSheet.abbreviatePosition(
+                batting?.bio?.position ?? pitching?.bio?.position
+            )
+        }
+
         result.loaded = true
         enrichment[w.id] = result
     }
