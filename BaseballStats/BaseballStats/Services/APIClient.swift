@@ -242,6 +242,16 @@ final class APIClient {
         return try await getOptional(url)
     }
 
+    /// `GET /teams/{team_id}/awards`. Returns nil on 404 (no franchise
+    /// match). An empty `awards` array is a valid success response for
+    /// a franchise with no major-award winners on record. Winners are
+    /// grouped by award type (MVP / CY Young / ROY / Gold Glove /
+    /// Silver Slugger), sorted year-desc within each group.
+    func getTeamAwards(teamId: String) async throws -> TeamAwardsResponse? {
+        let url = try buildURL(path: "/teams/\(teamId)/awards")
+        return try await getOptional(url)
+    }
+
     /// `GET /leaderboards?stat=&year=&player_type=&league=&team=`.
     /// Returns nil on 404 (e.g. a season with no qualifying rate-stat
     /// leaders). Sort order is decided server-side: ERA / WHIP
@@ -444,4 +454,32 @@ struct TeamPostseasonSeries: Codable, Identifiable, Hashable {
     let opponent: String
     let wins: Int
     let losses: Int
+}
+
+/// Response from `GET /teams/{team_id}/awards` — every major-award
+/// winner across the franchise's history, grouped by award type and
+/// sorted year-desc within each group.
+struct TeamAwardsResponse: Codable {
+    let team_id: String
+    let awards: [TeamAwardGroup]
+}
+
+/// One award type ("MVP", "CY Young", "Rookie of the Year",
+/// "Gold Glove", "Silver Slugger") and its franchise winners.
+struct TeamAwardGroup: Codable, Identifiable {
+    var id: String { award }
+    let award: String
+    let winners: [TeamAwardWinner]
+}
+
+/// One franchise award winner. `player_id` is the MLBAM id — resolve
+/// it to a `PlayerSearchResult` via `getPlayerByMlbId` to push the
+/// player profile on tap. `league` is nil for pre-1969 single-league
+/// votes.
+struct TeamAwardWinner: Codable, Identifiable {
+    var id: String { "\(year)-\(player_id)" }
+    let year: Int
+    let player_id: Int
+    let name: String
+    let league: String?
 }

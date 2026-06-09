@@ -88,6 +88,7 @@ struct HomeView: View {
                    let entry = MLBTeamCatalog.entry(forBDLId: bdlId) {
                     TeamHistorySheet(
                         entry:            entry,
+                        vm:               vm,
                         history:          vm.teamHistory,
                         postseasonByYear: vm.postseasonByYear,
                         isLoading:        vm.isLoadingHistory,

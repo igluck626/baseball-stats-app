@@ -92,6 +92,11 @@ final class HomeViewModel: ObservableObject {
     /// with `teamHistory` so the year row can display "🏆 WS" /
     /// "NLCS" / etc. without per-row fetches.
     @Published var teamPostseason: [TeamPostseasonSeries] = []
+    /// Major-award winners (MVP / CY Young / ROY / Gold Glove /
+    /// Silver Slugger) across the franchise's history, grouped by
+    /// award type. Loaded alongside `teamHistory`; empty before the
+    /// first fetch or when the franchise has no winners on record.
+    @Published var teamAwards: [TeamAwardGroup] = []
     @Published var isLoadingHistory: Bool = false
 
     /// `{year → list of series the team played that year}`. Built
@@ -376,16 +381,22 @@ final class HomeViewModel: ObservableObject {
     /// the top-1 card path uses; a 10-row list surfaces the leaders
     /// at a glance and the user can judge minimums in-context.
     func loadTeamLeaderboard(
-        stat: String, playerType: String,
+        stat: String, playerType: String, mode: String = "season",
     ) async -> [LeaderCard] {
         guard let bdlTeamId = FavoriteTeamStore.shared.bdlTeamId,
               let lahmanCode = bdlToLahmanTeamId[bdlTeamId] else {
             return []
         }
-        let year = Calendar.current.component(.year, from: Date())
+        // `year` only matters in season mode; career / all-time
+        // aggregate across every season, so we omit it (the backend
+        // ignores it for those modes anyway).
+        let year = mode == "season"
+            ? Calendar.current.component(.year, from: Date())
+            : nil
         let outer = try? await api.getLeaderboard(
             stat: stat, year: year,
             playerType: playerType,
+            mode: mode,
             team: lahmanCode, limit: 10,
         )
         let inner: LeaderboardResponse? = outer ?? nil
@@ -410,7 +421,10 @@ final class HomeViewModel: ObservableObject {
         isLoadingHistory = true
         async let historyTask    = (try? await api.getTeamHistory(teamId: lahmanCode)) ?? nil
         async let postseasonTask = (try? await api.getTeamPostseason(teamId: lahmanCode)) ?? nil
-        let (historyResp, postResp) = await (historyTask, postseasonTask)
+        // Awards load alongside history — same Lahman code, same
+        // trigger, fetched concurrently with the two above.
+        async let awardsTask: Void = loadTeamAwards(teamId: lahmanCode)
+        let (historyResp, postResp, _) = await (historyTask, postseasonTask, awardsTask)
 
         let rows = (historyResp?.history ?? [])
             .filter { ($0.year ?? 0) >= 1900 }
@@ -418,6 +432,16 @@ final class HomeViewModel: ObservableObject {
         self.teamHistory   = rows
         self.teamPostseason = postResp?.postseason ?? []
         self.isLoadingHistory = false
+    }
+
+    /// Fetch the franchise's major-award winners (grouped by award
+    /// type, year-desc within each group) and surface them on
+    /// `teamAwards`. `teamId` is the Lahman code (e.g. "LAN"). A 404
+    /// or network failure leaves the list empty — the Awards section
+    /// just renders its empty state.
+    func loadTeamAwards(teamId: String) async {
+        let resp = (try? await api.getTeamAwards(teamId: teamId)) ?? nil
+        self.teamAwards = resp?.awards ?? []
     }
 
     // MARK: - Injuries

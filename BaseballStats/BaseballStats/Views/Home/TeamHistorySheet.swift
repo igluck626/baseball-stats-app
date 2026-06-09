@@ -15,6 +15,10 @@ import SwiftUI
 
 struct TeamHistorySheet: View {
     let entry: MLBTeamCatalog.Entry
+    /// Drives the Awards section (`vm.teamAwards`) and the Franchise
+    /// Leaders section (`vm.loadTeamLeaderboard`). Shared with the
+    /// Home view so the same already-loaded data backs the sheet.
+    @ObservedObject var vm: HomeViewModel
     /// Reuses the shared `TeamStanding` shape (already used by the
     /// Standings tab) — a strict superset of what this sheet shows.
     let history: [TeamStanding]
@@ -25,6 +29,38 @@ struct TeamHistorySheet: View {
     let isLoading: Bool
 
     @Environment(\.dismiss) private var dismiss
+
+    /// The three top-level sections selected by the segmented picker.
+    /// Named `HistorySection` rather than `Section` so it can't be
+    /// confused with SwiftUI's own `Section` inside this file.
+    enum HistorySection: String, CaseIterable, Hashable {
+        case history, awards, leaders
+
+        /// Compact label for the segmented control (full names don't
+        /// fit three segments on an iPhone width).
+        var segmentLabel: String {
+            switch self {
+            case .history: return "Seasons"
+            case .awards:  return "Awards"
+            case .leaders: return "Leaders"
+            }
+        }
+
+        /// Full title shown in the nav bar.
+        var navTitle: String {
+            switch self {
+            case .history: return "Season History"
+            case .awards:  return "Awards"
+            case .leaders: return "Franchise Leaders"
+            }
+        }
+    }
+
+    @State private var section: HistorySection = .history
+    /// Nav stack for tapping a winner / leader through to their
+    /// profile. Lives here so both the Awards and Franchise Leaders
+    /// sections push onto the same stack.
+    @State private var path = NavigationPath()
 
     /// Tracks which year cards have their playoff-rounds dropdown
     /// expanded. Lives on the sheet so the open/closed state survives
@@ -44,27 +80,56 @@ struct TeamHistorySheet: View {
     ).opacity(0.8)
 
     var body: some View {
-        NavigationStack {
-            content
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .principal) {
-                        HStack(spacing: 6) {
-                            TeamLogoView(team: entry.teamInfo, size: 22)
-                            Text("Season History")
-                                .font(.headline.weight(.semibold))
-                        }
-                    }
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button("Close") { dismiss() }
+        NavigationStack(path: $path) {
+            VStack(spacing: 0) {
+                Picker("Section", selection: $section) {
+                    ForEach(HistorySection.allCases, id: \.self) { s in
+                        Text(s.segmentLabel).tag(s)
                     }
                 }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16)
+                .padding(.top, 10)
+                .padding(.bottom, 8)
+
+                sectionContent
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    HStack(spacing: 6) {
+                        TeamLogoView(team: entry.teamInfo, size: 22)
+                        Text(section.navTitle)
+                            .font(.headline.weight(.semibold))
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Close") { dismiss() }
+                }
+            }
+            // Both the Awards and Franchise Leaders sections push the
+            // tapped player's profile onto this shared stack.
+            .navigationDestination(for: PlayerSearchResult.self) { player in
+                PlayerProfileView(player: player)
+            }
         }
         .presentationBackground(.ultraThinMaterial)
     }
 
     @ViewBuilder
-    private var content: some View {
+    private var sectionContent: some View {
+        switch section {
+        case .history:
+            seasonHistory
+        case .awards:
+            AwardsSection(awards: vm.teamAwards, tint: tint, path: $path)
+        case .leaders:
+            FranchiseLeadersSection(entry: entry, vm: vm, tint: tint)
+        }
+    }
+
+    @ViewBuilder
+    private var seasonHistory: some View {
         if isLoading && history.isEmpty {
             VStack {
                 Spacer()
@@ -149,6 +214,303 @@ struct TeamHistorySheet: View {
     /// team_ids (PRO, NY4, SL4, BS1, etc.) still render legibly.
     static func displayCode(_ lahman: String) -> String {
         lahmanToDisplay[lahman] ?? lahman
+    }
+}
+
+// MARK: - Awards section
+
+/// Franchise major-award winners grouped by award type (MVP, Cy
+/// Young, ROY, Gold Glove, Silver Slugger). Each group gets a
+/// trophy-iconed header; each winner row carries the year + name and
+/// resolves the player_id to a profile on tap.
+private struct AwardsSection: View {
+    let awards: [TeamAwardGroup]
+    let tint: Color
+    @Binding var path: NavigationPath
+
+    /// The winner currently being resolved (by row id) — drives the
+    /// inline spinner and guards against double-taps.
+    @State private var resolvingId: String?
+
+    /// #FFD700-ish gold for MVP / Gold Glove icons.
+    private static let gold = Color(red: 1.0, green: 0.84, blue: 0.0)
+    /// Muted silver for the Silver Slugger icon.
+    private static let silver = Color(red: 0.75, green: 0.76, blue: 0.80)
+
+    var body: some View {
+        if awards.isEmpty {
+            emptyState
+        } else {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 20) {
+                    ForEach(awards) { group in
+                        awardGroup(group)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
+            }
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 6) {
+            Spacer()
+            Image(systemName: "trophy")
+                .font(.title)
+                .foregroundStyle(.tertiary)
+            Text("No major awards on record")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    @ViewBuilder
+    private func awardGroup(_ group: TeamAwardGroup) -> some View {
+        let style = Self.style(for: group.award, tint: tint)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: style.icon)
+                    .font(.headline)
+                    .foregroundStyle(style.color)
+                Text(group.award)
+                    .font(.headline.weight(.bold))
+                Spacer()
+                Text("\(group.winners.count)")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            VStack(spacing: 2) {
+                ForEach(group.winners) { winner in
+                    winnerRow(winner)
+                }
+            }
+        }
+    }
+
+    private func winnerRow(_ w: TeamAwardWinner) -> some View {
+        Button {
+            resolveAndPush(w)
+        } label: {
+            HStack(spacing: 12) {
+                Text(String(w.year))
+                    .font(.subheadline.weight(.bold))
+                    .monospacedDigit()
+                    .foregroundStyle(tint)
+                    .frame(width: 48, alignment: .leading)
+                Text(w.name)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                if let lg = w.league, !lg.isEmpty {
+                    Text(lg)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+                if resolvingId == w.id {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Resolve the MLBAM id to a full `PlayerSearchResult` and push
+    /// the profile. Mirrors the resolve-on-tap pattern the injury
+    /// rows use — the awards payload only carries the id + name.
+    private func resolveAndPush(_ w: TeamAwardWinner) {
+        guard resolvingId == nil else { return }
+        resolvingId = w.id
+        Task { @MainActor in
+            let player = (try? await APIClient.shared.getPlayerByMlbId(w.player_id)) ?? nil
+            if let player { path.append(player) }
+            resolvingId = nil
+        }
+    }
+
+    /// SF Symbol + tint for each award type. Falls back to a generic
+    /// rosette for anything the backend adds later. `tint` is the
+    /// team color (used for Cy Young / ROY).
+    private static func style(
+        for award: String, tint: Color,
+    ) -> (icon: String, color: Color) {
+        switch award {
+        case "MVP":                return ("trophy.fill",     gold)
+        case "CY Young":           return ("baseball.fill",   tint)
+        case "Rookie of the Year", "ROY":
+                                   return ("star.fill",       tint)
+        case "Gold Glove":         return ("hand.raised.fill", gold)
+        case "Silver Slugger":     return ("figure.baseball", silver)
+        default:                   return ("rosette",          tint)
+        }
+    }
+}
+
+// MARK: - Franchise Leaders section
+
+/// All-time franchise leaderboards. Batting/Pitching segmented
+/// toggle + a scrollable stat-pill row; the selected stat shows the
+/// top 10 career leaders scoped to the franchise. Reuses the
+/// `TeamLeadersSheet` loading + row pattern, but in `mode: "career"`.
+private struct FranchiseLeadersSection: View {
+    let entry: MLBTeamCatalog.Entry
+    @ObservedObject var vm: HomeViewModel
+    let tint: Color
+
+    enum Role: String, Hashable { case batting, pitching }
+
+    @State private var role: Role = .batting
+    @State private var stat: String = "HR"
+    @State private var leaders: [LeaderCard] = []
+    @State private var isLoading: Bool = false
+
+    private static let battingStats:  [String] = ["HR", "AVG", "RBI", "WAR", "H", "SB", "OPS"]
+    private static let pitchingStats: [String] = ["W", "SO", "ERA", "WAR", "IP", "SV"]
+
+    private var currentStats: [String] {
+        role == .batting ? Self.battingStats : Self.pitchingStats
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Picker("Role", selection: $role) {
+                Text("Batting").tag(Role.batting)
+                Text("Pitching").tag(Role.pitching)
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+
+            statPillRow
+
+            Divider().padding(.top, 4)
+
+            content
+        }
+        .task {
+            stat = currentStats.first ?? "HR"
+            await load()
+        }
+        .onChange(of: role) { _, _ in
+            // Clear stale rows immediately so the role flip doesn't
+            // flash the previous side's numbers mid-fetch.
+            leaders = []
+            let newFirst = currentStats.first ?? "HR"
+            if stat == newFirst {
+                Task { await load() }
+            } else {
+                stat = newFirst
+            }
+        }
+        .onChange(of: stat) { _, _ in
+            Task { await load() }
+        }
+    }
+
+    private var statPillRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(currentStats, id: \.self) { s in
+                    let selected = (stat == s)
+                    Button {
+                        stat = s
+                    } label: {
+                        Text(s)
+                            .font(.footnote.weight(.semibold))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(selected ? tint : Color(.systemFill).opacity(0.35))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .strokeBorder(
+                                        selected ? Color.clear : Color(.separator).opacity(0.5),
+                                        lineWidth: 0.5,
+                                    )
+                            )
+                            .foregroundStyle(selected ? .white : .primary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 6)
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if isLoading && leaders.isEmpty {
+            VStack {
+                Spacer()
+                ProgressView()
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if leaders.isEmpty {
+            VStack(spacing: 6) {
+                Spacer()
+                Image(systemName: "list.number")
+                    .font(.title)
+                    .foregroundStyle(.tertiary)
+                Text("No qualifying leaders")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            List {
+                ForEach(Array(leaders.enumerated()), id: \.offset) { idx, card in
+                    NavigationLink(value: card.player) {
+                        row(rank: idx + 1, card: card)
+                    }
+                    .buttonStyle(.plain)
+                    .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                }
+            }
+            .listStyle(.plain)
+        }
+    }
+
+    private func row(rank: Int, card: LeaderCard) -> some View {
+        HStack(spacing: 12) {
+            Text("\(rank)")
+                .font(.title3.weight(.bold))
+                .monospacedDigit()
+                .foregroundStyle(rank <= 3 ? tint : .secondary)
+                .frame(width: 28, alignment: .center)
+            Text(card.player.name)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            Spacer()
+            Text(TeamLeadersSheet.formatValue(card.value, stat: card.stat))
+                .font(.title3.weight(.bold))
+                .monospacedDigit()
+                .foregroundStyle(.primary)
+        }
+        .contentShape(Rectangle())
+    }
+
+    private func load() async {
+        isLoading = true
+        let playerType: String = role == .batting ? "batter" : "pitcher"
+        leaders = await vm.loadTeamLeaderboard(
+            stat: stat, playerType: playerType, mode: "career",
+        )
+        isLoading = false
     }
 }
 
