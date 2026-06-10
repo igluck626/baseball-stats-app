@@ -312,11 +312,16 @@ private struct AwardsSection: View {
     /// from the pre-fetched career caches (no async, no per-row fetch).
     struct AwardStatLine {
         var position: String = ""
-        /// True when the award-year line is a pitching line (IP-based).
+        /// True when the (single) award-year line is a pitching line
+        /// (IP-based). Ignored when `pitchingValues` is set (two-way).
         var isPitcher: Bool = false
-        /// Stat label → value for the award year. Missing keys render
-        /// as "—".
+        /// Primary stat line. For a two-way player this is the batting
+        /// line and `pitchingValues` carries the pitching one; missing
+        /// keys render as "—".
         var values: [String: Double] = [:]
+        /// Non-nil only for a two-way award year — the pitching line
+        /// rendered beneath the batting line ("BAT" / "PIT" labeled).
+        var pitchingValues: [String: Double]? = nil
     }
 
     /// Award-year stat lines. Which one a row uses is decided per
@@ -459,8 +464,11 @@ private struct AwardsSection: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     header(for: group)
-                    ForEach(group.winners) { winner in
+                    ForEach(Array(group.winners.enumerated()), id: \.offset) { idx, winner in
                         winnerRow(winner, award: group.award)
+                        if idx < group.winners.count - 1 {
+                            Divider().opacity(0.4)
+                        }
                     }
                 }
                 .padding(.horizontal, 16)
@@ -524,8 +532,16 @@ private struct AwardsSection: View {
                     }
                 }
                 if showStats {
-                    statLine(labels: labels, values: info.values)
-                        .padding(.leading, 54)
+                    if let pitching = info.pitchingValues {
+                        // Two-way player → two labeled lines (BAT / PIT).
+                        statLine(prefix: "BAT", labels: Self.battingStatLabels, values: info.values)
+                            .padding(.leading, 54)
+                        statLine(prefix: "PIT", labels: Self.pitchingStatLabels, values: pitching)
+                            .padding(.leading, 54)
+                    } else {
+                        statLine(labels: labels, values: info.values)
+                            .padding(.leading, 54)
+                    }
                 }
             }
             .padding(.vertical, 6)
@@ -536,8 +552,17 @@ private struct AwardsSection: View {
 
     /// Inline `LABEL value` pairs — self-describing so batter and
     /// pitcher rows can carry different stat sets within one award.
-    private func statLine(labels: [String], values: [String: Double]) -> some View {
+    /// An optional `prefix` ("BAT" / "PIT") tags two-way rows.
+    private func statLine(
+        prefix: String? = nil, labels: [String], values: [String: Double],
+    ) -> some View {
         HStack(spacing: 12) {
+            if let prefix {
+                Text(prefix)
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 24, alignment: .leading)
+            }
             ForEach(labels, id: \.self) { label in
                 HStack(spacing: 3) {
                     Text(label)
@@ -629,6 +654,22 @@ private struct AwardsSection: View {
         let pitSeason = pitching?.seasons?.first { $0.year == w.year }
         let isSilverSlugger = (award == "Silver Slugger")
         let pitchedEnough = (pitSeason?.IP ?? 0) >= Self.pitcherIPThreshold
+
+        // Two-way (Ohtani): MVP only — a real bat (PA > 150) AND a real
+        // arm (IP >= 10) in the award year → show both lines. Scoped to
+        // MVP so a pitcher-CY / ROY's token hitting doesn't double up,
+        // and Silver Slugger stays batting-only.
+        let isMVP = (award == "MVP" || award == "Most Valuable Player")
+        let isTwoWay = isMVP
+            && (batSeason?.PA ?? 0) > 150
+            && (pitSeason?.IP ?? 0) >= 10
+        if isTwoWay, let b = batSeason, let p = pitSeason {
+            return AwardStatLine(
+                position: position, isPitcher: false,
+                values: Self.battingValues(b),
+                pitchingValues: Self.pitchingValues(p),
+            )
+        }
 
         if !isSilverSlugger, let s = pitSeason, pitchedEnough {
             // Genuine pitching season → pitching line.
