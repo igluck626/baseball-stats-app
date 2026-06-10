@@ -291,6 +291,14 @@ private struct AwardsSection: View {
     /// the winner row id ("year-player_id"). Cached so re-selecting a
     /// pill or scrolling back doesn't refetch.
     @State private var enrichment: [String: WinnerEnrichment] = [:]
+    /// Career-stats caches keyed by player_id. A player with multiple
+    /// award rows (e.g. Piazza's 5 Silver Sluggers) would otherwise
+    /// fire one concurrent career fetch per row — some of which lose a
+    /// race / hit rate limits and come back nil, blanking those rows.
+    /// Caching per player guarantees a single fetch, reused by every
+    /// row for that player.
+    @State private var battingCareerCache: [Int: PlayerCareerStats] = [:]
+    @State private var pitchingCareerCache: [Int: PitcherCareerStats] = [:]
     /// The winner currently being resolved for navigation — drives
     /// the inline spinner and guards against double-taps.
     @State private var resolvingId: String?
@@ -564,11 +572,24 @@ private struct AwardsSection: View {
             return
         }
 
-        // Fetch both careers concurrently, keyed on the same MLBAM id.
-        async let battingTask  = APIClient.shared.getPlayerCareerStats(playerId: w.player_id)
-        async let pitchingTask = APIClient.shared.getPitcherCareerStats(playerId: w.player_id)
-        let batting  = (try? await battingTask)  ?? nil
-        let pitching = (try? await pitchingTask) ?? nil
+        // Fetch both careers (keyed on the same MLBAM id), reusing the
+        // per-player cache so a player with many award rows only ever
+        // triggers one fetch per side.
+        let batting: PlayerCareerStats?
+        if let cached = battingCareerCache[w.player_id] {
+            batting = cached
+        } else {
+            batting = (try? await APIClient.shared.getPlayerCareerStats(playerId: w.player_id)) ?? nil
+            if let b = batting { battingCareerCache[w.player_id] = b }
+        }
+
+        let pitching: PitcherCareerStats?
+        if let cached = pitchingCareerCache[w.player_id] {
+            pitching = cached
+        } else {
+            pitching = (try? await APIClient.shared.getPitcherCareerStats(playerId: w.player_id)) ?? nil
+            if let p = pitching { pitchingCareerCache[w.player_id] = p }
+        }
 
         let batSeason = batting?.seasons?.first  { $0.year == w.year }
         let pitSeason = pitching?.seasons?.first { $0.year == w.year }
