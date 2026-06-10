@@ -121,7 +121,6 @@ struct TeamHistorySheet: View {
                 PlayerProfileView(player: player)
             }
         }
-        .presentationBackground(.ultraThinMaterial)
     }
 
     @ViewBuilder
@@ -401,38 +400,49 @@ private struct AwardsSection: View {
     @ViewBuilder
     private var winnersList: some View {
         if let group = selectedGroup {
+            // Plain rows on the default sheet background — no card or
+            // material wrapper. Rows self-pad horizontally so the
+            // row dividers can inset to match (Leaders-tab style).
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     header(for: group)
                     ForEach(Array(group.winners.enumerated()), id: \.offset) { idx, winner in
                         winnerRow(winner, award: group.award)
                         if idx < group.winners.count - 1 {
-                            Divider().opacity(0.3)
+                            Divider()
+                                .opacity(0.4)
+                                .padding(.horizontal, 16)
                         }
                     }
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
+                .padding(.vertical, 8)
             }
         }
     }
 
-    /// Award icon + name + winner count.
+    /// Award icon + name + winner count — Leaders-tab section-header
+    /// style: plain bold text, no background fill, a `Divider()`
+    /// underneath separating it from the rows.
     private func header(for group: TeamAwardGroup) -> some View {
         let style = Self.style(for: group.award, tint: tint)
-        return HStack(spacing: 8) {
-            Image(systemName: style.icon)
-                .font(.headline)
-                .foregroundStyle(style.color)
-            Text(group.award)
-                .font(.headline.weight(.bold))
-            Spacer()
-            Text("\(group.winners.count)")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
+        return VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: style.icon)
+                    .font(.headline)
+                    .foregroundStyle(style.color)
+                Text(group.award)
+                    .font(.headline.weight(.bold))
+                Spacer()
+                Text("\(group.winners.count)")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            Divider()
         }
-        .padding(.bottom, 8)
+        .padding(.horizontal, 16)
+        .padding(.top, 4)
+        .padding(.bottom, 4)
     }
 
     /// One winner: year + name + position. For MVP / Cy Young / ROY the
@@ -464,7 +474,8 @@ private struct AwardsSection: View {
                 ProgressView().controlSize(.small)
             }
         }
-        .padding(.vertical, 12)
+        .padding(.vertical, 8)
+        .padding(.horizontal, 16)
         // Resolve the bio once (position label + cached nav target).
         // Lazy + cached: a player with multiple award rows resolves
         // once; rows scroll-in via LazyVStack so this never bursts.
@@ -775,7 +786,7 @@ private struct YearCard: View {
         .padding(.vertical, 14)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color(.systemBackground).opacity(0.5))
+                .fill(Color(.secondarySystemBackground))
         )
         .overlay(borderOverlay)
     }
