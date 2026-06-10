@@ -287,18 +287,18 @@ private struct AwardsSection: View {
     /// Currently-selected award pill. Empty until the first `.task`
     /// seeds it with the first available award.
     @State private var selectedAward: String = ""
-    /// Per-winner enrichment (position + award-year stats), keyed by
-    /// the winner row id ("year-player_id"). Cached so re-selecting a
-    /// pill or scrolling back doesn't refetch.
-    @State private var enrichment: [String: WinnerEnrichment] = [:]
-    /// Career-stats caches keyed by player_id. A player with multiple
-    /// award rows (e.g. Piazza's 5 Silver Sluggers) would otherwise
-    /// fire one concurrent career fetch per row — some of which lose a
-    /// race / hit rate limits and come back nil, blanking those rows.
-    /// Caching per player guarantees a single fetch, reused by every
-    /// row for that player.
+    /// Career-stats caches keyed by player_id, populated once by a bulk
+    /// prefetch when the Awards tab first appears. Awards data is
+    /// static (changes once a year), so we fetch every winner's career
+    /// up front and render every row synchronously from cache — no
+    /// per-row async, no fetch races, and no rate-limit storm from a
+    /// multi-award player's many rows each firing their own request.
     @State private var battingCareerCache: [Int: PlayerCareerStats] = [:]
     @State private var pitchingCareerCache: [Int: PitcherCareerStats] = [:]
+    /// True while the one-shot bulk prefetch is in flight (drives the
+    /// single loading spinner); `prefetched` guards it to run once.
+    @State private var isLoadingStats: Bool = false
+    @State private var prefetched: Bool = false
     /// The winner currently being resolved for navigation — drives
     /// the inline spinner and guards against double-taps.
     @State private var resolvingId: String?
@@ -308,19 +308,15 @@ private struct AwardsSection: View {
     /// Muted silver for the Silver Slugger icon.
     private static let silver = Color(red: 0.75, green: 0.76, blue: 0.80)
 
-    /// Per-winner display data resolved lazily off the player_id.
-    struct WinnerEnrichment {
+    /// Synchronous per-winner display data, computed at render time
+    /// from the pre-fetched career caches (no async, no per-row fetch).
+    struct AwardStatLine {
         var position: String = ""
-        /// True when the resolved position is a pitching role — picks
-        /// the pitching stat line + endpoint over the batting one.
+        /// True when the award-year line is a pitching line (IP-based).
         var isPitcher: Bool = false
         /// Stat label → value for the award year. Missing keys render
         /// as "—".
         var values: [String: Double] = [:]
-        /// Cached full bio so the on-tap navigation can skip a second
-        /// lookup once the row has been enriched.
-        var resolved: PlayerSearchResult?
-        var loaded: Bool = false
     }
 
     /// Award-year stat lines. Which one a row uses is decided per
@@ -383,13 +379,30 @@ private struct AwardsSection: View {
             VStack(spacing: 0) {
                 pillRow
                 Divider().padding(.top, 4)
-                winnersList
+                content
             }
             .task {
                 if selectedAward.isEmpty {
                     selectedAward = awards.first?.award ?? ""
                 }
+                await prefetchAll()
             }
+        }
+    }
+
+    /// One loading spinner while the bulk prefetch runs; once it's
+    /// done every row renders synchronously from cache.
+    @ViewBuilder
+    private var content: some View {
+        if isLoadingStats {
+            VStack {
+                Spacer()
+                ProgressView()
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            winnersList
         }
     }
 
@@ -480,8 +493,8 @@ private struct AwardsSection: View {
     /// for Gold Glove). The stat set follows the player's role, so a
     /// pitcher who won an MVP shows pitching numbers.
     private func winnerRow(_ w: TeamAwardWinner, award: String) -> some View {
-        let enr = enrichment[w.id]
-        let labels = (enr?.isPitcher ?? false)
+        let info = enriched(w, award: award)
+        let labels = info.isPitcher
             ? Self.pitchingStatLabels
             : Self.battingStatLabels
         let showStats = !Self.isFielding(award)
@@ -500,8 +513,8 @@ private struct AwardsSection: View {
                         .foregroundStyle(.primary)
                         .lineLimit(1)
                         .truncationMode(.tail)
-                    if let pos = enr?.position, !pos.isEmpty {
-                        Text(pos)
+                    if !info.position.isEmpty {
+                        Text(info.position)
                             .font(.caption2.weight(.semibold))
                             .foregroundStyle(.secondary)
                     }
@@ -510,8 +523,8 @@ private struct AwardsSection: View {
                         ProgressView().controlSize(.small)
                     }
                 }
-                if showStats, enr?.loaded == true {
-                    statLine(labels: labels, values: enr?.values ?? [:])
+                if showStats {
+                    statLine(labels: labels, values: info.values)
                         .padding(.leading, 54)
                 }
             }
@@ -519,7 +532,6 @@ private struct AwardsSection: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .task(id: w.id) { await enrich(w, award: award) }
     }
 
     /// Inline `LABEL value` pairs — self-describing so batter and
@@ -541,97 +553,100 @@ private struct AwardsSection: View {
         }
     }
 
-    /// Resolve position + award-year stats for one winner and cache
-    /// the result. We fetch BOTH the batting and pitching career for
-    /// the same MLBAM id (`w.player_id`) and decide the stat line by
-    /// the award-year's innings pitched — not by bio position, which
-    /// is unreliable for two-way / converted players. A real pitching
-    /// season (IP ≥ 10) shows the pitching line (so a pitcher-MVP /
-    /// ROY like Kershaw or Newcombe reads correctly); otherwise the
-    /// batting line. Silver Slugger is a hitting award and always uses
-    /// batting. Gold Glove carries no stat line (position only).
+    /// Bulk-prefetch every winner's batting + pitching career once,
+    /// when the Awards tab first appears. Awards data is static, so we
+    /// pull all ~30–40 unique players up front and then render every
+    /// row synchronously from cache — switching pills is instant and
+    /// no race condition is possible because nothing fetches during
+    /// render. Runs once (guarded by `prefetched`).
     ///
-    /// Both fetches are independent and best-effort: if one side 404s
-    /// (a pure batter has no pitching career, and vice versa) we still
-    /// render whatever the other side returned, so a row with real
-    /// data never comes up blank.
-    private func enrich(_ w: TeamAwardWinner, award: String) async {
-        if enrichment[w.id]?.loaded == true { return }
-        var result = WinnerEnrichment()
+    /// Concurrency is bounded (chunked) rather than firing every id at
+    /// once: 40 players × 2 endpoints would be ~80 simultaneous
+    /// requests, which is exactly the rate-limit storm this redesign
+    /// is meant to avoid.
+    private func prefetchAll() async {
+        guard !prefetched else { return }
+        prefetched = true
+        isLoadingStats = true
 
-        // Bio resolve drives the position label + caches the full
-        // PlayerSearchResult for on-tap navigation. Best-effort.
-        let resolved = (try? await APIClient.shared.getPlayerByMlbId(w.player_id)) ?? nil
-        result.resolved = resolved
-        result.position = InjuryReportSheet.abbreviatePosition(resolved?.position)
+        let api = APIClient.shared
+        // Unique MLBAM ids across every award group (MVP + CY + ROY +
+        // GG + SS combined).
+        let ids = Array(Set(awards.flatMap { $0.winners.map(\.player_id) }))
 
-        // Gold Glove carries no stat line — bio/position is enough.
+        let maxConcurrent = 8
+        for chunk in stride(from: 0, to: ids.count, by: maxConcurrent).map({
+            Array(ids[$0 ..< min($0 + maxConcurrent, ids.count)])
+        }) {
+            await withTaskGroup(
+                of: (Int, PlayerCareerStats?, PitcherCareerStats?).self
+            ) { group in
+                for id in chunk {
+                    group.addTask { await Self.fetchCareers(id: id, api: api) }
+                }
+                for await (id, batting, pitching) in group {
+                    if let batting  { battingCareerCache[id]  = batting }
+                    if let pitching { pitchingCareerCache[id] = pitching }
+                }
+            }
+        }
+
+        isLoadingStats = false
+    }
+
+    /// Fetch one player's batting + pitching career concurrently.
+    /// `nonisolated` so it can run off the main actor inside the task
+    /// group; both sides are best-effort (nil on 404 / failure).
+    nonisolated private static func fetchCareers(
+        id: Int, api: APIClient,
+    ) async -> (Int, PlayerCareerStats?, PitcherCareerStats?) {
+        async let b = api.getPlayerCareerStats(playerId: id)
+        async let p = api.getPitcherCareerStats(playerId: id)
+        return (id, (try? await b) ?? nil, (try? await p) ?? nil)
+    }
+
+    /// Synchronous award-year line for one winner, read straight from
+    /// the pre-fetched caches. Decides batting vs pitching by the
+    /// award-year innings pitched (a real pitching season, IP ≥ 10,
+    /// shows the pitching line — so a pitcher-MVP / ROY like Kershaw or
+    /// Newcombe reads correctly), except Silver Slugger which always
+    /// shows batting, and Gold Glove which shows no stat line at all.
+    /// Position comes from whichever career bio we have. Empty values
+    /// (a fetch that failed / 404'd) render as "—".
+    private func enriched(_ w: TeamAwardWinner, award: String) -> AwardStatLine {
+        let batting  = battingCareerCache[w.player_id]
+        let pitching = pitchingCareerCache[w.player_id]
+        let position = InjuryReportSheet.abbreviatePosition(
+            batting?.bio?.position ?? pitching?.bio?.position
+        )
+
+        // Gold Glove carries no stat line — position only.
         guard !Self.isFielding(award) else {
-            result.loaded = true
-            enrichment[w.id] = result
-            return
-        }
-
-        // Fetch both careers (keyed on the same MLBAM id), reusing the
-        // per-player cache so a player with many award rows only ever
-        // triggers one fetch per side.
-        let batting: PlayerCareerStats?
-        if let cached = battingCareerCache[w.player_id] {
-            batting = cached
-        } else {
-            batting = (try? await APIClient.shared.getPlayerCareerStats(playerId: w.player_id)) ?? nil
-            if let b = batting { battingCareerCache[w.player_id] = b }
-        }
-
-        let pitching: PitcherCareerStats?
-        if let cached = pitchingCareerCache[w.player_id] {
-            pitching = cached
-        } else {
-            pitching = (try? await APIClient.shared.getPitcherCareerStats(playerId: w.player_id)) ?? nil
-            if let p = pitching { pitchingCareerCache[w.player_id] = p }
+            return AwardStatLine(position: position, isPitcher: false, values: [:])
         }
 
         let batSeason = batting?.seasons?.first  { $0.year == w.year }
         let pitSeason = pitching?.seasons?.first { $0.year == w.year }
-
         let isSilverSlugger = (award == "Silver Slugger")
         let pitchedEnough = (pitSeason?.IP ?? 0) >= Self.pitcherIPThreshold
 
         if !isSilverSlugger, let s = pitSeason, pitchedEnough {
             // Genuine pitching season → pitching line.
-            result.isPitcher = true
-            result.values = Self.pitchingValues(s)
+            return AwardStatLine(position: position, isPitcher: true, values: Self.pitchingValues(s))
         } else if let s = batSeason {
             // Default (and Silver Slugger always) → batting line.
-            result.isPitcher = false
-            result.values = Self.battingValues(s)
+            return AwardStatLine(position: position, isPitcher: false, values: Self.battingValues(s))
         } else if !isSilverSlugger, let s = pitSeason {
             // No batting row for the year but a (sub-threshold)
             // pitching row exists — surface it rather than a blank row.
-            result.isPitcher = true
-            result.values = Self.pitchingValues(s)
+            return AwardStatLine(position: position, isPitcher: true, values: Self.pitchingValues(s))
         }
-
-        // Backfill the position label from whichever career bio we got
-        // when the direct bio resolve came back empty.
-        if result.position.isEmpty {
-            result.position = InjuryReportSheet.abbreviatePosition(
-                batting?.bio?.position ?? pitching?.bio?.position
-            )
-        }
-
-        result.loaded = true
-        enrichment[w.id] = result
+        return AwardStatLine(position: position, isPitcher: false, values: [:])
     }
 
-    /// Push the player's profile. Reuses the bio cached by `enrich`
-    /// when it's already resolved; otherwise resolves the MLBAM id
-    /// on tap (the awards payload only carries id + name).
+    /// Push the player's profile, resolving the MLBAM id on tap (the
+    /// awards payload only carries id + name).
     private func resolveAndPush(_ w: TeamAwardWinner) {
-        if let cached = enrichment[w.id]?.resolved {
-            path.append(cached)
-            return
-        }
         guard resolvingId == nil else { return }
         resolvingId = w.id
         Task { @MainActor in
