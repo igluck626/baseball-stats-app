@@ -331,6 +331,22 @@ private struct AwardsSection: View {
     private static let battingStatLabels:  [String] = ["WAR", "AVG", "HR", "RBI", "OPS"]
     private static let pitchingStatLabels: [String] = ["WAR", "ERA", "W", "SO", "WHIP"]
 
+    /// Per-column fixed widths, positional — index N applies to the
+    /// N-th label in either stat array (WAR / AVG·ERA / HR·W / RBI·SO /
+    /// OPS·WHIP). Fixed so values never wrap and the once-per-group
+    /// column header lines up exactly over every row's cells.
+    private static let statColumnWidths: [CGFloat] = [38, 44, 32, 36, 48]
+    private static let statColumnSpacing: CGFloat = 8
+    /// "BAT" / "PIT" gutter width on the two-way lines.
+    private static let twoWayLabelWidth: CGFloat = 30
+
+    /// The column header a group shows: pitching for Cy Young,
+    /// batting for everything else (MVP / ROY / Silver Slugger). Gold
+    /// Glove has no stat line, so no header.
+    private static func headerLabels(for award: String) -> [String] {
+        award == "CY Young" ? pitchingStatLabels : battingStatLabels
+    }
+
     private var selectedGroup: TeamAwardGroup? {
         awards.first { $0.award == selectedAward } ?? awards.first
     }
@@ -464,10 +480,13 @@ private struct AwardsSection: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     header(for: group)
+                    if !Self.isFielding(group.award) {
+                        columnHeader(keys: Self.headerLabels(for: group.award))
+                    }
                     ForEach(Array(group.winners.enumerated()), id: \.offset) { idx, winner in
                         winnerRow(winner, award: group.award)
                         if idx < group.winners.count - 1 {
-                            Divider().opacity(0.4)
+                            Divider().opacity(0.3)
                         }
                     }
                 }
@@ -495,35 +514,50 @@ private struct AwardsSection: View {
         .padding(.bottom, 8)
     }
 
-    /// Two-line winner row: line 1 is year + full-width name +
-    /// position (so the name never gets crowded by the stat cells);
-    /// line 2 is the award-year stat line with inline labels (omitted
-    /// for Gold Glove). The stat set follows the player's role, so a
-    /// pitcher who won an MVP shows pitching numbers.
+    /// Once-per-group column header — labels right-aligned over the
+    /// fixed-width value cells every row renders. No leading content,
+    /// so it lines up with each row's trailing cell block regardless
+    /// of any "BAT"/"PIT" gutter those rows carry.
+    private func columnHeader(keys: [String]) -> some View {
+        HStack(spacing: 0) {
+            Spacer(minLength: 8)
+            HStack(spacing: Self.statColumnSpacing) {
+                ForEach(Array(zip(keys, Self.statColumnWidths).enumerated()), id: \.offset) { item in
+                    Text(item.element.0)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: item.element.1, alignment: .trailing)
+                }
+            }
+        }
+        .padding(.bottom, 6)
+    }
+
+    /// Winner row. Line 1: year (team color) + name + position. Line 2
+    /// (and 3 for a two-way MVP): bare value cells, right-aligned in
+    /// fixed columns under the group header — no inline labels. Two-way
+    /// rows carry a small "BAT" / "PIT" gutter on the left.
     private func winnerRow(_ w: TeamAwardWinner, award: String) -> some View {
         let info = enriched(w, award: award)
-        let labels = info.isPitcher
-            ? Self.pitchingStatLabels
-            : Self.battingStatLabels
         let showStats = !Self.isFielding(award)
         return Button {
             resolveAndPush(w)
         } label: {
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 12) {
                     Text(String(w.year))
-                        .font(.subheadline.weight(.bold))
+                        .font(.body.weight(.bold))
                         .monospacedDigit()
                         .foregroundStyle(tint)
-                        .frame(width: 44, alignment: .leading)
+                        .frame(width: 52, alignment: .leading)
                     Text(w.name)
-                        .font(.subheadline.weight(.semibold))
+                        .font(.body.weight(.semibold))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
                         .truncationMode(.tail)
                     if !info.position.isEmpty {
                         Text(info.position)
-                            .font(.caption2.weight(.semibold))
+                            .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 6)
@@ -533,48 +567,46 @@ private struct AwardsSection: View {
                 }
                 if showStats {
                     if let pitching = info.pitchingValues {
-                        // Two-way player → two labeled lines (BAT / PIT).
-                        statLine(prefix: "BAT", labels: Self.battingStatLabels, values: info.values)
-                            .padding(.leading, 54)
-                        statLine(prefix: "PIT", labels: Self.pitchingStatLabels, values: pitching)
-                            .padding(.leading, 54)
+                        // Two-way MVP → two labeled lines.
+                        statCells(keys: Self.battingStatLabels, values: info.values, prefix: "BAT")
+                        statCells(keys: Self.pitchingStatLabels, values: pitching, prefix: "PIT")
                     } else {
-                        statLine(labels: labels, values: info.values)
-                            .padding(.leading, 54)
+                        let keys = info.isPitcher ? Self.pitchingStatLabels : Self.battingStatLabels
+                        statCells(keys: keys, values: info.values)
                     }
                 }
             }
-            .padding(.vertical, 6)
+            .padding(.vertical, 12)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
 
-    /// Inline `LABEL value` pairs — self-describing so batter and
-    /// pitcher rows can carry different stat sets within one award.
-    /// An optional `prefix` ("BAT" / "PIT") tags two-way rows.
-    private func statLine(
-        prefix: String? = nil, labels: [String], values: [String: Double],
+    /// Bare value cells, right-aligned in the fixed columns (no inline
+    /// labels — the group header names them). An optional `prefix`
+    /// ("BAT"/"PIT") sits in a left gutter for two-way rows; the value
+    /// block stays pinned to the trailing edge either way, so it always
+    /// aligns with the header.
+    private func statCells(
+        keys: [String], values: [String: Double], prefix: String? = nil,
     ) -> some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 0) {
             if let prefix {
                 Text(prefix)
                     .font(.caption2.weight(.bold))
                     .foregroundStyle(.secondary)
-                    .frame(width: 24, alignment: .leading)
+                    .frame(width: Self.twoWayLabelWidth, alignment: .leading)
             }
-            ForEach(labels, id: \.self) { label in
-                HStack(spacing: 3) {
-                    Text(label)
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    Text(formatTeamStatValue(values[label], stat: label))
+            Spacer(minLength: 8)
+            HStack(spacing: Self.statColumnSpacing) {
+                ForEach(Array(zip(keys, Self.statColumnWidths).enumerated()), id: \.offset) { item in
+                    Text(formatTeamStatValue(values[item.element.0], stat: item.element.0))
                         .font(.caption.weight(.semibold))
                         .monospacedDigit()
                         .foregroundStyle(.primary)
+                        .frame(width: item.element.1, alignment: .trailing)
                 }
             }
-            Spacer(minLength: 0)
         }
     }
 
