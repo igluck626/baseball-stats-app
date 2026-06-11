@@ -874,9 +874,11 @@ private enum BattingGameColumn {
 // reliably populated yet).
 private enum PitchingGameColumn {
     // Same compact frozen-pane widths as the batting table for visual
-    // consistency. Frozen pane: 12 + 38 + 50 = 100pt.
+    // consistency, plus a DEC (decision) column unique to pitching.
+    // Frozen pane: 12 + 38 + 50 + 36 = 136pt (see pitchingFrozenPaneWidth).
     static let date: CGFloat = 38
     static let opp:  CGFloat = 50
+    static let dec:  CGFloat = 36
     static let ip:   CGFloat = 36
     static let h:    CGFloat = 24
     static let r:    CGFloat = 24
@@ -886,6 +888,24 @@ private enum PitchingGameColumn {
     static let hr:   CGFloat = 26
     static let hbp:  CGFloat = 30
     static let era:  CGFloat = 44
+}
+
+/// Pitching frozen pane is wider than the shared batting width because
+/// it carries the extra DEC column (the batting table has no decision,
+/// so it keeps the narrower `gameLogFrozenPaneWidth`).
+private let pitchingFrozenPaneWidth: CGFloat = gameLogFrozenPaneWidth + PitchingGameColumn.dec
+
+/// Tint for a pitcher's per-game decision in the DEC column:
+/// W green, L red, S(ave) orange, H(old) blue, ND/everything else
+/// secondary.
+private func decisionColor(_ result: String?) -> Color {
+    switch result {
+    case "W": return .green
+    case "L": return .red
+    case "S": return Color.orange
+    case "H": return Color.blue
+    default:  return .secondary
+    }
 }
 
 // MARK: - Batting game-log table
@@ -1146,7 +1166,7 @@ private struct PitchingGameLogTable: View {
                     }
                 }
             }
-            .frame(width: gameLogFrozenPaneWidth)
+            .frame(width: pitchingFrozenPaneWidth)
             .background(.ultraThinMaterial)
             .shadow(color: .black.opacity(0.08), radius: 4, x: 2, y: 0)
             .zIndex(1)
@@ -1193,6 +1213,7 @@ private struct PitchingFrozenHeader: View {
         HStack(spacing: 0) {
             Text("Date").frame(width: PitchingGameColumn.date, alignment: .leading)
             Text("Opp") .frame(width: PitchingGameColumn.opp,  alignment: .leading)
+            Text("DEC") .frame(width: PitchingGameColumn.dec,  alignment: .center)
         }
         .font(.caption.weight(.semibold))
         .foregroundStyle(.secondary)
@@ -1233,6 +1254,9 @@ private struct PitchingFrozenGameRow: View {
                 .monospacedDigit()
             opponentLabel(game)
                 .frame(width: PitchingGameColumn.opp, alignment: .leading)
+            Text(game.result ?? "—")
+                .frame(width: PitchingGameColumn.dec, alignment: .center)
+                .foregroundStyle(decisionColor(game.result))
         }
         .font(.caption)
         .padding(.leading, 12)
@@ -1274,6 +1298,9 @@ private struct PitchingFrozenMonthTotalsRow: View {
                 .frame(width: PitchingGameColumn.date, alignment: .leading)
             Text("")
                 .frame(width: PitchingGameColumn.opp, alignment: .leading)
+            Text("—")
+                .frame(width: PitchingGameColumn.dec, alignment: .center)
+                .foregroundStyle(.secondary)
         }
         .font(.caption.weight(.semibold))
         .padding(.leading, 12)
