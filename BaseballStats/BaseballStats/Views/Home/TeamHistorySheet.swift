@@ -443,7 +443,7 @@ private struct AwardsSection: View {
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
             }
-            Divider()
+            Divider().overlay(Color(.systemGray4))
         }
         .padding(.horizontal, 16)
         .padding(.top, 4)
