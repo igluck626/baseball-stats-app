@@ -134,13 +134,15 @@ struct StandingsView: View {
                         LeagueTable(
                             buckets: viewModel.alStandings,
                             leagueLabel: "AL",
-                            isHistorical: isHistoricalView
+                            isHistorical: isHistoricalView,
+                            adjustments: viewModel.todayAdjustments
                         )
                     case .nl:
                         LeagueTable(
                             buckets: viewModel.nlStandings,
                             leagueLabel: "NL",
-                            isHistorical: isHistoricalView
+                            isHistorical: isHistoricalView,
+                            adjustments: viewModel.todayAdjustments
                         )
                     case .wc:
                         wildcardContent
@@ -151,6 +153,13 @@ struct StandingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .padding(.top, 4)
+                }
+                if !viewModel.todayAdjustments.isEmpty {
+                    Text("† Includes results not yet reflected in official standings")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.bottom, 8)
                 }
             }
             .padding(.horizontal, 16)
@@ -216,7 +225,8 @@ struct StandingsView: View {
                     title: "AL Wildcard",
                     teams: viewModel.alWildcard,
                     style: .wildcard(spots: spots),
-                    isHistorical: isHistoricalView
+                    isHistorical: isHistoricalView,
+                    adjustments: viewModel.todayAdjustments
                 )
             }
             if !viewModel.nlWildcard.isEmpty {
@@ -224,7 +234,8 @@ struct StandingsView: View {
                     title: "NL Wildcard",
                     teams: viewModel.nlWildcard,
                     style: .wildcard(spots: spots),
-                    isHistorical: isHistoricalView
+                    isHistorical: isHistoricalView,
+                    adjustments: viewModel.todayAdjustments
                 )
             }
         }
@@ -294,6 +305,15 @@ private struct DivisionCard: View {
     /// loaded), so rendering em-dashes adds visual noise without
     /// information.
     let isHistorical: Bool
+    /// Today's not-yet-official W/L bumps keyed by BDL team id.
+    let adjustments: [Int: (wDelta: Int, lDelta: Int)]
+
+    /// Resolve a row's adjustment by bridging its Lahman team code to a
+    /// BDL id (TeamStanding carries no BDL id directly).
+    private func adjustment(for team: TeamStanding) -> (wDelta: Int, lDelta: Int)? {
+        guard let code = team.team_id, let bdlId = lahmanToBDLTeamId[code] else { return nil }
+        return adjustments[bdlId]
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -347,6 +367,7 @@ private struct DivisionCard: View {
                     leader: teams.first,
                     isLeader: index == 0,
                     isHistorical: isHistorical,
+                    adjustment: adjustment(for: team),
                 )
                 .background(rowBackground(
                     style: style, isLeader: index == 0, rankInList: index,
@@ -489,6 +510,15 @@ private struct LeagueTable: View {
     let buckets: [String: [TeamStanding]]
     let leagueLabel: String
     let isHistorical: Bool
+    /// Today's not-yet-official W/L bumps keyed by BDL team id.
+    let adjustments: [Int: (wDelta: Int, lDelta: Int)]
+
+    /// Resolve a row's adjustment by bridging its Lahman team code to a
+    /// BDL id (TeamStanding carries no BDL id directly).
+    private func adjustment(for team: TeamStanding) -> (wDelta: Int, lDelta: Int)? {
+        guard let code = team.team_id, let bdlId = lahmanToBDLTeamId[code] else { return nil }
+        return adjustments[bdlId]
+    }
 
     private static let divisionOrder = ["E", "C", "W"]
     private static let divisionName: [String: String] = [
@@ -566,7 +596,8 @@ private struct LeagueTable: View {
                         team: team,
                         leader: group.teams.first,
                         isLeader: tIdx == 0,
-                        isHistorical: isHistorical
+                        isHistorical: isHistorical,
+                        adjustment: adjustment(for: team)
                     )
                     if tIdx != group.teams.indices.last {
                         Divider().opacity(0.25)
@@ -751,11 +782,18 @@ private struct ScrollableStatsRow: View {
     let leader: TeamStanding?
     let isLeader: Bool
     let isHistorical: Bool
+    /// Today's not-yet-official bump for this team (nil when none).
+    var adjustment: (wDelta: Int, lDelta: Int)? = nil
 
     var body: some View {
-        HStack(spacing: 0) {
-            statCell(formatInt(team.W),  width: StandingsLayout.cell)
-            statCell(formatInt(team.L),  width: StandingsLayout.cell)
+        let wDelta = adjustment?.wDelta ?? 0
+        let lDelta = adjustment?.lDelta ?? 0
+        let adjusted = wDelta > 0 || lDelta > 0
+        let adjW = team.W.map { $0 + wDelta }
+        let adjL = team.L.map { $0 + lDelta }
+        return HStack(spacing: 0) {
+            statCell(formatInt(adjW), width: StandingsLayout.cell)
+            wlLossCell(adjL, dagger: adjusted, width: StandingsLayout.cell)
             statCell(formatPct(team.win_pct), width: StandingsLayout.pct)
             statCell(formatGB(team: team, leader: leader, isLeader: isLeader),
                      width: StandingsLayout.gb, dim: isLeader)
@@ -784,6 +822,22 @@ private struct ScrollableStatsRow: View {
             .frame(width: width, alignment: .trailing)
             .monospacedDigit()
             .foregroundStyle(dim ? Color.secondary : Color.primary)
+    }
+
+    /// Losses cell. When `dagger` is set (this team has a not-yet-
+    /// official adjustment), a small secondary "†" is appended after
+    /// the value — i.e. right after the W-L pair — flagging the row as
+    /// live-adjusted. Explained by the legend at the bottom of the view.
+    private func wlLossCell(_ value: Int?, dagger: Bool, width: CGFloat) -> some View {
+        HStack(spacing: 0) {
+            Text(formatInt(value))
+                .monospacedDigit()
+                .foregroundStyle(.primary)
+            if dagger {
+                Text("†").foregroundStyle(.secondary)
+            }
+        }
+        .frame(width: width, alignment: .trailing)
     }
 }
 
