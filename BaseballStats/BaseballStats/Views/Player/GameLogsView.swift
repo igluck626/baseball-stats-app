@@ -1254,7 +1254,7 @@ private struct PitchingFrozenGameRow: View {
                 .monospacedDigit()
             opponentLabel(game)
                 .frame(width: PitchingGameColumn.opp, alignment: .leading)
-            Text(game.result ?? "—")
+            Text(game.result == "ND" || game.result == nil ? "—" : game.result!)
                 .frame(width: PitchingGameColumn.dec, alignment: .center)
                 .foregroundStyle(decisionColor(game.result))
         }
@@ -1293,14 +1293,18 @@ private struct PitchingScrollableGameRow: View {
 private struct PitchingFrozenMonthTotalsRow: View {
     let group: MonthGroup
     var body: some View {
+        let games = group.games.map(\.game)
+        let wins = games.filter { $0.result == "W" }.count
+        let losses = games.filter { $0.result == "L" }.count
         HStack(spacing: 0) {
             Text(monthShortName(group.month))
                 .frame(width: PitchingGameColumn.date, alignment: .leading)
             Text("")
                 .frame(width: PitchingGameColumn.opp, alignment: .leading)
-            Text("—")
+            Text("\(wins)-\(losses)")
+                .font(.caption.weight(.semibold))
                 .frame(width: PitchingGameColumn.dec, alignment: .center)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(wins > losses ? .green : losses > wins ? .red : .secondary)
         }
         .font(.caption.weight(.semibold))
         .padding(.leading, 12)
