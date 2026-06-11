@@ -994,6 +994,58 @@ def _season_leaders(
     return leaders
 
 
+def recalculate_current_season_leaders(year: Optional[int] = None) -> dict:
+    """Re-run the per-season leader-badge calculation for every
+    current-season batter + pitcher row and report the result.
+
+    Leader badges are NOT persisted — `_season_leaders` derives them
+    at response time from live DB state plus the PA/IP qualifier. So a
+    change in who qualifies (e.g. the PA backfill) only takes effect on
+    the next uncached read. This function recomputes the badges across
+    the whole current season in one pass — sharing the extremes /
+    qualifier caches so it costs only a handful of aggregate queries —
+    and returns per-stat leader counts so the change is verifiable. The
+    caller is expected to clear the response cache afterward so live
+    `/players/{id}/stats/career` reads recompute against the same data.
+    """
+    if not connection.db_available():
+        return {"year": None, "batters": 0, "pitchers": 0, "badges": {}}
+    if year is None:
+        year = _current_year()
+
+    badges: dict[str, int] = {}
+    batters = 0
+    pitchers = 0
+    with connection.get_session() as db:
+        extremes_cache: dict = {}
+        qualifier_cache: dict = {}
+
+        for row in db.query(_PlayerSeason).filter(_PlayerSeason.year == year).all():
+            batters += 1
+            led = _season_leaders(
+                db, _db_row_to_season(row), _PlayerSeason,
+                _LEADER_BATTING_STATS, extremes_cache, qualifier_cache,
+            )
+            for label in led:
+                badges[label] = badges.get(label, 0) + 1
+
+        for row in db.query(_PitcherSeason).filter(_PitcherSeason.year == year).all():
+            pitchers += 1
+            led = _season_leaders(
+                db, _db_pitcher_row_to_season(row), _PitcherSeason,
+                _LEADER_PITCHING_STATS, extremes_cache, qualifier_cache,
+            )
+            for label in led:
+                badges[label] = badges.get(label, 0) + 1
+
+    return {
+        "year":     year,
+        "batters":  batters,
+        "pitchers": pitchers,
+        "badges":   dict(sorted(badges.items())),
+    }
+
+
 def get_career_stats(player_id: int) -> Optional[dict]:
     """Return season-by-season batting stats for a player's career, from DB only."""
     if not connection.db_available():
@@ -5722,6 +5774,25 @@ _TEAM_FILTER_MATCHERS: dict[str, dict] = {
 # dict's keys so `team in _TEAM_FILTER_VARIANTS` still validates.
 _TEAM_FILTER_VARIANTS = _TEAM_FILTER_MATCHERS
 
+# Caller-facing team-code aliases → the canonical `_TEAM_FILTER_MATCHERS`
+# key. The A's relocated (Oakland → Sacramento → eventual Vegas) but kept
+# the same Lahman franchise; clients (and BDL) increasingly send "ATH",
+# which has no matcher key of its own. Resolve it to "OAK", whose matcher
+# already expands to both "OAK" and "ATH" rows. Normalize on input so the
+# leaderboard endpoint accepts the alias instead of 400-ing on it.
+_TEAM_CODE_ALIASES: dict[str, str] = {
+    "ATH": "OAK",
+}
+
+
+def _resolve_team_alias(team: Optional[str]) -> Optional[str]:
+    """Map a caller-supplied team code through `_TEAM_CODE_ALIASES`.
+    Pass-through for codes that are already canonical (or unknown —
+    validation happens separately)."""
+    if team is None:
+        return None
+    return _TEAM_CODE_ALIASES.get(team, team)
+
 
 def _team_filter_clause(table, team: str):
     """Build an OR clause that matches every storage variant for a
@@ -5854,6 +5925,10 @@ def get_leaderboard(
     """
     if not connection.db_available():
         return None
+
+    # Resolve relocation aliases (e.g. "ATH" → "OAK") so every mode
+    # below filters on the canonical franchise code.
+    team = _resolve_team_alias(team)
 
     is_batter = player_type == "batter"
     catalog = _LEADERBOARD_BATTING if is_batter else _LEADERBOARD_PITCHING

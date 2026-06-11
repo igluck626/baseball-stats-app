@@ -1359,6 +1359,10 @@ def leaderboards(
             status_code=400,
             detail="league must be 'AL' or 'NL' if provided",
         )
+    # Resolve relocation aliases (e.g. "ATH" → "OAK") before validating
+    # so the canonical franchise code is both accepted and forwarded.
+    if team is not None:
+        team = data_service._resolve_team_alias(team)
     if team is not None and team not in data_service._TEAM_FILTER_VARIANTS:
         raise HTTPException(
             status_code=400,
@@ -1587,6 +1591,44 @@ def admin_recalculate_pa(
         "season":           season,
         "gamelogs_updated": int(gamelogs_updated) if gamelogs_updated is not None else None,
         "seasons_updated":  int(seasons_updated) if seasons_updated is not None else None,
+    }
+
+
+@app.post("/admin/recalculate-leaders")
+def admin_recalculate_leaders(
+    season: int | None = Query(
+        None,
+        description="Season year to recompute leader badges for. Defaults to the current season.",
+    ),
+):
+    """Re-run the leader-badge calculation (the per-stat league/majors
+    #1 check) for every current-season player row, then drop the
+    response cache so the recomputed badges are what live requests
+    return.
+
+    Leader badges aren't stored — they're derived at response time by
+    `_season_leaders` from the current `player_seasons` data and the
+    PA/IP qualifier. After the PA backfill changed who qualifies for
+    rate stats, any career responses cached beforehand still carry the
+    old badges (e.g. a now-qualifying leader missing his bold marker).
+    This recomputes across the whole season in one pass (returning
+    per-stat leader counts so the change is verifiable) and clears the
+    in-process cache so `/players/{id}/stats/{career,current}` and the
+    leaderboards recompute on next read."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+
+    result = data_service.recalculate_current_season_leaders(season)
+
+    # Badges live inside the cached career / current-stats / leaderboard
+    # payloads; drop them so the recomputed values take effect now.
+    cleared = _cache.stats().get("total_keys", 0)
+    _cache.clear()
+
+    return {
+        "status":        "ok",
+        **result,
+        "cache_cleared": cleared,
     }
 
 
