@@ -4629,6 +4629,7 @@ def _parse_bdl_batting_gamelog(stat: dict, ctx: dict) -> Optional[dict]:
         "result":     result,
         "team_score": team_score,
         "opp_score":  opp_score,
+        "PA":         _to_int(stat.get("plate_appearances")),
         "AB":         _to_int(stat.get("at_bats")),
         "R":          _to_int(stat.get("runs")),
         "H":          _to_int(stat.get("hits")),

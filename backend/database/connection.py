@@ -110,6 +110,10 @@ _PITCHING_GAMELOGS_QUALITY_COLUMNS: list[str] = [
 _BATTING_GAMELOGS_NEW_COLUMNS: list[tuple[str, str]] = [
     ("IBB", "INTEGER"),
     ("CS",  "INTEGER"),
+    # Plate appearances — BDL ships `plate_appearances` per game; we
+    # now store it so season PA can be summed for the rate-stat
+    # leaderboard qualifier (it was never populated before).
+    ("PA",  "INTEGER"),
 ]
 
 # Extended counting stats added to player_seasons / pitcher_seasons in the

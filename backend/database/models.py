@@ -331,6 +331,7 @@ class BattingGameLog(Base):
     result      = Column(String)    # "W" / "L" / "T"
     team_score  = Column(Integer)
     opp_score   = Column(Integer)
+    PA          = Column(Integer, nullable=True)
     AB          = Column(Integer)
     R           = Column(Integer)
     H           = Column(Integer)

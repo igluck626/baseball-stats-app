@@ -59,6 +59,7 @@ from sqlalchemy import func as _sql_func              # noqa: E402
 import data_service                                   # noqa: E402
 from database import connection, crud                 # noqa: E402
 from database.models import (                          # noqa: E402
+    BattingGameLog,
     Pitcher  as _Pitcher,
     PitcherSeason,
     Player   as _Player,
@@ -192,6 +193,31 @@ def _build_current_batter_entry(
 _BATCH_SIZE = 100
 
 
+def _apply_season_pa(db, player_id: int, year: int, entry: dict) -> None:
+    """Populate `entry["PA"]` for a batter's current-season row.
+
+    BDL's `season_stats` doesn't carry plate appearances, so we sum
+    per-game PA from this player's `batting_gamelogs` for `year` (the
+    gamelog parser now stores BDL's `plate_appearances`). If no
+    game-log PA is available yet (cold start, or the day's gamelogs
+    haven't been ingested), we fall back to deriving PA from the
+    season counting components (AB + BB + HBP + SF). Leaves `entry`
+    untouched when neither source yields a positive total."""
+    pa_total = db.query(_sql_func.sum(BattingGameLog.PA)).filter(
+        BattingGameLog.player_id == player_id,
+        BattingGameLog.season == year,
+        BattingGameLog.PA.isnot(None),
+    ).scalar() or 0
+
+    # Fallback: calculate from components if PA not stored.
+    if pa_total == 0:
+        pa_total = (entry.get("AB") or 0) + (entry.get("BB") or 0) + \
+                   (entry.get("HBP") or 0) + (entry.get("SF") or 0)
+
+    if pa_total:
+        entry["PA"] = pa_total
+
+
 def _update_batters(current_year: int) -> tuple[int, int, list[int]]:
     """Phase 1: walk every batter and refresh their current-season
     row. BDL is the per-player stats source (rate-limited to ≈4.5
@@ -296,6 +322,7 @@ def _update_batters(current_year: int) -> tuple[int, int, list[int]]:
         if batch_entries:
             with connection.get_session() as db:
                 for pid, entry in batch_entries:
+                    _apply_season_pa(db, pid, current_year, entry)
                     crud.save_player_seasons(db, pid, [entry])
             updated += len(batch_entries)
 

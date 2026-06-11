@@ -1517,6 +1517,79 @@ def admin_reset_player_season(
     }
 
 
+@app.post("/admin/recalculate-pa")
+def admin_recalculate_pa(
+    season: int | None = Query(
+        None,
+        description="Season year to backfill PA for. Defaults to the current season.",
+    ),
+):
+    """Backfill plate appearances (PA) for `season`.
+
+    PA is absent from BDL's season + per-game payloads, so the nightly
+    never populated it — which silently excluded every active player
+    from the rate-stat leaderboards (the qualifier filters on
+    `PA >= min_pa`). This recomputes PA from the counting components:
+
+      1. `batting_gamelogs.PA` — set to AB + BB + HBP + SF for rows
+         that don't already carry a stored PA. (The BDL gamelog parser
+         now stores BDL's `plate_appearances` directly going forward;
+         this fills in the pre-existing NULL rows.)
+      2. `player_seasons.PA` — set to the sum of those per-game
+         components across the season.
+
+    Idempotent; safe to re-run. The component sum omits SH, so it's a
+    slight undercount vs true PA — but far better than the NULL it
+    replaces.
+
+    Column identifiers are double-quoted because the schema stores
+    them in their original mixed/upper case (Postgres folds unquoted
+    identifiers to lowercase — see `connection.py`)."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+
+    if season is None:
+        season = data_service._current_year()
+
+    gamelog_sql = _sa_text(
+        """
+        UPDATE batting_gamelogs
+        SET "PA" = COALESCE("AB", 0) + COALESCE("BB", 0)
+                 + COALESCE("HBP", 0) + COALESCE("SF", 0)
+        WHERE season = :season AND "PA" IS NULL
+        """
+    )
+    season_sql = _sa_text(
+        """
+        UPDATE player_seasons
+        SET "PA" = (
+            SELECT COALESCE(SUM(
+                COALESCE("AB", 0) + COALESCE("BB", 0)
+                + COALESCE("HBP", 0) + COALESCE("SF", 0)
+            ), 0)
+            FROM batting_gamelogs
+            WHERE batting_gamelogs.player_id = player_seasons.player_id
+              AND batting_gamelogs.season    = player_seasons.year
+        )
+        WHERE year = :season
+        """
+    )
+
+    with connection.get_session() as db:
+        gl_result = db.execute(gamelog_sql, {"season": season})
+        ps_result = db.execute(season_sql, {"season": season})
+        db.commit()
+        gamelogs_updated = gl_result.rowcount
+        seasons_updated  = ps_result.rowcount
+
+    return {
+        "status":           "ok",
+        "season":           season,
+        "gamelogs_updated": int(gamelogs_updated) if gamelogs_updated is not None else None,
+        "seasons_updated":  int(seasons_updated) if seasons_updated is not None else None,
+    }
+
+
 @app.post("/admin/add-historical-player")
 def admin_add_historical_player(
     mlbam_id:    int  = Query(..., description="MLBAM player id (our primary key)."),
