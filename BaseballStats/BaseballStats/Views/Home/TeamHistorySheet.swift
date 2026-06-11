@@ -409,8 +409,13 @@ private struct AwardsSection: View {
                     ForEach(Array(group.winners.enumerated()), id: \.offset) { idx, winner in
                         winnerRow(winner, award: group.award)
                         if idx < group.winners.count - 1 {
+                            // Match the Leaders list separator: a
+                            // systemGray4-tinted hairline (the same tint
+                            // LeaderboardsView sets via
+                            // `.listRowSeparatorTint(Color(.systemGray4))`),
+                            // inset to the row content.
                             Divider()
-                                .opacity(0.4)
+                                .overlay(Color(.systemGray4))
                                 .padding(.horizontal, 16)
                         }
                     }
@@ -474,7 +479,7 @@ private struct AwardsSection: View {
                 ProgressView().controlSize(.small)
             }
         }
-        .padding(.vertical, 8)
+        .padding(.vertical, 6)
         .padding(.horizontal, 16)
         // Resolve the bio once (position label + cached nav target).
         // Lazy + cached: a player with multiple award rows resolves
