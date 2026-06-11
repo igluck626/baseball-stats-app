@@ -79,14 +79,10 @@ final class StandingsViewModel: ObservableObject {
             return
         }
 
-        let cutoff = Self.parseISO(lastUpdated)
-
-        let etFormatter = DateFormatter()
-        etFormatter.timeZone = TimeZone(identifier: "America/New_York")
-        etFormatter.dateFormat = "yyyy-MM-dd"
-        let todayET = etFormatter.string(from: Date())
-
-        // ±1 day UTC envelope — yesterday / today / tomorrow in UTC.
+        // ±1 day UTC envelope — yesterday / today / tomorrow in UTC —
+        // so evening-ET games (which land on "UTC tomorrow") are still
+        // fetched. The ET-date filter, `last_updated` cutoff, and
+        // winner/loser delta math live in the shared helper.
         var utcCal = Calendar(identifier: .gregorian)
         utcCal.timeZone = TimeZone(identifier: "UTC")!
         let utcFormatter = DateFormatter()
@@ -109,40 +105,9 @@ final class StandingsViewModel: ObservableObject {
             }
         }
 
-        var adjustments: [Int: (wDelta: Int, lDelta: Int)] = [:]
-        for game in games {
-            guard game.phase == .final,
-                  let start = game.startDate,
-                  etFormatter.string(from: start) == todayET else { continue }
-            // Already reflected in the official standings? (Its end is
-            // after `start`, so `start > cutoff` ⟹ end is too.)
-            if let cutoff, start <= cutoff { continue }
-            guard let homeId = game.bdlHomeTeamId,
-                  let awayId = game.bdlAwayTeamId,
-                  let homeScore = game.teams.home.score,
-                  let awayScore = game.teams.away.score,
-                  homeScore != awayScore else { continue }
-            let homeWon = homeScore > awayScore
-            let winnerId = homeWon ? homeId : awayId
-            let loserId  = homeWon ? awayId : homeId
-            var win  = adjustments[winnerId] ?? (wDelta: 0, lDelta: 0)
-            win.wDelta += 1
-            adjustments[winnerId] = win
-            var lose = adjustments[loserId] ?? (wDelta: 0, lDelta: 0)
-            lose.lDelta += 1
-            adjustments[loserId] = lose
-        }
-        todayAdjustments = adjustments
-    }
-
-    /// Tolerant ISO-8601 parse for the standings `last_updated` stamp,
-    /// which the backend emits with microsecond fractional seconds.
-    private static func parseISO(_ iso: String?) -> Date? {
-        guard let iso else { return nil }
-        let withFraction = ISO8601DateFormatter()
-        withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = withFraction.date(from: iso) { return date }
-        return ISO8601DateFormatter().date(from: iso)
+        todayAdjustments = TodayRecordAdjustments.deltas(
+            from: games, lastUpdated: lastUpdated,
+        )
     }
 
     /// Split the flat array into AL/NL × division buckets and sort each
