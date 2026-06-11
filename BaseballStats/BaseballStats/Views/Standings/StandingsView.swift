@@ -825,19 +825,23 @@ private struct ScrollableStatsRow: View {
     }
 
     /// Losses cell. When `dagger` is set (this team has a not-yet-
-    /// official adjustment), a small secondary "†" is appended after
-    /// the value — i.e. right after the W-L pair — flagging the row as
-    /// live-adjusted. Explained by the legend at the bottom of the view.
+    /// official adjustment), a small secondary "†" floats as a
+    /// superscript at the top-trailing corner — overlaid outside the
+    /// fixed-width frame so it never shifts the L value off its
+    /// right-aligned baseline. Explained by the legend at the bottom.
     private func wlLossCell(_ value: Int?, dagger: Bool, width: CGFloat) -> some View {
-        HStack(spacing: 0) {
-            Text(formatInt(value))
-                .monospacedDigit()
-                .foregroundStyle(.primary)
-            if dagger {
-                Text("†").foregroundStyle(.secondary)
+        Text(formatInt(value))
+            .monospacedDigit()
+            .foregroundStyle(.primary)
+            .frame(width: width, alignment: .trailing)
+            .overlay(alignment: .topTrailing) {
+                if dagger {
+                    Text("†")
+                        .font(.system(size: 8))
+                        .foregroundStyle(.secondary)
+                        .offset(x: 6, y: -2)
+                }
             }
-        }
-        .frame(width: width, alignment: .trailing)
     }
 }
 
