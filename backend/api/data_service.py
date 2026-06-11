@@ -4702,6 +4702,19 @@ def _parse_bdl_batting_gamelog(stat: dict, ctx: dict) -> Optional[dict]:
     }
 
 
+def _bdl_pitching_hbp(stat: dict) -> Optional[int]:
+    """Pitcher hit-by-pitch from a BDL `/stats` row. The per-game
+    `/stats` payload uses `p_`-prefixed pitching keys (p_hits, p_bb,
+    p_k, p_hr, …), so HBP comes through as `p_hbp`; we fall back to the
+    season-stats-style `pitching_hbp` key in case the per-game shape
+    mirrors it for this field. Returns None when neither is present
+    (older rows / BDL not shipping it for that game)."""
+    raw = stat.get("p_hbp")
+    if raw is None:
+        raw = stat.get("pitching_hbp")
+    return _to_int(raw)
+
+
 def _parse_bdl_pitching_gamelog(stat: dict, ctx: dict) -> Optional[dict]:
     """BDL `/stats` row → `pitching_gamelogs` row dict. Returns
     None when the row has no pitching activity (IP is null) or
@@ -4755,8 +4768,8 @@ def _parse_bdl_pitching_gamelog(stat: dict, ctx: dict) -> Optional[dict]:
         "BB":        _to_int(stat.get("p_bb")),
         "SO":        _to_int(stat.get("p_k")),
         "HR":        _to_int(stat.get("p_hr")),
-        # BDL doesn't ship HBP or WP on the pitching side of /stats.
-        "HBP":       None,
+        "HBP":       _bdl_pitching_hbp(stat),
+        # BDL doesn't ship WP on the pitching side of /stats.
         "WP":        None,
         "pitches":   _to_int(stat.get("pitch_count")),
         # BDL doesn't ship strikes-thrown either.
@@ -4971,6 +4984,121 @@ def backfill_bdl_gamelogs(start_date: str, end_date: str) -> dict:
         "total_bat_rows": total_bat,
         "total_pit_rows": total_pit,
         "per_day":     per_day,
+    }
+
+
+def backfill_pitching_hbp(season: int, max_games: Optional[int] = None) -> dict:
+    """One-time backfill of pitcher HBP on `season` pitching_gamelogs.
+
+    HBP wasn't parsed from BDL's per-game `/stats` historically, so every
+    pre-existing row has `HBP IS NULL`. This re-fetches `/stats` for each
+    distinct BDL game id that still has a null-HBP pitching row, reads the
+    HBP straight off the raw stat line (via `_bdl_pitching_hbp`), maps the
+    BDL player id to MLBAM, and fills only the NULL `HBP` cells — it does
+    not re-parse or overwrite any other column. Idempotent and resumable.
+
+    `max_games` caps how many games are processed in one call so a long
+    in-season backfill can be chunked under the HTTP timeout; omit to
+    process every affected game. `remaining` in the response reports how
+    many affected games were left unprocessed when a cap was hit."""
+    if not connection.db_available():
+        return {"status": "no_db"}
+    _get_bdl_key()
+
+    from database.models import PitchingGameLog as _PGL
+
+    with connection.get_session() as db:
+        rows = (
+            db.query(_PGL.game_id)
+              .filter(_PGL.season == season)
+              .filter(_PGL.HBP.is_(None))
+              .distinct()
+              .all()
+        )
+        all_game_ids = [r.game_id for r in rows]
+        bdl_to_mlbam = _bdl_to_mlbam_map(db)
+
+    remaining = 0
+    if max_games is not None and max_games >= 0 and len(all_game_ids) > max_games:
+        remaining = len(all_game_ids) - max_games
+        game_ids = all_game_ids[:max_games]
+    else:
+        game_ids = all_game_ids
+
+    if not game_ids:
+        return {
+            "status": "ok", "season": season,
+            "games_processed": 0, "games_failed": 0,
+            "rows_updated": 0, "remaining": remaining,
+        }
+
+    total_updated   = 0
+    games_processed = 0
+    games_failed    = 0
+
+    for i, gid_str in enumerate(game_ids):
+        # Stored game_id is a string; the BDL `/stats` filter needs the
+        # int id. Non-numeric / out-of-range ids belong to the MLB Stats
+        # API historical path, which BDL can't serve — skip them.
+        try:
+            gid_int = int(gid_str)
+        except (TypeError, ValueError):
+            continue
+
+        hbp_by_pid: dict[int, int] = {}
+        cursor: Optional[int] = None
+        try:
+            while True:
+                params: dict = {"game_ids[]": [gid_int], "per_page": 100}
+                if cursor is not None:
+                    params["cursor"] = cursor
+                data = _bdl_get_json("stats", params)
+                for stat in (data.get("data") or []):
+                    # Pitching lines only — identified by a non-null IP.
+                    if stat.get("ip") is None:
+                        continue
+                    bdl_pid = (stat.get("player") or {}).get("id")
+                    if bdl_pid is None:
+                        continue
+                    mlbam = bdl_to_mlbam.get(int(bdl_pid))
+                    if mlbam is None:
+                        continue
+                    hbp = _bdl_pitching_hbp(stat)
+                    if hbp is not None:
+                        hbp_by_pid[mlbam] = hbp
+                cursor = (data.get("meta") or {}).get("next_cursor")
+                if cursor is None:
+                    break
+        except Exception as exc:
+            log.exception("backfill_pitching_hbp: game %s fetch failed: %s", gid_str, exc)
+            games_failed += 1
+            continue
+        games_processed += 1
+
+        if hbp_by_pid:
+            with connection.get_session() as db:
+                for pid, hbp in hbp_by_pid.items():
+                    updated = (
+                        db.query(_PGL)
+                          .filter(_PGL.player_id == pid)
+                          .filter(_PGL.game_id   == gid_str)
+                          .filter(_PGL.season    == season)
+                          .filter(_PGL.HBP.is_(None))
+                          .update({_PGL.HBP: hbp}, synchronize_session=False)
+                    )
+                    total_updated += int(updated or 0)
+                db.commit()
+
+        if i < len(game_ids) - 1:
+            time.sleep(_BDL_RATE_LIMIT_SLEEP)
+
+    return {
+        "status":          "ok",
+        "season":          season,
+        "games_processed": games_processed,
+        "games_failed":    games_failed,
+        "rows_updated":    total_updated,
+        "remaining":       remaining,
     }
 
 

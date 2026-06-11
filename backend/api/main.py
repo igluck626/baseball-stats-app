@@ -1632,6 +1632,42 @@ def admin_recalculate_leaders(
     }
 
 
+@app.post("/admin/backfill-pitching-hbp")
+def admin_backfill_pitching_hbp(
+    season: int | None = Query(
+        None,
+        description="Season to backfill HBP for. Defaults to the current season.",
+    ),
+    max_games: int | None = Query(
+        None,
+        description=(
+            "Cap on games processed this call (chunking for long runs). "
+            "Omit to process every affected game."
+        ),
+    ),
+):
+    """One-time backfill of pitcher hit-by-pitch on `season` game logs.
+
+    HBP was never parsed from BDL's per-game `/stats`, so existing
+    `pitching_gamelogs` rows have `HBP IS NULL`. This re-fetches `/stats`
+    for each distinct BDL game id that still has a null-HBP pitching row,
+    reads HBP off the raw stat line, and fills only the NULL cells (no
+    other column is touched). Idempotent and resumable.
+
+    Runs synchronously at the BDL rate limit (~0.22s/game), so a full
+    in-season run over hundreds of games can take several minutes — pass
+    `max_games` to chunk it under the request timeout and re-invoke until
+    `remaining` reaches 0."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    if season is None:
+        season = data_service._current_year()
+    result = data_service.backfill_pitching_hbp(season, max_games=max_games)
+    if result.get("status") == "no_db":
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    return result
+
+
 @app.post("/admin/add-historical-player")
 def admin_add_historical_player(
     mlbam_id:    int  = Query(..., description="MLBAM player id (our primary key)."),
