@@ -99,6 +99,7 @@ final class ScoresViewModel: ObservableObject {
         let standings = (await standingsTask) ?? []
         self.teamRecords   = Self.recordsByBDLTeamId(standings)
         self.teamStandings = Self.standingsByBDLTeamId(standings)
+        applyTodayAdjustments()
         isLoading = false
         didLoad = true
     }
@@ -127,6 +128,7 @@ final class ScoresViewModel: ObservableObject {
         if let standings = await standingsTask {
             self.teamRecords   = Self.recordsByBDLTeamId(standings)
             self.teamStandings = Self.standingsByBDLTeamId(standings)
+            applyTodayAdjustments()
         }
     }
 
@@ -143,11 +145,22 @@ final class ScoresViewModel: ObservableObject {
             let standings = try await bdl.getStandings(season: year, bypassCache: true)
             self.teamRecords   = Self.recordsByBDLTeamId(standings)
             self.teamStandings = Self.standingsByBDLTeamId(standings)
+            applyTodayAdjustments()
             NotificationCenter.default.post(name: .standingsShouldRefresh, object: nil)
         } catch {
             // Silent — the dict keeps its previous values; the next
             // `load()` tick will retry.
         }
+    }
+
+    /// Fold today's ET final games (from the already-loaded `games`)
+    /// into `teamRecords` so the score cards' "(W-L)" matches the
+    /// Standings tab. BDL standings carry no `last_updated`, so the
+    /// cutoff is nil — every today-ET final in the loaded slate is
+    /// applied. Silent (no "†") per the Scores/Home design.
+    private func applyTodayAdjustments() {
+        let deltas = TodayRecordAdjustments.deltas(from: games, lastUpdated: nil)
+        teamRecords = TodayRecordAdjustments.apply(deltas, to: teamRecords)
     }
 
     private static func recordsByBDLTeamId(

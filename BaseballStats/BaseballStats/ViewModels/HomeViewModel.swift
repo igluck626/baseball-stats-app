@@ -192,14 +192,30 @@ final class HomeViewModel: ObservableObject {
         // fields nil and the hero card just hides the secondary
         // line. Fired AFTER the primary state lands so the card can
         // paint everything else without waiting on this.
+        var standingsLastUpdated: String?
         if let lahmanCode = bdlToLahmanTeamId[bdlTeamId] {
             let year = cal.component(.year, from: today)
-            if let resp = (try? await api.getStandings(year: year)) ?? nil,
-               let row = resp.standings?.first(where: { $0.team_id == lahmanCode }) {
-                self.teamStreakCode = row.streak_code
-                self.teamLastTenW   = row.last_ten_w
-                self.teamLastTenL   = row.last_ten_l
+            if let resp = (try? await api.getStandings(year: year)) ?? nil {
+                standingsLastUpdated = resp.last_updated
+                if let row = resp.standings?.first(where: { $0.team_id == lahmanCode }) {
+                    self.teamStreakCode = row.streak_code
+                    self.teamLastTenW   = row.last_ten_w
+                    self.teamLastTenL   = row.last_ten_l
+                }
             }
+        }
+
+        // Fold today's not-yet-official finals into the record so the
+        // hero card matches the Standings tab. Uses the ±5-day team
+        // window already in `recentAndUpcoming`; gated by the backend
+        // standings' `last_updated` so already-absorbed games don't
+        // double-count.
+        let deltas = TodayRecordAdjustments.deltas(
+            from: recentAndUpcoming, lastUpdated: standingsLastUpdated,
+        )
+        if !deltas.isEmpty {
+            self.teamRecords = TodayRecordAdjustments.apply(deltas, to: self.teamRecords)
+            self.teamRecord  = self.teamRecords[bdlTeamId]
         }
 
         isLoading = false

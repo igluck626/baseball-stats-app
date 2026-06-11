@@ -110,6 +110,90 @@ struct TeamRecord: Codable, Hashable {
     let pct: String?
 }
 
+// MARK: - Today's-results record overlay
+
+/// Shared logic for folding today's already-final games — which the
+/// standings haven't absorbed yet — into a team's displayed W-L. Used
+/// by the Standings tab (which surfaces the deltas with a "†"), and by
+/// the Scores / Home record displays (which silently apply them).
+///
+/// A game counts when it's `STATUS_FINAL`, its **ET calendar date** is
+/// today, and it started after the standings' `lastUpdated` cutoff
+/// (start is strictly before end, so `start > cutoff` ⟹ the result
+/// post-dates the standings — a conservative guard that never
+/// double-counts an already-absorbed game). When `lastUpdated` is nil
+/// (no timestamp available, e.g. BDL standings) every today-ET final is
+/// applied.
+enum TodayRecordAdjustments {
+
+    /// Per-team `(wDelta, lDelta)` keyed by **BDL team id**.
+    static func deltas(
+        from games: [Game],
+        lastUpdated: String?,
+        now: Date = Date(),
+    ) -> [Int: (wDelta: Int, lDelta: Int)] {
+        let etFormatter = DateFormatter()
+        etFormatter.timeZone = TimeZone(identifier: "America/New_York")
+        etFormatter.dateFormat = "yyyy-MM-dd"
+        let todayET = etFormatter.string(from: now)
+        let cutoff = parseLastUpdated(lastUpdated)
+
+        var out: [Int: (wDelta: Int, lDelta: Int)] = [:]
+        for game in games {
+            guard game.phase == .final,
+                  let start = game.startDate,
+                  etFormatter.string(from: start) == todayET else { continue }
+            if let cutoff, start <= cutoff { continue }
+            guard let homeId = game.bdlHomeTeamId,
+                  let awayId = game.bdlAwayTeamId,
+                  let homeScore = game.teams.home.score,
+                  let awayScore = game.teams.away.score,
+                  homeScore != awayScore else { continue }
+            let homeWon = homeScore > awayScore
+            let winnerId = homeWon ? homeId : awayId
+            let loserId  = homeWon ? awayId : homeId
+            var win  = out[winnerId] ?? (wDelta: 0, lDelta: 0)
+            win.wDelta += 1
+            out[winnerId] = win
+            var lose = out[loserId] ?? (wDelta: 0, lDelta: 0)
+            lose.lDelta += 1
+            out[loserId] = lose
+        }
+        return out
+    }
+
+    /// Apply BDL-id-keyed deltas onto a `TeamRecord` dict, returning a
+    /// new dict with today's results folded in. Teams without a base
+    /// record are left untouched (a bump with no base would render a
+    /// misleading partial line).
+    static func apply(
+        _ deltas: [Int: (wDelta: Int, lDelta: Int)],
+        to records: [Int: TeamRecord],
+    ) -> [Int: TeamRecord] {
+        guard !deltas.isEmpty else { return records }
+        var out = records
+        for (bdlId, delta) in deltas {
+            guard let base = out[bdlId] else { continue }
+            out[bdlId] = TeamRecord(
+                wins:   base.wins.map   { $0 + delta.wDelta },
+                losses: base.losses.map { $0 + delta.lDelta },
+                pct:    base.pct,
+            )
+        }
+        return out
+    }
+
+    /// Tolerant ISO-8601 parse for the backend's microsecond
+    /// fractional-second `last_updated` stamp.
+    static func parseLastUpdated(_ iso: String?) -> Date? {
+        guard let iso else { return nil }
+        let withFraction = ISO8601DateFormatter()
+        withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = withFraction.date(from: iso) { return date }
+        return ISO8601DateFormatter().date(from: iso)
+    }
+}
+
 struct Venue: Codable, Hashable {
     let id: Int?
     let name: String?
