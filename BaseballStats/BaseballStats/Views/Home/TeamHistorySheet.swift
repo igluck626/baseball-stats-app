@@ -457,7 +457,7 @@ private struct AwardsSection: View {
     private func winnerRow(_ w: TeamAwardWinner, award: String) -> some View {
         let votingCode = Self.votingAward(for: award)
         let position = InjuryReportSheet.abbreviatePosition(resolved[w.player_id]?.position)
-        return HStack(spacing: 12) {
+        return HStack(spacing: 10) {
             yearLabel(w, votingCode: votingCode)
             Button {
                 resolveAndPush(w)
@@ -479,7 +479,7 @@ private struct AwardsSection: View {
                 ProgressView().controlSize(.small)
             }
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 10)
         .padding(.horizontal, 16)
         // Resolve the bio once (position label + cached nav target).
         // Lazy + cached: a player with multiple award rows resolves
