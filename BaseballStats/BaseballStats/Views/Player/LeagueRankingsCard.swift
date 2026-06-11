@@ -315,6 +315,7 @@ private let teamCodeToLeague: [String: String] = [
     "TOR": "AL", "WAS": "NL",
 
     // MLB Stats API + Baseball Reference 3-letter codes
+    "ATH": "AL",                 // Athletics (post-Oakland relocation code)
     "CHC": "NL",                 // Cubs
     "CWS": "AL", "CHW": "AL",    // White Sox (both abbreviations seen)
     "KCR": "AL", "KC":  "AL",    // Royals
