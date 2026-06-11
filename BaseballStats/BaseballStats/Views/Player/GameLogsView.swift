@@ -873,9 +873,8 @@ private enum BattingGameColumn {
 // Same shape for pitching. Result column is intentionally absent (not
 // reliably populated yet).
 private enum PitchingGameColumn {
-    // Same compact frozen-pane widths as the batting table for visual
-    // consistency, plus a DEC (decision) column unique to pitching.
-    // Frozen pane: 12 + 38 + 50 + 36 = 136pt (see pitchingFrozenPaneWidth).
+    // Frozen pane (Date + Opp) matches the batting table's widths. DEC
+    // (decision) is the first scrollable column, unique to pitching.
     static let date: CGFloat = 38
     static let opp:  CGFloat = 50
     static let dec:  CGFloat = 36
@@ -893,8 +892,6 @@ private enum PitchingGameColumn {
 /// Pitching frozen pane is wider than the shared batting width because
 /// it carries the extra DEC column (the batting table has no decision,
 /// so it keeps the narrower `gameLogFrozenPaneWidth`).
-private let pitchingFrozenPaneWidth: CGFloat = gameLogFrozenPaneWidth + PitchingGameColumn.dec
-
 /// Tint for a pitcher's per-game decision in the DEC column:
 /// W green, L red, S(ave) orange, H(old) blue, ND/everything else
 /// secondary.
@@ -1166,7 +1163,7 @@ private struct PitchingGameLogTable: View {
                     }
                 }
             }
-            .frame(width: pitchingFrozenPaneWidth)
+            .frame(width: gameLogFrozenPaneWidth)
             .background(.ultraThinMaterial)
             .shadow(color: .black.opacity(0.08), radius: 4, x: 2, y: 0)
             .zIndex(1)
@@ -1213,7 +1210,6 @@ private struct PitchingFrozenHeader: View {
         HStack(spacing: 0) {
             Text("Date").frame(width: PitchingGameColumn.date, alignment: .leading)
             Text("Opp") .frame(width: PitchingGameColumn.opp,  alignment: .leading)
-            Text("DEC") .frame(width: PitchingGameColumn.dec,  alignment: .center)
         }
         .font(.caption.weight(.semibold))
         .foregroundStyle(.secondary)
@@ -1226,6 +1222,7 @@ private struct PitchingFrozenHeader: View {
 private struct PitchingScrollableHeader: View {
     var body: some View {
         HStack(spacing: 0) {
+            Text("DEC").frame(width: PitchingGameColumn.dec, alignment: .center).padding(.horizontal, 2)
             Text("IP") .frame(width: PitchingGameColumn.ip,  alignment: .trailing).padding(.horizontal, 2)
             Text("H")  .frame(width: PitchingGameColumn.h,   alignment: .trailing).padding(.horizontal, 2)
             Text("R")  .frame(width: PitchingGameColumn.r,   alignment: .trailing).padding(.horizontal, 2)
@@ -1254,9 +1251,6 @@ private struct PitchingFrozenGameRow: View {
                 .monospacedDigit()
             opponentLabel(game)
                 .frame(width: PitchingGameColumn.opp, alignment: .leading)
-            Text(game.result == "ND" || game.result == nil ? "—" : game.result!)
-                .frame(width: PitchingGameColumn.dec, alignment: .center)
-                .foregroundStyle(decisionColor(game.result))
         }
         .font(.caption)
         .padding(.leading, 12)
@@ -1272,6 +1266,10 @@ private struct PitchingScrollableGameRow: View {
     let alternate: Bool
     var body: some View {
         HStack(spacing: 0) {
+            Text(game.result == "ND" || game.result == nil ? "—" : game.result!)
+                .frame(width: PitchingGameColumn.dec, alignment: .center)
+                .foregroundStyle(decisionColor(game.result))
+                .padding(.horizontal, 2)
             Text(formatIP(game.IP)) .frame(width: PitchingGameColumn.ip,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             Text(formatInt(game.H)) .frame(width: PitchingGameColumn.h,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             Text(formatInt(game.R)) .frame(width: PitchingGameColumn.r,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
@@ -1293,18 +1291,11 @@ private struct PitchingScrollableGameRow: View {
 private struct PitchingFrozenMonthTotalsRow: View {
     let group: MonthGroup
     var body: some View {
-        let games = group.games.map(\.game)
-        let wins = games.filter { $0.result == "W" }.count
-        let losses = games.filter { $0.result == "L" }.count
         HStack(spacing: 0) {
             Text(monthShortName(group.month))
                 .frame(width: PitchingGameColumn.date, alignment: .leading)
             Text("")
                 .frame(width: PitchingGameColumn.opp, alignment: .leading)
-            Text("\(wins)-\(losses)")
-                .font(.caption.weight(.semibold))
-                .frame(width: PitchingGameColumn.dec, alignment: .center)
-                .foregroundStyle(wins > losses ? .green : losses > wins ? .red : .secondary)
         }
         .font(.caption.weight(.semibold))
         .padding(.leading, 12)
@@ -1319,7 +1310,11 @@ private struct PitchingScrollableMonthTotalsRow: View {
     let group: MonthGroup
     var body: some View {
         let m = group.monthlyTotals
+        let games = group.games.map(\.game)
+        let wins = games.filter { $0.result == "W" }.count
+        let losses = games.filter { $0.result == "L" }.count
         HStack(spacing: 0) {
+            Text("\(wins)-\(losses)")  .frame(width: PitchingGameColumn.dec, alignment: .center).monospacedDigit().padding(.horizontal, 2)
             Text(formatIP(m.ip))     .frame(width: PitchingGameColumn.ip,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             Text(formatInt(m.h))     .frame(width: PitchingGameColumn.h,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             Text(formatInt(m.r))     .frame(width: PitchingGameColumn.r,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
