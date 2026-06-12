@@ -1046,7 +1046,10 @@ private struct BattingFrozenGameRow: View {
         .padding(.leading, 12)
         .padding(.vertical, 7)
         .frame(height: 30)
-        .background(alternate ? Color(.systemGray6).opacity(0.5) : Color.clear)
+        // No zebra striping — the hairline dividers between rows carry
+        // the separation, matching the career tables. `alternate` is
+        // kept in the row signature so call sites stay stable.
+        .background(Color.clear)
     }
 }
 
@@ -1076,7 +1079,10 @@ private struct BattingScrollableGameRow: View {
         .padding(.trailing, 12)
         .padding(.vertical, 7)
         .frame(height: 30)
-        .background(alternate ? Color(.systemGray6).opacity(0.5) : Color.clear)
+        // No zebra striping — the hairline dividers between rows carry
+        // the separation, matching the career tables. `alternate` is
+        // kept in the row signature so call sites stay stable.
+        .background(Color.clear)
     }
 }
 
@@ -1256,7 +1262,10 @@ private struct PitchingFrozenGameRow: View {
         .padding(.leading, 12)
         .padding(.vertical, 7)
         .frame(height: 30)
-        .background(alternate ? Color(.systemGray6).opacity(0.5) : Color.clear)
+        // No zebra striping — the hairline dividers between rows carry
+        // the separation, matching the career tables. `alternate` is
+        // kept in the row signature so call sites stay stable.
+        .background(Color.clear)
     }
 }
 
@@ -1284,7 +1293,10 @@ private struct PitchingScrollableGameRow: View {
         .padding(.trailing, 12)
         .padding(.vertical, 7)
         .frame(height: 30)
-        .background(alternate ? Color(.systemGray6).opacity(0.5) : Color.clear)
+        // No zebra striping — the hairline dividers between rows carry
+        // the separation, matching the career tables. `alternate` is
+        // kept in the row signature so call sites stay stable.
+        .background(Color.clear)
     }
 }
 
