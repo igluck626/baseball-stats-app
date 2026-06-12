@@ -761,23 +761,20 @@ private struct CompactGameStripCard: View {
         .padding(.vertical, 8)
         .padding(.horizontal, 8)
         .frame(width: 110, height: 100)
-        // Thin glass panel — same recipe as the hero card.
+        // Glass panel — same `.ultraThinMaterial` recipe as the hero
+        // card so nested tiles read as the same surface family.
         .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color(.systemBackground).opacity(0.25))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(Color.white.opacity(0.2), lineWidth: 0.5)
-                )
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(.ultraThinMaterial)
         )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(borderColor, lineWidth: game.phase == .live ? 1.2 : 0.5)
-        )
-    }
-
-    private var borderColor: Color {
-        game.phase == .live ? .red.opacity(0.55) : Color.gray.opacity(0.25)
+        .overlay {
+            // Live games keep a red accent ring; everything else
+            // relies on the material itself for separation.
+            if game.phase == .live {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(Color.red.opacity(0.55), lineWidth: 1.2)
+            }
+        }
     }
 
     @ViewBuilder
@@ -1026,7 +1023,7 @@ private struct TeamLeadersSection: View {
                     }
                 }
             }
-            .padding(14)
+            .padding(16)
             // `.ultraThinMaterial` glass — exact same recipe as the
             // hero card so the two cards match in both light and dark
             // mode (the material adapts per-mode; a translucent
@@ -1289,7 +1286,7 @@ private struct FavoritePlayersSection: View {
     private var trailingControl: some View {
         if !favorites.isEmpty {
             Button(isEditing ? "Done" : "Edit") {
-                withAnimation(.easeInOut(duration: 0.15)) {
+                withAnimation(.spring(response: 0.3)) {
                     isEditing.toggle()
                 }
             }
@@ -1338,20 +1335,14 @@ private struct FavoritePlayerTile: View {
             .padding(.vertical, 10)
             .padding(.horizontal, 8)
             .frame(width: 132, height: 156)
-            // Thin glass panel — lets the team-color gradient bleed
-            // through instead of frosting the surface gray.
+            // Glass tile — `.ultraThinMaterial` keeps the surface
+            // family consistent with the hero/leaders cards while
+            // still letting the team-color gradient read through.
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color(.systemBackground).opacity(0.25))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(Color.white.opacity(0.2), lineWidth: 0.5)
-                    )
+                    .fill(.ultraThinMaterial)
             )
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(.quaternary, lineWidth: 0.5)
-            )
+            .shadow(color: .black.opacity(0.06), radius: 8, y: 3)
 
             if showRemoveBadge {
                 Button(action: onRemove) {
@@ -1378,15 +1369,11 @@ private struct FavoritePlayerTile: View {
         .padding(.vertical, 10)
         .padding(.horizontal, 8)
         .frame(width: 132, height: 156)
-        // Thin glass panel — matches the live tile so the skeleton
-        // shape lines up exactly while data is loading.
+        // Glass tile — matches the live tile so the skeleton shape
+        // lines up exactly while data is loading.
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color(.systemBackground).opacity(0.25))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(Color.white.opacity(0.2), lineWidth: 0.5)
-                )
+                .fill(.ultraThinMaterial)
         )
     }
 
@@ -1441,15 +1428,11 @@ private struct AddFavoriteTile: View {
                     .foregroundStyle(.primary)
             }
             .frame(width: 132, height: 156)
-            // Thin glass panel — matches the player tiles. The
-            // dashed accent stroke on top is the unique signal.
+            // Glass tile — matches the player tiles. The dashed
+            // accent stroke on top is the unique signal.
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color(.systemBackground).opacity(0.25))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(Color.white.opacity(0.2), lineWidth: 0.5)
-                    )
+                    .fill(.ultraThinMaterial)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
