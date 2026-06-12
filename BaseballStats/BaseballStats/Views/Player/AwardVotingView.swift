@@ -68,6 +68,8 @@ struct AwardVotingView: View {
                     PlayerProfileView(player: player)
                 }
         }
+        // Glass sheet — matches the app-wide sheet treatment.
+        .presentationBackground(.ultraThinMaterial)
         .task { await vm.load() }
     }
 
