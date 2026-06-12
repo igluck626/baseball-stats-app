@@ -151,24 +151,43 @@ enum TodayRecordAdjustments {
         let etFormatter = DateFormatter()
         etFormatter.timeZone = TimeZone(identifier: "America/New_York")
         etFormatter.dateFormat = "yyyy-MM-dd"
+
+        let etHourFormatter = DateFormatter()
+        etHourFormatter.timeZone = TimeZone(identifier: "America/New_York")
+        etHourFormatter.dateFormat = "HH"
+
         let todayET = etFormatter.string(from: now)
+        let currentETHour = Int(etHourFormatter.string(from: now)) ?? 12
+
+        // Midnight-ET edge: a late West Coast game can end after
+        // midnight ET, so before 6 AM ET also accept yesterday's ET
+        // date (otherwise those finals would fall outside "today").
+        var validETDates: Set<String> = [todayET]
+        if currentETHour < 6,
+           let yesterday = Calendar.current.date(byAdding: .day, value: -1, to: now) {
+            validETDates.insert(etFormatter.string(from: yesterday))
+        }
+
         let cutoff = parseLastUpdated(lastUpdated)
 
         var out: [FinalResult] = []
         for game in games {
-            guard game.phase == .final,
-                  let start = game.startDate,
-                  etFormatter.string(from: start) == todayET else { continue }
-            if let cutoff, start <= cutoff { continue }
-            guard let homeId = game.bdlHomeTeamId,
-                  let awayId = game.bdlAwayTeamId,
-                  let homeScore = game.teams.home.score,
-                  let awayScore = game.teams.away.score,
-                  homeScore != awayScore else { continue }
-            out.append(FinalResult(
-                homeId: homeId, awayId: awayId,
-                homeScore: homeScore, awayScore: awayScore, start: start,
-            ))
+            let result: FinalResult? = {
+                guard game.phase == .final,
+                      let start = game.startDate,
+                      validETDates.contains(etFormatter.string(from: start)) else { return nil }
+                if let cutoff, start <= cutoff { return nil }
+                guard let homeId = game.bdlHomeTeamId,
+                      let awayId = game.bdlAwayTeamId,
+                      let homeScore = game.teams.home.score,
+                      let awayScore = game.teams.away.score,
+                      homeScore != awayScore else { return nil }
+                return FinalResult(
+                    homeId: homeId, awayId: awayId,
+                    homeScore: homeScore, awayScore: awayScore, start: start,
+                )
+            }()
+            if let result { out.append(result) }
         }
         return out.sorted { $0.start < $1.start }
     }
