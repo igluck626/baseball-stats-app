@@ -148,7 +148,8 @@ struct StandingsView: View {
                             leagueLabel: "AL",
                             isHistorical: isHistoricalView,
                             adjustments: viewModel.todayAdjustments,
-                            adjustedGB: viewModel.adjustedGB
+                            adjustedGB: viewModel.adjustedGB,
+                            wildcardContenders: viewModel.alWildcard
                         )
                     case .nl:
                         LeagueTable(
@@ -156,7 +157,8 @@ struct StandingsView: View {
                             leagueLabel: "NL",
                             isHistorical: isHistoricalView,
                             adjustments: viewModel.todayAdjustments,
-                            adjustedGB: viewModel.adjustedGB
+                            adjustedGB: viewModel.adjustedGB,
+                            wildcardContenders: viewModel.nlWildcard
                         )
                     case .wc:
                         wildcardContent
@@ -241,7 +243,8 @@ struct StandingsView: View {
                     style: .wildcard(spots: spots),
                     isHistorical: isHistoricalView,
                     adjustments: viewModel.todayAdjustments,
-                    adjustedGB: viewModel.adjustedGB
+                    adjustedGB: viewModel.adjustedGB,
+                    wildcardContenders: viewModel.alWildcard
                 )
             }
             if !viewModel.nlWildcard.isEmpty {
@@ -251,7 +254,8 @@ struct StandingsView: View {
                     style: .wildcard(spots: spots),
                     isHistorical: isHistoricalView,
                     adjustments: viewModel.todayAdjustments,
-                    adjustedGB: viewModel.adjustedGB
+                    adjustedGB: viewModel.adjustedGB,
+                    wildcardContenders: viewModel.nlWildcard
                 )
             }
         }
@@ -325,6 +329,9 @@ private struct DivisionCard: View {
     let adjustments: [Int: (wDelta: Int, lDelta: Int)]
     /// Recomputed columns keyed by Lahman team_id (empty → use base).
     let adjustedGB: [String: AdjustedStandingColumns]
+    /// This league's non-division-leaders sorted best→worst — the
+    /// ranking the WCGB reformatter anchors on.
+    let wildcardContenders: [TeamStanding]
 
     /// Resolve a row's adjustment by bridging its Lahman team code to a
     /// BDL id (TeamStanding carries no BDL id directly).
@@ -392,6 +399,7 @@ private struct DivisionCard: View {
                     isHistorical: isHistorical,
                     adjustment: adjustment(for: team),
                     gbOverride: gbOverride(for: team),
+                    wildcardContenders: wildcardContenders,
                 )
                 .background(rowBackground(
                     style: style, isLeader: index == 0, rankInList: index,
@@ -510,6 +518,59 @@ private func formatGBString(_ value: String?) -> String {
     return hasPlus ? "+\(formatted)" : formatted
 }
 
+/// Reformat the backend's MLB-convention WCGB — every team measured
+/// from the FIRST wild card ("-" for that leader, "2.5" behind it) —
+/// into the display convention the overlay path
+/// (`TodayRecordAdjustments.recalculateGB`) uses: anchored on the LAST
+/// in-spot (3rd) wild card. Spot-holders above the anchor show their
+/// lead over it ("+1.5"), the anchor itself shows "-", and teams below
+/// show games back from it. Division leaders (in via their division,
+/// absent from `contenders`) show "-", matching the overlay.
+///
+/// `contenders` is the league's non-division-leaders sorted best→worst
+/// — position in that list decides which of the three cases applies.
+/// Returns a raw string for `formatGBString` to normalize; falls back
+/// to the backend value when the list or its WCGB values can't be
+/// resolved.
+private func reformatWCGB(team: TeamStanding, contenders: [TeamStanding]) -> String? {
+    // Modern wild-card spots. Current season only — the WCGB column is
+    // hidden for historical years. Matches the overlay's constant.
+    let spots = 3
+
+    // Backend WCGB → games back from the 1st wild card. "-" is the 1st
+    // itself (0 back); a "+" prefix (ahead of the 1st — shouldn't occur
+    // for non-division-leaders, but tolerated) reads as negative back.
+    func backFromFirst(_ s: TeamStanding) -> Double? {
+        guard let v = s.wild_card_games_back, !v.isEmpty else { return nil }
+        if v == "-" { return 0 }
+        if v.hasPrefix("+") { return Double(v.dropFirst()).map { -$0 } }
+        return Double(v)
+    }
+
+    guard let id = team.team_id,
+          let index = contenders.firstIndex(where: { $0.team_id == id }) else {
+        // Not in the contender list — a division leader when the list
+        // is populated; otherwise (no contender data, e.g. the backend
+        // hasn't flagged division leaders) pass the backend value
+        // through untouched.
+        return contenders.isEmpty ? team.wild_card_games_back : "-"
+    }
+    // Everyone holds a spot — no out-team to measure leads against.
+    guard contenders.count > spots else { return "-" }
+    guard let anchorBack = backFromFirst(contenders[spots - 1]),
+          let teamBack = backFromFirst(team) else {
+        return team.wild_card_games_back
+    }
+    if index < spots - 1 {
+        let lead = anchorBack - teamBack
+        return lead > 0 ? String(format: "+%.1f", lead) : "-"
+    } else if index == spots - 1 {
+        return "-"
+    } else {
+        return String(format: "%.1f", teamBack - anchorBack)
+    }
+}
+
 /// "54-27" formatted record, "—" when either side is nil.
 private func formatRecord(w: Int?, l: Int?) -> String {
     guard let w = w, let l = l else { return "—" }
@@ -544,6 +605,9 @@ private struct LeagueTable: View {
     let adjustments: [Int: (wDelta: Int, lDelta: Int)]
     /// Recomputed columns keyed by Lahman team_id (empty → use base).
     let adjustedGB: [String: AdjustedStandingColumns]
+    /// This league's non-division-leaders sorted best→worst — the
+    /// ranking the WCGB reformatter anchors on.
+    let wildcardContenders: [TeamStanding]
 
     /// Resolve a row's adjustment by bridging its Lahman team code to a
     /// BDL id (TeamStanding carries no BDL id directly).
@@ -635,7 +699,8 @@ private struct LeagueTable: View {
                         isLeader: tIdx == 0,
                         isHistorical: isHistorical,
                         adjustment: adjustment(for: team),
-                        gbOverride: gbOverride(for: team)
+                        gbOverride: gbOverride(for: team),
+                        wildcardContenders: wildcardContenders
                     )
                     if tIdx != group.teams.indices.last {
                         Divider().opacity(0.25)
@@ -825,6 +890,9 @@ private struct ScrollableStatsRow: View {
     /// Recomputed columns for this team when today's results shift the
     /// standings; nil → keep the backend / leader-derived values.
     var gbOverride: AdjustedStandingColumns? = nil
+    /// League's non-division-leaders sorted best→worst, for converting
+    /// the backend's first-WC-anchored WCGB to the display convention.
+    var wildcardContenders: [TeamStanding] = []
 
     var body: some View {
         let wDelta = adjustment?.wDelta ?? 0
@@ -834,11 +902,13 @@ private struct ScrollableStatsRow: View {
         let adjL = team.L.map { $0 + lDelta }
         // GB / WCGB: use the recomputed override when present (routed
         // through `formatGBString` so a "-" renders as the table's em-
-        // dash), else the existing leader-derived / backend values.
+        // dash), else the leader-derived / backend values — with the
+        // backend's WCGB re-anchored from the 1st wild card to the 3rd
+        // so both paths read the same way.
         let gbText = gbOverride.map { formatGBString($0.gb) }
             ?? formatGBString(formatGB(team: team, leader: leader, isLeader: isLeader))
         let wcgbText = gbOverride.map { formatGBString($0.wcgb) }
-            ?? formatGBString(team.wild_card_games_back)
+            ?? formatGBString(reformatWCGB(team: team, contenders: wildcardContenders))
         // PCT: adjusted win% when today's results shifted it, else base.
         let pctText = formatPct(gbOverride?.pct ?? team.win_pct)
         // STRK: rolled-forward streak when adjusted, else base. Blank /
