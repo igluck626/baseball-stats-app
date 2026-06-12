@@ -592,7 +592,7 @@ private struct GameCard: View {
         .padding(.vertical, 12)
         .frame(maxWidth: .infinity)
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
-        .shadow(color: .black.opacity(0.06), radius: 6, x: 0, y: 2)
+        .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 3)
         .contentShape(Rectangle())
     }
 
@@ -773,7 +773,7 @@ private struct FinalGameCard: View {
         .padding(.vertical, 12)
         .frame(maxWidth: .infinity)
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
-        .shadow(color: .black.opacity(0.06), radius: 6, x: 0, y: 2)
+        .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 3)
     }
 
     private func fetchBoxScore() async {
@@ -1300,7 +1300,7 @@ private struct LiveGameCard: View {
         .padding(.vertical, 12)
         .frame(maxWidth: .infinity)
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
-        .shadow(color: .black.opacity(0.06), radius: 6, x: 0, y: 2)
+        .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 3)
         .contentShape(Rectangle())
         .task { await feed.start(gameId: game.gamePk) }
         .onDisappear { feed.stop() }
