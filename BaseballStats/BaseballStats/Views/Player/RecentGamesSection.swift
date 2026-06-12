@@ -100,8 +100,8 @@ struct RecentGamesSection: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20))
-        .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 2)
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 18))
+        .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 3)
         .task { await vm.load() }
     }
 
@@ -162,11 +162,7 @@ struct RecentGamesSection: View {
             }
         }
         .frame(maxWidth: .infinity)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color(.separator).opacity(0.4), lineWidth: 0.5)
-        )
+        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
     @ViewBuilder
