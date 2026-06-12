@@ -82,6 +82,8 @@ struct TeamLeadersSheet: View {
                 PlayerProfileView(player: player)
             }
         }
+        // Glass sheet — matches the app-wide sheet treatment.
+        .presentationBackground(.ultraThinMaterial)
         .task {
             // Initial fetch — restore the user's last tapped stat
             // (if any). Otherwise use the role's default.
@@ -129,15 +131,8 @@ struct TeamLeadersSheet: View {
                             .padding(.horizontal, 12)
                             .padding(.vertical, 6)
                             .background(
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
                                     .fill(selected ? tint : Color(.systemFill).opacity(0.35))
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .strokeBorder(
-                                        selected ? Color.clear : Color(.separator).opacity(0.5),
-                                        lineWidth: 0.5,
-                                    )
                             )
                             .foregroundStyle(selected ? .white : .primary)
                     }
@@ -179,6 +174,7 @@ struct TeamLeadersSheet: View {
                 }
             }
             .listStyle(.plain)
+            .scrollContentBackground(.hidden)
         }
     }
 
