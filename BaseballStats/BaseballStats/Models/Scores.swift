@@ -307,27 +307,36 @@ enum TodayRecordAdjustments {
             }
         }
 
-        // WCGB — per league, among non-division-leaders. The top
-        // `wildCardSpots` hold a spot ("-"); the rest trail the last
-        // spot-holder. Division leaders are already in → "-".
+        // WCGB — per league. Division leaders are in via their division
+        // ("—"). Among non-division-leaders sorted best→worst, the top
+        // `wildCardSpots` hold a spot: each spot-holder above the last
+        // shows how far it leads the next spot ("+X.X"); the last in-
+        // spot shows "—". Everyone below trails that last in-spot.
         for (_, group) in Dictionary(grouping: recs, by: { $0.league }) {
             for team in group where divisionLeaders.contains(team.teamId) {
-                wcgbByTeam[team.teamId] = "-"
+                wcgbByTeam[team.teamId] = "—"
             }
             let contenders = group
                 .filter { !divisionLeaders.contains($0.teamId) }
                 .sorted { ($0.pct, $0.w) > ($1.pct, $1.w) }
             guard contenders.count > wildCardSpots else {
-                for team in contenders { wcgbByTeam[team.teamId] = "-" }
+                for team in contenders { wcgbByTeam[team.teamId] = "—" }
                 continue
             }
             let lastIn = contenders[wildCardSpots - 1]
             for (i, team) in contenders.enumerated() {
-                if i < wildCardSpots {
-                    wcgbByTeam[team.teamId] = "-"
+                if i < wildCardSpots - 1 {
+                    // In, and leading the next spot-holder.
+                    let next = contenders[i + 1]
+                    let lead = Double((team.w - next.w) + (next.l - team.l)) / 2.0
+                    wcgbByTeam[team.teamId] = lead > 0 ? "+" + formatGB(lead) : "—"
+                } else if i == wildCardSpots - 1 {
+                    // Holds the last wild-card spot.
+                    wcgbByTeam[team.teamId] = "—"
                 } else {
-                    let wcgb = Double((lastIn.w - team.w) + (team.l - lastIn.l)) / 2.0
-                    wcgbByTeam[team.teamId] = formatGB(wcgb)
+                    // Out — games back from the last in-spot.
+                    let back = Double((lastIn.w - team.w) + (team.l - lastIn.l)) / 2.0
+                    wcgbByTeam[team.teamId] = formatGB(back)
                 }
             }
         }
@@ -378,17 +387,11 @@ enum TodayRecordAdjustments {
         return "\(prefix)1"
     }
 
-    /// "-" for 0 (leader / in WC), whole numbers without a decimal
-    /// ("1", "2"), halves with one ("0.5", "1.5"). Rounds to the
-    /// nearest half game.
+    /// "—" for 0 (leader / level), otherwise one decimal place rounded
+    /// to the nearest half game ("2.0", "0.5", "6.5").
     private static func formatGB(_ value: Double) -> String {
-        if value == 0 { return "-" }
-        let truncated = (value * 2).rounded() / 2
-        if truncated == truncated.rounded() {
-            return String(Int(truncated))
-        } else {
-            return String(format: "%.1f", truncated)
-        }
+        if value == 0 { return "—" }
+        return String(format: "%.1f", (value * 2).rounded() / 2)
     }
 }
 

@@ -494,13 +494,19 @@ private func formatGB(team: TeamStanding, leader: TeamStanding?, isLeader: Bool)
     return String(format: "%.1f", gb)
 }
 
-/// MLB Stats API renders an absent games-back as the bare string "-".
-/// Normalize to our em-dash so the rest of the row stays visually
-/// consistent.
+/// Normalize a games-back string for display: absent / "-" → em-dash,
+/// and any (possibly signed) numeric value is reformatted to one
+/// decimal place so the backend's "2" reads as "2.0" — matching the
+/// overlay's formatting. Non-numeric values (already an em-dash, etc.)
+/// pass through unchanged.
 private func formatGBString(_ value: String?) -> String {
-    guard let v = value, !v.isEmpty else { return "—" }
-    if v == "-" { return "—" }
-    return v
+    guard let v = value, !v.isEmpty, v != "-" else { return "—" }
+    let hasPlus = v.hasPrefix("+")
+    let numeric = hasPlus ? String(v.dropFirst()) : v
+    guard let num = Double(numeric) else { return v }
+    if num == 0 { return "—" }
+    let formatted = String(format: "%.1f", (num * 2).rounded() / 2)
+    return hasPlus ? "+\(formatted)" : formatted
 }
 
 /// "54-27" formatted record, "—" when either side is nil.
@@ -828,7 +834,7 @@ private struct ScrollableStatsRow: View {
         // through `formatGBString` so a "-" renders as the table's em-
         // dash), else the existing leader-derived / backend values.
         let gbText = gbOverride.map { formatGBString($0.gb) }
-            ?? formatGB(team: team, leader: leader, isLeader: isLeader)
+            ?? formatGBString(formatGB(team: team, leader: leader, isLeader: isLeader))
         let wcgbText = gbOverride.map { formatGBString($0.wcgb) }
             ?? formatGBString(team.wild_card_games_back)
         // PCT: adjusted win% when today's results shifted it, else base.
