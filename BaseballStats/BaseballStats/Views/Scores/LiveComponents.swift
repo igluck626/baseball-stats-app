@@ -369,7 +369,7 @@ struct PlaysView: View {
                     .padding(.vertical, 12)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
-                    .shadow(color: .black.opacity(0.06), radius: 6, x: 0, y: 2)
+                    .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 3)
             }
         }
         .onChange(of: plays) { _, new in
