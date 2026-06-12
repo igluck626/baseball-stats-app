@@ -376,7 +376,7 @@ private struct DivisionCard: View {
             FrozenIdentityHeader()
             Divider().opacity(0.4)
             ForEach(Array(teams.enumerated()), id: \.offset) { index, team in
-                FrozenIdentityCell(team: team, isLeader: index == 0)
+                FrozenIdentityCell(team: team, isLeader: team.rank == 1)
                     .background(rowBackground(
                         style: style, isLeader: index == 0, rankInList: index,
                     ))
@@ -395,16 +395,16 @@ private struct DivisionCard: View {
                 // GB here is games back from the team's DIVISION leader
                 // (the raw backend `games_back`), not from the top of
                 // this wildcard list — so leadership is the backend's
-                // division_leader flag, never list position, and there
-                // is no first-row "—". Division leaders don't appear in
-                // wildcard lists, so the flag is effectively always
+                // rank (1 = division leader), never list position, and
+                // there is no first-row "—". Rank-1 teams don't appear
+                // in wildcard lists, so the check is effectively always
                 // false; `leader: nil` skips formatGB's derive-from-
                 // leader fallback, which would compute against the
                 // wrong team in this card.
                 ScrollableStatsRow(
                     team: team,
                     leader: nil,
-                    isLeader: team.division_leader == true,
+                    isLeader: team.rank == 1,
                     isHistorical: isHistorical,
                     adjustment: adjustment(for: team),
                     gbOverride: gbOverride(for: team),
@@ -558,9 +558,9 @@ private func reformatWCGB(team: TeamStanding, contenders: [TeamStanding]) -> Str
 
     guard let id = team.team_id,
           let index = contenders.firstIndex(where: { $0.team_id == id }) else {
-        // Not in the contender list — a division leader when the list
-        // is populated; otherwise (no contender data, e.g. the backend
-        // hasn't flagged division leaders) pass the backend value
+        // Not in the contender list — a division leader (rank 1) when
+        // the list is populated; otherwise (no contender data, e.g.
+        // the backend hasn't ranked teams) pass the backend value
         // through untouched.
         return contenders.isEmpty ? team.wild_card_games_back : "-"
     }
@@ -679,7 +679,7 @@ private struct LeagueTable: View {
                 FrozenIdentityHeader()
                 Divider().opacity(0.4)
                 ForEach(Array(group.teams.enumerated()), id: \.offset) { tIdx, team in
-                    FrozenIdentityCell(team: team, isLeader: tIdx == 0)
+                    FrozenIdentityCell(team: team, isLeader: team.rank == 1)
                     if tIdx != group.teams.indices.last {
                         Divider().opacity(0.25)
                     }
@@ -705,7 +705,7 @@ private struct LeagueTable: View {
                     ScrollableStatsRow(
                         team: team,
                         leader: group.teams.first,
-                        isLeader: tIdx == 0,
+                        isLeader: team.rank == 1,
                         isHistorical: isHistorical,
                         adjustment: adjustment(for: team),
                         gbOverride: gbOverride(for: team),

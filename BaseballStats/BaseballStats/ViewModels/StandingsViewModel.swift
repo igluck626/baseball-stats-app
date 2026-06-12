@@ -142,10 +142,10 @@ final class StandingsViewModel: ObservableObject {
             switch team.league {
             case "AL":
                 al[div, default: []].append(team)
-                if team.division_leader != true { alWC.append(team) }
+                if team.rank != 1 { alWC.append(team) }
             case "NL":
                 nl[div, default: []].append(team)
-                if team.division_leader != true { nlWC.append(team) }
+                if team.rank != 1 { nlWC.append(team) }
             default:
                 continue
             }
@@ -154,9 +154,11 @@ final class StandingsViewModel: ObservableObject {
         for key in nl.keys { nl[key]?.sort(by: Self.standingsSort) }
         alStandings = al
         nlStandings = nl
-        // If the backend hasn't populated division_leader yet (historical
-        // years), both wildcard arrays come back empty — the view falls
-        // back to hiding the tab in that case.
+        // Contenders are every team not ranked first in its division
+        // (rank == 1 is the authoritative division-leader indicator;
+        // a missing rank keeps the team in the contender pool). If
+        // rank is absent across the board both arrays come back empty
+        // — the view falls back to hiding the tab in that case.
         alWildcard = alWC.sorted(by: Self.standingsSort)
         nlWildcard = nlWC.sorted(by: Self.standingsSort)
     }
