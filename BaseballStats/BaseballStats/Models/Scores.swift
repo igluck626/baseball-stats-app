@@ -214,14 +214,35 @@ enum TodayRecordAdjustments {
         return out
     }
 
-    /// Tolerant ISO-8601 parse for the backend's microsecond
-    /// fractional-second `last_updated` stamp.
+    /// Tolerant ISO-8601 parse for the backend's `last_updated` stamp.
+    /// Python's `datetime.isoformat()` emits 6-digit microseconds
+    /// (e.g. "2026-06-11T15:03:45.395494Z"), which `ISO8601DateFormatter`
+    /// (millisecond-only) won't parse — so we truncate to milliseconds,
+    /// then strip fractional seconds entirely as a last resort.
     static func parseLastUpdated(_ iso: String?) -> Date? {
         guard let iso else { return nil }
-        let withFraction = ISO8601DateFormatter()
-        withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = withFraction.date(from: iso) { return date }
-        return ISO8601DateFormatter().date(from: iso)
+
+        // Standard ISO-8601 with fractional seconds (3-digit ms).
+        let msFormatter = ISO8601DateFormatter()
+        msFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = msFormatter.date(from: iso) { return date }
+
+        // Python's 6-digit microseconds → truncate to 3-digit ms.
+        // "…45.395494Z" → "…45.395Z".
+        let truncated = iso.replacingOccurrences(
+            of: #"(\.\d{3})\d+(Z|[+-]\d{2}:?\d{2})$"#,
+            with: "$1$2",
+            options: .regularExpression,
+        )
+        if let date = msFormatter.date(from: truncated) { return date }
+
+        // Last resort: drop fractional seconds altogether.
+        let stripped = iso.replacingOccurrences(
+            of: #"\.\d+(Z|[+-]\d{2}:?\d{2})$"#,
+            with: "$1",
+            options: .regularExpression,
+        )
+        return ISO8601DateFormatter().date(from: stripped)
     }
 
     /// Modern wild-card spots per league (current season only — this
