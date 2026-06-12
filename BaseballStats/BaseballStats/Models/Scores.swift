@@ -192,6 +192,117 @@ enum TodayRecordAdjustments {
         if let date = withFraction.date(from: iso) { return date }
         return ISO8601DateFormatter().date(from: iso)
     }
+
+    /// Modern wild-card spots per league (current season only — this
+    /// overlay never applies to historical years).
+    private static let wildCardSpots = 3
+
+    /// Recompute Games-Back (vs the division leader) and Wild-Card
+    /// Games-Back (vs the last wild-card spot) from the today-adjusted
+    /// records, so the GB / WCGB columns stay consistent with the
+    /// bumped W-L. Returns a dict keyed by Lahman `team_id` →
+    /// `(gb, wcgb)` display strings; empty when there are no
+    /// adjustments (callers then keep the backend / leader-derived
+    /// values). GB / WCGB are recomputed for EVERY team — one win
+    /// shifts the whole division's / league's gaps, not just its row.
+    static func recalculateGB(
+        standings: [TeamStanding],
+        adjustments: [Int: (wDelta: Int, lDelta: Int)],
+    ) -> [String: (gb: String, wcgb: String, pct: Double?)] {
+        guard !adjustments.isEmpty else { return [:] }
+
+        struct Rec {
+            let teamId: String
+            let league: String
+            let division: String
+            let w: Int
+            let l: Int
+            var pct: Double {
+                let g = w + l
+                return g > 0 ? Double(w) / Double(g) : 0
+            }
+        }
+
+        // Apply the W/L deltas (bridging Lahman team_id → BDL id).
+        var recs: [Rec] = []
+        var pctByTeam: [String: Double] = [:]
+        for s in standings {
+            guard let teamId = s.team_id, let league = s.league,
+                  let division = s.division, let w0 = s.W, let l0 = s.L else { continue }
+            let delta = lahmanToBDLTeamId[teamId].flatMap { adjustments[$0] }
+            let rec = Rec(
+                teamId:   teamId,
+                league:   league,
+                division: division,
+                w:        w0 + (delta?.wDelta ?? 0),
+                l:        l0 + (delta?.lDelta ?? 0),
+            )
+            recs.append(rec)
+            pctByTeam[teamId] = rec.pct
+        }
+
+        var gbByTeam: [String: String] = [:]
+        var wcgbByTeam: [String: String] = [:]
+
+        // GB — per (league, division), measured off the best record.
+        var divisionLeaders: Set<String> = []
+        for (_, group) in Dictionary(grouping: recs, by: { "\($0.league)|\($0.division)" }) {
+            guard let leader = group.max(by: { ($0.pct, $0.w) < ($1.pct, $1.w) }) else { continue }
+            divisionLeaders.insert(leader.teamId)
+            for team in group {
+                let gb = Double((leader.w - team.w) + (team.l - leader.l)) / 2.0
+                gbByTeam[team.teamId] = formatGB(gb)
+            }
+        }
+
+        // WCGB — per league, among non-division-leaders. The top
+        // `wildCardSpots` hold a spot ("-"); the rest trail the last
+        // spot-holder. Division leaders are already in → "-".
+        for (_, group) in Dictionary(grouping: recs, by: { $0.league }) {
+            for team in group where divisionLeaders.contains(team.teamId) {
+                wcgbByTeam[team.teamId] = "-"
+            }
+            let contenders = group
+                .filter { !divisionLeaders.contains($0.teamId) }
+                .sorted { ($0.pct, $0.w) > ($1.pct, $1.w) }
+            guard contenders.count > wildCardSpots else {
+                for team in contenders { wcgbByTeam[team.teamId] = "-" }
+                continue
+            }
+            let lastIn = contenders[wildCardSpots - 1]
+            for (i, team) in contenders.enumerated() {
+                if i < wildCardSpots {
+                    wcgbByTeam[team.teamId] = "-"
+                } else {
+                    let wcgb = Double((lastIn.w - team.w) + (team.l - lastIn.l)) / 2.0
+                    wcgbByTeam[team.teamId] = formatGB(wcgb)
+                }
+            }
+        }
+
+        var out: [String: (gb: String, wcgb: String, pct: Double?)] = [:]
+        for id in Set(gbByTeam.keys).union(wcgbByTeam.keys) {
+            out[id] = (
+                gb:   gbByTeam[id] ?? "-",
+                wcgb: wcgbByTeam[id] ?? "-",
+                pct:  pctByTeam[id],
+            )
+        }
+        return out
+    }
+
+    /// "-" for 0 (leader / in WC), whole numbers without a decimal
+    /// ("1", "2"), halves with one ("0.5", "1.5"). Rounds to the
+    /// nearest half game.
+    private static func formatGB(_ value: Double) -> String {
+        if value == 0 { return "-" }
+        let truncated = (value * 2).rounded() / 2
+        if truncated == truncated.rounded() {
+            return String(Int(truncated))
+        } else {
+            return String(format: "%.1f", truncated)
+        }
+    }
 }
 
 struct Venue: Codable, Hashable {

@@ -135,14 +135,16 @@ struct StandingsView: View {
                             buckets: viewModel.alStandings,
                             leagueLabel: "AL",
                             isHistorical: isHistoricalView,
-                            adjustments: viewModel.todayAdjustments
+                            adjustments: viewModel.todayAdjustments,
+                            adjustedGB: viewModel.adjustedGB
                         )
                     case .nl:
                         LeagueTable(
                             buckets: viewModel.nlStandings,
                             leagueLabel: "NL",
                             isHistorical: isHistoricalView,
-                            adjustments: viewModel.todayAdjustments
+                            adjustments: viewModel.todayAdjustments,
+                            adjustedGB: viewModel.adjustedGB
                         )
                     case .wc:
                         wildcardContent
@@ -226,7 +228,8 @@ struct StandingsView: View {
                     teams: viewModel.alWildcard,
                     style: .wildcard(spots: spots),
                     isHistorical: isHistoricalView,
-                    adjustments: viewModel.todayAdjustments
+                    adjustments: viewModel.todayAdjustments,
+                    adjustedGB: viewModel.adjustedGB
                 )
             }
             if !viewModel.nlWildcard.isEmpty {
@@ -235,7 +238,8 @@ struct StandingsView: View {
                     teams: viewModel.nlWildcard,
                     style: .wildcard(spots: spots),
                     isHistorical: isHistoricalView,
-                    adjustments: viewModel.todayAdjustments
+                    adjustments: viewModel.todayAdjustments,
+                    adjustedGB: viewModel.adjustedGB
                 )
             }
         }
@@ -307,12 +311,18 @@ private struct DivisionCard: View {
     let isHistorical: Bool
     /// Today's not-yet-official W/L bumps keyed by BDL team id.
     let adjustments: [Int: (wDelta: Int, lDelta: Int)]
+    /// Recomputed GB / WCGB / PCT keyed by Lahman team_id (empty → use base).
+    let adjustedGB: [String: (gb: String, wcgb: String, pct: Double?)]
 
     /// Resolve a row's adjustment by bridging its Lahman team code to a
     /// BDL id (TeamStanding carries no BDL id directly).
     private func adjustment(for team: TeamStanding) -> (wDelta: Int, lDelta: Int)? {
         guard let code = team.team_id, let bdlId = lahmanToBDLTeamId[code] else { return nil }
         return adjustments[bdlId]
+    }
+
+    private func gbOverride(for team: TeamStanding) -> (gb: String, wcgb: String, pct: Double?)? {
+        team.team_id.flatMap { adjustedGB[$0] }
     }
 
     var body: some View {
@@ -368,6 +378,7 @@ private struct DivisionCard: View {
                     isLeader: index == 0,
                     isHistorical: isHistorical,
                     adjustment: adjustment(for: team),
+                    gbOverride: gbOverride(for: team),
                 )
                 .background(rowBackground(
                     style: style, isLeader: index == 0, rankInList: index,
@@ -512,12 +523,18 @@ private struct LeagueTable: View {
     let isHistorical: Bool
     /// Today's not-yet-official W/L bumps keyed by BDL team id.
     let adjustments: [Int: (wDelta: Int, lDelta: Int)]
+    /// Recomputed GB / WCGB / PCT keyed by Lahman team_id (empty → use base).
+    let adjustedGB: [String: (gb: String, wcgb: String, pct: Double?)]
 
     /// Resolve a row's adjustment by bridging its Lahman team code to a
     /// BDL id (TeamStanding carries no BDL id directly).
     private func adjustment(for team: TeamStanding) -> (wDelta: Int, lDelta: Int)? {
         guard let code = team.team_id, let bdlId = lahmanToBDLTeamId[code] else { return nil }
         return adjustments[bdlId]
+    }
+
+    private func gbOverride(for team: TeamStanding) -> (gb: String, wcgb: String, pct: Double?)? {
+        team.team_id.flatMap { adjustedGB[$0] }
     }
 
     private static let divisionOrder = ["E", "C", "W"]
@@ -597,7 +614,8 @@ private struct LeagueTable: View {
                         leader: group.teams.first,
                         isLeader: tIdx == 0,
                         isHistorical: isHistorical,
-                        adjustment: adjustment(for: team)
+                        adjustment: adjustment(for: team),
+                        gbOverride: gbOverride(for: team)
                     )
                     if tIdx != group.teams.indices.last {
                         Divider().opacity(0.25)
@@ -784,6 +802,10 @@ private struct ScrollableStatsRow: View {
     let isHistorical: Bool
     /// Today's not-yet-official bump for this team (nil when none).
     var adjustment: (wDelta: Int, lDelta: Int)? = nil
+    /// Recomputed GB / WCGB / PCT for this team when today's results
+    /// shift the standings; nil → keep the backend / leader-derived
+    /// values.
+    var gbOverride: (gb: String, wcgb: String, pct: Double?)? = nil
 
     var body: some View {
         let wDelta = adjustment?.wDelta ?? 0
@@ -791,15 +813,22 @@ private struct ScrollableStatsRow: View {
         let adjusted = wDelta > 0 || lDelta > 0
         let adjW = team.W.map { $0 + wDelta }
         let adjL = team.L.map { $0 + lDelta }
+        // GB / WCGB: use the recomputed override when present (routed
+        // through `formatGBString` so a "-" renders as the table's em-
+        // dash), else the existing leader-derived / backend values.
+        let gbText = gbOverride.map { formatGBString($0.gb) }
+            ?? formatGB(team: team, leader: leader, isLeader: isLeader)
+        let wcgbText = gbOverride.map { formatGBString($0.wcgb) }
+            ?? formatGBString(team.wild_card_games_back)
+        // PCT: adjusted win% when today's results shifted it, else base.
+        let pctText = formatPct(gbOverride?.pct ?? team.win_pct)
         return HStack(spacing: 0) {
             statCell(formatInt(adjW), width: StandingsLayout.cell)
             wlLossCell(adjL, dagger: adjusted, width: StandingsLayout.cell)
-            statCell(formatPct(team.win_pct), width: StandingsLayout.pct)
-            statCell(formatGB(team: team, leader: leader, isLeader: isLeader),
-                     width: StandingsLayout.gb, dim: isLeader)
+            statCell(pctText, width: StandingsLayout.pct)
+            statCell(gbText, width: StandingsLayout.gb, dim: gbText == "—")
             if !isHistorical {
-                statCell(formatGBString(team.wild_card_games_back),
-                         width: StandingsLayout.gb, dim: true)
+                statCell(wcgbText, width: StandingsLayout.gb, dim: true)
                 statCell(formatRecord(w: team.last_ten_w, l: team.last_ten_l),
                          width: StandingsLayout.record)
                 statCell(team.hasStreak ? (team.streak_code ?? "—") : "—",

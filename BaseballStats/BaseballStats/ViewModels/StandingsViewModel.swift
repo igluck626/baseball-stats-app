@@ -33,6 +33,12 @@ final class StandingsViewModel: ObservableObject {
     /// view folds these into the displayed W-L and flags them with "†".
     @Published var todayAdjustments: [Int: (wDelta: Int, lDelta: Int)] = [:]
 
+    /// Recomputed GB / WCGB strings keyed by Lahman `team_id`, derived
+    /// from the today-adjusted records so those columns stay consistent
+    /// with the bumped W-L. Empty when there are no adjustments (rows
+    /// then keep the backend / leader-derived values).
+    @Published var adjustedGB: [String: (gb: String, wcgb: String, pct: Double?)] = [:]
+
     private let api: APIClient
     private let bdl: BallDontLieClient
 
@@ -76,6 +82,7 @@ final class StandingsViewModel: ObservableObject {
     func loadTodayAdjustments() async {
         guard selectedYear == Self.currentYear else {
             todayAdjustments = [:]
+            adjustedGB = [:]
             return
         }
 
@@ -107,6 +114,14 @@ final class StandingsViewModel: ObservableObject {
 
         todayAdjustments = TodayRecordAdjustments.deltas(
             from: games, lastUpdated: lastUpdated,
+        )
+        // Recompute GB / WCGB off the adjusted records so those columns
+        // stay in step with the bumped W-L. The flat team list is the
+        // union of the division buckets (every team sits in one).
+        let allTeams = alStandings.values.flatMap { $0 }
+            + nlStandings.values.flatMap { $0 }
+        adjustedGB = TodayRecordAdjustments.recalculateGB(
+            standings: allTeams, adjustments: todayAdjustments,
         )
     }
 
