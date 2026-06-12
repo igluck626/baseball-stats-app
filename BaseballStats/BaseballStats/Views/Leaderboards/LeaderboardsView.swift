@@ -252,7 +252,7 @@ struct LeaderboardsView: View {
             // the parent) so the slide is bounded to this toggle's
             // state change and doesn't accidentally animate
             // unrelated re-renders.
-            withAnimation(.easeInOut(duration: 0.2)) {
+            withAnimation(.spring(response: 0.3)) {
                 showFilters.toggle()
             }
         } label: {
