@@ -12,6 +12,18 @@
 
 import SwiftUI
 
+/// Recomputed standings columns for a team when today's not-yet-
+/// official results shift the table — GB / WCGB / PCT plus STRK,
+/// home/away splits, and run totals. Matches
+/// `TodayRecordAdjustments.recalculateGB`'s value shape (keyed by
+/// Lahman team_id). A typealias keeps the 10-field tuple from being
+/// re-spelled at every call site.
+typealias AdjustedStandingColumns = (
+    gb: String, wcgb: String, pct: Double?, strk: String?,
+    homeW: Int?, homeL: Int?, awayW: Int?, awayL: Int?,
+    runsScored: Int?, runsAllowed: Int?
+)
+
 struct StandingsView: View {
     @StateObject private var viewModel = StandingsViewModel()
     @State private var selectedTab: TabSelection = .al
@@ -311,8 +323,8 @@ private struct DivisionCard: View {
     let isHistorical: Bool
     /// Today's not-yet-official W/L bumps keyed by BDL team id.
     let adjustments: [Int: (wDelta: Int, lDelta: Int)]
-    /// Recomputed GB / WCGB / PCT keyed by Lahman team_id (empty → use base).
-    let adjustedGB: [String: (gb: String, wcgb: String, pct: Double?)]
+    /// Recomputed columns keyed by Lahman team_id (empty → use base).
+    let adjustedGB: [String: AdjustedStandingColumns]
 
     /// Resolve a row's adjustment by bridging its Lahman team code to a
     /// BDL id (TeamStanding carries no BDL id directly).
@@ -321,7 +333,7 @@ private struct DivisionCard: View {
         return adjustments[bdlId]
     }
 
-    private func gbOverride(for team: TeamStanding) -> (gb: String, wcgb: String, pct: Double?)? {
+    private func gbOverride(for team: TeamStanding) -> AdjustedStandingColumns? {
         team.team_id.flatMap { adjustedGB[$0] }
     }
 
@@ -523,8 +535,8 @@ private struct LeagueTable: View {
     let isHistorical: Bool
     /// Today's not-yet-official W/L bumps keyed by BDL team id.
     let adjustments: [Int: (wDelta: Int, lDelta: Int)]
-    /// Recomputed GB / WCGB / PCT keyed by Lahman team_id (empty → use base).
-    let adjustedGB: [String: (gb: String, wcgb: String, pct: Double?)]
+    /// Recomputed columns keyed by Lahman team_id (empty → use base).
+    let adjustedGB: [String: AdjustedStandingColumns]
 
     /// Resolve a row's adjustment by bridging its Lahman team code to a
     /// BDL id (TeamStanding carries no BDL id directly).
@@ -533,7 +545,7 @@ private struct LeagueTable: View {
         return adjustments[bdlId]
     }
 
-    private func gbOverride(for team: TeamStanding) -> (gb: String, wcgb: String, pct: Double?)? {
+    private func gbOverride(for team: TeamStanding) -> AdjustedStandingColumns? {
         team.team_id.flatMap { adjustedGB[$0] }
     }
 
@@ -802,10 +814,9 @@ private struct ScrollableStatsRow: View {
     let isHistorical: Bool
     /// Today's not-yet-official bump for this team (nil when none).
     var adjustment: (wDelta: Int, lDelta: Int)? = nil
-    /// Recomputed GB / WCGB / PCT for this team when today's results
-    /// shift the standings; nil → keep the backend / leader-derived
-    /// values.
-    var gbOverride: (gb: String, wcgb: String, pct: Double?)? = nil
+    /// Recomputed columns for this team when today's results shift the
+    /// standings; nil → keep the backend / leader-derived values.
+    var gbOverride: AdjustedStandingColumns? = nil
 
     var body: some View {
         let wDelta = adjustment?.wDelta ?? 0
@@ -822,6 +833,18 @@ private struct ScrollableStatsRow: View {
             ?? formatGBString(team.wild_card_games_back)
         // PCT: adjusted win% when today's results shifted it, else base.
         let pctText = formatPct(gbOverride?.pct ?? team.win_pct)
+        // STRK: rolled-forward streak when adjusted, else base. Blank /
+        // "-" collapses to the em-dash like the base path.
+        let strkValue = gbOverride?.strk ?? team.streak_code
+        let strkText = (strkValue?.isEmpty == false && strkValue != "-") ? strkValue! : "—"
+        // Home / Away splits + run diff: prefer the adjusted values.
+        let homeText = formatRecord(w: gbOverride?.homeW ?? team.home_w,
+                                    l: gbOverride?.homeL ?? team.home_l)
+        let awayText = formatRecord(w: gbOverride?.awayW ?? team.away_w,
+                                    l: gbOverride?.awayL ?? team.away_l)
+        let rs = gbOverride?.runsScored  ?? team.runs_scored
+        let ra = gbOverride?.runsAllowed ?? team.runs_allowed
+        let diff: Int? = (rs != nil || ra != nil) ? ((rs ?? 0) - (ra ?? 0)) : nil
         return HStack(spacing: 0) {
             statCell(formatInt(adjW), width: StandingsLayout.cell)
             wlLossCell(adjL, dagger: adjusted, width: StandingsLayout.cell)
@@ -831,15 +854,11 @@ private struct ScrollableStatsRow: View {
                 statCell(wcgbText, width: StandingsLayout.gb, dim: true)
                 statCell(formatRecord(w: team.last_ten_w, l: team.last_ten_l),
                          width: StandingsLayout.record)
-                statCell(team.hasStreak ? (team.streak_code ?? "—") : "—",
-                         width: StandingsLayout.streak)
-                statCell(formatRecord(w: team.home_w, l: team.home_l),
-                         width: StandingsLayout.record)
-                statCell(formatRecord(w: team.away_w, l: team.away_l),
-                         width: StandingsLayout.record)
+                statCell(strkText, width: StandingsLayout.streak)
+                statCell(homeText, width: StandingsLayout.record)
+                statCell(awayText, width: StandingsLayout.record)
             }
-            statCell(formatDiff(team.runDifferential),
-                     width: StandingsLayout.diff)
+            statCell(formatDiff(diff), width: StandingsLayout.diff)
         }
         .font(.subheadline)
         .padding(.trailing, 14)

@@ -126,19 +126,35 @@ struct TeamRecord: Codable, Hashable {
 /// applied.
 enum TodayRecordAdjustments {
 
-    /// Per-team `(wDelta, lDelta)` keyed by **BDL team id**.
-    static func deltas(
+    /// One today-ET final game's decided outcome, normalized to BDL
+    /// team ids + scores. `start` is kept so a doubleheader's two games
+    /// can be applied to a streak in chronological order.
+    struct FinalResult {
+        let homeId: Int
+        let awayId: Int
+        let homeScore: Int
+        let awayScore: Int
+        let start: Date
+        var homeWon: Bool { homeScore > awayScore }
+    }
+
+    /// The today-ET, post-cutoff, non-tie final games — the single
+    /// qualifying set that both `deltas` and `recalculateGB` work from,
+    /// sorted chronologically. Filtering lives here so the W/L deltas
+    /// and the STRK / split / run-diff adjustments always agree on
+    /// which games count.
+    static func qualifyingResults(
         from games: [Game],
         lastUpdated: String?,
         now: Date = Date(),
-    ) -> [Int: (wDelta: Int, lDelta: Int)] {
+    ) -> [FinalResult] {
         let etFormatter = DateFormatter()
         etFormatter.timeZone = TimeZone(identifier: "America/New_York")
         etFormatter.dateFormat = "yyyy-MM-dd"
         let todayET = etFormatter.string(from: now)
         let cutoff = parseLastUpdated(lastUpdated)
 
-        var out: [Int: (wDelta: Int, lDelta: Int)] = [:]
+        var out: [FinalResult] = []
         for game in games {
             guard game.phase == .final,
                   let start = game.startDate,
@@ -149,9 +165,24 @@ enum TodayRecordAdjustments {
                   let homeScore = game.teams.home.score,
                   let awayScore = game.teams.away.score,
                   homeScore != awayScore else { continue }
-            let homeWon = homeScore > awayScore
-            let winnerId = homeWon ? homeId : awayId
-            let loserId  = homeWon ? awayId : homeId
+            out.append(FinalResult(
+                homeId: homeId, awayId: awayId,
+                homeScore: homeScore, awayScore: awayScore, start: start,
+            ))
+        }
+        return out.sorted { $0.start < $1.start }
+    }
+
+    /// Per-team `(wDelta, lDelta)` keyed by **BDL team id**.
+    static func deltas(
+        from games: [Game],
+        lastUpdated: String?,
+        now: Date = Date(),
+    ) -> [Int: (wDelta: Int, lDelta: Int)] {
+        var out: [Int: (wDelta: Int, lDelta: Int)] = [:]
+        for r in qualifyingResults(from: games, lastUpdated: lastUpdated, now: now) {
+            let winnerId = r.homeWon ? r.homeId : r.awayId
+            let loserId  = r.homeWon ? r.awayId : r.homeId
             var win  = out[winnerId] ?? (wDelta: 0, lDelta: 0)
             win.wDelta += 1
             out[winnerId] = win
@@ -207,8 +238,11 @@ enum TodayRecordAdjustments {
     /// shifts the whole division's / league's gaps, not just its row.
     static func recalculateGB(
         standings: [TeamStanding],
+        games: [Game],
         adjustments: [Int: (wDelta: Int, lDelta: Int)],
-    ) -> [String: (gb: String, wcgb: String, pct: Double?)] {
+        lastUpdated: String?,
+        now: Date = Date(),
+    ) -> [String: (gb: String, wcgb: String, pct: Double?, strk: String?, homeW: Int?, homeL: Int?, awayW: Int?, awayL: Int?, runsScored: Int?, runsAllowed: Int?)] {
         guard !adjustments.isEmpty else { return [:] }
 
         struct Rec {
@@ -240,6 +274,24 @@ enum TodayRecordAdjustments {
             recs.append(rec)
             pctByTeam[teamId] = rec.pct
         }
+
+        // Today's decided games per BDL team id (chronological), so we
+        // can roll the streak forward and tally home/away splits + runs
+        // off the same qualifying set the W/L deltas came from.
+        let results = qualifyingResults(from: games, lastUpdated: lastUpdated, now: now)
+        var todayByBDL: [Int: [(won: Bool, isHome: Bool, scored: Int, allowed: Int)]] = [:]
+        for r in results {
+            todayByBDL[r.homeId, default: []].append(
+                (won: r.homeWon, isHome: true, scored: r.homeScore, allowed: r.awayScore))
+            todayByBDL[r.awayId, default: []].append(
+                (won: !r.homeWon, isHome: false, scored: r.awayScore, allowed: r.homeScore))
+        }
+        // Base rows keyed by Lahman team_id, for the STRK / split / run
+        // baselines the deltas fold into.
+        let standingByTeamId = Dictionary(
+            standings.compactMap { s in s.team_id.map { ($0, s) } },
+            uniquingKeysWith: { first, _ in first },
+        )
 
         var gbByTeam: [String: String] = [:]
         var wcgbByTeam: [String: String] = [:]
@@ -280,15 +332,50 @@ enum TodayRecordAdjustments {
             }
         }
 
-        var out: [String: (gb: String, wcgb: String, pct: Double?)] = [:]
+        var out: [String: (gb: String, wcgb: String, pct: Double?, strk: String?, homeW: Int?, homeL: Int?, awayW: Int?, awayL: Int?, runsScored: Int?, runsAllowed: Int?)] = [:]
         for id in Set(gbByTeam.keys).union(wcgbByTeam.keys) {
+            let base = standingByTeamId[id]
+            let today = lahmanToBDLTeamId[id].flatMap { todayByBDL[$0] } ?? []
+
+            // STRK — roll the base streak forward across today's games.
+            var strk = base?.streak_code
+            for game in today { strk = evolveStreak(strk, won: game.won) }
+
+            // Home / away splits — base + today's home/away outcomes.
+            let homeWonToday  = today.filter { $0.isHome &&  $0.won }.count
+            let homeLostToday = today.filter { $0.isHome && !$0.won }.count
+            let awayWonToday  = today.filter { !$0.isHome &&  $0.won }.count
+            let awayLostToday = today.filter { !$0.isHome && !$0.won }.count
+
+            // Run diff — base runs scored/allowed + today's.
+            let scoredToday  = today.reduce(0) { $0 + $1.scored }
+            let allowedToday = today.reduce(0) { $0 + $1.allowed }
+
             out[id] = (
-                gb:   gbByTeam[id] ?? "-",
-                wcgb: wcgbByTeam[id] ?? "-",
-                pct:  pctByTeam[id],
+                gb:          gbByTeam[id] ?? "-",
+                wcgb:        wcgbByTeam[id] ?? "-",
+                pct:         pctByTeam[id],
+                strk:        strk,
+                homeW:       base?.home_w.map { $0 + homeWonToday },
+                homeL:       base?.home_l.map { $0 + homeLostToday },
+                awayW:       base?.away_w.map { $0 + awayWonToday },
+                awayL:       base?.away_l.map { $0 + awayLostToday },
+                runsScored:  base?.runs_scored.map { $0 + scoredToday },
+                runsAllowed: base?.runs_allowed.map { $0 + allowedToday },
             )
         }
         return out
+    }
+
+    /// Roll a streak code ("W3" / "L1" / "-") forward by one game.
+    /// Extends the run when the result matches the current direction,
+    /// otherwise flips to "W1" / "L1".
+    private static func evolveStreak(_ current: String?, won: Bool) -> String {
+        let prefix = won ? "W" : "L"
+        if let cur = current, cur.hasPrefix(prefix), let n = Int(cur.dropFirst()) {
+            return "\(prefix)\(n + 1)"
+        }
+        return "\(prefix)1"
     }
 
     /// "-" for 0 (leader / in WC), whole numbers without a decimal

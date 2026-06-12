@@ -37,7 +37,7 @@ final class StandingsViewModel: ObservableObject {
     /// from the today-adjusted records so those columns stay consistent
     /// with the bumped W-L. Empty when there are no adjustments (rows
     /// then keep the backend / leader-derived values).
-    @Published var adjustedGB: [String: (gb: String, wcgb: String, pct: Double?)] = [:]
+    @Published var adjustedGB: [String: (gb: String, wcgb: String, pct: Double?, strk: String?, homeW: Int?, homeL: Int?, awayW: Int?, awayL: Int?, runsScored: Int?, runsAllowed: Int?)] = [:]
 
     private let api: APIClient
     private let bdl: BallDontLieClient
@@ -121,7 +121,8 @@ final class StandingsViewModel: ObservableObject {
         let allTeams = alStandings.values.flatMap { $0 }
             + nlStandings.values.flatMap { $0 }
         adjustedGB = TodayRecordAdjustments.recalculateGB(
-            standings: allTeams, adjustments: todayAdjustments,
+            standings: allTeams, games: games,
+            adjustments: todayAdjustments, lastUpdated: lastUpdated,
         )
     }
 
