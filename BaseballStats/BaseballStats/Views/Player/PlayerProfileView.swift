@@ -1011,7 +1011,7 @@ struct PlayerProfileView: View {
         }
         .padding(24)
         .frame(maxWidth: .infinity)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20))
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 18))
     }
 
     private func errorCard(_ message: String) -> some View {
@@ -1029,14 +1029,14 @@ struct PlayerProfileView: View {
         }
         .padding(24)
         .frame(maxWidth: .infinity)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20))
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 18))
     }
 
     private var loadingCard: some View {
         ProgressView()
             .controlSize(.large)
             .frame(maxWidth: .infinity, minHeight: 180)
-            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20))
+            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 18))
     }
 
     // MARK: - Career
@@ -1327,8 +1327,8 @@ private struct GridCardChrome: ViewModifier {
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
             .frame(maxWidth: .infinity)
-            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20))
-            .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 2)
+            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 18))
+            .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 3)
     }
 }
 
@@ -2722,11 +2722,12 @@ private func winPctValue(w: Int?, l: Int?) -> Double? {
 }
 
 /// Shared background for every career-table season row. Selected
-/// rows get a tinted wash that wins over the zebra-striping; otherwise
-/// the row falls back to its alternate-row gray (or transparent on
-/// even rows). Pulled out so the batting + pitching, frozen +
-/// scrollable variants all render identical backgrounds for the same
-/// state.
+/// rows get a tinted wash; everything else is transparent — the
+/// hairline dividers between rows carry the separation (no zebra
+/// striping, matching the app-wide list treatment). Pulled out so
+/// the batting + pitching, frozen + scrollable variants all render
+/// identical backgrounds for the same state. `alternate` is kept in
+/// the signature so the call sites stay stable.
 @ViewBuilder
 private func careerRowBackground(
     isSelected: Bool,
@@ -2735,8 +2736,6 @@ private func careerRowBackground(
 ) -> some View {
     if isSelected {
         tint.opacity(0.15)
-    } else if alternate {
-        Color(.systemGray6).opacity(0.5)
     } else {
         Color.clear
     }
