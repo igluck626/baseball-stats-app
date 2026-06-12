@@ -121,6 +121,8 @@ struct TeamHistorySheet: View {
                 PlayerProfileView(player: player)
             }
         }
+        // Glass sheet — matches the app-wide sheet treatment.
+        .presentationBackground(.ultraThinMaterial)
     }
 
     @ViewBuilder
@@ -377,15 +379,8 @@ private struct AwardsSection: View {
                             .padding(.horizontal, 12)
                             .padding(.vertical, 6)
                             .background(
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
                                     .fill(selected ? tint : Color(.systemFill).opacity(0.35))
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .strokeBorder(
-                                        selected ? Color.clear : Color(.separator).opacity(0.5),
-                                        lineWidth: 0.5,
-                                    )
                             )
                             .foregroundStyle(selected ? .white : .primary)
                     }
@@ -649,15 +644,8 @@ private struct FranchiseLeadersSection: View {
                             .padding(.horizontal, 12)
                             .padding(.vertical, 6)
                             .background(
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
                                     .fill(selected ? tint : Color(.systemFill).opacity(0.35))
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .strokeBorder(
-                                        selected ? Color.clear : Color(.separator).opacity(0.5),
-                                        lineWidth: 0.5,
-                                    )
                             )
                             .foregroundStyle(selected ? .white : .primary)
                     }
@@ -701,6 +689,7 @@ private struct FranchiseLeadersSection: View {
                 }
             }
             .listStyle(.plain)
+            .scrollContentBackground(.hidden)
         }
     }
 
@@ -791,9 +780,10 @@ private struct YearCard: View {
         .padding(.vertical, 14)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color(.secondarySystemBackground))
+                .fill(.ultraThinMaterial)
         )
         .overlay(borderOverlay)
+        .shadow(color: .black.opacity(0.06), radius: 8, y: 3)
     }
 
     @ViewBuilder
