@@ -392,10 +392,19 @@ private struct DivisionCard: View {
             ScrollableStatsHeader(isHistorical: isHistorical)
             Divider().opacity(0.4)
             ForEach(Array(teams.enumerated()), id: \.offset) { index, team in
+                // GB here is games back from the team's DIVISION leader
+                // (the raw backend `games_back`), not from the top of
+                // this wildcard list — so leadership is the backend's
+                // division_leader flag, never list position, and there
+                // is no first-row "—". Division leaders don't appear in
+                // wildcard lists, so the flag is effectively always
+                // false; `leader: nil` skips formatGB's derive-from-
+                // leader fallback, which would compute against the
+                // wrong team in this card.
                 ScrollableStatsRow(
                     team: team,
-                    leader: teams.first,
-                    isLeader: index == 0,
+                    leader: nil,
+                    isLeader: team.division_leader == true,
                     isHistorical: isHistorical,
                     adjustment: adjustment(for: team),
                     gbOverride: gbOverride(for: team),
