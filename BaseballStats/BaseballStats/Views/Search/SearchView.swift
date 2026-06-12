@@ -191,10 +191,7 @@ private struct BrowseCard: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(.ultraThinMaterial)
         )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(.quaternary, lineWidth: 0.5)
-        )
+        .shadow(color: .black.opacity(0.06), radius: 8, y: 3)
         .foregroundStyle(.primary)
     }
 
@@ -220,10 +217,7 @@ private struct BrowseCard: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(.ultraThinMaterial)
         )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(.quaternary, lineWidth: 0.5)
-        )
+        .shadow(color: .black.opacity(0.06), radius: 8, y: 3)
     }
 
     private var headshot: some View {
