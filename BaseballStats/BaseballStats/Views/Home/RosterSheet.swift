@@ -103,6 +103,9 @@ struct RosterSheet: View {
                 PlayerProfileView(player: player)
             }
         }
+        // Glass sheet — matches InjuryReportSheet and the app-wide
+        // sheet treatment.
+        .presentationBackground(.ultraThinMaterial)
     }
 
     @ViewBuilder
