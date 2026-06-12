@@ -36,17 +36,14 @@ struct ScheduleSheet: View {
 
     var body: some View {
         NavigationStack(path: $path) {
-            ZStack {
-                backgroundGradient
-                content
-            }
+            content
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     HStack(spacing: 8) {
                         TeamLogoView(team: favorite.teamInfo, size: 24)
                         Text("\(String(seasonYear)) Schedule")
-                            .font(.headline)
+                            .font(.headline.weight(.semibold))
                     }
                 }
                 ToolbarItem(placement: .cancellationAction) {
@@ -67,14 +64,8 @@ struct ScheduleSheet: View {
         }
         .task { await vm.load(bdlTeamId: favorite.bdlTeamId) }
         .presentationDetents([.large])
-    }
-
-    private var backgroundGradient: some View {
-        LinearGradient(
-            colors: [Color(.systemGray6), Color(.systemBackground)],
-            startPoint: .top, endPoint: .bottom,
-        )
-        .ignoresSafeArea()
+        // Glass sheet — matches the app-wide sheet treatment.
+        .presentationBackground(.ultraThinMaterial)
     }
 
     @ViewBuilder
