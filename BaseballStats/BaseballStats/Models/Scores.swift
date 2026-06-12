@@ -323,18 +323,18 @@ enum TodayRecordAdjustments {
                 for team in contenders { wcgbByTeam[team.teamId] = "—" }
                 continue
             }
+            // Every team's WCGB is measured against the same anchor —
+            // the last in-spot (3rd) team. Teams above it show how far
+            // they lead it ("+X.X"); the 3rd itself shows "—"; teams
+            // below show games back from it.
             let lastIn = contenders[wildCardSpots - 1]
             for (i, team) in contenders.enumerated() {
                 if i < wildCardSpots - 1 {
-                    // In, and leading the next spot-holder.
-                    let next = contenders[i + 1]
-                    let lead = Double((team.w - next.w) + (next.l - team.l)) / 2.0
+                    let lead = Double((team.w - lastIn.w) + (lastIn.l - team.l)) / 2.0
                     wcgbByTeam[team.teamId] = lead > 0 ? "+" + formatGB(lead) : "—"
                 } else if i == wildCardSpots - 1 {
-                    // Holds the last wild-card spot.
                     wcgbByTeam[team.teamId] = "—"
                 } else {
-                    // Out — games back from the last in-spot.
                     let back = Double((lastIn.w - team.w) + (team.l - lastIn.l)) / 2.0
                     wcgbByTeam[team.teamId] = formatGB(back)
                 }
