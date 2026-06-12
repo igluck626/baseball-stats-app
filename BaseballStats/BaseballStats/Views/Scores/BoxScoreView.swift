@@ -591,7 +591,7 @@ struct BoxScoreView: View {
         .padding(.vertical, 14)
         .frame(maxWidth: .infinity)
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
-        .shadow(color: .black.opacity(0.06), radius: 6, x: 0, y: 2)
+        .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 3)
     }
 
     /// Live in-game card — surfaces the current matchup, base
@@ -662,7 +662,7 @@ struct BoxScoreView: View {
         .padding(.vertical, 14)
         .frame(maxWidth: .infinity)
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
-        .shadow(color: .black.opacity(0.06), radius: 6, x: 0, y: 2)
+        .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 3)
     }
 
     /// Prefer the resolved PA description; fall back to the last
@@ -778,7 +778,7 @@ struct BoxScoreView: View {
         .padding(.vertical, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
-        .shadow(color: .black.opacity(0.06), radius: 6, x: 0, y: 2)
+        .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 3)
     }
 
     private func linescoreRow(label: String, cells: [String], totals: [String],
@@ -844,7 +844,7 @@ struct BoxScoreView: View {
         .padding(.vertical, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
-        .shadow(color: .black.opacity(0.06), radius: 6, x: 0, y: 2)
+        .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 3)
     }
 
     private func battingTable(team: BoxScoreTeam) -> some View {
