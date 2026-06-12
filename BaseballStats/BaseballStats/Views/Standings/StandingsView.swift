@@ -361,6 +361,7 @@ private struct DivisionCard: View {
             }
         }
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
+        .shadow(color: .black.opacity(0.06), radius: 8, y: 3)
     }
 
     private var frozenPane: some View {
@@ -584,6 +585,7 @@ private struct LeagueTable: View {
             }
         }
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
+        .shadow(color: .black.opacity(0.06), radius: 8, y: 3)
     }
 
     // MARK: Frozen + scrollable panes
