@@ -19,33 +19,25 @@ struct AddFavoritePlayerSheet: View {
 
     var body: some View {
         NavigationStack {
-            ZStack {
-                backgroundGradient
-                content
-            }
-            .navigationTitle("Add Player")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+            content
+                .navigationTitle("Add Player")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") { dismiss() }
+                    }
                 }
-            }
-            .searchable(
-                text: $vm.searchText,
-                placement: .navigationBarDrawer(displayMode: .always),
-                prompt: "Search players",
-            )
-            .textInputAutocapitalization(.words)
-            .autocorrectionDisabled()
+                .searchable(
+                    text: $vm.searchText,
+                    placement: .navigationBarDrawer(displayMode: .always),
+                    prompt: "Search players",
+                )
+                .textInputAutocapitalization(.words)
+                .autocorrectionDisabled()
         }
-    }
-
-    private var backgroundGradient: some View {
-        LinearGradient(
-            colors: [Color(.systemGray6), Color(.systemBackground)],
-            startPoint: .top, endPoint: .bottom,
-        )
-        .ignoresSafeArea()
+        // Glass sheet — lets the Home tab's team-color wash read
+        // through, matching the app-wide sheet treatment.
+        .presentationBackground(.ultraThinMaterial)
     }
 
     @ViewBuilder
