@@ -41,15 +41,47 @@ final class StandingsViewModel: ObservableObject {
 
     private let api: APIClient
     private let bdl: BallDontLieClient
+    private let favorites: FavoriteTeamStore
 
     static var currentYear: Int {
         Calendar.current.component(.year, from: Date())
     }
 
-    init(api: APIClient = .shared, bdl: BallDontLieClient = .shared) {
+    init(
+        api: APIClient = .shared,
+        bdl: BallDontLieClient = .shared,
+        favorites: FavoriteTeamStore = .shared,
+    ) {
         self.api = api
         self.bdl = bdl
+        self.favorites = favorites
         self.selectedYear = Self.currentYear
+    }
+
+    /// Lahman team code of the user's favorite team (bridged from the
+    /// stored BDL id), or nil when no favorite is set. Drives the
+    /// default league tab, the favorite-division-first ordering, and
+    /// the row star.
+    var favoriteLahmanCode: String? {
+        favorites.bdlTeamId.flatMap { bdlToLahmanTeamId[$0] }
+    }
+
+    /// The favorite team's league ("AL"/"NL") and division code
+    /// ("E"/"C"/"W") for the currently-loaded standings, found by
+    /// locating its row in the partitioned buckets. nil when there's
+    /// no favorite or the team isn't in this year's standings (e.g. a
+    /// historical year predating the franchise). Resolving off the
+    /// loaded rows — rather than a static map — keeps it correct for
+    /// teams that changed leagues across eras (1990s Brewers).
+    var favoriteLeagueDivision: (league: String, division: String)? {
+        guard let code = favoriteLahmanCode else { return nil }
+        for (div, teams) in alStandings where teams.contains(where: { $0.team_id == code }) {
+            return ("AL", div)
+        }
+        for (div, teams) in nlStandings where teams.contains(where: { $0.team_id == code }) {
+            return ("NL", div)
+        }
+        return nil
     }
 
     func loadStandings() async {

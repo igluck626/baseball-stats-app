@@ -27,6 +27,10 @@ typealias AdjustedStandingColumns = (
 struct StandingsView: View {
     @StateObject private var viewModel = StandingsViewModel()
     @State private var selectedTab: TabSelection = .al
+    /// Guards the one-time "open on the favorite team's league" jump so
+    /// it fires only on first appearance — once the user taps a tab
+    /// manually we never override their choice on later loads.
+    @State private var didApplyFavoriteLeague = false
 
     /// Tab selection: AL division view, NL division view, or the
     /// Wildcard race across both leagues.
@@ -65,7 +69,10 @@ struct StandingsView: View {
                 }
             }
         }
-        .task { await viewModel.loadStandings() }
+        .task {
+            await viewModel.loadStandings()
+            applyFavoriteLeagueIfNeeded()
+        }
         .onChange(of: viewModel.selectedYear) { _, _ in
             Task { await viewModel.loadStandings() }
         }
@@ -118,6 +125,27 @@ struct StandingsView: View {
         }
     }
 
+    // MARK: - Favorite team
+
+    /// One-time jump to the favorite team's league on first appearance.
+    /// Runs after the initial standings load (league is read off the
+    /// loaded rows). Guarded by `didApplyFavoriteLeague` so a later
+    /// re-load never clobbers a tab the user has since chosen by hand.
+    private func applyFavoriteLeagueIfNeeded() {
+        guard !didApplyFavoriteLeague else { return }
+        didApplyFavoriteLeague = true
+        guard let league = viewModel.favoriteLeagueDivision?.league else { return }
+        selectedTab = (league == "NL") ? .nl : .al
+    }
+
+    /// The favorite team's division code for a given league tab, or nil
+    /// when the favorite isn't in that league — used to float their
+    /// division to the top of the table.
+    private func favoriteDivision(inLeague league: String) -> String? {
+        guard let fav = viewModel.favoriteLeagueDivision, fav.league == league else { return nil }
+        return fav.division
+    }
+
     // MARK: - Content
 
     @ViewBuilder
@@ -149,7 +177,9 @@ struct StandingsView: View {
                             isHistorical: isHistoricalView,
                             adjustments: viewModel.todayAdjustments,
                             adjustedGB: viewModel.adjustedGB,
-                            wildcardContenders: viewModel.alWildcard
+                            wildcardContenders: viewModel.alWildcard,
+                            favoriteCode: viewModel.favoriteLahmanCode,
+                            favoriteDivision: favoriteDivision(inLeague: "AL")
                         )
                     case .nl:
                         LeagueTable(
@@ -158,7 +188,9 @@ struct StandingsView: View {
                             isHistorical: isHistoricalView,
                             adjustments: viewModel.todayAdjustments,
                             adjustedGB: viewModel.adjustedGB,
-                            wildcardContenders: viewModel.nlWildcard
+                            wildcardContenders: viewModel.nlWildcard,
+                            favoriteCode: viewModel.favoriteLahmanCode,
+                            favoriteDivision: favoriteDivision(inLeague: "NL")
                         )
                     case .wc:
                         wildcardContent
@@ -244,7 +276,8 @@ struct StandingsView: View {
                     isHistorical: isHistoricalView,
                     adjustments: viewModel.todayAdjustments,
                     adjustedGB: viewModel.adjustedGB,
-                    wildcardContenders: viewModel.alWildcard
+                    wildcardContenders: viewModel.alWildcard,
+                    favoriteCode: viewModel.favoriteLahmanCode
                 )
             }
             if !viewModel.nlWildcard.isEmpty {
@@ -255,7 +288,8 @@ struct StandingsView: View {
                     isHistorical: isHistoricalView,
                     adjustments: viewModel.todayAdjustments,
                     adjustedGB: viewModel.adjustedGB,
-                    wildcardContenders: viewModel.nlWildcard
+                    wildcardContenders: viewModel.nlWildcard,
+                    favoriteCode: viewModel.favoriteLahmanCode
                 )
             }
         }
@@ -332,6 +366,9 @@ private struct DivisionCard: View {
     /// This league's non-division-leaders sorted best→worst — the
     /// ranking the WCGB reformatter anchors on.
     let wildcardContenders: [TeamStanding]
+    /// Lahman code of the user's favorite team — flags its row with a
+    /// star. nil when no favorite is set.
+    var favoriteCode: String? = nil
 
     /// Resolve a row's adjustment by bridging its Lahman team code to a
     /// BDL id (TeamStanding carries no BDL id directly).
@@ -376,7 +413,11 @@ private struct DivisionCard: View {
             FrozenIdentityHeader()
             Divider().opacity(0.4)
             ForEach(Array(teams.enumerated()), id: \.offset) { index, team in
-                FrozenIdentityCell(team: team, isLeader: team.rank == 1)
+                FrozenIdentityCell(
+                    team: team,
+                    isLeader: team.rank == 1,
+                    isFavorite: team.team_id != nil && team.team_id == favoriteCode,
+                )
                     .background(rowBackground(
                         style: style, isLeader: index == 0, rankInList: index,
                     ))
@@ -617,6 +658,13 @@ private struct LeagueTable: View {
     /// This league's non-division-leaders sorted best→worst — the
     /// ranking the WCGB reformatter anchors on.
     let wildcardContenders: [TeamStanding]
+    /// Lahman code of the user's favorite team — flags its row with a
+    /// star. nil when no favorite is set.
+    var favoriteCode: String? = nil
+    /// Favorite team's division code ("E"/"C"/"W") when it lives in
+    /// this league — floats that division to the top. nil otherwise,
+    /// leaving the canonical E / C / W order.
+    var favoriteDivision: String? = nil
 
     /// Resolve a row's adjustment by bridging its Lahman team code to a
     /// BDL id (TeamStanding carries no BDL id directly).
@@ -629,17 +677,28 @@ private struct LeagueTable: View {
         team.team_id.flatMap { adjustedGB[$0] }
     }
 
+    private func isFavorite(_ team: TeamStanding) -> Bool {
+        team.team_id != nil && team.team_id == favoriteCode
+    }
+
     private static let divisionOrder = ["E", "C", "W"]
     private static let divisionName: [String: String] = [
         "E": "East", "C": "Central", "W": "West",
     ]
 
-    /// Only divisions that actually carry teams in the response, in
-    /// canonical E / C / W order. Pre-divisional years produce zero
-    /// groups (the table renders just the headers + an empty body,
-    /// matching the existing behavior).
+    /// Only divisions that actually carry teams in the response. Order
+    /// is canonical E / C / W, except the favorite team's division is
+    /// floated to the front when it's in this league. Pre-divisional
+    /// years produce zero groups (the table renders just the headers +
+    /// an empty body, matching the existing behavior).
     private var divisions: [(code: String, teams: [TeamStanding])] {
-        Self.divisionOrder.compactMap { d in
+        let order: [String]
+        if let fav = favoriteDivision, Self.divisionOrder.contains(fav) {
+            order = [fav] + Self.divisionOrder.filter { $0 != fav }
+        } else {
+            order = Self.divisionOrder
+        }
+        return order.compactMap { d in
             guard let teams = buckets[d], !teams.isEmpty else { return nil }
             return (d, teams)
         }
@@ -679,7 +738,11 @@ private struct LeagueTable: View {
                 FrozenIdentityHeader()
                 Divider().opacity(0.4)
                 ForEach(Array(group.teams.enumerated()), id: \.offset) { tIdx, team in
-                    FrozenIdentityCell(team: team, isLeader: team.rank == 1)
+                    FrozenIdentityCell(
+                        team: team,
+                        isLeader: team.rank == 1,
+                        isFavorite: isFavorite(team),
+                    )
                     if tIdx != group.teams.indices.last {
                         Divider().opacity(0.25)
                     }
@@ -787,6 +850,9 @@ private struct DivisionBreak: View {
 private struct FrozenIdentityCell: View {
     let team: TeamStanding
     let isLeader: Bool
+    /// The user's favorite team — gets a small gold star after its
+    /// abbreviation. Defaults false so non-favorite rows are unchanged.
+    var isFavorite: Bool = false
 
     var body: some View {
         HStack(spacing: 6) {
@@ -795,6 +861,12 @@ private struct FrozenIdentityCell: View {
                 .font(.subheadline.weight(.semibold))
                 .monospacedDigit()
                 .lineLimit(1)
+            if isFavorite {
+                Image(systemName: "star.fill")
+                    .font(.system(size: 9))
+                    .foregroundStyle(Color(red: 0.85, green: 0.65, blue: 0.13))
+                    .accessibilityLabel("Favorite team")
+            }
             if let badge = clinchBadge {
                 clinchBadgeView(badge)
             }
