@@ -11,8 +11,10 @@
 //  players (Ohtani) can join either kind of comparison — we fetch
 //  whichever career (batting or pitching) matches the locked type.
 //
-//  Later phases add the other modes (Year Range / Age Range / Per-162);
-//  the mode picker here is a stub with only Career functional.
+//  Phase 2 adds Year Range and Age Range modes — each player's stats are
+//  re-aggregated from the subset of seasons inside the selected range, so
+//  ComparePlayer stores the raw season rows (plus birth year for Age) and
+//  the table values are computed per mode/range. Per-162 lands in Phase 3.
 //
 
 import Combine
@@ -39,8 +41,10 @@ enum ComparisonMode: String, CaseIterable, Identifiable {
     case per162    = "Per 162"
 
     var id: String { rawValue }
-    /// Only Career is wired up in Phase 1.
-    var isAvailable: Bool { self == .career }
+    /// Career + the two range modes are wired up; Per 162 lands in Phase 3.
+    var isAvailable: Bool { self != .per162 }
+    /// True for the modes that need a From/To range control.
+    var usesRange: Bool { self == .yearRange || self == .ageRange }
 }
 
 /// Whether a higher or lower value wins the best-cell highlight.
@@ -75,17 +79,34 @@ fileprivate struct CompareStat: Identifiable {
 }
 
 /// One player in the comparison. Carries the original search result (for
-/// profile navigation + identity) and the aggregated career stat map
-/// keyed by display label. `values[label]` is nil when the stat is
-/// undefined for this player (e.g. a rate with a zero denominator).
+/// profile navigation + identity) plus the raw per-season rows for the
+/// comparison side — range modes re-aggregate a filtered subset of these,
+/// so the stats are computed on demand rather than stored.
 struct ComparePlayer: Identifiable {
     let result: PlayerSearchResult
     let isPitcher: Bool
-    let values: [String: Double?]
+    /// Full season rows for the comparison side; the other array is empty.
+    let battingSeasons: [CareerSeason]
+    let pitchingSeasons: [PitcherCareerSeason]
+    /// From the career bio (falls back to the search result). nil → Age
+    /// Range mode can't place this player and the column shows "—".
+    let birthYear: Int?
 
     var id: Int { result.player_id }
     var name: String { result.name }
     var teamCode: String? { result.teamCode }
+
+    /// All dated season years for this player (both sides, though only one
+    /// is populated). Used for span/overlap math.
+    var seasonYears: [Int] {
+        battingSeasons.compactMap(\.year) + pitchingSeasons.compactMap(\.year)
+    }
+
+    /// First...last season year; nil when no season carries a year.
+    var yearSpan: ClosedRange<Int>? {
+        guard let lo = seasonYears.min(), let hi = seasonYears.max() else { return nil }
+        return lo...hi
+    }
 }
 
 // MARK: - View model
@@ -99,6 +120,13 @@ final class PlayerCompareViewModel: ObservableObject {
     /// Surfaced when a picked player can't join the locked comparison
     /// type (e.g. a pure pitcher added to a batter comparison).
     @Published var addError: String?
+
+    /// Active From/To selections for the range modes. Reset to sensible
+    /// defaults whenever the roster changes (`recomputeRangeDefaults`).
+    @Published var yearFrom: Int = 0
+    @Published var yearTo: Int = 0
+    @Published var ageFrom: Int = 20
+    @Published var ageTo: Int = 30
 
     private let api: APIClient
     static let maxPlayers = 4
@@ -115,9 +143,55 @@ final class PlayerCompareViewModel: ObservableObject {
         (comparisonType?.isPitcher ?? false) ? Self.pitchingStats : Self.battingStats
     }
 
+    // MARK: Range bounds + defaults
+
+    /// Years present across all players (min...max); nil before any data.
+    var yearBounds: ClosedRange<Int>? {
+        let years = players.flatMap(\.seasonYears)
+        guard let lo = years.min(), let hi = years.max() else { return nil }
+        return lo...hi
+    }
+
+    /// Ages present across players that carry a birth year (min...max).
+    var ageBounds: ClosedRange<Int>? {
+        var ages: [Int] = []
+        for p in players {
+            guard let by = p.birthYear else { continue }
+            ages.append(contentsOf: p.seasonYears.map { $0 - by })
+        }
+        guard let lo = ages.min(), let hi = ages.max() else { return nil }
+        return lo...hi
+    }
+
+    /// True when Age Range can't place at least one player (no birth year).
+    var hasMissingBirthYear: Bool { players.contains { $0.birthYear == nil } }
+
+    /// Reset the From/To selections for the current roster. Year defaults
+    /// to the overlap of every player's span (the years they all share),
+    /// falling back to the full span when there's no overlap. Age defaults
+    /// to 20–30 clamped into the available age range.
+    func recomputeRangeDefaults() {
+        if let yb = yearBounds {
+            let starts = players.compactMap { $0.yearSpan?.lowerBound }
+            let ends   = players.compactMap { $0.yearSpan?.upperBound }
+            if let latestStart = starts.max(), let earliestEnd = ends.min(),
+               latestStart <= earliestEnd {
+                yearFrom = latestStart; yearTo = earliestEnd
+            } else {
+                yearFrom = yb.lowerBound; yearTo = yb.upperBound
+            }
+        }
+        if let ab = ageBounds {
+            ageFrom = min(max(20, ab.lowerBound), ab.upperBound)
+            ageTo   = max(min(30, ab.upperBound), ab.lowerBound)
+            if ageFrom > ageTo { ageFrom = ab.lowerBound; ageTo = ab.upperBound }
+        }
+    }
+
     func remove(_ player: ComparePlayer) {
         players.removeAll { $0.id == player.id }
         if players.isEmpty { comparisonType = nil }
+        recomputeRangeDefaults()
     }
 
     /// Add a picked search result. The first player infers and locks the
@@ -147,6 +221,7 @@ final class PlayerCompareViewModel: ObservableObject {
             if let player = await build(result: result, type: type) {
                 if comparisonType == nil { comparisonType = type }
                 players.append(player)
+                recomputeRangeDefaults()
                 return
             }
             // For a locked comparison, never silently switch sides.
@@ -155,6 +230,49 @@ final class PlayerCompareViewModel: ObservableObject {
 
         let noun = (comparisonType ?? .batter).noun
         addError = "\(result.name) has no \(noun) career stats to compare."
+    }
+
+    // MARK: Display values (mode + range aware)
+
+    /// Per-player stat maps for the current mode/range, keyed by player id.
+    /// An empty map (every stat renders "—") means the player has no
+    /// seasons in the active range (or no birth year in Age Range).
+    fileprivate func displayValues() -> [Int: [String: Double?]] {
+        var out: [Int: [String: Double?]] = [:]
+        for p in players { out[p.id] = values(for: p) }
+        return out
+    }
+
+    private func values(for player: ComparePlayer) -> [String: Double?] {
+        if player.isPitcher {
+            let seasons = player.pitchingSeasons.filter {
+                inRange(year: $0.year, birthYear: player.birthYear)
+            }
+            guard !seasons.isEmpty else { return [:] }
+            return Self.aggregatePitching(seasons)
+        } else {
+            let seasons = player.battingSeasons.filter {
+                inRange(year: $0.year, birthYear: player.birthYear)
+            }
+            guard !seasons.isEmpty else { return [:] }
+            return Self.aggregateBatting(seasons)
+        }
+    }
+
+    /// Whether a season counts under the active mode/range. Career and the
+    /// (not-yet-functional) Per-162 mode include everything.
+    private func inRange(year: Int?, birthYear: Int?) -> Bool {
+        guard let year else { return false }
+        switch mode {
+        case .career, .per162:
+            return true
+        case .yearRange:
+            return year >= yearFrom && year <= yearTo
+        case .ageRange:
+            guard let birthYear else { return false }
+            let age = year - birthYear
+            return age >= ageFrom && age <= ageTo
+        }
     }
 
     // MARK: Build + aggregate
@@ -167,18 +285,24 @@ final class PlayerCompareViewModel: ObservableObject {
         case .batter:
             guard let career = try? await api.getPlayerCareerStats(playerId: result.player_id),
                   let seasons = career.seasons, !seasons.isEmpty else { return nil }
-            let values = Self.aggregateBatting(seasons)
             // Require real plate work so a pure pitcher's empty batting
             // line doesn't masquerade as a batter.
-            guard (values["AB"].flatMap { $0 } ?? 0) >= 1 else { return nil }
-            return ComparePlayer(result: result, isPitcher: false, values: values)
+            guard (Self.aggregateBatting(seasons)["AB"].flatMap { $0 } ?? 0) >= 1 else { return nil }
+            return ComparePlayer(
+                result: result, isPitcher: false,
+                battingSeasons: seasons, pitchingSeasons: [],
+                birthYear: career.bio?.birth_year ?? result.birth_year,
+            )
 
         case .pitcher:
             guard let career = try? await api.getPitcherCareerStats(playerId: result.player_id),
                   let seasons = career.seasons, !seasons.isEmpty else { return nil }
-            let values = Self.aggregatePitching(seasons)
-            guard (values["IP"].flatMap { $0 } ?? 0) >= 1 else { return nil }
-            return ComparePlayer(result: result, isPitcher: true, values: values)
+            guard (Self.aggregatePitching(seasons)["IP"].flatMap { $0 } ?? 0) >= 1 else { return nil }
+            return ComparePlayer(
+                result: result, isPitcher: true,
+                battingSeasons: [], pitchingSeasons: seasons,
+                birthYear: career.bio?.birth_year ?? result.birth_year,
+            )
         }
     }
 
@@ -377,7 +501,7 @@ struct PlayerCompareView: View {
     // MARK: Mode picker (Career functional; rest stubbed)
 
     private var modePicker: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 8) {
             Picker("Mode", selection: $vm.mode) {
                 ForEach(ComparisonMode.allCases) { mode in
                     Text(mode.rawValue).tag(mode)
@@ -389,6 +513,80 @@ struct PlayerCompareView: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
+            if vm.mode.usesRange && !vm.players.isEmpty {
+                rangeControls
+            }
+            if let subtitle = activeRangeSubtitle {
+                Text(subtitle)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    // MARK: Range controls
+
+    @ViewBuilder
+    private var rangeControls: some View {
+        switch vm.mode {
+        case .yearRange:
+            if let bounds = vm.yearBounds {
+                let years = Array(bounds)
+                HStack(spacing: 12) {
+                    Picker("From", selection: $vm.yearFrom) {
+                        ForEach(years, id: \.self) { Text(String($0)).tag($0) }
+                    }
+                    .pickerStyle(.menu)
+                    Image(systemName: "arrow.right")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Picker("To", selection: $vm.yearTo) {
+                        ForEach(years, id: \.self) { Text(String($0)).tag($0) }
+                    }
+                    .pickerStyle(.menu)
+                }
+                // Keep To ≥ From in both directions.
+                .onChange(of: vm.yearFrom) { _, new in if vm.yearTo < new { vm.yearTo = new } }
+                .onChange(of: vm.yearTo) { _, new in if vm.yearFrom > new { vm.yearFrom = new } }
+            }
+        case .ageRange:
+            if let bounds = vm.ageBounds {
+                VStack(spacing: 6) {
+                    HStack(spacing: 16) {
+                        Stepper("From \(vm.ageFrom)", value: $vm.ageFrom, in: bounds)
+                        Stepper("To \(vm.ageTo)", value: $vm.ageTo, in: bounds)
+                    }
+                    .font(.subheadline)
+                    if vm.hasMissingBirthYear {
+                        Text("Players without a birth year on file show “—” in Age Range.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .onChange(of: vm.ageFrom) { _, new in if vm.ageTo < new { vm.ageTo = new } }
+                .onChange(of: vm.ageTo) { _, new in if vm.ageFrom > new { vm.ageFrom = new } }
+            } else {
+                Text("No age data available for these players.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        default:
+            EmptyView()
+        }
+    }
+
+    /// "2018–2023" / "Age 20–25" describing the active range; nil for
+    /// Career / Per-162 (no range).
+    private var activeRangeSubtitle: String? {
+        switch vm.mode {
+        case .career, .per162:
+            return nil
+        case .yearRange:
+            guard vm.yearBounds != nil else { return nil }
+            return "\(vm.yearFrom)–\(vm.yearTo)"
+        case .ageRange:
+            guard vm.ageBounds != nil else { return nil }
+            return "Age \(vm.ageFrom)–\(vm.ageTo)"
         }
     }
 
@@ -431,7 +629,10 @@ struct PlayerCompareView: View {
     // MARK: Comparison table
 
     private var comparisonCard: some View {
-        HStack(spacing: 0) {
+        // Compute the mode/range-aware values once per render; shared by
+        // every cell and by the best-value resolution.
+        let values = vm.displayValues()
+        return HStack(spacing: 0) {
             // Frozen stat-label column.
             VStack(spacing: 0) {
                 Color.clear.frame(height: CompareLayout.headerHeight)
@@ -452,7 +653,7 @@ struct PlayerCompareView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 0) {
                     ForEach(vm.players) { player in
-                        playerColumn(player)
+                        playerColumn(player, values: values)
                         if player.id != vm.players.last?.id {
                             Divider()
                         }
@@ -465,11 +666,14 @@ struct PlayerCompareView: View {
         .shadow(color: .black.opacity(0.06), radius: 8, y: 3)
     }
 
-    private func playerColumn(_ player: ComparePlayer) -> some View {
+    private func playerColumn(
+        _ player: ComparePlayer,
+        values: [Int: [String: Double?]],
+    ) -> some View {
         VStack(spacing: 0) {
             playerHeader(player)
             ForEach(vm.stats) { stat in
-                statCell(player: player, stat: stat)
+                statCell(player: player, stat: stat, values: values)
             }
         }
         .frame(width: CompareLayout.columnWidth)
@@ -512,10 +716,15 @@ struct PlayerCompareView: View {
         }
     }
 
-    private func statCell(player: ComparePlayer, stat: CompareStat) -> some View {
+    private func statCell(
+        player: ComparePlayer,
+        stat: CompareStat,
+        values: [Int: [String: Double?]],
+    ) -> some View {
         let isPitcher = vm.comparisonType?.isPitcher ?? false
-        let best = isBest(player: player, stat: stat, isPitcher: isPitcher)
-        return Text(formatted(player.values[stat.label] ?? nil, format: stat.format))
+        let myValue = values[player.id]?[stat.label] ?? nil
+        let best = isBest(player: player, stat: stat, isPitcher: isPitcher, values: values)
+        return Text(formatted(myValue, format: stat.format))
             .font(.subheadline.weight(best ? .bold : .regular))
             .monospacedDigit()
             .foregroundStyle(.primary)
@@ -534,12 +743,17 @@ struct PlayerCompareView: View {
     /// True when `player` holds the best value in this stat row. Ties
     /// highlight every tied player. Players missing the stat are ignored
     /// and never win.
-    private func isBest(player: ComparePlayer, stat: CompareStat, isPitcher: Bool) -> Bool {
-        let values: [Double] = vm.players.compactMap { $0.values[stat.label] ?? nil }
-        guard values.count >= 2 else { return false }
-        guard let mine = player.values[stat.label] ?? nil else { return false }
+    private func isBest(
+        player: ComparePlayer,
+        stat: CompareStat,
+        isPitcher: Bool,
+        values: [Int: [String: Double?]],
+    ) -> Bool {
+        let all: [Double] = vm.players.compactMap { values[$0.id]?[stat.label] ?? nil }
+        guard all.count >= 2 else { return false }
+        guard let mine = values[player.id]?[stat.label] ?? nil else { return false }
         let direction = StatDirection.direction(for: stat.label, isPitcher: isPitcher)
-        let best = direction == .higherBetter ? values.max() : values.min()
+        let best = direction == .higherBetter ? all.max() : all.min()
         guard let best else { return false }
         return abs(mine - best) < 0.0000001
     }
