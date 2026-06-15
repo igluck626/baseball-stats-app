@@ -11,8 +11,8 @@ import SwiftUI
 
 struct SearchView: View {
     @StateObject private var viewModel = SearchViewModel()
-    // TEMPORARY (Phase 1): entry point to preview the Player Comparison
-    // feature. Real entry points land in Phase 4 — remove this then.
+    /// Drives the (empty) Player Comparison sheet opened from the browse
+    /// landing's "Compare Players" card.
     @State private var showingCompare = false
 
     var body: some View {
@@ -34,16 +34,6 @@ struct SearchView: View {
             .textInputAutocapitalization(.words)
             .autocorrectionDisabled()
             .task { await viewModel.loadActiveStars() }
-            // TEMPORARY preview hook for Phase 1 of Player Comparison.
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        showingCompare = true
-                    } label: {
-                        Image(systemName: "person.2.crop.square.stack")
-                    }
-                }
-            }
             .sheet(isPresented: $showingCompare) {
                 PlayerCompareView()
             }
@@ -130,6 +120,7 @@ struct SearchView: View {
     private var browseLanding: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
+                compareEntryCard
                 browseShelf(
                     title: "Active Stars",
                     players: viewModel.activeStars,
@@ -139,6 +130,41 @@ struct SearchView: View {
             .padding(.bottom, 24)
         }
         .scrollIndicators(.hidden)
+    }
+
+    /// Discovery entry point for the Player Comparison feature — opens an
+    /// empty comparison the user fills in from scratch. Lives at the top
+    /// of the idle browse landing so it's visible before any search.
+    private var compareEntryCard: some View {
+        Button {
+            showingCompare = true
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "person.2.crop.square.stack.fill")
+                    .font(.title2)
+                    .foregroundStyle(.tint)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Compare Players")
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                    Text("Stack 2–4 players side by side")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(14)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(.ultraThinMaterial)
+            )
+            .shadow(color: .black.opacity(0.06), radius: 8, y: 3)
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 16)
     }
 
     private func browseShelf(

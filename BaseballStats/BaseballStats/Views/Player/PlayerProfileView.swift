@@ -78,6 +78,12 @@ struct PlayerProfileView: View {
     /// the same set or to be modified by toggling more rows.
     @State private var showingCompareSheet: Bool = false
 
+    /// Drives the cross-PLAYER comparison sheet (distinct from the
+    /// same-player multi-season `showingCompareSheet` above). Opened from
+    /// the Career toolbar's "Compare" button, seeded with this player on
+    /// whichever side (batting/pitching) is being viewed.
+    @State private var showingPlayerCompare: Bool = false
+
     /// Tracks light vs. dark so the header's team-color backdrop can
     /// nudge its opacity up in dark mode (the tint reads weaker
     /// against the system dark background otherwise).
@@ -273,6 +279,14 @@ struct PlayerProfileView: View {
             )
             .presentationDetents([.height(320)])
             .presentationDragIndicator(.visible)
+        }
+        // Cross-player comparison, seeded with this player on the side
+        // currently being viewed (two-way players join the right career).
+        .sheet(isPresented: $showingPlayerCompare) {
+            PlayerCompareView(
+                startingPlayer: player,
+                startingType: showingBatting ? .batter : .pitcher
+            )
         }
     }
 
@@ -1110,6 +1124,7 @@ struct PlayerProfileView: View {
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(.secondary)
             Spacer()
+            comparePlayersButton
             Button {
                 showingColumnFilter = true
             } label: {
@@ -1120,6 +1135,30 @@ struct PlayerProfileView: View {
             .accessibilityLabel("Choose columns")
         }
         .padding(.horizontal, 4)
+    }
+
+    /// Capsule entry point to the cross-player comparison, seeded with
+    /// this player on the currently-viewed side (batting vs pitching).
+    /// Team-tinted to match the page; distinct from the same-player
+    /// multi-season Compare bar that floats at the bottom of the page.
+    private var comparePlayersButton: some View {
+        Button {
+            showingPlayerCompare = true
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "person.2.fill")
+                    .font(.caption2)
+                Text("Compare")
+                    .font(.caption.weight(.semibold))
+            }
+            .foregroundStyle(selectionTint)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(selectionTint.opacity(0.15)))
+            .overlay(Capsule().strokeBorder(selectionTint.opacity(0.4), lineWidth: 0.5))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Compare with other players")
     }
 
     /// Compact one-line legend explaining the gold-tinted leader cells.

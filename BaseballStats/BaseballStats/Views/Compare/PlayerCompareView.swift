@@ -131,10 +131,34 @@ final class PlayerCompareViewModel: ObservableObject {
     @Published var ageTo: Int = 30
 
     private let api: APIClient
+    /// Player to seed the comparison with (profile entry point); nil for
+    /// the empty Search-tab entry. `startingType` locks the side so a
+    /// two-way player joins whichever career the profile was showing.
+    private let startingPlayer: PlayerSearchResult?
+    private let startingType: ComparisonType?
+    private var didLoadStarting = false
     static let maxPlayers = 4
 
-    init(api: APIClient = .shared) {
+    init(
+        api: APIClient = .shared,
+        startingPlayer: PlayerSearchResult? = nil,
+        startingType: ComparisonType? = nil,
+    ) {
         self.api = api
+        self.startingPlayer = startingPlayer
+        self.startingType = startingType
+    }
+
+    /// Seed the comparison with the player it was opened from. Runs once,
+    /// on first appearance, and no-ops for the empty entry point. Locks the
+    /// comparison to `startingType` so the right side of a two-way player
+    /// is used; unlocks again if that player has no career of that type.
+    func loadStartingPlayerIfNeeded() async {
+        guard !didLoadStarting, let starting = startingPlayer, players.isEmpty else { return }
+        didLoadStarting = true
+        if let type = startingType { comparisonType = type }
+        await add(starting)
+        if players.isEmpty { comparisonType = nil }
     }
 
     var canAddMore: Bool { players.count < Self.maxPlayers }
@@ -473,9 +497,19 @@ private enum CompareLayout {
 // MARK: - Main view
 
 struct PlayerCompareView: View {
-    @StateObject private var vm = PlayerCompareViewModel()
+    @StateObject private var vm: PlayerCompareViewModel
     @State private var showingSearch = false
     @Environment(\.dismiss) private var dismiss
+
+    /// `startingPlayer` seeds the comparison (profile entry point); omit
+    /// both for the empty Search-tab entry. `startingType` should be the
+    /// role the profile is showing so a two-way player joins the right side.
+    init(startingPlayer: PlayerSearchResult? = nil, startingType: ComparisonType? = nil) {
+        _vm = StateObject(wrappedValue: PlayerCompareViewModel(
+            startingPlayer: startingPlayer,
+            startingType: startingType,
+        ))
+    }
 
     var body: some View {
         NavigationStack {
@@ -496,7 +530,8 @@ struct PlayerCompareView: View {
                 }
                 .padding(16)
             }
-            .navigationTitle("Compare")
+            .task { await vm.loadStartingPlayerIfNeeded() }
+            .navigationTitle("Compare Players")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
