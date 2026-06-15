@@ -14,7 +14,11 @@
 //  Phase 2 adds Year Range and Age Range modes — each player's stats are
 //  re-aggregated from the subset of seasons inside the selected range, so
 //  ComparePlayer stores the raw season rows (plus birth year for Age) and
-//  the table values are computed per mode/range. Per-162 lands in Phase 3.
+//  the table values are computed per mode/range.
+//
+//  Phase 3 adds Per-162 mode — full-career counting stats normalized to a
+//  single-season pace (batters to 162 games, pitchers to 200 IP), so it
+//  reads as "per full season." Rate stats pass through unscaled.
 //
 
 import Combine
@@ -41,8 +45,6 @@ enum ComparisonMode: String, CaseIterable, Identifiable {
     case per162    = "Per 162"
 
     var id: String { rawValue }
-    /// Career + the two range modes are wired up; Per 162 lands in Phase 3.
-    var isAvailable: Bool { self != .per162 }
     /// True for the modes that need a From/To range control.
     var usesRange: Bool { self == .yearRange || self == .ageRange }
 }
@@ -244,23 +246,60 @@ final class PlayerCompareViewModel: ObservableObject {
     }
 
     private func values(for player: ComparePlayer) -> [String: Double?] {
+        let base: [String: Double?]
         if player.isPitcher {
             let seasons = player.pitchingSeasons.filter {
                 inRange(year: $0.year, birthYear: player.birthYear)
             }
             guard !seasons.isEmpty else { return [:] }
-            return Self.aggregatePitching(seasons)
+            base = Self.aggregatePitching(seasons)
         } else {
             let seasons = player.battingSeasons.filter {
                 inRange(year: $0.year, birthYear: player.birthYear)
             }
             guard !seasons.isEmpty else { return [:] }
-            return Self.aggregateBatting(seasons)
+            base = Self.aggregateBatting(seasons)
         }
+        // Per-162 normalizes the (full-career, since inRange admits every
+        // season for this mode) totals to a single-season pace.
+        if mode == .per162 {
+            return Self.normalizedPer162(base, isPitcher: player.isPitcher)
+        }
+        return base
     }
 
-    /// Whether a season counts under the active mode/range. Career and the
-    /// (not-yet-functional) Per-162 mode include everything.
+    /// Counting stats that scale with playing time (everything but the
+    /// slash-line / ERA / WHIP rates). WAR is included — it's a counting
+    /// stat, so a per-season WAR pace is exactly the point of the mode.
+    private static let scalableBatting: Set<String> =
+        ["WAR", "G", "PA", "AB", "H", "2B", "3B", "HR", "RBI", "SB", "BB", "SO"]
+    private static let scalablePitching: Set<String> =
+        ["WAR", "W", "L", "G", "GS", "SV", "IP", "H", "SO", "BB"]
+
+    /// Scale counting stats to a full single-season workload — batters to
+    /// 162 games, pitchers to 200 IP (162 team games don't map to a
+    /// pitcher's appearances, least of all a reliever's). Rate stats
+    /// (AVG/OBP/SLG/OPS, ERA/WHIP) pass through unscaled. The divisor (G or
+    /// IP) lands exactly on the target after scaling. Returns all "—" when
+    /// the divisor is zero.
+    private static func normalizedPer162(
+        _ base: [String: Double?],
+        isPitcher: Bool,
+    ) -> [String: Double?] {
+        let divisorKey = isPitcher ? "IP" : "G"
+        let target: Double = isPitcher ? 200 : 162
+        guard let denom = base[divisorKey].flatMap({ $0 }), denom > 0 else { return [:] }
+        let factor = target / denom
+        let scalable = isPitcher ? scalablePitching : scalableBatting
+        var out = base
+        for (key, value) in base where scalable.contains(key) {
+            if let value { out[key] = value * factor }
+        }
+        return out
+    }
+
+    /// Whether a season counts under the active mode/range. Career and
+    /// Per-162 (which normalizes full-career totals) include everything.
     private func inRange(year: Int?, birthYear: Int?) -> Bool {
         guard let year else { return false }
         switch mode {
@@ -508,11 +547,6 @@ struct PlayerCompareView: View {
                 }
             }
             .pickerStyle(.segmented)
-            if !vm.mode.isAvailable {
-                Text("\(vm.mode.rawValue) mode is coming soon — showing Career totals.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
             if vm.mode.usesRange && !vm.players.isEmpty {
                 rangeControls
             }
@@ -575,12 +609,15 @@ struct PlayerCompareView: View {
         }
     }
 
-    /// "2018–2023" / "Age 20–25" describing the active range; nil for
-    /// Career / Per-162 (no range).
+    /// "2018–2023" / "Age 20–25" / "Per 162 Games" describing the active
+    /// mode; nil for Career (plain totals, no qualifier).
     private var activeRangeSubtitle: String? {
         switch vm.mode {
-        case .career, .per162:
+        case .career:
             return nil
+        case .per162:
+            // Pitchers normalize to a 200-IP workload, batters to 162 G.
+            return (vm.comparisonType?.isPitcher ?? false) ? "Per 200 IP" : "Per 162 Games"
         case .yearRange:
             guard vm.yearBounds != nil else { return nil }
             return "\(vm.yearFrom)–\(vm.yearTo)"
