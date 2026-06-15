@@ -473,7 +473,7 @@ struct BoxScoreView: View {
                 ?? vm.game.linescore?.isTopInning
                 ?? false
             return isTop ? .away : .home
-        case .final, .preview, .other:
+        case .final, .preview, .other, .postponed:
             return .home
         }
     }
@@ -489,7 +489,9 @@ struct BoxScoreView: View {
                 if vm.game.phase == .live, let live = vm.live?.liveData {
                     liveSituationCard(live)
                 }
-                if let bs = vm.boxScore {
+                if vm.game.phase == .postponed {
+                    postponedNotice
+                } else if let bs = vm.boxScore {
                     linescoreCard
                     teamPicker(bs: bs)
                     teamSection(side: currentSide, bs: bs)
@@ -712,11 +714,31 @@ struct BoxScoreView: View {
 
     private var centerStatus: String {
         switch vm.game.phase {
-        case .final:   return "FINAL"
-        case .live:    return vm.game.linescore?.currentInningOrdinal.map { "LIVE · \($0)" } ?? "LIVE"
-        case .preview: return vm.game.startDate.map { Self.timeFormatter.string(from: $0) } ?? "SCHEDULED"
-        case .other:   return vm.game.status.detailedState.uppercased()
+        case .final:     return "FINAL"
+        case .live:      return vm.game.linescore?.currentInningOrdinal.map { "LIVE · \($0)" } ?? "LIVE"
+        case .postponed: return "POSTPONED"
+        case .preview:   return vm.game.startDate.map { Self.timeFormatter.string(from: $0) } ?? "SCHEDULED"
+        case .other:     return vm.game.status.detailedState.uppercased()
         }
+    }
+
+    /// Shown in place of the linescore / box-score tables when a game
+    /// has been postponed — there are no stats to render, so a clear
+    /// notice reads better than an empty "Retry" error state.
+    private var postponedNotice: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "calendar.badge.exclamationmark")
+                .font(.largeTitle)
+                .foregroundStyle(.orange)
+            Text("Game Postponed")
+                .font(.headline)
+            Text("This game won't be played as scheduled. Check back for a makeup date.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 24)
+        }
+        .frame(maxWidth: .infinity, minHeight: 160)
     }
 
     // MARK: - Linescore

@@ -295,6 +295,10 @@ private struct ScheduleRow: View {
                     .foregroundStyle(.primary)
                     .monospacedDigit()
             }
+        case .postponed:
+            Text("PPD")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.orange)
         case .preview, .other:
             Text(HomeGameUtils.localTime(game: game))
                 .font(.subheadline.weight(.semibold))

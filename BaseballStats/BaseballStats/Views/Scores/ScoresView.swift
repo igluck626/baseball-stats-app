@@ -461,8 +461,16 @@ struct ScoresView: View {
             .filter { $0.phase == .live }
             .sorted { ($0.linescore?.currentInning ?? 0) > ($1.linescore?.currentInning ?? 0) }
         let upcoming = vm.games
-            .filter { $0.phase == .preview || $0.phase == .other }
-            .sorted { ($0.startDate ?? .distantFuture) < ($1.startDate ?? .distantFuture) }
+            .filter { $0.phase == .preview || $0.phase == .other || $0.phase == .postponed }
+            // On-time games first (earliest start), then postponed games
+            // sink to the bottom — they're not happening today, so they
+            // shouldn't crowd out the games that are.
+            .sorted { a, b in
+                let aPpd = a.phase == .postponed
+                let bPpd = b.phase == .postponed
+                if aPpd != bPpd { return !aPpd }
+                return (a.startDate ?? .distantFuture) < (b.startDate ?? .distantFuture)
+            }
         let completed = vm.games
             .filter { $0.phase == .final }
             .sorted { ($0.startDate ?? .distantPast) > ($1.startDate ?? .distantPast) }
@@ -642,7 +650,8 @@ private struct GameCard: View {
         game.phase == .final && side.isWinner == true
     }
 
-    /// "FINAL" / "Top 7th" / "7:05 PM" / detailed-state pass-through.
+    /// "FINAL" / "Top 7th" / "7:05 PM" / "PPD" / "DELAYED" / detailed-
+    /// state pass-through.
     private var statusLine: String {
         switch game.phase {
         case .final:
@@ -657,7 +666,15 @@ private struct GameCard: View {
                 return "\(stateShort) \(ordinal)"
             }
             return "LIVE"
+        case .postponed:
+            return "PPD"
         case .preview:
+            // A delayed game keeps its `.preview` phase (it may still be
+            // played today) — surface the delay in place of the now-
+            // unreliable start time.
+            if game.status.detailedState == "Delayed" {
+                return "DELAYED"
+            }
             if let date = game.startDate {
                 return Self.timeFormatter.string(from: date)
             }
@@ -678,7 +695,7 @@ private struct GameCard: View {
         case .live:
             let outs = game.linescore?.outs ?? 0
             return "\(outs) out\(outs == 1 ? "" : "s")"
-        case .preview:
+        case .preview, .postponed:
             if let venue = game.venue?.name { return venue }
             return nil
         case .other:
@@ -688,10 +705,14 @@ private struct GameCard: View {
 
     private var statusColor: Color {
         switch game.phase {
-        case .final:   return .secondary
-        case .live:    return .red
-        case .preview: return .primary
-        case .other:   return .secondary
+        case .final:     return .secondary
+        case .live:      return .red
+        case .postponed: return .orange
+        case .preview:
+            // Delayed previews share the postponed accent so the
+            // schedule-disrupted state reads at a glance.
+            return game.status.detailedState == "Delayed" ? .orange : .primary
+        case .other:     return .secondary
         }
     }
 

@@ -52,15 +52,17 @@ struct Game: Codable, Identifiable, Hashable {
         case preview        // scheduled / not yet started
         case live           // in progress
         case final          // ended
-        case other          // postponed / canceled / suspended
+        case postponed      // postponed — won't be played today
+        case other          // canceled / suspended
     }
 
     var phase: Phase {
         switch status.abstractGameState {
-        case "Preview": return .preview
-        case "Live":    return .live
-        case "Final":   return .final
-        default:        return .other
+        case "Preview":   return .preview
+        case "Live":      return .live
+        case "Final":     return .final
+        case "Postponed": return .postponed
+        default:          return .other
         }
     }
 
@@ -723,11 +725,14 @@ private func bdlStatusToAbstract(_ status: String) -> String {
     case "STATUS_FINAL":            return "Final"
     case "STATUS_IN_PROGRESS":      return "Live"
     case "STATUS_SCHEDULED":        return "Preview"
-    // Delays + postponements aren't truly "live" — the live UI
-    // (LIVE badge, current-inning ordinal) doesn't apply. Treat
-    // them as scheduled so the card renders the start-time chrome
-    // instead of "LIVE · ?" with a question-mark inning.
-    case "STATUS_POSTPONED":        return "Preview"
+    // Postponed games won't be played today — they get their own
+    // phase so the UI can flag them ("PPD") and sink them below the
+    // genuinely-scheduled games rather than showing a stale start time.
+    case "STATUS_POSTPONED":        return "Postponed"
+    // Delays aren't truly "live" (the LIVE badge / current-inning
+    // ordinal don't apply) but the game may still be played today, so
+    // keep them as scheduled. The card reads `detailedState` to show a
+    // "DELAYED" hint in place of the start time.
     case "STATUS_DELAYED":          return "Preview"
     case "STATUS_RAIN_DELAY":       return "Preview"
     default:                        return "Preview"

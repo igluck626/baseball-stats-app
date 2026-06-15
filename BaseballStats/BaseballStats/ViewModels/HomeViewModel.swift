@@ -193,10 +193,16 @@ final class HomeViewModel: ObservableObject {
         // line. Fired AFTER the primary state lands so the card can
         // paint everything else without waiting on this.
         var standingsLastUpdated: String?
-        if let lahmanCode = bdlToLahmanTeamId[bdlTeamId] {
+        // Hoisted out of the fetch block below so the streak overlay
+        // (which needs the full league rows + the favorite's Lahman
+        // code) can reuse them after the `deltas` are computed.
+        let favLahmanCode = bdlToLahmanTeamId[bdlTeamId]
+        var standingsRows: [TeamStanding] = []
+        if let lahmanCode = favLahmanCode {
             let year = cal.component(.year, from: today)
             if let resp = (try? await api.getStandings(year: year)) ?? nil {
                 standingsLastUpdated = resp.last_updated
+                standingsRows = resp.standings ?? []
                 if let row = resp.standings?.first(where: { $0.team_id == lahmanCode }) {
                     self.teamStreakCode = row.streak_code
                     self.teamLastTenW   = row.last_ten_w
@@ -216,6 +222,23 @@ final class HomeViewModel: ObservableObject {
         if !deltas.isEmpty {
             self.teamRecords = TodayRecordAdjustments.apply(deltas, to: self.teamRecords)
             self.teamRecord  = self.teamRecords[bdlTeamId]
+
+            // Also adjust the streak to match the standings overlay so
+            // the STREAK pill doesn't lag the W/L record beside it.
+            // `recalculateGB` rolls `streak_code` forward across today's
+            // qualifying finals using the same logic the Standings tab
+            // runs; we read just the favorite team's entry by Lahman code.
+            let adjusted = TodayRecordAdjustments.recalculateGB(
+                standings: standingsRows,
+                games: recentAndUpcoming,
+                adjustments: deltas,
+                lastUpdated: standingsLastUpdated,
+            )
+            if let code = favLahmanCode,
+               let favEntry = adjusted[code],
+               let strk = favEntry.strk {
+                self.teamStreakCode = strk
+            }
         }
 
         isLoading = false

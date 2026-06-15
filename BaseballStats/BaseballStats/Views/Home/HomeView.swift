@@ -782,7 +782,7 @@ private struct CompactGameStripCard: View {
         switch game.phase {
         case .final:    finalContent
         case .live:     liveContent
-        case .preview, .other: upcomingContent
+        case .preview, .other, .postponed: upcomingContent
         }
     }
 
@@ -905,6 +905,8 @@ enum HomeGameUtils {
         switch game.phase {
         case .live:
             return "\(venue) \(opp) · \(inningLine(game: game))"
+        case .postponed:
+            return "PPD \(venue) \(opp)"
         case .preview, .other:
             let when = relativeDayLabel(game: game)
             let time = localTime(game: game)
