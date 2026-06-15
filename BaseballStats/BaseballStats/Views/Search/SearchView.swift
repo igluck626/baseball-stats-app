@@ -11,6 +11,9 @@ import SwiftUI
 
 struct SearchView: View {
     @StateObject private var viewModel = SearchViewModel()
+    // TEMPORARY (Phase 1): entry point to preview the Player Comparison
+    // feature. Real entry points land in Phase 4 — remove this then.
+    @State private var showingCompare = false
 
     var body: some View {
         NavigationStack {
@@ -18,6 +21,7 @@ struct SearchView: View {
                 backgroundGradient
                 content
             }
+            .navigationTitle("Search")
             .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: PlayerSearchResult.self) { player in
                 PlayerProfileView(player: player)
@@ -30,6 +34,19 @@ struct SearchView: View {
             .textInputAutocapitalization(.words)
             .autocorrectionDisabled()
             .task { await viewModel.loadActiveStars() }
+            // TEMPORARY preview hook for Phase 1 of Player Comparison.
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showingCompare = true
+                    } label: {
+                        Image(systemName: "person.2.crop.square.stack")
+                    }
+                }
+            }
+            .sheet(isPresented: $showingCompare) {
+                PlayerCompareView()
+            }
         }
     }
 
