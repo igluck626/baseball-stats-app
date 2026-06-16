@@ -161,6 +161,7 @@ private extension String {
             headshot_url: nil,
             is_hof: false,
             hof_year: nil,
+            heat_score: nil, heat_tier: nil, heat_updated: nil,
             is_pitcher: nil,
             bdl_id: nil
         ))
@@ -187,6 +188,7 @@ private extension String {
             headshot_url: nil,
             is_hof: true,
             hof_year: 1936,
+            heat_score: nil, heat_tier: nil, heat_updated: nil,
             is_pitcher: nil,
             bdl_id: nil
         ))

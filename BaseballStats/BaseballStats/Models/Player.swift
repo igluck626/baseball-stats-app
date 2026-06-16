@@ -61,6 +61,13 @@ struct PlayerSearchResult: Codable, Identifiable, Hashable {
     let headshot_url: String?
     let is_hof: Bool?
     let hof_year: Int?
+    /// Hot/cold "heat": signed, tanh-compressed form vs season baseline
+    /// (~±0.32 range). `heat_tier` is the bucket ("red_hot" … "ice_cold" /
+    /// "neutral"); both nil for unrated players. `heat_updated` is an ISO
+    /// timestamp of the last nightly compute.
+    let heat_score: Double?
+    let heat_tier: String?
+    let heat_updated: String?
     /// Set by the leaderboard endpoint per `player_type` so the
     /// profile screen can pick the right default role tab without
     /// waiting for the four parallel current/career fetches. Nil for
@@ -87,6 +94,7 @@ struct PlayerSearchResult: Codable, Identifiable, Hashable {
         case death_year, death_month, death_day
         case birth_city, birth_state, birth_country
         case debut, final_game, birthdate, deathdate, headshot_url, is_hof, hof_year
+        case heat_score, heat_tier, heat_updated
         case is_pitcher, bdl_id
     }
 }
@@ -137,6 +145,10 @@ struct PlayerBio: Codable, Hashable {
     let headshot_url: String?
     let is_hof: Bool?
     let hof_year: Int?
+    /// Per-side heat — see `PlayerSearchResult.heat_score`.
+    let heat_score: Double?
+    let heat_tier: String?
+    let heat_updated: String?
 
     enum CodingKeys: String, CodingKey {
         case position, bats
@@ -146,6 +158,7 @@ struct PlayerBio: Codable, Hashable {
         case death_year, death_month, death_day
         case birth_city, birth_state, birth_country
         case debut, final_game, birthdate, deathdate, headshot_url, is_hof, hof_year
+        case heat_score, heat_tier, heat_updated
     }
 }
 

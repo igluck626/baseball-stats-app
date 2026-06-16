@@ -677,9 +677,21 @@ struct PlayerProfileView: View {
     /// surface for the current MLB year, and Recent Games + Rankings
     /// are gated on having a resolvable team / league — retired
     /// players don't reach Overview at all (`tabsToShow` strips it).
+    /// Hot/cold meter — shown for any rated player (heat_tier present),
+    /// including neutral; hidden entirely for unrated players. `player`
+    /// carries one heat rating, so the same gauge shows on both sides;
+    /// the window label is tuned per role.
+    @ViewBuilder
+    private func heatMeter(window: String) -> some View {
+        if let tier = player.heat_tier, let score = player.heat_score {
+            HeatMeterView(score: score, tier: tier, window: window)
+        }
+    }
+
     @ViewBuilder
     private var battingOverview: some View {
         VStack(spacing: 20) {
+            heatMeter(window: "Last 15 games")
             battingCurrentSeasonCard
             RecentGamesSection(
                 playerId: player.player_id,
@@ -698,6 +710,7 @@ struct PlayerProfileView: View {
     @ViewBuilder
     private var pitchingOverview: some View {
         VStack(spacing: 20) {
+            heatMeter(window: "Recent form")
             pitchingCurrentSeasonCard
             RecentGamesSection(
                 playerId: player.player_id,
@@ -4364,6 +4377,7 @@ final class CurrentSeasonRanksViewModel: ObservableObject {
             headshot_url: "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/660271/headshot/67/current",
             is_hof: false,
             hof_year: nil,
+            heat_score: 0.24, heat_tier: "red_hot", heat_updated: nil,
             is_pitcher: nil,
             bdl_id: nil
         ))
