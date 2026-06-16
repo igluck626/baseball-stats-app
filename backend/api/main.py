@@ -858,10 +858,11 @@ def players_heat(
     ),
     limit: int = Query(10, ge=1, le=50, description="Max players per list."),
 ):
-    """League-wide hottest / coldest qualified players for the Search tab.
-    Returns `{"hot": [...], "cold": [...]}` (or just the requested list when
-    `tier` is given). Only ratings refreshed in the last couple of days are
-    included, so stale heat never surfaces."""
+    """League-wide hottest / coldest qualified players for the Search tab,
+    split by side: `hot_hitters` / `hot_pitchers` / `cold_hitters` /
+    `cold_pitchers`. With `tier=hot` returns just the hot pair, `tier=cold`
+    just the cold pair, omitted returns all four. Only ratings refreshed in
+    the last couple of days are included, so stale heat never surfaces."""
     if not connection.db_available():
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
     if tier is not None and tier not in ("hot", "cold"):
