@@ -1163,13 +1163,13 @@ struct PlayerProfileView: View {
     }
 
     /// Compact one-line legend explaining the leader cells. Each sample
-    /// renders in its exact cell color — teal for league, gold for majors
+    /// renders in its exact cell color — blue for league, gold for majors
     /// — so the legend doubles as a visual cheat sheet.
     private var leaderLegend: some View {
         HStack(spacing: 14) {
             Text("League leader")
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(LeaderTint.teal)
+                .foregroundStyle(LeaderTint.leagueBlue)
             Text("Majors leader")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(LeaderTint.gold)
@@ -3249,22 +3249,18 @@ private enum LeaderTint {
                 : UIColor(red: 0.78, green: 0.58, blue: 0.08, alpha: 1.0)
         })
     }
-    /// Adaptive teal/cyan — league leader. Bright cyan-teal in dark, deep
-    /// teal in light. Clearly hued (cool green-cyan) so it separates from
-    /// both primary text (black/white) and the gold majors tier, and reads
-    /// distinctly greener than the system link blue.
-    static var teal: Color {
-        Color(uiColor: UIColor { traits in
-            traits.userInterfaceStyle == .dark
-                ? UIColor(red: 0.30, green: 0.80, blue: 0.80, alpha: 1.0)
-                : UIColor(red: 0.0,  green: 0.52, blue: 0.55, alpha: 1.0)
-        })
+    /// System blue — league leader. Adaptive for light/dark and matches
+    /// the Overview tab's rank-badge blue (`rankTierColor`), keeping the
+    /// two surfaces consistent. Cool and clearly distinct from primary
+    /// text and the gold majors tier.
+    static var leagueBlue: Color {
+        Color(.systemBlue)
     }
 }
 
 /// Builds the standard "career-row stat cell" and applies the leadership
 /// styling by color tier — both semibold:
-///   • league → teal/cyan text
+///   • league → system-blue text
 ///   • majors → gold text
 /// Plain primary text when the leaders dict has no entry for `label`.
 ///
@@ -3281,7 +3277,7 @@ private func leaderCell(
     let color: Color = {
         switch kind {
         case "majors": return LeaderTint.gold
-        case "league": return LeaderTint.teal
+        case "league": return LeaderTint.leagueBlue
         default:       return .primary
         }
     }()
