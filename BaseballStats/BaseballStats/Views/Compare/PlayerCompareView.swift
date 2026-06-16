@@ -601,18 +601,14 @@ struct PlayerCompareView: View {
         case .yearRange:
             if let bounds = vm.yearBounds {
                 let years = Array(bounds)
-                HStack(spacing: 12) {
-                    Picker("From", selection: $vm.yearFrom) {
-                        ForEach(years, id: \.self) { Text(String($0)).tag($0) }
-                    }
-                    .pickerStyle(.menu)
+                HStack(spacing: 10) {
+                    rangePill(selection: $vm.yearFrom, values: years) { String($0) }
+                        .accessibilityLabel("From year")
                     Image(systemName: "arrow.right")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Picker("To", selection: $vm.yearTo) {
-                        ForEach(years, id: \.self) { Text(String($0)).tag($0) }
-                    }
-                    .pickerStyle(.menu)
+                    rangePill(selection: $vm.yearTo, values: years) { String($0) }
+                        .accessibilityLabel("To year")
                 }
                 // Keep To ≥ From in both directions.
                 .onChange(of: vm.yearFrom) { _, new in if vm.yearTo < new { vm.yearTo = new } }
@@ -620,12 +616,17 @@ struct PlayerCompareView: View {
             }
         case .ageRange:
             if let bounds = vm.ageBounds {
+                let ages = Array(bounds)
                 VStack(spacing: 6) {
-                    HStack(spacing: 16) {
-                        Stepper("From \(vm.ageFrom)", value: $vm.ageFrom, in: bounds)
-                        Stepper("To \(vm.ageTo)", value: $vm.ageTo, in: bounds)
+                    HStack(spacing: 10) {
+                        rangePill(selection: $vm.ageFrom, values: ages) { "Age \($0)" }
+                            .accessibilityLabel("From age")
+                        Image(systemName: "arrow.right")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        rangePill(selection: $vm.ageTo, values: ages) { "Age \($0)" }
+                            .accessibilityLabel("To age")
                     }
-                    .font(.subheadline)
                     if vm.hasMissingBirthYear {
                         Text("Players without a birth year on file show “—” in Age Range.")
                             .font(.caption2)
@@ -641,6 +642,35 @@ struct PlayerCompareView: View {
             }
         default:
             EmptyView()
+        }
+    }
+
+    /// Shared capsule menu used by BOTH range modes so Year Range and Age
+    /// Range read identically — an `.ultraThinMaterial` pill showing the
+    /// current value with a chevron hint, tapping opens a checkmarked menu.
+    private func rangePill(
+        selection: Binding<Int>,
+        values: [Int],
+        display: @escaping (Int) -> String,
+    ) -> some View {
+        Menu {
+            Picker("", selection: selection) {
+                ForEach(values, id: \.self) { Text(display($0)).tag($0) }
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Text(display(selection.wrappedValue))
+                    .font(.subheadline.weight(.semibold))
+                    .monospacedDigit()
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(Capsule().fill(.ultraThinMaterial))
+            .overlay(Capsule().strokeBorder(.quaternary, lineWidth: 0.5))
         }
     }
 
@@ -832,11 +862,23 @@ struct PlayerCompareView: View {
 
     // MARK: Formatting
 
+    /// Comma-grouped formatter for counting stats — career H / SO / etc.
+    /// routinely top 1,000. `.decimal` only inserts separators at ≥ 1,000,
+    /// so small values still render plain ("5", not "5").
+    private static let countFormatter: NumberFormatter = {
+        let f = NumberFormatter()
+        f.numberStyle = .decimal
+        f.groupingSeparator = ","
+        f.maximumFractionDigits = 0
+        return f
+    }()
+
     private func formatted(_ value: Double?, format: StatFormat) -> String {
         guard let value else { return "—" }
         switch format {
         case .int:
-            return String(Int(value.rounded()))
+            let rounded = Int(value.rounded())
+            return Self.countFormatter.string(from: NSNumber(value: rounded)) ?? "\(rounded)"
         case .dec1:
             return String(format: "%.1f", value)
         case .dec2:
