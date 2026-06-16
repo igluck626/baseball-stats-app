@@ -84,7 +84,7 @@ fileprivate struct CompareStat: Identifiable {
 /// profile navigation + identity) plus the raw per-season rows for the
 /// comparison side — range modes re-aggregate a filtered subset of these,
 /// so the stats are computed on demand rather than stored.
-struct ComparePlayer: Identifiable {
+struct ComparePlayer: Identifiable, Equatable {
     let result: PlayerSearchResult
     let isPitcher: Bool
     /// Full season rows for the comparison side; the other array is empty.
@@ -218,6 +218,18 @@ final class PlayerCompareViewModel: ObservableObject {
         players.removeAll { $0.id == player.id }
         if players.isEmpty { comparisonType = nil }
         recomputeRangeDefaults()
+    }
+
+    /// Reorder columns: pull the dragged player out and reinsert at the
+    /// drop target's slot. The whole table follows automatically — headers
+    /// and stat cells both read from `players`. No-op for self-drops or
+    /// unknown ids. Range defaults are untouched (same roster).
+    func movePlayer(from sourceId: Int, to targetIndex: Int) {
+        guard let sourceIndex = players.firstIndex(where: { $0.id == sourceId }),
+              targetIndex >= 0, targetIndex <= players.count,
+              sourceIndex != targetIndex else { return }
+        let player = players.remove(at: sourceIndex)
+        players.insert(player, at: min(targetIndex, players.count))
     }
 
     /// Add a picked search result. The first player infers and locks the
@@ -500,6 +512,9 @@ private enum CompareLayout {
 struct PlayerCompareView: View {
     @StateObject private var vm: PlayerCompareViewModel
     @State private var showingSearch = false
+    /// Player id of the column currently under a drag, for the drop-target
+    /// highlight. nil when nothing is being targeted.
+    @State private var dropTargetId: Int?
     @Environment(\.dismiss) private var dismiss
 
     /// `startingPlayer` seeds the comparison (profile entry point); omit
@@ -769,6 +784,7 @@ struct PlayerCompareView: View {
                         }
                     }
                 }
+                .animation(.spring(response: 0.3), value: vm.players)
             }
         }
         .background(.ultraThinMaterial)
@@ -782,6 +798,25 @@ struct PlayerCompareView: View {
     ) -> some View {
         VStack(spacing: 0) {
             playerHeader(player)
+                // Press-and-hold the header tile to drag it; a quick swipe
+                // still scrolls the row (`.draggable` is long-press gated).
+                .draggable(String(player.id))
+                .dropDestination(for: String.self) { items, _ in
+                    guard let raw = items.first, let draggedId = Int(raw),
+                          let targetIndex = vm.players.firstIndex(where: { $0.id == player.id })
+                    else { return false }
+                    vm.movePlayer(from: draggedId, to: targetIndex)
+                    return true
+                } isTargeted: { targeted in
+                    if targeted { dropTargetId = player.id }
+                    else if dropTargetId == player.id { dropTargetId = nil }
+                }
+                .overlay {
+                    if dropTargetId == player.id {
+                        Rectangle()
+                            .strokeBorder(Color.accentColor, lineWidth: 2)
+                    }
+                }
             Divider().opacity(0.3)
             ForEach(Array(vm.stats.enumerated()), id: \.element.id) { idx, stat in
                 statCell(player: player, stat: stat, values: values)
