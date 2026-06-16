@@ -3641,6 +3641,91 @@ def admin_load_award_shares():
         }
 
 
+@app.post("/admin/load-people-bio")
+def admin_load_people_bio():
+    """Targeted backfill: re-read `People.csv` and upsert bio rows for
+    every player/pitcher already in the DB, skipping the full Lahman
+    re-run. Reuses `lahman_load._load_people_info()` so the bio-field
+    mapping (including `death_year/month/day`) stays single-sourced.
+
+    Primarily exists to populate the death-date columns added after the
+    initial Lahman import without re-running batting/pitching/fielding/
+    awards. `crud.save_player` / `save_pitcher` upsert per-field (never
+    overwriting a non-null with null), so this safely fills the new
+    columns on existing rows and refreshes other bio fields in place.
+
+    Same bridge-building shape as `/admin/load-award-shares`: the
+    Chadwick bbref→mlbam map, supplemented with bbref_ids from our own
+    bio tables so manually-added historical players resolve too. The id
+    sets are every player_id currently in `players` / `pitchers` (we
+    only write People rows for players we actually have).
+
+    Synchronous — one CSV pass plus a batched upsert; no background
+    thread. Diagnostic-mode error handling matches the award loaders:
+    returns 200 with `status: "error"` + traceback on failure.
+    """
+    import traceback
+
+    if not connection.db_available():
+        return {
+            "status":  "error",
+            "message": "DATABASE_URL is not configured",
+        }
+
+    started = time.time()
+    try:
+        # Chadwick bbref→mlbam bridge, supplemented from our own bio
+        # tables (same reasoning as /admin/load-award-shares — manually-
+        # added historical players carry a bbref_id but may have no
+        # Chadwick CSV row, and People.csv is keyed on bbref).
+        bridge = lahman_load._load_chadwick_bridge()
+        supplemented_from_db = 0
+        with connection.get_session() as db:
+            for row in (
+                db.query(Player.bbref_id, Player.player_id)
+                  .filter(Player.bbref_id.isnot(None))
+                  .all()
+            ):
+                if row.bbref_id and row.bbref_id not in bridge:
+                    bridge[row.bbref_id] = row.player_id
+                    supplemented_from_db += 1
+            for row in (
+                db.query(Pitcher.bbref_id, Pitcher.player_id)
+                  .filter(Pitcher.bbref_id.isnot(None))
+                  .all()
+            ):
+                if row.bbref_id and row.bbref_id not in bridge:
+                    bridge[row.bbref_id] = row.player_id
+                    supplemented_from_db += 1
+
+            # Only write People rows for players we actually have stored.
+            batter_ids  = set(crud.get_all_player_ids(db))
+            pitcher_ids = set(crud.get_all_pitcher_ids(db))
+
+        # state/lock are Optional on _load_people_info — pass None for the
+        # synchronous (no progress-tracking) path.
+        players_written, pitchers_written = lahman_load._load_people_info(
+            bridge, batter_ids, pitcher_ids, None, None,
+        )
+        duration = round(time.time() - started, 2)
+        return {
+            "status":               "done",
+            "players_written":      players_written,
+            "pitchers_written":     pitchers_written,
+            "supplemented_from_db": supplemented_from_db,
+            "duration_seconds":     duration,
+        }
+    except Exception as exc:
+        log.exception("load-people-bio failed")
+        return {
+            "status":     "error",
+            "message":    str(exc),
+            "error_type": type(exc).__name__,
+            "traceback":  traceback.format_exc(),
+            "duration_seconds": round(time.time() - started, 2),
+        }
+
+
 @app.post("/admin/load-awards")
 def admin_load_awards():
     """Targeted backfill: load just `AwardsPlayers.csv` into
