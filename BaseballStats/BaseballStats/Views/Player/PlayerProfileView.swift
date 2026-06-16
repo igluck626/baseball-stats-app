@@ -1163,13 +1163,13 @@ struct PlayerProfileView: View {
     }
 
     /// Compact one-line legend explaining the leader cells. Each sample
-    /// renders in its exact cell color — silver/slate for league, gold for
-    /// majors — so the legend doubles as a visual cheat sheet.
+    /// renders in its exact cell color — teal for league, gold for majors
+    /// — so the legend doubles as a visual cheat sheet.
     private var leaderLegend: some View {
         HStack(spacing: 14) {
             Text("League leader")
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(LeaderTint.silver)
+                .foregroundStyle(LeaderTint.teal)
             Text("Majors leader")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(LeaderTint.gold)
@@ -3249,21 +3249,22 @@ private enum LeaderTint {
                 : UIColor(red: 0.78, green: 0.58, blue: 0.08, alpha: 1.0)
         })
     }
-    /// Adaptive cool silver/slate — league leader. Cool bright silver in
-    /// dark, muted-but-blue-tinted slate in light, so it never reads as a
-    /// plain disabled gray.
-    static var silver: Color {
+    /// Adaptive teal/cyan — league leader. Bright cyan-teal in dark, deep
+    /// teal in light. Clearly hued (cool green-cyan) so it separates from
+    /// both primary text (black/white) and the gold majors tier, and reads
+    /// distinctly greener than the system link blue.
+    static var teal: Color {
         Color(uiColor: UIColor { traits in
             traits.userInterfaceStyle == .dark
-                ? UIColor(red: 0.68, green: 0.74, blue: 0.82, alpha: 1.0)
-                : UIColor(red: 0.42, green: 0.48, blue: 0.56, alpha: 1.0)
+                ? UIColor(red: 0.30, green: 0.80, blue: 0.80, alpha: 1.0)
+                : UIColor(red: 0.0,  green: 0.52, blue: 0.55, alpha: 1.0)
         })
     }
 }
 
 /// Builds the standard "career-row stat cell" and applies the leadership
 /// styling by color tier — both semibold:
-///   • league → silver/slate text
+///   • league → teal/cyan text
 ///   • majors → gold text
 /// Plain primary text when the leaders dict has no entry for `label`.
 ///
@@ -3280,7 +3281,7 @@ private func leaderCell(
     let color: Color = {
         switch kind {
         case "majors": return LeaderTint.gold
-        case "league": return LeaderTint.silver
+        case "league": return LeaderTint.teal
         default:       return .primary
         }
     }()
