@@ -23,10 +23,10 @@ struct RosterSheet: View {
     enum RosterMode: String, Hashable { case hitters, pitchers }
     @State private var mode: RosterMode = .hitters
 
-    /// Leading jersey-number column width — shared by the data rows and
-    /// the column-header spacer so the identity block + stat columns line
-    /// up across both.
-    private static let jerseyWidth: CGFloat = 32
+    /// Leading position-column width — shared by the data rows and the
+    /// column-header spacer so the identity block + stat columns line up
+    /// across both. Sized for 2–3 char positions ("SS" / "RHP" / "DH").
+    private static let positionWidth: CGFloat = 40
 
     /// Per-stat fixed widths shared by the per-section column header
     /// and every data row so values stack into clean columns. Name +
@@ -76,7 +76,14 @@ struct RosterSheet: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                modePillRow
+                Picker("Mode", selection: $mode) {
+                    Text("Hitters").tag(RosterMode.hitters)
+                    Text("Pitchers").tag(RosterMode.pitchers)
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16)
+                .padding(.top, 10)
+                .padding(.bottom, 8)
 
                 Divider().padding(.top, 4)
 
@@ -104,37 +111,6 @@ struct RosterSheet: View {
         // Glass sheet — matches InjuryReportSheet and the app-wide
         // sheet treatment.
         .presentationBackground(.ultraThinMaterial)
-    }
-
-    /// Hitters / Pitchers selector as team-tinted pills, matching the
-    /// TeamLeadersSheet pill family (selected = team fill + white text).
-    private var modePillRow: some View {
-        HStack(spacing: 6) {
-            modePill("Hitters",  .hitters)
-            modePill("Pitchers", .pitchers)
-            Spacer()
-        }
-        .padding(.horizontal, 16)
-        .padding(.top, 10)
-        .padding(.bottom, 6)
-    }
-
-    private func modePill(_ label: String, _ value: RosterMode) -> some View {
-        let selected = (mode == value)
-        return Button {
-            mode = value
-        } label: {
-            Text(label)
-                .font(.footnote.weight(.semibold))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(selected ? tint : Color(.systemFill).opacity(0.35))
-                )
-                .foregroundStyle(selected ? .white : .primary)
-        }
-        .buttonStyle(.plain)
     }
 
     @ViewBuilder
@@ -176,9 +152,9 @@ struct RosterSheet: View {
     /// labels line up over their values.
     private var columnHeaderRow: some View {
         HStack(spacing: 0) {
-            // Jersey-column spacer + identity-block flex, so the stat
+            // Position-column spacer + identity-block flex, so the stat
             // labels land over their values exactly like the rows below.
-            Color.clear.frame(width: Self.jerseyWidth)
+            Color.clear.frame(width: Self.positionWidth)
             Text("")
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.leading, 8)
@@ -237,24 +213,26 @@ struct RosterSheet: View {
     /// (the `NavigationLink` wrapper supplies the hit target).
     private func row(_ player: RosterPlayer) -> some View {
         HStack(spacing: 0) {
-            // Leading jersey anchor — team-tinted number, fixed width so
-            // the identity block + stat columns line up down the table.
-            jerseyLabel(player)
-                .frame(width: Self.jerseyWidth, alignment: .center)
+            // Leading position anchor — team-tinted, fixed width so the
+            // identity block + stat columns line up down the table.
+            // Position is the primary organizing info on a roster.
+            positionLabel(player)
+                .frame(width: Self.positionWidth, alignment: .center)
 
-            // Two-line identity block: name over position (Apple list
-            // primary/secondary pattern).
+            // Identity block: name with the jersey number as a muted
+            // secondary line (Apple list primary/secondary pattern). No
+            // secondary line when BDL carries no number.
             VStack(alignment: .leading, spacing: 1) {
                 Text(player.name)
                     .font(.body.weight(.semibold))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
-                if !player.position.isEmpty {
-                    Text(player.position.uppercased())
+                if let jersey = player.jersey, !jersey.isEmpty {
+                    Text("#\(jersey)")
                         .font(.caption.weight(.medium))
                         .foregroundStyle(.secondary)
-                        .tracking(0.3)
+                        .monospacedDigit()
                 }
             }
             .padding(.leading, 8)
@@ -273,19 +251,17 @@ struct RosterSheet: View {
         .contentShape(Rectangle())
     }
 
-    /// Jersey number cell: team-tinted bold number, or a muted em-dash
-    /// when BDL doesn't carry a number for the player.
+    /// Position cell: team-tinted bold abbreviation, or a muted em-dash
+    /// when BDL doesn't carry a position for the player.
     @ViewBuilder
-    private func jerseyLabel(_ player: RosterPlayer) -> some View {
-        if let jersey = player.jersey, !jersey.isEmpty {
-            Text(jersey)
+    private func positionLabel(_ player: RosterPlayer) -> some View {
+        if !player.position.isEmpty {
+            Text(player.position.uppercased())
                 .font(.subheadline.weight(.bold))
-                .monospacedDigit()
                 .foregroundStyle(tint)
         } else {
             Text("—")
                 .font(.subheadline.weight(.bold))
-                .monospacedDigit()
                 .foregroundStyle(.tertiary)
         }
     }
