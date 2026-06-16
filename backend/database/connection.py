@@ -58,6 +58,12 @@ _BIO_COLUMNS: list[tuple[str, str]] = [
     ("birth_country", "VARCHAR"),
     ("debut",         "VARCHAR"),
     ("final_game",    "VARCHAR"),
+    # Hot/cold "heat" — last-N-game form vs season baseline, stamped by
+    # the nightly heat phase. On both players + pitchers (two-way players
+    # carry an independent rating per side).
+    ("heat_score",    "DOUBLE PRECISION"),
+    ("heat_tier",     "VARCHAR"),
+    ("heat_updated",  "TIMESTAMP"),
     # External-system mapping for the BallDontLie API migration.
     # Stamped lazily by `/admin/build-bdl-player-mapping`. Kept on
     # both `players` and `pitchers` because two-way players have a

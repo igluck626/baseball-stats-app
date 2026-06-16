@@ -48,6 +48,11 @@ class Player(Base):
     birth_country   = Column(String)
     debut           = Column(String)    # ISO date "YYYY-MM-DD"
     final_game      = Column(String)
+    # Hot/cold "heat": signed pct of last-N-game form vs season baseline
+    # (e.g. +0.22 = 22% above). Stamped by the nightly heat phase.
+    heat_score      = Column(Float)
+    heat_tier       = Column(String)    # red_hot | hot | neutral | cold | ice_cold | None
+    heat_updated    = Column(DateTime)
 
 
 class PlayerSeason(Base):
@@ -132,6 +137,11 @@ class Pitcher(Base):
     birth_country   = Column(String)
     debut           = Column(String)
     final_game      = Column(String)
+    # Hot/cold "heat" — see Player.heat_score. For pitchers, positive =
+    # pitching better than season baseline (lower ERA/WHIP).
+    heat_score      = Column(Float)
+    heat_tier       = Column(String)    # red_hot | hot | neutral | cold | ice_cold | None
+    heat_updated    = Column(DateTime)
 
 
 class PitcherSeason(Base):

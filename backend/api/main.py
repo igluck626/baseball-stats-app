@@ -742,6 +742,20 @@ def _run_nightly_update() -> None:
                 log.error(
                     f"[nightly] new-player gamelog backfill FAILED (non-fatal): {exc}"
                 )
+
+        # Phase 6 — hot/cold heat. Reads fully-ingested, deduped gamelogs
+        # vs season baselines and stamps heat_score / heat_tier. Non-fatal.
+        log.info("[nightly] starting heat phase")
+        try:
+            with connection.get_session() as db:
+                heat = data_service.compute_all_player_heat(db, current_year)
+            log.info(
+                f"[nightly] heat computed — scored: {heat.get('scored', 0)}, "
+                f"hot: {heat.get('hot', 0)}, cold: {heat.get('cold', 0)}, "
+                f"neutral: {heat.get('neutral', 0)}, skipped: {heat.get('skipped', 0)}"
+            )
+        except Exception as exc:
+            log.error(f"[nightly] heat phase FAILED (non-fatal): {exc}")
     except Exception as exc:
         # Log the full traceback so silent thread crashes are visible in
         # Railway's log stream. The previous handler stored only str(exc),
@@ -3639,6 +3653,53 @@ def admin_load_award_shares():
             "traceback":  traceback.format_exc(),
             "duration_seconds": round(time.time() - started, 2),
         }
+
+
+@app.post("/admin/compute-heat")
+def admin_compute_heat(
+    player_id: int | None = Query(
+        None,
+        description="Optional — compute + return heat for one player (debug, "
+                    "both sides if two-way). Omit to run the full active scan.",
+    ),
+):
+    """Compute hot/cold heat and persist it. With no `player_id`, runs the
+    full active-player scan via `compute_all_player_heat` and returns the
+    count buckets. With `player_id`, computes the rating for whichever bio
+    side(s) exist (batting / pitching) and returns the scores."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    current_year = datetime.datetime.utcnow().year
+
+    if player_id is None:
+        with connection.get_session() as db:
+            counts = data_service.compute_all_player_heat(db, current_year)
+        return {"status": "ok", "current_year": current_year, "counts": counts}
+
+    out: dict = {"player_id": player_id, "current_year": current_year, "sides": {}}
+    with connection.get_session() as db:
+        now = datetime.datetime.utcnow()
+        batter = db.get(Player, player_id)
+        if batter is not None:
+            score, tier = data_service.compute_player_heat(
+                db, player_id, is_pitcher=False, current_year=current_year,
+            )
+            batter.heat_score, batter.heat_tier, batter.heat_updated = score, tier, now
+            out["sides"]["batting"] = {"heat_score": score, "heat_tier": tier}
+        pitcher = db.get(Pitcher, player_id)
+        if pitcher is not None:
+            score, tier = data_service.compute_player_heat(
+                db, player_id, is_pitcher=True, current_year=current_year,
+            )
+            pitcher.heat_score, pitcher.heat_tier, pitcher.heat_updated = score, tier, now
+            out["sides"]["pitching"] = {"heat_score": score, "heat_tier": tier}
+        if batter is None and pitcher is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No bio row in players or pitchers for player_id {player_id}",
+            )
+        db.commit()
+    return out
 
 
 @app.post("/admin/load-people-bio")

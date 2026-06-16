@@ -6837,6 +6837,191 @@ def _build_pitcher_season_entry(
     return entry
 
 
+# ---------------------------------------------------------------------------
+# Hot/cold "heat" — last-N-game form vs season baseline
+# ---------------------------------------------------------------------------
+# Each active player's recent window (last 15 games for hitters / relievers,
+# last 5 starts for starters) is compared to their stored season rate. The
+# signed `heat_score` is the percentage above/below baseline; `heat_tier`
+# buckets it. Guardrails (sample size, recency, valid baseline) gate out
+# noisy or stale ratings — those return (None, None) and clear the columns.
+
+# Most-recent game must be within this many days of today, else the rating
+# is considered stale (player on the IL, slumped out of the window, etc.).
+_HEAT_RECENCY_DAYS = 10
+
+
+def heat_tier_for(score: Optional[float]) -> Optional[str]:
+    """Bucket a signed heat score into a tier label (None passes through)."""
+    if score is None:
+        return None
+    if score >= 0.20:
+        return "red_hot"
+    if score >= 0.08:
+        return "hot"
+    if score <= -0.20:
+        return "ice_cold"
+    if score <= -0.08:
+        return "cold"
+    return "neutral"
+
+
+def _season_row(seasons: list, year: int):
+    """The season row matching `year` from a player's seasons list, or None."""
+    for s in seasons:
+        if getattr(s, "year", None) == year:
+            return s
+    return None
+
+
+def _heat_recent(logs: list) -> bool:
+    """True when the most-recent game (logs are game_date-desc) is within
+    `_HEAT_RECENCY_DAYS` of today. False on missing dates."""
+    if not logs:
+        return False
+    most_recent = getattr(logs[0], "game_date", None)
+    if most_recent is None:
+        return False
+    if isinstance(most_recent, datetime.datetime):
+        most_recent = most_recent.date()
+    return (datetime.date.today() - most_recent).days <= _HEAT_RECENCY_DAYS
+
+
+def compute_player_heat(
+    db, player_id: int, is_pitcher: bool, current_year: int,
+) -> tuple[Optional[float], Optional[str]]:
+    """Compute `(heat_score, heat_tier)` for one player. Returns (None, None)
+    when the sample-size / recency / baseline guardrails aren't met."""
+    if is_pitcher:
+        return _compute_pitcher_heat(db, player_id, current_year)
+    return _compute_batter_heat(db, player_id, current_year)
+
+
+def _compute_batter_heat(
+    db, player_id: int, current_year: int,
+) -> tuple[Optional[float], Optional[str]]:
+    logs = crud.get_batting_gamelogs(db, player_id, season=current_year, last_n=15)
+    if len(logs) < 10 or not _heat_recent(logs):
+        return (None, None)
+
+    def total(attr: str) -> int:
+        return sum((getattr(g, attr) or 0) for g in logs)
+
+    pa = total("PA")
+    if pa < 30:
+        return (None, None)
+
+    h, bb, hbp, ab, sf = total("H"), total("BB"), total("HBP"), total("AB"), total("SF")
+    dbl, trp, hr = total("doubles"), total("triples"), total("HR")
+    obp_den = ab + bb + hbp + sf
+    if ab <= 0 or obp_den <= 0:
+        return (None, None)
+    window_obp = (h + bb + hbp) / obp_den
+    tb = h + dbl + 2 * trp + 3 * hr
+    window_slg = tb / ab
+    window_ops = window_obp + window_slg
+
+    season = _season_row(crud.get_player_seasons(db, player_id), current_year)
+    if season is None:
+        return (None, None)
+    if (season.PA or 0) < 100:
+        return (None, None)
+    season_ops = season.OPS
+    if not season_ops or season_ops <= 0:
+        return (None, None)
+
+    score = (window_ops - season_ops) / season_ops
+    return (score, heat_tier_for(score))
+
+
+def _compute_pitcher_heat(
+    db, player_id: int, current_year: int,
+) -> tuple[Optional[float], Optional[str]]:
+    season = _season_row(crud.get_pitcher_seasons(db, player_id), current_year)
+    if season is None:
+        return (None, None)
+
+    # Starter vs reliever from the season GS/G ratio — drives the window
+    # size and the (looser) reliever guardrails.
+    g, gs = (season.G or 0), (season.GS or 0)
+    is_starter = g > 0 and (gs / g) > 0.5
+    last_n = 5 if is_starter else 15
+    min_games = 3 if is_starter else 8
+    min_ip = 10 if is_starter else 5
+
+    logs = crud.get_pitching_gamelogs(db, player_id, season=current_year, last_n=last_n)
+    if len(logs) < min_games or not _heat_recent(logs):
+        return (None, None)
+
+    ip = sum((getattr(gl, "IP", None) or 0.0) for gl in logs)
+    if ip < min_ip or ip <= 0:
+        return (None, None)
+    er = sum((gl.ER or 0) for gl in logs)
+    h  = sum((gl.H or 0) for gl in logs)
+    bb = sum((gl.BB or 0) for gl in logs)
+    window_era = er * 9 / ip
+    window_whip = (h + bb) / ip
+
+    if (season.IP or 0) < 20:
+        return (None, None)
+    season_era, season_whip = season.ERA, season.WHIP
+    if not season_era or season_era <= 0 or not season_whip or season_whip <= 0:
+        return (None, None)
+
+    # Positive = better than baseline (lower ERA/WHIP). Equal-weight blend.
+    era_part  = (season_era - window_era) / season_era
+    whip_part = (season_whip - window_whip) / season_whip
+    score = 0.5 * era_part + 0.5 * whip_part
+    return (score, heat_tier_for(score))
+
+
+def compute_all_player_heat(db, current_year: int) -> dict:
+    """Score every active, BDL-mapped player (one row per side) and stamp
+    heat_score / heat_tier / heat_updated. Returns count buckets."""
+    from database.models import Pitcher as _Pitcher
+    from database.models import Player as _Player
+
+    counts = {"scored": 0, "hot": 0, "cold": 0, "neutral": 0, "skipped": 0}
+    now = datetime.datetime.utcnow()
+
+    def _apply(row, is_pitcher: bool) -> None:
+        score, tier = compute_player_heat(db, row.player_id, is_pitcher, current_year)
+        row.heat_score = score
+        row.heat_tier = tier
+        row.heat_updated = now
+        if tier is None:
+            counts["skipped"] += 1
+        else:
+            counts["scored"] += 1
+            if tier in ("red_hot", "hot"):
+                counts["hot"] += 1
+            elif tier in ("ice_cold", "cold"):
+                counts["cold"] += 1
+            else:
+                counts["neutral"] += 1
+
+    batters = (
+        db.query(_Player)
+          .filter(_Player.mlb_last_season.is_(None))
+          .filter(_Player.bdl_id.isnot(None))
+          .all()
+    )
+    for row in batters:
+        _apply(row, is_pitcher=False)
+
+    pitchers = (
+        db.query(_Pitcher)
+          .filter(_Pitcher.mlb_last_season.is_(None))
+          .filter(_Pitcher.bdl_id.isnot(None))
+          .all()
+    )
+    for row in pitchers:
+        _apply(row, is_pitcher=True)
+
+    db.commit()
+    return counts
+
+
 def init_db() -> None:
     """Create database tables if they don't exist. Called once on startup."""
     connection.init_db()

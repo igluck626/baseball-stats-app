@@ -1291,6 +1291,23 @@ def main() -> None:
                 f"New-player gamelog backfill FAILED (non-fatal): {exc}"
             )
 
+    # Phase 6 — hot/cold heat. Compares each active player's last-N-game
+    # window to their season baseline and stamps heat_score / heat_tier.
+    # Runs last so it reads fully-ingested, deduped gamelogs. Non-fatal.
+    log.info("=" * 52)
+    log.info("Phase 6: hot/cold heat")
+    log.info("=" * 52)
+    try:
+        with connection.get_session() as db:
+            heat = data_service.compute_all_player_heat(db, current_year)
+        log.info(
+            f"Heat computed — scored: {heat.get('scored', 0)}, "
+            f"hot: {heat.get('hot', 0)}, cold: {heat.get('cold', 0)}, "
+            f"neutral: {heat.get('neutral', 0)}, skipped: {heat.get('skipped', 0)}"
+        )
+    except Exception as exc:
+        log.error(f"Heat compute FAILED (non-fatal): {exc}")
+
     log.info("=" * 52)
     log.info(
         f"Batters   — updated: {bat_updated}, skipped: {bat_skipped}, failed: {len(bat_failed)}"
