@@ -1162,19 +1162,23 @@ struct PlayerProfileView: View {
         .accessibilityLabel("Compare with other players")
     }
 
-    /// Compact one-line legend explaining the gold leader cells. Each
-    /// sample renders in the *exact* treatment its cells use — gold
-    /// semibold text for league, gold underlined text for majors — so the
-    /// legend doubles as a visual cheat sheet.
+    /// Compact one-line legend explaining the gold leader cells. The dot
+    /// shape mirrors the cells — hollow for league, filled for majors —
+    /// so the legend doubles as a visual cheat sheet.
     private var leaderLegend: some View {
         HStack(spacing: 14) {
-            Text("League leader")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(LeaderTint.gold)
-            Text("Majors leader")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(LeaderTint.gold)
-                .underline(true, color: LeaderTint.gold)
+            HStack(spacing: 5) {
+                leaderMarker(filled: false)
+                Text("League leader")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(LeaderTint.gold)
+            }
+            HStack(spacing: 5) {
+                leaderMarker(filled: true)
+                Text("Majors leader")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(LeaderTint.gold)
+            }
             Spacer()
         }
         .padding(.horizontal, 4)
@@ -3253,19 +3257,28 @@ private enum LeaderTint {
     }
 }
 
+/// Small gold leader dot, distinguished by SHAPE: filled for majors,
+/// hollow (ring) for league. Both adaptive gold. Sized to sit in the
+/// cell's leading space without crowding the value.
+private func leaderMarker(filled: Bool) -> some View {
+    Image(systemName: filled ? "circle.fill" : "circle")
+        .font(.system(size: 5))
+        .foregroundStyle(LeaderTint.gold)
+}
+
 /// Builds the standard "career-row stat cell" and applies the leadership
-/// styling in two clearly distinct tiers:
-///   • league → gold semibold text (a quiet emphasis)
-///   • majors → gold value on a snug gold pill (the higher tier)
+/// styling in two clearly distinct tiers — both gold semibold text,
+/// differentiated by a small leading dot:
+///   • league → hollow gold dot
+///   • majors → filled gold dot
 /// Plain primary text when the leaders dict has no entry for `label`.
 ///
-/// Alignment: the pill is a `.background` applied AFTER the fixed-width
-/// frame, so it spans exactly the column width and adds NO layout size —
-/// columns and row heights stay aligned with the frozen pane and the
-/// non-leader cells. The font size is left inherited (only weight changes)
-/// and `.monospacedDigit()` keeps numeric advance widths constant across
-/// weights, so nothing shifts horizontally either.
-@ViewBuilder
+/// Alignment: the value sits in the fixed-width frame right-aligned exactly
+/// as in non-leader cells; the dot is an `.overlay(alignment: .leading)`,
+/// which adds NO layout size, so the number's position is byte-for-byte
+/// identical across non-leader / league / majors cells. At the table's
+/// 11pt font the dot lands in the empty left slack of the column, clear of
+/// both the value and (via the 2pt padding) the neighboring column.
 private func leaderCell(
     _ value: String,
     label: String,
@@ -3273,34 +3286,19 @@ private func leaderCell(
     width: CGFloat
 ) -> some View {
     let kind = leaders?[label]
-    switch kind {
-    case "majors":
-        // Gold semibold text + a gold underline. The underline adds no
-        // width and no height, so the number stays in the exact same
-        // right-aligned position as the non-leader cells — perfect grid
-        // alignment. The underline (vs plain gold text for league) is the
-        // sole majors distinction.
-        Text(value)
-            .fontWeight(.semibold)
-            .monospacedDigit()
-            .foregroundStyle(LeaderTint.gold)
-            .underline(true, color: LeaderTint.gold)
-            .frame(width: width, alignment: .trailing)
-            .padding(.horizontal, 2)
-    case "league":
-        Text(value)
-            .fontWeight(.semibold)
-            .monospacedDigit()
-            .foregroundStyle(LeaderTint.gold)
-            .frame(width: width, alignment: .trailing)
-            .padding(.horizontal, 2)
-    default:
-        Text(value)
-            .monospacedDigit()
-            .foregroundStyle(.primary)
-            .frame(width: width, alignment: .trailing)
-            .padding(.horizontal, 2)
-    }
+    return Text(value)
+        .fontWeight(kind != nil ? .semibold : .regular)
+        .monospacedDigit()
+        .foregroundStyle(kind != nil ? LeaderTint.gold : .primary)
+        .frame(width: width, alignment: .trailing)
+        .overlay(alignment: .leading) {
+            if kind == "majors" {
+                leaderMarker(filled: true)
+            } else if kind == "league" {
+                leaderMarker(filled: false)
+            }
+        }
+        .padding(.horizontal, 2)
 }
 
 // MARK: - Formatters
