@@ -434,6 +434,13 @@ struct PlayerProfileView: View {
                         .map { "\(dob) (\($0))" } ?? dob
                     HeaderBioRow(label: "Date of Birth", value: value)
                 }
+                // Deceased only — placed right after birth so the two dates
+                // read adjacently. `formatLongDate` returns nil for living
+                // players (no deathdate) and passes a year-only "1948"
+                // through unchanged.
+                if let dod = formatLongDate(player.deathdate) {
+                    HeaderBioRow(label: "Date of Death", value: dod)
+                }
                 if let place = placeOfBirth {
                     HeaderBioRow(label: "Place of Birth", value: place)
                 }
