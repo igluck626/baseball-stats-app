@@ -3286,12 +3286,21 @@ private func leaderCell(
     let kind = leaders?[label]
     switch kind {
     case "majors":
+        // Pill is sized to the value FIRST (padding + background before the
+        // frame) so the capsule hugs the number instead of spanning the
+        // whole column. The pill is then right-aligned within the fixed
+        // column width, so the grid stays aligned; vertical padding is safe
+        // because the row is height-clamped to 28pt (it can't grow the row
+        // or desync the frozen pane). Horizontal padding kept at 4pt to
+        // limit left-overflow on the narrowest 3-digit columns.
         Text(value)
             .fontWeight(.semibold)
             .monospacedDigit()
             .foregroundStyle(LeaderTint.goldText)
-            .frame(width: width, alignment: .trailing)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 1.5)
             .background(LeaderTint.gold.opacity(0.22), in: Capsule())
+            .frame(width: width, alignment: .trailing)
             .padding(.horizontal, 2)
     case "league":
         Text(value)
