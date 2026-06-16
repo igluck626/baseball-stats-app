@@ -56,7 +56,7 @@ enum StatDirection {
 
     static func direction(for stat: String, isPitcher: Bool) -> StatDirection {
         let lowerBetterBatting: Set<String> = ["SO"]
-        let lowerBetterPitching: Set<String> = ["ERA", "L", "BB", "WHIP", "H"]
+        let lowerBetterPitching: Set<String> = ["ERA", "L", "BB", "WHIP", "H", "FIP"]
         if isPitcher {
             return lowerBetterPitching.contains(stat) ? .lowerBetter : .higherBetter
         } else {
@@ -67,10 +67,11 @@ enum StatDirection {
 
 /// How a stat value is rendered in a cell.
 fileprivate enum StatFormat {
-    case int          // 156
-    case dec1         // 73.4  (WAR, IP)
-    case dec2         // 2.94  (ERA, WHIP)
-    case rate3        // .314  (AVG/OBP/SLG/OPS)
+    case int          // 1,156   (comma-grouped counting stats)
+    case dec1         // 73.4    (WAR)
+    case dec2         // 2.94    (ERA, WHIP, FIP, SO/BB)
+    case rate3        // .314    (AVG/OBP/SLG/OPS)
+    case ip           // 1,234.2 (innings — comma-grouped integer part)
 }
 
 /// One row of the comparison table — a stat label plus how to format it.
@@ -308,9 +309,9 @@ final class PlayerCompareViewModel: ObservableObject {
     /// slash-line / ERA / WHIP rates). WAR is included — it's a counting
     /// stat, so a per-season WAR pace is exactly the point of the mode.
     private static let scalableBatting: Set<String> =
-        ["WAR", "G", "PA", "AB", "H", "2B", "3B", "HR", "RBI", "SB", "BB", "SO"]
+        ["WAR", "G", "PA", "AB", "H", "2B", "3B", "HR", "RBI", "SB", "BB", "SO", "TB", "IBB"]
     private static let scalablePitching: Set<String> =
-        ["WAR", "W", "L", "G", "GS", "SV", "IP", "H", "SO", "BB"]
+        ["WAR", "W", "L", "G", "GS", "SV", "IP", "H", "SO", "BB", "CG", "SHO"]
 
     /// Scale counting stats to a full single-season workload — batters to
     /// 162 games, pitchers to 200 IP (162 team games don't map to a
@@ -409,6 +410,7 @@ final class PlayerCompareViewModel: ObservableObject {
         let so  = sumInt { $0.SO }
         let hbp = sumInt { $0.HBP }
         let sf  = sumInt { $0.SF }
+        let ibb = sumInt { $0.IBB }
         // Total bases: stored when present, else derived (H + 2B + 2·3B + 3·HR).
         let tb = seasons.reduce(0.0) { acc, s in
             if let t = s.TB { return acc + Double(t) }
@@ -423,13 +425,37 @@ final class PlayerCompareViewModel: ObservableObject {
         let obp: Double? = obpDen > 0 ? (h + bb + hbp) / obpDen : nil
         let slg: Double? = ab > 0 ? tb / ab : nil
         let ops: Double? = (obp != nil && slg != nil) ? obp! + slg! : nil
+        // OPS+ is park/league-adjusted — aggregate as a PA-weighted average
+        // of the seasonal values (only seasons that carry both OPS+ and PA).
+        let opsPlus = paWeightedAverage(
+            seasons, value: { $0.OPS_plus }, weight: { $0.PA.map(Double.init) },
+        )
 
         return [
             "WAR": war, "G": g, "PA": pa, "AB": ab, "H": h,
             "2B": dbl, "3B": trp, "HR": hr, "RBI": rbi, "SB": sb,
             "BB": bb, "SO": so,
             "AVG": avg, "OBP": obp, "SLG": slg, "OPS": ops,
+            "OPS+": opsPlus, "TB": tb, "IBB": ibb,
         ]
+    }
+
+    /// Weighted average of a per-season rate by a per-season weight, over
+    /// the seasons that carry both. nil when no qualifying weight exists.
+    /// Used for the adjusted-rate aggregates (OPS+ by PA, ERA+ by IP).
+    private static func paWeightedAverage<S>(
+        _ seasons: [S],
+        value: (S) -> Double?,
+        weight: (S) -> Double?,
+    ) -> Double? {
+        var weighted = 0.0
+        var total = 0.0
+        for s in seasons {
+            guard let v = value(s), let w = weight(s), w > 0 else { continue }
+            weighted += v * w
+            total += w
+        }
+        return total > 0 ? weighted / total : nil
     }
 
     private static func aggregatePitching(_ seasons: [PitcherCareerSeason]) -> [String: Double?] {
@@ -445,6 +471,10 @@ final class PlayerCompareViewModel: ObservableObject {
         let so = sumInt { $0.SO }
         let bb = sumInt { $0.BB }
         let er = sumInt { $0.ER }
+        let hr  = sumInt { $0.HR }
+        let hbp = sumInt { $0.HBP }
+        let cg  = sumInt { $0.CG }
+        let sho = sumInt { $0.SHO }
         // Innings: summed as the app does elsewhere (raw decimal), so the
         // ERA/WHIP math matches WindowSnapshot.computePitching.
         let ip = seasons.reduce(0.0) { $0 + ($1.IP ?? 0) }
@@ -452,11 +482,23 @@ final class PlayerCompareViewModel: ObservableObject {
 
         let era: Double? = ip > 0 ? er * 9 / ip : nil
         let whip: Double? = ip > 0 ? (h + bb) / ip : nil
+        // ERA+ is park/league-adjusted — IP-weighted average of the
+        // seasonal values (only seasons carrying both ERA+ and IP).
+        let eraPlus = paWeightedAverage(seasons, value: { $0.ERA_plus }, weight: { $0.IP })
+        // FIP recomputed from career components, constant 3.10. HBP is
+        // present on the pitching model, so use the full 3·(BB+HBP) form.
+        let fip: Double? = ip > 0
+            ? ((13 * hr) + (3 * (bb + hbp)) - (2 * so)) / ip + 3.10
+            : nil
+        let so9: Double? = ip > 0 ? so * 9 / ip : nil
+        let soBB: Double? = bb > 0 ? so / bb : nil
 
         return [
             "WAR": war, "W": w, "L": l, "ERA": era, "G": g,
             "GS": gs, "SV": sv, "IP": ip, "H": h, "SO": so,
             "BB": bb, "WHIP": whip,
+            "CG": cg, "SHO": sho, "ERA+": eraPlus, "FIP": fip,
+            "SO/9": so9, "SO/BB": soBB,
         ]
     }
 
@@ -475,25 +517,34 @@ final class PlayerCompareViewModel: ObservableObject {
         .init(label: "SB",  format: .int),
         .init(label: "BB",  format: .int),
         .init(label: "SO",  format: .int),
-        .init(label: "AVG", format: .rate3),
-        .init(label: "OBP", format: .rate3),
-        .init(label: "SLG", format: .rate3),
-        .init(label: "OPS", format: .rate3),
+        .init(label: "AVG",  format: .rate3),
+        .init(label: "OBP",  format: .rate3),
+        .init(label: "SLG",  format: .rate3),
+        .init(label: "OPS",  format: .rate3),
+        .init(label: "OPS+", format: .int),
+        .init(label: "TB",   format: .int),
+        .init(label: "IBB",  format: .int),
     ]
 
     private static let pitchingStats: [CompareStat] = [
-        .init(label: "WAR",  format: .dec1),
-        .init(label: "W",    format: .int),
-        .init(label: "L",    format: .int),
-        .init(label: "ERA",  format: .dec2),
-        .init(label: "G",    format: .int),
-        .init(label: "GS",   format: .int),
-        .init(label: "SV",   format: .int),
-        .init(label: "IP",   format: .dec1),
-        .init(label: "H",    format: .int),
-        .init(label: "SO",   format: .int),
-        .init(label: "BB",   format: .int),
-        .init(label: "WHIP", format: .dec2),
+        .init(label: "WAR",   format: .dec1),
+        .init(label: "W",     format: .int),
+        .init(label: "L",     format: .int),
+        .init(label: "ERA",   format: .dec2),
+        .init(label: "G",     format: .int),
+        .init(label: "GS",    format: .int),
+        .init(label: "SV",    format: .int),
+        .init(label: "IP",    format: .ip),
+        .init(label: "H",     format: .int),
+        .init(label: "SO",    format: .int),
+        .init(label: "BB",    format: .int),
+        .init(label: "WHIP",  format: .dec2),
+        .init(label: "CG",    format: .int),
+        .init(label: "SHO",   format: .int),
+        .init(label: "ERA+",  format: .int),
+        .init(label: "FIP",   format: .dec2),
+        .init(label: "SO/9",  format: .dec1),
+        .init(label: "SO/BB", format: .dec2),
     ]
 }
 
@@ -957,6 +1008,15 @@ struct PlayerCompareView: View {
         case .int:
             let rounded = Int(value.rounded())
             return Self.countFormatter.string(from: NSNumber(value: rounded)) ?? "\(rounded)"
+        case .ip:
+            // One-decimal innings with a comma-grouped integer part
+            // (career IP can top 1,000 → "1,234.2").
+            let s = String(format: "%.1f", value)
+            let parts = s.split(separator: ".", maxSplits: 1)
+            let intVal = Int(parts[0]) ?? 0
+            let grouped = Self.countFormatter.string(from: NSNumber(value: intVal)) ?? String(parts[0])
+            let frac = parts.count > 1 ? parts[1] : "0"
+            return "\(grouped).\(frac)"
         case .dec1:
             return String(format: "%.1f", value)
         case .dec2:
