@@ -1164,26 +1164,17 @@ struct PlayerProfileView: View {
 
     /// Compact one-line legend explaining the gold leader cells. Each
     /// sample renders in the *exact* treatment its cells use — gold
-    /// semibold text for league, a gold-tinted cell for majors — so the
+    /// semibold text for league, gold underlined text for majors — so the
     /// legend doubles as a visual cheat sheet.
     private var leaderLegend: some View {
         HStack(spacing: 14) {
             Text("League leader")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(LeaderTint.gold)
-            HStack(spacing: 6) {
-                // Sample value rendered in the majors full-cell tint.
-                Text("100")
-                    .font(.caption.weight(.semibold))
-                    .monospacedDigit()
-                    .foregroundStyle(LeaderTint.goldText)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1)
-                    .background(LeaderTint.gold.opacity(0.18), in: RoundedRectangle(cornerRadius: 4))
-                Text("Majors leader")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            Text("Majors leader")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(LeaderTint.gold)
+                .underline(true, color: LeaderTint.gold)
             Spacer()
         }
         .padding(.horizontal, 4)
@@ -3251,22 +3242,13 @@ private struct CareerHeaderCell: View {
 /// renderings used in the cells.
 private enum LeaderTint {
     /// Adaptive emphasis gold — brighter / more saturated in dark mode,
-    /// deeper in light. Used for league text, the majors pill fill, and
-    /// the legend swatches.
+    /// deeper in light (a muted single gold reads muddy in dark). Used for
+    /// the league/majors text and the majors underline.
     static var gold: Color {
         Color(uiColor: UIColor { traits in
             traits.userInterfaceStyle == .dark
                 ? UIColor(red: 1.0,  green: 0.82, blue: 0.25, alpha: 1.0)
                 : UIColor(red: 0.78, green: 0.58, blue: 0.08, alpha: 1.0)
-        })
-    }
-    /// Text color for the majors pill — legible over the faint gold fill:
-    /// deep gold in light mode, bright gold in dark.
-    static var goldText: Color {
-        Color(uiColor: UIColor { traits in
-            traits.userInterfaceStyle == .dark
-                ? UIColor(red: 1.0,  green: 0.88, blue: 0.45, alpha: 1.0)
-                : UIColor(red: 0.55, green: 0.40, blue: 0.0,  alpha: 1.0)
         })
     }
 }
@@ -3293,19 +3275,17 @@ private func leaderCell(
     let kind = leaders?[label]
     switch kind {
     case "majors":
-        // Full-cell tint: the background fills the fixed-width frame, so the
-        // number keeps its exact right-aligned position and lines up
-        // perfectly with the non-leader cells in the same column (no shift
-        // from a content-sized pill). Vertical padding is just 1pt and the
-        // row is height-clamped to 28pt, so this can't grow the row or
-        // desync the frozen pane.
+        // Gold semibold text + a gold underline. The underline adds no
+        // width and no height, so the number stays in the exact same
+        // right-aligned position as the non-leader cells — perfect grid
+        // alignment. The underline (vs plain gold text for league) is the
+        // sole majors distinction.
         Text(value)
             .fontWeight(.semibold)
             .monospacedDigit()
-            .foregroundStyle(LeaderTint.goldText)
+            .foregroundStyle(LeaderTint.gold)
+            .underline(true, color: LeaderTint.gold)
             .frame(width: width, alignment: .trailing)
-            .padding(.vertical, 1)
-            .background(LeaderTint.gold.opacity(0.18), in: RoundedRectangle(cornerRadius: 4))
             .padding(.horizontal, 2)
     case "league":
         Text(value)
