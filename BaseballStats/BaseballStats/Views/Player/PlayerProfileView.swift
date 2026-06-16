@@ -14,6 +14,7 @@
 
 import Combine
 import SwiftUI
+import UIKit
 
 /// Calendar year — single source of truth for "the current season"
 /// used by every Overview-tab fetch (current-season stats card,
@@ -1161,28 +1162,21 @@ struct PlayerProfileView: View {
         .accessibilityLabel("Compare with other players")
     }
 
-    /// Compact one-line legend explaining the gold-tinted leader cells.
-    /// Each label renders in the *exact* style its cells use in the
-    /// table — plain gold for league, bold+italic gold for majors —
-    /// so the legend doubles as a visual cheat sheet.
+    /// Compact one-line legend explaining the gold leader cells. Each
+    /// sample renders in the *exact* treatment its cells use — gold
+    /// semibold text for league, a gold pill for majors — so the legend
+    /// doubles as a visual cheat sheet.
     private var leaderLegend: some View {
-        HStack(spacing: 14) {
-            HStack(spacing: 5) {
-                Circle()
-                    .fill(LeaderTint.gold)
-                    .frame(width: 7, height: 7)
-                Text("League leader")
-                    .font(.caption)
-                    .foregroundStyle(LeaderTint.gold)
-            }
-            HStack(spacing: 5) {
-                Circle()
-                    .fill(LeaderTint.gold)
-                    .frame(width: 7, height: 7)
-                Text("Majors leader")
-                    .font(.caption.weight(.bold).italic())
-                    .foregroundStyle(LeaderTint.gold)
-            }
+        HStack(spacing: 12) {
+            Text("League leader")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(LeaderTint.gold)
+            Text("Majors leader")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(LeaderTint.goldText)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 2)
+                .background(LeaderTint.gold.opacity(0.22), in: Capsule())
             Spacer()
         }
         .padding(.horizontal, 4)
@@ -3243,20 +3237,45 @@ private struct CareerHeaderCell: View {
 
 // MARK: - League-leader cells
 
-/// Tint color used to mark league/majors leaders. Both tiers share
-/// the same muted gold; the league/majors distinction is carried by
-/// font weight + style (plain vs bold + italic) so colorblind users
-/// can tell them apart without relying on a separate hue. The legend
-/// labels demonstrate the exact rendering used in the cells.
+/// Tint colors marking league/majors leaders. The two tiers are now
+/// distinguished by TREATMENT (gold text vs gold pill), not just weight,
+/// and the gold itself is color-scheme adaptive — a muted single gold
+/// reads muddy in dark mode. The legend swatches demonstrate the exact
+/// renderings used in the cells.
 private enum LeaderTint {
-    static let gold = Color(red: 0.8, green: 0.6, blue: 0.1)
+    /// Adaptive emphasis gold — brighter / more saturated in dark mode,
+    /// deeper in light. Used for league text, the majors pill fill, and
+    /// the legend swatches.
+    static var gold: Color {
+        Color(uiColor: UIColor { traits in
+            traits.userInterfaceStyle == .dark
+                ? UIColor(red: 1.0,  green: 0.82, blue: 0.25, alpha: 1.0)
+                : UIColor(red: 0.78, green: 0.58, blue: 0.08, alpha: 1.0)
+        })
+    }
+    /// Text color for the majors pill — legible over the faint gold fill:
+    /// deep gold in light mode, bright gold in dark.
+    static var goldText: Color {
+        Color(uiColor: UIColor { traits in
+            traits.userInterfaceStyle == .dark
+                ? UIColor(red: 1.0,  green: 0.88, blue: 0.45, alpha: 1.0)
+                : UIColor(red: 0.55, green: 0.40, blue: 0.0,  alpha: 1.0)
+        })
+    }
 }
 
-/// Builds the standard "career-row stat cell" — `.frame(width:, alignment:)
-/// .monospacedDigit().padding(.horizontal, 2)` — and applies the leadership
-/// styling: gold color for any lead, additionally bold + italic when the
-/// player led the majors. Pass-through to a plain primary-color Text when
-/// the leaders dict has no entry for `label` (the common case).
+/// Builds the standard "career-row stat cell" and applies the leadership
+/// styling in two clearly distinct tiers:
+///   • league → gold semibold text (a quiet emphasis)
+///   • majors → gold value on a snug gold pill (the higher tier)
+/// Plain primary text when the leaders dict has no entry for `label`.
+///
+/// Alignment: the pill is a `.background` applied AFTER the fixed-width
+/// frame, so it spans exactly the column width and adds NO layout size —
+/// columns and row heights stay aligned with the frozen pane and the
+/// non-leader cells. The font size is left inherited (only weight changes)
+/// and `.monospacedDigit()` keeps numeric advance widths constant across
+/// weights, so nothing shifts horizontally either.
 @ViewBuilder
 private func leaderCell(
     _ value: String,
@@ -3265,13 +3284,29 @@ private func leaderCell(
     width: CGFloat
 ) -> some View {
     let kind = leaders?[label]
-    Text(value)
-        .bold(kind == "majors")
-        .italic(kind == "majors")
-        .foregroundStyle(kind != nil ? LeaderTint.gold : .primary)
-        .frame(width: width, alignment: .trailing)
-        .monospacedDigit()
-        .padding(.horizontal, 2)
+    switch kind {
+    case "majors":
+        Text(value)
+            .fontWeight(.semibold)
+            .monospacedDigit()
+            .foregroundStyle(LeaderTint.goldText)
+            .frame(width: width, alignment: .trailing)
+            .background(LeaderTint.gold.opacity(0.22), in: Capsule())
+            .padding(.horizontal, 2)
+    case "league":
+        Text(value)
+            .fontWeight(.semibold)
+            .monospacedDigit()
+            .foregroundStyle(LeaderTint.gold)
+            .frame(width: width, alignment: .trailing)
+            .padding(.horizontal, 2)
+    default:
+        Text(value)
+            .monospacedDigit()
+            .foregroundStyle(.primary)
+            .frame(width: width, alignment: .trailing)
+            .padding(.horizontal, 2)
+    }
 }
 
 // MARK: - Formatters
