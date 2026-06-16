@@ -427,7 +427,11 @@ struct PlayerProfileView: View {
                 Divider().padding(.vertical, 4)
 
                 if let dob = formatLongDate(player.birthdate) {
-                    HeaderBioRow(label: "Date of Birth", value: dob)
+                    // Append current age in parens when computable, e.g.
+                    // "August 7, 1991 (34)".
+                    let value = currentAge(fromISO: player.birthdate)
+                        .map { "\(dob) (\($0))" } ?? dob
+                    HeaderBioRow(label: "Date of Birth", value: value)
                 }
                 if let place = placeOfBirth {
                     HeaderBioRow(label: "Place of Birth", value: place)
@@ -3670,6 +3674,20 @@ private func formatLongDate(_ iso: String?) -> String? {
     output.dateFormat = "MMMM d, yyyy"
     output.timeZone = TimeZone(identifier: "UTC")
     return output.string(from: date)
+}
+
+/// Current age in whole years from an ISO "yyyy-MM-dd" birth date,
+/// accounting for whether this year's birthday has passed. nil when the
+/// string is empty or unparseable. No death-date data exists, so this is
+/// the player's age if living — correct for the common active-player case.
+private func currentAge(fromISO iso: String?) -> Int? {
+    guard let iso = nonEmpty(iso) else { return nil }
+    let input = DateFormatter()
+    input.dateFormat = "yyyy-MM-dd"
+    input.timeZone = TimeZone(identifier: "UTC")
+    input.locale = Locale(identifier: "en_US_POSIX")
+    guard let birth = input.date(from: iso) else { return nil }
+    return Calendar.current.dateComponents([.year], from: birth, to: Date()).year
 }
 
 // MARK: - Column filter metadata

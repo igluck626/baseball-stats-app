@@ -59,6 +59,7 @@ _PS_PITCH_COLUMNS = [c.key for c in _PitcherSeason.__table__.columns if c.key !=
 _BIO_COLUMNS = [
     "position", "bats", "throws", "height", "weight",
     "birth_year", "birth_month", "birth_day",
+    "death_year", "death_month", "death_day",
     "birth_city", "birth_state", "birth_country",
     "debut", "final_game",
 ]
@@ -102,6 +103,18 @@ def _bio_dict(row, db=None) -> dict:
     out["birthdate"] = (
         f"{int(y):04d}-{int(m):02d}-{int(d):02d}" if (y and m and d) else None
     )
+    # Mirror the birthdate derivation for death. Guarded on death_year so
+    # living players (no death data) get deathdate=None. Month/day can be
+    # missing for some historical rows even when the year is known, so fall
+    # back to a year-only ISO date in that case rather than dropping it.
+    dy, dm, dd = out.get("death_year"), out.get("death_month"), out.get("death_day")
+    if dy:
+        out["deathdate"] = (
+            f"{int(dy):04d}-{int(dm):02d}-{int(dd):02d}" if (dm and dd)
+            else f"{int(dy):04d}"
+        )
+    else:
+        out["deathdate"] = None
     out["headshot_url"] = _headshot_url(row.player_id)
     # `bdl_id` is the FK iOS uses to filter BDL `/stats?game_ids[]=`
     # responses to a single player. The column is stamped per-side
