@@ -427,9 +427,10 @@ struct PlayerProfileView: View {
                 Divider().padding(.vertical, 4)
 
                 if let dob = formatLongDate(player.birthdate) {
-                    // Append current age in parens when computable, e.g.
-                    // "August 7, 1991 (34)".
-                    let value = currentAge(fromISO: player.birthdate)
+                    // Append the age in parens when computable: current age
+                    // for a living player, age at death for a deceased one
+                    // (e.g. "August 7, 1991 (34)" / "February 6, 1895 (53)").
+                    let value = ageDisplay(birthISO: player.birthdate, deathISO: player.deathdate)
                         .map { "\(dob) (\($0))" } ?? dob
                     HeaderBioRow(label: "Date of Birth", value: value)
                 }
@@ -3680,14 +3681,39 @@ private func formatLongDate(_ iso: String?) -> String? {
 /// accounting for whether this year's birthday has passed. nil when the
 /// string is empty or unparseable. No death-date data exists, so this is
 /// the player's age if living — correct for the common active-player case.
-private func currentAge(fromISO iso: String?) -> Int? {
-    guard let iso = nonEmpty(iso) else { return nil }
-    let input = DateFormatter()
-    input.dateFormat = "yyyy-MM-dd"
-    input.timeZone = TimeZone(identifier: "UTC")
-    input.locale = Locale(identifier: "en_US_POSIX")
-    guard let birth = input.date(from: iso) else { return nil }
-    return Calendar.current.dateComponents([.year], from: birth, to: Date()).year
+/// Parse an ISO date that may be a full "yyyy-MM-dd" or a year-only
+/// "yyyy" (the server emits year-only death dates when month/day are
+/// unknown). Year-only resolves to Jan 1 of that year — an acceptable
+/// approximation for an age computation.
+private func parseISODate(_ iso: String) -> Date? {
+    let full = DateFormatter()
+    full.dateFormat = "yyyy-MM-dd"
+    full.timeZone = TimeZone(identifier: "UTC")
+    full.locale = Locale(identifier: "en_US_POSIX")
+    if let d = full.date(from: iso) { return d }
+
+    let yearOnly = DateFormatter()
+    yearOnly.dateFormat = "yyyy"
+    yearOnly.timeZone = TimeZone(identifier: "UTC")
+    yearOnly.locale = Locale(identifier: "en_US_POSIX")
+    return yearOnly.date(from: iso)
+}
+
+/// Age to show in parentheses next to Date of Birth: current age for a
+/// living player (death nil), age at death for a deceased one (death
+/// present). nil when there's no usable birth date. The bare number
+/// matches the reference-site convention for both cases.
+private func ageDisplay(birthISO: String?, deathISO: String?) -> Int? {
+    guard let birthISO = nonEmpty(birthISO), let birth = parseISODate(birthISO) else {
+        return nil
+    }
+    let endDate: Date
+    if let deathISO = nonEmpty(deathISO), let death = parseISODate(deathISO) {
+        endDate = death
+    } else {
+        endDate = Date()
+    }
+    return Calendar.current.dateComponents([.year], from: birth, to: endDate).year
 }
 
 // MARK: - Column filter metadata
@@ -4322,10 +4348,12 @@ final class CurrentSeasonRanksViewModel: ObservableObject {
             height: 76,
             weight: 210,
             birth_year: 1994, birth_month: 7, birth_day: 5,
+            death_year: nil, death_month: nil, death_day: nil,
             birth_city: "Oshu", birth_state: nil, birth_country: "Japan",
             debut: "2018-03-29",
             final_game: nil,
             birthdate: "1994-07-05",
+            deathdate: nil,
             headshot_url: "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/660271/headshot/67/current",
             is_hof: false,
             hof_year: nil,

@@ -47,12 +47,17 @@ struct PlayerSearchResult: Codable, Identifiable, Hashable {
     let birth_year: Int?
     let birth_month: Int?
     let birth_day: Int?
+    let death_year: Int?
+    let death_month: Int?
+    let death_day: Int?
     let birth_city: String?
     let birth_state: String?
     let birth_country: String?
     let debut: String?          // ISO date "YYYY-MM-DD"
     let final_game: String?
     let birthdate: String?      // ISO date, derived
+    /// ISO "YYYY-MM-DD" (or "YYYY" year-only) when deceased; nil if living.
+    let deathdate: String?
     let headshot_url: String?
     let is_hof: Bool?
     let hof_year: Int?
@@ -79,8 +84,9 @@ struct PlayerSearchResult: Codable, Identifiable, Hashable {
         case throwingArm = "throws"
         case height, weight
         case birth_year, birth_month, birth_day
+        case death_year, death_month, death_day
         case birth_city, birth_state, birth_country
-        case debut, final_game, birthdate, headshot_url, is_hof, hof_year
+        case debut, final_game, birthdate, deathdate, headshot_url, is_hof, hof_year
         case is_pitcher, bdl_id
     }
 }
@@ -116,12 +122,18 @@ struct PlayerBio: Codable, Hashable {
     let birth_year: Int?
     let birth_month: Int?
     let birth_day: Int?
+    let death_year: Int?
+    let death_month: Int?
+    let death_day: Int?
     let birth_city: String?
     let birth_state: String?
     let birth_country: String?
     let debut: String?
     let final_game: String?
     let birthdate: String?
+    /// ISO "yyyy-MM-dd" (or "yyyy" year-only) when the player is deceased;
+    /// nil for living players. Server-derived from death_year/month/day.
+    let deathdate: String?
     let headshot_url: String?
     let is_hof: Bool?
     let hof_year: Int?
@@ -131,8 +143,9 @@ struct PlayerBio: Codable, Hashable {
         case throwingArm = "throws"
         case height, weight
         case birth_year, birth_month, birth_day
+        case death_year, death_month, death_day
         case birth_city, birth_state, birth_country
-        case debut, final_game, birthdate, headshot_url, is_hof, hof_year
+        case debut, final_game, birthdate, deathdate, headshot_url, is_hof, hof_year
     }
 }
 
