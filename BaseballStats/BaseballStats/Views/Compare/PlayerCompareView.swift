@@ -91,6 +91,12 @@ struct ComparePlayer: Identifiable, Equatable {
     /// Full season rows for the comparison side; the other array is empty.
     let battingSeasons: [CareerSeason]
     let pitchingSeasons: [PitcherCareerSeason]
+    /// Pre-computed full-career aggregates from the API (one side populated,
+    /// matching `isPitcher`). Career and Per-162 modes prefer these for the
+    /// adjusted/rate stats so the table matches the player's Career tab
+    /// exactly; range modes can't use them (they cover the whole career).
+    let battingCareerTotals: CareerTotals?
+    let pitchingCareerTotals: PitcherCareerTotals?
     /// From the career bio (falls back to the search result). nil → Age
     /// Range mode can't place this player and the column shows "—".
     let birthYear: Int?
@@ -283,26 +289,71 @@ final class PlayerCompareViewModel: ObservableObject {
     }
 
     private func values(for player: ComparePlayer) -> [String: Double?] {
-        let base: [String: Double?]
+        // Career and Per-162 cover the full career, so the API's pre-computed
+        // `career_totals` are authoritative for the adjusted/rate stats —
+        // prefer them so the table matches the player's Career tab. Range
+        // modes are a career subset, so they must compute from the filtered
+        // seasons (career_totals can't be sliced).
+        let usingCareerTotals = (mode == .career || mode == .per162)
+        var base: [String: Double?]
         if player.isPitcher {
             let seasons = player.pitchingSeasons.filter {
                 inRange(year: $0.year, birthYear: player.birthYear)
             }
             guard !seasons.isEmpty else { return [:] }
             base = Self.aggregatePitching(seasons)
+            if usingCareerTotals {
+                base = Self.applyPitchingCareerTotals(base, player.pitchingCareerTotals)
+            }
         } else {
             let seasons = player.battingSeasons.filter {
                 inRange(year: $0.year, birthYear: player.birthYear)
             }
             guard !seasons.isEmpty else { return [:] }
             base = Self.aggregateBatting(seasons)
+            if usingCareerTotals {
+                base = Self.applyBattingCareerTotals(base, player.battingCareerTotals)
+            }
         }
-        // Per-162 normalizes the (full-career, since inRange admits every
-        // season for this mode) totals to a single-season pace.
+        // Per-162 normalizes the (career-totals-corrected) totals to a
+        // single-season pace — counting stats scale, the rates above don't.
         if mode == .per162 {
             return Self.normalizedPer162(base, isPitcher: player.isPitcher)
         }
         return base
+    }
+
+    /// Overlay the authoritative full-career batting rates/WAR from the API
+    /// onto the season-summed base. Counting stats stay summed; only the
+    /// stats `career_totals` carries are replaced.
+    private static func applyBattingCareerTotals(
+        _ base: [String: Double?],
+        _ totals: CareerTotals?,
+    ) -> [String: Double?] {
+        guard let t = totals else { return base }
+        var out = base
+        if let v = t.WAR      { out["WAR"]  = v }
+        if let v = t.AVG      { out["AVG"]  = v }
+        if let v = t.OBP      { out["OBP"]  = v }
+        if let v = t.SLG      { out["SLG"]  = v }
+        if let v = t.OPS      { out["OPS"]  = v }
+        if let v = t.OPS_plus { out["OPS+"] = v }
+        return out
+    }
+
+    /// Overlay the authoritative full-career pitching rates/WAR from the API.
+    private static func applyPitchingCareerTotals(
+        _ base: [String: Double?],
+        _ totals: PitcherCareerTotals?,
+    ) -> [String: Double?] {
+        guard let t = totals else { return base }
+        var out = base
+        if let v = t.WAR      { out["WAR"]  = v }
+        if let v = t.ERA      { out["ERA"]  = v }
+        if let v = t.WHIP     { out["WHIP"] = v }
+        if let v = t.ERA_plus { out["ERA+"] = v }
+        if let v = t.FIP      { out["FIP"]  = v }
+        return out
     }
 
     /// Counting stats that scale with playing time (everything but the
@@ -367,6 +418,7 @@ final class PlayerCompareViewModel: ObservableObject {
             return ComparePlayer(
                 result: result, isPitcher: false,
                 battingSeasons: seasons, pitchingSeasons: [],
+                battingCareerTotals: career.career_totals, pitchingCareerTotals: nil,
                 birthYear: career.bio?.birth_year ?? result.birth_year,
             )
 
@@ -377,6 +429,7 @@ final class PlayerCompareViewModel: ObservableObject {
             return ComparePlayer(
                 result: result, isPitcher: true,
                 battingSeasons: [], pitchingSeasons: seasons,
+                battingCareerTotals: nil, pitchingCareerTotals: career.career_totals,
                 birthYear: career.bio?.birth_year ?? result.birth_year,
             )
         }

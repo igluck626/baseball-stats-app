@@ -272,7 +272,7 @@ struct CareerSeason: Codable, Identifiable, Hashable {
 /// has counting stats — the backend omits them otherwise. Slash-line rates
 /// and OPS+ are computed off the summed counting stats (PA-weighted for
 /// OPS+) so they match bref's career-page numbers.
-struct CareerTotals: Codable {
+struct CareerTotals: Codable, Equatable {
     let seasons: Int?
     let WAR: Double?
     let WAR_off: Double?
@@ -417,7 +417,7 @@ struct PitcherCareerSeason: Codable, Identifiable, Hashable {
 /// Pitching `career_totals` block. ERA / WHIP / ERA+ come off the
 /// summed counting stats (IP-weighted for ERA+) so they line up with
 /// bref's career-page numbers.
-struct PitcherCareerTotals: Codable {
+struct PitcherCareerTotals: Codable, Equatable {
     let seasons: Int?
     let WAR: Double?
     let IP: Double?
