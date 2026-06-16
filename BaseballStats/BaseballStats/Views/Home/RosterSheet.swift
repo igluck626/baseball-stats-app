@@ -80,7 +80,7 @@ struct RosterSheet: View {
                 .padding(.top, 10)
                 .padding(.bottom, 8)
 
-                Divider()
+                Divider().padding(.top, 4)
 
                 tableContent
             }
@@ -124,8 +124,13 @@ struct RosterSheet: View {
                         if !players.isEmpty {
                             sectionHeader(section)
                             columnHeaderRow
-                            ForEach(players, id: \.bdl_id) { player in
+                            ForEach(Array(players.enumerated()), id: \.element.bdl_id) { idx, player in
                                 rowButton(player: player)
+                                if idx < players.count - 1 {
+                                    Divider()
+                                        .overlay(Color(.systemGray4))
+                                        .padding(.horizontal, 16)
+                                }
                             }
                         }
                     }
@@ -167,7 +172,7 @@ struct RosterSheet: View {
                 .font(.caption.weight(.bold))
                 .tracking(0.8)
                 .foregroundStyle(.primary)
-            Divider()
+            Divider().overlay(Color(.systemGray4))
         }
         .padding(.horizontal, 16)
         .padding(.top, 18)
@@ -194,7 +199,7 @@ struct RosterSheet: View {
         HStack(spacing: 0) {
             HStack(spacing: 6) {
                 Text(player.name)
-                    .font(.body.weight(.medium))
+                    .font(.body.weight(.semibold))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
