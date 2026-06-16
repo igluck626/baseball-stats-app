@@ -62,6 +62,7 @@ _BIO_COLUMNS = [
     "death_year", "death_month", "death_day",
     "birth_city", "birth_state", "birth_country",
     "debut", "final_game",
+    "heat_score", "heat_tier", "heat_updated",
 ]
 
 # MLB Stats API headshot URL pattern. Same image space for batters & pitchers.
@@ -7020,6 +7021,67 @@ def compute_all_player_heat(db, current_year: int) -> dict:
 
     db.commit()
     return counts
+
+
+# Only surface ratings stamped within this many days, so a stale rating
+# (player went cold/quiet, nightly stopped running) doesn't linger.
+_HEAT_FRESHNESS_DAYS = 2
+
+
+def _heat_entry(db, row, is_pitcher: bool) -> dict:
+    """Search-card-shaped block for one heat-list player."""
+    team_display, team_code = _latest_team_info(db, row.player_id, pitcher=is_pitcher)
+    return {
+        "player_id":    row.player_id,
+        "name":         row.name,
+        "team":         team_display,
+        "team_code":    team_code,
+        "position":     row.position,
+        "is_pitcher":   is_pitcher,
+        "heat_score":   row.heat_score,
+        "heat_tier":    row.heat_tier,
+        "heat_updated": row.heat_updated,
+        "headshot_url": _headshot_url(row.player_id),
+    }
+
+
+def get_heat_leaders(tier: Optional[str] = None, limit: int = 10) -> dict:
+    """Hottest / coldest qualified players league-wide. Reads both bio
+    tables (a two-way player can appear once per side), keeps only ratings
+    refreshed within `_HEAT_FRESHNESS_DAYS`, and orders hot by score desc /
+    cold by score asc. Returns `{"hot": [...]}`, `{"cold": [...]}`, or both
+    depending on `tier`."""
+    if not connection.db_available():
+        return {"hot": [], "cold": []}
+
+    from database.models import Pitcher as _Pitcher
+    from database.models import Player as _Player
+
+    cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=_HEAT_FRESHNESS_DAYS)
+    want_hot = tier in (None, "hot")
+    want_cold = tier in (None, "cold")
+    out: dict = {}
+
+    with connection.get_session() as db:
+        def _collect(tiers: list[str], order_desc: bool) -> list[dict]:
+            rows: list[tuple] = []
+            for model, is_pitcher in ((_Player, False), (_Pitcher, True)):
+                q = (
+                    db.query(model)
+                      .filter(model.heat_tier.in_(tiers))
+                      .filter(model.heat_score.isnot(None))
+                      .filter(model.heat_updated.isnot(None))
+                      .filter(model.heat_updated >= cutoff)
+                )
+                rows.extend((r, is_pitcher) for r in q.all())
+            rows.sort(key=lambda t: t[0].heat_score, reverse=order_desc)
+            return [_heat_entry(db, r, is_pitcher) for (r, is_pitcher) in rows[:limit]]
+
+        if want_hot:
+            out["hot"] = _collect(["red_hot", "hot"], order_desc=True)
+        if want_cold:
+            out["cold"] = _collect(["ice_cold", "cold"], order_desc=False)
+    return out
 
 
 def init_db() -> None:

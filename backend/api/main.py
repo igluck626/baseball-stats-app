@@ -849,6 +849,26 @@ def search_players(name: str = Query(..., min_length=2, description="Player name
     return payload
 
 
+@app.get("/players/heat")
+def players_heat(
+    tier: str | None = Query(
+        None,
+        description="'hot' (red_hot + hot) or 'cold' (ice_cold + cold). "
+                    "Omit to return both lists.",
+    ),
+    limit: int = Query(10, ge=1, le=50, description="Max players per list."),
+):
+    """League-wide hottest / coldest qualified players for the Search tab.
+    Returns `{"hot": [...], "cold": [...]}` (or just the requested list when
+    `tier` is given). Only ratings refreshed in the last couple of days are
+    included, so stale heat never surfaces."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    if tier is not None and tier not in ("hot", "cold"):
+        raise HTTPException(status_code=400, detail="tier must be 'hot' or 'cold'")
+    return data_service.get_heat_leaders(tier=tier, limit=limit)
+
+
 @app.get("/players/by-mlb-id/{mlb_id}")
 def player_by_mlb_id(mlb_id: int):
     """Direct lookup by MLB Stats API id. Used by the Scores tab —
