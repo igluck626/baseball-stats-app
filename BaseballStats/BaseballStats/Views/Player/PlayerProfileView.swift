@@ -1164,19 +1164,26 @@ struct PlayerProfileView: View {
 
     /// Compact one-line legend explaining the gold leader cells. Each
     /// sample renders in the *exact* treatment its cells use — gold
-    /// semibold text for league, a gold pill for majors — so the legend
-    /// doubles as a visual cheat sheet.
+    /// semibold text for league, a gold-tinted cell for majors — so the
+    /// legend doubles as a visual cheat sheet.
     private var leaderLegend: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 14) {
             Text("League leader")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(LeaderTint.gold)
-            Text("Majors leader")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(LeaderTint.goldText)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 2)
-                .background(LeaderTint.gold.opacity(0.22), in: Capsule())
+            HStack(spacing: 6) {
+                // Sample value rendered in the majors full-cell tint.
+                Text("100")
+                    .font(.caption.weight(.semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(LeaderTint.goldText)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(LeaderTint.gold.opacity(0.18), in: RoundedRectangle(cornerRadius: 4))
+                Text("Majors leader")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             Spacer()
         }
         .padding(.horizontal, 4)
@@ -3286,21 +3293,19 @@ private func leaderCell(
     let kind = leaders?[label]
     switch kind {
     case "majors":
-        // Pill is sized to the value FIRST (padding + background before the
-        // frame) so the capsule hugs the number instead of spanning the
-        // whole column. The pill is then right-aligned within the fixed
-        // column width, so the grid stays aligned; vertical padding is safe
-        // because the row is height-clamped to 28pt (it can't grow the row
-        // or desync the frozen pane). Horizontal padding kept at 4pt to
-        // limit left-overflow on the narrowest 3-digit columns.
+        // Full-cell tint: the background fills the fixed-width frame, so the
+        // number keeps its exact right-aligned position and lines up
+        // perfectly with the non-leader cells in the same column (no shift
+        // from a content-sized pill). Vertical padding is just 1pt and the
+        // row is height-clamped to 28pt, so this can't grow the row or
+        // desync the frozen pane.
         Text(value)
             .fontWeight(.semibold)
             .monospacedDigit()
             .foregroundStyle(LeaderTint.goldText)
-            .padding(.horizontal, 4)
-            .padding(.vertical, 1.5)
-            .background(LeaderTint.gold.opacity(0.22), in: Capsule())
             .frame(width: width, alignment: .trailing)
+            .padding(.vertical, 1)
+            .background(LeaderTint.gold.opacity(0.18), in: RoundedRectangle(cornerRadius: 4))
             .padding(.horizontal, 2)
     case "league":
         Text(value)
