@@ -23,6 +23,11 @@ struct RosterSheet: View {
     enum RosterMode: String, Hashable { case hitters, pitchers }
     @State private var mode: RosterMode = .hitters
 
+    /// Leading jersey-number column width — shared by the data rows and
+    /// the column-header spacer so the identity block + stat columns line
+    /// up across both.
+    private static let jerseyWidth: CGFloat = 32
+
     /// Per-stat fixed widths shared by the per-section column header
     /// and every data row so values stack into clean columns. Name +
     /// position is flex (`maxWidth: .infinity`); stat cells right-
@@ -71,14 +76,7 @@ struct RosterSheet: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                Picker("Mode", selection: $mode) {
-                    Text("Hitters").tag(RosterMode.hitters)
-                    Text("Pitchers").tag(RosterMode.pitchers)
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal, 16)
-                .padding(.top, 10)
-                .padding(.bottom, 8)
+                modePillRow
 
                 Divider().padding(.top, 4)
 
@@ -106,6 +104,37 @@ struct RosterSheet: View {
         // Glass sheet — matches InjuryReportSheet and the app-wide
         // sheet treatment.
         .presentationBackground(.ultraThinMaterial)
+    }
+
+    /// Hitters / Pitchers selector as team-tinted pills, matching the
+    /// TeamLeadersSheet pill family (selected = team fill + white text).
+    private var modePillRow: some View {
+        HStack(spacing: 6) {
+            modePill("Hitters",  .hitters)
+            modePill("Pitchers", .pitchers)
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
+        .padding(.bottom, 6)
+    }
+
+    private func modePill(_ label: String, _ value: RosterMode) -> some View {
+        let selected = (mode == value)
+        return Button {
+            mode = value
+        } label: {
+            Text(label)
+                .font(.footnote.weight(.semibold))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(selected ? tint : Color(.systemFill).opacity(0.35))
+                )
+                .foregroundStyle(selected ? .white : .primary)
+        }
+        .buttonStyle(.plain)
     }
 
     @ViewBuilder
@@ -147,8 +176,12 @@ struct RosterSheet: View {
     /// labels line up over their values.
     private var columnHeaderRow: some View {
         HStack(spacing: 0) {
+            // Jersey-column spacer + identity-block flex, so the stat
+            // labels land over their values exactly like the rows below.
+            Color.clear.frame(width: Self.jerseyWidth)
             Text("")
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, 8)
             ForEach(statColumns, id: \.self) { col in
                 Text(col)
                     .frame(width: statColumnWidth(col), alignment: .trailing)
@@ -168,10 +201,17 @@ struct RosterSheet: View {
     /// the sheet-internal pattern.
     private func sectionHeader(_ group: RosterPositionGroup) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(sectionTitle(group))
-                .font(.caption.weight(.bold))
-                .tracking(0.8)
-                .foregroundStyle(.primary)
+            HStack(spacing: 8) {
+                // Small team-color accent bar — brands the section
+                // without sacrificing label legibility.
+                RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                    .fill(tint)
+                    .frame(width: 3, height: 13)
+                Text(sectionTitle(group))
+                    .font(.caption.weight(.bold))
+                    .tracking(0.8)
+                    .foregroundStyle(tint)
+            }
             Divider().overlay(Color(.systemGray4))
         }
         .padding(.horizontal, 16)
@@ -197,7 +237,14 @@ struct RosterSheet: View {
     /// (the `NavigationLink` wrapper supplies the hit target).
     private func row(_ player: RosterPlayer) -> some View {
         HStack(spacing: 0) {
-            HStack(spacing: 6) {
+            // Leading jersey anchor — team-tinted number, fixed width so
+            // the identity block + stat columns line up down the table.
+            jerseyLabel(player)
+                .frame(width: Self.jerseyWidth, alignment: .center)
+
+            // Two-line identity block: name over position (Apple list
+            // primary/secondary pattern).
+            VStack(alignment: .leading, spacing: 1) {
                 Text(player.name)
                     .font(.body.weight(.semibold))
                     .foregroundStyle(.primary)
@@ -205,11 +252,12 @@ struct RosterSheet: View {
                     .minimumScaleFactor(0.8)
                 if !player.position.isEmpty {
                     Text(player.position.uppercased())
-                        .font(.caption2.weight(.semibold))
+                        .font(.caption.weight(.medium))
                         .foregroundStyle(.secondary)
                         .tracking(0.3)
                 }
             }
+            .padding(.leading, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
 
             ForEach(Array(statValues(for: player).enumerated()), id: \.offset) { idx, value in
@@ -221,8 +269,25 @@ struct RosterSheet: View {
             }
         }
         .padding(.horizontal, 16)
-        .frame(minHeight: 44)
+        .frame(minHeight: 50)
         .contentShape(Rectangle())
+    }
+
+    /// Jersey number cell: team-tinted bold number, or a muted em-dash
+    /// when BDL doesn't carry a number for the player.
+    @ViewBuilder
+    private func jerseyLabel(_ player: RosterPlayer) -> some View {
+        if let jersey = player.jersey, !jersey.isEmpty {
+            Text(jersey)
+                .font(.subheadline.weight(.bold))
+                .monospacedDigit()
+                .foregroundStyle(tint)
+        } else {
+            Text("—")
+                .font(.subheadline.weight(.bold))
+                .monospacedDigit()
+                .foregroundStyle(.tertiary)
+        }
     }
 
     /// Per-section sort. Position-player buckets sort by conventional

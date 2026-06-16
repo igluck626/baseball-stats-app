@@ -592,6 +592,7 @@ final class HomeViewModel: ObservableObject {
                 name:         name,
                 bdl_id:       bp.id,
                 position:     position,
+                jersey:       bp.jersey,
                 headshotURL:  headshot,
                 resolved:     nil,
                 currentStats: nil,
@@ -624,6 +625,7 @@ final class HomeViewModel: ObservableObject {
             name:         name,
             bdl_id:       bp.id,
             position:     position,
+            jersey:       bp.jersey,
             headshotURL:  headshot,
             resolved:     resolved,
             currentStats: stats,
@@ -791,6 +793,9 @@ struct RosterPlayer: Identifiable, Hashable {
     /// "DH" / etc.). Pass through `RosterPositionGroup.from(_:)` to
     /// bucket for the segmented picker.
     let position: String
+    /// Uniform number from BDL (`BDLPlayer.jersey`); nil/blank when BDL
+    /// doesn't carry one. Rendered as the leading anchor on each row.
+    let jersey: String?
     let headshotURL: URL?
     /// The full `PlayerSearchResult` from `resolveBDLPlayerId` —
     /// needed to push the profile destination on tap (the existing
