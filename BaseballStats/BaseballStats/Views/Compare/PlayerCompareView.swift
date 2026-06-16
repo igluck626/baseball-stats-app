@@ -488,10 +488,11 @@ final class PlayerCompareViewModel: ObservableObject {
 // MARK: - Layout constants
 
 private enum CompareLayout {
-    static let labelWidth:   CGFloat = 58
-    static let columnWidth:  CGFloat = 116
-    static let headerHeight: CGFloat = 76
-    static let rowHeight:    CGFloat = 34
+    static let labelWidth:   CGFloat = 52
+    static let columnWidth:  CGFloat = 118
+    static let headerHeight: CGFloat = 92
+    static let rowHeight:    CGFloat = 36
+    static let logoSize:     CGFloat = 26
 }
 
 // MARK: - Main view
@@ -735,19 +736,26 @@ struct PlayerCompareView: View {
         // every cell and by the best-value resolution.
         let values = vm.displayValues()
         return HStack(spacing: 0) {
-            // Frozen stat-label column.
+            // Frozen stat-label column. Header spacer aligns it with the
+            // player tiles; a hairline under each pairs with the value rows.
             VStack(spacing: 0) {
                 Color.clear.frame(height: CompareLayout.headerHeight)
-                ForEach(vm.stats) { stat in
+                Divider().opacity(0.3)
+                ForEach(Array(vm.stats.enumerated()), id: \.element.id) { idx, stat in
                     Text(stat.label)
-                        .font(.caption.weight(.semibold))
+                        .font(.subheadline)
                         .foregroundStyle(.secondary)
-                        .frame(width: CompareLayout.labelWidth, height: CompareLayout.rowHeight, alignment: .leading)
-                        .padding(.leading, 12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .frame(height: CompareLayout.rowHeight)
+                        .padding(.leading, 14)
+                    if idx != vm.stats.count - 1 { Divider().opacity(0.3) }
                 }
             }
-            .frame(width: CompareLayout.labelWidth + 12)
+            .frame(width: CompareLayout.labelWidth + 14)
             .background(.ultraThinMaterial)
+            .overlay(alignment: .trailing) {
+                Rectangle().fill(Color.black.opacity(0.06)).frame(width: 0.5)
+            }
             .zIndex(1)
 
             // Player columns — scroll horizontally when 3–4 players
@@ -757,15 +765,15 @@ struct PlayerCompareView: View {
                     ForEach(vm.players) { player in
                         playerColumn(player, values: values)
                         if player.id != vm.players.last?.id {
-                            Divider()
+                            Divider().opacity(0.3)
                         }
                     }
                 }
             }
         }
         .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .shadow(color: .black.opacity(0.06), radius: 8, y: 3)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .shadow(color: .black.opacity(0.06), radius: 10, y: 4)
     }
 
     private func playerColumn(
@@ -774,8 +782,10 @@ struct PlayerCompareView: View {
     ) -> some View {
         VStack(spacing: 0) {
             playerHeader(player)
-            ForEach(vm.stats) { stat in
+            Divider().opacity(0.3)
+            ForEach(Array(vm.stats.enumerated()), id: \.element.id) { idx, stat in
                 statCell(player: player, stat: stat, values: values)
+                if idx != vm.stats.count - 1 { Divider().opacity(0.3) }
             }
         }
         .frame(width: CompareLayout.columnWidth)
@@ -786,36 +796,59 @@ struct PlayerCompareView: View {
         return ZStack(alignment: .topTrailing) {
             NavigationLink(value: player.result) {
                 VStack(spacing: 4) {
+                    teamLogo(player)
                     Text(player.name)
-                        .font(.subheadline.weight(.bold))
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.7)
-                        .multilineTextAlignment(.center)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
                         .foregroundStyle(.primary)
                     Text(teamLabel(player.teamCode))
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(tint)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity)
                 .frame(height: CompareLayout.headerHeight)
-                .padding(.horizontal, 6)
-                .background(tint.opacity(0.16))
+                .padding(.horizontal, 8)
+                .background(tint.opacity(0.12))
                 .overlay(alignment: .bottom) {
                     Rectangle().fill(tint).frame(height: 2)
                 }
             }
             .buttonStyle(.plain)
 
-            Button {
-                vm.remove(player)
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 16))
-                    .foregroundStyle(.secondary)
-                    .padding(4)
-            }
-            .buttonStyle(.plain)
+            removeButton(player)
         }
+    }
+
+    private func teamLogo(_ player: ComparePlayer) -> some View {
+        AsyncImage(url: teamLogoURL(for: player.teamCode)) { phase in
+            if case .success(let image) = phase {
+                image.resizable().scaledToFit()
+            } else {
+                Image(systemName: "baseball")
+                    .resizable()
+                    .scaledToFit()
+                    .foregroundStyle(.quaternary)
+                    .padding(3)
+            }
+        }
+        .frame(width: CompareLayout.logoSize, height: CompareLayout.logoSize)
+    }
+
+    /// Muted, hierarchical close affordance with a generous tap target —
+    /// reads as a quiet corner control rather than a heavy button.
+    private func removeButton(_ player: ComparePlayer) -> some View {
+        Button {
+            vm.remove(player)
+        } label: {
+            Image(systemName: "xmark.circle.fill")
+                .font(.system(size: 18))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(.secondary)
+                .padding(6)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private func statCell(
@@ -827,17 +860,27 @@ struct PlayerCompareView: View {
         let myValue = values[player.id]?[stat.label] ?? nil
         let best = isBest(player: player, stat: stat, isPitcher: isPitcher, values: values)
         return Text(formatted(myValue, format: stat.format))
-            .font(.subheadline.weight(best ? .bold : .regular))
+            .font(.subheadline.weight(best ? .semibold : .regular))
             .monospacedDigit()
             .foregroundStyle(.primary)
             .frame(width: CompareLayout.columnWidth, height: CompareLayout.rowHeight)
-            .background(best ? compareBestTint : Color.clear)
+            .background {
+                if best {
+                    // Subtle inset gold pill — reads as a quiet highlight,
+                    // not a loud full-cell fill.
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(compareBestTint)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                }
+            }
     }
 
-    /// Gold best-value tint — readable in both light and dark mode and
-    /// independent of any one team's color.
+    /// Refined gold best-value tint — readable in light and dark mode and
+    /// independent of any one team's color. Low opacity so the inset pill
+    /// reads as an elegant accent rather than a block.
     private var compareBestTint: Color {
-        Color(red: 0.85, green: 0.65, blue: 0.13).opacity(0.22)
+        Color(red: 0.85, green: 0.65, blue: 0.13).opacity(0.14)
     }
 
     // MARK: Best-value resolution
