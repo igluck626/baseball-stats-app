@@ -1162,23 +1162,17 @@ struct PlayerProfileView: View {
         .accessibilityLabel("Compare with other players")
     }
 
-    /// Compact one-line legend explaining the gold leader cells. The dot
-    /// shape mirrors the cells — hollow for league, filled for majors —
-    /// so the legend doubles as a visual cheat sheet.
+    /// Compact one-line legend explaining the leader cells. Each sample
+    /// renders in its exact cell color — silver/slate for league, gold for
+    /// majors — so the legend doubles as a visual cheat sheet.
     private var leaderLegend: some View {
         HStack(spacing: 14) {
-            HStack(spacing: 5) {
-                leaderMarker(filled: false)
-                Text("League leader")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(LeaderTint.gold)
-            }
-            HStack(spacing: 5) {
-                leaderMarker(filled: true)
-                Text("Majors leader")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(LeaderTint.gold)
-            }
+            Text("League leader")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(LeaderTint.silver)
+            Text("Majors leader")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(LeaderTint.gold)
             Spacer()
         }
         .padding(.horizontal, 4)
@@ -3239,15 +3233,15 @@ private struct CareerHeaderCell: View {
 
 // MARK: - League-leader cells
 
-/// Tint colors marking league/majors leaders. The two tiers are now
-/// distinguished by TREATMENT (gold text vs gold pill), not just weight,
-/// and the gold itself is color-scheme adaptive — a muted single gold
-/// reads muddy in dark mode. The legend swatches demonstrate the exact
-/// renderings used in the cells.
+/// Tint colors marking leaders, by tier: gold for a majors (both-leagues)
+/// lead, silver/slate for a league lead. Both are color-scheme adaptive —
+/// a single muted shade reads muddy in dark mode — and the silver is kept
+/// cool/saturated enough to read as an intentional metallic accent rather
+/// than ordinary secondary-gray text. The legend swatches demonstrate the
+/// exact renderings used in the cells.
 private enum LeaderTint {
-    /// Adaptive emphasis gold — brighter / more saturated in dark mode,
-    /// deeper in light (a muted single gold reads muddy in dark). Used for
-    /// the league/majors text and the majors underline.
+    /// Adaptive premium gold — majors leader. Brighter / more saturated in
+    /// dark mode, deeper in light.
     static var gold: Color {
         Color(uiColor: UIColor { traits in
             traits.userInterfaceStyle == .dark
@@ -3255,30 +3249,27 @@ private enum LeaderTint {
                 : UIColor(red: 0.78, green: 0.58, blue: 0.08, alpha: 1.0)
         })
     }
-}
-
-/// Small gold leader dot, distinguished by SHAPE: filled for majors,
-/// hollow (ring) for league. Both adaptive gold. Sized to sit in the
-/// cell's leading space without crowding the value.
-private func leaderMarker(filled: Bool) -> some View {
-    Image(systemName: filled ? "circle.fill" : "circle")
-        .font(.system(size: 5))
-        .foregroundStyle(LeaderTint.gold)
+    /// Adaptive cool silver/slate — league leader. Cool bright silver in
+    /// dark, muted-but-blue-tinted slate in light, so it never reads as a
+    /// plain disabled gray.
+    static var silver: Color {
+        Color(uiColor: UIColor { traits in
+            traits.userInterfaceStyle == .dark
+                ? UIColor(red: 0.68, green: 0.74, blue: 0.82, alpha: 1.0)
+                : UIColor(red: 0.42, green: 0.48, blue: 0.56, alpha: 1.0)
+        })
+    }
 }
 
 /// Builds the standard "career-row stat cell" and applies the leadership
-/// styling in two clearly distinct tiers — both gold semibold text,
-/// differentiated by a small leading dot:
-///   • league → hollow gold dot
-///   • majors → filled gold dot
+/// styling by color tier — both semibold:
+///   • league → silver/slate text
+///   • majors → gold text
 /// Plain primary text when the leaders dict has no entry for `label`.
 ///
-/// Alignment: the value sits in the fixed-width frame right-aligned exactly
-/// as in non-leader cells; the dot is an `.overlay(alignment: .leading)`,
-/// which adds NO layout size, so the number's position is byte-for-byte
-/// identical across non-leader / league / majors cells. At the table's
-/// 11pt font the dot lands in the empty left slack of the column, clear of
-/// both the value and (via the 2pt padding) the neighboring column.
+/// Alignment: color-only emphasis, so the value sits in the fixed-width
+/// frame right-aligned exactly as in non-leader cells — the number's
+/// position is byte-for-byte identical across non-leader / league / majors.
 private func leaderCell(
     _ value: String,
     label: String,
@@ -3286,18 +3277,18 @@ private func leaderCell(
     width: CGFloat
 ) -> some View {
     let kind = leaders?[label]
+    let color: Color = {
+        switch kind {
+        case "majors": return LeaderTint.gold
+        case "league": return LeaderTint.silver
+        default:       return .primary
+        }
+    }()
     return Text(value)
         .fontWeight(kind != nil ? .semibold : .regular)
         .monospacedDigit()
-        .foregroundStyle(kind != nil ? LeaderTint.gold : .primary)
+        .foregroundStyle(color)
         .frame(width: width, alignment: .trailing)
-        .overlay(alignment: .leading) {
-            if kind == "majors" {
-                leaderMarker(filled: true)
-            } else if kind == "league" {
-                leaderMarker(filled: false)
-            }
-        }
         .padding(.horizontal, 2)
 }
 
