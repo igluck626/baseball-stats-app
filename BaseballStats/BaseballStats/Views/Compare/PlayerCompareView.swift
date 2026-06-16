@@ -172,8 +172,17 @@ final class PlayerCompareViewModel: ObservableObject {
     var hasComparison: Bool { players.count >= 2 }
 
     /// Stat rows for the current comparison type (batting vs pitching).
+    /// Both the frozen label column and the value columns read this, so
+    /// filtering here keeps the two panes aligned.
     fileprivate var stats: [CompareStat] {
-        (comparisonType?.isPitcher ?? false) ? Self.pitchingStats : Self.battingStats
+        let base = (comparisonType?.isPitcher ?? false) ? Self.pitchingStats : Self.battingStats
+        // ERA+ is park/league-adjusted; the range-mode IP-weighted average
+        // is too inaccurate to trust (Career / Per-162 use the authoritative
+        // career_totals value instead), so drop the row in range modes.
+        if mode == .yearRange || mode == .ageRange {
+            return base.filter { $0.label != "ERA+" }
+        }
+        return base
     }
 
     // MARK: Range bounds + defaults
