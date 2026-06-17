@@ -114,6 +114,64 @@ extension PlayerSearchResult {
     }
 }
 
+// MARK: - Heat leaders
+
+/// One entry in a hot/cold heat-leaders list (`GET /players/heat`). A
+/// lightweight card shape — tapping resolves to a full `PlayerSearchResult`
+/// via `/players/by-mlb-id` for the profile.
+struct HeatLeader: Codable, Identifiable, Hashable {
+    let player_id: Int
+    let name: String
+    let team: String?
+    let team_code: String?
+    let position: String?
+    let is_pitcher: Bool?
+    let heat_score: Double?
+    let heat_tier: String?
+    let headshot_url: String?
+
+    var id: Int { player_id }
+}
+
+/// `GET /players/heat` response — four parallel lists split by side and
+/// direction. Missing keys (e.g. when the endpoint is filtered to one
+/// direction) decode as empty so callers never crash on a partial body.
+struct HeatLeadersResponse: Codable, Hashable {
+    let hot_hitters: [HeatLeader]
+    let hot_pitchers: [HeatLeader]
+    let cold_hitters: [HeatLeader]
+    let cold_pitchers: [HeatLeader]
+
+    static let empty = HeatLeadersResponse(
+        hot_hitters: [], hot_pitchers: [], cold_hitters: [], cold_pitchers: [],
+    )
+
+    /// True when any list carries entries — drives the "show heat vs fall
+    /// back to Active Stars" branch on the Search landing.
+    var isEmpty: Bool {
+        hot_hitters.isEmpty && hot_pitchers.isEmpty
+            && cold_hitters.isEmpty && cold_pitchers.isEmpty
+    }
+
+    init(
+        hot_hitters: [HeatLeader], hot_pitchers: [HeatLeader],
+        cold_hitters: [HeatLeader], cold_pitchers: [HeatLeader],
+    ) {
+        self.hot_hitters = hot_hitters
+        self.hot_pitchers = hot_pitchers
+        self.cold_hitters = cold_hitters
+        self.cold_pitchers = cold_pitchers
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        hot_hitters   = try c.decodeIfPresent([HeatLeader].self, forKey: .hot_hitters)   ?? []
+        hot_pitchers  = try c.decodeIfPresent([HeatLeader].self, forKey: .hot_pitchers)  ?? []
+        cold_hitters  = try c.decodeIfPresent([HeatLeader].self, forKey: .cold_hitters)  ?? []
+        cold_pitchers = try c.decodeIfPresent([HeatLeader].self, forKey: .cold_pitchers) ?? []
+    }
+}
+
 // MARK: - Bio
 
 /// The `bio` block returned inside player current/career stats responses.

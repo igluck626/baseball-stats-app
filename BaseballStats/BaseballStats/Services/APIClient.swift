@@ -80,6 +80,18 @@ final class APIClient {
         }
     }
 
+    /// `GET /players/heat?limit=N`. League-wide hot/cold leaders for the
+    /// Search-tab discovery shelves — four lists (hot/cold × hitters/
+    /// pitchers). The backend always returns the keys (empty when no heat
+    /// is computed yet), so this never 404s.
+    func getHeatLeaders(limit: Int = 12) async throws -> HeatLeadersResponse {
+        let url = try buildURL(
+            path: "/players/heat",
+            query: [URLQueryItem(name: "limit", value: String(limit))]
+        )
+        return try await get(url)
+    }
+
     /// `GET /players/by-mlb-id/{id}`. Direct lookup by MLB Stats API id.
     /// Returns nil on 404 (no player by that id in our DB). Used by the
     /// Scores tab when the user taps a player in a box score — the

@@ -19,7 +19,17 @@ final class SearchViewModel: ObservableObject {
     @Published var errorMessage: String? = nil
     /// Curated discover-shelf for the idle landing state. Order is
     /// preserved across the parallel fetch via re-keying by MLBAM id.
+    /// Now a FALLBACK — only shown when no heat has been computed yet.
     @Published var activeStars: [PlayerSearchResult] = []
+
+    /// League-wide hot/cold leaders for the idle landing state. Replaces
+    /// the static Active Stars shelf with always-fresh form data.
+    @Published var heat: HeatLeadersResponse = .empty
+    @Published var isLoadingHeat: Bool = false
+    private var didLoadHeat = false
+
+    /// True once a heat fetch has succeeded with at least one rated player.
+    var hasHeat: Bool { !heat.isEmpty }
 
     /// MLBAM ids the browse shelf renders, in display order. Hand-
     /// curated so the shelf doesn't drift with stat changes — keeps
@@ -108,6 +118,25 @@ final class SearchViewModel: ObservableObject {
         }
         let byId = Dictionary(uniqueKeysWithValues: pairs)
         activeStars = ids.compactMap { byId[$0] }
+    }
+
+    /// Fetch the league-wide hot/cold leaders for the idle landing. Loads
+    /// once per VM lifetime (heat only changes nightly); a failed/empty
+    /// fetch leaves `heat` empty so the view falls back to Active Stars.
+    func loadHeat() async {
+        guard !didLoadHeat else { return }
+        isLoadingHeat = true
+        if let resp = try? await api.getHeatLeaders(limit: 12) {
+            heat = resp
+            didLoadHeat = true
+        }
+        isLoadingHeat = false
+    }
+
+    /// Resolve a heat-card player_id to the full `PlayerSearchResult` the
+    /// profile needs (heat lists carry only a lightweight card shape).
+    func resolveHeatPlayer(_ playerId: Int) async -> PlayerSearchResult? {
+        (try? await api.getPlayerByMlbId(playerId)) ?? nil
     }
 
     private func handleQueryChange(_ text: String) {

@@ -14,9 +14,15 @@ struct SearchView: View {
     /// Drives the (empty) Player Comparison sheet opened from the browse
     /// landing's "Compare Players" card.
     @State private var showingCompare = false
+    /// Programmatic nav stack — heat cards resolve to a profile and push
+    /// onto this; the existing value-based NavigationLinks push here too.
+    @State private var path = NavigationPath()
+    /// player_id being resolved from a heat-card tap (drives the card's
+    /// inline spinner and guards against double-taps).
+    @State private var resolvingHeatId: Int?
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             ZStack {
                 backgroundGradient
                 content
@@ -33,7 +39,12 @@ struct SearchView: View {
             )
             .textInputAutocapitalization(.words)
             .autocorrectionDisabled()
-            .task { await viewModel.loadActiveStars() }
+            .task {
+                await viewModel.loadHeat()
+                // Active Stars is now only a fallback for when no heat has
+                // been computed yet — skip its 10 fetches when heat landed.
+                if !viewModel.hasHeat { await viewModel.loadActiveStars() }
+            }
             .sheet(isPresented: $showingCompare) {
                 PlayerCompareView()
             }
@@ -121,15 +132,97 @@ struct SearchView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 compareEntryCard
-                browseShelf(
-                    title: "Active Stars",
-                    players: viewModel.activeStars,
-                )
+
+                if viewModel.hasHeat {
+                    heatSection(
+                        title: "Heating Up", icon: "flame.fill", iconColor: .orange,
+                        hitters: viewModel.heat.hot_hitters,
+                        pitchers: viewModel.heat.hot_pitchers,
+                    )
+                    heatSection(
+                        title: "Cooling Down", icon: "snowflake", iconColor: .cyan,
+                        hitters: viewModel.heat.cold_hitters,
+                        pitchers: viewModel.heat.cold_pitchers,
+                    )
+                } else if viewModel.isLoadingHeat {
+                    ProgressView()
+                        .controlSize(.large)
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 40)
+                } else {
+                    // Fallback when no heat is computed yet — keep the
+                    // landing from going blank with the curated shelf.
+                    browseShelf(title: "Active Stars", players: viewModel.activeStars)
+                }
             }
             .padding(.top, 16)
             .padding(.bottom, 24)
         }
         .scrollIndicators(.hidden)
+    }
+
+    // MARK: - Heat sections
+
+    /// One direction's section: a flame/snowflake header over labeled
+    /// Hitters / Pitchers sub-rows (the two sides are rated differently,
+    /// so they're kept visually distinct).
+    @ViewBuilder
+    private func heatSection(
+        title: String, icon: String, iconColor: Color,
+        hitters: [HeatLeader], pitchers: [HeatLeader],
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .foregroundStyle(iconColor)
+                Text(title)
+                    .font(.title3.weight(.semibold))
+            }
+            .padding(.horizontal, 16)
+
+            if !hitters.isEmpty {
+                heatSubRow(label: "Hitters", leaders: hitters)
+            }
+            if !pitchers.isEmpty {
+                heatSubRow(label: "Pitchers", leaders: pitchers)
+            }
+        }
+    }
+
+    private func heatSubRow(label: String, leaders: [HeatLeader]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 16)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 12) {
+                    ForEach(leaders) { leader in
+                        heatCardButton(leader)
+                    }
+                }
+                .padding(.horizontal, 16)
+            }
+        }
+    }
+
+    /// A heat card resolves its lightweight `HeatLeader` to a full
+    /// `PlayerSearchResult` (for a complete profile header) on tap, then
+    /// pushes it onto the nav stack.
+    private func heatCardButton(_ leader: HeatLeader) -> some View {
+        Button {
+            guard resolvingHeatId == nil else { return }
+            resolvingHeatId = leader.player_id
+            Task {
+                if let player = await viewModel.resolveHeatPlayer(leader.player_id) {
+                    path.append(player)
+                }
+                resolvingHeatId = nil
+            }
+        } label: {
+            HeatPlayerCard(leader: leader, isResolving: resolvingHeatId == leader.player_id)
+        }
+        .buttonStyle(.plain)
     }
 
     /// Discovery entry point for the Player Comparison feature — opens an
@@ -202,6 +295,70 @@ struct SearchView: View {
                     .padding(.horizontal, 16)
                 }
             }
+        }
+    }
+}
+
+// MARK: - HeatPlayerCard
+
+/// Compact horizontally-scrollable card for the Hot/Cold shelves. No
+/// headshot — a tier flame/snowflake + label up top, then name + position·
+/// team. Reuses `HeatTierStyle` so colors/icons match the profile meter.
+private struct HeatPlayerCard: View {
+    let leader: HeatLeader
+    var isResolving: Bool = false
+
+    private var style: HeatTierStyle { HeatTierStyle.for(leader.heat_tier ?? "neutral") }
+
+    var body: some View {
+        VStack(spacing: 6) {
+            HStack(spacing: 4) {
+                if let icon = style.icon {
+                    Image(systemName: icon).font(.caption)
+                }
+                Text(style.label).font(.caption.weight(.bold))
+            }
+            .foregroundStyle(style.color)
+
+            Text(leader.name)
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.primary)
+
+            Text(detailLine ?? " ")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .frame(width: 124)
+        .padding(.vertical, 12)
+        .padding(.horizontal, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(.ultraThinMaterial)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(style.color.opacity(0.35), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.06), radius: 8, y: 3)
+        .overlay {
+            if isResolving { ProgressView().controlSize(.small) }
+        }
+        .opacity(isResolving ? 0.55 : 1)
+    }
+
+    /// "SS · NYY" / "RF" / "Team" — position first, then resolved team code.
+    private var detailLine: String? {
+        let pos = leader.position?.browseNonEmpty
+        let team = leader.team_code?.browseNonEmpty.map { teamAbbreviation(for: $0) }
+        switch (pos, team) {
+        case let (p?, t?): return "\(p) · \(t)"
+        case let (p?, nil): return p
+        case let (nil, t?): return t
+        default: return nil
         }
     }
 }
