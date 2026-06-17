@@ -1014,7 +1014,7 @@ struct BoxScoreView: View {
         let avg = p.seasonStats?.batting?.avg ?? "—"
         let ops = p.seasonStats?.batting?.ops ?? "—"
         let isCurrent = currentBatterId != nil && p.person.id == currentBatterId
-        return Button { tapPlayer(id: p.person.id, name: p.person.fullName) } label: {
+        return Button { tapPlayer(id: p.person.id, name: p.person.fullName, isPitcher: false) } label: {
             HStack(spacing: 0) {
                 HStack(spacing: 4) {
                     if isCurrent {
@@ -1230,7 +1230,7 @@ struct BoxScoreView: View {
         let pit = p.stats?.pitching
         let era = p.seasonStats?.pitching?.era ?? "—"
         let decisionTag = pitcherDecisionTag(for: p)
-        return Button { tapPlayer(id: p.person.id, name: p.person.fullName) } label: {
+        return Button { tapPlayer(id: p.person.id, name: p.person.fullName, isPitcher: true) } label: {
             HStack(spacing: 0) {
                 pitcherLabel(p, decisionTag: decisionTag)
                     .frame(width: PitchingCol.name, alignment: .leading)
@@ -1448,7 +1448,7 @@ struct BoxScoreView: View {
 
     // MARK: - Navigation
 
-    private func tapPlayer(id: Int, name: String) {
+    private func tapPlayer(id: Int, name: String, isPitcher: Bool) {
         // `id` is a BDL player id (BoxScoreResponse synthesized
         // from BDL keys players by BDL id, not MLBAM). The resolve
         // call hops through our backend's `/players/by-bdl-id/{id}`
@@ -1461,7 +1461,14 @@ struct BoxScoreView: View {
             let player = await vm.playerProfile(bdlId: id)
             pendingPlayerLookup = nil
             if let player {
-                path.append(player)
+                // Force the profile's default role to the table the
+                // user tapped: a two-way player (Ohtani) tapped in the
+                // batting lineup opens to batting, tapped in the
+                // pitching table opens to pitching. by-bdl-id resolves
+                // one canonical side per player, so without this every
+                // tap would land on that single side. Mirrors how the
+                // leaderboard path stamps `is_pitcher` per board.
+                path.append(player.withIsPitcher(isPitcher))
                 return
             }
             // 404 → player's bdl_id isn't mapped in our DB yet.

@@ -73,7 +73,13 @@ struct PlayerSearchResult: Codable, Identifiable, Hashable {
     /// waiting for the four parallel current/career fetches. Nil for
     /// search-result rows (where role is still inferred client-side
     /// from the fetched career thresholds).
-    let is_pitcher: Bool?
+    ///
+    /// `var` so callers that know the side from context (e.g. the box
+    /// score, which knows whether a row was tapped in the batting or
+    /// pitching table) can override it via `withIsPitcher(_:)` before
+    /// pushing the profile — mirroring how the leaderboard endpoint
+    /// stamps it server-side.
+    var is_pitcher: Bool?
     /// BallDontLie player id, stamped by the backend bootstrap walk.
     /// Used by the player-profile live-stats overlay to filter
     /// BDL `/stats?game_ids[]=` responses to a single player.
@@ -111,6 +117,17 @@ extension PlayerSearchResult {
         guard let raw = headshot_url, !raw.isEmpty else { return nil }
         let upgraded = raw.replacingOccurrences(of: "w_213", with: "w_640")
         return URL(string: upgraded)
+    }
+
+    /// A copy with `is_pitcher` forced to `value`. Used when the caller
+    /// knows the side from tap context (box-score batting vs pitching
+    /// table) so the profile defaults to the right role tab for two-way
+    /// players — the same effect the leaderboard endpoint achieves by
+    /// stamping `is_pitcher` per `player_type`.
+    func withIsPitcher(_ value: Bool) -> PlayerSearchResult {
+        var copy = self
+        copy.is_pitcher = value
+        return copy
     }
 }
 
