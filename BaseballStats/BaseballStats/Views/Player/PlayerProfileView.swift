@@ -678,12 +678,14 @@ struct PlayerProfileView: View {
     /// are gated on having a resolvable team / league — retired
     /// players don't reach Overview at all (`tabsToShow` strips it).
     /// Hot/cold meter — shown for any rated player (heat_tier present),
-    /// including neutral; hidden entirely for unrated players. `player`
-    /// carries one heat rating, so the same gauge shows on both sides;
-    /// the window label is tuned per role.
+    /// including neutral; hidden when unrated or while the side's stats
+    /// are still loading. The score/tier are passed in PER SIDE (batting
+    /// vs pitching bio) so a two-way player shows a different rating on
+    /// each tab. Deliberately no cross-side fallback to the top-level
+    /// `player` heat — that would flash the wrong side's rating mid-load.
     @ViewBuilder
-    private func heatMeter(window: String) -> some View {
-        if let tier = player.heat_tier, let score = player.heat_score {
+    private func heatMeter(score: Double?, tier: String?, window: String) -> some View {
+        if let tier, let score {
             HeatMeterView(score: score, tier: tier, window: window)
         }
     }
@@ -691,7 +693,11 @@ struct PlayerProfileView: View {
     @ViewBuilder
     private var battingOverview: some View {
         VStack(spacing: 20) {
-            heatMeter(window: "Last 15 games")
+            heatMeter(
+                score: viewModel.currentBatting?.bio?.heat_score,
+                tier: viewModel.currentBatting?.bio?.heat_tier,
+                window: "Last 15 games"
+            )
             battingCurrentSeasonCard
             RecentGamesSection(
                 playerId: player.player_id,
@@ -710,7 +716,11 @@ struct PlayerProfileView: View {
     @ViewBuilder
     private var pitchingOverview: some View {
         VStack(spacing: 20) {
-            heatMeter(window: "Recent form")
+            heatMeter(
+                score: viewModel.currentPitching?.bio?.heat_score,
+                tier: viewModel.currentPitching?.bio?.heat_tier,
+                window: "Recent form"
+            )
             pitchingCurrentSeasonCard
             RecentGamesSection(
                 playerId: player.player_id,
