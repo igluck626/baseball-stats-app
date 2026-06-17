@@ -854,15 +854,17 @@ def players_heat(
     tier: str | None = Query(
         None,
         description="'hot' (red_hot + hot) or 'cold' (ice_cold + cold). "
-                    "Omit to return both lists.",
+                    "Omit to return both halves.",
     ),
     limit: int = Query(10, ge=1, le=50, description="Max players per list."),
 ):
     """League-wide hottest / coldest qualified players for the Search tab,
-    split by side: `hot_hitters` / `hot_pitchers` / `cold_hitters` /
-    `cold_pitchers`. With `tier=hot` returns just the hot pair, `tier=cold`
-    just the cold pair, omitted returns all four. Only ratings refreshed in
-    the last couple of days are included, so stale heat never surfaces."""
+    split six ways: `hot_hitters` / `hot_starters` / `hot_relievers` and the
+    cold trio (`cold_hitters` / `cold_starters` / `cold_relievers`). With
+    `tier=hot` returns just the hot trio, `tier=cold` just the cold trio,
+    omitted returns all six. Starters vs relievers come from each pitcher's
+    stored `heat_role`. Only ratings refreshed in the last couple of days are
+    included, so stale heat never surfaces."""
     if not connection.db_available():
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
     if tier is not None and tier not in ("hot", "cold"):
@@ -3702,18 +3704,21 @@ def admin_compute_heat(
         now = datetime.datetime.utcnow()
         batter = db.get(Player, player_id)
         if batter is not None:
-            score, tier = data_service.compute_player_heat(
+            score, tier, _ = data_service.compute_player_heat(
                 db, player_id, is_pitcher=False, current_year=current_year,
             )
             batter.heat_score, batter.heat_tier, batter.heat_updated = score, tier, now
             out["sides"]["batting"] = {"heat_score": score, "heat_tier": tier}
         pitcher = db.get(Pitcher, player_id)
         if pitcher is not None:
-            score, tier = data_service.compute_player_heat(
+            score, tier, role = data_service.compute_player_heat(
                 db, player_id, is_pitcher=True, current_year=current_year,
             )
             pitcher.heat_score, pitcher.heat_tier, pitcher.heat_updated = score, tier, now
-            out["sides"]["pitching"] = {"heat_score": score, "heat_tier": tier}
+            pitcher.heat_role = role
+            out["sides"]["pitching"] = {
+                "heat_score": score, "heat_tier": tier, "heat_role": role,
+            }
         if batter is None and pitcher is None:
             raise HTTPException(
                 status_code=404,

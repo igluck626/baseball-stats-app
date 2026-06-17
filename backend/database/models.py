@@ -142,6 +142,10 @@ class Pitcher(Base):
     heat_score      = Column(Float)
     heat_tier       = Column(String)    # red_hot | hot | neutral | cold | ice_cold | None
     heat_updated    = Column(DateTime)
+    # Role the heat window was scored as — "SP" (started >50% of appearances)
+    # or "RP", set during compute. Lets the heat leaderboard split starters
+    # from relievers. None for unscored pitchers. Batters never set this.
+    heat_role       = Column(String)    # SP | RP | None
 
 
 class PitcherSeason(Base):

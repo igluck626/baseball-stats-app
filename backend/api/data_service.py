@@ -7031,9 +7031,11 @@ def _heat_recent(logs: list) -> bool:
 def compute_player_heat(
     db, player_id: int, is_pitcher: bool, current_year: int,
     league_avgs: Optional[dict] = None,
-) -> tuple[Optional[float], Optional[str]]:
-    """Compute `(heat_score, heat_tier)` for one player. Returns (None, None)
-    when the sample-size / recency / baseline guardrails aren't met.
+) -> tuple[Optional[float], Optional[str], Optional[str]]:
+    """Compute `(heat_score, heat_tier, heat_role)` for one player. Returns
+    (None, None, None) when the sample-size / recency / baseline guardrails
+    aren't met. `heat_role` is "SP"/"RP" for a scored pitcher and None for
+    batters (and for any unscored player).
 
     `league_avgs` supplies the league-average baselines for the absolute
     (vs-league) half of the blend; when omitted (e.g. the single-player debug
@@ -7048,23 +7050,23 @@ def compute_player_heat(
 
 def _compute_batter_heat(
     db, player_id: int, current_year: int, league_avgs: dict,
-) -> tuple[Optional[float], Optional[str]]:
+) -> tuple[Optional[float], Optional[str], Optional[str]]:
     logs = crud.get_batting_gamelogs(db, player_id, season=current_year, last_n=15)
     if len(logs) < 10 or not _heat_recent(logs):
-        return (None, None)
+        return (None, None, None)
 
     def total(attr: str) -> int:
         return sum((getattr(g, attr) or 0) for g in logs)
 
     pa = total("PA")
     if pa < 30:
-        return (None, None)
+        return (None, None, None)
 
     h, bb, hbp, ab, sf = total("H"), total("BB"), total("HBP"), total("AB"), total("SF")
     dbl, trp, hr = total("doubles"), total("triples"), total("HR")
     obp_den = ab + bb + hbp + sf
     if ab <= 0 or obp_den <= 0:
-        return (None, None)
+        return (None, None, None)
     window_obp = (h + bb + hbp) / obp_den
     tb = h + dbl + 2 * trp + 3 * hr
     window_slg = tb / ab
@@ -7072,12 +7074,12 @@ def _compute_batter_heat(
 
     season = _season_row(crud.get_player_seasons(db, player_id), current_year)
     if season is None:
-        return (None, None)
+        return (None, None, None)
     if (season.PA or 0) < 100:
-        return (None, None)
+        return (None, None, None)
     season_ops = season.OPS
     if not season_ops or season_ops <= 0:
-        return (None, None)
+        return (None, None, None)
 
     # Blend: window vs own baseline (trend) + window vs league average
     # (absolute). Higher OPS is better, so both terms are (window - ref)/ref.
@@ -7086,32 +7088,34 @@ def _compute_batter_heat(
     absolute = (window_ops - league_avg_ops) / league_avg_ops if league_avg_ops > 0 else 0.0
     raw = TREND_WEIGHT * trend + ABSOLUTE_WEIGHT * absolute
     score = compress_heat(raw)
-    return (score, heat_tier_for(score))
+    return (score, heat_tier_for(score), None)
 
 
 def _compute_pitcher_heat(
     db, player_id: int, current_year: int, league_avgs: dict,
-) -> tuple[Optional[float], Optional[str]]:
+) -> tuple[Optional[float], Optional[str], Optional[str]]:
     season = _season_row(crud.get_pitcher_seasons(db, player_id), current_year)
     if season is None:
-        return (None, None)
+        return (None, None, None)
 
     # Starter vs reliever from the season GS/G ratio — drives the window
     # size and the (looser) reliever guardrails. SP windows widened to 8
-    # starts (was 5) so one blowup doesn't swing the rating.
+    # starts (was 5) so one blowup doesn't swing the rating. `role` is
+    # returned so the leaderboard can split starters from relievers.
     g, gs = (season.G or 0), (season.GS or 0)
     is_starter = g > 0 and (gs / g) > 0.5
+    role = "SP" if is_starter else "RP"
     last_n = 8 if is_starter else 15
     min_games = 4 if is_starter else 8
     min_ip = 15 if is_starter else 5
 
     logs = crud.get_pitching_gamelogs(db, player_id, season=current_year, last_n=last_n)
     if len(logs) < min_games or not _heat_recent(logs):
-        return (None, None)
+        return (None, None, None)
 
     ip = sum((getattr(gl, "IP", None) or 0.0) for gl in logs)
     if ip < min_ip or ip <= 0:
-        return (None, None)
+        return (None, None, None)
     er  = sum((gl.ER or 0) for gl in logs)
     h   = sum((gl.H or 0) for gl in logs)
     bb  = sum((gl.BB or 0) for gl in logs)
@@ -7123,10 +7127,10 @@ def _compute_pitcher_heat(
     window_fip = ((13 * hr) + (3 * (bb + hbp)) - (2 * so)) / ip + 3.10
 
     if (season.IP or 0) < 20:
-        return (None, None)
+        return (None, None, None)
     season_era, season_whip = season.ERA, season.WHIP
     if not season_era or season_era <= 0 or not season_whip or season_whip <= 0:
-        return (None, None)
+        return (None, None, None)
 
     league_avg_era  = league_avgs.get("era")  or _HEAT_FALLBACK_ERA
     league_avg_whip = league_avgs.get("whip") or _HEAT_FALLBACK_WHIP
@@ -7153,7 +7157,7 @@ def _compute_pitcher_heat(
         raw = 0.5 * era_c + 0.5 * whip_c
 
     score = compress_heat(raw)
-    return (score, heat_tier_for(score))
+    return (score, heat_tier_for(score), role)
 
 
 def compute_all_player_heat(db, current_year: int) -> dict:
@@ -7170,12 +7174,15 @@ def compute_all_player_heat(db, current_year: int) -> dict:
     league_avgs = _compute_league_heat_baselines(db, current_year)
 
     def _apply(row, is_pitcher: bool) -> None:
-        score, tier = compute_player_heat(
+        score, tier, role = compute_player_heat(
             db, row.player_id, is_pitcher, current_year, league_avgs,
         )
         row.heat_score = score
         row.heat_tier = tier
         row.heat_updated = now
+        # Only the Pitcher model maps heat_role; batters never carry one.
+        if is_pitcher:
+            row.heat_role = role
         if tier is None:
             counts["skipped"] += 1
         else:
@@ -7226,20 +7233,27 @@ def _heat_entry(db, row, is_pitcher: bool) -> dict:
         "is_pitcher":   is_pitcher,
         "heat_score":   row.heat_score,
         "heat_tier":    row.heat_tier,
+        # Batter rows (Player model) don't map heat_role — getattr keeps the
+        # serializer side-agnostic.
+        "heat_role":    getattr(row, "heat_role", None),
         "heat_updated": row.heat_updated,
         "headshot_url": _headshot_url(row.player_id),
     }
 
 
 def get_heat_leaders(tier: Optional[str] = None, limit: int = 10) -> dict:
-    """Hottest / coldest qualified players league-wide, split four ways by
-    side and direction. Keeps only ratings refreshed within
+    """Hottest / coldest qualified players league-wide, split six ways: hitters
+    plus starters (heat_role="SP") and relievers (heat_role="RP") on each of
+    the hot and cold sides. Keeps only ratings refreshed within
     `_HEAT_FRESHNESS_DAYS`; hot lists order by score desc, cold by score asc.
-    Returns `hot_hitters` / `hot_pitchers` / `cold_hitters` / `cold_pitchers`,
-    limited to the hot or cold pair when `tier` is given."""
+    Returns `hot_hitters` / `hot_starters` / `hot_relievers` and the cold trio,
+    limited to the hot or cold half when `tier` is given. Pitchers whose
+    heat_role hasn't been backfilled yet (null) appear in neither SP nor RP
+    list until the next compute-heat run."""
     empty = {
-        "hot_hitters": [], "hot_pitchers": [],
-        "cold_hitters": [], "cold_pitchers": [],
+        "hot_hitters": [], "cold_hitters": [],
+        "hot_starters": [], "hot_relievers": [],
+        "cold_starters": [], "cold_relievers": [],
     }
     if not connection.db_available():
         return empty
@@ -7250,29 +7264,34 @@ def get_heat_leaders(tier: Optional[str] = None, limit: int = 10) -> dict:
     cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=_HEAT_FRESHNESS_DAYS)
     want_hot = tier in (None, "hot")
     want_cold = tier in (None, "cold")
-    out: dict = {}
+    out: dict = dict(empty)
 
     with connection.get_session() as db:
-        def _list(model, is_pitcher: bool, tiers: list[str], order_desc: bool) -> list[dict]:
+        def _list(
+            model, is_pitcher: bool, tiers: list[str], order_desc: bool,
+            role: Optional[str] = None,
+        ) -> list[dict]:
             order = model.heat_score.desc() if order_desc else model.heat_score.asc()
-            rows = (
+            q = (
                 db.query(model)
                   .filter(model.heat_tier.in_(tiers))
                   .filter(model.heat_score.isnot(None))
                   .filter(model.heat_updated.isnot(None))
                   .filter(model.heat_updated >= cutoff)
-                  .order_by(order)
-                  .limit(limit)
-                  .all()
             )
+            if role is not None:
+                q = q.filter(model.heat_role == role)
+            rows = q.order_by(order).limit(limit).all()
             return [_heat_entry(db, r, is_pitcher) for r in rows]
 
         if want_hot:
-            out["hot_hitters"]  = _list(_Player,  False, ["red_hot", "hot"], order_desc=True)
-            out["hot_pitchers"] = _list(_Pitcher, True,  ["red_hot", "hot"], order_desc=True)
+            out["hot_hitters"]   = _list(_Player,  False, ["red_hot", "hot"], order_desc=True)
+            out["hot_starters"]  = _list(_Pitcher, True,  ["red_hot", "hot"], order_desc=True, role="SP")
+            out["hot_relievers"] = _list(_Pitcher, True,  ["red_hot", "hot"], order_desc=True, role="RP")
         if want_cold:
-            out["cold_hitters"]  = _list(_Player,  False, ["ice_cold", "cold"], order_desc=False)
-            out["cold_pitchers"] = _list(_Pitcher, True,  ["ice_cold", "cold"], order_desc=False)
+            out["cold_hitters"]   = _list(_Player,  False, ["ice_cold", "cold"], order_desc=False)
+            out["cold_starters"]  = _list(_Pitcher, True,  ["ice_cold", "cold"], order_desc=False, role="SP")
+            out["cold_relievers"] = _list(_Pitcher, True,  ["ice_cold", "cold"], order_desc=False, role="RP")
     return out
 
 

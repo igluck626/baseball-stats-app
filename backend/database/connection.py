@@ -64,6 +64,10 @@ _BIO_COLUMNS: list[tuple[str, str]] = [
     ("heat_score",    "DOUBLE PRECISION"),
     ("heat_tier",     "VARCHAR"),
     ("heat_updated",  "TIMESTAMP"),
+    # SP/RP classification for the heat window (pitchers only; the column
+    # also lands on `players` since the migration runs on both tables, but
+    # the batter side never writes it).
+    ("heat_role",     "VARCHAR"),
     # External-system mapping for the BallDontLie API migration.
     # Stamped lazily by `/admin/build-bdl-player-mapping`. Kept on
     # both `players` and `pitchers` because two-way players have a
