@@ -138,12 +138,14 @@ struct SearchView: View {
                     heatSection(
                         title: "Heating Up", icon: "flame.fill", iconColor: .orange,
                         hitters: viewModel.heat.hot_hitters,
-                        pitchers: viewModel.heat.hot_pitchers,
+                        starters: viewModel.heat.hot_starters,
+                        relievers: viewModel.heat.hot_relievers,
                     )
                     heatSection(
                         title: "Cooling Down", icon: "snowflake", iconColor: .cyan,
                         hitters: viewModel.heat.cold_hitters,
-                        pitchers: viewModel.heat.cold_pitchers,
+                        starters: viewModel.heat.cold_starters,
+                        relievers: viewModel.heat.cold_relievers,
                     )
                 } else if viewModel.isLoadingHeat {
                     ProgressView()
@@ -165,12 +167,13 @@ struct SearchView: View {
     // MARK: - Heat sections
 
     /// One direction's section: a flame/snowflake header over labeled
-    /// Hitters / Pitchers sub-rows (the two sides are rated differently,
-    /// so they're kept visually distinct).
+    /// Hitters / Starters / Relievers sub-rows (each side is rated
+    /// differently, so they're kept visually distinct). Empty sub-rows are
+    /// omitted so a side with no qualifiers doesn't leave a dangling label.
     @ViewBuilder
     private func heatSection(
         title: String, icon: String, iconColor: Color,
-        hitters: [HeatLeader], pitchers: [HeatLeader],
+        hitters: [HeatLeader], starters: [HeatLeader], relievers: [HeatLeader],
     ) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 6) {
@@ -184,8 +187,11 @@ struct SearchView: View {
             if !hitters.isEmpty {
                 heatSubRow(label: "Hitters", leaders: hitters)
             }
-            if !pitchers.isEmpty {
-                heatSubRow(label: "Pitchers", leaders: pitchers)
+            if !starters.isEmpty {
+                heatSubRow(label: "Starters", leaders: starters)
+            }
+            if !relievers.isEmpty {
+                heatSubRow(label: "Relievers", leaders: relievers)
             }
         }
     }

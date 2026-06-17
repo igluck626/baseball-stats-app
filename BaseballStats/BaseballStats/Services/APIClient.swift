@@ -81,9 +81,9 @@ final class APIClient {
     }
 
     /// `GET /players/heat?limit=N`. League-wide hot/cold leaders for the
-    /// Search-tab discovery shelves — four lists (hot/cold × hitters/
-    /// pitchers). The backend always returns the keys (empty when no heat
-    /// is computed yet), so this never 404s.
+    /// Search-tab discovery shelves — six lists (hot/cold × hitters/
+    /// starters/relievers). The backend always returns the keys (empty when
+    /// no heat is computed yet), so this never 404s.
     func getHeatLeaders(limit: Int = 12) async throws -> HeatLeadersResponse {
         let url = try buildURL(
             path: "/players/heat",
