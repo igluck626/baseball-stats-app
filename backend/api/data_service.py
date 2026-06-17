@@ -610,47 +610,70 @@ def _latest_team_info(
     return team, _resolve_team_code(team, latest.league)
 
 
+def _choose_active_bio_row(batter_row, pitcher_row):
+    """When a player_id sits in BOTH the players (batter) and pitchers
+    tables, pick which bio row to surface. Prefer the ACTIVE row
+    (`mlb_last_season IS NULL`) when exactly one side is active — this
+    fixes pitchers whose stale, retired batter row would otherwise shadow
+    their active pitcher row (e.g. Eury Pérez: batter last_season=2023,
+    pitcher last_season=None). When both sides are active or both retired
+    (true two-way players like Ohtani), keep the batter-first default so
+    their resolution is unchanged. Returns `(row, is_pitcher)`; assumes at
+    least one of the two rows is non-None."""
+    def _active(r):
+        return r is not None and r.mlb_last_season is None
+
+    if batter_row is not None and pitcher_row is not None:
+        if _active(pitcher_row) and not _active(batter_row):
+            return pitcher_row, True
+        if _active(batter_row) and not _active(pitcher_row):
+            return batter_row, False
+        # Both active or both retired — keep the historical batter-first
+        # default (Ohtani-style two-way players stay on the batting side).
+        return batter_row, False
+    if pitcher_row is not None:
+        return pitcher_row, True
+    return batter_row, False
+
+
 def search_player(name: str) -> list[dict]:
     """Look up players by name in the database (both batters and pitchers).
 
-    Returns merged results from the players and pitchers tables. If a player
-    appears in both (e.g. two-way players), the players-table row wins.
+    Returns merged results from the players and pitchers tables. For a
+    player who appears in BOTH (two-way players, or a pitcher who also has
+    a stale batter row), `_choose_active_bio_row` prefers the active side
+    so navigation never lands on a retired shadow row.
     """
     if not connection.db_available():
         return []
 
-    by_id: dict[int, dict] = {}
     try:
         with connection.get_session() as db:
-            for r in crud.search_pitchers_by_name(db, name):
-                team_display, team_code = _latest_team_info(db, r.player_id, pitcher=True)
-                by_id[r.player_id] = {
-                    "player_id":       r.player_id,
-                    "name":            r.name,
-                    "bbref_id":        r.bbref_id,
-                    "mlb_debut":       r.mlb_debut,
-                    "mlb_last_season": r.mlb_last_season,
+            batter_rows  = {r.player_id: r for r in crud.search_players_by_name(db, name)}
+            pitcher_rows = {r.player_id: r for r in crud.search_pitchers_by_name(db, name)}
+            out: dict[int, dict] = {}
+            for pid in set(batter_rows) | set(pitcher_rows):
+                row, is_pitcher = _choose_active_bio_row(
+                    batter_rows.get(pid), pitcher_rows.get(pid),
+                )
+                team_display, team_code = _latest_team_info(
+                    db, row.player_id, pitcher=is_pitcher,
+                )
+                out[pid] = {
+                    "player_id":       row.player_id,
+                    "name":            row.name,
+                    "bbref_id":        row.bbref_id,
+                    "mlb_debut":       row.mlb_debut,
+                    "mlb_last_season": row.mlb_last_season,
                     "current_team":    team_display,
                     "team_code":       team_code,
-                    **_bio_dict(r, db),
-                }
-            # Players (batters) take priority for two-way players.
-            for r in crud.search_players_by_name(db, name):
-                team_display, team_code = _latest_team_info(db, r.player_id, pitcher=False)
-                by_id[r.player_id] = {
-                    "player_id":       r.player_id,
-                    "name":            r.name,
-                    "bbref_id":        r.bbref_id,
-                    "mlb_debut":       r.mlb_debut,
-                    "mlb_last_season": r.mlb_last_season,
-                    "current_team":    team_display,
-                    "team_code":       team_code,
-                    **_bio_dict(r, db),
+                    "is_pitcher":      is_pitcher,
+                    **_bio_dict(row, db),
                 }
     except Exception:
         return []
 
-    return list(by_id.values())
+    return list(out.values())
 
 
 def get_player_by_bdl_id(bdl_id: int) -> Optional[dict]:
@@ -714,31 +737,32 @@ def get_player_by_id(player_id: int) -> Optional[dict]:
     `PlayerProfileView` can drive off it directly. Used by the
     Scores tab when the user taps a player in a box score.
 
-    Batters take priority over pitchers for two-way players, mirroring
-    `search_player`'s precedence.
+    For a player who sits in both tables (two-way players, or a pitcher
+    carrying a stale batter row), `_choose_active_bio_row` prefers the
+    active side so by-mlb-id navigation never returns a retired shadow row.
     """
     if not connection.db_available():
         return None
     with connection.get_session() as db:
-        for getter, is_pitcher in [(crud.get_player, False),
-                                   (crud.get_pitcher, True)]:
-            row = getter(db, player_id)
-            if row is None:
-                continue
-            team_display, team_code = _latest_team_info(
-                db, row.player_id, pitcher=is_pitcher
-            )
-            return {
-                "player_id":       row.player_id,
-                "name":            row.name,
-                "bbref_id":        row.bbref_id,
-                "mlb_debut":       row.mlb_debut,
-                "mlb_last_season": row.mlb_last_season,
-                "current_team":    team_display,
-                "team_code":       team_code,
-                **_bio_dict(row, db),
-            }
-    return None
+        batter_row  = crud.get_player(db, player_id)
+        pitcher_row = crud.get_pitcher(db, player_id)
+        if batter_row is None and pitcher_row is None:
+            return None
+        row, is_pitcher = _choose_active_bio_row(batter_row, pitcher_row)
+        team_display, team_code = _latest_team_info(
+            db, row.player_id, pitcher=is_pitcher
+        )
+        return {
+            "player_id":       row.player_id,
+            "name":            row.name,
+            "bbref_id":        row.bbref_id,
+            "mlb_debut":       row.mlb_debut,
+            "mlb_last_season": row.mlb_last_season,
+            "current_team":    team_display,
+            "team_code":       team_code,
+            "is_pitcher":      is_pitcher,
+            **_bio_dict(row, db),
+        }
 
 
 def get_current_stats(player_id: int) -> Optional[dict]:
