@@ -610,28 +610,57 @@ def _latest_team_info(
     return team, _resolve_team_code(team, latest.league)
 
 
+# Position values that mark a batter row as a "phantom" — i.e. the player
+# isn't really a hitter, the row just exists because a pure pitcher took a
+# plate appearance. A genuine hitter/two-way player carries a real fielding
+# position (OF, DH, 1B, ...) instead. The PITCHER row's position is ALWAYS
+# "P", so it can't discriminate — only the batter row's position can.
+_PITCHER_POSITION_CODES = {"P", "SP", "RP", "CL", "CP", "RHP", "LHP"}
+
+
+def _batter_row_is_phantom(batter_row) -> bool:
+    """True when a player's batter row reflects a pitcher rather than a real
+    hitter: its position is a pitcher code (Misiorowski = "P") or blank. A
+    two-way player like Ohtani has a real fielding position here ("OF") and
+    is NOT a phantom."""
+    pos = (getattr(batter_row, "position", None) or "").strip().upper()
+    return pos == "" or pos in _PITCHER_POSITION_CODES
+
+
 def _choose_active_bio_row(batter_row, pitcher_row):
     """When a player_id sits in BOTH the players (batter) and pitchers
-    tables, pick which bio row to surface. Prefer the ACTIVE row
-    (`mlb_last_season IS NULL`) when exactly one side is active — this
-    fixes pitchers whose stale, retired batter row would otherwise shadow
-    their active pitcher row (e.g. Eury Pérez: batter last_season=2023,
-    pitcher last_season=None). When both sides are active or both retired
-    (true two-way players like Ohtani), keep the batter-first default so
-    their resolution is unchanged. Returns `(row, is_pitcher)`; assumes at
-    least one of the two rows is non-None."""
+    tables, pick which bio row to surface. Returns `(row, is_pitcher)`;
+    assumes at least one of the two rows is non-None.
+
+    Priority:
+      1. If exactly one side is ACTIVE (`mlb_last_season IS NULL`), return
+         it — fixes pitchers whose stale, retired batter row would otherwise
+         shadow their active pitcher row (Eury Pérez: batter 2023, pitcher
+         active).
+      2. If both sides are active OR both retired, disambiguate by the
+         BATTER row's position: a phantom batter row (position "P"/blank)
+         belongs to a pure pitcher → return the pitcher row (Misiorowski).
+      3. Otherwise keep the batter-first default — genuine position players
+         and two-way players who carry a real fielding position on the
+         batter row (Ohtani = "OF") stay on the batting side."""
     def _active(r):
         return r is not None and r.mlb_last_season is None
 
-    if batter_row is not None and pitcher_row is not None:
-        if _active(pitcher_row) and not _active(batter_row):
-            return pitcher_row, True
-        if _active(batter_row) and not _active(pitcher_row):
-            return batter_row, False
-        # Both active or both retired — keep the historical batter-first
-        # default (Ohtani-style two-way players stay on the batting side).
+    # Only one row exists — no conflict to resolve.
+    if batter_row is None:
+        return pitcher_row, True
+    if pitcher_row is None:
         return batter_row, False
-    if pitcher_row is not None:
+
+    # Both rows exist. Prefer the active side when exactly one is active.
+    if _active(pitcher_row) and not _active(batter_row):
+        return pitcher_row, True
+    if _active(batter_row) and not _active(pitcher_row):
+        return batter_row, False
+
+    # Both active or both retired — use the batter row's position to tell a
+    # pure pitcher (phantom batter row) from a genuine hitter/two-way player.
+    if _batter_row_is_phantom(batter_row):
         return pitcher_row, True
     return batter_row, False
 
