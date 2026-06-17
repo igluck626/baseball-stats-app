@@ -8,6 +8,7 @@
 //
 
 import SwiftUI
+import UIKit
 
 struct SearchView: View {
     @StateObject private var viewModel = SearchViewModel()
@@ -308,6 +309,8 @@ private struct HeatPlayerCard: View {
     let leader: HeatLeader
     var isResolving: Bool = false
 
+    @Environment(\.colorScheme) private var colorScheme
+
     /// Team brand color drives the per-card identity now — no repeated
     /// heat icon (the section header already says hot/cold, and the row is
     /// sorted hottest-first so position implies intensity).
@@ -331,6 +334,10 @@ private struct HeatPlayerCard: View {
         .frame(width: 132, alignment: .leading)
         .padding(12)
         .background(cardBackground)
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(borderColor, lineWidth: 1)
+        )
         .shadow(color: .black.opacity(0.06), radius: 8, y: 3)
         .overlay {
             if isResolving { ProgressView().controlSize(.small) }
@@ -338,21 +345,47 @@ private struct HeatPlayerCard: View {
         .opacity(isResolving ? 0.55 : 1)
     }
 
-    /// Glass base + a soft team-color wash that fades top→bottom, so each
-    /// card carries its team identity while staying subtle enough that
-    /// `.primary` text holds contrast across all 30 colors, light or dark.
+    /// Glass base + a soft team-color wash, matching the player-profile
+    /// header's adaptive 4-stop gradient exactly (stronger in dark mode so
+    /// the tint registers). Subtle enough that `.primary` text keeps
+    /// contrast across all 30 team colors in both appearances.
     private var cardBackground: some View {
-        RoundedRectangle(cornerRadius: 16, style: .continuous)
+        let isDark = colorScheme == .dark
+        return RoundedRectangle(cornerRadius: 16, style: .continuous)
             .fill(.ultraThinMaterial)
             .overlay {
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .fill(
                         LinearGradient(
-                            colors: [tint.opacity(0.18), tint.opacity(0.04)],
+                            stops: [
+                                .init(color: tint.opacity(isDark ? 0.25  : 0.18 ), location: 0.0),
+                                .init(color: tint.opacity(isDark ? 0.21  : 0.14 ), location: 0.30),
+                                .init(color: tint.opacity(isDark ? 0.056 : 0.035), location: 0.70),
+                                .init(color: .clear,                                location: 1.00),
+                            ],
                             startPoint: .top, endPoint: .bottom
                         )
                     )
             }
+    }
+
+    /// Darker shade of the team color for the card edge. Darkened more in
+    /// light mode (where a true darker tint reads cleanly); darkened less
+    /// in dark mode so the edge doesn't vanish against the dark glass.
+    private var borderColor: Color {
+        let isDark = colorScheme == .dark
+        return darkened(tint, by: isDark ? 0.08 : 0.25).opacity(isDark ? 0.7 : 0.6)
+    }
+
+    /// Reduce a color's HSB brightness for a genuinely darker shade (not
+    /// just a more opaque one).
+    private func darkened(_ color: Color, by amount: Double) -> Color {
+        var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        UIColor(color).getHue(&h, saturation: &s, brightness: &b, alpha: &a)
+        return Color(
+            hue: Double(h), saturation: Double(s),
+            brightness: max(0, Double(b) - amount), opacity: Double(a),
+        )
     }
 
     /// "SS · NYY" / "RF" / "Team" — position first, then resolved team code.
