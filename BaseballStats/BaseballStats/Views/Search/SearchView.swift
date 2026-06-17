@@ -308,27 +308,15 @@ private struct HeatPlayerCard: View {
     let leader: HeatLeader
     var isResolving: Bool = false
 
-    private var style: HeatTierStyle { HeatTierStyle.for(leader.heat_tier ?? "neutral") }
-
-    /// The section header already says "Heating Up" / "Cooling Down", so
-    /// the only thing worth differentiating per card is INTENSITY — the
-    /// top tiers get a slightly larger, heavier icon so the very hottest /
-    /// coldest pop out of the row without any text label.
-    private var isIntense: Bool {
-        leader.heat_tier == "red_hot" || leader.heat_tier == "ice_cold"
+    /// Team brand color drives the per-card identity now — no repeated
+    /// heat icon (the section header already says hot/cold, and the row is
+    /// sorted hottest-first so position implies intensity).
+    private var tint: Color {
+        TeamColors.color(for: leader.team_code) ?? .accentColor
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            // Small tier-colored icon accent — color carries hot-vs-cold
-            // and the size carries intensity. No redundant tier text.
-            if let icon = style.icon {
-                Image(systemName: icon)
-                    .font(.system(size: isIntense ? 14 : 12,
-                                  weight: isIntense ? .semibold : .regular))
-                    .foregroundStyle(style.color)
-            }
-
             Text(leader.name)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.primary)
@@ -342,15 +330,29 @@ private struct HeatPlayerCard: View {
         }
         .frame(width: 132, alignment: .leading)
         .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(.ultraThinMaterial)
-        )
+        .background(cardBackground)
         .shadow(color: .black.opacity(0.06), radius: 8, y: 3)
         .overlay {
             if isResolving { ProgressView().controlSize(.small) }
         }
         .opacity(isResolving ? 0.55 : 1)
+    }
+
+    /// Glass base + a soft team-color wash that fades top→bottom, so each
+    /// card carries its team identity while staying subtle enough that
+    /// `.primary` text holds contrast across all 30 colors, light or dark.
+    private var cardBackground: some View {
+        RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .fill(.ultraThinMaterial)
+            .overlay {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [tint.opacity(0.18), tint.opacity(0.04)],
+                            startPoint: .top, endPoint: .bottom
+                        )
+                    )
+            }
     }
 
     /// "SS · NYY" / "RF" / "Team" — position first, then resolved team code.
