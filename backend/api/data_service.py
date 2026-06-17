@@ -6875,6 +6875,52 @@ def _build_pitcher_season_entry(
 # is considered stale (player on the IL, slumped out of the window, etc.).
 _HEAT_RECENCY_DAYS = 10
 
+# The raw heat score blends two signals: the player's recent window vs their
+# OWN season baseline ("trend"), and the same window vs the LEAGUE average
+# ("absolute"). Trend alone makes elite players sustaining elite production
+# read neutral and rewards mediocre players on lucky streaks; the absolute
+# term anchors both to league context. Tune these to shift the balance.
+TREND_WEIGHT = 0.5
+ABSOLUTE_WEIGHT = 0.5
+
+# League-average fallbacks for the absolute term when too few qualified
+# players exist to compute live averages (early season / sparse data).
+_HEAT_FALLBACK_OPS  = 0.715
+_HEAT_FALLBACK_ERA  = 4.10
+_HEAT_FALLBACK_WHIP = 1.30
+_HEAT_FALLBACK_FIP  = 4.10
+# Need at least this many qualified samples before trusting a live average.
+_HEAT_MIN_LEAGUE_SAMPLES = 20
+
+
+def _compute_league_heat_baselines(db, current_year: int) -> dict:
+    """League-average rate baselines for the absolute (vs-league) half of the
+    heat blend, derived from this season's qualified rows (hitters PA ≥ 100,
+    pitchers IP ≥ 20). Falls back to fixed constants when fewer than
+    `_HEAT_MIN_LEAGUE_SAMPLES` qualify so the absolute term never divides by a
+    noisy small-sample mean."""
+    hitter_ops = [
+        s.OPS for s in db.query(_PlayerSeason).filter(_PlayerSeason.year == current_year).all()
+        if (s.PA or 0) >= 100 and s.OPS and s.OPS > 0
+    ]
+    pitch_rows = [
+        s for s in db.query(_PitcherSeason).filter(_PitcherSeason.year == current_year).all()
+        if (s.IP or 0) >= 20
+    ]
+    era_vals  = [s.ERA  for s in pitch_rows if s.ERA  and s.ERA  > 0]
+    whip_vals = [s.WHIP for s in pitch_rows if s.WHIP and s.WHIP > 0]
+    fip_vals  = [s.FIP  for s in pitch_rows if s.FIP  and s.FIP  > 0]
+
+    def _avg(vals: list, fallback: float) -> float:
+        return (sum(vals) / len(vals)) if len(vals) >= _HEAT_MIN_LEAGUE_SAMPLES else fallback
+
+    return {
+        "ops":  _avg(hitter_ops, _HEAT_FALLBACK_OPS),
+        "era":  _avg(era_vals,   _HEAT_FALLBACK_ERA),
+        "whip": _avg(whip_vals,  _HEAT_FALLBACK_WHIP),
+        "fip":  _avg(fip_vals,   _HEAT_FALLBACK_FIP),
+    }
+
 
 def compress_heat(raw: float) -> float:
     """tanh compression on the raw (signed pct-vs-baseline) score: keeps the
@@ -6923,16 +6969,24 @@ def _heat_recent(logs: list) -> bool:
 
 def compute_player_heat(
     db, player_id: int, is_pitcher: bool, current_year: int,
+    league_avgs: Optional[dict] = None,
 ) -> tuple[Optional[float], Optional[str]]:
     """Compute `(heat_score, heat_tier)` for one player. Returns (None, None)
-    when the sample-size / recency / baseline guardrails aren't met."""
+    when the sample-size / recency / baseline guardrails aren't met.
+
+    `league_avgs` supplies the league-average baselines for the absolute
+    (vs-league) half of the blend; when omitted (e.g. the single-player debug
+    path) they're computed on demand so the score still reflects league
+    context. The full scan passes them in once to avoid re-querying."""
+    if league_avgs is None:
+        league_avgs = _compute_league_heat_baselines(db, current_year)
     if is_pitcher:
-        return _compute_pitcher_heat(db, player_id, current_year)
-    return _compute_batter_heat(db, player_id, current_year)
+        return _compute_pitcher_heat(db, player_id, current_year, league_avgs)
+    return _compute_batter_heat(db, player_id, current_year, league_avgs)
 
 
 def _compute_batter_heat(
-    db, player_id: int, current_year: int,
+    db, player_id: int, current_year: int, league_avgs: dict,
 ) -> tuple[Optional[float], Optional[str]]:
     logs = crud.get_batting_gamelogs(db, player_id, season=current_year, last_n=15)
     if len(logs) < 10 or not _heat_recent(logs):
@@ -6964,13 +7018,18 @@ def _compute_batter_heat(
     if not season_ops or season_ops <= 0:
         return (None, None)
 
-    raw = (window_ops - season_ops) / season_ops
+    # Blend: window vs own baseline (trend) + window vs league average
+    # (absolute). Higher OPS is better, so both terms are (window - ref)/ref.
+    league_avg_ops = league_avgs.get("ops") or _HEAT_FALLBACK_OPS
+    trend = (window_ops - season_ops) / season_ops
+    absolute = (window_ops - league_avg_ops) / league_avg_ops if league_avg_ops > 0 else 0.0
+    raw = TREND_WEIGHT * trend + ABSOLUTE_WEIGHT * absolute
     score = compress_heat(raw)
     return (score, heat_tier_for(score))
 
 
 def _compute_pitcher_heat(
-    db, player_id: int, current_year: int,
+    db, player_id: int, current_year: int, league_avgs: dict,
 ) -> tuple[Optional[float], Optional[str]]:
     season = _season_row(crud.get_pitcher_seasons(db, player_id), current_year)
     if season is None:
@@ -7008,18 +7067,29 @@ def _compute_pitcher_heat(
     if not season_era or season_era <= 0 or not season_whip or season_whip <= 0:
         return (None, None)
 
-    # Positive components = better than baseline (lower ERA/WHIP/FIP).
-    era_part  = (season_era - window_era) / season_era
-    whip_part = (season_whip - window_whip) / season_whip
+    league_avg_era  = league_avgs.get("era")  or _HEAT_FALLBACK_ERA
+    league_avg_whip = league_avgs.get("whip") or _HEAT_FALLBACK_WHIP
+    league_avg_fip  = league_avgs.get("fip")  or _HEAT_FALLBACK_FIP
+
+    # Each component blends trend (vs own baseline) + absolute (vs league).
+    # Lower ERA/WHIP/FIP is better, so the direction flips: positive means
+    # the window beats the reference. Guard every divisor.
+    def pitch_component(window_val: float, season_val: float, league_avg: float) -> float:
+        trend = (season_val - window_val) / season_val if season_val and season_val > 0 else 0.0
+        absolute = (league_avg - window_val) / league_avg if league_avg and league_avg > 0 else 0.0
+        return TREND_WEIGHT * trend + ABSOLUTE_WEIGHT * absolute
+
+    era_c  = pitch_component(window_era, season_era, league_avg_era)
+    whip_c = pitch_component(window_whip, season_whip, league_avg_whip)
 
     # FIP component when a valid season FIP exists; otherwise fall back to
     # the ERA/WHIP-only blend so a missing FIP never zeroes the rating.
     season_fip = season.FIP
     if season_fip and season_fip > 0:
-        fip_part = (season_fip - window_fip) / season_fip
-        raw = 0.4 * era_part + 0.3 * whip_part + 0.3 * fip_part
+        fip_c = pitch_component(window_fip, season_fip, league_avg_fip)
+        raw = 0.4 * era_c + 0.3 * whip_c + 0.3 * fip_c
     else:
-        raw = 0.5 * era_part + 0.5 * whip_part
+        raw = 0.5 * era_c + 0.5 * whip_c
 
     score = compress_heat(raw)
     return (score, heat_tier_for(score))
@@ -7034,8 +7104,14 @@ def compute_all_player_heat(db, current_year: int) -> dict:
     counts = {"scored": 0, "hot": 0, "cold": 0, "neutral": 0, "skipped": 0}
     now = datetime.datetime.utcnow()
 
+    # League averages anchor the absolute half of every player's blend —
+    # computed once here and threaded through, not re-queried per player.
+    league_avgs = _compute_league_heat_baselines(db, current_year)
+
     def _apply(row, is_pitcher: bool) -> None:
-        score, tier = compute_player_heat(db, row.player_id, is_pitcher, current_year)
+        score, tier = compute_player_heat(
+            db, row.player_id, is_pitcher, current_year, league_avgs,
+        )
         row.heat_score = score
         row.heat_tier = tier
         row.heat_updated = now
