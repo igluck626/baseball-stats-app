@@ -617,17 +617,48 @@ def _latest_team_info(
 # "P", so it can't discriminate — only the batter row's position can.
 _PITCHER_POSITION_CODES = {"P", "SP", "RP", "CL", "CP", "RHP", "LHP"}
 
+# Volume gate for the phantom check: a batter row is treated as a pitcher's
+# stray row when career pitching volume dominates — at least this many career
+# IP, with fewer career PA than IP. Position players have ~0 IP; genuine
+# two-way players (Ohtani: ~4600 PA vs ~600 IP) carry far more PA than IP, so
+# only pure pitchers with stray batting data trip this.
+_PHANTOM_MIN_CAREER_IP = 50
 
-def _batter_row_is_phantom(batter_row) -> bool:
+
+def _batter_row_is_phantom(batter_row, pitcher_row, db) -> bool:
     """True when a player's batter row reflects a pitcher rather than a real
-    hitter: its position is a pitcher code (Misiorowski = "P") or blank. A
-    two-way player like Ohtani has a real fielding position here ("OF") and
-    is NOT a phantom."""
+    hitter. Two signals:
+
+      1. Position string: the batter row's position is a pitcher code
+         (Misiorowski = "P") or blank.
+      2. Career volume: pitching overwhelmingly dominates despite a stray
+         fielding label. Pre-DH NL pitchers (Freeland, Scherzer) carry an
+         "OF"/position string from a pinch appearance, so the string alone is
+         fragile — but their career IP (1300+, 2900+) dwarfs their PA (198,
+         529). Ohtani (~4600 PA vs ~600 IP) has PA well above IP and stays a
+         hitter; a position player has ~0 IP and never trips the gate.
+
+    The volume query runs only when the cheap position check is inconclusive
+    and a pitcher row exists, so it costs nothing for ordinary players."""
     pos = (getattr(batter_row, "position", None) or "").strip().upper()
-    return pos == "" or pos in _PITCHER_POSITION_CODES
+    if pos == "" or pos in _PITCHER_POSITION_CODES:
+        return True
+
+    if pitcher_row is not None:
+        career_ip = sum(
+            (getattr(s, "IP", None) or 0.0)
+            for s in crud.get_pitcher_seasons(db, pitcher_row.player_id)
+        )
+        career_pa = sum(
+            (getattr(s, "PA", None) or 0)
+            for s in crud.get_player_seasons(db, batter_row.player_id)
+        )
+        if career_ip >= _PHANTOM_MIN_CAREER_IP and career_pa < career_ip:
+            return True
+    return False
 
 
-def _choose_active_bio_row(batter_row, pitcher_row):
+def _choose_active_bio_row(batter_row, pitcher_row, db):
     """When a player_id sits in BOTH the players (batter) and pitchers
     tables, pick which bio row to surface. Returns `(row, is_pitcher)`;
     assumes at least one of the two rows is non-None.
@@ -658,9 +689,10 @@ def _choose_active_bio_row(batter_row, pitcher_row):
     if _active(batter_row) and not _active(pitcher_row):
         return batter_row, False
 
-    # Both active or both retired — use the batter row's position to tell a
-    # pure pitcher (phantom batter row) from a genuine hitter/two-way player.
-    if _batter_row_is_phantom(batter_row):
+    # Both active or both retired — tell a pure pitcher (phantom batter row)
+    # from a genuine hitter/two-way player, by position string and, when that
+    # is inconclusive, career batting-vs-pitching volume.
+    if _batter_row_is_phantom(batter_row, pitcher_row, db):
         return pitcher_row, True
     return batter_row, False
 
@@ -683,7 +715,7 @@ def search_player(name: str) -> list[dict]:
             out: dict[int, dict] = {}
             for pid in set(batter_rows) | set(pitcher_rows):
                 row, is_pitcher = _choose_active_bio_row(
-                    batter_rows.get(pid), pitcher_rows.get(pid),
+                    batter_rows.get(pid), pitcher_rows.get(pid), db,
                 )
                 team_display, team_code = _latest_team_info(
                     db, row.player_id, pitcher=is_pitcher,
@@ -777,7 +809,7 @@ def get_player_by_id(player_id: int) -> Optional[dict]:
         pitcher_row = crud.get_pitcher(db, player_id)
         if batter_row is None and pitcher_row is None:
             return None
-        row, is_pitcher = _choose_active_bio_row(batter_row, pitcher_row)
+        row, is_pitcher = _choose_active_bio_row(batter_row, pitcher_row, db)
         team_display, team_code = _latest_team_info(
             db, row.player_id, pitcher=is_pitcher
         )
