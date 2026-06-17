@@ -192,7 +192,7 @@ struct SearchView: View {
     private func heatSubRow(label: String, leaders: [HeatLeader]) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(label)
-                .font(.caption.weight(.semibold))
+                .font(.caption.weight(.medium))
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 16)
             ScrollView(.horizontal, showsIndicators: false) {
@@ -310,38 +310,41 @@ private struct HeatPlayerCard: View {
 
     private var style: HeatTierStyle { HeatTierStyle.for(leader.heat_tier ?? "neutral") }
 
+    /// The section header already says "Heating Up" / "Cooling Down", so
+    /// the only thing worth differentiating per card is INTENSITY — the
+    /// top tiers get a slightly larger, heavier icon so the very hottest /
+    /// coldest pop out of the row without any text label.
+    private var isIntense: Bool {
+        leader.heat_tier == "red_hot" || leader.heat_tier == "ice_cold"
+    }
+
     var body: some View {
-        VStack(spacing: 6) {
-            HStack(spacing: 4) {
-                if let icon = style.icon {
-                    Image(systemName: icon).font(.caption)
-                }
-                Text(style.label).font(.caption.weight(.bold))
+        VStack(alignment: .leading, spacing: 4) {
+            // Small tier-colored icon accent — color carries hot-vs-cold
+            // and the size carries intensity. No redundant tier text.
+            if let icon = style.icon {
+                Image(systemName: icon)
+                    .font(.system(size: isIntense ? 14 : 12,
+                                  weight: isIntense ? .semibold : .regular))
+                    .foregroundStyle(style.color)
             }
-            .foregroundStyle(style.color)
 
             Text(leader.name)
                 .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.primary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.primary)
 
             Text(detailLine ?? " ")
-                .font(.caption2)
+                .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
         }
-        .frame(width: 124)
-        .padding(.vertical, 12)
-        .padding(.horizontal, 8)
+        .frame(width: 132, alignment: .leading)
+        .padding(12)
         .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .fill(.ultraThinMaterial)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(style.color.opacity(0.35), lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.06), radius: 8, y: 3)
         .overlay {
