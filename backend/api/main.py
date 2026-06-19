@@ -2236,6 +2236,273 @@ def admin_update_player_bio(
     }
 
 
+@app.post("/admin/repair-swapped-player")
+def admin_repair_swapped_player(
+    real_mlbam:    int = Query(..., description="The real modern player's MLBAM id (keeps its game logs + bdl_id)."),
+    correct_bbref: str = Query(..., description="The bbref_id that actually belongs to this modern player, e.g. 'brownbe01'."),
+    bogus_mlbam:   int = Query(..., description="Synthetic Negro-Leagues MLBAM id currently holding the real career (deleted if safe)."),
+    position_type: str = Query(..., description="'pitcher' or 'batter' — the modern player's real side."),
+    position:      str | None = Query(None, description="Position to stamp on a NEWLY-created bio row (defaults 'P' for pitcher, else None). Ignored when the correct-side row already exists."),
+):
+    """Repair ONE swapped-Chadwick split player (see the Ben Brown
+    investigation). A 2024 Negro-Leagues Chadwick merge cross-assigned
+    synthetic MLBAM ids sharing a surname stem, so a modern player's real
+    MLBAM id (`real_mlbam`) got linked to a historical player's bbref —
+    loading the wrong/empty career — while a synthetic id (`bogus_mlbam`)
+    soaked up the modern player's real Lahman career.
+
+    Per-player sequence (each phase in its own session; safe to re-run —
+    season writes upsert and the bogus delete is idempotent):
+      A. Guard `bogus_mlbam`: confirm it has NO bdl_id and NO game logs.
+         If it has either, the bogus delete (phase F) is SKIPPED and the
+         response is flagged `ok_with_warnings` — we never destroy a row
+         that carries live keys.
+      B. Capture the modern player's bio off `real_mlbam` (prefer the
+         bdl-stamped row — that's the BDL-synced modern identity).
+      C. Ensure the correct-side bio row (`position_type`) exists with
+         `correct_bbref`; create it (carrying bdl_id/birth/etc.) if the
+         current row is on the wrong side (e.g. Ben Brown has only a
+         batter/SS row but is a pitcher).
+      D. Delete the wrong-side bio row and ALL season rows on
+         `real_mlbam` (the historical junk — it can sit on either side).
+         Game logs are keyed on player_id and are NOT touched.
+      E. Reload the real career from Lahman via `correct_bbref` onto
+         `real_mlbam` (`_lahman_pitching/batting_seasons_for_bbref`).
+      F. Delete the bogus duplicate record (bio + seasons), guarded by A.
+
+    Returns a per-phase summary instead of raising, so a partial failure
+    is visible without a 500. Scope: the 10 CLEAN swaps only — NOT the
+    harriho/663687 or rodrijo/679563 multi-way tangles."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    if position_type not in ("pitcher", "batter"):
+        raise HTTPException(status_code=400, detail="position_type must be 'pitcher' or 'batter'")
+
+    correct_is_pitcher = position_type == "pitcher"
+    CorrectBio = Pitcher if correct_is_pitcher else Player
+    WrongBio   = Player  if correct_is_pitcher else Pitcher
+
+    summary: dict = {
+        "status":        "ok",
+        "real_mlbam":    real_mlbam,
+        "correct_bbref": correct_bbref,
+        "bogus_mlbam":   bogus_mlbam,
+        "position_type": position_type,
+        "steps":         [],
+    }
+    step = summary["steps"].append
+
+    try:
+        # --- A. Guard the bogus record (must carry NO bdl_id / NO game logs) ---
+        with connection.get_session() as db:
+            bp  = db.get(Player, bogus_mlbam)
+            bpi = db.get(Pitcher, bogus_mlbam)
+            bogus_exists = (bp is not None) or (bpi is not None)
+            bogus_bdl = next(
+                (x.bdl_id for x in (bp, bpi) if x is not None and x.bdl_id is not None),
+                None,
+            )
+            bogus_bat_logs = (
+                db.query(BattingGameLog)
+                  .filter(BattingGameLog.player_id == bogus_mlbam).count()
+            )
+            bogus_pit_logs = (
+                db.query(PitchingGameLog)
+                  .filter(PitchingGameLog.player_id == bogus_mlbam).count()
+            )
+        bogus_safe = (
+            bogus_bdl is None and bogus_bat_logs == 0 and bogus_pit_logs == 0
+        )
+        summary["bogus_record"] = {
+            "exists":            bogus_exists,
+            "bdl_id":            bogus_bdl,
+            "batting_gamelogs":  bogus_bat_logs,
+            "pitching_gamelogs": bogus_pit_logs,
+            "safe_to_delete":    bogus_safe,
+        }
+
+        # --- B. Capture preserved bio off real_mlbam (prefer the bdl-stamped row) ---
+        with connection.get_session() as db:
+            rp  = db.get(Player, real_mlbam)
+            rpi = db.get(Pitcher, real_mlbam)
+            if rp is None and rpi is None:
+                return {
+                    "status": "error",
+                    "detail": f"real_mlbam {real_mlbam} has no bio row in players or pitchers",
+                    "steps":  summary["steps"],
+                }
+            src = next(
+                (x for x in (rp, rpi) if x is not None and x.bdl_id is not None),
+                None,
+            ) or rp or rpi
+            preserved = {
+                "name":          src.name,
+                "bdl_id":        src.bdl_id,
+                "mlb_debut":     src.mlb_debut,
+                "bats":          src.bats,
+                "throws":        src.throws,
+                "height":        src.height,
+                "weight":        src.weight,
+                "birth_year":    src.birth_year,
+                "birth_month":   src.birth_month,
+                "birth_day":     src.birth_day,
+                "birth_city":    src.birth_city,
+                "birth_state":   src.birth_state,
+                "birth_country": src.birth_country,
+                "debut":         src.debut,
+            }
+        # Current team comes from the bogus record's latest season (that's
+        # where the REAL career lives right now) — report-only; the Lahman
+        # reload + nightly roster sync re-establish team on real_mlbam.
+        with connection.get_session() as db:
+            CorrectSeason = PitcherSeason if correct_is_pitcher else PlayerSeason
+            latest = (
+                db.query(CorrectSeason)
+                  .filter(CorrectSeason.player_id == bogus_mlbam)
+                  .order_by(CorrectSeason.year.desc())
+                  .first()
+            )
+            preserved_team = latest.team if latest is not None else None
+        summary["preserved"] = {
+            "name":                  preserved["name"],
+            "bdl_id":                preserved["bdl_id"],
+            "team_latest_on_bogus":  preserved_team,
+        }
+
+        # --- C. Ensure the correct-side bio exists with the correct bbref ---
+        with connection.get_session() as db:
+            row = db.get(CorrectBio, real_mlbam)
+            if row is None:
+                row = CorrectBio(
+                    player_id       = real_mlbam,
+                    name            = preserved["name"],
+                    bbref_id        = correct_bbref,
+                    bdl_id          = preserved["bdl_id"],
+                    mlb_debut       = preserved["mlb_debut"],
+                    mlb_last_season = None,   # active
+                    position        = position or ("P" if correct_is_pitcher else None),
+                    bats            = preserved["bats"],
+                    throws          = preserved["throws"],
+                    height          = preserved["height"],
+                    weight          = preserved["weight"],
+                    birth_year      = preserved["birth_year"],
+                    birth_month     = preserved["birth_month"],
+                    birth_day       = preserved["birth_day"],
+                    birth_city      = preserved["birth_city"],
+                    birth_state     = preserved["birth_state"],
+                    birth_country   = preserved["birth_country"],
+                    debut           = preserved["debut"],
+                )
+                db.add(row)
+                step(f"created {position_type} bio for {real_mlbam} with bbref {correct_bbref}")
+                created_bio = True
+            else:
+                row.bbref_id = correct_bbref
+                if row.bdl_id is None and preserved["bdl_id"] is not None:
+                    row.bdl_id = preserved["bdl_id"]
+                step(f"updated existing {position_type} bio bbref -> {correct_bbref}")
+                created_bio = False
+            db.commit()
+
+        # --- D. Delete wrong-side bio + ALL historical season rows on real_mlbam ---
+        with connection.get_session() as db:
+            wrong = db.get(WrongBio, real_mlbam)
+            wrong_deleted = False
+            if wrong is not None:
+                db.delete(wrong)
+                wrong_deleted = True
+            pl_seasons = (
+                db.query(PlayerSeason)
+                  .filter(PlayerSeason.player_id == real_mlbam)
+                  .delete(synchronize_session=False)
+            )
+            pi_seasons = (
+                db.query(PitcherSeason)
+                  .filter(PitcherSeason.player_id == real_mlbam)
+                  .delete(synchronize_session=False)
+            )
+            db.commit()
+        step(
+            f"deleted wrong-side bio={wrong_deleted}; cleared seasons "
+            f"player={pl_seasons} pitcher={pi_seasons}"
+        )
+
+        # --- E. Reload the real career from Lahman onto real_mlbam ---
+        if correct_is_pitcher:
+            seasons = _lahman_pitching_seasons_for_bbref(correct_bbref)
+            if seasons:
+                with connection.get_session() as db:
+                    crud.save_pitcher_seasons(db, real_mlbam, seasons)
+        else:
+            seasons = _lahman_batting_seasons_for_bbref(correct_bbref)
+            if seasons:
+                with connection.get_session() as db:
+                    crud.save_player_seasons(db, real_mlbam, seasons)
+        years = sorted(s["year"] for s in seasons)
+        step(f"reloaded {len(seasons)} {position_type} seasons from {correct_bbref}: {years}")
+        summary["seasons_written"] = len(seasons)
+        summary["season_years"]    = years
+        if not seasons:
+            summary["status"] = "ok_with_warnings"
+            step(f"WARNING: Lahman has no {position_type} rows for {correct_bbref} "
+                 "(career may post-date the Lahman release — the nightly stat "
+                 "ingest will fill current-season rows)")
+
+        # --- F. Delete the bogus duplicate record (guarded by phase A) ---
+        if not bogus_exists:
+            step("bogus record already absent — nothing to delete")
+            summary["bogus_deleted"] = False
+        elif bogus_safe:
+            with connection.get_session() as db:
+                bs_pl = (
+                    db.query(PlayerSeason)
+                      .filter(PlayerSeason.player_id == bogus_mlbam)
+                      .delete(synchronize_session=False)
+                )
+                bs_pi = (
+                    db.query(PitcherSeason)
+                      .filter(PitcherSeason.player_id == bogus_mlbam)
+                      .delete(synchronize_session=False)
+                )
+                b_pl = db.get(Player, bogus_mlbam)
+                b_pi = db.get(Pitcher, bogus_mlbam)
+                if b_pl is not None:
+                    db.delete(b_pl)
+                if b_pi is not None:
+                    db.delete(b_pi)
+                db.commit()
+            step(f"deleted bogus {bogus_mlbam} (seasons player={bs_pl} pitcher={bs_pi})")
+            summary["bogus_deleted"] = True
+        else:
+            step(
+                f"SKIPPED deleting bogus {bogus_mlbam} — it has bdl_id={bogus_bdl} "
+                f"or game logs (bat={bogus_bat_logs}, pit={bogus_pit_logs}); not safe"
+            )
+            summary["bogus_deleted"] = False
+            summary["status"] = "ok_with_warnings"
+
+        # --- Confirm real_mlbam's game logs are intact (never touched) ---
+        with connection.get_session() as db:
+            rb = (
+                db.query(BattingGameLog)
+                  .filter(BattingGameLog.player_id == real_mlbam).count()
+            )
+            rpg = (
+                db.query(PitchingGameLog)
+                  .filter(PitchingGameLog.player_id == real_mlbam).count()
+            )
+        summary["created_bio"] = created_bio
+        summary["real_gamelogs_preserved"] = {"batting": rb, "pitching": rpg}
+        return summary
+
+    except Exception as exc:   # never 500 — surface the partial state
+        return {
+            "status": "error",
+            "detail": f"{type(exc).__name__}: {exc}",
+            "steps":  summary["steps"],
+        }
+
+
 @app.get("/admin/dob-coverage")
 def admin_dob_coverage():
     """Diagnostic: report birth-date completeness across both bio
