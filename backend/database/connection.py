@@ -127,6 +127,11 @@ _BATTING_GAMELOGS_NEW_COLUMNS: list[tuple[str, str]] = [
     # now store it so season PA can be summed for the rate-stat
     # leaderboard qualifier (it was never populated before).
     ("PA",  "INTEGER"),
+    # GIDP / SH (sac bunts) — both shipped per-game by BDL `/stats`
+    # and the MLB boxscore but absent from season_stats, so storing
+    # them per game lets the season-row aggregation recover them.
+    ("GIDP", "INTEGER"),
+    ("SH",   "INTEGER"),
 ]
 
 # Extended counting stats added to player_seasons / pitcher_seasons in the

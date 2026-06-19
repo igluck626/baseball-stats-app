@@ -1733,7 +1733,7 @@ def admin_recalculate_batting_counting(
     ),
 ):
     """Fill the batting counting stats that BDL's season-stats payload
-    omits — PA, H, HBP, SF, CS, IBB — by summing them from
+    omits — PA, H, HBP, SF, CS, IBB, GIDP, SH — by summing them from
     `batting_gamelogs` into the matching `player_seasons` row.
 
     Motivating case: a batter whose current-season row was created
@@ -1752,8 +1752,13 @@ def admin_recalculate_batting_counting(
     actually have game logs for the year.
 
     Scope notes:
-      • GIDP and SH are intentionally NOT handled — `batting_gamelogs`
-        has no column for either, so there's nothing to sum.
+      • GIDP and SH (sac bunts) are now stored on `batting_gamelogs`
+        (from BDL `gidp` / `sac_bunts`), so they're summed here too —
+        but only game logs re-ingested AFTER that column was added
+        carry values; older rows sum to 0 until re-pulled via
+        `/admin/backfill-bdl-gamelogs`.
+      • IBB is summed but BDL `/stats` doesn't ship it per game, so it
+        typically lands at 0 (MLB-Stats-API-sourced logs do carry it).
       • 2B/3B are left alone — they render as 0 acceptably and aren't
         worth the extra columns.
       • Idempotent: re-running only ever fills remaining NULLs.
@@ -1771,7 +1776,7 @@ def admin_recalculate_batting_counting(
     # non-null existing value is preserved. The EXISTS guard skips
     # season rows that have no game logs for the year (nothing to sum).
     player_filter = "AND player_seasons.player_id = :player_id" if player_id is not None else ""
-    fields = ("PA", "H", "HBP", "SF", "CS", "IBB")
+    fields = ("PA", "H", "HBP", "SF", "CS", "IBB", "GIDP", "SH")
     set_clause = ",\n          ".join(
         f'"{f}" = COALESCE(player_seasons."{f}", ('
         f'SELECT SUM(COALESCE(g."{f}", 0)) FROM batting_gamelogs g '

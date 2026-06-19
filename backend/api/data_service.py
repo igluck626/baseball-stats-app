@@ -4796,6 +4796,8 @@ def _parse_bdl_batting_gamelog(stat: dict, ctx: dict) -> Optional[dict]:
         "CS":         _to_int(stat.get("caught_stealing")),
         "HBP":        _to_int(stat.get("hit_by_pitch")),
         "SF":         _to_int(stat.get("sac_flies")),
+        "GIDP":       _to_int(stat.get("gidp")),
+        "SH":         _to_int(stat.get("sac_bunts")),
         # BDL doesn't ship LOB on /stats — stays null.
         "LOB":        None,
     }
@@ -5363,6 +5365,8 @@ def _mlb_parse_box(
                 "CS":         bs.get("caughtStealing"),
                 "HBP":        bs.get("hitByPitch"),
                 "SF":         bs.get("sacFlies"),
+                "GIDP":       bs.get("groundIntoDoublePlay"),
+                "SH":         bs.get("sacBunts"),
             })
 
         # Pitchers: top-level "pitchers" array on each side lists the

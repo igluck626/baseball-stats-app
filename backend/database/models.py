@@ -366,6 +366,11 @@ class BattingGameLog(Base):
     CS          = Column(Integer)
     HBP         = Column(Integer)
     SF          = Column(Integer)
+    # Sourced from BDL `/stats` (`gidp` / `sac_bunts`) and the MLB Stats
+    # API boxscore (`groundIntoDoublePlay` / `sacBunts`). Stored so the
+    # season-row aggregation can sum them — season_stats omits both.
+    GIDP        = Column(Integer)
+    SH          = Column(Integer)   # sacrifice bunts
     LOB         = Column(Integer)
 
 
