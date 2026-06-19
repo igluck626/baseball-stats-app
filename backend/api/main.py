@@ -1721,6 +1721,96 @@ def admin_recalculate_pa(
     }
 
 
+@app.post("/admin/recalculate-batting-counting")
+def admin_recalculate_batting_counting(
+    season: int | None = Query(
+        None,
+        description="Season year to aggregate. Defaults to the current season.",
+    ),
+    player_id: int | None = Query(
+        None,
+        description="Optional — target one player. Omit for a league-wide pass.",
+    ),
+):
+    """Fill the batting counting stats that BDL's season-stats payload
+    omits — PA, H, HBP, SF, CS, IBB — by summing them from
+    `batting_gamelogs` into the matching `player_seasons` row.
+
+    Motivating case: a batter whose current-season row was created
+    fresh from BDL (e.g. a `/admin/backfill-player-history` or
+    swap-repair player) lands with these columns NULL, because the
+    nightly batter phase never writes them (unlike pitchers, whose
+    full line is rebuilt from bref every night). Game logs DO carry
+    these fields, so they can be recovered by aggregation.
+
+    COALESCE-only fill: each column is written **only when it's
+    currently NULL**, so an established player whose row was already
+    seeded with the complete bref line is never overwritten — the
+    season totals there are authoritative and may include games the
+    game-log table doesn't (or extended fields like GIDP/SH that the
+    logs lack). The `EXISTS` guard restricts the pass to rows that
+    actually have game logs for the year.
+
+    Scope notes:
+      • GIDP and SH are intentionally NOT handled — `batting_gamelogs`
+        has no column for either, so there's nothing to sum.
+      • 2B/3B are left alone — they render as 0 acceptably and aren't
+        worth the extra columns.
+      • Idempotent: re-running only ever fills remaining NULLs.
+
+    Column identifiers are double-quoted because the schema stores
+    them in mixed/upper case (Postgres folds unquoted identifiers to
+    lowercase — see `connection.py`)."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+
+    if season is None:
+        season = data_service._current_year()
+
+    # One correlated SUM subquery per column, wrapped in COALESCE so a
+    # non-null existing value is preserved. The EXISTS guard skips
+    # season rows that have no game logs for the year (nothing to sum).
+    player_filter = "AND player_seasons.player_id = :player_id" if player_id is not None else ""
+    fields = ("PA", "H", "HBP", "SF", "CS", "IBB")
+    set_clause = ",\n          ".join(
+        f'"{f}" = COALESCE(player_seasons."{f}", ('
+        f'SELECT SUM(COALESCE(g."{f}", 0)) FROM batting_gamelogs g '
+        f"WHERE g.player_id = player_seasons.player_id "
+        f"AND g.season = player_seasons.year))"
+        for f in fields
+    )
+    season_sql = _sa_text(
+        f"""
+        UPDATE player_seasons SET
+          {set_clause}
+        WHERE year = :season
+          AND EXISTS (
+              SELECT 1 FROM batting_gamelogs g
+              WHERE g.player_id = player_seasons.player_id
+                AND g.season    = player_seasons.year
+          )
+          {player_filter}
+        """
+    )
+
+    params: dict = {"season": season}
+    if player_id is not None:
+        params["player_id"] = player_id
+
+    with connection.get_session() as db:
+        result = db.execute(season_sql, params)
+        db.commit()
+        seasons_updated = result.rowcount
+
+    return {
+        "status":          "ok",
+        "season":          season,
+        "player_id":       player_id,
+        "fields":          list(fields),
+        "seasons_updated": int(seasons_updated) if seasons_updated is not None else None,
+    }
+
+
 @app.post("/admin/recalculate-leaders")
 def admin_recalculate_leaders(
     season: int | None = Query(
