@@ -6113,13 +6113,14 @@ _QUALIFIER_PA_PER_GAME = 3.1
 _QUALIFIER_IP_PER_GAME = 1.0
 _FULL_SEASON_GAMES     = 162
 
-# Single-team-filter qualifier — flat low minimums when the leaderboard
-# is scoped to one franchise. The MLB-wide qualifier doesn't make sense
-# for a 4–5 starter rotation, and would wipe out every result early in
-# the season. These thresholds only filter out single-AB pinch hits and
-# one-inning relief outings, not actual rotation arms or everyday bats.
-_TEAM_FILTER_MIN_PA = 10
-_TEAM_FILTER_MIN_IP = 3.0
+# NOTE: team-scoped leaderboards used to apply a flat low qualifier
+# (10 PA / 3 IP) so rate-stat boards weren't wiped out by the MLB-wide
+# minimums. That made team AVG/ERA boards garbage — an 11-PA .545 topped
+# the list. They now use the SAME qualifier as league-wide (pro-rated for
+# season, 502/162 for all-time), so a team rate board shows the franchise's
+# qualified regulars. Counting-stat boards are unaffected either way: their
+# catalog `eligibility` is None, so `_ranked_unique_seasons` never applies a
+# PA/IP filter to them (they self-qualify — you can't lead in HR on 11 PA).
 
 
 def _qualifier_thresholds(db, year: int) -> tuple[int, float]:
@@ -6396,10 +6397,14 @@ def _leaderboard_season(
     column = getattr(table, column_name)
 
     with connection.get_session() as db:
-        if team:
-            min_pa, min_ip = _TEAM_FILTER_MIN_PA, _TEAM_FILTER_MIN_IP
-        else:
-            min_pa, min_ip = _qualifier_thresholds(db, year)
+        # Proper pro-rated qualifier for EVERY scope (league-wide or a
+        # single team). Rate stats (eligibility "PA"/"IP") get the real
+        # threshold so a team AVG board needs ~502 qualifying PA *with
+        # that team* — `_ranked_unique_seasons` applies the PA/IP filter
+        # to the team-filtered season rows, so the count is the player's
+        # season PA on the row tagged with this franchise. Counting stats
+        # (eligibility None) ignore this value entirely.
+        min_pa, min_ip = _qualifier_thresholds(db, year)
 
         rows = _ranked_unique_seasons(
             db=db, table=table, column=column, direction=direction,
@@ -6456,8 +6461,13 @@ def _leaderboard_all_time(
     column_name, direction, eligibility = catalog[stat]
     column = getattr(table, column_name)
 
-    min_pa = _TEAM_FILTER_MIN_PA if team else _ALL_TIME_MIN_PA
-    min_ip = _TEAM_FILTER_MIN_IP if team else _ALL_TIME_MIN_IP
+    # Same flat all-time qualifier for league-wide AND team scope. Rate
+    # stats (eligibility "PA"/"IP") need 502 PA / 162 IP — applied to the
+    # team-filtered season rows, so a franchise rate board surfaces real
+    # qualified seasons, not an 11-PA fluke. Counting stats (eligibility
+    # None) ignore these values.
+    min_pa = _ALL_TIME_MIN_PA
+    min_ip = _ALL_TIME_MIN_IP
 
     with connection.get_session() as db:
         rows = _ranked_unique_seasons(
