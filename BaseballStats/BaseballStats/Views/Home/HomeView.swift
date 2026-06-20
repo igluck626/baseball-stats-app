@@ -148,7 +148,9 @@ struct HomeView: View {
     /// like genuine glass against it).
     private var backgroundGradient: some View {
         ZStack {
-            Color(.systemBackground)
+            // Grouped background so the solid white/dark cards float with
+            // clear separation (matches the player-profile surface).
+            Color(.systemGroupedBackground)
                 .ignoresSafeArea()
             LinearGradient(
                 colors: [
@@ -289,6 +291,36 @@ struct HomeView: View {
     }
 }
 
+// MARK: - Shared card surface
+
+/// Solid card surface with a faint team-color wash fading top → bottom —
+/// the player-profile / heat-card recipe, scaled down for these Home cards.
+/// `faint` halves it (two-stop) for the small tiles so they read as crisp
+/// white/dark with just a hint of color. Adaptive light/dark. Pair with the
+/// caller's existing border + shadow.
+private func teamWashBackground(
+    tint: Color,
+    cornerRadius: CGFloat,
+    isDark: Bool,
+    faint: Bool = false,
+) -> some View {
+    let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+    let stops: [Gradient.Stop] = faint
+        ? [
+            .init(color: tint.opacity(isDark ? 0.10 : 0.07), location: 0.0),
+            .init(color: .clear,                             location: 1.0),
+          ]
+        : [
+            .init(color: tint.opacity(isDark ? 0.20 : 0.14), location: 0.0),
+            .init(color: tint.opacity(isDark ? 0.10 : 0.06), location: 0.5),
+            .init(color: .clear,                             location: 1.0),
+          ]
+    return ZStack {
+        shape.fill(Color(.systemBackground))
+        shape.fill(LinearGradient(stops: stops, startPoint: .top, endPoint: .bottom))
+    }
+}
+
 // MARK: - Team Hero Card (with embedded game strip)
 
 /// Top-of-tab card. Hosts the team's bio block (logo + name + record
@@ -325,6 +357,8 @@ private struct TeamHeroCard: View {
     /// self-terminates once the game goes final.
     @StateObject private var liveVM = LiveFeedViewModel()
 
+    @Environment(\.colorScheme) private var colorScheme
+
     private var teamColor: Color {
         TeamColors.color(for: entry.lahmanCode) ?? Color.accentColor
     }
@@ -350,11 +384,13 @@ private struct TeamHeroCard: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        // `.ultraThinMaterial` glass — pairs with the subtle team-tint
-        // gradient at the top of the screen for the Apple Sports look.
+        // Solid card + faint team wash (matches the player profile / heat
+        // cards) so it reads as a crisp white surface over the grouped
+        // background rather than translucent grey.
         .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(.ultraThinMaterial)
+            teamWashBackground(
+                tint: teamColor, cornerRadius: 18, isDark: colorScheme == .dark,
+            )
         )
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -733,6 +769,8 @@ private struct CompactGameStripCard: View {
     let favoriteBDLId: Int
     let tint: Color
 
+    @Environment(\.colorScheme) private var colorScheme
+
     private var opponent: GameTeam {
         if game.bdlHomeTeamId == favoriteBDLId {
             return game.teams.away
@@ -761,11 +799,12 @@ private struct CompactGameStripCard: View {
         .padding(.vertical, 8)
         .padding(.horizontal, 8)
         .frame(width: 110, height: 100)
-        // Glass panel — same `.ultraThinMaterial` recipe as the hero
-        // card so nested tiles read as the same surface family.
+        // Solid tile + a VERY faint team wash (half the big-card
+        // intensity) so it reads as crisp white with just a hint of color.
         .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(.ultraThinMaterial)
+            teamWashBackground(
+                tint: tint, cornerRadius: 10, isDark: colorScheme == .dark, faint: true,
+            )
         )
         .overlay {
             // Live games keep a red accent ring; everything else
@@ -980,6 +1019,7 @@ private struct TeamLeadersSection: View {
 
     enum Role: String, Hashable { case batting, pitching }
 
+    @Environment(\.colorScheme) private var colorScheme
     @State private var role: Role = .batting
 
     var body: some View {
@@ -1026,13 +1066,12 @@ private struct TeamLeadersSection: View {
                 }
             }
             .padding(16)
-            // `.ultraThinMaterial` glass — exact same recipe as the
-            // hero card so the two cards match in both light and dark
-            // mode (the material adapts per-mode; a translucent
-            // systemBackground wash did not).
+            // Solid card + faint team wash — exact same recipe as the
+            // hero card so the two large cards match in both light and dark.
             .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(.ultraThinMaterial)
+                teamWashBackground(
+                    tint: tint, cornerRadius: 18, isDark: colorScheme == .dark,
+                )
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -1299,12 +1338,12 @@ private struct FavoritePlayersSection: View {
     @ViewBuilder
     private func favoriteCard(_ fav: FavoritePlayerDisplay) -> some View {
         if isEditing {
-            FavoritePlayerTile(fav: fav, showRemoveBadge: true, onRemove: {
+            FavoritePlayerTile(fav: fav, showRemoveBadge: true, tint: tint, onRemove: {
                 onRemove(fav.player.player_id)
             })
         } else {
             Button { onTapPlayer(fav.player) } label: {
-                FavoritePlayerTile(fav: fav, showRemoveBadge: false, onRemove: {})
+                FavoritePlayerTile(fav: fav, showRemoveBadge: false, tint: tint, onRemove: {})
             }
             .buttonStyle(.plain)
         }
@@ -1314,7 +1353,10 @@ private struct FavoritePlayersSection: View {
 private struct FavoritePlayerTile: View {
     let fav: FavoritePlayerDisplay
     let showRemoveBadge: Bool
+    let tint: Color
     let onRemove: () -> Void
+
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -1337,12 +1379,12 @@ private struct FavoritePlayerTile: View {
             .padding(.vertical, 10)
             .padding(.horizontal, 8)
             .frame(width: 132, height: 156)
-            // Glass tile — `.ultraThinMaterial` keeps the surface
-            // family consistent with the hero/leaders cards while
-            // still letting the team-color gradient read through.
+            // Solid tile + a VERY faint team wash, matching the game-strip
+            // tiles — crisp white/dark with just a hint of team color.
             .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(.ultraThinMaterial)
+                teamWashBackground(
+                    tint: tint, cornerRadius: 14, isDark: colorScheme == .dark, faint: true,
+                )
             )
             .shadow(color: .black.opacity(0.06), radius: 8, y: 3)
 
@@ -1371,11 +1413,11 @@ private struct FavoritePlayerTile: View {
         .padding(.vertical, 10)
         .padding(.horizontal, 8)
         .frame(width: 132, height: 156)
-        // Glass tile — matches the live tile so the skeleton shape
-        // lines up exactly while data is loading.
+        // Solid tile — matches the live tile so the skeleton shape lines
+        // up exactly while data is loading.
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(.ultraThinMaterial)
+                .fill(Color(.systemBackground))
         )
     }
 
@@ -1430,11 +1472,11 @@ private struct AddFavoriteTile: View {
                     .foregroundStyle(.primary)
             }
             .frame(width: 132, height: 156)
-            // Glass tile — matches the player tiles. The dashed
-            // accent stroke on top is the unique signal.
+            // Solid tile — matches the player tiles. The dashed accent
+            // stroke on top is the unique signal.
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(.ultraThinMaterial)
+                    .fill(Color(.systemBackground))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
