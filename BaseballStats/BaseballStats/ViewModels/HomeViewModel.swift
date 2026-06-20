@@ -421,22 +421,26 @@ final class HomeViewModel: ObservableObject {
     /// at a glance and the user can judge minimums in-context.
     func loadTeamLeaderboard(
         stat: String, playerType: String, mode: String = "season",
+        year: Int? = nil, yearFrom: Int? = nil, yearTo: Int? = nil,
     ) async -> [LeaderCard] {
         guard let bdlTeamId = FavoriteTeamStore.shared.bdlTeamId,
               let lahmanCode = bdlToLahmanTeamId[bdlTeamId] else {
             return []
         }
-        // `year` only matters in season mode; career / all-time
-        // aggregate across every season, so we omit it (the backend
-        // ignores it for those modes anyway).
-        let year = mode == "season"
-            ? Calendar.current.component(.year, from: Date())
+        // `year` only matters in season mode (a specific season's team
+        // leaders). All-time / career aggregate across seasons, so the
+        // backend ignores `year` there; the optional `yearFrom`/`yearTo`
+        // window those modes instead (nil = full franchise history).
+        let resolvedYear: Int? = mode == "season"
+            ? (year ?? Calendar.current.component(.year, from: Date()))
             : nil
         let outer = try? await api.getLeaderboard(
-            stat: stat, year: year,
+            stat: stat, year: resolvedYear,
             playerType: playerType,
             mode: mode,
-            team: lahmanCode, limit: 10,
+            team: lahmanCode,
+            yearFrom: yearFrom, yearTo: yearTo,
+            limit: 10,
         )
         let inner: LeaderboardResponse? = outer ?? nil
         let candidates = inner?.leaders ?? []

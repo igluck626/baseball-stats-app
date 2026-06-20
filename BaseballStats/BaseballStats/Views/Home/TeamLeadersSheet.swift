@@ -28,6 +28,17 @@ struct TeamLeadersSheet: View {
     @State private var leaders: [LeaderCard] = []
     @State private var isLoading: Bool = false
 
+    /// Season / All-Time / Career, reusing the main Leaders tab's enum so
+    /// the two screens stay identical (same labels, same API mode strings).
+    @State private var mode: LeaderboardsViewModel.Mode = .season
+    /// Single-season selection (Season mode only). Defaults to current year.
+    @State private var year: Int = LeaderboardsViewModel.currentYear
+
+    /// Season-mode year menu range — current year down to 1900, newest
+    /// first. Mirrors the main Leaders tab's single-year picker floor.
+    private static let seasonYears: [Int] =
+        Array((1900...LeaderboardsViewModel.currentYear).reversed())
+
     private static let battingStats:  [String] = [
         "WAR", "AVG", "HR", "RBI", "OPS", "SLG", "OBP",
         "SB", "H", "R", "BB", "2B", "3B", "SO",
@@ -56,6 +67,8 @@ struct TeamLeadersSheet: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 10)
                 .padding(.bottom, 8)
+
+                modeAndYearControls
 
                 statPillRow
 
@@ -116,6 +129,59 @@ struct TeamLeadersSheet: View {
             vm.selectedLeaderStat = newValue
             Task { await load() }
         }
+        .onChange(of: mode) { _, _ in
+            // Clear stale rows so the mode flip doesn't briefly show the
+            // previous mode's numbers while the new fetch is in flight.
+            leaders = []
+            Task { await load() }
+        }
+        .onChange(of: year) { _, _ in
+            leaders = []
+            Task { await load() }
+        }
+    }
+
+    /// Season / All-Time / Career segmented picker, plus a single-year
+    /// menu in Season mode (a short caption replaces it in the aggregate
+    /// modes). Mirrors the main Leaders tab: same mode control, same year
+    /// menu, year hidden when the mode aggregates across seasons.
+    private var modeAndYearControls: some View {
+        VStack(spacing: 8) {
+            Picker("Mode", selection: $mode) {
+                ForEach(LeaderboardsViewModel.Mode.allCases) { m in
+                    Text(m.label).tag(m)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            if mode.usesYear {
+                HStack(spacing: 8) {
+                    Text("Season")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Picker("Year", selection: $year) {
+                        ForEach(Self.seasonYears, id: \.self) { y in
+                            Text(String(y)).tag(y)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .tint(tint)
+                }
+            } else {
+                HStack {
+                    Text(mode == .allTime
+                         ? "Best single seasons in franchise history"
+                         : "Best career totals with this team")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 8)
     }
 
     private var statPillRow: some View {
@@ -207,6 +273,10 @@ struct TeamLeadersSheet: View {
         let playerType: String = role == .batting ? "batter" : "pitcher"
         leaders = await vm.loadTeamLeaderboard(
             stat: stat, playerType: playerType,
+            mode: mode.rawValue,
+            // Year applies only in Season mode; all-time / career run
+            // unbounded over the full franchise history.
+            year: mode.usesYear ? year : nil,
         )
         isLoading = false
     }
