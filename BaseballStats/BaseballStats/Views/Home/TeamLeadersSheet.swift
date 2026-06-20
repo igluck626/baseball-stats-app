@@ -190,6 +190,9 @@ struct TeamLeadersSheet: View {
                 .foregroundStyle(.primary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
+            // Side-specific recent-form accent (batting heat on the batting
+            // role, pitching heat on pitching). Hidden for nil/neutral.
+            HeatTierBadge(tier: card.player.heat_tier)
             Spacer()
             Text(Self.formatValue(card.value, stat: card.stat))
                 .font(.title3.weight(.bold))
