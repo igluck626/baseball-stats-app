@@ -18,6 +18,9 @@ struct HeatMeterView: View {
     /// Window label shown as a subtitle (e.g. "Last 15 games" / "Recent form").
     var window: String = "Recent form"
 
+    /// Presents the "how the rating works" explanation sheet.
+    @State private var showingInfo = false
+
     /// The compressed score asymptotes near ±0.32; map that span to the
     /// full track and clamp so extremes pin to the ends.
     private static let range: Double = 0.32
@@ -46,6 +49,19 @@ struct HeatMeterView: View {
                 Text(window)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                Button {
+                    showingInfo = true
+                } label: {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.secondary)
+                        // Light glyph, comfortable tap target.
+                        .padding(.vertical, 2)
+                        .padding(.leading, 2)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("How Hot and Cold works")
             }
 
             track
@@ -57,6 +73,9 @@ struct HeatMeterView: View {
                 .fill(.ultraThinMaterial)
         )
         .shadow(color: .black.opacity(0.05), radius: 6, y: 2)
+        .sheet(isPresented: $showingInfo) {
+            HeatInfoSheet()
+        }
     }
 
     private var track: some View {
@@ -120,6 +139,119 @@ struct HeatTierStyle {
         default: // "neutral" or anything unexpected
             return .init(label: "Neutral", icon: nil, color: .secondary)
         }
+    }
+}
+
+/// Explainer sheet for the Hot & Cold rating. Plain-language summary and a
+/// visual tier legend are always visible; the stats-heavy methodology lives
+/// in a collapsed-by-default disclosure group.
+struct HeatInfoSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var showingMath = false
+
+    /// Hottest-to-coldest, reusing the meter's exact tier styling.
+    private static let legendTiers = ["red_hot", "hot", "neutral", "cold", "ice_cold"]
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    plainLanguage
+                    tierLegend
+                    Divider()
+                    DisclosureGroup(isExpanded: $showingMath) {
+                        howItsCalculated
+                            .padding(.top, 8)
+                    } label: {
+                        Text("How it's calculated")
+                            .font(.headline)
+                    }
+                }
+                .padding(20)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .navigationTitle("Hot & Cold")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    // MARK: - Plain language
+
+    private var plainLanguage: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Hot & Cold reflects how a player has been performing recently compared to both their own season and the rest of the league.")
+            Text("The rating looks at a player's last 15 games (hitters), last 5 starts (starting pitchers), or last 15 appearances (relievers), then compares that stretch to their season baseline and to league average.")
+            Text("A player is hot when they're outperforming both, and cold when they're underperforming. The further from average, the stronger the rating, ranging from Ice Cold to Red Hot.")
+        }
+        .font(.subheadline)
+        .foregroundStyle(.primary)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    // MARK: - Tier legend
+
+    private var tierLegend: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(Self.legendTiers, id: \.self) { tier in
+                let style = HeatTierStyle.for(tier)
+                HStack(spacing: 12) {
+                    Image(systemName: style.icon ?? "circle.fill")
+                        .font(.subheadline)
+                        .foregroundStyle(style.color)
+                        .frame(width: 22, alignment: .center)
+                    Text(style.label)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.primary)
+                    Spacer()
+                }
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color(.secondarySystemBackground))
+        )
+    }
+
+    // MARK: - How it's calculated
+
+    private var howItsCalculated: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Hitters are measured primarily by wOBA (weighted on-base average), which weights each offensive outcome by its real run value, so getting on base and hitting for power count for what they're actually worth. A smaller part of the rating rewards a lower strikeout rate, and active base stealing provides a small bonus.")
+            formula("wOBA = (0.69×BB + 0.72×HBP + 0.89×1B + 1.27×2B + 1.62×3B + 2.10×HR) / (AB + BB + SF + HBP)")
+
+            Text("Pitchers blend three stats: ERA (30%), WHIP (30%), and FIP (40%). FIP carries the most weight because it best reflects a pitcher's underlying performance and is less affected by luck or defense.")
+            formula("FIP = (13×HR + 3×(BB+HBP) - 2×SO) / IP + 3.10")
+
+            Text("For each stat, two signals are combined: how the recent stretch compares to the player's own season (35%) and to league average (65%).")
+            formula("score = (0.35 × trend vs self) + (0.65 × vs league average)")
+
+            Text("Weighting league average more heavily keeps the rating grounded in real quality, similar to how OPS+ and ERA+ work. An elite player performing at their usual level stays hot, and a struggling player is not called hot for a small uptick.")
+            Text("Scores are then smoothed to limit the effect of a single outlier game and sorted into five tiers: Red Hot, Hot, Neutral, Cold, and Ice Cold.")
+        }
+        .font(.subheadline)
+        .foregroundStyle(.primary)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func formula(_ text: String) -> some View {
+        Text(text)
+            .font(.system(.footnote, design: .monospaced))
+            .foregroundStyle(.primary)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color(.secondarySystemBackground))
+            )
     }
 }
 
