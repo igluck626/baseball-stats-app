@@ -7013,6 +7013,17 @@ _HEAT_RECENCY_DAYS = 10
 TREND_WEIGHT = 0.5
 ABSOLUTE_WEIGHT = 0.5
 
+# Pitcher component weights for the ERA / WHIP / FIP blend. FIP gets the
+# largest single share — built on K/BB/HR, it's the most stable signal of
+# true performance over a small window and best separates a genuinely-good
+# stretch from ERA noise / sequencing luck. Results still drive 60% (ERA +
+# WHIP). Tune later (we may push FIP toward 0.5). These apply only when a
+# valid season FIP exists; the FIP-missing path falls back to a 50/50
+# ERA/WHIP split. Must sum to 1.0.
+PITCH_ERA_WEIGHT  = 0.3
+PITCH_WHIP_WEIGHT = 0.3
+PITCH_FIP_WEIGHT  = 0.4
+
 # League-average fallbacks for the absolute term when too few qualified
 # players exist to compute live averages (early season / sparse data).
 _HEAT_FALLBACK_OPS  = 0.715
@@ -7168,15 +7179,16 @@ def _compute_pitcher_heat(
         return (None, None, None)
 
     # Starter vs reliever from the season GS/G ratio — drives the window
-    # size and the (looser) reliever guardrails. SP windows widened to 8
-    # starts (was 5) so one blowup doesn't swing the rating. `role` is
+    # size and the (looser) reliever guardrails. SP window is the last 5
+    # starts (~30 IP): recent enough to read as "current form" while still
+    # a meaningful sample. RP stays at the last 15 appearances. `role` is
     # returned so the leaderboard can split starters from relievers.
     g, gs = (season.G or 0), (season.GS or 0)
     is_starter = g > 0 and (gs / g) > 0.5
     role = "SP" if is_starter else "RP"
-    last_n = 8 if is_starter else 15
-    min_games = 4 if is_starter else 8
-    min_ip = 15 if is_starter else 5
+    last_n = 5 if is_starter else 15
+    min_games = 3 if is_starter else 8
+    min_ip = 10 if is_starter else 5
 
     logs = crud.get_pitching_gamelogs(db, player_id, season=current_year, last_n=last_n)
     if len(logs) < min_games or not _heat_recent(logs):
@@ -7221,7 +7233,9 @@ def _compute_pitcher_heat(
     season_fip = season.FIP
     if season_fip and season_fip > 0:
         fip_c = pitch_component(window_fip, season_fip, league_avg_fip)
-        raw = 0.4 * era_c + 0.3 * whip_c + 0.3 * fip_c
+        raw = (PITCH_ERA_WEIGHT * era_c
+               + PITCH_WHIP_WEIGHT * whip_c
+               + PITCH_FIP_WEIGHT * fip_c)
     else:
         raw = 0.5 * era_c + 0.5 * whip_c
 
