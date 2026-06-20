@@ -22,6 +22,10 @@ struct PlayerSearchResultRow: View {
                         .font(.title3.weight(.semibold))
                         .lineLimit(1)
 
+                    // Recent-form accent next to the name; hidden for
+                    // nil/neutral. Same icon/color as the profile meter.
+                    HeatTierBadge(tier: player.heat_tier)
+
                     if player.is_hof == true {
                         hofBadge
                     }

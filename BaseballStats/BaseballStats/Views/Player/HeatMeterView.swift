@@ -142,6 +142,26 @@ struct HeatTierStyle {
     }
 }
 
+/// Small inline hot/cold tier icon for list rows (Leaders / Search). A pure
+/// visual accent: renders the flame/snowflake from `HeatTierStyle` in the tier
+/// color. Renders NOTHING (no glyph, no spacing) when `tier` is nil or
+/// "neutral" — only red_hot / hot / cold / ice_cold carry an icon. No tap
+/// behavior. Reuses `HeatTierStyle` so it matches the meter exactly.
+struct HeatTierBadge: View {
+    let tier: String?
+    var size: CGFloat = 12
+
+    var body: some View {
+        if let tier, let icon = HeatTierStyle.for(tier).icon {
+            let style = HeatTierStyle.for(tier)
+            Image(systemName: icon)
+                .font(.system(size: size, weight: .semibold))
+                .foregroundStyle(style.color)
+                .accessibilityLabel("\(style.label) form")
+        }
+    }
+}
+
 /// Explainer sheet for the Hot & Cold rating. Plain-language summary and a
 /// visual tier legend are always visible; the stats-heavy methodology lives
 /// in a collapsed-by-default disclosure group.

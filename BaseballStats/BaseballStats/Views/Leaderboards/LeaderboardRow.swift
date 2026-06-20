@@ -55,7 +55,12 @@ struct LeaderboardRow: View {
                         .font(.title3.weight(.semibold))
                         .lineLimit(1)
                         .minimumScaleFactor(0.75)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .layoutPriority(1)
+                    // Side-specific form accent (batting heat on batting
+                    // boards, pitching heat on pitching boards — the backend
+                    // resolves the correct side). Hidden for nil/neutral.
+                    HeatTierBadge(tier: entry.player.heat_tier)
+                    Spacer(minLength: 0)
                     if entry.player.is_hof == true {
                         hofBadge
                     }
