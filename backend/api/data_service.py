@@ -7032,12 +7032,50 @@ PITCH_FIP_WEIGHT  = 0.4
 
 # League-average fallbacks for the absolute term when too few qualified
 # players exist to compute live averages (early season / sparse data).
-_HEAT_FALLBACK_OPS  = 0.715
-_HEAT_FALLBACK_ERA  = 4.10
-_HEAT_FALLBACK_WHIP = 1.30
-_HEAT_FALLBACK_FIP  = 4.10
+_HEAT_FALLBACK_OPS   = 0.715
+_HEAT_FALLBACK_ERA   = 4.10
+_HEAT_FALLBACK_WHIP  = 1.30
+_HEAT_FALLBACK_FIP   = 4.10
+_HEAT_FALLBACK_WOBA  = 0.320
+_HEAT_FALLBACK_K_PCT = 0.22
 # Need at least this many qualified samples before trusting a live average.
 _HEAT_MIN_LEAGUE_SAMPLES = 20
+
+# Hitter heat: wOBA-based offense + K-rate trend + a small positive-only
+# baserunning nudge. wOBA linear weights (run value per outcome) — static
+# FanGraphs-style coefficients; tune as a group.
+WOBA_UBB = 0.69   # unintentional walk
+WOBA_HBP = 0.72
+WOBA_1B  = 0.89
+WOBA_2B  = 1.27
+WOBA_3B  = 1.62
+WOBA_HR  = 2.10
+
+# Blend of the two hitter components (must sum to 1.0). wOBA carries the bulk;
+# the K-rate trend is a contact tiebreaker. The baserunning bonus is ADDITIVE
+# on top of this blend (not part of the split), so it can only nudge upward.
+HITTER_WOBA_WEIGHT  = 0.80
+HITTER_KRATE_WEIGHT = 0.20
+
+# Baserunning nudge: net steals (SB - CS, floored at 0) × scale, capped. A
+# strong stretch (~5 net steals in 15 games) approaches the cap. Never
+# negative — a non-runner gets 0; getting caught only erodes toward 0.
+BASERUNNING_SCALE = 0.006
+BASERUNNING_CAP   = 0.03
+
+
+def _woba(ab: int, h: int, doubles: int, triples: int, hr: int,
+          bb: int, ibb: int, hbp: int, sf: int) -> Optional[float]:
+    """wOBA from box-score components (FanGraphs linear weights). Returns
+    None on a non-positive denominator (no real plate appearances)."""
+    one_b = h - doubles - triples - hr
+    ubb = bb - ibb
+    denom = ab + ubb + sf + hbp   # AB + (BB - IBB) + SF + HBP
+    if denom <= 0:
+        return None
+    num = (WOBA_UBB * ubb + WOBA_HBP * hbp + WOBA_1B * one_b
+           + WOBA_2B * doubles + WOBA_3B * triples + WOBA_HR * hr)
+    return num / denom
 
 
 def _compute_league_heat_baselines(db, current_year: int) -> dict:
@@ -7046,10 +7084,22 @@ def _compute_league_heat_baselines(db, current_year: int) -> dict:
     pitchers IP ≥ 20). Falls back to fixed constants when fewer than
     `_HEAT_MIN_LEAGUE_SAMPLES` qualify so the absolute term never divides by a
     noisy small-sample mean."""
-    hitter_ops = [
-        s.OPS for s in db.query(_PlayerSeason).filter(_PlayerSeason.year == current_year).all()
-        if (s.PA or 0) >= 100 and s.OPS and s.OPS > 0
+    hitter_rows = [
+        s for s in db.query(_PlayerSeason).filter(_PlayerSeason.year == current_year).all()
+        if (s.PA or 0) >= 100
     ]
+    hitter_ops = [s.OPS for s in hitter_rows if s.OPS and s.OPS > 0]
+    woba_vals: list[float] = []
+    k_pct_vals: list[float] = []
+    for s in hitter_rows:
+        w = _woba(s.AB or 0, s.H or 0, s.doubles or 0, s.triples or 0,
+                  s.HR or 0, s.BB or 0, s.IBB or 0, s.HBP or 0, s.SF or 0)
+        if w is not None and w > 0:
+            woba_vals.append(w)
+        pa = s.PA or 0
+        if pa > 0:
+            k_pct_vals.append((s.SO or 0) / pa)
+
     pitch_rows = [
         s for s in db.query(_PitcherSeason).filter(_PitcherSeason.year == current_year).all()
         if (s.IP or 0) >= 20
@@ -7062,10 +7112,12 @@ def _compute_league_heat_baselines(db, current_year: int) -> dict:
         return (sum(vals) / len(vals)) if len(vals) >= _HEAT_MIN_LEAGUE_SAMPLES else fallback
 
     return {
-        "ops":  _avg(hitter_ops, _HEAT_FALLBACK_OPS),
-        "era":  _avg(era_vals,   _HEAT_FALLBACK_ERA),
-        "whip": _avg(whip_vals,  _HEAT_FALLBACK_WHIP),
-        "fip":  _avg(fip_vals,   _HEAT_FALLBACK_FIP),
+        "ops":   _avg(hitter_ops, _HEAT_FALLBACK_OPS),
+        "woba":  _avg(woba_vals,  _HEAT_FALLBACK_WOBA),
+        "k_pct": _avg(k_pct_vals, _HEAT_FALLBACK_K_PCT),
+        "era":   _avg(era_vals,   _HEAT_FALLBACK_ERA),
+        "whip":  _avg(whip_vals,  _HEAT_FALLBACK_WHIP),
+        "fip":   _avg(fip_vals,   _HEAT_FALLBACK_FIP),
     }
 
 
@@ -7157,31 +7209,52 @@ def _compute_batter_heat(
     if pa < 30:
         return (None, None, None)
 
-    h, bb, hbp, ab, sf = total("H"), total("BB"), total("HBP"), total("AB"), total("SF")
+    ab, h, bb, ibb, hbp, sf = (total("AB"), total("H"), total("BB"),
+                               total("IBB"), total("HBP"), total("SF"))
     dbl, trp, hr = total("doubles"), total("triples"), total("HR")
-    obp_den = ab + bb + hbp + sf
-    if ab <= 0 or obp_den <= 0:
+    so, sb, cs = total("SO"), total("SB"), total("CS")
+
+    window_woba = _woba(ab, h, dbl, trp, hr, bb, ibb, hbp, sf)
+    if window_woba is None or window_woba <= 0:
         return (None, None, None)
-    window_obp = (h + bb + hbp) / obp_den
-    tb = h + dbl + 2 * trp + 3 * hr
-    window_slg = tb / ab
-    window_ops = window_obp + window_slg
 
     season = _season_row(crud.get_player_seasons(db, player_id), current_year)
     if season is None:
         return (None, None, None)
     if (season.PA or 0) < 100:
         return (None, None, None)
-    season_ops = season.OPS
-    if not season_ops or season_ops <= 0:
+    season_woba = _woba(
+        season.AB or 0, season.H or 0, season.doubles or 0, season.triples or 0,
+        season.HR or 0, season.BB or 0, season.IBB or 0, season.HBP or 0, season.SF or 0,
+    )
+    if not season_woba or season_woba <= 0:
         return (None, None, None)
 
-    # Blend: window vs own baseline (trend) + window vs league average
-    # (absolute). Higher OPS is better, so both terms are (window - ref)/ref.
-    league_avg_ops = league_avgs.get("ops") or _HEAT_FALLBACK_OPS
-    trend = (window_ops - season_ops) / season_ops
-    absolute = (window_ops - league_avg_ops) / league_avg_ops if league_avg_ops > 0 else 0.0
-    raw = TREND_WEIGHT * trend + ABSOLUTE_WEIGHT * absolute
+    # wOBA component: window vs own baseline (trend) + vs league (absolute),
+    # 35/65. Higher wOBA is better, so both terms are (window - ref)/ref.
+    league_woba = league_avgs.get("woba") or _HEAT_FALLBACK_WOBA
+    woba_trend = (window_woba - season_woba) / season_woba
+    woba_absolute = (window_woba - league_woba) / league_woba if league_woba > 0 else 0.0
+    woba_component = TREND_WEIGHT * woba_trend + ABSOLUTE_WEIGHT * woba_absolute
+
+    # K-rate component: LOWER K% is better, so the direction flips — positive
+    # means striking out less than the reference. Guard zero denominators.
+    window_k_pct = so / pa if pa > 0 else 0.0
+    season_pa = season.PA or 0
+    season_k_pct = (season.SO or 0) / season_pa if season_pa > 0 else 0.0
+    league_k_pct = league_avgs.get("k_pct") or _HEAT_FALLBACK_K_PCT
+    k_trend = (season_k_pct - window_k_pct) / season_k_pct if season_k_pct > 0 else 0.0
+    k_absolute = (league_k_pct - window_k_pct) / league_k_pct if league_k_pct > 0 else 0.0
+    k_component = TREND_WEIGHT * k_trend + ABSOLUTE_WEIGHT * k_absolute
+
+    # Baserunning: positive-only net-steals nudge, ADDITIVE on top of the
+    # weighted blend (can only push the rating up).
+    net_sb = max(0, sb - cs)
+    baserunning_bonus = min(net_sb * BASERUNNING_SCALE, BASERUNNING_CAP)
+
+    raw = (HITTER_WOBA_WEIGHT * woba_component
+           + HITTER_KRATE_WEIGHT * k_component
+           + baserunning_bonus)
     score = compress_heat(raw)
     return (score, heat_tier_for(score), None)
 
