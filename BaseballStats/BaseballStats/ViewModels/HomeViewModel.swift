@@ -445,7 +445,7 @@ final class HomeViewModel: ObservableObject {
         let inner: LeaderboardResponse? = outer ?? nil
         let candidates = inner?.leaders ?? []
         return candidates.map {
-            LeaderCard(stat: stat, value: $0.value, player: $0.player)
+            LeaderCard(stat: stat, value: $0.value, player: $0.player, year: $0.year)
         }
     }
 
@@ -730,7 +730,11 @@ struct LeaderCard: Identifiable, Hashable {
     let stat: String          // "AVG" / "HR" / "ERA" / "WHIP" / …
     let value: Double?
     let player: PlayerSearchResult
-    var id: String { "\(stat)-\(player.player_id)" }
+    /// Season the value occurred in. Set for season / all-time entries,
+    /// nil for career aggregates. Used by the All-Time team-leaders rows
+    /// to show e.g. "1961" under the name.
+    var year: Int? = nil
+    var id: String { "\(stat)-\(player.player_id)-\(year ?? 0)" }
 }
 
 /// Three leaders for a single stat. Used by the compact home-card

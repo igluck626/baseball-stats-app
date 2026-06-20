@@ -466,13 +466,7 @@ struct LeaderboardsView: View {
     /// "7,356.0" — career WAR stays plain since it never crosses
     /// 999.
     private var rowFormat: LeaderboardRow.ValueFormat {
-        switch viewModel.selectedStat {
-        case "AVG", "OBP", "SLG", "OPS": return .threeDecimal
-        case "ERA", "WHIP", "FIP":       return .twoDecimal
-        case "WAR", "SO/9":              return .oneDecimal
-        case "IP":                       return .oneDecimalGrouped
-        default:                         return .integer
-        }
+        LeaderboardRow.valueFormat(for: viewModel.selectedStat)
     }
 }
 

@@ -24,7 +24,7 @@ struct TeamLeadersSheet: View {
     enum Role: String, Hashable { case batting, pitching }
 
     @State private var role: Role = .batting
-    @State private var stat: String = "AVG"
+    @State private var stat: String = LeaderboardsViewModel.defaultBattingStat
     @State private var leaders: [LeaderCard] = []
     @State private var isLoading: Bool = false
 
@@ -39,17 +39,18 @@ struct TeamLeadersSheet: View {
     private static let seasonYears: [Int] =
         Array((1900...LeaderboardsViewModel.currentYear).reversed())
 
-    private static let battingStats:  [String] = [
-        "WAR", "AVG", "HR", "RBI", "OPS", "SLG", "OBP",
-        "SB", "H", "R", "BB", "2B", "3B", "SO",
-    ]
-    private static let pitchingStats: [String] = [
-        "WAR", "ERA", "W", "SO", "WHIP", "SV", "IP",
-        "BB", "H", "HR", "SO/9", "CG", "SHO",
-    ]
-
+    /// Reuse the main Leaders tab's stat lists + defaults so the two
+    /// screens offer the exact same stats in the same order.
     private var currentStats: [String] {
-        role == .batting ? Self.battingStats : Self.pitchingStats
+        role == .batting
+            ? LeaderboardsViewModel.battingStats
+            : LeaderboardsViewModel.pitchingStats
+    }
+
+    private var defaultStatForRole: String {
+        role == .batting
+            ? LeaderboardsViewModel.defaultBattingStat
+            : LeaderboardsViewModel.defaultPitchingStat
     }
 
     private var tint: Color {
@@ -59,18 +60,7 @@ struct TeamLeadersSheet: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                Picker("Role", selection: $role) {
-                    Text("Batting").tag(Role.batting)
-                    Text("Pitching").tag(Role.pitching)
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal, 16)
-                .padding(.top, 10)
-                .padding(.bottom, 8)
-
-                modeAndYearControls
-
-                statPillRow
+                topControls
 
                 Divider().padding(.top, 4)
 
@@ -84,6 +74,11 @@ struct TeamLeadersSheet: View {
                         Text("Team Leaders")
                             .font(.headline.weight(.semibold))
                     }
+                }
+                // Single-year picker — only in Season mode, mirroring the
+                // main Leaders tab's toolbar control (bare menu, no label).
+                ToolbarItem(placement: .topBarTrailing) {
+                    if mode.usesYear { yearMenu }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Close") { dismiss() }
@@ -104,25 +99,24 @@ struct TeamLeadersSheet: View {
                currentStats.contains(saved) {
                 stat = saved
             } else {
-                stat = currentStats.first ?? "AVG"
+                stat = defaultStatForRole
             }
             await load()
         }
         .onChange(of: role) { _, _ in
             // Clear stale rows immediately so the role flip doesn't
             // briefly show the previous side's numbers while the new
-            // fetch is in flight.
+            // fetch is in flight. Reset to the role's default stat
+            // (WAR), mirroring the main tab's resetStatForCurrentKind.
             leaders = []
-            let newFirst = currentStats.first ?? "AVG"
-            if stat == newFirst {
-                // Same stat key on both sides (e.g. flipping role
-                // while on WAR, which heads both arrays): assigning
-                // `stat` is a no-op so the `.onChange(of: stat)`
-                // below won't fire — load directly. Without this,
-                // the rows stayed on the old role's numbers.
+            let newDefault = defaultStatForRole
+            if stat == newDefault {
+                // Same stat key on both sides (WAR heads both): assigning
+                // `stat` is a no-op so `.onChange(of: stat)` won't fire —
+                // load directly so the new role's numbers actually land.
                 Task { await load() }
             } else {
-                stat = newFirst
+                stat = newDefault
             }
         }
         .onChange(of: stat) { _, newValue in
@@ -141,73 +135,71 @@ struct TeamLeadersSheet: View {
         }
     }
 
-    /// Season / All-Time / Career segmented picker, plus a single-year
-    /// menu in Season mode (a short caption replaces it in the aggregate
-    /// modes). Mirrors the main Leaders tab: same mode control, same year
-    /// menu, year hidden when the mode aggregates across seasons.
-    private var modeAndYearControls: some View {
-        VStack(spacing: 8) {
-            Picker("Mode", selection: $mode) {
-                ForEach(LeaderboardsViewModel.Mode.allCases) { m in
-                    Text(m.label).tag(m)
+    /// Mirrors the main Leaders tab's stacked controls: the Season /
+    /// All-Time / Career mode picker on top, then a row of
+    /// [Batting/Pitching segmented | stat menu pill]. The single-year
+    /// picker lives in the toolbar (Season mode only), same as the main tab.
+    private var topControls: some View {
+        VStack(spacing: 10) {
+            modePicker
+            HStack(spacing: 10) {
+                Picker("Role", selection: $role) {
+                    Text("Batting").tag(Role.batting)
+                    Text("Pitching").tag(Role.pitching)
                 }
-            }
-            .pickerStyle(.segmented)
+                .pickerStyle(.segmented)
+                .frame(maxWidth: .infinity)
 
-            if mode.usesYear {
-                HStack(spacing: 8) {
-                    Text("Season")
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Picker("Year", selection: $year) {
-                        ForEach(Self.seasonYears, id: \.self) { y in
-                            Text(String(y)).tag(y)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                    .tint(tint)
-                }
-            } else {
-                HStack {
-                    Text(mode == .allTime
-                         ? "Best single seasons in franchise history"
-                         : "Best career totals with this team")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                }
+                statMenu
             }
         }
         .padding(.horizontal, 16)
+        .padding(.top, 10)
         .padding(.bottom, 8)
     }
 
-    private var statPillRow: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
+    private var modePicker: some View {
+        Picker("Mode", selection: $mode) {
+            ForEach(LeaderboardsViewModel.Mode.allCases) { m in
+                Text(m.label).tag(m)
+            }
+        }
+        .pickerStyle(.segmented)
+    }
+
+    /// Glass-capsule stat menu, identical to the main Leaders tab's
+    /// `statMenu`. `displayName` renders "SO/9" as "K/9", etc.
+    private var statMenu: some View {
+        Menu {
+            Picker("Stat", selection: $stat) {
                 ForEach(currentStats, id: \.self) { s in
-                    let selected = (stat == s)
-                    Button {
-                        stat = s
-                    } label: {
-                        Text(s)
-                            .font(.footnote.weight(.semibold))
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(
-                                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .fill(selected ? tint : Color(.systemFill).opacity(0.35))
-                            )
-                            .foregroundStyle(selected ? .white : .primary)
-                    }
-                    .buttonStyle(.plain)
+                    Text(LeaderboardsViewModel.displayName(s)).tag(s)
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 6)
+        } label: {
+            HStack(spacing: 4) {
+                Text(LeaderboardsViewModel.displayName(stat))
+                    .font(.subheadline.weight(.semibold))
+                Image(systemName: "chevron.down")
+                    .font(.caption2.weight(.semibold))
+            }
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .glassEffect(.regular, in: Capsule())
         }
+    }
+
+    /// Bare single-year menu for the toolbar — newest first, floored at
+    /// 1900. Matches the main Leaders tab's year picker exactly.
+    private var yearMenu: some View {
+        Picker("Year", selection: $year) {
+            ForEach(Self.seasonYears, id: \.self) { y in
+                Text(String(y)).tag(y)
+            }
+        }
+        .pickerStyle(.menu)
+        .labelsHidden()
     }
 
     @ViewBuilder
@@ -244,29 +236,64 @@ struct TeamLeadersSheet: View {
         }
     }
 
+    /// Mirrors `LeaderboardRow` minus the headshot and team line (both
+    /// redundant for a single franchise): rank · name + heat badge + HOF ·
+    /// value. In All-Time mode a secondary line shows the season the mark
+    /// was set. Value formatting is shared with the main tab.
     private func row(rank: Int, card: LeaderCard) -> some View {
         HStack(spacing: 12) {
             Text("\(rank)")
-                .font(.title3.weight(.bold))
+                .font(.callout.weight(.semibold))
                 .monospacedDigit()
-                .foregroundStyle(rank <= 3 ? tint : .secondary)
-                .frame(width: 28, alignment: .center)
-            Text(card.player.name)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.primary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-            // Side-specific recent-form accent (batting heat on the batting
-            // role, pitching heat on pitching). Hidden for nil/neutral.
-            HeatTierBadge(tier: card.player.heat_tier)
-            Spacer()
-            Text(Self.formatValue(card.value, stat: card.stat))
-                .font(.title3.weight(.bold))
+                .foregroundStyle(.secondary)
+                .frame(width: 26, alignment: .trailing)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(card.player.name)
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                    // Side-specific recent-form accent. Hidden for nil/neutral.
+                    HeatTierBadge(tier: card.player.heat_tier)
+                    if card.player.is_hof == true { hofBadge }
+                }
+                // All-Time rows: the season this single-season mark occurred.
+                if mode == .allTime, let y = card.year {
+                    Text(String(y))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            Text(LeaderboardRow.formatted(
+                card.value,
+                as: LeaderboardRow.valueFormat(for: card.stat),
+            ))
+                .font(.title3.weight(.semibold))
                 .monospacedDigit()
                 .foregroundStyle(.primary)
         }
         .contentShape(Rectangle())
     }
+
+    /// HOF capsule, identical to the one in `LeaderboardRow` /
+    /// `PlayerSearchResultRow` so the indicator reads the same everywhere.
+    private var hofBadge: some View {
+        Text("HOF")
+            .font(.caption2.weight(.bold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(Self.baseballRed.gradient))
+            .accessibilityLabel("Hall of Fame")
+    }
+
+    private static let baseballRed = Color(red: 0.8, green: 0.1, blue: 0.1)
 
     private func load() async {
         isLoading = true
@@ -281,11 +308,12 @@ struct TeamLeadersSheet: View {
         isLoading = false
     }
 
-    /// Same precision rules the Home Team Leaders strip uses, so the
-    /// see-all sheet renders identical numbers to the cards above —
-    /// except batting rate stats strip the leading "0." for the
-    /// baseball convention (".305" rather than "0.305"). Negative
-    /// values are passed through with the minus sign intact.
+    /// Precision rules for the franchise-history sheet (a separate screen
+    /// that still consumes this helper). The Team Leaders ROWS above use
+    /// `LeaderboardRow.formatted` to match the main Leaders tab; this stays
+    /// for `TeamHistorySheet`, which renders IP in baseball notation
+    /// (the decimal is OUTS) rather than the main tab's grouped decimal.
+    /// Batting rate stats strip the leading "0." per baseball convention.
     static func formatValue(_ v: Double?, stat: String) -> String {
         guard let v else { return "—" }
         switch stat {
@@ -300,10 +328,8 @@ struct TeamLeadersSheet: View {
              "2B", "3B", "CG", "SHO":
             return String(Int(v.rounded()))
         case "IP":
-            // Baseball-notation innings: the decimal is OUTS, not
-            // a true fraction. 120.333 → "120.1", 120.667 → "120.2",
-            // 120.0 → "120.0". Same conversion as the Home-tab
-            // leader strip.
+            // Baseball-notation innings: the decimal is OUTS, not a true
+            // fraction. 120.333 → "120.1", 120.667 → "120.2", 120.0 → "120.0".
             let whole = Int(v.rounded(.down))
             let frac  = v - Double(whole)
             let outs: String

@@ -161,7 +161,26 @@ struct LeaderboardRow: View {
     }
 
     private var formattedValue: String {
-        guard let v = entry.value else { return "—" }
+        LeaderboardRow.formatted(entry.value, as: format)
+    }
+
+    /// Map a stat key to its display format. Shared with the Team Leaders
+    /// sheet so both lists format identically — keep the two in sync by
+    /// calling this rather than duplicating the switch.
+    static func valueFormat(for stat: String) -> ValueFormat {
+        switch stat {
+        case "AVG", "OBP", "SLG", "OPS": return .threeDecimal
+        case "ERA", "WHIP", "FIP":       return .twoDecimal
+        case "WAR", "SO/9":              return .oneDecimal
+        case "IP":                       return .oneDecimalGrouped
+        default:                         return .integer
+        }
+    }
+
+    /// Format a leaderboard value for display. Pulled out as a static so
+    /// the Team Leaders sheet renders values byte-for-byte the same way.
+    static func formatted(_ value: Double?, as format: ValueFormat) -> String {
+        guard let v = value else { return "—" }
         switch format {
         case .integer:
             // .formatted(.number) picks up the locale's thousands
