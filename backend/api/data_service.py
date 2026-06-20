@@ -7076,19 +7076,28 @@ def compress_heat(raw: float) -> float:
     return math.tanh(raw / 0.28) * 0.32
 
 
+# Tier cutoffs on the COMPRESSED heat scale (compress_heat asymptotes at
+# ±0.32). red_hot / ice_cold are deliberately exclusive — the 0.25–0.32 band
+# is narrow, so only genuinely dominant/dreadful stretches qualify (a good-
+# but-not-overpowering run lands in hot, not red_hot). Tune here.
+RED_HOT_THRESHOLD  = 0.25
+HOT_THRESHOLD      = 0.08
+COLD_THRESHOLD     = -0.08
+ICE_COLD_THRESHOLD = -0.25
+
+
 def heat_tier_for(score: Optional[float]) -> Optional[str]:
     """Bucket a COMPRESSED heat score into a tier label (None passes through).
-    Thresholds operate on the compressed scale: red_hot ≈ raw +18%, hot ≈
-    raw +7%."""
+    Thresholds operate on the compressed scale (asymptote ±0.32)."""
     if score is None:
         return None
-    if score >= 0.18:
+    if score >= RED_HOT_THRESHOLD:
         return "red_hot"
-    if score >= 0.08:
+    if score >= HOT_THRESHOLD:
         return "hot"
-    if score <= -0.18:
+    if score <= ICE_COLD_THRESHOLD:
         return "ice_cold"
-    if score <= -0.08:
+    if score <= COLD_THRESHOLD:
         return "cold"
     return "neutral"
 
