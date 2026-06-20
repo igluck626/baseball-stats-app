@@ -389,7 +389,7 @@ struct LeaderboardsView: View {
                 ZStack {
                     NavigationLink(value: entry.player) { EmptyView() }
                         .opacity(0)
-                    LeaderboardRow(entry: entry, format: rowFormat)
+                    LeaderboardRow(entry: entry, format: rowFormat, showHeat: showHeat)
                 }
                 .listRowSeparatorTint(Color(.systemGray4))
             }
@@ -467,6 +467,16 @@ struct LeaderboardsView: View {
     /// 999.
     private var rowFormat: LeaderboardRow.ValueFormat {
         LeaderboardRow.valueFormat(for: viewModel.selectedStat)
+    }
+
+    /// The hot/cold form badge only makes sense on current-season data —
+    /// heat is last-15-games / last-5-starts form. A 1961 Maris or a 2024
+    /// leader showing "hot" would reflect today's form, not theirs. So
+    /// gate it to Season mode on the current year; hide for past seasons,
+    /// all-time, and career.
+    private var showHeat: Bool {
+        viewModel.selectedMode == .season
+            && viewModel.selectedYear == LeaderboardsViewModel.currentYear
     }
 }
 

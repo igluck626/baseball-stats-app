@@ -17,6 +17,12 @@ struct LeaderboardRow: View {
     /// IP runs into five figures and reads better with the locale's
     /// thousands separator.
     let format: ValueFormat
+    /// Whether to surface the hot/cold form badge. Heat reflects CURRENT
+    /// form (last 15 games / 5 starts), so it's only meaningful when the
+    /// list shows current-season data — the parent passes false for past
+    /// seasons, all-time, and career. Defaults to false so any caller that
+    /// forgets to set it can't accidentally show stale form.
+    var showHeat: Bool = false
 
     enum ValueFormat {
         /// Counting stats — HR / H / R / RBI / SB / BB / SO / W / SV /
@@ -59,7 +65,9 @@ struct LeaderboardRow: View {
                     // Side-specific form accent (batting heat on batting
                     // boards, pitching heat on pitching boards — the backend
                     // resolves the correct side). Hidden for nil/neutral.
-                    HeatTierBadge(tier: entry.player.heat_tier)
+                    if showHeat {
+                        HeatTierBadge(tier: entry.player.heat_tier)
+                    }
                     Spacer(minLength: 0)
                     if entry.player.is_hof == true {
                         hofBadge

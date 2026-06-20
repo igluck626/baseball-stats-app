@@ -53,6 +53,13 @@ struct TeamLeadersSheet: View {
             : LeaderboardsViewModel.defaultPitchingStat
     }
 
+    /// Heat reflects CURRENT form (last 15 games / 5 starts), so the
+    /// badge only makes sense on current-season data — Season mode on the
+    /// current year. Hidden for past-year Season, All-Time, and Career.
+    private var showHeat: Bool {
+        mode == .season && year == LeaderboardsViewModel.currentYear
+    }
+
     private var tint: Color {
         TeamColors.color(for: entry.lahmanCode) ?? .accentColor
     }
@@ -255,8 +262,13 @@ struct TeamLeadersSheet: View {
                         .foregroundStyle(.primary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.75)
-                    // Side-specific recent-form accent. Hidden for nil/neutral.
-                    HeatTierBadge(tier: card.player.heat_tier)
+                    // Side-specific recent-form accent. Heat is CURRENT
+                    // form, so only show it on current-season data — not
+                    // past-year Season, All-Time, or Career. Self-hides
+                    // for nil/neutral too.
+                    if showHeat {
+                        HeatTierBadge(tier: card.player.heat_tier)
+                    }
                     if card.player.is_hof == true { hofBadge }
                 }
                 // All-Time rows: the season this single-season mark occurred.
