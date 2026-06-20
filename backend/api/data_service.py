@@ -7009,9 +7009,15 @@ _HEAT_RECENCY_DAYS = 10
 # OWN season baseline ("trend"), and the same window vs the LEAGUE average
 # ("absolute"). Trend alone makes elite players sustaining elite production
 # read neutral and rewards mediocre players on lucky streaks; the absolute
-# term anchors both to league context. Tune these to shift the balance.
-TREND_WEIGHT = 0.5
-ABSOLUTE_WEIGHT = 0.5
+# term anchors both to league context. We lean toward ABSOLUTE (0.65) so the
+# rating is grounded in genuine quality vs a fixed standard (like ERA+/OPS+
+# are league-normalized) rather than mere movement off a noisy personal mean
+# — a bad player being less-bad shouldn't read "hot", and an elite player
+# regressing toward their own elite mean shouldn't read "cold". Trend keeps a
+# meaningful 0.35 share for momentum. Shared by batter AND pitcher heat. The
+# two must sum to 1.0 to keep the blend normalized.
+TREND_WEIGHT = 0.35
+ABSOLUTE_WEIGHT = 0.65
 
 # Pitcher component weights for the ERA / WHIP / FIP blend. FIP gets the
 # largest single share — built on K/BB/HR, it's the most stable signal of
