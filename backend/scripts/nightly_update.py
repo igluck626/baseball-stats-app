@@ -1197,6 +1197,20 @@ def main() -> None:
     gl = _update_gamelogs(current_year)
 
     log.info("=" * 52)
+    log.info("Phase 4b: batting counting aggregation (GIDP/SH/HBP/SF/CS/PA/H)")
+    log.info("=" * 52)
+    # Runs AFTER game logs so it sums the freshest per-game rows. Overwrites
+    # the current-season counting fields the BDL batter phase doesn't write
+    # (and corrects stale bref-seed values like GIDP). Non-fatal.
+    try:
+        with connection.get_session() as db:
+            bc_updated = data_service.recalculate_batting_counting(db, current_year)
+            db.commit()
+        log.info(f"Batting counting aggregation — rows updated: {bc_updated}")
+    except Exception as exc:
+        log.error(f"Batting counting aggregation FAILED (non-fatal): {exc}")
+
+    log.info("=" * 52)
     log.info("Phase 5: reconcile teams from active rosters")
     log.info("=" * 52)
     # Belt-and-suspenders for offseason-trade / FA-signing cases

@@ -45,7 +45,7 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 # or backend/api (local venv).
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from sqlalchemy import and_, case, func, or_
+from sqlalchemy import and_, case, func, or_, text as _sa_text
 from sqlalchemy.orm import aliased
 
 from database import connection, crud
@@ -4735,6 +4735,71 @@ def _resolve_side(stat: dict, ctx: dict) -> Optional[str]:
         ctx.get("game_id"),
     )
     return None
+
+
+# Batting counting stats that BDL's season_stats payload omits but the
+# per-game logs carry — summed from batting_gamelogs into player_seasons.
+_BATTING_COUNTING_FIELDS = ("PA", "H", "HBP", "SF", "CS", "IBB", "GIDP", "SH")
+
+
+def recalculate_batting_counting(
+    db, season: int, player_id: Optional[int] = None,
+) -> int:
+    """Aggregate the per-game batting counting stats BDL's season_stats
+    omits — PA / H / HBP / SF / CS / IBB / GIDP / SH — from
+    `batting_gamelogs` into the matching `player_seasons` row. Returns the
+    number of season rows updated. Caller owns the session/commit.
+
+    Overwrite vs. fill, scoped by season:
+      • CURRENT season (`season >= _current_year()`): each field is
+        OVERWRITTEN with the game-log SUM. Mid-season the logs are the
+        freshest, most accurate source — this is what corrects a stale
+        bref-seed value (e.g. a GIDP frozen at last night's number, or
+        the pre-game-log seed Aaron Judge carried).
+      • PAST seasons: COALESCE-only (fill NULLs, never overwrite). Game
+        logs exist back to 2006, but their historical totals can be
+        incomplete and the GIDP/SH columns are NULL until those old logs
+        are re-ingested — overwriting would clobber the authoritative
+        Lahman/bref season totals with partial (or zeroed) sums. Filling
+        only nulls keeps history safe.
+
+    The EXISTS guard means rows WITHOUT game logs for the year are never
+    touched (so a Lahman-only historical row, or a current row before its
+    logs land, is left alone rather than zeroed)."""
+    overwrite = season >= _current_year()
+    assignments = []
+    for f in _BATTING_COUNTING_FIELDS:
+        summ = (
+            f'(SELECT SUM(COALESCE(g."{f}", 0)) FROM batting_gamelogs g '
+            f"WHERE g.player_id = player_seasons.player_id "
+            f"AND g.season = player_seasons.year)"
+        )
+        if overwrite:
+            assignments.append(f'"{f}" = {summ}')
+        else:
+            assignments.append(f'"{f}" = COALESCE(player_seasons."{f}", {summ})')
+    set_clause = ",\n          ".join(assignments)
+    player_filter = (
+        "AND player_seasons.player_id = :player_id" if player_id is not None else ""
+    )
+    sql = _sa_text(
+        f"""
+        UPDATE player_seasons SET
+          {set_clause}
+        WHERE year = :season
+          AND EXISTS (
+              SELECT 1 FROM batting_gamelogs g
+              WHERE g.player_id = player_seasons.player_id
+                AND g.season    = player_seasons.year
+          )
+          {player_filter}
+        """
+    )
+    params: dict = {"season": season}
+    if player_id is not None:
+        params["player_id"] = player_id
+    result = db.execute(sql, params)
+    return result.rowcount or 0
 
 
 def _parse_bdl_batting_gamelog(stat: dict, ctx: dict) -> Optional[dict]:
