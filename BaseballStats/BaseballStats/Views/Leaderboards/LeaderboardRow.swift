@@ -137,6 +137,12 @@ struct LeaderboardRow: View {
         Text("HOF")
             .font(.caption2.weight(.bold))
             .foregroundStyle(.white)
+            // Keep "HOF" on one horizontal line at its intrinsic width even
+            // when the row is tight (long names) — the name (which scales /
+            // truncates) yields space, not the badge. Without this the badge
+            // compresses and the text wraps to "H/O/F".
+            .lineLimit(1)
+            .fixedSize()
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(Capsule().fill(LeaderboardRow.baseballRed.gradient))
