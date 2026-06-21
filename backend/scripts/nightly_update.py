@@ -1211,6 +1211,19 @@ def main() -> None:
         log.error(f"Batting counting aggregation FAILED (non-fatal): {exc}")
 
     log.info("=" * 52)
+    log.info("Phase 4c: advanced batting rates (wOBA / K% / BB% / ISO)")
+    log.info("=" * 52)
+    # Runs AFTER 4b so the components are correct. BDL omits these rate
+    # columns, so without this pass current-season rows stay NULL. Non-fatal.
+    try:
+        with connection.get_session() as db:
+            br_updated = data_service.recalculate_batting_rates(db, current_year)
+            db.commit()
+        log.info(f"Batting rates — rows updated: {br_updated}")
+    except Exception as exc:
+        log.error(f"Batting rates FAILED (non-fatal): {exc}")
+
+    log.info("=" * 52)
     log.info("Phase 5: reconcile teams from active rosters")
     log.info("=" * 52)
     # Belt-and-suspenders for offseason-trade / FA-signing cases

@@ -1583,6 +1583,9 @@ private enum BattingCareerColumn {
     static let slg:     CGFloat = 38
     static let ops:     CGFloat = 44
     static let opsPlus: CGFloat = 38
+    static let woba:    CGFloat = 44
+    static let kPct:    CGFloat = 44
+    static let bbPct:   CGFloat = 44
     static let tb:      CGFloat = 36
     static let gidp:    CGFloat = 34
     static let hbp:     CGFloat = 30
@@ -2164,6 +2167,9 @@ private struct BattingCareerScrollableHeader: View {
             if visible.contains("SLG")  { CareerHeaderCell(label: "SLG",  width: BattingCareerColumn.slg,     alignment: .trailing, sort: $sort) }
             if visible.contains("OPS")  { CareerHeaderCell(label: "OPS",  width: BattingCareerColumn.ops,     alignment: .trailing, sort: $sort) }
             if visible.contains("OPS+") { CareerHeaderCell(label: "OPS+", width: BattingCareerColumn.opsPlus, alignment: .trailing, sort: $sort) }
+            if visible.contains("wOBA") { CareerHeaderCell(label: "wOBA", width: BattingCareerColumn.woba, alignment: .trailing, sort: $sort) }
+            if visible.contains("K%")   { CareerHeaderCell(label: "K%",   width: BattingCareerColumn.kPct, alignment: .trailing, sort: $sort) }
+            if visible.contains("BB%")  { CareerHeaderCell(label: "BB%",  width: BattingCareerColumn.bbPct, alignment: .trailing, sort: $sort) }
             if visible.contains("TB")   { CareerHeaderCell(label: "TB",   width: BattingCareerColumn.tb,      alignment: .trailing, sort: $sort) }
             if visible.contains("GIDP") { CareerHeaderCell(label: "GIDP", width: BattingCareerColumn.gidp,    alignment: .trailing, sort: $sort) }
             if visible.contains("HBP")  { CareerHeaderCell(label: "HBP",  width: BattingCareerColumn.hbp,     alignment: .trailing, sort: $sort) }
@@ -2229,6 +2235,9 @@ private struct BattingCareerScrollableSeasonRow: View {
             if visible.contains("SLG")  { leaderCell(format3(season.SLG),         label: "SLG",  leaders: l, width: BattingCareerColumn.slg) }
             if visible.contains("OPS")  { leaderCell(format3(season.OPS),         label: "OPS",  leaders: l, width: BattingCareerColumn.ops) }
             if visible.contains("OPS+") { leaderCell(formatRoundedInt(season.OPS_plus), label: "OPS+", leaders: l, width: BattingCareerColumn.opsPlus) }
+            if visible.contains("wOBA") { leaderCell(format3(season.wOBA),  label: "wOBA", leaders: l, width: BattingCareerColumn.woba) }
+            if visible.contains("K%")   { leaderCell(formatPct(season.K_pct), label: "K%",  leaders: l, width: BattingCareerColumn.kPct) }
+            if visible.contains("BB%")  { leaderCell(formatPct(season.BB_pct), label: "BB%", leaders: l, width: BattingCareerColumn.bbPct) }
             if visible.contains("TB")   { leaderCell(formatCount(seasonTB(season)), label: "TB", leaders: l, width: BattingCareerColumn.tb) }
             if visible.contains("GIDP") { leaderCell(formatCount(season.GIDP),    label: "GIDP", leaders: l, width: BattingCareerColumn.gidp) }
             if visible.contains("HBP")  { leaderCell(formatCount(season.HBP),     label: "HBP",  leaders: l, width: BattingCareerColumn.hbp) }
@@ -2293,6 +2302,9 @@ private struct BattingCareerScrollableTotalsRow: View {
                     .monospacedDigit()
                     .padding(.horizontal, 2)
             }
+            if visible.contains("wOBA") { Text(format3(agg.woba))    .frame(width: BattingCareerColumn.woba,    alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("K%")   { Text(formatPct(agg.kPct))  .frame(width: BattingCareerColumn.kPct,    alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
+            if visible.contains("BB%")  { Text(formatPct(agg.bbPct)) .frame(width: BattingCareerColumn.bbPct,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
             if visible.contains("TB")   { Text(formatCount(agg.tb))  .frame(width: BattingCareerColumn.tb,      alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
             if visible.contains("GIDP") { Text(formatCount(agg.gidp)).frame(width: BattingCareerColumn.gidp,    alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
             if visible.contains("HBP")  { Text(formatCount(agg.hbp)) .frame(width: BattingCareerColumn.hbp,     alignment: .trailing).monospacedDigit().padding(.horizontal, 2) }
@@ -2717,6 +2729,9 @@ private func sortBatting(_ seasons: [CareerSeason], by s: CareerSort) -> [Career
         case "SLG":  return cmpOpt(a.SLG,     b.SLG,     asc: asc)
         case "OPS":  return cmpOpt(a.OPS,     b.OPS,     asc: asc)
         case "OPS+": return cmpOpt(a.OPS_plus, b.OPS_plus, asc: asc)
+        case "wOBA": return cmpOpt(a.wOBA,     b.wOBA,     asc: asc)
+        case "K%":   return cmpOpt(a.K_pct,    b.K_pct,    asc: asc)
+        case "BB%":  return cmpOpt(a.BB_pct,   b.BB_pct,   asc: asc)
         case "TB":   return cmpOpt(seasonTB(a), seasonTB(b), asc: asc)
         case "GIDP": return cmpOpt(a.GIDP,    b.GIDP,    asc: asc)
         case "HBP":  return cmpOpt(a.HBP,     b.HBP,     asc: asc)
@@ -3358,6 +3373,13 @@ private func format1(_ value: Double?) -> String {
     return String(format: "%.1f", value)
 }
 
+/// Percentage display for rate fractions stored 0…1 (K% / BB% on the
+/// career table). 0.225 → "22.5%". Returns "—" for nil.
+private func formatPct(_ value: Double?) -> String {
+    guard let value else { return "—" }
+    return String(format: "%.1f%%", value * 100)
+}
+
 // MARK: - Effective stats (overnight + today merge)
 
 /// Player-profile season-grid values with today's box-score line
@@ -3795,6 +3817,9 @@ let battingFilterGroups: [ColumnFilterGroup] = [
     ]),
     ColumnFilterGroup(title: "Advanced", columns: [
         ColumnFilterEntry(key: "OPS+", label: "OPS+", description: "OPS adjusted to league/park (100 = avg)"),
+        ColumnFilterEntry(key: "wOBA", label: "wOBA", description: "Weighted on-base average (run-value weighted)"),
+        ColumnFilterEntry(key: "K%",   label: "K%",   description: "Strikeout rate (SO ÷ PA)"),
+        ColumnFilterEntry(key: "BB%",  label: "BB%",  description: "Walk rate (BB ÷ PA)"),
     ]),
 ]
 
@@ -4118,6 +4143,21 @@ private struct BattingCareerAgg {
     /// 1*singles + 2*2B + 3*3B + 4*HR with `singles = h - 2B - 3B - HR`.
     var tb: Int {
         h + dbl + 2 * trp + 3 * hr
+    }
+
+    var kPct:  Double? { pa > 0 ? Double(so) / Double(pa) : nil }
+    var bbPct: Double? { pa > 0 ? Double(bb) / Double(pa) : nil }
+
+    /// Career wOBA from summed components — standard linear weights
+    /// (uBB = BB - IBB, singles), matching the backend.
+    var woba: Double? {
+        let ubb = bb - ibb
+        let den = ab + ubb + sf + hbp
+        guard den > 0 else { return nil }
+        let singles = h - dbl - trp - hr
+        let num = 0.69 * Double(ubb) + 0.72 * Double(hbp) + 0.89 * Double(singles)
+                + 1.27 * Double(dbl) + 1.62 * Double(trp) + 2.10 * Double(hr)
+        return num / Double(den)
     }
 
     static func compute(seasons: [CareerSeason]) -> BattingCareerAgg {

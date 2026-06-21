@@ -667,6 +667,18 @@ def _run_nightly_update() -> None:
         except Exception as exc:
             log.error(f"[nightly] batting-counting aggregation FAILED (non-fatal): {exc}")
 
+        # Phase 4c — advanced batting rates (wOBA / K% / BB% / ISO). Runs
+        # AFTER 4b so the components it derives from are correct. BDL omits
+        # these, so without this pass current-season rows stay NULL. Non-fatal.
+        log.info("[nightly] starting batting-rates phase")
+        try:
+            with connection.get_session() as db:
+                br_updated = data_service.recalculate_batting_rates(db, current_year)
+                db.commit()
+            log.info(f"[nightly] batting-rates phase done: rows updated={br_updated}")
+        except Exception as exc:
+            log.error(f"[nightly] batting-rates phase FAILED (non-fatal): {exc}")
+
         # Phase 5 — reconcile current-year season teams from BDL's
         # active rosters. Belt-and-suspenders for offseason-trade /
         # FA-signing cases where bref's `Tm` column lags the move.
@@ -1785,6 +1797,44 @@ def admin_recalculate_batting_counting(
         "player_id":       player_id,
         "mode":            "overwrite" if season >= data_service._current_year() else "fill-nulls",
         "fields":          list(data_service._BATTING_COUNTING_FIELDS),
+        "seasons_updated": int(seasons_updated),
+    }
+
+
+@app.post("/admin/recalculate-batting-rates")
+def admin_recalculate_batting_rates(
+    season: int | None = Query(
+        None,
+        description="Season year to recompute. Defaults to the current season.",
+    ),
+    player_id: int | None = Query(
+        None,
+        description="Optional — target one player. Omit for a league-wide pass.",
+    ),
+):
+    """Compute the advanced batting RATE columns — wOBA, K_pct, BB_pct, ISO —
+    on `player_seasons` from the stored components. BDL's season_stats omits
+    these, so current-season rows land NULL (blank career rates + empty
+    wOBA/K%/BB%/ISO leaderboards for the year). Run AFTER
+    `/admin/recalculate-batting-counting` so the components are correct first.
+
+    Standard wOBA linear weights (uBB = BB - IBB, singles), matching the bref
+    builder. Overwrites the season's rows (live components are authoritative)."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+
+    if season is None:
+        season = data_service._current_year()
+
+    with connection.get_session() as db:
+        seasons_updated = data_service.recalculate_batting_rates(db, season, player_id)
+        db.commit()
+
+    return {
+        "status":          "ok",
+        "season":          season,
+        "player_id":       player_id,
+        "fields":          ["wOBA", "K_pct", "BB_pct", "ISO"],
         "seasons_updated": int(seasons_updated),
     }
 

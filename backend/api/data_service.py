@@ -4802,6 +4802,51 @@ def recalculate_batting_counting(
     return result.rowcount or 0
 
 
+def recalculate_batting_rates(db, season: int, player_id: Optional[int] = None) -> int:
+    """Compute the advanced batting RATE columns — wOBA, K_pct, BB_pct, ISO —
+    on `player_seasons` for `season` from the stored components. BDL's
+    season_stats omits these, so current-season rows otherwise land NULL
+    (blank career rows + empty wOBA/K%/BB%/ISO leaderboards for the year).
+
+    Overwrites for the season (the season's components are the live truth,
+    same philosophy as `recalculate_batting_counting`). Run it AFTER the
+    counting aggregation so the components (PA/SO/HBP/SF/IBB…) are correct.
+    Uses the STANDARD wOBA linear weights (uBB = BB - IBB, singles), matching
+    the bref builder in `_compute_batting_advanced`. Returns rows updated.
+
+    Caller owns the session/commit."""
+    q = db.query(_PlayerSeason).filter(_PlayerSeason.year == season)
+    if player_id is not None:
+        q = q.filter(_PlayerSeason.player_id == player_id)
+
+    updated = 0
+    for r in q.all():
+        pa = r.PA or 0
+        if pa <= 0:
+            continue
+        r.K_pct  = round((r.SO or 0) / pa, 3)
+        r.BB_pct = round((r.BB or 0) / pa, 3)
+
+        # ISO = SLG - AVG (both stored from BDL); skip if either missing.
+        if r.SLG is not None and r.BA is not None:
+            r.ISO = round(r.SLG - r.BA, 3)
+
+        ab  = r.AB or 0
+        ubb = (r.BB or 0) - (r.IBB or 0)
+        hbp = r.HBP or 0
+        sf  = r.SF or 0
+        den = ab + ubb + sf + hbp
+        if den > 0:
+            singles = (r.H or 0) - (r.doubles or 0) - (r.triples or 0) - (r.HR or 0)
+            num = (0.69 * ubb + 0.72 * hbp + 0.89 * singles
+                   + 1.27 * (r.doubles or 0) + 1.62 * (r.triples or 0)
+                   + 2.10 * (r.HR or 0))
+            r.wOBA = round(num / den, 3)
+        updated += 1
+
+    return updated
+
+
 def _parse_bdl_batting_gamelog(stat: dict, ctx: dict) -> Optional[dict]:
     """One BDL `/stats` row → `batting_gamelogs` row dict. Returns
     None when the row carries no batting activity (the row's `ip`
@@ -5995,6 +6040,14 @@ _LEADERBOARD_BATTING: dict[str, tuple[str, str, Optional[str]]] = {
     "SO":  ("SO",      "desc", None),
     "PA":  ("PA",      "desc", None),
     "AB":  ("AB",      "desc", None),
+    # Advanced rate stats — all stored columns on player_seasons, so they
+    # rank directly. PA-qualified like the other batting rates. K% sorts
+    # ASC (lower K-rate = better contact); BB%/wOBA/OPS+/ISO sort DESC.
+    "wOBA": ("wOBA",     "desc", "PA"),
+    "OPS+": ("OPS_plus", "desc", "PA"),
+    "K%":   ("K_pct",    "asc",  "PA"),
+    "BB%":  ("BB_pct",   "desc", "PA"),
+    "ISO":  ("ISO",      "desc", "PA"),
 }
 _LEADERBOARD_PITCHING: dict[str, tuple[str, str, Optional[str]]] = {
     "ERA":  ("ERA",    "asc",  "IP"),
@@ -6015,6 +6068,13 @@ _LEADERBOARD_PITCHING: dict[str, tuple[str, str, Optional[str]]] = {
     # IP-qualified so partial-season relievers don't crowd the
     # leaderboard with tiny-sample SO/9 outliers.
     "SO/9": ("K_per9", "desc", "IP"),
+    # Advanced rate stats — stored columns on pitcher_seasons. ERA+ DESC
+    # (higher = better vs league), FIP / BB9 ASC (lower better). IP-qualified.
+    # NOTE: pitcher_seasons has no K%/BB% columns (only K/9, BB/9), so K%/BB%
+    # aren't offered for pitchers without a schema add.
+    "ERA+": ("ERA_plus", "desc", "IP"),
+    "FIP":  ("FIP",      "asc",  "IP"),
+    "BB/9": ("BB_per9",  "asc",  "IP"),
 }
 
 # Canonical team key (Lahman code) → matcher that picks up every
@@ -6514,8 +6574,12 @@ def _leaderboard_all_time(
 # Career rate stats — these compute from aggregated counting stats
 # instead of pulling a season column. Set per role so the dispatcher
 # knows when to apply the career PA/IP qualifier.
-_CAREER_BATTING_RATE_STATS  = {"AVG", "OBP", "SLG", "OPS"}
-_CAREER_PITCHING_RATE_STATS = {"ERA", "WHIP"}
+_CAREER_BATTING_RATE_STATS  = {"AVG", "OBP", "SLG", "OPS", "wOBA", "K%", "BB%", "ISO"}
+_CAREER_PITCHING_RATE_STATS = {"ERA", "WHIP", "FIP"}
+# OPS+ / ERA+ are intentionally NOT career-supported — they're league/park
+# normalized and a career figure needs a PA/IP-weighted average of season
+# values, not a sum-based formula. They work in Season / All-Time only;
+# selecting them in Career mode yields an empty board (no crash).
 
 
 # Career leaderboard cache. The career aggregation is the most
@@ -6622,6 +6686,7 @@ def _leaderboard_career(
                 func.sum(_PlayerSeason.triples).label("triples"),
                 func.sum(_PlayerSeason.HBP).label("HBP"),
                 func.sum(_PlayerSeason.SF).label("SF"),
+                func.sum(_PlayerSeason.IBB).label("IBB"),   # for career wOBA (uBB = BB - IBB)
                 # max(year) gives us the player's most-recent season —
                 # used downstream to surface a "current team" label.
                 func.max(_PlayerSeason.year).label("last_year"),
@@ -6640,6 +6705,7 @@ def _leaderboard_career(
                 func.sum(_PitcherSeason.CG).label("CG"),
                 func.sum(_PitcherSeason.SHO).label("SHO"),
                 func.sum(_PitcherSeason.ER).label("ER"),
+                func.sum(_PitcherSeason.HBP).label("HBP"),   # for career FIP
                 func.max(_PitcherSeason.year).label("last_year"),
             ]
 
@@ -6746,6 +6812,29 @@ def _career_value(agg, stat: str, is_batter: bool) -> Optional[float]:
             obp = _career_value(agg, "OBP", True)
             slg = _career_value(agg, "SLG", True)
             return (obp + slg) if (obp is not None and slg is not None) else None
+        if stat == "ISO":
+            slg = _career_value(agg, "SLG", True)
+            ba  = _career_value(agg, "AVG", True)
+            return (slg - ba) if (slg is not None and ba is not None) else None
+        if stat == "K%":
+            pa = agg.PA or 0
+            return (agg.SO or 0) / pa if pa else None
+        if stat == "BB%":
+            pa = agg.PA or 0
+            return (agg.BB or 0) / pa if pa else None
+        if stat == "wOBA":
+            ab  = agg.AB or 0
+            ubb = (agg.BB or 0) - (agg.IBB or 0)
+            hbp = agg.HBP or 0
+            sf  = agg.SF or 0
+            den = ab + ubb + sf + hbp
+            if den <= 0:
+                return None
+            singles = (agg.H or 0) - (agg.doubles or 0) - (agg.triples or 0) - (agg.HR or 0)
+            num = (0.69 * ubb + 0.72 * hbp + 0.89 * singles
+                   + 1.27 * (agg.doubles or 0) + 1.62 * (agg.triples or 0)
+                   + 2.10 * (agg.HR or 0))
+            return num / den
         # Counting stat: pull directly off the aggregated row. The
         # API stat label might not match the aggregate label (e.g.
         # "2B" vs "doubles") — translate here.
@@ -6760,6 +6849,12 @@ def _career_value(agg, stat: str, is_batter: bool) -> Optional[float]:
     if stat == "WHIP":
         ip = float(agg.IP or 0)
         return (float((agg.BB or 0) + (agg.H or 0))) / ip if ip else None
+    if stat == "FIP":
+        ip = float(agg.IP or 0)
+        if ip <= 0:
+            return None
+        return (13 * (agg.HR or 0) + 3 * ((agg.BB or 0) + (agg.HBP or 0))
+                - 2 * (agg.SO or 0)) / ip + 3.10
     raw = getattr(agg, stat, None)
     return float(raw) if raw is not None else None
 

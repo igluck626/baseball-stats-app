@@ -38,9 +38,11 @@ struct LeaderboardRow: View {
         case oneDecimalGrouped
         /// ERA / WHIP / FIP — two decimals, no grouping (range 0–10).
         case twoDecimal
-        /// AVG / OBP / SLG / OPS — three decimals, leading-zero
-        /// stripped per Baseball Reference convention.
+        /// AVG / OBP / SLG / OPS / wOBA / ISO — three decimals,
+        /// leading-zero stripped per Baseball Reference convention.
         case threeDecimal
+        /// K% / BB% — stored as a fraction (0.225), rendered "22.5%".
+        case percent
     }
 
     var body: some View {
@@ -177,11 +179,13 @@ struct LeaderboardRow: View {
     /// calling this rather than duplicating the switch.
     static func valueFormat(for stat: String) -> ValueFormat {
         switch stat {
-        case "AVG", "OBP", "SLG", "OPS": return .threeDecimal
-        case "ERA", "WHIP", "FIP":       return .twoDecimal
-        case "WAR", "SO/9":              return .oneDecimal
-        case "IP":                       return .oneDecimalGrouped
-        default:                         return .integer
+        case "AVG", "OBP", "SLG", "OPS", "wOBA", "ISO": return .threeDecimal
+        case "ERA", "WHIP", "FIP", "BB/9":             return .twoDecimal
+        case "WAR", "SO/9":                            return .oneDecimal
+        case "IP":                                     return .oneDecimalGrouped
+        case "K%", "BB%":                              return .percent
+        // OPS+ / ERA+ are integers — fall through to .integer.
+        default:                                       return .integer
         }
     }
 
@@ -208,6 +212,9 @@ struct LeaderboardRow: View {
             if s.hasPrefix("0.")  { return String(s.dropFirst()) }
             if s.hasPrefix("-0.") { return "-" + String(s.dropFirst(2)) }
             return s
+        case .percent:
+            // Stored as a fraction (0.225) → "22.5%".
+            return String(format: "%.1f%%", v * 100)
         }
     }
 }

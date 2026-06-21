@@ -131,12 +131,13 @@ final class LeaderboardsViewModel: ObservableObject {
     /// Note: HLD ("holds") isn't currently tracked in pitcher_seasons,
     /// so it's deliberately absent from the pitching list.
     static let battingStats:  [String] = [
-        "WAR", "HR", "AVG", "RBI", "OPS", "H", "R", "SB", "BB",
-        "OBP", "SLG", "2B", "3B", "SO", "PA", "AB",
+        "WAR", "HR", "AVG", "RBI", "OPS", "OPS+", "wOBA",
+        "H", "R", "SB", "BB", "OBP", "SLG", "ISO", "K%", "BB%",
+        "2B", "3B", "SO", "PA", "AB",
     ]
     static let pitchingStats: [String] = [
-        "WAR", "ERA", "SO", "W", "WHIP", "SV", "IP",
-        "SO/9", "H", "BB", "HR", "CG", "SHO",
+        "WAR", "ERA", "ERA+", "FIP", "SO", "W", "WHIP", "SV", "IP",
+        "SO/9", "BB/9", "H", "BB", "HR", "CG", "SHO",
     ]
 
     /// User-facing label for a stat. Passes through for stats where
