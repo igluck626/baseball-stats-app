@@ -1404,18 +1404,12 @@ def team_postseason(team_id: str):
 # Leaderboards
 # ---------------------------------------------------------------------------
 
-# Stats accepted by the leaderboard endpoint. Must match the keys in
-# data_service._LEADERBOARD_BATTING / _PITCHING. Surfaced here so the
-# 400 error message stays in sync with what data_service knows.
-_LEADERBOARD_BATTING_STATS  = {
-    "HR", "AVG", "RBI", "OPS", "H", "R", "SB", "BB",
-    "OBP", "SLG", "WAR", "2B", "3B", "SO", "PA", "AB",
-}
-_LEADERBOARD_PITCHING_STATS = {
-    "ERA", "SO", "W", "WHIP", "SV", "IP",
-    "H", "BB", "HR", "WAR", "CG", "SHO",
-    "SO/9",
-}
+# Stats accepted by the leaderboard endpoint. Derived directly from the
+# data_service catalogs so validation + the 400 "Try one of" message always
+# track exactly what the catalogs support — adding a stat there makes it valid
+# here automatically (no manual sync, no drift). `set(dict)` yields the keys.
+_LEADERBOARD_BATTING_STATS  = set(data_service._LEADERBOARD_BATTING)
+_LEADERBOARD_PITCHING_STATS = set(data_service._LEADERBOARD_PITCHING)
 
 
 _LEADERBOARD_MODES = {"season", "all_time", "career"}
