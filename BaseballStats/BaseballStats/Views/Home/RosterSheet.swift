@@ -19,6 +19,12 @@ struct RosterSheet: View {
     let isLoading: Bool
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+
+    /// Brightened team color for team-tinted text/accents in dark mode.
+    private var headerTint: Color {
+        colorScheme == .dark ? tint.brightenedForDarkText() : tint
+    }
 
     enum RosterMode: String, Hashable { case hitters, pitchers }
     @State private var mode: RosterMode = .hitters
@@ -179,14 +185,15 @@ struct RosterSheet: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
                 // Small team-color accent bar — brands the section
-                // without sacrificing label legibility.
+                // without sacrificing label legibility. Brightened in dark
+                // mode so dark team colors stay readable.
                 RoundedRectangle(cornerRadius: 1.5, style: .continuous)
-                    .fill(tint)
+                    .fill(headerTint)
                     .frame(width: 3, height: 13)
                 Text(sectionTitle(group))
                     .font(.caption.weight(.bold))
                     .tracking(0.8)
-                    .foregroundStyle(tint)
+                    .foregroundStyle(headerTint)
             }
             Divider().overlay(Color(.systemGray4))
         }

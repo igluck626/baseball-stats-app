@@ -14,6 +14,7 @@
 //
 
 import SwiftUI
+import UIKit   // UIColor HSB manipulation for the dark-mode brightening helpers
 
 enum TeamColors {
     /// Returns the primary brand color for a given team code, or nil
@@ -129,5 +130,46 @@ extension Color {
             a = Double( value        & 0xFF) / 255.0
         }
         self.init(.sRGB, red: r, green: g, blue: b, opacity: a)
+    }
+}
+
+// MARK: - Dark-mode team-color brightening
+//
+// Team brand colors are tuned for white backgrounds; many (A's forest
+// green, navy clubs) go nearly invisible on a dark surface. These lift
+// brightness for dark mode. Call ONLY in dark mode — light mode should use
+// the raw color. Counterparts to SearchView's `darkened` HSB helper.
+extension Color {
+    /// For dark-mode WASHES: boost every color's brightness so it registers
+    /// against a dark card, ceiling-capped so already-bright colors (Rockies
+    /// purple, Giants orange) don't blow out. A slight saturation cap keeps
+    /// lifted colors from going neon.
+    func brightenedForDark(
+        boost: CGFloat = 0.22, ceiling: CGFloat = 0.92, satCap: CGFloat = 0.85,
+    ) -> Color {
+        var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        UIColor(self).getHue(&h, saturation: &s, brightness: &b, alpha: &a)
+        return Color(
+            hue: Double(h),
+            saturation: Double(min(s, satCap)),
+            brightness: Double(min(b + boost, ceiling)),
+            opacity: Double(a),
+        )
+    }
+
+    /// For dark-mode team-colored TEXT / accents: raise brightness to a high
+    /// floor so the color reads comfortably (text needs more contrast than a
+    /// wash). Already-bright colors above the floor are untouched.
+    func brightenedForDarkText(
+        minBrightness: CGFloat = 0.82, satCap: CGFloat = 0.80,
+    ) -> Color {
+        var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        UIColor(self).getHue(&h, saturation: &s, brightness: &b, alpha: &a)
+        return Color(
+            hue: Double(h),
+            saturation: Double(min(s, satCap)),
+            brightness: Double(max(b, minBrightness)),
+            opacity: Double(a),
+        )
     }
 }

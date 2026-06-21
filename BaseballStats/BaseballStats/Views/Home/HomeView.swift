@@ -13,7 +13,6 @@
 //
 
 import SwiftUI
-import UIKit   // UIColor HSB manipulation for the dark-mode tint brighten
 
 struct HomeView: View {
     @StateObject private var vm = HomeViewModel()
@@ -294,24 +293,6 @@ struct HomeView: View {
 
 // MARK: - Shared card surface
 
-/// Lifts a color's HSB brightness to a minimum floor so a dark team color
-/// (A's forest green, navy clubs) registers against a dark card. Already-
-/// bright colors (Rockies purple, Giants orange) sit above the floor and are
-/// barely touched. A slight saturation cap keeps the lifted color from going
-/// neon. Counterpart to SearchView's `darkened` HSB helper.
-private func adaptiveBrightened(
-    _ color: Color, minBrightness: CGFloat = 0.72, satCap: CGFloat = 0.85,
-) -> Color {
-    var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
-    UIColor(color).getHue(&h, saturation: &s, brightness: &b, alpha: &a)
-    return Color(
-        hue: Double(h),
-        saturation: Double(min(s, satCap)),
-        brightness: Double(max(b, minBrightness)),
-        opacity: Double(a),
-    )
-}
-
 /// Solid card surface with a team-color wash over a `systemBackground` base.
 /// Big cards (default) carry the tint across the WHOLE card — stronger at top,
 /// still gently tinted at the bottom (never clear) — so the team color reads
@@ -329,8 +310,9 @@ private func teamWashBackground(
 ) -> some View {
     let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
     // Light mode over a white base already shows the raw color fine; dark mode
-    // needs dark teams lifted to register against the dark surface.
-    let washTint = isDark ? adaptiveBrightened(tint) : tint
+    // boosts every team color so even the dark ones register against the dark
+    // surface (ceiling-capped so the bright ones don't blow out).
+    let washTint = isDark ? tint.brightenedForDark() : tint
     let stops: [Gradient.Stop] = faint
         ? [
             .init(color: washTint.opacity(isDark ? 0.10 : 0.07), location: 0.0),
@@ -920,10 +902,14 @@ private struct HomeSectionHeader<Trailing: View>: View {
     let tint: Color
     @ViewBuilder let trailing: Trailing
 
+    @Environment(\.colorScheme) private var colorScheme
+
     var body: some View {
         HStack(spacing: 10) {
             Capsule()
-                .fill(tint)
+                // Brighten the team-color accent in dark mode so dark teams
+                // still read against the dark surface.
+                .fill(colorScheme == .dark ? tint.brightenedForDarkText() : tint)
                 .frame(width: 4, height: 18)
             Text(title)
                 .font(.title3.weight(.bold))
@@ -1064,7 +1050,7 @@ private struct TeamLeadersSection: View {
                             .font(.caption2.weight(.bold))
                     }
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(tint)
+                    .foregroundStyle(colorScheme == .dark ? tint.brightenedForDarkText() : tint)
                 }
             }
 
@@ -1243,6 +1229,8 @@ private struct RosterSection: View {
     let tint: Color
     let onSeeAll: () -> Void
 
+    @Environment(\.colorScheme) private var colorScheme
+
     var body: some View {
         HomeSectionHeader(title: "Roster", tint: tint) {
             Button(action: onSeeAll) {
@@ -1252,7 +1240,7 @@ private struct RosterSection: View {
                         .font(.caption2.weight(.bold))
                 }
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(tint)
+                .foregroundStyle(colorScheme == .dark ? tint.brightenedForDarkText() : tint)
             }
         }
     }
@@ -1269,6 +1257,8 @@ private struct TeamHistorySection: View {
     let tint: Color
     let onSeeAll: () -> Void
 
+    @Environment(\.colorScheme) private var colorScheme
+
     var body: some View {
         HomeSectionHeader(title: "History", tint: tint) {
             Button(action: onSeeAll) {
@@ -1278,7 +1268,7 @@ private struct TeamHistorySection: View {
                         .font(.caption2.weight(.bold))
                 }
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(tint)
+                .foregroundStyle(colorScheme == .dark ? tint.brightenedForDarkText() : tint)
             }
         }
     }
@@ -1296,10 +1286,17 @@ private struct InjuryReportSection: View {
     let tint: Color
     let onSeeAll: () -> Void
 
+    @Environment(\.colorScheme) private var colorScheme
+
+    /// Brightened team color for the header accent + control in dark mode.
+    private var headerTint: Color {
+        colorScheme == .dark ? tint.brightenedForDarkText() : tint
+    }
+
     var body: some View {
         HStack(spacing: 10) {
             Capsule()
-                .fill(tint)
+                .fill(headerTint)
                 .frame(width: 4, height: 18)
             Text("Injury Report")
                 .font(.title3.weight(.bold))
@@ -1315,7 +1312,7 @@ private struct InjuryReportSection: View {
                         .font(.caption2.weight(.bold))
                 }
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(tint)
+                .foregroundStyle(headerTint)
             }
         }
         .padding(.horizontal, 16)
