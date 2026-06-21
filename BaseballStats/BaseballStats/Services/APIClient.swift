@@ -325,6 +325,13 @@ final class APIClient {
         }
         if !query.isEmpty {
             components.queryItems = query
+            // URLComponents leaves "+" literal in query values, but the
+            // server decodes "+" as a space (form-urlencoded). Force it to
+            // %2B so stats like "OPS+"/"ERA+" survive the round-trip. Safe:
+            // real spaces are already encoded as %20 (never "+"), so any
+            // remaining "+" is a literal plus from a value like "ERA+".
+            components.percentEncodedQuery = components.percentEncodedQuery?
+                .replacingOccurrences(of: "+", with: "%2B")
         }
         guard let url = components.url else { throw APIError.invalidURL }
         return url
