@@ -293,11 +293,13 @@ struct HomeView: View {
 
 // MARK: - Shared card surface
 
-/// Solid card surface with a faint team-color wash fading top → bottom —
-/// the player-profile / heat-card recipe, scaled down for these Home cards.
-/// `faint` halves it (two-stop) for the small tiles so they read as crisp
-/// white/dark with just a hint of color. Adaptive light/dark. Pair with the
-/// caller's existing border + shadow.
+/// Solid card surface with a team-color wash over a `systemBackground` base.
+/// Big cards (default) carry the tint across the WHOLE card — stronger at top,
+/// still gently tinted at the bottom (never clear) — so the team color reads
+/// as the card's surface. Small tiles (`faint: true`) keep a top-tint that
+/// fades to clear for a crisp white/dark look. Adaptive light/dark; opacities
+/// stay low (~0.08–0.22) so inner `.primary`/`.secondary` text stays legible
+/// across all 30 team colors. Pair with the caller's existing border + shadow.
 private func teamWashBackground(
     tint: Color,
     cornerRadius: CGFloat,
@@ -311,9 +313,9 @@ private func teamWashBackground(
             .init(color: .clear,                             location: 1.0),
           ]
         : [
-            .init(color: tint.opacity(isDark ? 0.20 : 0.14), location: 0.0),
-            .init(color: tint.opacity(isDark ? 0.10 : 0.06), location: 0.5),
-            .init(color: .clear,                             location: 1.0),
+            .init(color: tint.opacity(isDark ? 0.22 : 0.16), location: 0.0),   // stronger at top
+            .init(color: tint.opacity(isDark ? 0.16 : 0.11), location: 0.5),   // mid
+            .init(color: tint.opacity(isDark ? 0.12 : 0.08), location: 1.0),   // still tinted at bottom
           ]
     return ZStack {
         shape.fill(Color(.systemBackground))
