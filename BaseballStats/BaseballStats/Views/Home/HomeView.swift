@@ -13,6 +13,7 @@
 //
 
 import SwiftUI
+import UIKit   // UIColor HSB manipulation for the dark-mode tint brighten
 
 struct HomeView: View {
     @StateObject private var vm = HomeViewModel()
@@ -293,13 +294,33 @@ struct HomeView: View {
 
 // MARK: - Shared card surface
 
+/// Lifts a color's HSB brightness to a minimum floor so a dark team color
+/// (A's forest green, navy clubs) registers against a dark card. Already-
+/// bright colors (Rockies purple, Giants orange) sit above the floor and are
+/// barely touched. A slight saturation cap keeps the lifted color from going
+/// neon. Counterpart to SearchView's `darkened` HSB helper.
+private func adaptiveBrightened(
+    _ color: Color, minBrightness: CGFloat = 0.72, satCap: CGFloat = 0.85,
+) -> Color {
+    var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+    UIColor(color).getHue(&h, saturation: &s, brightness: &b, alpha: &a)
+    return Color(
+        hue: Double(h),
+        saturation: Double(min(s, satCap)),
+        brightness: Double(max(b, minBrightness)),
+        opacity: Double(a),
+    )
+}
+
 /// Solid card surface with a team-color wash over a `systemBackground` base.
 /// Big cards (default) carry the tint across the WHOLE card — stronger at top,
 /// still gently tinted at the bottom (never clear) — so the team color reads
 /// as the card's surface. Small tiles (`faint: true`) keep a top-tint that
 /// fades to clear for a crisp white/dark look. Adaptive light/dark; opacities
-/// stay low (~0.08–0.22) so inner `.primary`/`.secondary` text stays legible
-/// across all 30 team colors. Pair with the caller's existing border + shadow.
+/// stay low so inner `.primary`/`.secondary` text stays legible across all 30
+/// team colors. In DARK mode the wash color is brightened (`adaptiveBrightened`)
+/// so dark team colors actually show — text/borders/accents elsewhere keep the
+/// TRUE team color. Pair with the caller's existing border + shadow.
 private func teamWashBackground(
     tint: Color,
     cornerRadius: CGFloat,
@@ -307,16 +328,25 @@ private func teamWashBackground(
     faint: Bool = false,
 ) -> some View {
     let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+    // Light mode over a white base already shows the raw color fine; dark mode
+    // needs dark teams lifted to register against the dark surface.
+    let washTint = isDark ? adaptiveBrightened(tint) : tint
     let stops: [Gradient.Stop] = faint
         ? [
-            .init(color: tint.opacity(isDark ? 0.10 : 0.07), location: 0.0),
-            .init(color: .clear,                             location: 1.0),
+            .init(color: washTint.opacity(isDark ? 0.10 : 0.07), location: 0.0),
+            .init(color: .clear,                                 location: 1.0),
           ]
-        : [
-            .init(color: tint.opacity(isDark ? 0.22 : 0.16), location: 0.0),   // stronger at top
-            .init(color: tint.opacity(isDark ? 0.16 : 0.11), location: 0.5),   // mid
-            .init(color: tint.opacity(isDark ? 0.12 : 0.08), location: 1.0),   // still tinted at bottom
-          ]
+        : isDark
+            ? [
+                .init(color: washTint.opacity(0.20), location: 0.0),   // stronger at top
+                .init(color: washTint.opacity(0.15), location: 0.5),   // mid
+                .init(color: washTint.opacity(0.11), location: 1.0),   // still tinted at bottom
+              ]
+            : [
+                .init(color: washTint.opacity(0.16), location: 0.0),
+                .init(color: washTint.opacity(0.11), location: 0.5),
+                .init(color: washTint.opacity(0.08), location: 1.0),
+              ]
     return ZStack {
         shape.fill(Color(.systemBackground))
         shape.fill(LinearGradient(stops: stops, startPoint: .top, endPoint: .bottom))
