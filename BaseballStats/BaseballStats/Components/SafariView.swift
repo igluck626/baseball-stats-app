@@ -14,9 +14,14 @@ import SwiftUI
 struct SafariView: UIViewControllerRepresentable {
     let url: URL
 
+    // Self-contained: reads the Settings preference directly, so the article
+    // always opens with the current "Open articles in Reader Mode" choice no
+    // matter where SafariView is presented from.
+    @AppStorage("autoReaderMode") private var autoReaderMode = false
+
     func makeUIViewController(context: Context) -> SFSafariViewController {
         let config = SFSafariViewController.Configuration()
-        config.entersReaderIfAvailable = false
+        config.entersReaderIfAvailable = autoReaderMode
         let controller = SFSafariViewController(url: url, configuration: config)
         controller.dismissButtonStyle = .done
         return controller

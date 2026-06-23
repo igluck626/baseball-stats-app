@@ -19,7 +19,7 @@ struct HomeView: View {
     @ObservedObject private var store = FavoriteTeamStore.shared
     @ObservedObject private var favoritesStore = FavoritePlayersStore.shared
     @State private var navigationPath = NavigationPath()
-    @State private var showingPicker = false
+    @State private var showingSettings = false
     @State private var showingAddPlayer = false
     @State private var showingSchedule = false
     @State private var showingLeadersSheet = false
@@ -49,8 +49,8 @@ struct HomeView: View {
             .navigationDestination(for: PlayerSearchResult.self) { player in
                 PlayerProfileView(player: player)
             }
-            .sheet(isPresented: $showingPicker) {
-                TeamPickerView { _ in showingPicker = false }
+            .sheet(isPresented: $showingSettings) {
+                SettingsView()
             }
             .sheet(isPresented: $showingAddPlayer) {
                 AddFavoritePlayerSheet { picked in
@@ -195,7 +195,7 @@ struct HomeView: View {
         ToolbarItem(placement: .topBarTrailing) {
             if store.bdlTeamId != nil {
                 Button {
-                    showingPicker = true
+                    showingSettings = true
                 } label: {
                     Image(systemName: "gearshape")
                         .font(.body.weight(.semibold))
