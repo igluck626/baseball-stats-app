@@ -53,6 +53,9 @@ struct ContentView: View {
         .toolbarBackground(.ultraThinMaterial, for: .tabBar)
         .toolbarBackground(.visible, for: .tabBar)
         .environmentObject(navigation)
+        // User's System/Light/Dark choice, applied over the device appearance.
+        // Cascades to every tab and the tab bar.
+        .appearanceOverride()
     }
 }
 

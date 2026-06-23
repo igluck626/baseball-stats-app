@@ -22,6 +22,7 @@ struct SettingsView: View {
     /// writes) the one source of truth.
     @ObservedObject private var teamStore = FavoriteTeamStore.shared
     @AppStorage("autoReaderMode") private var autoReaderMode = false
+    @AppStorage("appearanceMode") private var appearanceMode: AppearanceMode = .system
 
     private var currentTeamName: String {
         guard let bdlId = teamStore.bdlTeamId,
@@ -49,6 +50,19 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    Picker("Appearance", selection: $appearanceMode) {
+                        ForEach(AppearanceMode.allCases) { mode in
+                            Text(mode.label).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                } header: {
+                    Text("Appearance")
+                } footer: {
+                    Text("System follows your device's Light/Dark setting.")
+                }
+
+                Section {
                     Toggle("Open articles in Reader Mode", isOn: $autoReaderMode)
                 } header: {
                     Text("Reading")
@@ -64,6 +78,9 @@ struct SettingsView: View {
                 }
             }
         }
+        // The Settings sheet has its own environment, so force the chosen
+        // appearance here too — and it updates live as the user taps a segment.
+        .preferredColorScheme(appearanceMode.colorScheme)
     }
 }
 

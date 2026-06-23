@@ -114,7 +114,9 @@ struct HomeView: View {
             // the sheet to the exact tapped article so its url opens.
             .sheet(item: $selectedArticle) { article in
                 if let url = URL(string: article.url) {
-                    SafariView(url: url).ignoresSafeArea()
+                    SafariView(url: url)
+                        .ignoresSafeArea()
+                        .appearanceOverride()
                 }
             }
         }
