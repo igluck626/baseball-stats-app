@@ -154,8 +154,12 @@ struct HomeView: View {
                 .ignoresSafeArea()
             LinearGradient(
                 colors: [
-                    teamColor.opacity(0.25),
-                    teamColor.opacity(0.08),
+                    // ~50% stronger than the previous 0.25 / 0.08 so the
+                    // team color reads clearly (was too pale). Kept global —
+                    // every team uses the same values; content sits on opaque
+                    // cards so dark-team primaries stay legible.
+                    teamColor.opacity(0.375),
+                    teamColor.opacity(0.12),
                     Color.clear,
                 ],
                 startPoint: .top,

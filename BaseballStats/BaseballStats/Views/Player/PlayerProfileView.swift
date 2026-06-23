@@ -189,10 +189,15 @@ struct PlayerProfileView: View {
                     if let tint = TeamColors.color(for: player.teamCode) {
                         let isDark = colorScheme == .dark
                         LinearGradient(
+                            // ~50% stronger than the previous values so the
+                            // team color reads clearly (was too pale). Bumped
+                            // in proportion with the Home page wash so the two
+                            // surfaces stay in sync. Content sits on opaque
+                            // cards, so dark-team primaries stay legible.
                             stops: [
-                                .init(color: tint.opacity(isDark ? 0.25  : 0.18 ), location: 0.0),
-                                .init(color: tint.opacity(isDark ? 0.21  : 0.14 ), location: 0.30),
-                                .init(color: tint.opacity(isDark ? 0.056 : 0.035), location: 0.70),
+                                .init(color: tint.opacity(isDark ? 0.375 : 0.27 ), location: 0.0),
+                                .init(color: tint.opacity(isDark ? 0.315 : 0.21 ), location: 0.30),
+                                .init(color: tint.opacity(isDark ? 0.084 : 0.052), location: 0.70),
                                 .init(color: .clear,                               location: 1.00),
                             ],
                             startPoint: .top,
