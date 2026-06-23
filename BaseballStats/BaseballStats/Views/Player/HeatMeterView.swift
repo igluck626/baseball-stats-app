@@ -66,13 +66,15 @@ struct HeatMeterView: View {
 
             track
         }
-        .padding(14)
+        // Match the "Season" + "Recent Games" card chrome on this profile
+        // (GridCardChrome / RecentGamesSection) so all three cards read as
+        // one family. Only the outer container changes — the gauge, marker,
+        // tier colors, and ⓘ button are untouched.
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
         .frame(maxWidth: .infinity)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(.ultraThinMaterial)
-        )
-        .shadow(color: .black.opacity(0.05), radius: 6, y: 2)
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 18))
+        .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 3)
         .sheet(isPresented: $showingInfo) {
             HeatInfoSheet()
         }
