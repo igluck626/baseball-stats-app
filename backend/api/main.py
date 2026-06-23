@@ -24,6 +24,7 @@ from sqlalchemy import (
 import sys
 
 import data_service
+import news_service
 from cache import cache as _cache
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -4105,6 +4106,38 @@ def admin_compute_heat(
             )
         db.commit()
     return out
+
+
+# ---------------------------------------------------------------------------
+# Team news (MLB.com RSS) — Phase 1: manual refresh + read endpoint.
+# Not wired into the nightly; a dedicated cron drives the refresh later.
+# ---------------------------------------------------------------------------
+
+@app.post("/admin/refresh-news")
+def admin_refresh_news():
+    """Ingest team news from all 30 MLB.com per-team RSS feeds and upsert into
+    `news_articles` (deduped on url). Returns a per-team + totals summary,
+    including any feeds that failed and how many old articles were pruned."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    return news_service.refresh_news()
+
+
+@app.get("/news")
+def news(
+    team: str | None = Query(
+        None,
+        description="Optional team_code (Lahman code, e.g. 'CHN'). Omit for "
+                    "league-wide newest articles across all teams.",
+    ),
+    limit: int = Query(20, ge=1, le=50, description="Max articles (1–50)."),
+):
+    """Newest-first team news. Filters to one `team_code` when `team` is given,
+    else returns league-wide newest. Each item carries id, source_name,
+    team_code, title, summary, url, image_url, published_at."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    return {"articles": news_service.get_news(team=team, limit=limit)}
 
 
 @app.post("/admin/load-people-bio")
