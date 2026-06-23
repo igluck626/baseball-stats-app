@@ -92,6 +92,19 @@ final class APIClient {
         return try await get(url)
     }
 
+    /// `GET /news?team={lahmanCode}&limit=N`. Newest-first team news. Pass a
+    /// Lahman team code to scope to one team, or nil for league-wide. The
+    /// backend wraps the list in `{"articles": [...]}`.
+    func getNews(team: String?, limit: Int = 15) async throws -> [NewsArticle] {
+        var query = [URLQueryItem(name: "limit", value: String(limit))]
+        if let team {
+            query.append(URLQueryItem(name: "team", value: team))
+        }
+        let url = try buildURL(path: "/news", query: query)
+        let response: NewsResponse = try await get(url)
+        return response.articles
+    }
+
     /// `GET /players/by-mlb-id/{id}`. Direct lookup by MLB Stats API id.
     /// Returns nil on 404 (no player by that id in our DB). Used by the
     /// Scores tab when the user taps a player in a box score — the

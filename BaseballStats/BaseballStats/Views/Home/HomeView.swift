@@ -27,6 +27,8 @@ struct HomeView: View {
     @State private var showingHistorySheet = false
     @State private var showingInjurySheet = false
     @State private var isEditingFavorites = false
+    /// Tapped news article — drives the in-app Safari reader sheet.
+    @State private var selectedArticle: NewsArticle?
 
     var body: some View {
         NavigationStack(path: $navigationPath) {
@@ -108,6 +110,13 @@ struct HomeView: View {
                     .presentationDetents([.large])
                 }
             }
+            // In-app Safari reader for a tapped news article. `item:` keys
+            // the sheet to the exact tapped article so its url opens.
+            .sheet(item: $selectedArticle) { article in
+                if let url = URL(string: article.url) {
+                    SafariView(url: url).ignoresSafeArea()
+                }
+            }
         }
         .task(id: store.bdlTeamId) {
             guard let bdlId = store.bdlTeamId else { return }
@@ -116,6 +125,7 @@ struct HomeView: View {
             await vm.loadTeamLeaders(bdlTeamId: bdlId)
             await vm.loadRoster(bdlTeamId: bdlId)
             await vm.loadTeamHistory(bdlTeamId: bdlId)
+            await vm.loadNews(bdlTeamId: bdlId)
             vm.startAutoRefresh(bdlTeamId: bdlId)
         }
         .task(id: favoritesStore.playerIds) {
@@ -226,6 +236,17 @@ struct HomeView: View {
                     onSchedule:   { showingSchedule = true },
                     onTapStripGame: { game in navigationPath.append(game) },
                 )
+
+                // Team News — nice-to-have, so it only appears once
+                // articles have loaded. A failed/empty fetch keeps
+                // `vm.news` empty and the section never renders.
+                if !vm.news.isEmpty {
+                    TeamNewsSection(
+                        articles:      vm.news,
+                        tint:          tint,
+                        onTapArticle:  { article in selectedArticle = article },
+                    )
+                }
 
                 TeamLeadersSection(
                     leaders:     vm.teamLeaders,
@@ -1520,6 +1541,141 @@ private struct AddFavoriteTile: View {
             )
         }
         .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Team News Section
+
+/// Horizontal carousel of the favorite team's latest news, pinned to the
+/// bottom of Home. The caller only renders this when `articles` is non-empty,
+/// so loading / empty / error all resolve to "section absent".
+private struct TeamNewsSection: View {
+    let articles: [NewsArticle]
+    let tint: Color
+    let onTapArticle: (NewsArticle) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            // Same header chrome as Team Leaders (capsule accent + title);
+            // the "See all" is a disabled-looking placeholder for now —
+            // tapping it does nothing until the full news screen ships.
+            HomeSectionHeader(title: "Team News", tint: tint) {
+                HStack(spacing: 3) {
+                    Text("See all")
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.bold))
+                }
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.tertiary)
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: 12) {
+                    ForEach(articles) { article in
+                        Button { onTapArticle(article) } label: {
+                            NewsCard(article: article, tint: tint)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 16)
+            }
+        }
+    }
+}
+
+/// One news tile — image (16:9) with a source badge, headline (2 lines), and
+/// a relative timestamp. Full-bleed image clipped to the card's rounded
+/// corners; solid card surface + the app's standard shadow.
+private struct NewsCard: View {
+    let article: NewsArticle
+    let tint: Color
+
+    private static let cardWidth: CGFloat = 250
+    private static let imageHeight: CGFloat = cardWidth * 9 / 16   // 16:9
+
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .abbreviated   // "2h ago", "3d ago"
+        return f
+    }()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            image
+                .frame(width: Self.cardWidth, height: Self.imageHeight)
+                .clipped()
+                .overlay(alignment: .bottomLeading) { sourceBadge }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(article.title)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(2, reservesSpace: true)   // uniform card height
+                    .multilineTextAlignment(.leading)
+                Text(Self.relativeFormatter.localizedString(
+                    for: article.publishedAt, relativeTo: Date()))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(12)
+            .frame(width: Self.cardWidth, alignment: .leading)
+        }
+        .frame(width: Self.cardWidth)
+        .background(Color(.systemBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 3)
+        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    // MARK: Image + fallbacks
+
+    @ViewBuilder
+    private var image: some View {
+        if let urlStr = article.imageUrl, let url = URL(string: urlStr) {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let img):
+                    img.resizable().scaledToFill()
+                case .empty:
+                    placeholder                 // loading: neutral gray
+                case .failure:
+                    fallback                    // broken/unreachable: team block
+                @unknown default:
+                    fallback
+                }
+            }
+        } else {
+            fallback                            // no image url
+        }
+    }
+
+    /// Neutral loading fill.
+    private var placeholder: some View {
+        Rectangle().fill(Color(.secondarySystemFill))
+    }
+
+    /// Graceful no-image block — a faint team-tint wash with a newspaper
+    /// glyph, never a broken-image icon.
+    private var fallback: some View {
+        ZStack {
+            Rectangle().fill(tint.opacity(0.18))
+            Image(systemName: "newspaper.fill")
+                .font(.title)
+                .foregroundStyle(tint.opacity(0.55))
+        }
+    }
+
+    /// "MLB.com" badge — semi-opaque light pill + dark text, legible over
+    /// any photo in both light and dark mode.
+    private var sourceBadge: some View {
+        Text(article.sourceName)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(.black)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Color.white.opacity(0.82), in: Capsule())
+            .padding(8)
     }
 }
 

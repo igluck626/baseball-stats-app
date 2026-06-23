@@ -99,6 +99,11 @@ final class HomeViewModel: ObservableObject {
     @Published var teamAwards: [TeamAwardGroup] = []
     @Published var isLoadingHistory: Bool = false
 
+    /// Team news (MLB.com RSS). Nice-to-have: a failed/empty fetch leaves
+    /// this empty and the Home section hides itself rather than erroring.
+    @Published var news: [NewsArticle] = []
+    @Published var isLoadingNews: Bool = false
+
     /// `{year → list of series the team played that year}`. Built
     /// off `teamPostseason` so the history table can do an O(1)
     /// lookup per row instead of re-scanning the array per cell.
@@ -360,6 +365,18 @@ final class HomeViewModel: ObservableObject {
         let (b, p) = await (batting, pitching)
         teamLeaders = TeamLeaders(batting: b, pitching: p)
         isLoadingLeaders = false
+    }
+
+    /// Fetch the favorite team's latest news. Fail-silent: any error or an
+    /// empty result leaves `news` empty so the Home section stays hidden.
+    func loadNews(bdlTeamId: Int) async {
+        guard let lahmanCode = bdlToLahmanTeamId[bdlTeamId] else {
+            news = []
+            return
+        }
+        isLoadingNews = true
+        news = ((try? await api.getNews(team: lahmanCode, limit: 15)) ?? [])
+        isLoadingNews = false
     }
 
     nonisolated private static func fetchLeaderGroups(
