@@ -1546,9 +1546,10 @@ private struct AddFavoriteTile: View {
 
 // MARK: - Team News Section
 
-/// Horizontal carousel of the favorite team's latest news, pinned to the
-/// bottom of Home. The caller only renders this when `articles` is non-empty,
-/// so loading / empty / error all resolve to "section absent".
+/// Horizontal carousel of the favorite team's latest news, placed between the
+/// team hero card and the Team Leaders section. The caller only renders this
+/// when `articles` is non-empty, so loading / empty / error all resolve to
+/// "section absent".
 private struct TeamNewsSection: View {
     let articles: [NewsArticle]
     let tint: Color

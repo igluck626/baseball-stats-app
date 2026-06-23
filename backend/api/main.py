@@ -4109,18 +4109,63 @@ def admin_compute_heat(
 
 
 # ---------------------------------------------------------------------------
-# Team news (MLB.com RSS) — Phase 1: manual refresh + read endpoint.
-# Not wired into the nightly; a dedicated cron drives the refresh later.
+# Team news (MLB.com RSS) — manual/cron refresh + read endpoint.
+# The refresh runs in a background thread (like the nightly) so the cron POST
+# returns immediately; a 20-minute Railway cron drives it.
 # ---------------------------------------------------------------------------
+
+# Backgrounded like the nightly. A simple flag + lock prevents overlapping
+# 20-minute ticks from walking the 30 feeds twice at once.
+_news_refresh_lock = threading.Lock()
+_news_refresh_running = False
+
+
+def _run_news_refresh() -> None:
+    """Background worker: run the news ingest, log the summary (the response
+    is gone since the endpoint already returned), and always clear the running
+    flag — success OR failure — via try/finally."""
+    global _news_refresh_running
+    try:
+        summary = news_service.refresh_news()
+        log.info(
+            "[news] refresh done: inserted=%s updated=%s pruned=%s failed_feeds=%s",
+            summary.get("total_inserted"),
+            summary.get("total_updated"),
+            summary.get("pruned"),
+            summary.get("failed_feeds"),
+        )
+    except Exception as exc:   # noqa: BLE001 — log + reset, never crash the thread
+        log.exception("[news] refresh FAILED: %s", exc)
+    finally:
+        with _news_refresh_lock:
+            _news_refresh_running = False
+
 
 @app.post("/admin/refresh-news")
 def admin_refresh_news():
-    """Ingest team news from all 30 MLB.com per-team RSS feeds and upsert into
-    `news_articles` (deduped on url). Returns a per-team + totals summary,
-    including any feeds that failed and how many old articles were pruned."""
+    """Kick off a team-news ingest (all 30 MLB.com per-team RSS feeds, upserted
+    into `news_articles` deduped on url) in a background thread and return
+    immediately — mirrors `/admin/nightly-update`. The walk takes ~30-40s, so
+    the per-team + totals summary is written to the logs, not the response.
+
+    Returns `{"status": "started"}`, or `{"status": "already_running"}` when a
+    refresh is already in flight (so overlapping cron ticks can't double-run)."""
     if not connection.db_available():
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
-    return news_service.refresh_news()
+
+    global _news_refresh_running
+    # Atomic claim inside the lock so two simultaneous POSTs can't both pass
+    # the running check and spawn duplicate threads.
+    with _news_refresh_lock:
+        if _news_refresh_running:
+            log.info("[news] refresh POST rejected — already running")
+            return {"status": "already_running"}
+        _news_refresh_running = True
+
+    log.info("[news] refresh POST accepted — spawning worker thread")
+    t = threading.Thread(target=_run_news_refresh, daemon=True, name="news-refresh")
+    t.start()
+    return {"status": "started"}
 
 
 @app.get("/news")
