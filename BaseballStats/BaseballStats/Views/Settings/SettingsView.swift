@@ -69,6 +69,16 @@ struct SettingsView: View {
                 } footer: {
                     Text("Show articles in a cleaner, simplified view when available.")
                 }
+
+                Section {
+                    // Pushes within this NavigationStack; inherits the
+                    // appearance override applied to the sheet below.
+                    NavigationLink {
+                        AboutView()
+                    } label: {
+                        Text("About")
+                    }
+                }
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
