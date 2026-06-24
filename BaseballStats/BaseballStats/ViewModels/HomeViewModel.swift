@@ -375,7 +375,9 @@ final class HomeViewModel: ObservableObject {
             return
         }
         isLoadingNews = true
-        news = ((try? await api.getNews(team: lahmanCode, limit: 15)) ?? [])
+        // Carousel is a top-headlines teaser; the full set is behind "See all"
+        // (TeamNewsListView, limit 25).
+        news = ((try? await api.getNews(team: lahmanCode, limit: 10)) ?? [])
         isLoadingNews = false
     }
 

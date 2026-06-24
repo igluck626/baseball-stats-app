@@ -30,7 +30,7 @@ struct HomeView: View {
     /// Tapped news article — drives the in-app Safari reader sheet.
     @State private var selectedArticle: NewsArticle?
 
-    var body: some View {
+    var body: some View { 
         NavigationStack(path: $navigationPath) {
             ZStack {
                 backgroundGradient
@@ -48,6 +48,13 @@ struct HomeView: View {
             }
             .navigationDestination(for: PlayerSearchResult.self) { player in
                 PlayerProfileView(player: player)
+            }
+            .navigationDestination(for: TeamNewsDestination.self) { dest in
+                TeamNewsListView(
+                    lahmanCode: dest.lahmanCode,
+                    teamName:   dest.teamName,
+                    tint:       teamColor,
+                )
             }
             .sheet(isPresented: $showingSettings) {
                 SettingsView()
@@ -153,6 +160,18 @@ struct HomeView: View {
         return color
     }
 
+    /// Push the full Team News list, using the exact same Lahman code the
+    /// carousel/news fetch already uses (`bdlToLahmanTeamId`) plus the team's
+    /// display name for the nav title.
+    private func pushNewsList() {
+        guard let bdlId = store.bdlTeamId,
+              let lahmanCode = bdlToLahmanTeamId[bdlId] else { return }
+        let teamName = MLBTeamCatalog.entry(forBDLId: bdlId)?.fullName
+        navigationPath.append(
+            TeamNewsDestination(lahmanCode: lahmanCode, teamName: teamName)
+        )
+    }
+
     /// Subtle team-color wash that only paints the top ~40% of the
     /// screen and fades to clear. The `Color(.systemBackground)` base
     /// shows through below the fade — so the lower half of the tab
@@ -247,6 +266,7 @@ struct HomeView: View {
                         articles:      vm.news,
                         tint:          tint,
                         onTapArticle:  { article in selectedArticle = article },
+                        onSeeAll:      { pushNewsList() },
                     )
                 }
 
@@ -1556,20 +1576,25 @@ private struct TeamNewsSection: View {
     let articles: [NewsArticle]
     let tint: Color
     let onTapArticle: (NewsArticle) -> Void
+    let onSeeAll: () -> Void
+
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            // Same header chrome as Team Leaders (capsule accent + title);
-            // the "See all" is a disabled-looking placeholder for now —
-            // tapping it does nothing until the full news screen ships.
+            // Same header chrome as Team Leaders (capsule accent + title).
+            // "See all" pushes the full news list; styled like the active
+            // "See All Stats" link (team tint, brightened for dark mode).
             HomeSectionHeader(title: "Team News", tint: tint) {
-                HStack(spacing: 3) {
-                    Text("See all")
-                    Image(systemName: "chevron.right")
-                        .font(.caption2.weight(.bold))
+                Button(action: onSeeAll) {
+                    HStack(spacing: 3) {
+                        Text("See all")
+                        Image(systemName: "chevron.right")
+                            .font(.caption2.weight(.bold))
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(colorScheme == .dark ? tint.brightenedForDarkText() : tint)
                 }
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.tertiary)
             }
 
             ScrollView(.horizontal, showsIndicators: false) {
