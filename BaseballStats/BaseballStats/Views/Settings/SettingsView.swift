@@ -21,6 +21,7 @@ struct SettingsView: View {
     /// Same store the rest of the app uses — the row reflects (and the picker
     /// writes) the one source of truth.
     @ObservedObject private var teamStore = FavoriteTeamStore.shared
+    @ObservedObject private var tabOrder = TabOrderStore.shared
     @AppStorage("autoReaderMode") private var autoReaderMode = false
     @AppStorage("appearanceMode") private var appearanceMode: AppearanceMode = .system
 
@@ -68,6 +69,19 @@ struct SettingsView: View {
                     Text("Reading")
                 } footer: {
                     Text("Show articles in a cleaner, simplified view when available.")
+                }
+
+                Section {
+                    NavigationLink {
+                        TabOrderView()
+                    } label: {
+                        LabeledContent("Tab Order",
+                                       value: tabOrder.order.first?.title ?? "")
+                    }
+                } header: {
+                    Text("Tabs")
+                } footer: {
+                    Text("Reorder the bottom tabs. The first tab is where the app opens.")
                 }
 
                 Section {

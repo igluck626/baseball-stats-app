@@ -14,41 +14,23 @@ struct ContentView: View {
     /// in the tree (e.g. AllTimeRankingsCard on a player profile)
     /// can push to the Leaderboards tab.
     @StateObject private var navigation = AppNavigation()
+    /// Drives the tab bar's order (and the launch tab). Same shared store
+    /// AppNavigation seeds `selectedTab` from, so reordering in Settings
+    /// rebuilds the bar here.
+    @ObservedObject private var tabOrder = TabOrderStore.shared
 
     var body: some View {
         TabView(selection: $navigation.selectedTab) {
-            HomeView()
-                .tabItem {
-                    Label("Home", systemImage: "house.fill")
-                }
-                .tag(AppNavigation.Tab.home)
-
-            ScoresView()
-                .tabItem {
-                    Label("Scores", systemImage: "baseball.diamond.bases")
-                }
-                .tag(AppNavigation.Tab.scores)
-
-            StandingsView() 
-                .tabItem {
-                    Label("Standings", systemImage: "list.bullet")
-                }
-                .tag(AppNavigation.Tab.standings)
-
-            LeaderboardsView()
-                .tabItem {
-                    Label("Leaders", systemImage: "trophy")
-                }
-                .tag(AppNavigation.Tab.leaders)
-
-            // Search lives last — the browse sections give it a
-            // discover-style landing screen rather than the chrome-
-            // first layout it had when it opened the app.
-            SearchView()
-                .tabItem {
-                    Label("Search", systemImage: "magnifyingglass")
-                }
-                .tag(AppNavigation.Tab.search)
+            // Tabs are data-driven: render each tab in the user's saved order.
+            // `.tag(tab)` keys selection by identity, so reordering preserves
+            // the current selection and the openLeaderboard jump still works.
+            ForEach(tabOrder.order) { tab in
+                tabContent(tab)
+                    .tabItem {
+                        Label(tab.title, systemImage: tab.icon)
+                    }
+                    .tag(tab)
+            }
         }
         .toolbarBackground(.ultraThinMaterial, for: .tabBar)
         .toolbarBackground(.visible, for: .tabBar)
@@ -56,6 +38,19 @@ struct ContentView: View {
         // User's System/Light/Dark choice, applied over the device appearance.
         // Cascades to every tab and the tab bar.
         .appearanceOverride()
+    }
+
+    /// The view for each tab. A @ViewBuilder switch (not AnyView) so SwiftUI
+    /// keeps each tab's concrete type and view identity.
+    @ViewBuilder
+    private func tabContent(_ tab: AppNavigation.Tab) -> some View {
+        switch tab {
+        case .home:      HomeView()
+        case .scores:    ScoresView()
+        case .standings: StandingsView()
+        case .leaders:   LeaderboardsView()
+        case .search:    SearchView()
+        }
     }
 }
 

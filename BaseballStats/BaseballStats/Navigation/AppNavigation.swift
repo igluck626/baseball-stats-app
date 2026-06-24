@@ -33,17 +33,77 @@ extension Notification.Name {
 
 @MainActor
 final class AppNavigation: ObservableObject {
-    /// Tab cases match ContentView's TabView. Tag values are stable so
-    /// a future reorder doesn't break deeplinks.
-    enum Tab: Int, Hashable {
+    /// Tab cases match ContentView's TabView. Raw values are stable identities
+    /// (decoupled from on-screen position) so deeplinks and the persisted tab
+    /// order keep working across reorders and app versions.
+    enum Tab: Int, Hashable, CaseIterable, Identifiable {
         case scores    = 0
         case search    = 1
         case standings = 2
         case leaders   = 3
         case home      = 4
+
+        var id: Int { rawValue }
+
+        /// On-screen label — matches the original hardcoded `.tabItem` text.
+        var title: String {
+            switch self {
+            case .home:      return "Home"
+            case .scores:    return "Scores"
+            case .standings: return "Standings"
+            case .leaders:   return "Leaders"
+            case .search:    return "Search"
+            }
+        }
+
+        /// SF Symbol — matches the original hardcoded `.tabItem` icon.
+        var icon: String {
+            switch self {
+            case .home:      return "house.fill"
+            case .scores:    return "baseball.diamond.bases"
+            case .standings: return "list.bullet"
+            case .leaders:   return "trophy"
+            case .search:    return "magnifyingglass"
+            }
+        }
+
+        /// Factory-default order — exactly today's visual order. Used when
+        /// nothing is saved, and to backfill any missing tabs during reconcile.
+        static let defaultOrder: [Tab] = [.home, .scores, .standings, .leaders, .search]
+
+        /// Reconcile a (possibly malformed/stale) saved order into a complete,
+        /// valid order: keep known saved cases in their saved order (deduped),
+        /// drop unknowns, then append any missing cases in default order.
+        /// Always returns exactly all five cases — never fewer, never crashes.
+        static func reconciledOrder(from saved: [Tab]) -> [Tab] {
+            var result: [Tab] = []
+            var seen = Set<Tab>()
+            for tab in saved where !seen.contains(tab) {
+                result.append(tab)
+                seen.insert(tab)
+            }
+            for tab in defaultOrder where !seen.contains(tab) {
+                result.append(tab)
+                seen.insert(tab)
+            }
+            return result
+        }
+
+        /// Same reconciliation, starting from persisted raw Int values.
+        /// Unknown raw values (e.g. a tab removed in a future version) are
+        /// dropped via `compactMap`; nil/empty falls back to the default order.
+        static func reconciledOrder(fromRawValues raw: [Int]?) -> [Tab] {
+            reconciledOrder(from: (raw ?? []).compactMap(Tab.init(rawValue:)))
+        }
     }
 
-    @Published var selectedTab: Tab = .home
+    @Published var selectedTab: Tab
+
+    init() {
+        // Launch on the FIRST tab in the user's saved order (same source of
+        // truth the tab bar uses). Falls back to .home if somehow empty.
+        selectedTab = TabOrderStore.shared.order.first ?? .home
+    }
     /// One-shot deeplink slot. Set by callers wanting to push state
     /// into the Leaderboards tab; consumed (and cleared) by
     /// LeaderboardsView on appear / on change. Optional so the
