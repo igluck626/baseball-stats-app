@@ -104,6 +104,11 @@ final class HomeViewModel: ObservableObject {
     @Published var news: [NewsArticle] = []
     @Published var isLoadingNews: Bool = false
 
+    /// League-wide news teaser (team omitted), deduped to collapse the
+    /// cross-team syndicated copies the league feed returns. Powers the
+    /// "League" toggle in the Home news carousel.
+    @Published var leagueNews: [NewsArticle] = []
+
     /// `{year → list of series the team played that year}`. Built
     /// off `teamPostseason` so the history table can do an O(1)
     /// lookup per row instead of re-scanning the array per cell.
@@ -379,6 +384,16 @@ final class HomeViewModel: ObservableObject {
         // (TeamNewsListView, limit 25).
         news = ((try? await api.getNews(team: lahmanCode, limit: 10)) ?? [])
         isLoadingNews = false
+    }
+
+    /// Fetch the league-wide news teaser (team omitted). Fail-silent like
+    /// `loadNews`. The league feed is heavily syndicated — a single wire
+    /// story is stored once per team, so the newest ~25 can be 20+ copies of
+    /// one article. Pull the endpoint max (50) so dedup leaves enough DISTINCT
+    /// stories to fill the 10-card carousel.
+    func loadLeagueNews() async {
+        let raw = (try? await api.getNews(team: nil, limit: 50)) ?? []
+        leagueNews = Array(NewsArticle.deduplicated(raw).prefix(10))
     }
 
     nonisolated private static func fetchLeaderGroups(

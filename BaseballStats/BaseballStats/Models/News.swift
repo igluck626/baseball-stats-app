@@ -67,3 +67,25 @@ struct NewsArticle: Decodable, Identifiable, Hashable {
 struct NewsResponse: Decodable {
     let articles: [NewsArticle]
 }
+
+extension NewsArticle {
+    /// Collapse cross-team syndicated duplicates. The same wire story is
+    /// stored once per team, so the league-wide feed surfaces it multiple
+    /// times. Two articles are "the same" when their normalized title (cased
+    /// down + whitespace-trimmed) and `publishedAt` match. Keeps the first
+    /// occurrence, preserving the endpoint's newest-first ordering.
+    static func deduplicated(_ articles: [NewsArticle]) -> [NewsArticle] {
+        var seen = Set<String>()
+        var out: [NewsArticle] = []
+        for article in articles {
+            let normalizedTitle = article.title
+                .lowercased()
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let key = "\(normalizedTitle)|\(article.publishedAt.timeIntervalSince1970)"
+            if seen.insert(key).inserted {
+                out.append(article)
+            }
+        }
+        return out
+    }
+}

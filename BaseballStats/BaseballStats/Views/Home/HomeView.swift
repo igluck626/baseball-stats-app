@@ -51,6 +51,7 @@ struct HomeView: View {
             }
             .navigationDestination(for: TeamNewsDestination.self) { dest in
                 TeamNewsListView(
+                    scope:      dest.scope,
                     lahmanCode: dest.lahmanCode,
                     teamName:   dest.teamName,
                     tint:       teamColor,
@@ -135,6 +136,7 @@ struct HomeView: View {
             await vm.loadRoster(bdlTeamId: bdlId)
             await vm.loadTeamHistory(bdlTeamId: bdlId)
             await vm.loadNews(bdlTeamId: bdlId)
+            await vm.loadLeagueNews()
             vm.startAutoRefresh(bdlTeamId: bdlId)
         }
         .task(id: favoritesStore.playerIds) {
@@ -160,16 +162,24 @@ struct HomeView: View {
         return color
     }
 
-    /// Push the full Team News list, using the exact same Lahman code the
-    /// carousel/news fetch already uses (`bdlToLahmanTeamId`) plus the team's
-    /// display name for the nav title.
-    private func pushNewsList() {
-        guard let bdlId = store.bdlTeamId,
-              let lahmanCode = bdlToLahmanTeamId[bdlId] else { return }
-        let teamName = MLBTeamCatalog.entry(forBDLId: bdlId)?.fullName
-        navigationPath.append(
-            TeamNewsDestination(lahmanCode: lahmanCode, teamName: teamName)
-        )
+    /// Push the full news list for the given scope. Team scope uses the exact
+    /// same Lahman code the carousel/news fetch already uses
+    /// (`bdlToLahmanTeamId`) plus the team's display name for the nav title;
+    /// league scope needs neither (per-article badges + a fixed title).
+    private func pushNewsList(scope: NewsScope) {
+        switch scope {
+        case .team:
+            guard let bdlId = store.bdlTeamId,
+                  let lahmanCode = bdlToLahmanTeamId[bdlId] else { return }
+            let teamName = MLBTeamCatalog.entry(forBDLId: bdlId)?.fullName
+            navigationPath.append(
+                TeamNewsDestination(scope: .team, lahmanCode: lahmanCode, teamName: teamName)
+            )
+        case .league:
+            navigationPath.append(
+                TeamNewsDestination(scope: .league, lahmanCode: nil, teamName: nil)
+            )
+        }
     }
 
     /// Subtle team-color wash that only paints the top ~40% of the
@@ -263,10 +273,11 @@ struct HomeView: View {
                 // `vm.news` empty and the section never renders.
                 if !vm.news.isEmpty {
                     TeamNewsSection(
-                        articles:      vm.news,
-                        tint:          tint,
-                        onTapArticle:  { article in selectedArticle = article },
-                        onSeeAll:      { pushNewsList() },
+                        teamArticles:   vm.news,
+                        leagueArticles: vm.leagueNews,
+                        tint:           tint,
+                        onTapArticle:   { article in selectedArticle = article },
+                        onSeeAll:       { scope in pushNewsList(scope: scope) },
                     )
                 }
 
@@ -1573,20 +1584,33 @@ private struct AddFavoriteTile: View {
 /// when `articles` is non-empty, so loading / empty / error all resolve to
 /// "section absent".
 private struct TeamNewsSection: View {
-    let articles: [NewsArticle]
+    let teamArticles: [NewsArticle]
+    let leagueArticles: [NewsArticle]
     let tint: Color
     let onTapArticle: (NewsArticle) -> Void
-    let onSeeAll: () -> Void
+    let onSeeAll: (NewsScope) -> Void
 
+    /// Persisted across launches so the carousel reopens on the last-used feed.
+    @AppStorage("newsScope") private var scope: NewsScope = .team
     @Environment(\.colorScheme) private var colorScheme
+
+    /// Articles for the active scope. Falls back to team if league was chosen
+    /// but isn't loaded (e.g. the league fetch failed), so the carousel is
+    /// never empty while team news exists.
+    private var articles: [NewsArticle] {
+        scope == .league && !leagueArticles.isEmpty ? leagueArticles : teamArticles
+    }
+
+    /// Team-mode is visually identical to today; badges only in league mode.
+    private var showsTeamBadge: Bool { scope == .league }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             // Same header chrome as Team Leaders (capsule accent + title).
-            // "See all" pushes the full news list; styled like the active
-            // "See All Stats" link (team tint, brightened for dark mode).
+            // "See all" pushes the full news list for the current scope; styled
+            // like the active "See All Stats" link (team tint, dark-brightened).
             HomeSectionHeader(title: "Team News", tint: tint) {
-                Button(action: onSeeAll) {
+                Button { onSeeAll(scope) } label: {
                     HStack(spacing: 3) {
                         Text("See all")
                         Image(systemName: "chevron.right")
@@ -1597,11 +1621,24 @@ private struct TeamNewsSection: View {
                 }
             }
 
+            // Team / League toggle — only once the league feed is available.
+            // Constrained width so the two-option control doesn't span the
+            // full screen; leading-aligned under the header.
+            if !leagueArticles.isEmpty {
+                Picker("News scope", selection: $scope) {
+                    Text("Team").tag(NewsScope.team)
+                    Text("League").tag(NewsScope.league)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 200)
+                .padding(.horizontal, 16)
+            }
+
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 12) {
                     ForEach(articles) { article in
                         Button { onTapArticle(article) } label: {
-                            NewsCard(article: article, tint: tint)
+                            NewsCard(article: article, tint: tint, showsTeamBadge: showsTeamBadge)
                         }
                         .buttonStyle(.plain)
                     }
@@ -1618,6 +1655,9 @@ private struct TeamNewsSection: View {
 private struct NewsCard: View {
     let article: NewsArticle
     let tint: Color
+    /// League mode adds a team badge (bottom-right) and derives the image
+    /// fallback tint from the article's own team instead of the favorite.
+    let showsTeamBadge: Bool
 
     private static let cardWidth: CGFloat = 250
     private static let imageHeight: CGFloat = cardWidth * 9 / 16   // 16:9
@@ -1628,12 +1668,23 @@ private struct NewsCard: View {
         return f
     }()
 
+    /// Per-article team tint in league mode; favorite-team tint otherwise.
+    private var effectiveTint: Color {
+        showsTeamBadge ? (TeamColors.color(for: article.teamCode) ?? .accentColor) : tint
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             image
                 .frame(width: Self.cardWidth, height: Self.imageHeight)
                 .clipped()
                 .overlay(alignment: .bottomLeading) { sourceBadge }
+                .overlay(alignment: .bottomTrailing) {
+                    if showsTeamBadge {
+                        NewsTeamBadge(teamCode: article.teamCode)
+                            .padding(8)
+                    }
+                }
 
             VStack(alignment: .leading, spacing: 6) {
                 Text(article.title)
@@ -1687,10 +1738,10 @@ private struct NewsCard: View {
     /// glyph, never a broken-image icon.
     private var fallback: some View {
         ZStack {
-            Rectangle().fill(tint.opacity(0.18))
+            Rectangle().fill(effectiveTint.opacity(0.18))
             Image(systemName: "newspaper.fill")
                 .font(.title)
-                .foregroundStyle(tint.opacity(0.55))
+                .foregroundStyle(effectiveTint.opacity(0.55))
         }
     }
 
