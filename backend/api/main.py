@@ -1075,6 +1075,20 @@ def award_voting(
     return response
 
 
+@app.get("/awards/available")
+def awards_available():
+    """Which (award, year, league) voting combinations actually have data,
+    so a picker can offer only valid choices. Grouped per award: overall
+    league set, min/max year, and a newest-first per-year list of which
+    leagues have data that year (this captures the ML→AL/NL split — early
+    Cy Young / Rookie of the Year years return ['ML'], later years
+    ['AL','NL']). Restricted to `_AWARD_VOTING_IDS` so it never advertises an
+    award the /awards/voting breakdown can't render. Read-only metadata."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    return data_service.get_awards_available(_AWARD_VOTING_IDS)
+
+
 @app.get("/players/{player_id}/postseason/batting")
 def player_postseason_batting(player_id: int):
     rows = data_service.get_postseason_batting(player_id)

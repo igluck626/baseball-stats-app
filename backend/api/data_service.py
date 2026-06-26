@@ -1694,6 +1694,59 @@ def get_award_voting(award_id: str, year: int, league: str) -> Optional[dict]:
     }
 
 
+# League display order for the /awards/available picker metadata — AL, NL,
+# then ML (the pre-split single-league bucket) last.
+_AWARD_LEAGUE_ORDER = {"AL": 0, "NL": 1, "ML": 2}
+
+# Preferred award ordering in the picker response, independent of how the
+# distinct query happens to return them.
+_AWARD_DISPLAY_ORDER = ["MVP", "CY Young", "ROY"]
+
+
+def get_awards_available(award_ids) -> dict:
+    """Distinct (award, year, league) voting combinations that exist, grouped
+    for picker construction. Restricted to `award_ids` (the awards the
+    /awards/voting breakdown can render). For each award returns its overall
+    league set, min/max year, and a newest-first per-year list of which
+    leagues have data that year — the per-year league lists capture the
+    ML→AL/NL split, so a picker never offers an empty (award, year, league)."""
+    if not connection.db_available():
+        return {"awards": []}
+    with connection.get_session() as db:
+        combos = crud.get_award_share_combos(db, award_ids)
+
+    # award_id -> {year -> set(leagues)}
+    by_award: dict[str, dict[int, set]] = {}
+    for award_id, year, league in combos:
+        by_award.setdefault(award_id, {}).setdefault(year, set()).add(league)
+
+    def _sorted_leagues(leagues) -> list:
+        return sorted(leagues, key=lambda lg: _AWARD_LEAGUE_ORDER.get(lg, 99))
+
+    def _award_sort_key(award_id: str) -> int:
+        return (_AWARD_DISPLAY_ORDER.index(award_id)
+                if award_id in _AWARD_DISPLAY_ORDER else len(_AWARD_DISPLAY_ORDER))
+
+    awards_out: list[dict] = []
+    for award_id in sorted(by_award, key=_award_sort_key):
+        year_map = by_award[award_id]
+        # Newest year first.
+        entries = [
+            {"year": yr, "leagues": _sorted_leagues(year_map[yr])}
+            for yr in sorted(year_map, reverse=True)
+        ]
+        overall_leagues = set().union(*year_map.values())
+        awards_out.append({
+            "award":    award_id,
+            "leagues":  _sorted_leagues(overall_leagues),
+            "min_year": min(year_map),
+            "max_year": max(year_map),
+            "entries":  entries,
+        })
+
+    return {"awards": awards_out}
+
+
 def get_postseason_batting(player_id: int) -> list[dict]:
     if not connection.db_available():
         return []

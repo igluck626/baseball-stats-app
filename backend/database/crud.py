@@ -243,6 +243,22 @@ def get_award_share_voting(db: Session, award_id: str,
     )
 
 
+def get_award_share_combos(db: Session, award_ids) -> list[tuple[str, int, str]]:
+    """Distinct (award_id, year, league) triples that have voting data,
+    restricted to `award_ids`. Lightweight metadata powering the
+    `/awards/available` picker — caller groups these into per-award /
+    per-year league sets."""
+    rows = (
+        db.query(PlayerAwardShare.award_id,
+                 PlayerAwardShare.year,
+                 PlayerAwardShare.league)
+        .filter(PlayerAwardShare.award_id.in_(award_ids))
+        .distinct()
+        .all()
+    )
+    return [(r.award_id, r.year, r.league) for r in rows]
+
+
 def save_player_award_shares(db: Session, rows: list[dict]) -> None:
     """Upsert award-share rows. PostgreSQL gets the native
     `INSERT ... ON CONFLICT (player_id, year, award_id, league)
