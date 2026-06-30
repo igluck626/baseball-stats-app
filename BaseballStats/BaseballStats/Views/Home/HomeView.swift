@@ -291,24 +291,14 @@ struct HomeView: View {
                     },
                 )
 
-                RosterSection(
-                    roster:    vm.roster,
-                    isLoading: vm.isLoadingRoster,
-                    tint:      tint,
-                    onSeeAll:  { showingRosterSheet = true },
-                )
-
-                if !vm.injuredPlayers.isEmpty {
-                    InjuryReportSection(
-                        count:    vm.injuredPlayers.count,
-                        tint:     tint,
-                        onSeeAll: { showingInjurySheet = true },
-                    )
-                }
-
-                TeamHistorySection(
-                    tint:     tint,
-                    onSeeAll: { showingHistorySheet = true },
+                // Roster / Injury / History — three nav entries grouped into
+                // one card. The injury row is omitted when there are none.
+                TeamToolsCard(
+                    tint:        tint,
+                    injuryCount: vm.injuredPlayers.count,
+                    onRoster:    { showingRosterSheet = true },
+                    onInjuries:  { showingInjurySheet = true },
+                    onHistory:   { showingHistorySheet = true },
                 )
 
                 FavoritePlayersSection(
@@ -1274,106 +1264,116 @@ func formatLeaderValue(_ v: Double?, stat: String) -> String {
     }
 }
 
-// MARK: - Roster Section (header-only entry point)
+// MARK: - Team Tools Card (Roster / Injury / History nav rows)
 
-/// Header-only entry point for the active-roster surface. Renders a
-/// `HomeSectionHeader` with a trailing "See All ›" button that opens
-/// `RosterSheet` — the sheet does the actual table rendering. We
-/// dropped the inline preview cards: they didn't add information
-/// the section header doesn't already imply.
-private struct RosterSection: View {
-    let roster: [RosterPlayer]
-    let isLoading: Bool
+/// Groups the three team-detail entry points (Roster, Injury Report, History)
+/// into one card of tappable nav rows — replacing the old bare section headers.
+/// Each row opens its existing sheet. The Injury Report row is omitted entirely
+/// when there are no injuries (so no dangling divider), while the card itself
+/// always shows (Roster + History are always present).
+private struct TeamToolsCard: View {
     let tint: Color
-    let onSeeAll: () -> Void
+    /// 0 → the Injury Report row is omitted.
+    let injuryCount: Int
+    let onRoster: () -> Void
+    let onInjuries: () -> Void
+    let onHistory: () -> Void
 
     @Environment(\.colorScheme) private var colorScheme
 
-    var body: some View {
-        HomeSectionHeader(title: "Roster", tint: tint) {
-            Button(action: onSeeAll) {
-                HStack(spacing: 3) {
-                    Text("See All")
-                    Image(systemName: "chevron.right")
-                        .font(.caption2.weight(.bold))
-                }
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(colorScheme == .dark ? tint.brightenedForDarkText() : tint)
-            }
-        }
-    }
-}
-
-// MARK: - Team History Section (header-only entry point)
-
-/// Header-only section for the franchise's season-by-season history.
-/// Tapping "See All ›" opens `TeamHistorySheet` — there's no inline
-/// preview here because the history table only reads well at the
-/// sheet's full width, and a truncated single-row preview adds
-/// noise without information.
-private struct TeamHistorySection: View {
-    let tint: Color
-    let onSeeAll: () -> Void
-
-    @Environment(\.colorScheme) private var colorScheme
-
-    var body: some View {
-        HomeSectionHeader(title: "History", tint: tint) {
-            Button(action: onSeeAll) {
-                HStack(spacing: 3) {
-                    Text("See All")
-                    Image(systemName: "chevron.right")
-                        .font(.caption2.weight(.bold))
-                }
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(colorScheme == .dark ? tint.brightenedForDarkText() : tint)
-            }
-        }
-    }
-}
-
-// MARK: - Injury Report Section (header-only entry point)
-
-/// Header-only entry point matching the Roster + History sections.
-/// Renders `HomeSectionHeader`-style chrome inline (so the count can
-/// sit next to the title in a separate `.secondary` color) plus a
-/// trailing "See All ›" button. The caller hides this section
-/// entirely when there are no injuries.
-private struct InjuryReportSection: View {
-    let count: Int
-    let tint: Color
-    let onSeeAll: () -> Void
-
-    @Environment(\.colorScheme) private var colorScheme
-
-    /// Brightened team color for the header accent + control in dark mode.
-    private var headerTint: Color {
+    /// Team accent, brightened in dark mode — same source as the old header
+    /// capsule bar.
+    private var iconTint: Color {
         colorScheme == .dark ? tint.brightenedForDarkText() : tint
     }
 
+    /// Divider starts after the icon (leading inset) like a grouped list.
+    private static let dividerInset: CGFloat = 58
+
+    private var injuryCaption: String {
+        injuryCount == 1 ? "1 player on the IL" : "\(injuryCount) players on the IL"
+    }
+
     var body: some View {
-        HStack(spacing: 10) {
-            Capsule()
-                .fill(headerTint)
-                .frame(width: 4, height: 18)
-            Text("Injury Report")
-                .font(.title3.weight(.bold))
-            Text("(\(count))")
-                .font(.title3.weight(.bold))
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
-            Spacer()
-            Button(action: onSeeAll) {
-                HStack(spacing: 3) {
-                    Text("See All")
-                    Image(systemName: "chevron.right")
-                        .font(.caption2.weight(.bold))
-                }
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(headerTint)
+        VStack(spacing: 0) {
+            row(icon: "person.3.fill", title: "Roster",
+                caption: "Active roster", action: onRoster)
+
+            if injuryCount > 0 {
+                divider
+                row(icon: "cross.case.fill", title: "Injury Report",
+                    caption: injuryCaption, badge: injuryCount, action: onInjuries)
             }
+
+            divider
+            row(icon: "clock.arrow.circlepath", title: "History",
+                caption: "Season-by-season record", action: onHistory)
         }
+        // Team-tint wash — identical treatment to the Team Leaders card so the
+        // two cards stay in sync (same helper, border, shadow, corner radius).
+        .background(
+            teamWashBackground(tint: tint, cornerRadius: 18, isDark: colorScheme == .dark)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(tint.opacity(0.25), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 3)
         .padding(.horizontal, 16)
+    }
+
+    private var divider: some View {
+        Divider().padding(.leading, Self.dividerInset)
+    }
+
+    private func row(
+        icon: String,
+        title: String,
+        caption: String,
+        badge: Int? = nil,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(iconTint)
+                    .frame(width: 30, height: 30)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(iconTint.opacity(0.15))
+                    )
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                    Text(caption)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 8)
+
+                if let badge {
+                    Text("\(badge)")
+                        .font(.caption.weight(.bold))
+                        .monospacedDigit()
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(iconTint))
+                }
+
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 11)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 
