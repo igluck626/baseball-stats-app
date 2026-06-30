@@ -24,6 +24,7 @@ from sqlalchemy import (
 import sys
 
 import data_service
+import live_service
 import news_service
 from cache import cache as _cache
 
@@ -843,7 +844,11 @@ def _run_catchup_update() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     data_service.init_db()
+    # Start the in-process live-game proxy loop (single-worker assumption —
+    # see live_service.py). Guarded so it starts at most once per process.
+    live_service.start_live_loop()
     yield
+    live_service.stop_live_loop()
 
 
 app = FastAPI(title="Baseball Stats API", version="0.1.0", lifespan=lifespan)
@@ -1413,6 +1418,31 @@ def team_postseason(team_id: str):
         "team_id":    team_id,
         "postseason": postseason,
     }
+
+
+@app.get("/live/games")
+def live_games():
+    """All currently-live MLB games as compact summary cards (teams, score,
+    inning/half/outs, live flag), served straight from the live-proxy cache —
+    never calls balldontlie. Empty list when nothing is live. Each card (and the
+    envelope) carries the snapshot's `fetched_at` timestamp."""
+    return live_service.get_live_summary()
+
+
+@app.get("/live/games/{game_id}")
+def live_game(game_id: int):
+    """The full unified live snapshot for one game (score, linescore grid,
+    inning/count/base state, current batter/pitcher, recent + scoring plays, and
+    per-player batting/pitching lines) — all from ONE cached snapshot, so every
+    element is mutually consistent. 404 when the game isn't currently live /
+    not in cache. Reads cache only — never calls balldontlie."""
+    snapshot = live_service.get_live_game(game_id)
+    if snapshot is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Game {game_id} is not currently live (no cached snapshot)",
+        )
+    return snapshot
 
 
 @app.get("/postseason/available")
