@@ -36,6 +36,9 @@ struct SearchView: View {
             .navigationDestination(for: AwardVotingBrowserDestination.self) { _ in
                 AwardVotingBrowserView()
             }
+            .navigationDestination(for: PostseasonBracketDestination.self) { _ in
+                PostseasonBracketView()
+            }
             .searchable(
                 text: $viewModel.searchText,
                 placement: .navigationBarDrawer(displayMode: .always),
@@ -184,6 +187,7 @@ struct SearchView: View {
             .padding(.horizontal, 16)
 
             awardVotingEntryCard
+            playoffHistoryEntryCard
         }
     }
 
@@ -203,6 +207,40 @@ struct SearchView: View {
                         .font(.headline)
                         .foregroundStyle(.primary)
                     Text("MVP, Cy Young, Rookie of the Year by season")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(14)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(.ultraThinMaterial)
+            )
+            .shadow(color: .black.opacity(0.06), radius: 8, y: 3)
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 16)
+    }
+
+    /// Pushes the by-year playoff bracket. Same row chrome as the Award Voting
+    /// entry.
+    private var playoffHistoryEntryCard: some View {
+        Button {
+            path.append(PostseasonBracketDestination())
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "trophy.circle.fill")
+                    .font(.title2)
+                    .foregroundStyle(.tint)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Playoff History")
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                    Text("Postseason brackets by year")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

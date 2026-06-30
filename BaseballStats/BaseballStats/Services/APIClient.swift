@@ -251,6 +251,33 @@ final class APIClient {
         return try await get(url)
     }
 
+    /// `GET /postseason/available`. Years that have postseason data, newest
+    /// first — drives the Playoff History year picker. No params; always
+    /// returns a body, so this never 404s.
+    func getPostseasonAvailable() async throws -> PostseasonAvailableResponse {
+        let url = try buildURL(path: "/postseason/available")
+        return try await get(url)
+    }
+
+    /// `GET /postseason?year=YYYY`. Every postseason series that year, both
+    /// leagues. Series come back sorted by `round_code` (not bracket order);
+    /// the client assembles the bracket. An empty `series` is a valid response.
+    func getPostseason(year: Int) async throws -> PostseasonYearResponse {
+        let url = try buildURL(
+            path: "/postseason",
+            query: [URLQueryItem(name: "year", value: String(year))]
+        )
+        return try await get(url)
+    }
+
+    /// `GET /postseason/champions`. Every World Series result, newest year
+    /// first, in one call — drives the Playoff History champions list. No
+    /// params; always returns a body, so this never 404s.
+    func getPostseasonChampions() async throws -> PostseasonChampionsResponse {
+        let url = try buildURL(path: "/postseason/champions")
+        return try await get(url)
+    }
+
     /// `GET /teams/standings?year=...`. Returns nil on 404.
     func getStandings(year: Int) async throws -> StandingsResponse? {
         let url = try buildURL(
