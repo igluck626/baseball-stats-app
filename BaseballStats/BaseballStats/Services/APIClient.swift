@@ -242,6 +242,15 @@ final class APIClient {
         return try await getOptional(url)
     }
 
+    /// `GET /awards/available`. Enumerates which (award, year, league) voting
+    /// combinations exist, grouped per award (newest year first), so the
+    /// picker offers only valid choices. No params; the backend always returns
+    /// a body (empty `awards` if the DB has none), so this never 404s.
+    func getAwardsAvailable() async throws -> AwardsAvailableResponse {
+        let url = try buildURL(path: "/awards/available")
+        return try await get(url)
+    }
+
     /// `GET /teams/standings?year=...`. Returns nil on 404.
     func getStandings(year: Int) async throws -> StandingsResponse? {
         let url = try buildURL(

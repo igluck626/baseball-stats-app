@@ -344,16 +344,7 @@ struct LeaderboardsView: View {
                 }
             }
         } label: {
-            HStack(spacing: 4) {
-                Text(LeaderboardsViewModel.displayName(viewModel.selectedStat))
-                    .font(.subheadline.weight(.semibold))
-                Image(systemName: "chevron.down")
-                    .font(.caption2.weight(.semibold))
-            }
-            .foregroundStyle(.primary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .glassEffect(.regular, in: Capsule())
+            MenuPillLabel(text: LeaderboardsViewModel.displayName(viewModel.selectedStat))
         }
     }
 

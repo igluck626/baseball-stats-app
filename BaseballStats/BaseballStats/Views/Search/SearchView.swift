@@ -33,6 +33,9 @@ struct SearchView: View {
             .navigationDestination(for: PlayerSearchResult.self) { player in
                 PlayerProfileView(player: player)
             }
+            .navigationDestination(for: AwardVotingBrowserDestination.self) { _ in
+                AwardVotingBrowserView()
+            }
             .searchable(
                 text: $viewModel.searchText,
                 placement: .navigationBarDrawer(displayMode: .always),
@@ -157,11 +160,66 @@ struct SearchView: View {
                     // landing from going blank with the curated shelf.
                     browseShelf(title: "Active Stars", players: viewModel.activeStars)
                 }
+
+                baseballHistorySection
             }
             .padding(.top, 16)
             .padding(.bottom, 24)
         }
         .scrollIndicators(.hidden)
+    }
+
+    // MARK: - Baseball History
+
+    /// Evergreen browse section (independent of search / heat) for historical
+    /// reference features. One entry today: Award Voting.
+    private var baseballHistorySection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 6) {
+                Image(systemName: "trophy")
+                    .foregroundStyle(.tint)
+                Text("Baseball History")
+                    .font(.title3.weight(.semibold))
+            }
+            .padding(.horizontal, 16)
+
+            awardVotingEntryCard
+        }
+    }
+
+    /// Pushes the award-voting picker (same row chrome as `compareEntryCard`).
+    /// The picker then presents the existing `AwardVotingView` breakdown as a
+    /// sheet, so the breakdown has a clean pushed parent (no sheet-over-sheet).
+    private var awardVotingEntryCard: some View {
+        Button {
+            path.append(AwardVotingBrowserDestination())
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "trophy.fill")
+                    .font(.title2)
+                    .foregroundStyle(.tint)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Award Voting")
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                    Text("MVP, Cy Young, Rookie of the Year by season")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(14)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(.ultraThinMaterial)
+            )
+            .shadow(color: .black.opacity(0.06), radius: 8, y: 3)
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 16)
     }
 
     // MARK: - Heat sections

@@ -128,3 +128,31 @@ struct SeasonStatsBlock: Codable, Hashable {
         let ERAplus: Double?
     }
 }
+
+// MARK: - /awards/available
+
+/// Enumeration of which (award, year, league) voting combinations actually
+/// have data, so the picker offers only valid choices. `entries` is newest
+/// year first; each entry's `leagues` captures the single-league (ML) →
+/// AL/NL split per year, so a picker can offer only the real leagues for the
+/// selected (award, year) with no hardcoded rules.
+struct AwardsAvailableResponse: Codable, Hashable {
+    let awards: [AwardAvailability]
+}
+
+struct AwardAvailability: Codable, Hashable, Identifiable {
+    let award: String          // "MVP" / "CY Young" / "ROY"
+    let leagues: [String]      // overall league set across all years
+    let min_year: Int
+    let max_year: Int
+    let entries: [AwardYearAvailability]   // newest year first
+
+    var id: String { award }
+}
+
+struct AwardYearAvailability: Codable, Hashable, Identifiable {
+    let year: Int
+    let leagues: [String]      // leagues with data that year ("ML" or "AL"/"NL")
+
+    var id: Int { year }
+}
