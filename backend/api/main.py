@@ -1449,20 +1449,24 @@ def postseason(year: int = Query(..., description="Postseason year")):
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
     with connection.get_session() as db:
         rows = crud.get_series_post_by_year(db, year)
-    series = [
-        {
-            "round_code":    r.round,
-            "round":         _POSTSEASON_ROUND_DISPLAY.get(r.round, r.round),
-            "winner":        r.team_id_winner,
-            "loser":         r.team_id_loser,
-            "winner_league": r.league_id_winner,
-            "loser_league":  r.league_id_loser,
-            "wins":          r.wins,
-            "losses":        r.losses,
-            "ties":          r.ties,
-        }
-        for r in rows
-    ]
+        # Shape INSIDE the session block: get_session() commits on exit, which
+        # expires the ORM instances (expire_on_commit defaults True), so reading
+        # their attributes after the block raises DetachedInstanceError. Same
+        # pattern as /teams/{id}/postseason, which builds its list in-block.
+        series = [
+            {
+                "round_code":    r.round,
+                "round":         _POSTSEASON_ROUND_DISPLAY.get(r.round, r.round),
+                "winner":        r.team_id_winner,
+                "loser":         r.team_id_loser,
+                "winner_league": r.league_id_winner,
+                "loser_league":  r.league_id_loser,
+                "wins":          r.wins,
+                "losses":        r.losses,
+                "ties":          r.ties,
+            }
+            for r in rows
+        ]
     return {"year": year, "series": series}
 
 
