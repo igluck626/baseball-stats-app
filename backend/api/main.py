@@ -1427,6 +1427,34 @@ def postseason_available():
     return {"years": years}
 
 
+@app.get("/postseason/champions")
+def postseason_champions():
+    """Every World Series result, newest year first, in one call — drives the
+    Playoff History champions list. Each row carries explicit winner/loser
+    (raw Lahman codes) + leagues + series W-L (winner perspective). Read-only."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    with connection.get_session() as db:
+        rows = crud.get_world_series_results(db)
+        # Shape INSIDE the session block (the session commits + expires ORM
+        # instances on exit, so attribute reads afterward would raise
+        # DetachedInstanceError — same fix as /postseason?year=).
+        champions = [
+            {
+                "year":          r.year,
+                "winner":        r.team_id_winner,
+                "loser":         r.team_id_loser,
+                "winner_league": r.league_id_winner,
+                "loser_league":  r.league_id_loser,
+                "wins":          r.wins,
+                "losses":        r.losses,
+                "ties":          r.ties,
+            }
+            for r in rows
+        ]
+    return {"champions": champions}
+
+
 @app.get("/postseason")
 def postseason(year: int = Query(..., description="Postseason year")):
     """All postseason series for one year, across both leagues, shaped for

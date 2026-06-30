@@ -542,3 +542,15 @@ def get_series_post_by_year(db: Session, year: int) -> list[SeriesPost]:
           .order_by(SeriesPost.round)
           .all()
     )
+
+
+def get_world_series_results(db: Session) -> list[SeriesPost]:
+    """Every World Series result (round == 'WS'), newest year first. Powers the
+    Playoff History champions list. Pre-1969 the WS row is simply the year's
+    champion; older WS-equivalent rows that carry the 'WS' code are included."""
+    return (
+        db.query(SeriesPost)
+          .filter(SeriesPost.round == "WS")
+          .order_by(SeriesPost.year.desc())
+          .all()
+    )
