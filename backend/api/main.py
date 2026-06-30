@@ -1415,6 +1415,57 @@ def team_postseason(team_id: str):
     }
 
 
+@app.get("/postseason/available")
+def postseason_available():
+    """Years that have postseason series, newest first — drives the Playoff
+    History year picker so it only offers real years (gaps like 1904 and 1994,
+    which had no postseason, are simply absent). Read-only metadata."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    with connection.get_session() as db:
+        years = crud.get_series_post_years(db)
+    return {"years": years}
+
+
+@app.get("/postseason")
+def postseason(year: int = Query(..., description="Postseason year")):
+    """All postseason series for one year, across both leagues, shaped for
+    bracket rendering. Each series returns the winner and loser explicitly (a
+    bracket needs to know who advanced), BOTH the raw Lahman `round_code` AND a
+    normalized display `round` label, and the winner-perspective W-L (`wins`/
+    `losses`/`ties`).
+
+    Unrecognized / legacy round codes (1981 AEDIV/AWDIV/NEDIV/NWDIV, pre-1900
+    Temple Cup codes, etc.) pass through with their raw code as both
+    `round_code` and `round` (the display map falls back to the raw code), so
+    the client can choose to bracket them or fall back to a flat list — nothing
+    is filtered out.
+
+    Team codes stay raw Lahman codes; the iOS side maps them to abbreviation /
+    color via its shared helpers. An empty `series` (no rows for the year) is a
+    valid response — matches `/teams/{id}/postseason`, which never 404s on an
+    empty result."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    with connection.get_session() as db:
+        rows = crud.get_series_post_by_year(db, year)
+    series = [
+        {
+            "round_code":    r.round,
+            "round":         _POSTSEASON_ROUND_DISPLAY.get(r.round, r.round),
+            "winner":        r.team_id_winner,
+            "loser":         r.team_id_loser,
+            "winner_league": r.league_id_winner,
+            "loser_league":  r.league_id_loser,
+            "wins":          r.wins,
+            "losses":        r.losses,
+            "ties":          r.ties,
+        }
+        for r in rows
+    ]
+    return {"year": year, "series": series}
+
+
 # ---------------------------------------------------------------------------
 # Leaderboards
 # ---------------------------------------------------------------------------

@@ -517,3 +517,28 @@ def get_series_post_by_team(
     if year_from is not None:
         q = q.filter(SeriesPost.year >= year_from)
     return q.order_by(SeriesPost.year.desc(), SeriesPost.round).all()
+
+
+def get_series_post_years(db: Session) -> list[int]:
+    """Distinct years that have postseason series, newest first. Drives the
+    Playoff History year picker — years with no postseason (1904, 1994, …) are
+    simply absent."""
+    rows = (
+        db.query(SeriesPost.year)
+          .distinct()
+          .order_by(SeriesPost.year.desc())
+          .all()
+    )
+    return [r.year for r in rows]
+
+
+def get_series_post_by_year(db: Session, year: int) -> list[SeriesPost]:
+    """All postseason series for one year, both leagues. Ordered by round so a
+    multi-round year reads in a stable order; the caller maps each raw round
+    code to a bracket slot."""
+    return (
+        db.query(SeriesPost)
+          .filter(SeriesPost.year == year)
+          .order_by(SeriesPost.round)
+          .all()
+    )
