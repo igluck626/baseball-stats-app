@@ -41,7 +41,16 @@ REFRESH_INTERVAL_S = 10.0      # poll live games every 10s
 SCHEDULE_INTERVAL_S = 60.0     # when nothing is live, only re-check the slate this often
 LIVE_CACHE_TTL_S = 30          # > refresh interval, so a snapshot survives between
                                # cycles but self-evicts ~30s after a game stops refreshing
-RECENT_PLAYS = 20              # most-recent plays kept in each snapshot
+MAX_PLAY_PAGES = 16           # /plays is cursor-paginated (100/page, earliest-
+                              # first). Per-pitch rows make a 9-inning game
+                              # ~300-700 plays, so follow next_cursor up to this
+                              # many pages (~1600 plays) to assemble the FULL
+                              # game. Set high enough to cover even an 18-inning
+                              # marathon so the cap is never the limiter in
+                              # practice — critical because pagination is
+                              # oldest-first, so hitting the cap would drop the
+                              # MOST RECENT plays (and any late scoring plays).
+                              # If it's ever hit we log a warning (see below).
 BDL_PACING_S = data_service._BDL_RATE_LIMIT_SLEEP   # 0.22s between BDL calls
 BDL_429_BACKOFF_S = 2.0
 BDL_429_RETRIES = 2
@@ -85,8 +94,34 @@ async def _fetch_slate() -> list[dict]:
 
 
 async def _fetch_plays(game_id: int) -> list[dict]:
-    data = await _bdl_call("plays", {"game_id": game_id, "per_page": 100})
-    return data.get("data") or []
+    """Full-game play feed. balldontlie /plays is cursor-paginated (100/page,
+    earliest-first), so a single page only covers the opening innings. We follow
+    `meta.next_cursor` (capped at MAX_PLAY_PAGES) to assemble the WHOLE game —
+    otherwise the client's 'All plays' view is missing most of the game."""
+    rows: list[dict] = []
+    cursor: Optional[int] = None
+    for _page in range(MAX_PLAY_PAGES):
+        params: dict[str, Any] = {"game_id": game_id, "per_page": 100}
+        if cursor is not None:
+            params["cursor"] = cursor
+        data = await _bdl_call("plays", params)
+        chunk = data.get("data") or []
+        rows.extend(chunk)
+        cursor = (data.get("meta") or {}).get("next_cursor")
+        if not cursor or len(chunk) < 100:
+            break                            # cursor exhausted → we have the full game
+        await asyncio.sleep(BDL_PACING_S)    # pace between pages, same as between calls
+    else:
+        # Ran the full page budget without exhausting the cursor — i.e. a game
+        # longer than MAX_PLAY_PAGES*100 plays. Pagination is oldest-first, so the
+        # rows we kept are the EARLIEST and we've dropped the most-recent action +
+        # any late scoring plays. The cap is sized so this shouldn't happen for any
+        # real game, so make it loud rather than silently serving stale plays.
+        if cursor is not None:
+            log.warning("game %s exceeded %d play pages (>%d plays) — most recent "
+                        "plays truncated; raise MAX_PLAY_PAGES",
+                        game_id, MAX_PLAY_PAGES, MAX_PLAY_PAGES * 100)
+    return rows
 
 
 async def _fetch_pas(game_id: int) -> list[dict]:
@@ -160,6 +195,23 @@ def _play_block(p: dict) -> dict:
     }
 
 
+def _team_name_candidates(team: dict) -> set[str]:
+    """Every spelling balldontlie might use for a team's name, so a /stats row's
+    `team_name` can be matched whichever form it ships. The live /stats feed sets
+    `team_name` to the FULL name (e.g. 'Chicago White Sox') — which is the team's
+    `display_name`, NOT its `name` ('White Sox') — so matching `name` alone drops
+    every row."""
+    cands: set[str] = set()
+    for k in ("display_name", "name", "full_name", "short_display_name"):
+        v = team.get(k)
+        if v:
+            cands.add(v)
+    loc, nm = team.get("location"), team.get("name")
+    if loc and nm:
+        cands.add(f"{loc} {nm}")
+    return cands
+
+
 def _side_for_stat(stat: dict, home_team: dict, away_team: dict) -> Optional[str]:
     player = stat.get("player") or {}
     team = player.get("team") or {}
@@ -168,11 +220,14 @@ def _side_for_stat(stat: dict, home_team: dict, away_team: dict) -> Optional[str
         return "home"
     if tid is not None and tid == away_team.get("id"):
         return "away"
+    # Live /stats rows carry no team id (player.team is null), only `team_name`
+    # as the full display name — match that against either side's name forms.
     name = stat.get("team_name")
-    if name and name == home_team.get("name"):
-        return "home"
-    if name and name == away_team.get("name"):
-        return "away"
+    if name:
+        if name in _team_name_candidates(home_team):
+            return "home"
+        if name in _team_name_candidates(away_team):
+            return "away"
     return None
 
 
@@ -281,7 +336,10 @@ def assemble_unified(game: dict, stats: list[dict],
         for i in range(n_inn)
     ]
 
-    recent = [_play_block(p) for p in plays_sorted[-RECENT_PLAYS:]]
+    # Full game (now that _fetch_plays paginates) — the client's "All plays" view
+    # needs the whole feed, not just a tail window. scoring_plays stays the
+    # full-game scoring subset.
+    full_plays = [_play_block(p) for p in plays_sorted]
     scoring = [_play_block(p) for p in plays_sorted if p.get("scoring_play")]
 
     batting: dict[str, list] = {"away": [], "home": []}
@@ -330,7 +388,7 @@ def assemble_unified(game: dict, stats: list[dict],
             "on_second": bool(lpa.get("runner_on_second")),
             "on_third":  bool(lpa.get("runner_on_third")),
         },
-        "plays":         recent,
+        "plays":         full_plays,
         "scoring_plays": scoring,
         "batting":       batting,
         "pitching":      pitching,
