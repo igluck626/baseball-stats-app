@@ -113,22 +113,29 @@ struct BaseRunnerView: View {
     var size: CGFloat = 32
 
     var body: some View {
-        ZStack {
-            base(filled: second).offset(y: -size * 0.32)
-            base(filled: third).offset(x: -size * 0.32)
-            base(filled: first).offset(x: size * 0.32)
+        // Drive the diamond off a slightly inset dimension: a base offset by
+        // `d * 0.32` whose rotated square extends ~`d * 0.17` past that offset
+        // would reach ~0.52*size and spill the frame. Insetting to 0.86*size
+        // keeps the far corners at ~0.45*size — fully inside the `size` box
+        // (nothing clipped, nothing spilling into the row) while callers keep
+        // using `size` as the footprint.
+        let d = size * 0.86
+        return ZStack {
+            base(filled: second, side: d).offset(y: -d * 0.32)
+            base(filled: third,  side: d).offset(x: -d * 0.32)
+            base(filled: first,  side: d).offset(x: d * 0.32)
         }
         .frame(width: size, height: size)
     }
 
-    private func base(filled: Bool) -> some View {
+    private func base(filled: Bool, side: CGFloat) -> some View {
         Rectangle()
             .fill(filled ? Color.accentColor : Color.clear)
             .overlay(
                 Rectangle()
                     .stroke(Color.primary.opacity(0.6), lineWidth: 1)
             )
-            .frame(width: size * 0.28, height: size * 0.28)
+            .frame(width: side * 0.28, height: side * 0.28)
             .rotationEffect(.degrees(45))
     }
 }

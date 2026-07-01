@@ -193,6 +193,18 @@ def _norm_status(raw: Optional[str]) -> str:
     return "scheduled"
 
 
+def _norm_half(inning_type: Optional[str]) -> Optional[str]:
+    """Normalize a play's `inning_type` to "top"/"bottom", or None for the
+    inning-transition markers ("Mid"/"End") and blanks — so the situation's
+    half can only ever land on a real side."""
+    t = (inning_type or "").lower()
+    if "top" in t:
+        return "top"
+    if "bot" in t:
+        return "bottom"
+    return None
+
+
 def _first(d: dict, *keys: str) -> Any:
     """First present (non-None) value among `keys` — used for balldontlie
     fields whose exact key spelling we can't pin from the client alone
@@ -352,28 +364,66 @@ def assemble_unified(game: dict, stats: list[dict],
     pas_sorted = sorted(pas, key=lambda x: x.get("pa_number") or 0)
     last_pa = pas_sorted[-1] if pas_sorted else None
 
-    # Score: authoritative team totals from /games; fall back to the running
-    # score on the last play.
-    away_runs = away_data.get("runs")
-    home_runs = home_data.get("runs")
-    if away_runs is None and last_play:
-        away_runs = last_play.get("away_score")
-    if home_runs is None and last_play:
-        home_runs = last_play.get("home_score")
-
-    # Current inning / half / count: last PA leads (base state), last play fills
-    # count (balls/strikes live only on plays).
+    # ── Current state: derive the ENTIRE situation from ONE play row so every
+    # field is mutually consistent AND agrees with the plays list. The
+    # /plate_appearances feed lags the /plays feed badly — a completed-PA object
+    # is only created after an at-bat ends, so its newest entry can trail the
+    # live plays by a full half-inning (observed: plays in the Top 8th while the
+    # last PA is still Bottom 7th). Sourcing batter/pitcher/score from it left the
+    # header showing a stale batter (and score) while the plays had moved on.
+    #
+    # `sit_play` = the latest play with a real Top/Bottom inning_type, skipping
+    # the "Mid"/"End" inning-transition markers. balldontlie back-fills a
+    # COMPLETED at-bat's rows with the post-AB out count/score, but the tail
+    # (in-progress) at-bat carries the CURRENT outs / count / score / matchup —
+    # exactly the live state we want.
     lp = last_play or {}
     lpa = last_pa or {}
-    inning = lpa.get("inning") or lp.get("inning") or game.get("period")
-    half = (lpa.get("half_inning") or lp.get("inning_type") or "").lower() or None
-    outs = lpa.get("outs")
+    sit_play = next(
+        (p for p in reversed(plays_sorted) if _norm_half(p.get("inning_type"))),
+        None,
+    )
+    sp = sit_play or {}
+    inning = sp.get("inning") or lpa.get("inning") or lp.get("inning") or game.get("period")
+    half = _norm_half(sp.get("inning_type")) or (lpa.get("half_inning") or "").lower() or None
+    outs = sp.get("outs")
     if outs is None:
-        outs = lp.get("outs")
-    balls = lp.get("balls")
-    strikes = lp.get("strikes")
-    batter_id = lpa.get("batter_id") or lp.get("batter_id")
-    pitcher_id = lpa.get("pitcher_id") or lp.get("pitcher_id")
+        outs = lpa.get("outs")
+    balls = sp.get("balls") if sp.get("balls") is not None else lp.get("balls")
+    strikes = sp.get("strikes") if sp.get("strikes") is not None else lp.get("strikes")
+    # Batter/pitcher from the freshest play — the whole point of the fix: the
+    # header matchup must be the plays list's most recent action, not the PA
+    # feed's stale one.
+    batter_id = sp.get("batter_id") or lpa.get("batter_id") or lp.get("batter_id")
+    pitcher_id = sp.get("pitcher_id") or lpa.get("pitcher_id") or lp.get("pitcher_id")
+
+    # Score: the running score on the freshest play (so the header matches the
+    # scoring plays below it), then /games team totals, then the last play. The
+    # /games totals can lag the plays by a batter, so the play score wins.
+    away_runs = sp.get("away_score")
+    if away_runs is None:
+        away_runs = away_data.get("runs")
+    if away_runs is None:
+        away_runs = lp.get("away_score")
+    home_runs = sp.get("home_score")
+    if home_runs is None:
+        home_runs = home_data.get("runs")
+    if home_runs is None:
+        home_runs = lp.get("home_score")
+
+    # Base runners live ONLY on the /plate_appearances feed, and it lags — its
+    # runner state belongs to whatever (older) half-inning last_pa is in. Trust it
+    # only when that PA is the SAME inning + half as the current play; otherwise
+    # the runners are from a prior inning that has since cleared, so show empty
+    # bases rather than bleeding stale runners into the current situation.
+    pa_matches_current = bool(
+        lpa
+        and lpa.get("inning") == inning
+        and (lpa.get("half_inning") or "").lower() == (half or "")
+    )
+    on_first  = bool(lpa.get("runner_on_first"))  if pa_matches_current else False
+    on_second = bool(lpa.get("runner_on_second")) if pa_matches_current else False
+    on_third  = bool(lpa.get("runner_on_third"))  if pa_matches_current else False
 
     # Linescore grid.
     away_inn = away_data.get("inning_scores") or []
@@ -440,6 +490,14 @@ def assemble_unified(game: dict, stats: list[dict],
             key=lambda r: pitch_appearance.get(r.get("id"), _LAST)
         )
 
+    # Header/summary team blocks — override the team-total runs with the freshest
+    # score (computed above from the play feed) so the header score can't trail
+    # the scoring plays. This is also the score the /live/games list card reads.
+    away_summary = _team_block(away_team, away_data)
+    home_summary = _team_block(home_team, home_data)
+    away_summary["runs"] = away_runs
+    home_summary["runs"] = home_runs
+
     return {
         "game_id":     game.get("id"),
         "fetched_at":  _now_iso(),
@@ -447,8 +505,8 @@ def assemble_unified(game: dict, stats: list[dict],
         "season":      game.get("season"),
         "season_type": game.get("season_type"),
         "summary": {
-            "away":        _team_block(away_team, away_data),
-            "home":        _team_block(home_team, home_data),
+            "away":        away_summary,
+            "home":        home_summary,
             "inning":      inning,
             "inning_half": half,
             "outs":        outs,
@@ -469,9 +527,9 @@ def assemble_unified(game: dict, stats: list[dict],
         "situation": {
             "batter":   {"id": batter_id,  "name": names.get(batter_id)}  if batter_id  else None,
             "pitcher":  {"id": pitcher_id, "name": names.get(pitcher_id)} if pitcher_id else None,
-            "on_first":  bool(lpa.get("runner_on_first")),
-            "on_second": bool(lpa.get("runner_on_second")),
-            "on_third":  bool(lpa.get("runner_on_third")),
+            "on_first":  on_first,
+            "on_second": on_second,
+            "on_third":  on_third,
         },
         "plays":         full_plays,
         "scoring_plays": scoring,

@@ -542,37 +542,46 @@ struct BoxScoreView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 16) {
-                headerCard
-                if vm.game.phase == .live, let live = vm.live?.liveData {
-                    liveSituationCard(live)
-                }
-                if vm.game.phase == .postponed {
-                    postponedNotice
-                } else if let bs = vm.boxScore {
-                    linescoreCard
-                    teamPicker(bs: bs)
-                    teamSection(side: currentSide, bs: bs)
-                } else if vm.isLoading {
-                    ProgressView().controlSize(.large)
-                        .frame(maxWidth: .infinity, minHeight: 120)
-                } else if let error = vm.error {
-                    VStack(spacing: 12) {
-                        Text(error)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 24)
-                        Button("Retry") {
-                            Task { await vm.load() }
+            // Each card below applies its own `.glassEffect`. Grouping them in a
+            // GlassEffectContainer renders the Liquid Glass in one pass so
+            // adjacent cards don't independently sample the background and bleed
+            // into each other at their facing edges (the header/situation
+            // "overlap"). The 16pt container spacing matches the VStack spacing —
+            // wider than any card gap, so distinct cards stay distinct rather
+            // than morphing into one blob.
+            GlassEffectContainer(spacing: 16) {
+                VStack(spacing: 16) {
+                    headerCard
+                    if vm.game.phase == .live, let live = vm.live?.liveData {
+                        liveSituationCard(live)
+                    }
+                    if vm.game.phase == .postponed {
+                        postponedNotice
+                    } else if let bs = vm.boxScore {
+                        linescoreCard
+                        teamPicker(bs: bs)
+                        teamSection(side: currentSide, bs: bs)
+                    } else if vm.isLoading {
+                        ProgressView().controlSize(.large)
+                            .frame(maxWidth: .infinity, minHeight: 120)
+                    } else if let error = vm.error {
+                        VStack(spacing: 12) {
+                            Text(error)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal, 24)
+                            Button("Retry") {
+                                Task { await vm.load() }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
                         }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
                     }
                 }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 16)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 16)
         }
         .navigationTitle(navigationTitle)
         .navigationBarTitleDisplayMode(.inline)
