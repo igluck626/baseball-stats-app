@@ -70,12 +70,18 @@ final class BoxScoreViewModel: ObservableObject {
         // produces the legacy `LiveFeedResponse` shape the live
         // situation card consumes.
         if game.phase == .live {
-            // `loadLiveState` writes both `live` AND `plays`, so we
-            // don't double-fetch the play stream for the live path.
-            async let boxTask  = loadBoxScore()
-            async let liveTask = loadLiveState()
-            _ = await boxTask
-            _ = await liveTask
+            // LIVE: read one unified snapshot from our backend proxy — score,
+            // linescore, situation, and plays all come from this single payload
+            // (no score-vs-plays skew). Fall back to the direct balldontlie
+            // path whenever the proxy didn't apply a snapshot — the game just
+            // started (no cache entry / 404) OR a transient/decode error — so
+            // the view always has something to render on first load.
+            if await loadLiveFromBackend() != .updated {
+                async let boxTask  = loadBoxScore()
+                async let liveTask = loadLiveState()
+                _ = await boxTask
+                _ = await liveTask
+            }
         } else {
             // Final / preview: stats + plays are independent fetches
             // — run them in parallel so the box score + plays section
@@ -231,6 +237,42 @@ final class BoxScoreViewModel: ObservableObject {
         self.plays = plays
         let pas = (try? await pasTask) ?? []
         live = plays.toLiveFeedResponse(plateAppearances: pas)
+    }
+
+    /// Outcome of one backend live-snapshot fetch. The polling loop treats
+    /// these very differently, so they must stay distinct — conflating
+    /// `.transient` with `.notLive` (the original `Bool` did) is exactly what
+    /// let a single decode error permanently stop live updates.
+    enum LiveFetchOutcome {
+        case updated     // fresh snapshot applied — keep polling
+        case notLive     // 404: game isn't live (ended / not started) — stop
+        case transient   // network or decode error — keep polling, retry next tick
+    }
+
+    /// LIVE path (Phase 2): one `/live/games/{id}` snapshot from our backend
+    /// drives `boxScore`, `live`, and `plays` together — so every box-score
+    /// element is mutually consistent (the score-vs-plays skew fix), and the
+    /// upstream balldontlie load is O(games) shared across users.
+    ///
+    /// Distinguishes a real 404 (`getLiveGame` → nil, game not live) from a
+    /// transient/decoding failure (a THROW). The old code collapsed both to
+    /// `false` with `try?`, so a decode error looked identical to "game over"
+    /// and the poll loop stopped for good.
+    @discardableResult
+    private func loadLiveFromBackend() async -> LiveFetchOutcome {
+        let detail: LiveGameDetail?
+        do {
+            detail = try await api.getLiveGame(id: game.gamePk)
+        } catch {
+            // Transport or decode error — NOT a signal that the game is over.
+            return .transient
+        }
+        guard let detail else { return .notLive }   // 404 → game not live
+        self.plays    = detail.playsAsBDL
+        self.live     = detail.toLiveFeedResponse()
+        self.boxScore = detail.toBoxScoreResponse()
+        self.error    = nil
+        return .updated
     }
 
     private func loadBoxScore() async {
@@ -389,12 +431,28 @@ final class BoxScoreViewModel: ObservableObject {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 15 * 1_000_000_000)
                 guard !Task.isCancelled, let self else { return }
-                async let boxTask  = self.loadBoxScore()
-                async let liveTask = self.loadLiveState()
-                _ = await boxTask
-                _ = await liveTask
-                let state = self.live?.liveData.linescore?.inningState?.lowercased()
-                if state == "final" || state == "game over" { return }
+                // Refresh from the backend live proxy (one consistent payload).
+                switch await self.loadLiveFromBackend() {
+                case .updated:
+                    continue                         // fresh snapshot — keep polling
+                case .transient:
+                    // Network or decode hiccup — do NOT treat as game-over.
+                    // Degrade to the direct balldontlie path for this tick so the
+                    // box score still moves, and keep polling. (Before, a decode
+                    // error here silently stopped live updates entirely.)
+                    async let boxTask  = self.loadBoxScore()
+                    async let liveTask = self.loadLiveState()
+                    _ = await boxTask
+                    _ = await liveTask
+                case .notLive:
+                    // 404 = the game is no longer live (ended). Pull the finished
+                    // box score once from the direct path, then stop polling.
+                    async let boxTask   = self.loadBoxScore()
+                    async let playsTask = self.loadPlays()
+                    _ = await boxTask
+                    _ = await playsTask
+                    return
+                }
             }
         }
     }

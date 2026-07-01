@@ -69,10 +69,35 @@ final class ScoresViewModel: ObservableObject {
     @Published var teamStandings: [Int: TeamStandingInfo] = [:]
 
     private let bdl: BallDontLieClient
+    private let api: APIClient
     private var refreshTask: Task<Void, Never>?
 
-    init(bdl: BallDontLieClient = .shared) {
+    init(bdl: BallDontLieClient = .shared, api: APIClient = .shared) {
         self.bdl = bdl
+        self.api = api
+    }
+
+    /// Live-poll step (Phase 2): refresh ONLY the in-progress games from our
+    /// backend live proxy (`/live/games`) and merge their fresh score / inning
+    /// state into the existing list — finals and scheduled games stay as the
+    /// initial `getGames` load left them. When a game that WAS live drops out
+    /// of the live set (it ended), do one full `load` to capture its final
+    /// state + records. Steady-state load is O(games) on our backend, not the
+    /// O(users) balldontlie poll this replaces.
+    func refreshLive(date: Date) async {
+        guard Calendar.current.isDateInToday(date) else { return }
+        guard let resp = try? await api.getLiveGames() else { return }
+        let liveById = Dictionary(resp.games.map { ($0.gameId, $0) }, uniquingKeysWith: { a, _ in a })
+        let wereLive = Set(games.filter { $0.phase == .live }.map(\.gamePk))
+
+        games = games.map { g in
+            liveById[g.gamePk].map { g.merging(live: $0) } ?? g
+        }
+
+        let ended = wereLive.subtracting(liveById.keys)
+        if !ended.isEmpty {
+            await load(date: date)   // a game finished — refresh finals/records
+        }
     }
 
     func load(date: Date) async {
@@ -241,7 +266,9 @@ final class ScoresViewModel: ObservableObject {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 15 * 1_000_000_000)
                 guard !Task.isCancelled, let self else { return }
-                await self.load(date: date)
+                // Poll our backend proxy (cheap, shared) instead of re-fetching
+                // the whole slate from balldontlie every tick.
+                await self.refreshLive(date: date)
                 if !self.games.contains(where: { $0.phase == .live }) { return }
             }
         }

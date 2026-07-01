@@ -267,6 +267,30 @@ final class HomeViewModel: ObservableObject {
         return Array(recents) + Array(upcoming)
     }
 
+    /// Live-poll step (Phase 2): refresh the favorite's live game from our
+    /// backend proxy (`/live/games`) and merge its score / inning state into
+    /// the hero strip — instead of re-fetching ±5 days of team games from
+    /// balldontlie every tick. When the live game ends (drops out of the live
+    /// set), do one full `load` to capture its final state + records.
+    func refreshLive(bdlTeamId: Int) async {
+        guard hasLiveGame else { return }
+        guard let resp = try? await api.getLiveGames() else { return }
+        let liveById = Dictionary(resp.games.map { ($0.gameId, $0) }, uniquingKeysWith: { a, _ in a })
+        let wereLive = Set(recentAndUpcoming.filter { $0.phase == .live }.map(\.gamePk))
+
+        recentAndUpcoming = recentAndUpcoming.map { g in
+            liveById[g.gamePk].map { g.merging(live: $0) } ?? g
+        }
+        if let ng = nextGame, let live = liveById[ng.gamePk] {
+            nextGame = ng.merging(live: live)
+        }
+
+        let ended = wereLive.subtracting(liveById.keys)
+        if !ended.isEmpty {
+            await load(bdlTeamId: bdlTeamId)
+        }
+    }
+
     /// 15s auto-refresh while the favorite team has a live game.
     /// Matches `ScoresViewModel.startAutoRefresh`'s cadence so the
     /// hero card's live score stays in step with the Scores tab.
@@ -278,7 +302,7 @@ final class HomeViewModel: ObservableObject {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 15 * 1_000_000_000)
                 guard !Task.isCancelled, let self else { return }
-                await self.load(bdlTeamId: bdlTeamId)
+                await self.refreshLive(bdlTeamId: bdlTeamId)
             }
         }
     }

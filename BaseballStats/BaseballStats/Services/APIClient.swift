@@ -278,6 +278,23 @@ final class APIClient {
         return try await get(url)
     }
 
+    /// `GET /live/games`. All currently-live MLB games as compact cards from
+    /// the backend live proxy (shared cache, server-side BDL key). Empty list
+    /// when nothing is live; always returns a body, so this never 404s.
+    func getLiveGames() async throws -> LiveGamesResponse {
+        let url = try buildURL(path: "/live/games")
+        return try await get(url)
+    }
+
+    /// `GET /live/games/{id}`. The full unified live snapshot for one game —
+    /// score, linescore, situation, plays, and per-player lines, all from ONE
+    /// cached snapshot (consistency fix). Returns nil (404) when the game
+    /// isn't currently live / not in the proxy cache.
+    func getLiveGame(id gameId: Int) async throws -> LiveGameDetail? {
+        let url = try buildURL(path: "/live/games/\(gameId)")
+        return try await getOptional(url)
+    }
+
     /// `GET /teams/standings?year=...`. Returns nil on 404.
     func getStandings(year: Int) async throws -> StandingsResponse? {
         let url = try buildURL(

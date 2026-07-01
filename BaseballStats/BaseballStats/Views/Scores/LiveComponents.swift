@@ -32,9 +32,11 @@ final class LiveFeedViewModel: ObservableObject {
 
     private var task: Task<Void, Never>?
     private let bdl: BallDontLieClient
+    private let api: APIClient
 
-    init(bdl: BallDontLieClient = .shared) {
+    init(bdl: BallDontLieClient = .shared, api: APIClient = .shared) {
         self.bdl = bdl
+        self.api = api
     }
 
     /// One-shot fetch + start a 15s polling loop. Idempotent — if
@@ -62,10 +64,17 @@ final class LiveFeedViewModel: ObservableObject {
     }
 
     private func fetch(gameId: Int) async {
+        // Phase 2: read the unified snapshot from our backend live proxy
+        // (shared cache, consistent state). Falls back to the direct
+        // balldontlie path only if the proxy has no snapshot yet (e.g. a
+        // just-started game) or once the game has gone final (the proxy stops
+        // serving it, so `isGameOver` can fire and the loop terminates).
+        if let detail = try? await api.getLiveGame(id: gameId) {
+            live  = detail.toLiveFeedResponse()
+            error = nil
+            return
+        }
         do {
-            // Fetch the play and PA streams in parallel; combine
-            // via the synthesizer in Scores.swift to produce a
-            // legacy LiveFeedResponse the UI already knows.
             async let playsTask = bdl.getPlays(gameId: gameId)
             async let pasTask   = bdl.getPlateAppearances(gameId: gameId)
             let plays = try await playsTask
