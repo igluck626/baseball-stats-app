@@ -41,6 +41,10 @@ REFRESH_INTERVAL_S = 10.0      # poll live games every 10s
 SCHEDULE_INTERVAL_S = 60.0     # when nothing is live, only re-check the slate this often
 LIVE_CACHE_TTL_S = 30          # > refresh interval, so a snapshot survives between
                                # cycles but self-evicts ~30s after a game stops refreshing
+LINEUP_CACHE_TTL_S = 6 * 3600  # lineups are STATIC for a game (set pre-first-pitch,
+                               # never change), so fetch once per game and reuse the
+                               # cached copy every cycle — one /lineups call per game
+                               # total, not per cycle. TTL comfortably outlasts a game.
 MAX_PLAY_PAGES = 16           # /plays is cursor-paginated (100/page, earliest-
                               # first). Per-pitch rows make a 9-inning game
                               # ~300-700 plays, so follow next_cursor up to this
@@ -60,6 +64,10 @@ _SUMMARY_KEY = "live:summary"
 
 def _game_key(game_id: int) -> str:
     return f"live:game:{game_id}"
+
+
+def _lineup_key(game_id: int) -> str:
+    return f"live:lineup:{game_id}"
 
 
 # --- BDL fetch helpers (run the sync urllib client off the event loop) ----
@@ -133,6 +141,41 @@ async def _fetch_stats(game_id: int) -> list[dict]:
     # /stats uses the plural game_ids[] (unlike /plays + /plate_appearances).
     data = await _bdl_call("stats", {"game_ids[]": game_id, "per_page": 100})
     return data.get("data") or []
+
+
+async def _fetch_lineup(game_id: int) -> list[dict]:
+    # /lineups also filters on the PLURAL game_ids[] (singular game_id is silently
+    # ignored, same trap as /stats). Each row: batting_order (1-9), position,
+    # is_probable_pitcher, player{id,...}, team{...}.
+    data = await _bdl_call("lineups", {"game_ids[]": game_id, "per_page": 100})
+    return data.get("data") or []
+
+
+async def _get_lineup_cached(game_id: int) -> tuple[list[dict], bool]:
+    """The starting lineup drives batting order — but /stats itself carries no
+    order and ships teams interleaved, so we join against /lineups. Lineups are
+    set pre-first-pitch and never change, so fetch ONCE per game and reuse the
+    cached copy every subsequent cycle (this is what keeps the cost to ~1 call
+    per game, not per cycle).
+
+    Returns (lineup, made_bdl_call). On a fetch error returns ([], True) so the
+    caller falls back to the current unsorted order for this cycle and retries
+    next cycle — a missing lineup must never crash the assembly."""
+    key = _lineup_key(game_id)
+    cached = _cache.get(key)
+    if cached is not None:
+        return cached, False
+    await asyncio.sleep(BDL_PACING_S)   # pace the one-time fetch like any other call
+    try:
+        lineup = await _fetch_lineup(game_id)
+    except Exception:
+        log.warning("lineup fetch failed for game %s — unsorted batting this cycle", game_id)
+        return [], True
+    # Only cache a non-empty lineup; an empty result (e.g. not posted pre-game
+    # yet) should be retried next cycle rather than pinned for LINEUP_CACHE_TTL_S.
+    if lineup:
+        _cache.set(key, lineup, LINEUP_CACHE_TTL_S)
+    return lineup, True
 
 
 # --- Assembly -------------------------------------------------------------
@@ -240,6 +283,10 @@ def _bat_row(stat: dict) -> Optional[dict]:
         "id":       p.get("id"),
         "name":     p.get("full_name"),
         "position": p.get("position"),
+        # Filled from /lineups during assembly (null for substitutes not in the
+        # starting nine). The client sorts server-side already, but exposing it
+        # keeps the ordering self-describing.
+        "batting_order": None,
         "ab":  stat.get("at_bats"),
         "r":   stat.get("runs"),
         "h":   stat.get("hits"),
@@ -277,10 +324,15 @@ def _pit_row(stat: dict) -> Optional[dict]:
 
 
 def assemble_unified(game: dict, stats: list[dict],
-                     plays: list[dict], pas: list[dict]) -> dict:
+                     plays: list[dict], pas: list[dict],
+                     lineup: Optional[list[dict]] = None) -> dict:
     """Build the single consistent per-game snapshot from this cycle's four
     balldontlie payloads. Everything a client renders comes from here, so the
-    score, plays, and inning/base state can never skew relative to each other."""
+    score, plays, and inning/base state can never skew relative to each other.
+
+    `lineup` (from /lineups, cached per game) supplies batting order — /stats
+    itself carries none and ships teams interleaved. When absent (fetch failed /
+    not posted yet) batters fall back to /stats order for this cycle."""
     home_team = game.get("home_team") or {}
     away_team = game.get("away_team") or {}
     home_data = game.get("home_team_data") or {}
@@ -342,6 +394,25 @@ def assemble_unified(game: dict, stats: list[dict],
     full_plays = [_play_block(p) for p in plays_sorted]
     scoring = [_play_block(p) for p in plays_sorted if p.get("scoring_play")]
 
+    # Batting order: player_id -> lineup slot (1-9) from /lineups. /stats has no
+    # order field, so without this join batters render in balldontlie's arbitrary
+    # (team-interleaved) order.
+    batting_order: dict[int, int] = {}
+    for row in (lineup or []):
+        pid = (row.get("player") or {}).get("id")
+        slot = row.get("batting_order")
+        if pid is not None and slot is not None:
+            batting_order[pid] = slot
+
+    # Pitching order: first appearance of each pitcher_id in the play feed we
+    # already fetched (starter first, then relievers as they entered) — no extra
+    # BDL call. Pitchers absent from plays sort to the end.
+    pitch_appearance: dict[int, int] = {}
+    for idx, pl in enumerate(plays_sorted):
+        ppid = pl.get("pitcher_id")
+        if ppid is not None and ppid not in pitch_appearance:
+            pitch_appearance[ppid] = idx
+
     batting: dict[str, list] = {"away": [], "home": []}
     pitching: dict[str, list] = {"away": [], "home": []}
     for s in stats:
@@ -350,10 +421,24 @@ def assemble_unified(game: dict, stats: list[dict],
             continue
         b = _bat_row(s)
         if b:
+            b["batting_order"] = batting_order.get(b.get("id"))
             batting[side].append(b)
         p = _pit_row(s)
         if p:
             pitching[side].append(p)
+
+    # Sort each side. Python's sort is stable, so:
+    #   - batters: starters by slot 1-9; substitutes (no slot) fall after,
+    #     keeping their /stats order.
+    #   - pitchers: by play-feed appearance; any not found sort last.
+    _LAST = float("inf")
+    for side in ("away", "home"):
+        batting[side].sort(
+            key=lambda r: (r.get("batting_order") is None, r.get("batting_order") or 0)
+        )
+        pitching[side].sort(
+            key=lambda r: pitch_appearance.get(r.get("id"), _LAST)
+        )
 
     return {
         "game_id":     game.get("id"),
@@ -470,8 +555,14 @@ async def _refresh_cycle() -> int:
             plays = await _fetch_plays(gid); bdl_calls += 1
             await asyncio.sleep(BDL_PACING_S)
             pas = await _fetch_pas(gid); bdl_calls += 1
+            # Lineup drives batting order; cached per game, so this makes a BDL
+            # call only on the first cycle we see the game (and any retry after a
+            # failed/empty fetch) — steady-state cost is 0.
+            lineup, lineup_called = await _get_lineup_cached(gid)
+            if lineup_called:
+                bdl_calls += 1
 
-            unified = assemble_unified(games_by_id[gid], stats, plays, pas)
+            unified = assemble_unified(games_by_id[gid], stats, plays, pas, lineup)
             _cache.set(_game_key(gid), unified, LIVE_CACHE_TTL_S)
             summaries.append(_summary_from_unified(unified))
         except Exception:
