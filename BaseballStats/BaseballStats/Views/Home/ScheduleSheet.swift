@@ -25,6 +25,10 @@ struct ScheduleSheet: View {
     /// the Scores tab uses.
     let teamStandings: [Int: TeamStandingInfo]
     let teamRecords:   [Int: TeamRecord]
+    /// Passed in explicitly (not via `@EnvironmentObject`) because environment
+    /// objects don't reliably cross the `.sheet` boundary. Forwarded to the
+    /// pushed BoxScoreView so its live polling still gates on lifecycle/tab.
+    @ObservedObject var navigation: AppNavigation
 
     private var teamColor: Color {
         TeamColors.color(for: favorite.lahmanCode) ?? .accentColor
@@ -56,6 +60,8 @@ struct ScheduleSheet: View {
                     teamStandings:  teamStandings,
                     teamRecords:    teamRecords,
                     path:           $path,
+                    owningTab:      .home,
+                    navigation:     navigation,
                 )
             }
             .navigationDestination(for: PlayerSearchResult.self) { player in

@@ -18,6 +18,7 @@ struct HomeView: View {
     @StateObject private var vm = HomeViewModel()
     @ObservedObject private var store = FavoriteTeamStore.shared
     @ObservedObject private var favoritesStore = FavoritePlayersStore.shared
+    @EnvironmentObject private var navigation: AppNavigation
     @State private var navigationPath = NavigationPath()
     @State private var showingSettings = false
     @State private var showingAddPlayer = false
@@ -44,6 +45,8 @@ struct HomeView: View {
                     teamStandings:  vm.teamStandings,
                     teamRecords:    vm.teamRecords,
                     path:           $navigationPath,
+                    owningTab:      .home,
+                    navigation:     navigation,
                 )
             }
             .navigationDestination(for: PlayerSearchResult.self) { player in
@@ -72,6 +75,7 @@ struct HomeView: View {
                         favorite:      entry,
                         teamStandings: vm.teamStandings,
                         teamRecords:   vm.teamRecords,
+                        navigation:    navigation,
                     )
                 }
             }
@@ -137,10 +141,24 @@ struct HomeView: View {
             await vm.loadTeamHistory(bdlTeamId: bdlId)
             await vm.loadNews(bdlTeamId: bdlId)
             await vm.loadLeagueNews()
-            vm.startAutoRefresh(bdlTeamId: bdlId)
+            // Only arm while the Home tab is visible and the app is active.
+            if navigation.shouldPoll(on: .home) {
+                vm.startAutoRefresh(bdlTeamId: bdlId)
+            }
         }
         .task(id: favoritesStore.playerIds) {
             await vm.loadFavoritePlayers(ids: favoritesStore.playerIds)
+        }
+        // Pause the hero-card live refresh on background / switch away from
+        // Home; resume with an immediate refresh on return. start*/stop* only.
+        .onChange(of: navigation.shouldPoll(on: .home)) { _, canPoll in
+            if canPoll {
+                if let bdlId = store.bdlTeamId {
+                    vm.startAutoRefresh(bdlTeamId: bdlId, immediate: true)
+                }
+            } else {
+                vm.stopAutoRefresh()
+            }
         }
         .onDisappear { vm.stopAutoRefresh() }
     }
@@ -419,6 +437,9 @@ private struct TeamHeroCard: View {
     /// self-terminates once the game goes final.
     @StateObject private var liveVM = LiveFeedViewModel()
 
+    /// Home tab tree, so the root-injected coordinator is reliably present.
+    @EnvironmentObject private var navigation: AppNavigation
+
     @Environment(\.colorScheme) private var colorScheme
 
     private var teamColor: Color {
@@ -463,10 +484,22 @@ private struct TeamHeroCard: View {
         // Start the live feed VM when a live game appears; restart on
         // game change; stop when the live game disappears. The VM's
         // own polling loop handles the 30s refresh + self-terminates
-        // on final state, so we just gate the kickoff here.
+        // on final state, so we just gate the kickoff here. Also gated
+        // on tab visibility / app-active so a hidden Home tab holds no task.
         .task(id: liveGame?.id) {
-            if let g = liveGame {
+            if let g = liveGame, navigation.shouldPoll(on: .home) {
                 await liveVM.start(gameId: g.gamePk)
+            } else {
+                liveVM.stop()
+            }
+        }
+        // Pause on background / switch away from Home; resume with an immediate
+        // refresh (start leads with a fetch) on return. start()/stop() only.
+        .onChange(of: navigation.shouldPoll(on: .home)) { _, canPoll in
+            if canPoll {
+                if let g = liveGame {
+                    Task { await liveVM.start(gameId: g.gamePk) }
+                }
             } else {
                 liveVM.stop()
             }

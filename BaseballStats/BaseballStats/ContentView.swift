@@ -19,6 +19,10 @@ struct ContentView: View {
     /// rebuilds the bar here.
     @ObservedObject private var tabOrder = TabOrderStore.shared
 
+    /// App lifecycle, observed once at the root and pushed into `navigation`
+    /// so every live-polling loop can gate on it via `navigation.shouldPoll(on:)`.
+    @Environment(\.scenePhase) private var scenePhase
+
     var body: some View {
         TabView(selection: $navigation.selectedTab) {
             // Tabs are data-driven: render each tab in the user's saved order.
@@ -34,6 +38,13 @@ struct ContentView: View {
         }
         .toolbarBackground(.ultraThinMaterial, for: .tabBar)
         .toolbarBackground(.visible, for: .tabBar)
+        // Mirror app lifecycle into the shared coordinator. Backgrounding /
+        // going inactive flips `shouldPoll(on:)` false for every tab, which
+        // each live loop observes to cancel itself; returning to active
+        // re-arms the visible tab's loop with an immediate refresh.
+        .onChange(of: scenePhase) { _, phase in
+            navigation.scenePhase = phase
+        }
         .environmentObject(navigation)
         // User's System/Light/Dark choice, applied over the device appearance.
         // Cascades to every tab and the tab bar.

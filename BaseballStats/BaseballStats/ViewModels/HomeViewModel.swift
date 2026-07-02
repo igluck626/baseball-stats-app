@@ -295,10 +295,18 @@ final class HomeViewModel: ObservableObject {
     /// Matches `ScoresViewModel.startAutoRefresh`'s cadence so the
     /// hero card's live score stays in step with the Scores tab.
     /// Cancellable, weak-self loop.
-    func startAutoRefresh(bdlTeamId: Int) {
+    /// When `immediate` is true (the foreground/visible RESUME path), do one
+    /// leading refresh before entering the sleep loop so the hero card updates
+    /// right away instead of after a full interval. All other callers keep the
+    /// default `false` so the normal `.task` arm doesn't double-fetch.
+    func startAutoRefresh(bdlTeamId: Int, immediate: Bool = false) {
         stopAutoRefresh()
         guard hasLiveGame else { return }
         refreshTask = Task { @MainActor [weak self] in
+            if immediate {
+                guard let self else { return }
+                await self.refreshLive(bdlTeamId: bdlTeamId)
+            }
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 15 * 1_000_000_000)
                 guard !Task.isCancelled, let self else { return }

@@ -60,6 +60,53 @@ final class BoxScoreViewModel: ObservableObject {
         self.api  = api
     }
 
+    // MARK: - Display source (live payload when live, frozen `game` otherwise)
+    //
+    // One place decides where the header + linescore read from — matching the
+    // backend's "single source per field" principle. While the game is LIVE and
+    // a polled snapshot is present, the banner score / inning label / linescore
+    // come from `live` (the SAME object, refreshed every poll, that the
+    // situation card and plays list already use), so all four surfaces agree.
+    // For FINAL / PRE-GAME there is no `live`, so they fall back to the initial
+    // `game` object (which the live poll never updates).
+
+    /// Live linescore from the current poll snapshot — non-nil ONLY while the
+    /// game is live AND a snapshot has loaded.
+    private var liveLinescore: LiveLinescore? {
+        guard game.phase == .live else { return nil }
+        return live?.liveData.linescore
+    }
+
+    /// Banner score: play-derived from the live snapshot when live, else the
+    /// frozen game score (finished / scheduled games).
+    var displayAwayScore: Int? { liveLinescore?.teams?.away?.runs ?? game.teams.away.score }
+    var displayHomeScore: Int? { liveLinescore?.teams?.home?.runs ?? game.teams.home.score }
+
+    /// Banner inning/status ordinal ("Bot 6th"): fresh from the live snapshot
+    /// when live, else the frozen game's.
+    var displayInningOrdinal: String? {
+        liveLinescore?.currentInningOrdinal ?? game.linescore?.currentInningOrdinal
+    }
+
+    /// Linescore card source: rebuilt from the live snapshot when live (grid +
+    /// R/H/E + inning state), else the frozen game linescore. Same `Inning` /
+    /// `LinescoreTeamsTotals` types either way, so the view renders unchanged.
+    var displayLinescore: Linescore? {
+        guard let ll = liveLinescore else { return game.linescore }
+        return Linescore(
+            currentInning:        ll.currentInning,
+            currentInningOrdinal: ll.currentInningOrdinal,
+            inningState:          ll.inningState,
+            innings:              ll.innings,
+            teams:                ll.teams,
+            scheduledInnings:     ll.scheduledInnings,
+            isTopInning:          ll.isTopInning,
+            balls:                ll.balls,
+            strikes:              ll.strikes,
+            outs:                 ll.outs,
+        )
+    }
+
     func load() async {
         isLoading = true
         error = nil
@@ -424,10 +471,18 @@ final class BoxScoreViewModel: ObservableObject {
     /// situation streams (plays + PAs → live card data). Self-
     /// terminates when the synthesized inningState reports the
     /// game has gone final.
-    func startLivePolling() {
+    /// `immediate` (the foreground/visible RESUME path only) does one leading
+    /// backend refresh before the sleep loop so the box score updates right
+    /// away on return instead of after a full interval. The initial `.task`
+    /// keeps the default `false` because it already runs `load()` first.
+    func startLivePolling(immediate: Bool = false) {
         guard game.phase == .live else { return }
         stopLivePolling()
         liveTask = Task { @MainActor [weak self] in
+            if immediate {
+                guard !Task.isCancelled, let self else { return }
+                _ = await self.loadLiveFromBackend()
+            }
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 15 * 1_000_000_000)
                 guard !Task.isCancelled, let self else { return }
@@ -488,6 +543,16 @@ struct BoxScoreView: View {
     /// `.navigationDestination(for: PlayerSearchResult.self)` on
     /// ScoresView fires and pushes the profile view.
     @Binding var path: NavigationPath
+    /// The tab this box score was pushed from. Live polling is gated on
+    /// `navigation.shouldPoll(on: owningTab)` so it pauses when the user
+    /// switches tabs or backgrounds the app, and resumes on return. Passed
+    /// explicitly (with `navigation` below) rather than read from the
+    /// environment so it survives the ScheduleSheet sheet boundary.
+    let owningTab: AppNavigation.Tab
+    /// Shared lifecycle/tab coordinator, injected explicitly (NOT via
+    /// `@EnvironmentObject`) so it reaches this view identically whether it's
+    /// pushed on a tab's NavigationStack or presented inside a sheet.
+    @ObservedObject var navigation: AppNavigation
     @State private var pendingPlayerLookup: Int?
     @State private var navigationError: String?
     /// User override for the team-selector segmented control. nil
@@ -508,11 +573,15 @@ struct BoxScoreView: View {
         teamStandings: [Int: TeamStandingInfo] = [:],
         teamRecords: [Int: TeamRecord] = [:],
         path: Binding<NavigationPath>,
+        owningTab: AppNavigation.Tab,
+        navigation: AppNavigation,
     ) {
         _vm = StateObject(wrappedValue: BoxScoreViewModel(game: game))
         self.teamStandings = teamStandings
         self.teamRecords = teamRecords
         _path = path
+        self.owningTab = owningTab
+        self.navigation = navigation
     }
 
     /// Default-selected team when the user hasn't tapped the
@@ -587,7 +656,21 @@ struct BoxScoreView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task {
             await vm.load()
-            vm.startLivePolling()
+            // Only arm the loop if this tab is visible and the app is active;
+            // a loaded-but-hidden box score holds zero tasks.
+            if navigation.shouldPoll(on: owningTab) {
+                vm.startLivePolling()
+            }
+        }
+        // Pause on background / tab-switch, resume (with an immediate refresh)
+        // on return. Routed only through the self-cancelling start*/stop* pair,
+        // so this can never leave more than one poll task alive.
+        .onChange(of: navigation.shouldPoll(on: owningTab)) { _, canPoll in
+            if canPoll {
+                vm.startLivePolling(immediate: true)
+            } else {
+                vm.stopLivePolling()
+            }
         }
         .onDisappear { vm.stopLivePolling() }
         .overlay(alignment: .top) {
@@ -638,6 +721,7 @@ struct BoxScoreView: View {
             HStack(spacing: 12) {
                 teamHeader(
                     side:      vm.game.teams.away,
+                    score:     vm.displayAwayScore,
                     bdlTeamId: vm.game.bdlAwayTeamId,
                 )
                 Spacer()
@@ -647,6 +731,7 @@ struct BoxScoreView: View {
                 Spacer()
                 teamHeader(
                     side:      vm.game.teams.home,
+                    score:     vm.displayHomeScore,
                     bdlTeamId: vm.game.bdlHomeTeamId,
                 )
             }
@@ -741,7 +826,7 @@ struct BoxScoreView: View {
         return play?.playEvents?.compactMap(\.details?.description).last
     }
 
-    private func teamHeader(side: GameTeam, bdlTeamId: Int?) -> some View {
+    private func teamHeader(side: GameTeam, score: Int?, bdlTeamId: Int?) -> some View {
         // Two stacked sub-lines under the score:
         //   line 1: "(21-27)"  — current-season W-L
         //   line 2: "3rd AL East" — division rank label
@@ -759,7 +844,7 @@ struct BoxScoreView: View {
             TeamLogoView(team: side.team, size: 56)
             Text(side.team.abbreviation ?? String(side.team.name.prefix(3)).uppercased())
                 .font(.subheadline.weight(.bold))
-            Text(side.score.map(String.init) ?? "—")
+            Text(score.map(String.init) ?? "—")
                 .font(.title.weight(.bold))
                 .monospacedDigit()
                 .padding(.bottom, 2)
@@ -782,7 +867,7 @@ struct BoxScoreView: View {
     private var centerStatus: String {
         switch vm.game.phase {
         case .final:     return "FINAL"
-        case .live:      return vm.game.linescore?.currentInningOrdinal.map { "LIVE · \($0)" } ?? "LIVE"
+        case .live:      return vm.displayInningOrdinal.map { "LIVE · \($0)" } ?? "LIVE"
         case .postponed: return "POSTPONED"
         case .preview:   return vm.game.startDate.map { Self.timeFormatter.string(from: $0) } ?? "SCHEDULED"
         case .other:     return vm.game.status.detailedState.uppercased()
@@ -811,9 +896,9 @@ struct BoxScoreView: View {
     // MARK: - Linescore
 
     private var linescoreCard: some View {
-        let innings = vm.game.linescore?.innings ?? []
-        let totals = vm.game.linescore?.teams
-        let inningCount = max(innings.count, vm.game.linescore?.scheduledInnings ?? 9)
+        let innings = vm.displayLinescore?.innings ?? []
+        let totals = vm.displayLinescore?.teams
+        let inningCount = max(innings.count, vm.displayLinescore?.scheduledInnings ?? 9)
         return VStack(alignment: .leading, spacing: 8) {
             Text("Linescore").font(.headline)
             ScrollView(.horizontal, showsIndicators: false) {

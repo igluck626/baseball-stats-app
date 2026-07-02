@@ -43,7 +43,12 @@ final class LiveFeedViewModel: ObservableObject {
     /// the loop is already running it cancels the old one first so
     /// changing gameId (rare, but possible across re-mounts) doesn't
     /// leak a stale poller.
-    func start(gameId: Int) async {
+    ///
+    /// `immediate` exists only for signature symmetry with the other live
+    /// loops' start methods; this one ALWAYS leads with a fetch below, so the
+    /// flag has no effect and the foreground-resume path gets an instant
+    /// refresh for free.
+    func start(gameId: Int, immediate: Bool = false) async {
         stop()
         await fetch(gameId: gameId)
         task = Task { @MainActor [weak self] in

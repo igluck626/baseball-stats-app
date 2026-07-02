@@ -258,11 +258,21 @@ final class ScoresViewModel: ObservableObject {
     /// today. We don't poll past dates (scores frozen) or future
     /// dates (no live state to refresh into). Cancels itself
     /// naturally once the last live game on today's slate ends.
-    func startAutoRefresh(for date: Date) {
+    /// `immediate` (the foreground/visible RESUME path only) does one leading
+    /// `refreshLive` before the sleep loop so the slate updates instantly on
+    /// return. CRITICAL: the reactive `.onChange(of: games)` re-arm and the
+    /// initial `.task` MUST keep the default `false` — a leading fetch there
+    /// would mutate `games`, re-trigger `.onChange`, and hammer in a tight loop.
+    func startAutoRefresh(for date: Date, immediate: Bool = false) {
         stopAutoRefresh()
         guard Calendar.current.isDateInToday(date) else { return }
         guard games.contains(where: { $0.phase == .live }) else { return }
         refreshTask = Task { @MainActor [weak self] in
+            if immediate {
+                guard let self else { return }
+                await self.refreshLive(date: date)
+                if !self.games.contains(where: { $0.phase == .live }) { return }
+            }
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 15 * 1_000_000_000)
                 guard !Task.isCancelled, let self else { return }
@@ -307,6 +317,7 @@ final class ScoresViewModel: ObservableObject {
 
 struct ScoresView: View {
     @StateObject private var vm = ScoresViewModel()
+    @EnvironmentObject private var navigation: AppNavigation
     @State private var navigationPath = NavigationPath()
     @State private var showingDatePicker = false
 
@@ -324,6 +335,8 @@ struct ScoresView: View {
                     teamStandings:  vm.teamStandings,
                     teamRecords:    vm.teamRecords,
                     path:           $navigationPath,
+                    owningTab:      .scores,
+                    navigation:     navigation,
                 )
             }
             .navigationDestination(for: PlayerSearchResult.self) { player in
@@ -340,7 +353,12 @@ struct ScoresView: View {
         // pull in the just-completed W/L delta without waiting for
         // a tab switch or the next nightly run.
         .onChange(of: vm.games) { oldGames, newGames in
-            vm.startAutoRefresh(for: vm.selectedDate)
+            // Reactive re-arm keeps the default `immediate: false` — a leading
+            // fetch here would mutate `games` and re-fire this handler in a
+            // tight loop. It also only arms while this tab is visible/active.
+            if navigation.shouldPoll(on: .scores) {
+                vm.startAutoRefresh(for: vm.selectedDate)
+            }
             let wasLive = Set(oldGames.filter { $0.phase == .live }.map(\.gamePk))
             let nowFinal = newGames.filter { $0.phase == .final }.map(\.gamePk)
             if nowFinal.contains(where: { wasLive.contains($0) }) {
@@ -349,6 +367,15 @@ struct ScoresView: View {
                 // Standings tab pulls in the new W/L delta on its
                 // next foreground.
                 Task { await vm.refreshStandings() }
+            }
+        }
+        // Pause on background / switch away from the Scores tab; resume with an
+        // immediate refresh on return. Sole arm/disarm path is start*/stop*.
+        .onChange(of: navigation.shouldPoll(on: .scores)) { _, canPoll in
+            if canPoll {
+                vm.startAutoRefresh(for: vm.selectedDate, immediate: true)
+            } else {
+                vm.stopAutoRefresh()
             }
         }
         .onDisappear { vm.stopAutoRefresh() }
@@ -1335,6 +1362,9 @@ private struct LiveGameCard: View {
     let records: [Int: TeamRecord]
     let standings: [Int: TeamStandingInfo]
     @StateObject private var feed = LiveFeedViewModel()
+    // Lives inside the Scores tab tree, so the root-injected coordinator is
+    // reliably in the environment here (no sheet boundary to cross).
+    @EnvironmentObject private var navigation: AppNavigation
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -1350,7 +1380,22 @@ private struct LiveGameCard: View {
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
         .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 3)
         .contentShape(Rectangle())
-        .task { await feed.start(gameId: game.gamePk) }
+        // Only poll while the Scores tab is visible and the app is active.
+        .task {
+            if navigation.shouldPoll(on: .scores) {
+                await feed.start(gameId: game.gamePk)
+            }
+        }
+        // Pause on background / tab-switch, resume with an immediate refresh
+        // (feed.start leads with a fetch) on return. start()/stop() are the
+        // only arm/disarm primitives and start() self-cancels.
+        .onChange(of: navigation.shouldPoll(on: .scores)) { _, canPoll in
+            if canPoll {
+                Task { await feed.start(gameId: game.gamePk) }
+            } else {
+                feed.stop()
+            }
+        }
         .onDisappear { feed.stop() }
     }
 

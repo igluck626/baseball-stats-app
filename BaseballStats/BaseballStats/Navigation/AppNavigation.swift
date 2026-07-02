@@ -99,6 +99,19 @@ final class AppNavigation: ObservableObject {
 
     @Published var selectedTab: Tab
 
+    /// App lifecycle phase, mirrored from the root `.onChange(of: scenePhase)`
+    /// in ContentView. The single source of truth for "is the app foregrounded"
+    /// that the live-polling loops gate on — see `shouldPoll(on:)`.
+    @Published var scenePhase: ScenePhase = .active
+
+    /// Whether a live-polling loop owned by `tab` is allowed to run right now:
+    /// the app must be active AND `tab` must be the selected one. Pushed detail
+    /// views (e.g. a box score) pass the tab they were pushed from as `tab`, so
+    /// they pause when the user switches tabs and resume when they switch back.
+    func shouldPoll(on tab: Tab) -> Bool {
+        scenePhase == .active && selectedTab == tab
+    }
+
     init() {
         // Launch on the FIRST tab in the user's saved order (same source of
         // truth the tab bar uses). Falls back to .home if somehow empty.
