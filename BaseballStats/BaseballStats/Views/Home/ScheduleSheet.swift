@@ -29,6 +29,9 @@ struct ScheduleSheet: View {
     /// objects don't reliably cross the `.sheet` boundary. Forwarded to the
     /// pushed BoxScoreView so its live polling still gates on lifecycle/tab.
     @ObservedObject var navigation: AppNavigation
+    /// Same sheet-boundary reason — forwarded to the pushed BoxScoreView so a
+    /// live box score opened from the schedule subscribes to the shared store.
+    @ObservedObject var liveStore: LiveGameStore
 
     private var teamColor: Color {
         TeamColors.color(for: favorite.lahmanCode) ?? .accentColor
@@ -62,6 +65,7 @@ struct ScheduleSheet: View {
                     path:           $path,
                     owningTab:      .home,
                     navigation:     navigation,
+                    liveStore:      liveStore,
                 )
             }
             .navigationDestination(for: PlayerSearchResult.self) { player in

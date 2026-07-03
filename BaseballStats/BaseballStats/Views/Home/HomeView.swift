@@ -48,6 +48,7 @@ struct HomeView: View {
                     path:           $navigationPath,
                     owningTab:      .home,
                     navigation:     navigation,
+                    liveStore:      liveStore,
                 )
             }
             .navigationDestination(for: PlayerSearchResult.self) { player in
@@ -77,6 +78,7 @@ struct HomeView: View {
                         teamStandings: vm.teamStandings,
                         teamRecords:   vm.teamRecords,
                         navigation:    navigation,
+                        liveStore:     liveStore,
                     )
                 }
             }

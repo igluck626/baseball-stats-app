@@ -35,24 +35,19 @@ final class BoxScoreViewModel: ObservableObject {
     /// after the box score lands and the notable batters can be
     /// identified.
     @Published var batterStatsAtDate: [Int: BatterStatsAtDate] = [:]
-    /// Live-game synthesized snapshot — Stage C of the BDL migration
-    /// will populate this from BDL plays + plate appearances.
-    /// Stage A (this commit) leaves it nil for live games; the
-    /// view falls back to "—" placeholders in the live situation
-    /// card until Stage C lands.
+    /// Live situation snapshot. For LIVE games `applyLiveDetail` sets this from
+    /// the shared `LiveGameStore`'s `LiveGameDetail` (Phase 2, step 5); for
+    /// final / pre-game it stays nil and the view falls back to `game`.
     @Published var live: LiveFeedResponse?
-    /// Full play stream from BDL `/plays?game_id=`. Used by the
-    /// `playsSection` to render the "Scoring" and "All" modes.
-    /// For live games this is also the source the live-state
-    /// synthesizer reads, so `loadLiveState` writes here too;
-    /// for final games `loadPlays` does a one-shot fetch.
+    /// Full play stream. Used by the `playsSection` to render the "Scoring" and
+    /// "All" modes. For LIVE games `applyLiveDetail` writes it from the store's
+    /// snapshot; for final games `loadPlays` does a one-shot fetch.
     @Published var plays: [BDLPlay] = []
     @Published var isLoading = false
     @Published var error: String?
 
     private let bdl: BallDontLieClient
     private let api: APIClient
-    private var liveTask: Task<Void, Never>?
 
     init(game: Game, bdl: BallDontLieClient = .shared, api: APIClient = .shared) {
         self.game = game
@@ -110,44 +105,47 @@ final class BoxScoreViewModel: ObservableObject {
     func load() async {
         isLoading = true
         error = nil
-        // Same fetch for live + final — BDL's `/stats?game_ids[]=`
-        // returns per-player lines whether the game is in progress
-        // or done. For live games we ALSO pull the plays + PA
-        // streams in parallel; the synthesizer in Scores.swift
-        // produces the legacy `LiveFeedResponse` shape the live
-        // situation card consumes.
-        if game.phase == .live {
-            // LIVE: read one unified snapshot from our backend proxy — score,
-            // linescore, situation, and plays all come from this single payload
-            // (no score-vs-plays skew). Fall back to the direct balldontlie
-            // path whenever the proxy didn't apply a snapshot — the game just
-            // started (no cache entry / 404) OR a transient/decode error — so
-            // the view always has something to render on first load.
-            if await loadLiveFromBackend() != .updated {
-                async let boxTask  = loadBoxScore()
-                async let liveTask = loadLiveState()
-                _ = await boxTask
-                _ = await liveTask
-            }
-        } else {
-            // Final / preview: stats + plays are independent fetches
-            // — run them in parallel so the box score + plays section
-            // land together.
-            async let boxTask   = loadBoxScore()
-            async let playsTask = loadPlays()
-            _ = await boxTask
-            _ = await playsTask
-        }
-        // Pitcher records + batter point-in-time totals both depend
-        // on the box score (need decisions / notable hits) and are
-        // independent of each other, so fan them out in parallel.
-        // The small extra latency is bounded by the per-player
-        // fan-outs below.
+        // LIVE games: `LiveGameStore` owns the /live/games/{id} detail now
+        // (Phase 2, step 5). The view subscribes and feeds `applyLiveDetail`,
+        // which populates boxScore / live / plays (and, once, the derived stats)
+        // and clears `isLoading`. So there's nothing to fetch here for a live
+        // game — leaving `isLoading` true until the first snapshot lands.
+        guard game.phase != .live else { return }
+
+        // Final / preview: stats + plays are independent fetches — run them in
+        // parallel so the box score + plays section land together.
+        async let boxTask   = loadBoxScore()
+        async let playsTask = loadPlays()
+        _ = await boxTask
+        _ = await playsTask
+        // Pitcher records + batter point-in-time totals both depend on the box
+        // score (need decisions / notable hits) and are independent of each
+        // other, so fan them out in parallel.
         async let pitcherRecordsTask = loadPitcherRecords()
         async let batterStatsTask    = loadBatterStatsAtDate()
         _ = await pitcherRecordsTask
         _ = await batterStatsTask
         isLoading = false
+    }
+
+    /// Apply a live snapshot from `LiveGameStore` (Phase 2, step 5). Populates
+    /// boxScore / live / plays from ONE consistent `LiveGameDetail` — the same
+    /// source the situation card and plays list read — so every box-score
+    /// element stays mutually consistent (the score-vs-plays skew fix). On the
+    /// FIRST snapshot it also kicks the derived point-in-time stats once,
+    /// mirroring the old flow (which loaded them once after the initial live
+    /// fetch and did NOT refresh them each poll tick).
+    func applyLiveDetail(_ detail: LiveGameDetail) {
+        let firstSnapshot = (boxScore == nil)
+        plays     = detail.playsAsBDL
+        live      = detail.toLiveFeedResponse()
+        boxScore  = detail.toBoxScoreResponse()
+        error     = nil
+        isLoading = false
+        if firstSnapshot {
+            Task { await self.loadPitcherRecords() }
+            Task { await self.loadBatterStatsAtDate() }
+        }
     }
 
     /// Resolve each decision pitcher's MLBAM id (via the backend's
@@ -270,56 +268,6 @@ final class BoxScoreViewModel: ObservableObject {
         if let p = try? await bdl.getPlays(gameId: game.gamePk) {
             self.plays = p
         }
-    }
-
-    private func loadLiveState() async {
-        async let playsTask = bdl.getPlays(gameId: game.gamePk)
-        async let pasTask   = bdl.getPlateAppearances(gameId: game.gamePk)
-        guard let plays = try? await playsTask else {
-            live = nil
-            return
-        }
-        // Stash the raw play stream so `playsSection` can render
-        // it without re-issuing the call.
-        self.plays = plays
-        let pas = (try? await pasTask) ?? []
-        live = plays.toLiveFeedResponse(plateAppearances: pas)
-    }
-
-    /// Outcome of one backend live-snapshot fetch. The polling loop treats
-    /// these very differently, so they must stay distinct — conflating
-    /// `.transient` with `.notLive` (the original `Bool` did) is exactly what
-    /// let a single decode error permanently stop live updates.
-    enum LiveFetchOutcome {
-        case updated     // fresh snapshot applied — keep polling
-        case notLive     // 404: game isn't live (ended / not started) — stop
-        case transient   // network or decode error — keep polling, retry next tick
-    }
-
-    /// LIVE path (Phase 2): one `/live/games/{id}` snapshot from our backend
-    /// drives `boxScore`, `live`, and `plays` together — so every box-score
-    /// element is mutually consistent (the score-vs-plays skew fix), and the
-    /// upstream balldontlie load is O(games) shared across users.
-    ///
-    /// Distinguishes a real 404 (`getLiveGame` → nil, game not live) from a
-    /// transient/decoding failure (a THROW). The old code collapsed both to
-    /// `false` with `try?`, so a decode error looked identical to "game over"
-    /// and the poll loop stopped for good.
-    @discardableResult
-    private func loadLiveFromBackend() async -> LiveFetchOutcome {
-        let detail: LiveGameDetail?
-        do {
-            detail = try await api.getLiveGame(id: game.gamePk)
-        } catch {
-            // Transport or decode error — NOT a signal that the game is over.
-            return .transient
-        }
-        guard let detail else { return .notLive }   // 404 → game not live
-        self.plays    = detail.playsAsBDL
-        self.live     = detail.toLiveFeedResponse()
-        self.boxScore = detail.toBoxScoreResponse()
-        self.error    = nil
-        return .updated
     }
 
     private func loadBoxScore() async {
@@ -466,57 +414,6 @@ final class BoxScoreViewModel: ObservableObject {
         )
     }
 
-    /// 15s polling loop for live games — re-fetches the box score
-    /// (per-player stat lines + linescore inputs) and the live
-    /// situation streams (plays + PAs → live card data). Self-
-    /// terminates when the synthesized inningState reports the
-    /// game has gone final.
-    /// `immediate` (the foreground/visible RESUME path only) does one leading
-    /// backend refresh before the sleep loop so the box score updates right
-    /// away on return instead of after a full interval. The initial `.task`
-    /// keeps the default `false` because it already runs `load()` first.
-    func startLivePolling(immediate: Bool = false) {
-        guard game.phase == .live else { return }
-        stopLivePolling()
-        liveTask = Task { @MainActor [weak self] in
-            if immediate {
-                guard !Task.isCancelled, let self else { return }
-                _ = await self.loadLiveFromBackend()
-            }
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 15 * 1_000_000_000)
-                guard !Task.isCancelled, let self else { return }
-                // Refresh from the backend live proxy (one consistent payload).
-                switch await self.loadLiveFromBackend() {
-                case .updated:
-                    continue                         // fresh snapshot — keep polling
-                case .transient:
-                    // Network or decode hiccup — do NOT treat as game-over.
-                    // Degrade to the direct balldontlie path for this tick so the
-                    // box score still moves, and keep polling. (Before, a decode
-                    // error here silently stopped live updates entirely.)
-                    async let boxTask  = self.loadBoxScore()
-                    async let liveTask = self.loadLiveState()
-                    _ = await boxTask
-                    _ = await liveTask
-                case .notLive:
-                    // 404 = the game is no longer live (ended). Pull the finished
-                    // box score once from the direct path, then stop polling.
-                    async let boxTask   = self.loadBoxScore()
-                    async let playsTask = self.loadPlays()
-                    _ = await boxTask
-                    _ = await playsTask
-                    return
-                }
-            }
-        }
-    }
-
-    func stopLivePolling() {
-        liveTask?.cancel()
-        liveTask = nil
-    }
-
     /// Resolve a BDL-id-keyed player → our backend's PlayerSearchResult.
     /// Returns nil if the player isn't BDL-mapped in our DB (the
     /// bootstrap walk is still adding bdl_ids to historical rows);
@@ -553,6 +450,14 @@ struct BoxScoreView: View {
     /// `@EnvironmentObject`) so it reaches this view identically whether it's
     /// pushed on a tab's NavigationStack or presented inside a sheet.
     @ObservedObject var navigation: AppNavigation
+    /// Shared live-game store, also injected explicitly for the same sheet-
+    /// boundary reason as `navigation`. For LIVE games the box score subscribes
+    /// to `liveStore.detail[gamePk]` instead of running its own poll loop.
+    @ObservedObject var liveStore: LiveGameStore
+    /// Stable per-view identity for the store's refcounted detail subscription
+    /// (Phase 2, step 5). Opening a box score OVER its Scores/Home card takes
+    /// that game's refcount 1→2, sharing the existing loop.
+    @State private var subscriberID = LiveGameStore.SubscriberID()
     @State private var pendingPlayerLookup: Int?
     @State private var navigationError: String?
     /// User override for the team-selector segmented control. nil
@@ -575,6 +480,7 @@ struct BoxScoreView: View {
         path: Binding<NavigationPath>,
         owningTab: AppNavigation.Tab,
         navigation: AppNavigation,
+        liveStore: LiveGameStore,
     ) {
         _vm = StateObject(wrappedValue: BoxScoreViewModel(game: game))
         self.teamStandings = teamStandings
@@ -582,6 +488,7 @@ struct BoxScoreView: View {
         _path = path
         self.owningTab = owningTab
         self.navigation = navigation
+        self.liveStore = liveStore
     }
 
     /// Default-selected team when the user hasn't tapped the
@@ -656,23 +563,38 @@ struct BoxScoreView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task {
             await vm.load()
-            // Only arm the loop if this tab is visible and the app is active;
-            // a loaded-but-hidden box score holds zero tasks.
+            guard vm.game.phase == .live else { return }   // final / pre-game: no store subscription
+            // Seed from whatever the store already has — a box score usually
+            // opens OVER a Scores/Home card already subscribed to this game, so
+            // detail is present and renders instantly (no wait for the next tick).
+            if let detail = liveStore.detail[vm.game.gamePk] {
+                vm.applyLiveDetail(detail)
+            }
+            // Subscribe (immediate: true) while this tab is visible/active. For a
+            // game a card already watches this is refcount 1→2 sharing one loop;
+            // for a fresh open (e.g. from ScheduleSheet) it's 0→1, which the
+            // store always leads with a fetch.
             if navigation.shouldPoll(on: owningTab) {
-                vm.startLivePolling()
+                liveStore.subscribeDetail(vm.game.gamePk, owner: subscriberID, immediate: true)
             }
         }
-        // Pause on background / tab-switch, resume (with an immediate refresh)
-        // on return. Routed only through the self-cancelling start*/stop* pair,
-        // so this can never leave more than one poll task alive.
+        // Feed each fresh store snapshot into the view model (drives the banner /
+        // linescore / situation / plays, all from one consistent LiveGameDetail).
+        .onChange(of: liveStore.detail[vm.game.gamePk]) { _, detail in
+            if let detail { vm.applyLiveDetail(detail) }
+        }
+        // Pause on background / tab-switch (unsubscribe → refcount drops); resume
+        // with an immediate refresh on return. Idempotent + refcounted, so this
+        // never stops a loop a card still needs.
         .onChange(of: navigation.shouldPoll(on: owningTab)) { _, canPoll in
+            guard vm.game.phase == .live else { return }
             if canPoll {
-                vm.startLivePolling(immediate: true)
+                liveStore.subscribeDetail(vm.game.gamePk, owner: subscriberID, immediate: true)
             } else {
-                vm.stopLivePolling()
+                liveStore.unsubscribeDetail(vm.game.gamePk, owner: subscriberID)
             }
         }
-        .onDisappear { vm.stopLivePolling() }
+        .onDisappear { liveStore.unsubscribeDetail(vm.game.gamePk, owner: subscriberID) }
         .overlay(alignment: .top) {
             VStack(spacing: 6) {
                 if pendingPlayerLookup != nil {

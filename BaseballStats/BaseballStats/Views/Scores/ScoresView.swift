@@ -300,6 +300,7 @@ struct ScoresView: View {
                     path:           $navigationPath,
                     owningTab:      .scores,
                     navigation:     navigation,
+                    liveStore:      liveStore,
                 )
             }
             .navigationDestination(for: PlayerSearchResult.self) { player in
