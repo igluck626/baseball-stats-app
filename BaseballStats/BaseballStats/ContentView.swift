@@ -14,6 +14,10 @@ struct ContentView: View {
     /// in the tree (e.g. AllTimeRankingsCard on a player profile)
     /// can push to the Leaderboards tab.
     @StateObject private var navigation = AppNavigation()
+    /// Phase 2: single source of truth for live-game data, root-injected like
+    /// `navigation`. Created here so it lives for the app's lifetime; nothing
+    /// reads it yet (surfaces migrate onto it in later steps).
+    @StateObject private var liveStore = LiveGameStore()
     /// Drives the tab bar's order (and the launch tab). Same shared store
     /// AppNavigation seeds `selectedTab` from, so reordering in Settings
     /// rebuilds the bar here.
@@ -46,6 +50,7 @@ struct ContentView: View {
             navigation.scenePhase = phase
         }
         .environmentObject(navigation)
+        .environmentObject(liveStore)
         // User's System/Light/Dark choice, applied over the device appearance.
         // Cascades to every tab and the tab bar.
         .appearanceOverride()
