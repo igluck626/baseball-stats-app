@@ -70,24 +70,22 @@ final class ScoresViewModel: ObservableObject {
 
     private let bdl: BallDontLieClient
     private let api: APIClient
-    private var refreshTask: Task<Void, Never>?
 
     init(bdl: BallDontLieClient = .shared, api: APIClient = .shared) {
         self.bdl = bdl
         self.api = api
     }
 
-    /// Live-poll step (Phase 2): refresh ONLY the in-progress games from our
-    /// backend live proxy (`/live/games`) and merge their fresh score / inning
-    /// state into the existing list — finals and scheduled games stay as the
-    /// initial `getGames` load left them. When a game that WAS live drops out
-    /// of the live set (it ended), do one full `load` to capture its final
-    /// state + records. Steady-state load is O(games) on our backend, not the
-    /// O(users) balldontlie poll this replaces.
-    func refreshLive(date: Date) async {
+    /// Fold the shared `LiveGameStore`'s live-games list into `games` — the SAME
+    /// merge the old self-fetched loop did, minus the fetch: `LiveGameStore` now
+    /// owns the single `/live/games` poll (Phase 2, step 2), and the view feeds
+    /// its `liveList` in here on every store update. Only in-progress games
+    /// matching a slate game by gamePk get their score / inning refreshed;
+    /// finals and scheduled games stay as the initial `load` left them. When a
+    /// game that WAS live drops out of the live set (it ended), do one full
+    /// `load` to capture its final state + records.
+    func applyLiveList(_ liveById: [Int: LiveGameSummary], date: Date) async {
         guard Calendar.current.isDateInToday(date) else { return }
-        guard let resp = try? await api.getLiveGames() else { return }
-        let liveById = Dictionary(resp.games.map { ($0.gameId, $0) }, uniquingKeysWith: { a, _ in a })
         let wereLive = Set(games.filter { $0.phase == .live }.map(\.gamePk))
 
         games = games.map { g in
@@ -253,42 +251,6 @@ final class ScoresViewModel: ObservableObject {
         }
     }
 
-    /// Spin up a polling task that re-runs `load(date:)` every 15s
-    /// while any game in `games` is live AND the selected date is
-    /// today. We don't poll past dates (scores frozen) or future
-    /// dates (no live state to refresh into). Cancels itself
-    /// naturally once the last live game on today's slate ends.
-    /// `immediate` (the foreground/visible RESUME path only) does one leading
-    /// `refreshLive` before the sleep loop so the slate updates instantly on
-    /// return. CRITICAL: the reactive `.onChange(of: games)` re-arm and the
-    /// initial `.task` MUST keep the default `false` — a leading fetch there
-    /// would mutate `games`, re-trigger `.onChange`, and hammer in a tight loop.
-    func startAutoRefresh(for date: Date, immediate: Bool = false) {
-        stopAutoRefresh()
-        guard Calendar.current.isDateInToday(date) else { return }
-        guard games.contains(where: { $0.phase == .live }) else { return }
-        refreshTask = Task { @MainActor [weak self] in
-            if immediate {
-                guard let self else { return }
-                await self.refreshLive(date: date)
-                if !self.games.contains(where: { $0.phase == .live }) { return }
-            }
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 15 * 1_000_000_000)
-                guard !Task.isCancelled, let self else { return }
-                // Poll our backend proxy (cheap, shared) instead of re-fetching
-                // the whole slate from balldontlie every tick.
-                await self.refreshLive(date: date)
-                if !self.games.contains(where: { $0.phase == .live }) { return }
-            }
-        }
-    }
-
-    func stopAutoRefresh() {
-        refreshTask?.cancel()
-        refreshTask = nil
-    }
-
     static func iso(_ date: Date) -> String {
         // `yyyy-MM-dd` in local timezone — what BDL's `dates[]`
         // filter expects, and what the date-strip pills key on.
@@ -318,6 +280,7 @@ final class ScoresViewModel: ObservableObject {
 struct ScoresView: View {
     @StateObject private var vm = ScoresViewModel()
     @EnvironmentObject private var navigation: AppNavigation
+    @EnvironmentObject private var liveStore: LiveGameStore
     @State private var navigationPath = NavigationPath()
     @State private var showingDatePicker = false
 
@@ -347,18 +310,22 @@ struct ScoresView: View {
             }
         }
         .task { await vm.load(date: vm.selectedDate) }
-        // Restart the auto-refresh whenever a load completes — gives
-        // it a fresh look at whether any game is live now. Also
-        // detect Live → Final transitions so the Standings tab can
-        // pull in the just-completed W/L delta without waiting for
-        // a tab switch or the next nightly run.
+        // Drive the SHARED LiveGameStore list loop from the Scores tab's
+        // lifecycle, gated exactly like the old per-VM loop was (Phase 2, step 2).
+        .task {
+            if navigation.shouldPoll(on: .scores) { liveStore.startListLoop() }
+        }
+        // Fold each fresh /live/games snapshot from the store into `games`
+        // (score / inning) — the merge the deleted refreshLive loop used to do,
+        // now sourced from the store's shared list instead of a self-fetch.
+        .onChange(of: liveStore.liveList) { _, list in
+            Task { await vm.applyLiveList(list, date: vm.selectedDate) }
+        }
+        // Detect Live → Final transitions so the Standings tab can pull in the
+        // just-completed W/L delta without waiting for a tab switch or the next
+        // nightly run. (The auto-refresh re-arm that used to live here is gone —
+        // the store list loop is driven by shouldPoll below.)
         .onChange(of: vm.games) { oldGames, newGames in
-            // Reactive re-arm keeps the default `immediate: false` — a leading
-            // fetch here would mutate `games` and re-fire this handler in a
-            // tight loop. It also only arms while this tab is visible/active.
-            if navigation.shouldPoll(on: .scores) {
-                vm.startAutoRefresh(for: vm.selectedDate)
-            }
             let wasLive = Set(oldGames.filter { $0.phase == .live }.map(\.gamePk))
             let nowFinal = newGames.filter { $0.phase == .final }.map(\.gamePk)
             if nowFinal.contains(where: { wasLive.contains($0) }) {
@@ -369,16 +336,16 @@ struct ScoresView: View {
                 Task { await vm.refreshStandings() }
             }
         }
-        // Pause on background / switch away from the Scores tab; resume with an
-        // immediate refresh on return. Sole arm/disarm path is start*/stop*.
+        // Pause the store list loop on background / switch away from the Scores
+        // tab; resume with an immediate refresh on return.
         .onChange(of: navigation.shouldPoll(on: .scores)) { _, canPoll in
             if canPoll {
-                vm.startAutoRefresh(for: vm.selectedDate, immediate: true)
+                liveStore.startListLoop(immediate: true)
             } else {
-                vm.stopAutoRefresh()
+                liveStore.stopListLoop()
             }
         }
-        .onDisappear { vm.stopAutoRefresh() }
+        .onDisappear { liveStore.stopListLoop() }
     }
 
     // MARK: - Date bar
@@ -460,7 +427,10 @@ struct ScoresView: View {
     }
 
     private func jumpTo(date: Date) {
-        vm.stopAutoRefresh()
+        // No per-VM loop to stop anymore — the shared LiveGameStore list loop is
+        // driven by shouldPoll(.scores), and applyLiveList is today-gated, so a
+        // date change just reloads the slate; the next store tick folds live
+        // scores back in when the date is today.
         vm.selectedDate = date
         Task { await vm.load(date: date) }
     }
