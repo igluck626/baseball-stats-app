@@ -3,103 +3,14 @@
 //  BaseballStats
 //
 //  Shared building blocks for the live-game surfaces in the Scores
-//  tab. Two visual primitives (`BaseRunnerView`, `LiveBadge`) plus
-//  the `LiveFeedViewModel` that drives both the live game card on
-//  ScoresView and the live header on BoxScoreView.
-//
-//  The view model owns its own 30-second poll loop so consumers can
-//  drop it in with `@StateObject` and forget about lifecycle —
-//  `.task { await vm.start(gameId:) }` kicks off the initial fetch
-//  and timer; the timer self-cancels when the play stream shows the
-//  game has finished (last play type == "End of Game").
-//
-//  Backed by BallDontLie's `/plays` + `/plate_appearances` streams
-//  (Phase 3 of the MLB-Stats-API → BDL migration). The two streams
-//  are synthesized into a legacy `LiveFeedResponse` via the
-//  extension in `Scores.swift` so the live UI doesn't need to
-//  branch on the data source.
+//  tab: visual primitives (`BaseRunnerView`, `LiveBadge`), the team-logo
+//  cache + view, and the `PlaysView` play-by-play list. These consume the
+//  live snapshots the shared `LiveGameStore` publishes; none owns a poll
+//  loop of its own (Phase 2 moved all live polling into the store).
 //
 
 import Combine
 import SwiftUI
-
-// MARK: - Live feed view model
-
-@MainActor
-final class LiveFeedViewModel: ObservableObject {
-    @Published var live: LiveFeedResponse?
-    @Published var error: String?
-
-    private var task: Task<Void, Never>?
-    private let bdl: BallDontLieClient
-    private let api: APIClient
-
-    init(bdl: BallDontLieClient = .shared, api: APIClient = .shared) {
-        self.bdl = bdl
-        self.api = api
-    }
-
-    /// One-shot fetch + start a 15s polling loop. Idempotent — if
-    /// the loop is already running it cancels the old one first so
-    /// changing gameId (rare, but possible across re-mounts) doesn't
-    /// leak a stale poller.
-    ///
-    /// `immediate` exists only for signature symmetry with the other live
-    /// loops' start methods; this one ALWAYS leads with a fetch below, so the
-    /// flag has no effect and the foreground-resume path gets an instant
-    /// refresh for free.
-    func start(gameId: Int, immediate: Bool = false) async {
-        stop()
-        await fetch(gameId: gameId)
-        task = Task { @MainActor [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 15 * 1_000_000_000)
-                guard !Task.isCancelled, let self else { return }
-                await self.fetch(gameId: gameId)
-                // Stop polling once the game is final — no point
-                // burning network on a frozen response.
-                if self.isGameOver { return }
-            }
-        }
-    }
-
-    func stop() {
-        task?.cancel()
-        task = nil
-    }
-
-    private func fetch(gameId: Int) async {
-        // Phase 2: read the unified snapshot from our backend live proxy
-        // (shared cache, consistent state). Falls back to the direct
-        // balldontlie path only if the proxy has no snapshot yet (e.g. a
-        // just-started game) or once the game has gone final (the proxy stops
-        // serving it, so `isGameOver` can fire and the loop terminates).
-        if let detail = try? await api.getLiveGame(id: gameId) {
-            live  = detail.toLiveFeedResponse()
-            error = nil
-            return
-        }
-        do {
-            async let playsTask = bdl.getPlays(gameId: gameId)
-            async let pasTask   = bdl.getPlateAppearances(gameId: gameId)
-            let plays = try await playsTask
-            let pas   = (try? await pasTask) ?? []
-            live  = plays.toLiveFeedResponse(plateAppearances: pas)
-            error = nil
-        } catch {
-            self.error = error.localizedDescription
-        }
-    }
-
-    /// True once the synthesized linescore signals the game is
-    /// done — the synthesizer maps BDL's "End Inning"/"End of Game"
-    /// hints into the legacy `inningState` field where this getter
-    /// expects them.
-    private var isGameOver: Bool {
-        let state = live?.liveData.linescore?.inningState?.lowercased()
-        return state == "final" || state == "game over"
-    }
-}
 
 // MARK: - Base runner diamond
 

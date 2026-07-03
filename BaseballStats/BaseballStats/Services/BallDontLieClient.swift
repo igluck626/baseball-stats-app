@@ -390,23 +390,6 @@ final class BallDontLieClient: @unchecked Sendable {
         return result
     }
 
-    /// Per-PA log with base-runner state and pitch-by-pitch detail.
-    /// The live card uses the latest entry's `runnerOn{First,Second,
-    /// Third}` to render the diamond — `/plays` doesn't carry that.
-    func getPlateAppearances(gameId: Int) async throws -> [BDLPlateAppearance] {
-        let key = "pas:\(gameId)"
-        if let cached: [BDLPlateAppearance] = cachedValue(key) { return cached }
-        let items: [URLQueryItem] = [
-            URLQueryItem(name: "game_id",  value: String(gameId)),
-            URLQueryItem(name: "per_page", value: "100"),
-        ]
-        let result: [BDLPlateAppearance] = try await fetchAllPages(
-            path: "/mlb/v1/plate_appearances", baseQuery: items,
-        )
-        storeInCache(key, result, ttl: 15)
-        return result
-    }
-
     // MARK: - Active roster
 
     /// `GET /mlb/v1/players/active?team_ids[]={teamId}&per_page=100`.

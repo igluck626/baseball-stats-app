@@ -327,21 +327,3 @@ struct BDLStandingsEntry: Codable, Hashable {
     let wins: Int
     let losses: Int
 }
-
-// MARK: - Plate appearances
-
-struct BDLPlateAppearance: Codable, Hashable {
-    let batterId: Int
-    let pitcherId: Int
-    let inning: Int
-    let halfInning: String           // "top" / "bottom"
-    let paNumber: Int
-    let outs: Int?
-    let batterSide: String?
-    let pitcherHand: String?
-    let result: String?              // "Strikeout" / "Single" / …
-    let isBallInPlayOut: Bool?
-    let runnerOnFirst: Bool?
-    let runnerOnSecond: Bool?
-    let runnerOnThird: Bool?
-}
