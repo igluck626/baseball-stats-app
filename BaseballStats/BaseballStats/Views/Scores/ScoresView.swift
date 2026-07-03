@@ -1322,24 +1322,35 @@ private struct FinalGameCard: View {
 
 // MARK: - Live game card
 
-/// Card variant for games currently in progress. Holds its own
-/// `LiveFeedViewModel` so each card polls `/feed/live` independently;
-/// the parent `ScoresViewModel`'s 30-second schedule poll only
-/// covers list-level state (a game flipping from preview → live or
-/// live → final). Tapping the card pushes the live BoxScoreView.
+/// Card variant for games currently in progress. Subscribes to the shared
+/// `LiveGameStore`'s refcounted detail loop for this game (`/live/games/{id}`)
+/// while the Scores tab is visible; the parent list snapshot covers list-level
+/// state (a game flipping from preview → live or live → final). Tapping the
+/// card pushes the live BoxScoreView.
 private struct LiveGameCard: View {
     let game: Game
     let records: [Int: TeamRecord]
     let standings: [Int: TeamStandingInfo]
-    @StateObject private var feed = LiveFeedViewModel()
-    // Lives inside the Scores tab tree, so the root-injected coordinator is
+    // Lives inside the Scores tab tree, so the root-injected coordinators are
     // reliably in the environment here (no sheet boundary to cross).
     @EnvironmentObject private var navigation: AppNavigation
+    @EnvironmentObject private var liveStore: LiveGameStore
+    /// Stable per-card identity for the store's refcounted detail subscription
+    /// (Phase 2, step 4). One token per card instance makes subscribe/
+    /// unsubscribe idempotent, so N cards (and a pushed box score) watching the
+    /// same game share ONE detail loop.
+    @State private var subscriberID = LiveGameStore.SubscriberID()
+
+    /// This game's live snapshot from the shared store, adapted to the existing
+    /// `LiveFeedResponse` shape the card renders — so the display is unchanged.
+    private var liveFeed: LiveFeedResponse? {
+        liveStore.detail[game.gamePk]?.toLiveFeedResponse()
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             scoreboardRow
-            if let live = feed.live?.liveData {
+            if let live = liveFeed?.liveData {
                 Divider()
                 inGameDetail(live)
             }
@@ -1350,23 +1361,24 @@ private struct LiveGameCard: View {
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
         .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 3)
         .contentShape(Rectangle())
-        // Only poll while the Scores tab is visible and the app is active.
+        // Subscribe to this game's shared detail loop while the Scores tab is
+        // visible and the app is active. Refcounted by `subscriberID`, so many
+        // cards on one game share a single /live/games/{id} loop.
         .task {
             if navigation.shouldPoll(on: .scores) {
-                await feed.start(gameId: game.gamePk)
+                liveStore.subscribeDetail(game.gamePk, owner: subscriberID)
             }
         }
-        // Pause on background / tab-switch, resume with an immediate refresh
-        // (feed.start leads with a fetch) on return. start()/stop() are the
-        // only arm/disarm primitives and start() self-cancels.
+        // Pause on background / tab-switch (unsubscribe → refcount drops), resume
+        // with an immediate refresh on return.
         .onChange(of: navigation.shouldPoll(on: .scores)) { _, canPoll in
             if canPoll {
-                Task { await feed.start(gameId: game.gamePk) }
+                liveStore.subscribeDetail(game.gamePk, owner: subscriberID, immediate: true)
             } else {
-                feed.stop()
+                liveStore.unsubscribeDetail(game.gamePk, owner: subscriberID)
             }
         }
-        .onDisappear { feed.stop() }
+        .onDisappear { liveStore.unsubscribeDetail(game.gamePk, owner: subscriberID) }
     }
 
     // MARK: Top — team rows + inning + LIVE badge
@@ -1429,11 +1441,12 @@ private struct LiveGameCard: View {
     /// linescore's `isTopInning`. Falls back to the inning ordinal
     /// alone when the half isn't reported (mid-inning / end-inning).
     private var inningArrow: some View {
-        let ls = game.linescore ?? feed.live?.liveData.linescore.map(toGameLinescore)
+        let lf = liveFeed
+        let ls = game.linescore ?? lf?.liveData.linescore.map(toGameLinescore)
         let ordinal = ls?.currentInningOrdinal
-            ?? feed.live?.liveData.linescore?.currentInningOrdinal
+            ?? lf?.liveData.linescore?.currentInningOrdinal
             ?? "?"
-        let isTop = feed.live?.liveData.linescore?.isTopInning
+        let isTop = lf?.liveData.linescore?.isTopInning
             ?? game.linescore?.isTopInning
         let arrow: String? = isTop.map { $0 ? "▲" : "▼" }
         return HStack(spacing: 4) {

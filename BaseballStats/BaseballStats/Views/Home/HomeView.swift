@@ -438,16 +438,20 @@ private struct TeamHeroCard: View {
     /// keeps animating between 1.0 and 0.4 from there.
     @State private var livePulse = false
 
-    /// Live-game runner / out / matchup feed. Reuses the Scores-tab
-    /// view model so the hero card pulls the same `/plays` +
-    /// `/plate_appearances` synthesis the box-score live header
-    /// reads. Started on appear when `liveGame` is set; restarts on
-    /// `.task(id:)` when the game changes; the VM's own 30s loop
-    /// self-terminates once the game goes final.
-    @StateObject private var liveVM = LiveFeedViewModel()
-
-    /// Home tab tree, so the root-injected coordinator is reliably present.
+    /// Home tab tree, so the root-injected coordinators are reliably present.
     @EnvironmentObject private var navigation: AppNavigation
+    @EnvironmentObject private var liveStore: LiveGameStore
+    /// Stable per-card identity for the store's refcounted detail subscription
+    /// (Phase 2, step 4) — makes subscribe/unsubscribe idempotent.
+    @State private var subscriberID = LiveGameStore.SubscriberID()
+
+    /// The favorite's live snapshot from the shared store, adapted to the
+    /// existing `LiveFeedResponse` shape the situation panel renders — so the
+    /// runner / out / matchup display is unchanged.
+    private var liveFeed: LiveFeedResponse? {
+        guard let pk = liveGame?.gamePk else { return nil }
+        return liveStore.detail[pk]?.toLiveFeedResponse()
+    }
 
     @Environment(\.colorScheme) private var colorScheme
 
@@ -490,27 +494,35 @@ private struct TeamHeroCard: View {
         )
         .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 3)
         .padding(.horizontal, 16)
-        // Start the live feed VM when a live game appears; restart on
-        // game change; stop when the live game disappears. The VM's
-        // own polling loop handles the 30s refresh + self-terminates
-        // on final state, so we just gate the kickoff here. Also gated
-        // on tab visibility / app-active so a hidden Home tab holds no task.
-        .task(id: liveGame?.id) {
-            if let g = liveGame, navigation.shouldPoll(on: .home) {
-                await liveVM.start(gameId: g.gamePk)
-            } else {
-                liveVM.stop()
+        // Subscribe to the favorite's shared detail loop while there's a live
+        // game AND the Home tab is visible/active. Refcounted by subscriberID.
+        .task {
+            if let pk = liveGame?.gamePk, navigation.shouldPoll(on: .home) {
+                liveStore.subscribeDetail(pk, owner: subscriberID)
+            }
+        }
+        // Favorite's live game changed (or cleared): release the old id and
+        // subscribe the new one. onChange hands us both, so the old game's
+        // detail loop refcount drops correctly.
+        .onChange(of: liveGame?.gamePk) { oldPk, newPk in
+            if let oldPk { liveStore.unsubscribeDetail(oldPk, owner: subscriberID) }
+            if let newPk, navigation.shouldPoll(on: .home) {
+                liveStore.subscribeDetail(newPk, owner: subscriberID, immediate: true)
             }
         }
         // Pause on background / switch away from Home; resume with an immediate
-        // refresh (start leads with a fetch) on return. start()/stop() only.
+        // refresh on return.
         .onChange(of: navigation.shouldPoll(on: .home)) { _, canPoll in
+            guard let pk = liveGame?.gamePk else { return }
             if canPoll {
-                if let g = liveGame {
-                    Task { await liveVM.start(gameId: g.gamePk) }
-                }
+                liveStore.subscribeDetail(pk, owner: subscriberID, immediate: true)
             } else {
-                liveVM.stop()
+                liveStore.unsubscribeDetail(pk, owner: subscriberID)
+            }
+        }
+        .onDisappear {
+            if let pk = liveGame?.gamePk {
+                liveStore.unsubscribeDetail(pk, owner: subscriberID)
             }
         }
     }
@@ -615,15 +627,15 @@ private struct TeamHeroCard: View {
         .padding(.vertical, 8)
     }
 
-    /// Bases + outs + current matchup, driven by `liveVM.live` (the
-    /// BDL `/plays` + `/plate_appearances` synthesis). Rendered
+    /// Bases + outs + current matchup, driven by `liveFeed` (the shared
+    /// `LiveGameStore`'s detail snapshot for the favorite's game). Rendered
     /// unconditionally beneath the score row so the layout is stable
     /// — runners default to empty, outs to zero, and the
     /// batter-vs-pitcher line is hidden when names aren't ready
     /// (early-game cold start, or BDL hasn't shipped a "Start
     /// Batter/Pitcher" event yet).
     private var liveSituationPanel: some View {
-        let linescore = liveVM.live?.liveData.linescore
+        let linescore = liveFeed?.liveData.linescore
         let outs = linescore?.outs ?? 0
         let first  = linescore?.offense?.first  != nil
         let second = linescore?.offense?.second != nil

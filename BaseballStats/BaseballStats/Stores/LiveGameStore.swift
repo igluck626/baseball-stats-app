@@ -115,17 +115,24 @@ final class LiveGameStore: ObservableObject {
     // MARK: - Detail loops (refcounted by distinct subscriber token)
 
     /// Register `owner`'s interest in game `gameId`'s full snapshot. Idempotent:
-    /// subscribing when `(owner, gameId)` is already active is a no-op. The
-    /// FIRST distinct owner (set 0→1) starts that id's loop; later owners share
-    /// it. `immediate` gives a new subscriber an instant fetch instead of
-    /// waiting a full interval.
+    /// subscribing when `(owner, gameId)` is already active is a no-op.
+    ///
+    /// `immediate` semantics — READ before relying on it (e.g. Step 5 box score):
+    ///   • Loop START (set 0→1): `startDetailLoop` ALWAYS leads with a fetch, so
+    ///     the first subscriber never waits an interval. `immediate` is
+    ///     irrelevant on this transition — a brand-new loop always fetches first.
+    ///   • Already-running loop (set 1→2, 2→3, …): the loop is already ticking
+    ///     and `detail[gameId]` is (usually) already populated, so a newcomer
+    ///     sees data at once. Pass `immediate: true` to ALSO trigger a one-shot
+    ///     fetch now (freshest possible for a resume / a box score joining a
+    ///     card's loop); `immediate: false` just joins without an extra fetch.
     func subscribeDetail(_ gameId: Int, owner: SubscriberID, immediate: Bool = false) {
         var owners = detailOwners[gameId] ?? []
         let (inserted, _) = owners.insert(owner)
         detailOwners[gameId] = owners
         guard inserted else { return }          // already subscribed → no-op
         if owners.count == 1 {
-            startDetailLoop(gameId, immediate: immediate)   // 0→1: start the loop
+            startDetailLoop(gameId)             // 0→1: start the loop (always leads with a fetch)
         } else if immediate {
             // Loop already running for another owner — hand the newcomer a fresh
             // value now rather than making it wait for the next tick.
@@ -150,13 +157,16 @@ final class LiveGameStore: ObservableObject {
         }
     }
 
-    private func startDetailLoop(_ gameId: Int, immediate: Bool) {
+    /// Start (or replace) the detail poll loop for `gameId`. ALWAYS leads with a
+    /// fetch before the first sleep, so the first subscriber's situation/inning
+    /// populates on the first cycle (~1s) instead of after a full interval — no
+    /// caller can accidentally get a delayed first load. `fetchDetail` is a
+    /// single `/live/games/{id}` call (the backend owns any schedule/lineup
+    /// warm-up), so nothing gates the first detail snapshot reaching `detail`.
+    private func startDetailLoop(_ gameId: Int) {
         detailTasks[gameId]?.cancel()
         detailTasks[gameId] = Task { @MainActor [weak self] in
-            if immediate {
-                guard let self else { return }
-                await self.fetchDetail(gameId)
-            }
+            await self?.fetchDetail(gameId)         // leading fetch — always, on every loop start
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: Self.refreshIntervalNanos)
                 guard !Task.isCancelled, let self else { return }
