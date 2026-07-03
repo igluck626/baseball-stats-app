@@ -133,7 +133,6 @@ final class HomeViewModel: ObservableObject {
 
     private let bdl: BallDontLieClient
     private let api: APIClient
-    private var refreshTask: Task<Void, Never>?
 
     init(bdl: BallDontLieClient = .shared, api: APIClient = .shared) {
         self.bdl = bdl
@@ -267,15 +266,15 @@ final class HomeViewModel: ObservableObject {
         return Array(recents) + Array(upcoming)
     }
 
-    /// Live-poll step (Phase 2): refresh the favorite's live game from our
-    /// backend proxy (`/live/games`) and merge its score / inning state into
-    /// the hero strip — instead of re-fetching ±5 days of team games from
-    /// balldontlie every tick. When the live game ends (drops out of the live
-    /// set), do one full `load` to capture its final state + records.
-    func refreshLive(bdlTeamId: Int) async {
+    /// Fold the shared `LiveGameStore`'s live-games list into the hero strip —
+    /// the SAME merge the old self-fetched loop did, minus the fetch:
+    /// `LiveGameStore` now owns the single `/live/games` poll (Phase 2, step 3),
+    /// and the view feeds its `liveList` in here on every store update. Only the
+    /// favorite's in-progress game (matched by gamePk) gets its score / inning
+    /// refreshed; when it ends (drops out of the live set) do one full `load` to
+    /// capture its final state + records.
+    func applyLiveList(_ liveById: [Int: LiveGameSummary], bdlTeamId: Int) async {
         guard hasLiveGame else { return }
-        guard let resp = try? await api.getLiveGames() else { return }
-        let liveById = Dictionary(resp.games.map { ($0.gameId, $0) }, uniquingKeysWith: { a, _ in a })
         let wereLive = Set(recentAndUpcoming.filter { $0.phase == .live }.map(\.gamePk))
 
         recentAndUpcoming = recentAndUpcoming.map { g in
@@ -287,37 +286,8 @@ final class HomeViewModel: ObservableObject {
 
         let ended = wereLive.subtracting(liveById.keys)
         if !ended.isEmpty {
-            await load(bdlTeamId: bdlTeamId)
+            await load(bdlTeamId: bdlTeamId)   // a game finished — refresh finals/records
         }
-    }
-
-    /// 15s auto-refresh while the favorite team has a live game.
-    /// Matches `ScoresViewModel.startAutoRefresh`'s cadence so the
-    /// hero card's live score stays in step with the Scores tab.
-    /// Cancellable, weak-self loop.
-    /// When `immediate` is true (the foreground/visible RESUME path), do one
-    /// leading refresh before entering the sleep loop so the hero card updates
-    /// right away instead of after a full interval. All other callers keep the
-    /// default `false` so the normal `.task` arm doesn't double-fetch.
-    func startAutoRefresh(bdlTeamId: Int, immediate: Bool = false) {
-        stopAutoRefresh()
-        guard hasLiveGame else { return }
-        refreshTask = Task { @MainActor [weak self] in
-            if immediate {
-                guard let self else { return }
-                await self.refreshLive(bdlTeamId: bdlTeamId)
-            }
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 15 * 1_000_000_000)
-                guard !Task.isCancelled, let self else { return }
-                await self.refreshLive(bdlTeamId: bdlTeamId)
-            }
-        }
-    }
-
-    func stopAutoRefresh() {
-        refreshTask?.cancel()
-        refreshTask = nil
     }
 
     // MARK: - Standings projection (duplicated from ScoresViewModel)

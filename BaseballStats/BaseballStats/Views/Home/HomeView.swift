@@ -19,6 +19,7 @@ struct HomeView: View {
     @ObservedObject private var store = FavoriteTeamStore.shared
     @ObservedObject private var favoritesStore = FavoritePlayersStore.shared
     @EnvironmentObject private var navigation: AppNavigation
+    @EnvironmentObject private var liveStore: LiveGameStore
     @State private var navigationPath = NavigationPath()
     @State private var showingSettings = false
     @State private var showingAddPlayer = false
@@ -141,26 +142,34 @@ struct HomeView: View {
             await vm.loadTeamHistory(bdlTeamId: bdlId)
             await vm.loadNews(bdlTeamId: bdlId)
             await vm.loadLeagueNews()
-            // Only arm while the Home tab is visible and the app is active.
-            if navigation.shouldPoll(on: .home) {
-                vm.startAutoRefresh(bdlTeamId: bdlId)
-            }
         }
         .task(id: favoritesStore.playerIds) {
             await vm.loadFavoritePlayers(ids: favoritesStore.playerIds)
         }
-        // Pause the hero-card live refresh on background / switch away from
-        // Home; resume with an immediate refresh on return. start*/stop* only.
+        // Drive the SHARED LiveGameStore list loop from the Home tab's lifecycle,
+        // gated by shouldPoll(.home). It's the SAME shared loop the Scores tab
+        // drives — startListLoop is self-cancelling/idempotent and only one tab
+        // is visible at a time (Phase 2, step 3).
+        .task {
+            if navigation.shouldPoll(on: .home) { liveStore.startListLoop() }
+        }
+        // Fold each fresh /live/games snapshot from the store into the hero strip
+        // (score / inning) — the merge the deleted refreshLive loop used to do,
+        // now sourced from the store's shared list instead of a self-fetch.
+        .onChange(of: liveStore.liveList) { _, list in
+            guard let bdlId = store.bdlTeamId else { return }
+            Task { await vm.applyLiveList(list, bdlTeamId: bdlId) }
+        }
+        // Pause the store list loop on background / switch away from Home;
+        // resume with an immediate refresh on return.
         .onChange(of: navigation.shouldPoll(on: .home)) { _, canPoll in
             if canPoll {
-                if let bdlId = store.bdlTeamId {
-                    vm.startAutoRefresh(bdlTeamId: bdlId, immediate: true)
-                }
+                liveStore.startListLoop(immediate: true)
             } else {
-                vm.stopAutoRefresh()
+                liveStore.stopListLoop()
             }
         }
-        .onDisappear { vm.stopAutoRefresh() }
+        .onDisappear { liveStore.stopListLoop() }
     }
 
     // MARK: - Chrome
