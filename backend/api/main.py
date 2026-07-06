@@ -2842,6 +2842,167 @@ def admin_seed_pitcher_season(
     }
 
 
+@app.get("/admin/misclassified-pitchers")
+def admin_misclassified_pitchers(
+    season:    int = Query(2026, description="Season to inspect (default 2026)."),
+    bdl_limit: int = Query(60,   description="Max DISTINCT candidates to run the rate-limited BDL classification for. Beyond this, bdl_says_pitcher is left null and the response is flagged `bdl_truncated`. 0 disables BDL calls entirely."),
+):
+    """READ-ONLY diagnostic — no writes, no seeding, no repair.
+
+    Finds the 'Cade Smith pattern' (real pitchers invisible to the nightly
+    pitcher aggregation) and the reverse (pitchers misfiled as batters), and tags
+    each candidate with BDL's authoritative pitcher-vs-position call — the signal
+    Part B's self-heal guard uses to tell a misclassified pitcher (should
+    self-heal) from a position player who threw a mop-up inning (must NOT be
+    seeded).
+
+    Q1 CANDIDATES: player_ids with `pitching_gamelogs` for `season` but NO
+        `pitcher_seasons` row (any year) — the set the nightly never seeds
+        (`get_all_pitcher_ids` = DISTINCT player_id FROM pitcher_seasons).
+    Q2 bdl_says_pitcher: for each candidate/reverse row, fetch its BDL bio by
+        bdl_id and classify via `_bdl_is_pitcher`. null on missing bdl_id or any
+        BDL failure (never crashes). Paced at `_BDL_RATE_LIMIT_SLEEP` between
+        calls; capped at `bdl_limit` DISTINCT ids (response flags `bdl_truncated`).
+    Q3 REVERSE: player_ids with a `player_seasons` row for `season` that ALSO
+        have `pitching_gamelogs` for `season` — pitchers producing empty batting
+        lines (Cade Smith was one pre-repair).
+    """
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+
+    # ---- Phase 1: pure-DB reads. No network I/O while the session is open, and
+    #      every ORM object is flattened to plain scalars before the session
+    #      closes (so Phase 2 touches no detached instances). READ-ONLY. ----
+    with connection.get_session() as db:
+        # player_ids that already have ANY pitcher_seasons row are visible to the
+        # nightly, so they are NOT candidates.
+        seeded_pitcher_ids = {
+            pid for (pid,) in db.query(PitcherSeason.player_id).distinct().all()
+        }
+
+        # Q1: per-player pitching-log aggregates for the season.
+        q1_agg = (
+            db.query(
+                PitchingGameLog.player_id,
+                _sa_func.count().label("games"),
+                _sa_func.sum(PitchingGameLog.IP).label("ip"),
+            )
+            .filter(PitchingGameLog.season == season)
+            .group_by(PitchingGameLog.player_id)
+            .all()
+        )
+
+        candidates = []
+        for pid, games, ip in q1_agg:
+            if pid in seeded_pitcher_ids:
+                continue
+            batter_bio  = db.get(Player, pid)
+            pitcher_bio = db.get(Pitcher, pid)
+            bdl_id = (getattr(batter_bio, "bdl_id", None)
+                      or getattr(pitcher_bio, "bdl_id", None))
+            name = (getattr(batter_bio, "name", None)
+                    or getattr(pitcher_bio, "name", None))
+            # Bio tables carry no team; derive from the latest season row. For
+            # this pattern the batter-season row usually has it (Cade -> CLE).
+            latest_ps = (
+                db.query(PlayerSeason)
+                  .filter(PlayerSeason.player_id == pid)
+                  .order_by(PlayerSeason.year.desc())
+                  .first()
+            )
+            candidates.append({
+                "player_id":       pid,
+                "name":            name,
+                "team":            latest_ps.team if latest_ps else None,
+                "games":           int(games),
+                "ip":              round(float(ip), 1) if ip is not None else 0.0,
+                "in_batter_bio":   batter_bio is not None,
+                "in_pitcher_bio":  pitcher_bio is not None,
+                "batter_position": getattr(batter_bio, "position", None),
+                "bdl_id":          bdl_id,
+            })
+        candidates.sort(key=lambda c: c["ip"], reverse=True)
+
+        # Q3 reverse: player_seasons (batter) for the season who ALSO pitched it.
+        batter_season_ids = {
+            pid for (pid,) in db.query(PlayerSeason.player_id)
+                              .filter(PlayerSeason.year == season).all()
+        }
+        pitched_ids = {
+            pid for (pid,) in db.query(PitchingGameLog.player_id)
+                              .filter(PitchingGameLog.season == season).distinct().all()
+        }
+        reverse = []
+        for pid in (batter_season_ids & pitched_ids):
+            ps = (db.query(PlayerSeason)
+                    .filter(PlayerSeason.player_id == pid,
+                            PlayerSeason.year == season)
+                    .first())
+            batter_bio = db.get(Player, pid)
+            pitching_games = (db.query(PitchingGameLog)
+                                .filter(PitchingGameLog.player_id == pid,
+                                        PitchingGameLog.season == season).count())
+            batting_games = (db.query(BattingGameLog)
+                               .filter(BattingGameLog.player_id == pid,
+                                       BattingGameLog.season == season).count())
+            reverse.append({
+                "player_id":      pid,
+                "name":           getattr(batter_bio, "name", None),
+                "team":           ps.team if ps else None,
+                "batter_PA":      getattr(ps, "PA", None),
+                "batter_G":       getattr(ps, "G", None),
+                "pitching_games": int(pitching_games),
+                "batting_games":  int(batting_games),
+                "bdl_id":         getattr(batter_bio, "bdl_id", None),
+            })
+        reverse.sort(key=lambda r: r["pitching_games"], reverse=True)
+
+    # ---- Phase 2: BDL classification (network I/O, session already closed).
+    #      Memoized so an id in both lists is fetched once; paced + capped for
+    #      the BDL rate limit; every failure degrades to null, never raises. ----
+    bdl_cache: dict = {}          # bdl_id -> (bool | None, note | None)
+    stats = {"calls": 0, "truncated": False}
+
+    def classify(bdl_id):
+        if bdl_id is None:
+            return None, "no bdl_id"
+        if bdl_id in bdl_cache:
+            return bdl_cache[bdl_id]
+        if stats["calls"] >= bdl_limit:
+            stats["truncated"] = True
+            return None, "bdl_limit reached — not classified"
+        if stats["calls"] > 0:                       # pace between calls only
+            time.sleep(data_service._BDL_RATE_LIMIT_SLEEP)
+        stats["calls"] += 1
+        try:
+            bio = data_service.fetch_bdl_player_bio(bdl_id)
+            result = ((data_service._bdl_is_pitcher(bio), None) if bio is not None
+                      else (None, "BDL returned no bio"))
+        except Exception as exc:
+            result = (None, f"BDL error: {type(exc).__name__}")
+        bdl_cache[bdl_id] = result
+        return result
+
+    # Classify Q1 first (most likely real pitchers, sorted by IP desc), then Q3.
+    for row in candidates + reverse:
+        says, note = classify(row["bdl_id"])
+        row["bdl_says_pitcher"] = says
+        if note:
+            row["bdl_note"] = note
+
+    return {
+        "season":             season,
+        "read_only":          True,
+        "q1_candidate_count": len(candidates),
+        "q3_reverse_count":   len(reverse),
+        "bdl_calls_made":     stats["calls"],
+        "bdl_limit":          bdl_limit,
+        "bdl_truncated":      stats["truncated"],
+        "candidates":         candidates,   # Q1: pitching logs, no pitcher_seasons row
+        "reverse":            reverse,       # Q3: batter season + pitched this year
+    }
+
+
 @app.get("/admin/dob-coverage")
 def admin_dob_coverage():
     """Diagnostic: report birth-date completeness across both bio
