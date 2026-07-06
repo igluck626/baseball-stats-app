@@ -20,6 +20,9 @@ struct HomeView: View {
     @ObservedObject private var favoritesStore = FavoritePlayersStore.shared
     @EnvironmentObject private var navigation: AppNavigation
     @EnvironmentObject private var liveStore: LiveGameStore
+    /// Stable token for this tab's refcounted hold on the shared list loop, so
+    /// Home↔Scores switching can't cancel a loop the other tab still needs.
+    @State private var listSubscriberID = LiveGameStore.SubscriberID()
     @State private var navigationPath = NavigationPath()
     @State private var showingSettings = false
     @State private var showingAddPlayer = false
@@ -148,12 +151,12 @@ struct HomeView: View {
         .task(id: favoritesStore.playerIds) {
             await vm.loadFavoritePlayers(ids: favoritesStore.playerIds)
         }
-        // Drive the SHARED LiveGameStore list loop from the Home tab's lifecycle,
-        // gated by shouldPoll(.home). It's the SAME shared loop the Scores tab
-        // drives — startListLoop is self-cancelling/idempotent and only one tab
-        // is visible at a time (Phase 2, step 3).
+        // Hold the SHARED LiveGameStore list loop while the Home tab is visible,
+        // gated by shouldPoll(.home). Refcounted by `listSubscriberID` (like the
+        // Scores tab), so a Home↔Scores switch can't cancel a loop the other tab
+        // still holds regardless of .onChange ordering.
         .task {
-            if navigation.shouldPoll(on: .home) { liveStore.startListLoop() }
+            if navigation.shouldPoll(on: .home) { liveStore.subscribeList(owner: listSubscriberID) }
         }
         // Fold each fresh /live/games snapshot from the store into the hero strip
         // (score / inning) — the merge the deleted refreshLive loop used to do,
@@ -166,12 +169,12 @@ struct HomeView: View {
         // resume with an immediate refresh on return.
         .onChange(of: navigation.shouldPoll(on: .home)) { _, canPoll in
             if canPoll {
-                liveStore.startListLoop()
+                liveStore.subscribeList(owner: listSubscriberID)
             } else {
-                liveStore.stopListLoop()
+                liveStore.unsubscribeList(owner: listSubscriberID)
             }
         }
-        .onDisappear { liveStore.stopListLoop() }
+        .onDisappear { liveStore.unsubscribeList(owner: listSubscriberID) }
     }
 
     // MARK: - Chrome

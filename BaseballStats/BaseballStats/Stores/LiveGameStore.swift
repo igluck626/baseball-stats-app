@@ -61,12 +61,27 @@ final class LiveGameStore: ObservableObject {
 
     private let api: APIClient
     private var listTask: Task<Void, Never>?
+    /// A grace-delayed stop for the list loop. On a 1→0 owner transition we don't
+    /// stop immediately; we schedule this. A re-subscribe within the window
+    /// cancels it, so a brief Home↔Scores tab-switch flap (leaving tab releases
+    /// before arriving tab acquires) keeps the ONE loop alive — no teardown, no
+    /// extra leading fetch. A genuine leave-both-tabs / background lets it elapse.
+    private var pendingListStop: Task<Void, Never>?
+    /// Distinct owners of the shared list loop (Scores + Home). Refcount =
+    /// set.count; the loop runs iff non-empty. This makes a Home↔Scores switch
+    /// order-independent: while both briefly hold it the count is 2, so the
+    /// leaving tab's release only drops it to 1 and can't cancel a loop the
+    /// arriving tab still holds. (Mirrors `detailOwners`.)
+    private var listOwners: Set<SubscriberID> = []
     private var detailTasks: [Int: Task<Void, Never>] = [:]
     /// Distinct subscriber tokens per game id. Effective refcount = set.count.
     private var detailOwners: [Int: Set<SubscriberID>] = [:]
 
     /// Matches every other live loop's cadence (Scores/Home/box score = 15s).
     private static let refreshIntervalNanos: UInt64 = 15 * 1_000_000_000
+    /// How long the list loop lingers after its last owner leaves, so a brief
+    /// tab-switch flap doesn't tear it down and restart it.
+    private static let listStopGraceNanos: UInt64 = 1_500_000_000  // 1.5s
 
     init(api: APIClient = .shared) {
         self.api = api
@@ -74,18 +89,53 @@ final class LiveGameStore: ObservableObject {
 
     // MARK: - List loop (shared by Home card + Scores list)
 
-    /// Start the single `/live/games` poll loop. Self-cancelling: a running loop
-    /// is cancelled and replaced, so repeat calls can't leave two loops alive —
-    /// and, since it always stop-and-restarts, every call is a fresh loop START.
+    /// Register `owner`'s interest in the shared `/live/games` list loop.
+    /// Idempotent: subscribing when `owner` is already subscribed is a no-op (no
+    /// double loop). The FIRST distinct owner (set 0→1) starts the loop; later
+    /// owners just share it and see the already-populated `liveList` at once.
     ///
-    /// ALWAYS leads with a fetch before the first sleep (mirrors
-    /// `startDetailLoop`), so `liveList` populates ~1s after the tab appears
-    /// instead of after a full interval — otherwise a live game is miscategorized
-    /// as Upcoming until the first fetch lands. There is no separate `immediate`
-    /// flag: the list loop has no already-running-loop case to re-arm (it stops
-    /// first), so a leading fetch on start is the whole story; a RESUME just
-    /// calls this again, which restarts + leads with a fetch.
-    func startListLoop() {
+    /// Refcounted (mirrors `subscribeDetail`) so the Home↔Scores cross-tab
+    /// contention is gone: the leaving tab's `unsubscribeList` only decrements,
+    /// so it can't cancel a loop the arriving tab still holds — regardless of the
+    /// order SwiftUI fires the two views' `.onChange` handlers.
+    func subscribeList(owner: SubscriberID) {
+        // Re-acquiring within the grace window cancels the pending stop — the
+        // loop is still running, so we must NOT restart it (that's the churn we
+        // avoid). `listTask == nil` below is what distinguishes a genuine cold
+        // start (no loop) from a re-acquire (loop still alive).
+        pendingListStop?.cancel()
+        pendingListStop = nil
+        let (inserted, _) = listOwners.insert(owner)
+        if inserted, listOwners.count == 1, listTask == nil {   // first owner AND no loop → cold start
+            startListLoop()
+        }
+    }
+
+    /// Release `owner`'s interest. Idempotent: unsubscribing when not subscribed
+    /// is a no-op. On the LAST owner leaving (set 1→0) the loop is NOT stopped
+    /// immediately — a grace-delayed stop is scheduled so a brief tab-switch flap
+    /// (re-subscribe within the window) keeps the loop alive. Only if the window
+    /// elapses with `listOwners` still empty does the loop actually stop.
+    func unsubscribeList(owner: SubscriberID) {
+        guard listOwners.remove(owner) != nil, listOwners.isEmpty else { return }  // 1→0 only
+        pendingListStop?.cancel()
+        pendingListStop = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: Self.listStopGraceNanos)
+            // Re-check after the wait: a subscribe during the window either
+            // cancelled this task or refilled `listOwners` — either way, don't
+            // stop a loop that's wanted again.
+            guard !Task.isCancelled, let self, self.listOwners.isEmpty else { return }
+            self.stopListLoop()
+            self.pendingListStop = nil
+        }
+    }
+
+    /// Start (or replace) the single `/live/games` poll loop. Always leads with a
+    /// fetch before the first sleep (mirrors `startDetailLoop`), so `liveList`
+    /// populates ~1s after a tab appears instead of after a full interval —
+    /// otherwise a live game is miscategorized as Upcoming until the first fetch
+    /// lands. Private: entered only via `subscribeList` on the 0→1 transition.
+    private func startListLoop() {
         stopListLoop()
         listTask = Task { @MainActor [weak self] in
             await self?.fetchList()             // leading fetch — always, on every loop start
@@ -97,7 +147,7 @@ final class LiveGameStore: ObservableObject {
         }
     }
 
-    func stopListLoop() {
+    private func stopListLoop() {
         listTask?.cancel()
         listTask = nil
     }

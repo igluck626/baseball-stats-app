@@ -281,6 +281,9 @@ struct ScoresView: View {
     @StateObject private var vm = ScoresViewModel()
     @EnvironmentObject private var navigation: AppNavigation
     @EnvironmentObject private var liveStore: LiveGameStore
+    /// Stable token for this tab's refcounted hold on the shared list loop, so
+    /// Home↔Scores switching can't cancel a loop the other tab still needs.
+    @State private var listSubscriberID = LiveGameStore.SubscriberID()
     @State private var navigationPath = NavigationPath()
     @State private var showingDatePicker = false
 
@@ -314,7 +317,7 @@ struct ScoresView: View {
         // Drive the SHARED LiveGameStore list loop from the Scores tab's
         // lifecycle, gated exactly like the old per-VM loop was (Phase 2, step 2).
         .task {
-            if navigation.shouldPoll(on: .scores) { liveStore.startListLoop() }
+            if navigation.shouldPoll(on: .scores) { liveStore.subscribeList(owner: listSubscriberID) }
         }
         // Fold each fresh /live/games snapshot from the store into `games`
         // (score / inning) — the merge the deleted refreshLive loop used to do,
@@ -341,12 +344,12 @@ struct ScoresView: View {
         // tab; resume with an immediate refresh on return.
         .onChange(of: navigation.shouldPoll(on: .scores)) { _, canPoll in
             if canPoll {
-                liveStore.startListLoop()
+                liveStore.subscribeList(owner: listSubscriberID)
             } else {
-                liveStore.stopListLoop()
+                liveStore.unsubscribeList(owner: listSubscriberID)
             }
         }
-        .onDisappear { liveStore.stopListLoop() }
+        .onDisappear { liveStore.unsubscribeList(owner: listSubscriberID) }
     }
 
     // MARK: - Date bar
