@@ -166,7 +166,7 @@ struct HomeView: View {
         // resume with an immediate refresh on return.
         .onChange(of: navigation.shouldPoll(on: .home)) { _, canPoll in
             if canPoll {
-                liveStore.startListLoop(immediate: true)
+                liveStore.startListLoop()
             } else {
                 liveStore.stopListLoop()
             }

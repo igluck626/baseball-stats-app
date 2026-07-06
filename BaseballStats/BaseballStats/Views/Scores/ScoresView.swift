@@ -341,7 +341,7 @@ struct ScoresView: View {
         // tab; resume with an immediate refresh on return.
         .onChange(of: navigation.shouldPoll(on: .scores)) { _, canPoll in
             if canPoll {
-                liveStore.startListLoop(immediate: true)
+                liveStore.startListLoop()
             } else {
                 liveStore.stopListLoop()
             }
@@ -482,11 +482,18 @@ struct ScoresView: View {
         // right now" items rise: latest innings for live, earliest
         // start time for upcoming, most-recently-completed for
         // finals.
+        // LIVE membership comes from the store's live list (the backend's
+        // definition of in-progress), NOT the frozen schedule status — so a game
+        // that flips to live mid-view moves into the Live section on the next
+        // store update instead of staying stuck in Upcoming. Non-live games fall
+        // back to their schedule status: Final if completed, else Upcoming.
+        let liveIds = Set(liveStore.liveList.keys)
         let live = vm.games
-            .filter { $0.phase == .live }
+            .filter { liveIds.contains($0.gamePk) }
             .sorted { ($0.linescore?.currentInning ?? 0) > ($1.linescore?.currentInning ?? 0) }
-        let upcoming = vm.games
-            .filter { $0.phase == .preview || $0.phase == .other || $0.phase == .postponed }
+        let notLive = vm.games.filter { !liveIds.contains($0.gamePk) }
+        let upcoming = notLive
+            .filter { $0.phase != .final }
             // On-time games first (earliest start), then postponed games
             // sink to the bottom — they're not happening today, so they
             // shouldn't crowd out the games that are.
@@ -496,7 +503,7 @@ struct ScoresView: View {
                 if aPpd != bPpd { return !aPpd }
                 return (a.startDate ?? .distantFuture) < (b.startDate ?? .distantFuture)
             }
-        let completed = vm.games
+        let completed = notLive
             .filter { $0.phase == .final }
             .sorted { ($0.startDate ?? .distantPast) > ($1.startDate ?? .distantPast) }
 
@@ -541,6 +548,11 @@ struct ScoresView: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
+            // Animate only when live membership changes (a game enters/leaves the
+            // Live section), not on every score tick — so an Upcoming→Live move
+            // slides smoothly instead of snapping. `Game.id` (gamePk) identity
+            // keeps rows stable across the section move.
+            .animation(.default, value: liveIds)
         }
         .refreshable {
             await vm.refresh()

@@ -48,6 +48,8 @@ final class BoxScoreViewModel: ObservableObject {
 
     private let bdl: BallDontLieClient
     private let api: APIClient
+    /// Guards the one-time derived-stats load on the first live snapshot.
+    private var didLoadLiveDerived = false
 
     init(game: Game, bdl: BallDontLieClient = .shared, api: APIClient = .shared) {
         self.game = game
@@ -65,11 +67,13 @@ final class BoxScoreViewModel: ObservableObject {
     // For FINAL / PRE-GAME there is no `live`, so they fall back to the initial
     // `game` object (which the live poll never updates).
 
-    /// Live linescore from the current poll snapshot — non-nil ONLY while the
-    /// game is live AND a snapshot has loaded.
+    /// Live linescore from the applied store snapshot — non-nil ONLY once a
+    /// live snapshot has been applied (via `applyLiveDetail`). Keys off the
+    /// SNAPSHOT, not the frozen `game.phase`, so a game opened pre-game that
+    /// goes live switches to live values; for final / pre-game `live` stays nil
+    /// and callers fall back to `game`.
     private var liveLinescore: LiveLinescore? {
-        guard game.phase == .live else { return nil }
-        return live?.liveData.linescore
+        live?.liveData.linescore
     }
 
     /// Banner score: play-derived from the live snapshot when live, else the
@@ -136,13 +140,16 @@ final class BoxScoreViewModel: ObservableObject {
     /// mirroring the old flow (which loaded them once after the initial live
     /// fetch and did NOT refresh them each poll tick).
     func applyLiveDetail(_ detail: LiveGameDetail) {
-        let firstSnapshot = (boxScore == nil)
         plays     = detail.playsAsBDL
         live      = detail.toLiveFeedResponse()
         boxScore  = detail.toBoxScoreResponse()
         error     = nil
         isLoading = false
-        if firstSnapshot {
+        // Load derived point-in-time stats once, on the FIRST live snapshot —
+        // tracked by a flag (not `boxScore == nil`) so a game that transitioned
+        // from pre-game (where `load()` already set a boxScore) still gets them.
+        if !didLoadLiveDerived {
+            didLoadLiveDerived = true
             Task { await self.loadPitcherRecords() }
             Task { await self.loadBatterStatsAtDate() }
         }
@@ -491,25 +498,34 @@ struct BoxScoreView: View {
         self.liveStore = liveStore
     }
 
-    /// Default-selected team when the user hasn't tapped the
-    /// segmented control yet. Final → home (the venue's team is
-    /// the natural anchor). Live → whichever side is batting; for
-    /// top of the inning the away team is offense, otherwise home.
-    /// Preview / other → home (no strong default; consistent with
-    /// final so the picker doesn't surprise the user pre-game).
+    /// Whether the shared store currently considers this game live — the
+    /// backend's definition (present in `liveList`), independent of the frozen
+    /// initial `game.phase`. Drives the live subscription so a game opened
+    /// pre-game that flips to live starts streaming (Option (b) of the fix).
+    private var isLive: Bool {
+        liveStore.liveList[vm.game.gamePk] != nil || vm.game.phase == .live
+    }
+
+    /// Subscribe to the shared detail loop only while live AND this tab is
+    /// visible / the app active.
+    private var shouldSubscribeLive: Bool {
+        isLive && navigation.shouldPoll(on: owningTab)
+    }
+
+    /// Render the live chrome (LIVE badge, inning label, situation card) once a
+    /// real snapshot has been APPLIED (`vm.live != nil`) — not off the frozen
+    /// `game.phase` — so the header / situation flip to live exactly when live
+    /// data arrives, and fall back to `game` for final / pre-game.
+    private var isLiveNow: Bool { vm.live != nil }
+
+    /// Default-selected team when the user hasn't tapped the segmented control
+    /// yet. Live → the batting side (top of inning → away is offense); else
+    /// home (final / pre-game — a consistent, non-surprising default).
     private var defaultSide: TeamSide {
-        switch vm.game.phase {
-        case .live:
-            // `isTopInning == true` → away team batting → away
-            // offensive; default the box-score view to it so the
-            // user lands on the side that's currently active.
-            let isTop = vm.live?.liveData.linescore?.isTopInning
-                ?? vm.game.linescore?.isTopInning
-                ?? false
-            return isTop ? .away : .home
-        case .final, .preview, .other, .postponed:
-            return .home
+        if let ls = vm.live?.liveData.linescore {
+            return (ls.isTopInning ?? false) ? .away : .home
         }
+        return .home
     }
 
     private var currentSide: TeamSide {
@@ -528,7 +544,7 @@ struct BoxScoreView: View {
             GlassEffectContainer(spacing: 16) {
                 VStack(spacing: 16) {
                     headerCard
-                    if vm.game.phase == .live, let live = vm.live?.liveData {
+                    if let live = vm.live?.liveData {
                         liveSituationCard(live)
                     }
                     if vm.game.phase == .postponed {
@@ -563,32 +579,34 @@ struct BoxScoreView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task {
             await vm.load()
-            guard vm.game.phase == .live else { return }   // final / pre-game: no store subscription
+            guard shouldSubscribeLive else { return }   // final / pre-game (not in live set): no subscription
             // Seed from whatever the store already has — a box score usually
             // opens OVER a Scores/Home card already subscribed to this game, so
             // detail is present and renders instantly (no wait for the next tick).
             if let detail = liveStore.detail[vm.game.gamePk] {
                 vm.applyLiveDetail(detail)
             }
-            // Subscribe (immediate: true) while this tab is visible/active. For a
-            // game a card already watches this is refcount 1→2 sharing one loop;
-            // for a fresh open (e.g. from ScheduleSheet) it's 0→1, which the
-            // store always leads with a fetch.
-            if navigation.shouldPoll(on: owningTab) {
-                liveStore.subscribeDetail(vm.game.gamePk, owner: subscriberID, immediate: true)
-            }
+            // Subscribe (immediate: true). Over a card already watching this game
+            // it's refcount 1→2 sharing one loop; a fresh open (e.g. ScheduleSheet)
+            // is 0→1, which the store always leads with a fetch.
+            liveStore.subscribeDetail(vm.game.gamePk, owner: subscriberID, immediate: true)
         }
         // Feed each fresh store snapshot into the view model (drives the banner /
         // linescore / situation / plays, all from one consistent LiveGameDetail).
+        // This also catches the pre-game→live transition: when a card (or our own
+        // subscribe below) first populates detail for this game, it applies here.
         .onChange(of: liveStore.detail[vm.game.gamePk]) { _, detail in
             if let detail { vm.applyLiveDetail(detail) }
         }
-        // Pause on background / tab-switch (unsubscribe → refcount drops); resume
-        // with an immediate refresh on return. Idempotent + refcounted, so this
-        // never stops a loop a card still needs.
-        .onChange(of: navigation.shouldPoll(on: owningTab)) { _, canPoll in
-            guard vm.game.phase == .live else { return }
+        // Subscribe/unsubscribe as liveness + visibility change. A game that
+        // flips to live while open (enters the store's live set) subscribes here;
+        // hiding the tab / backgrounding unsubscribes. Idempotent + refcounted,
+        // so it never stops a loop a card still needs.
+        .onChange(of: shouldSubscribeLive) { _, canPoll in
             if canPoll {
+                if let detail = liveStore.detail[vm.game.gamePk] {
+                    vm.applyLiveDetail(detail)
+                }
                 liveStore.subscribeDetail(vm.game.gamePk, owner: subscriberID, immediate: true)
             } else {
                 liveStore.unsubscribeDetail(vm.game.gamePk, owner: subscriberID)
@@ -637,7 +655,7 @@ struct BoxScoreView: View {
             // LIVE badge sits centered above the score row so it
             // owns the headline visual; the team-by-score row stays
             // symmetric below.
-            if vm.game.phase == .live {
+            if isLiveNow {
                 LiveBadge()
             }
             HStack(spacing: 12) {
@@ -649,7 +667,7 @@ struct BoxScoreView: View {
                 Spacer()
                 Text(centerStatus)
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(vm.game.phase == .live ? Color.red : Color.secondary)
+                    .foregroundStyle(isLiveNow ? Color.red : Color.secondary)
                 Spacer()
                 teamHeader(
                     side:      vm.game.teams.home,
@@ -787,6 +805,11 @@ struct BoxScoreView: View {
     }
 
     private var centerStatus: String {
+        // Live-now wins over the frozen schedule phase, so a game that flipped
+        // to live while open shows "LIVE · <inning>" instead of its start time.
+        if isLiveNow {
+            return vm.displayInningOrdinal.map { "LIVE · \($0)" } ?? "LIVE"
+        }
         switch vm.game.phase {
         case .final:     return "FINAL"
         case .live:      return vm.displayInningOrdinal.map { "LIVE · \($0)" } ?? "LIVE"
@@ -855,11 +878,11 @@ struct BoxScoreView: View {
                 }
                 .padding(.horizontal, 4)
             }
-            // Live games render the plays expander inside the
-            // situation card above this one; final / preview games
-            // get it here so it's always reachable from somewhere
-            // above the team picker.
-            if vm.game.phase != .live {
+            // Live games render the plays expander inside the situation card
+            // above this one; final / preview games get it here so it's always
+            // reachable. Keyed off `isLiveNow` (an applied snapshot), so a game
+            // that transitioned to live doesn't render the plays list twice.
+            if !isLiveNow {
                 Divider().opacity(0.4)
                 PlaysView(
                     plays:               vm.plays,

@@ -75,16 +75,20 @@ final class LiveGameStore: ObservableObject {
     // MARK: - List loop (shared by Home card + Scores list)
 
     /// Start the single `/live/games` poll loop. Self-cancelling: a running loop
-    /// is cancelled and replaced, so repeat calls can't leave two loops alive.
-    /// `immediate` does one leading fetch before the sleep loop — the
-    /// foreground/visible RESUME path, matching the committed lifecycle pattern.
-    func startListLoop(immediate: Bool = false) {
+    /// is cancelled and replaced, so repeat calls can't leave two loops alive —
+    /// and, since it always stop-and-restarts, every call is a fresh loop START.
+    ///
+    /// ALWAYS leads with a fetch before the first sleep (mirrors
+    /// `startDetailLoop`), so `liveList` populates ~1s after the tab appears
+    /// instead of after a full interval — otherwise a live game is miscategorized
+    /// as Upcoming until the first fetch lands. There is no separate `immediate`
+    /// flag: the list loop has no already-running-loop case to re-arm (it stops
+    /// first), so a leading fetch on start is the whole story; a RESUME just
+    /// calls this again, which restarts + leads with a fetch.
+    func startListLoop() {
         stopListLoop()
         listTask = Task { @MainActor [weak self] in
-            if immediate {
-                guard let self else { return }
-                await self.fetchList()
-            }
+            await self?.fetchList()             // leading fetch — always, on every loop start
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: Self.refreshIntervalNanos)
                 guard !Task.isCancelled, let self else { return }
