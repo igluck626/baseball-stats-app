@@ -2480,9 +2480,10 @@ def admin_update_player_bio(
 def admin_repair_swapped_player(
     real_mlbam:    int = Query(..., description="The real modern player's MLBAM id (keeps its game logs + bdl_id)."),
     correct_bbref: str = Query(..., description="The bbref_id that actually belongs to this modern player, e.g. 'brownbe01'."),
-    bogus_mlbam:   int = Query(..., description="Synthetic Negro-Leagues MLBAM id currently holding the real career (deleted if safe)."),
+    bogus_mlbam:   int | None = Query(None, description="Synthetic Negro-Leagues MLBAM id currently holding the real career (deleted if safe). OMIT for a straightforwardly-misclassified modern player whose stats already live on real_mlbam (no split) — phases A/F are then skipped."),
     position_type: str = Query(..., description="'pitcher' or 'batter' — the modern player's real side."),
     position:      str | None = Query(None, description="Position to stamp on a NEWLY-created bio row (defaults 'P' for pitcher, else None). Ignored when the correct-side row already exists."),
+    skip_lahman_reload: bool = Query(False, description="When true, run phases C (create correct-side bio) + D (delete wrong-side bio + all season rows), then RETURN before phase E (the Lahman reload) and phase F. Use for a modern (post-Lahman-debut) player whose real season stats come from the nightly BDL ingest, not Lahman, and whose correct_bbref may be conflated (avoids re-injecting a bogus historical season)."),
 ):
     """Repair ONE swapped-Chadwick split player (see the Ben Brown
     investigation). A 2024 Negro-Leagues Chadwick merge cross-assigned
@@ -2510,6 +2511,12 @@ def admin_repair_swapped_player(
          `real_mlbam` (`_lahman_pitching/batting_seasons_for_bbref`).
       F. Delete the bogus duplicate record (bio + seasons), guarded by A.
 
+    Modern-player mode: pass `skip_lahman_reload=true` (and omit `bogus_mlbam`)
+    for a straightforwardly-misclassified modern player — runs C+D then RETURNS
+    before the Lahman reload (E) and the bogus delete (F). Used to reclassify a
+    player whose real season stats come from the nightly BDL ingest, not Lahman
+    (pair with `seed-pitcher-season` to seed the stub the nightly then fills).
+
     Returns a per-phase summary instead of raising, so a partial failure
     is visible without a 500. Scope: the 10 CLEAN swaps only — NOT the
     harriho/663687 or rodrijo/679563 multi-way tangles."""
@@ -2534,25 +2541,36 @@ def admin_repair_swapped_player(
 
     try:
         # --- A. Guard the bogus record (must carry NO bdl_id / NO game logs) ---
-        with connection.get_session() as db:
-            bp  = db.get(Player, bogus_mlbam)
-            bpi = db.get(Pitcher, bogus_mlbam)
-            bogus_exists = (bp is not None) or (bpi is not None)
-            bogus_bdl = next(
-                (x.bdl_id for x in (bp, bpi) if x is not None and x.bdl_id is not None),
-                None,
+        # When `bogus_mlbam` is omitted (a straightforwardly-misclassified modern
+        # player with no split), there is no bogus record to guard or delete —
+        # skip A entirely and treat it as "already absent" for phase F.
+        if bogus_mlbam is None:
+            bogus_exists   = False
+            bogus_bdl      = None
+            bogus_bat_logs = 0
+            bogus_pit_logs = 0
+            bogus_safe     = False
+            step("phase A skipped — no bogus_mlbam supplied (no split to repair)")
+        else:
+            with connection.get_session() as db:
+                bp  = db.get(Player, bogus_mlbam)
+                bpi = db.get(Pitcher, bogus_mlbam)
+                bogus_exists = (bp is not None) or (bpi is not None)
+                bogus_bdl = next(
+                    (x.bdl_id for x in (bp, bpi) if x is not None and x.bdl_id is not None),
+                    None,
+                )
+                bogus_bat_logs = (
+                    db.query(BattingGameLog)
+                      .filter(BattingGameLog.player_id == bogus_mlbam).count()
+                )
+                bogus_pit_logs = (
+                    db.query(PitchingGameLog)
+                      .filter(PitchingGameLog.player_id == bogus_mlbam).count()
+                )
+            bogus_safe = (
+                bogus_bdl is None and bogus_bat_logs == 0 and bogus_pit_logs == 0
             )
-            bogus_bat_logs = (
-                db.query(BattingGameLog)
-                  .filter(BattingGameLog.player_id == bogus_mlbam).count()
-            )
-            bogus_pit_logs = (
-                db.query(PitchingGameLog)
-                  .filter(PitchingGameLog.player_id == bogus_mlbam).count()
-            )
-        bogus_safe = (
-            bogus_bdl is None and bogus_bat_logs == 0 and bogus_pit_logs == 0
-        )
         summary["bogus_record"] = {
             "exists":            bogus_exists,
             "bdl_id":            bogus_bdl,
@@ -2667,6 +2685,26 @@ def admin_repair_swapped_player(
             f"player={pl_seasons} pitcher={pi_seasons}"
         )
 
+        # --- (modern-player mode) skip E + F and return after the reclassify ---
+        # Post-Lahman-debut players have no Lahman rows (and `correct_bbref` may be
+        # conflated), so a reload would write nothing useful and risks re-injecting
+        # a bogus historical season. Their current-season stats come from the
+        # nightly BDL ingest — seed a stub PitcherSeason (see /admin/seed-pitcher-
+        # season) so the nightly picks them up.
+        if skip_lahman_reload:
+            step("phase E skipped — skip_lahman_reload=true (no Lahman reload); "
+                 "phase F skipped (no bogus delete)")
+            summary["seasons_written"] = 0
+            summary["season_years"]    = []
+            summary["created_bio"]     = created_bio
+            with connection.get_session() as db:
+                rb = (db.query(BattingGameLog)
+                        .filter(BattingGameLog.player_id == real_mlbam).count())
+                rpg = (db.query(PitchingGameLog)
+                         .filter(PitchingGameLog.player_id == real_mlbam).count())
+            summary["real_gamelogs_preserved"] = {"batting": rb, "pitching": rpg}
+            return summary
+
         # --- E. Reload the real career from Lahman onto real_mlbam ---
         if correct_is_pitcher:
             seasons = _lahman_pitching_seasons_for_bbref(correct_bbref)
@@ -2741,6 +2779,67 @@ def admin_repair_swapped_player(
             "detail": f"{type(exc).__name__}: {exc}",
             "steps":  summary["steps"],
         }
+
+
+@app.post("/admin/seed-pitcher-season/{player_id}")
+def admin_seed_pitcher_season(
+    player_id: int,
+    year:      int | None = Query(None, description="Season year to seed (defaults to the current UTC year, e.g. 2026)."),
+    team_code: str = Query(..., description="Team code to pin the seed row to (e.g. 'CLE')."),
+):
+    """Seed a STUB `pitcher_seasons` row for `(player_id, year)` so the nightly
+    pitcher aggregation picks the player up and fills the real stats from BDL.
+
+    Why this exists: `nightly_update._update_pitchers` iterates only players
+    already in `pitcher_seasons` (`crud.get_all_pitcher_ids` =
+    `SELECT DISTINCT player_id FROM pitcher_seasons`). A real pitcher who has
+    pitching game logs but no `pitcher_seasons` row — e.g. one misclassified as a
+    position player — is therefore never seeded and never aggregated. Inserting a
+    stub row (after reclassifying his bio to pitcher) makes the next nightly fill
+    his line from BDL (keyed by `bdl_id`), so he self-heals.
+
+    INSERT-IF-ABSENT — the critical semantic: if a `pitcher_seasons` row already
+    exists for `(player_id, year)`, this is a NO-OP and the existing row (which may
+    already hold nightly-filled stats) is left UNTOUCHED. So it's idempotent and
+    non-destructive — unlike `reset-player-season`, which is a destructive
+    delete-then-insert for the team-repin use case. Here we only ever CREATE a
+    missing seed; we never overwrite real stats. The stub carries `team` only;
+    every stat column is left NULL until the nightly fills it."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+
+    season = year if year is not None else datetime.datetime.utcnow().year
+
+    with connection.get_session() as db:
+        existing = (
+            db.query(PitcherSeason)
+              .filter(PitcherSeason.player_id == player_id)
+              .filter(PitcherSeason.year      == season)
+              .first()
+        )
+        if existing is not None:
+            # A row already exists — DO NOT overwrite (it may hold real stats).
+            return {
+                "status":    "already_exists",
+                "player_id": player_id,
+                "year":      season,
+                "team":      existing.team,
+                "note":      "pitcher_seasons row already present — left untouched (no overwrite)",
+            }
+        db.add(PitcherSeason(
+            player_id = player_id,
+            year      = season,
+            team      = team_code,
+        ))
+        db.commit()
+
+    return {
+        "status":    "seeded",
+        "player_id": player_id,
+        "year":      season,
+        "team":      team_code,
+        "note":      "stub pitcher_seasons row inserted (stats NULL); next nightly fills from BDL",
+    }
 
 
 @app.get("/admin/dob-coverage")
