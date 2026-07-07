@@ -448,11 +448,26 @@ extension LiveGameDetail {
                 sacFlies: nil, sacBunts: nil, groundIntoDoublePlay: nil,
                 avg: liveRateString(b.avg), ops: nil,
             )
+            // Season AVG / OPS live in `seasonStats` — the slot the box-score
+            // table's AVG/OPS columns read (BoxScoreView `battingRow`). The live
+            // payload ships season `avg`/`obp`/`slg` (not a precomputed `ops`),
+            // so compute OPS = OBP + SLG here, mirroring the BDL-path precedent
+            // (Scores.swift `opsValue`). Counting stats stay on `stats` above.
+            let seasonOPS: String? = (b.obp != nil && b.slg != nil)
+                ? liveRateString(b.obp! + b.slg!)
+                : nil
+            let seasonBatting = BoxBatting(
+                atBats: nil, runs: nil, hits: nil, doubles: nil, triples: nil,
+                homeRuns: nil, rbi: nil, baseOnBalls: nil, strikeOuts: nil,
+                stolenBases: nil, caughtStealing: nil, hitByPitch: nil,
+                sacFlies: nil, sacBunts: nil, groundIntoDoublePlay: nil,
+                avg: liveRateString(b.avg), ops: seasonOPS,
+            )
             players["ID\(pid)"] = BoxPlayer(
                 person:   PlayerInfo(id: pid, fullName: b.name ?? ""),
                 position: BoxPosition(abbreviation: b.position),
                 stats:    BoxStats(batting: batting, pitching: nil),
-                seasonStats: nil,
+                seasonStats: BoxStats(batting: seasonBatting, pitching: nil),
                 stats_battingOrder: nil,
             )
             batterOrder.append(pid)
@@ -466,15 +481,25 @@ extension LiveGameDetail {
                 era: liveEraString(p.era), wins: p.w, losses: p.l,
                 saves: p.sv, pitchCount: nil,
             )
+            // Season ERA lives in `seasonStats` — the slot the box-score table's
+            // ERA column reads (BoxScoreView `pitchingRow`). Counting stats
+            // (IP/H/R/ER/BB/SO) stay on `stats` above.
+            let seasonPitching = BoxPitching(
+                inningsPitched: nil, hits: nil, runs: nil, earnedRuns: nil,
+                baseOnBalls: nil, strikeOuts: nil, homeRuns: nil,
+                era: liveEraString(p.era), wins: nil, losses: nil,
+                saves: nil, pitchCount: nil,
+            )
             // Two-way player (e.g. Ohtani) already in the dict as a batter:
             // merge the pitching line into the same BoxPlayer rather than
-            // clobbering the batting line.
+            // clobbering the batting line. Preserve the batter's season batting
+            // (avg/ops) while adding the pitching season ERA.
             if let existing = players["ID\(pid)"] {
                 players["ID\(pid)"] = BoxPlayer(
                     person:   existing.person,
                     position: existing.position,
                     stats:    BoxStats(batting: existing.stats?.batting, pitching: pitching),
-                    seasonStats: existing.seasonStats,
+                    seasonStats: BoxStats(batting: existing.seasonStats?.batting, pitching: seasonPitching),
                     stats_battingOrder: existing.stats_battingOrder,
                 )
             } else {
@@ -482,7 +507,7 @@ extension LiveGameDetail {
                     person:   PlayerInfo(id: pid, fullName: p.name ?? ""),
                     position: BoxPosition(abbreviation: "P"),
                     stats:    BoxStats(batting: nil, pitching: pitching),
-                    seasonStats: nil,
+                    seasonStats: BoxStats(batting: nil, pitching: seasonPitching),
                     stats_battingOrder: nil,
                 )
             }
