@@ -516,7 +516,7 @@ struct ScoresView: View {
                     sectionHeader("Live")
                     ForEach(live) { game in
                         NavigationLink(value: game) {
-                            LiveGameCard(
+                            GameRowCard(
                                 game:      game,
                                 records:   vm.teamRecords,
                                 standings: vm.teamStandings,
@@ -529,7 +529,11 @@ struct ScoresView: View {
                     sectionHeader("Upcoming")
                     ForEach(upcoming) { game in
                         NavigationLink(value: game) {
-                            GameCard(game: game, records: vm.teamRecords)
+                            GameRowCard(
+                                game:      game,
+                                records:   vm.teamRecords,
+                                standings: vm.teamStandings,
+                            )
                         }
                         .buttonStyle(.plain)
                     }
@@ -1338,24 +1342,77 @@ private struct FinalGameCard: View {
 
 // MARK: - Live game card
 
-/// Card variant for games currently in progress. Subscribes to the shared
-/// `LiveGameStore`'s refcounted detail loop for this game (`/live/games/{id}`)
-/// while the Scores tab is visible; the parent list snapshot covers list-level
-/// state (a game flipping from preview → live or live → final). Tapping the
-/// card pushes the live BoxScoreView.
+/// Unified card for the Upcoming + Live buckets. Renders the plain `GameCard`
+/// (start time) or the live `LiveGameCard` (score + bases/count/LIVE) internally,
+/// keyed off REACTIVE `liveList` membership — the SAME signal that buckets the
+/// row into the Live section, so layout and subscription can't diverge.
+///
+/// Being ONE type across both buckets is what fixes the transition bugs: the row
+/// keeps a stable `gamePk` identity across the section slide (so the animation is
+/// unchanged), and this card — not a per-phase card that has to be swapped in —
+/// OWNS the refcounted detail subscription and re-evaluates it via
+/// `.onChange(of: shouldSubscribeLive)`. So a game flipping Upcoming→Live (or
+/// Live→ended) re-subscribes / re-renders in place without depending on a SwiftUI
+/// view-type swap re-running the appearance lifecycle. `FinalGameCard` stays
+/// separate for the Completed bucket.
+private struct GameRowCard: View {
+    let game: Game
+    let records: [Int: TeamRecord]
+    let standings: [Int: TeamStandingInfo]
+    @EnvironmentObject private var navigation: AppNavigation
+    @EnvironmentObject private var liveStore: LiveGameStore
+    /// Stable per-row token for the store's refcounted detail loop (moved here
+    /// from `LiveGameCard` so it survives the Upcoming↔Live re-render — one loop
+    /// shared across N cards + a pushed box score).
+    @State private var subscriberID = LiveGameStore.SubscriberID()
+
+    /// The backend's live definition (present in `liveList`) — reactive, so this
+    /// recomputes on every store publish. Drives BOTH the layout choice and the
+    /// subscription.
+    private var isLive: Bool { liveStore.liveList[game.gamePk] != nil }
+
+    /// Subscribe only while live AND the Scores tab is visible / app active.
+    private var shouldSubscribeLive: Bool {
+        isLive && navigation.shouldPoll(on: .scores)
+    }
+
+    var body: some View {
+        Group {
+            if isLive {
+                // Live block renders ONLY while in `liveList`, so a stale
+                // `detail` snapshot can't show live content after a game ends.
+                LiveGameCard(game: game, records: records, standings: standings)
+            } else {
+                GameCard(game: game, records: records)
+            }
+        }
+        // Reactive subscribe: fires on the Upcoming→Live transition because this
+        // outer card persists across the section move (stable identity, one type),
+        // unlike the old GameCard→LiveGameCard type swap. Composes shouldPoll:
+        // subscribe iff live AND tab-visible/active.
+        .task {
+            if shouldSubscribeLive { liveStore.subscribeDetail(game.gamePk, owner: subscriberID) }
+        }
+        .onChange(of: shouldSubscribeLive) { _, on in
+            if on {
+                liveStore.subscribeDetail(game.gamePk, owner: subscriberID, immediate: true)
+            } else {
+                liveStore.unsubscribeDetail(game.gamePk, owner: subscriberID)
+            }
+        }
+        .onDisappear { liveStore.unsubscribeDetail(game.gamePk, owner: subscriberID) }
+    }
+}
+
+/// Card variant for games currently in progress — pure rendering. It reads this
+/// game's live snapshot from the shared store; the refcounted detail
+/// subscription is owned by the enclosing `GameRowCard` (so it re-subscribes on
+/// the Upcoming→Live transition, which this card alone could not).
 private struct LiveGameCard: View {
     let game: Game
     let records: [Int: TeamRecord]
     let standings: [Int: TeamStandingInfo]
-    // Lives inside the Scores tab tree, so the root-injected coordinators are
-    // reliably in the environment here (no sheet boundary to cross).
-    @EnvironmentObject private var navigation: AppNavigation
     @EnvironmentObject private var liveStore: LiveGameStore
-    /// Stable per-card identity for the store's refcounted detail subscription
-    /// (Phase 2, step 4). One token per card instance makes subscribe/
-    /// unsubscribe idempotent, so N cards (and a pushed box score) watching the
-    /// same game share ONE detail loop.
-    @State private var subscriberID = LiveGameStore.SubscriberID()
 
     /// This game's live snapshot from the shared store, adapted to the existing
     /// `LiveFeedResponse` shape the card renders — so the display is unchanged.
@@ -1377,24 +1434,6 @@ private struct LiveGameCard: View {
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
         .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 3)
         .contentShape(Rectangle())
-        // Subscribe to this game's shared detail loop while the Scores tab is
-        // visible and the app is active. Refcounted by `subscriberID`, so many
-        // cards on one game share a single /live/games/{id} loop.
-        .task {
-            if navigation.shouldPoll(on: .scores) {
-                liveStore.subscribeDetail(game.gamePk, owner: subscriberID)
-            }
-        }
-        // Pause on background / tab-switch (unsubscribe → refcount drops), resume
-        // with an immediate refresh on return.
-        .onChange(of: navigation.shouldPoll(on: .scores)) { _, canPoll in
-            if canPoll {
-                liveStore.subscribeDetail(game.gamePk, owner: subscriberID, immediate: true)
-            } else {
-                liveStore.unsubscribeDetail(game.gamePk, owner: subscriberID)
-            }
-        }
-        .onDisappear { liveStore.unsubscribeDetail(game.gamePk, owner: subscriberID) }
     }
 
     // MARK: Top — team rows + inning + LIVE badge
