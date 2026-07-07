@@ -230,5 +230,68 @@ class TestBuntSingleRegression(unittest.TestCase):
         self.assertEqual(away, self.expected["games_ref_hits_away_PIT"])
 
 
+class TestPitchCountExtraction(unittest.TestCase):
+    """`_pitch_counts_from_pas`: `pitcher_pitch_count` is a CUMULATIVE running
+    total per pitcher on each pitch, so a pitcher's game total is the MAX across
+    their pitches (== last pitch's value), never the sum. Empty/absent counts
+    yield NO map entry -> pc None downstream (not 0)."""
+
+    def _pas(self):
+        # Two pitchers, interleaved PAs. pitcher_pitch_count climbs monotonically
+        # per pitcher (10 -> then p1's next PA continues at 13/15). game_pitch_count
+        # is the interleaved whole-game count and must NOT be used.
+        return [
+            {"pitcher_id": 1, "pitches": [
+                {"pitcher_pitch_count": 3,  "game_pitch_count": 3},
+                {"pitcher_pitch_count": 7,  "game_pitch_count": 7},
+                {"pitcher_pitch_count": 10, "game_pitch_count": 12},
+            ]},
+            {"pitcher_id": 2, "pitches": [
+                {"pitcher_pitch_count": 4,  "game_pitch_count": 8},
+                {"pitcher_pitch_count": 9,  "game_pitch_count": 15},
+            ]},
+            {"pitcher_id": 1, "pitches": [
+                {"pitcher_pitch_count": 13, "game_pitch_count": 18},
+                {"pitcher_pitch_count": 15, "game_pitch_count": 20},
+            ]},
+        ]
+
+    def test_max_per_pitcher_not_sum(self):
+        pc = ls._pitch_counts_from_pas(self._pas())
+        # p1 last cumulative = 15 (NOT sum 3+7+10+13+15=48); p2 = 9 (NOT 4+9=13)
+        self.assertEqual(pc[1], 15)
+        self.assertEqual(pc[2], 9)
+
+    def test_uses_pitcher_not_game_pitch_count(self):
+        pc = ls._pitch_counts_from_pas(self._pas())
+        # game_pitch_count maxes are 20 (p1) / 15 (p2); must NOT be those.
+        self.assertNotEqual(pc[1], 20)
+        self.assertNotEqual(pc[2], 15)
+
+    def test_empty_pitches_yields_no_entry(self):
+        pas = [
+            {"pitcher_id": 5, "pitches": []},          # empty array
+            {"pitcher_id": 6},                          # no pitches key
+            {"pitcher_id": 7, "pitches": [{"balls": 0}]},  # pitch w/o the count
+            {"pitches": [{"pitcher_pitch_count": 4}]},  # no pitcher_id
+        ]
+        pc = ls._pitch_counts_from_pas(pas)
+        # None of these produce a count -> absent from map (so pc None, not 0).
+        self.assertNotIn(5, pc)
+        self.assertNotIn(6, pc)
+        self.assertNotIn(7, pc)
+        self.assertEqual(pc, {})
+
+    def test_pit_row_attaches_pc_none_when_absent(self):
+        stat = {"ip": "2.0", "player": {"id": 99, "full_name": "Test P"}}
+        # pitcher 99 not in the map -> pc None (not 0, not missing)
+        row = ls._pit_row(stat, {1: 15})
+        self.assertIn("pc", row)
+        self.assertIsNone(row["pc"])
+        # present -> attached
+        row2 = ls._pit_row(stat, {99: 42})
+        self.assertEqual(row2["pc"], 42)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -312,14 +312,16 @@ def _bat_row(stat: dict) -> Optional[dict]:
     }
 
 
-def _pit_row(stat: dict) -> Optional[dict]:
+def _pit_row(stat: dict,
+             pitch_counts: Optional[dict[int, int]] = None) -> Optional[dict]:
     # Only players who pitched (ip present and non-zero).
     ip = stat.get("ip")
     if ip in (None, 0, "0", "0.0", ""):
         return None
     p = stat.get("player") or {}
+    pid = p.get("id")
     return {
-        "id":   p.get("id"),
+        "id":   pid,
         "name": p.get("full_name"),
         "ip":   ip,
         "h":    _first(stat, "p_hits", "pitching_hits"),
@@ -332,6 +334,10 @@ def _pit_row(stat: dict) -> Optional[dict]:
         "w":    stat.get("wins"),
         "l":    stat.get("losses"),
         "sv":   stat.get("saves"),
+        # Per-pitcher game pitch count from the PA feed (max cumulative
+        # pitcher_pitch_count). None when the PA feed carries no count for this
+        # pitcher (e.g. feed lag) — emitted as null, never 0.
+        "pc":   (pitch_counts or {}).get(pid),
     }
 
 
@@ -554,13 +560,44 @@ def _bases_from_pas(pas: list[dict], inning: Optional[int],
     )
 
 
+def _pitch_counts_from_pas(pas: list[dict]) -> dict[int, int]:
+    """Per-pitcher game pitch count from /plate_appearances.
+
+    `pitcher_pitch_count` lives on each pitch (data[].pitches[]) and is a
+    CUMULATIVE running total per pitcher, so a pitcher's game total is the MAX
+    over all their pitches (== the last pitch's value) — NEVER the sum (summing a
+    running counter is meaningless). Uses `pitcher_pitch_count`, NOT
+    `game_pitch_count` (the whole-game interleaved count across both pitchers).
+
+    Robust to feed shape: a PA with no `pitcher_id`, an empty/absent `pitches`
+    array, or a pitch dict missing `pitcher_pitch_count` all contribute nothing.
+    A pitcher with no usable count is simply ABSENT from the map — so the caller
+    emits `pc = None` (not 0) for them."""
+    pc: dict[int, int] = {}
+    for pa in pas:
+        pid = pa.get("pitcher_id")
+        if pid is None:
+            continue
+        for pitch in (pa.get("pitches") or []):
+            v = pitch.get("pitcher_pitch_count")
+            if v is None:
+                continue
+            cur = pc.get(pid)
+            if cur is None or v > cur:
+                pc[pid] = v
+    return pc
+
+
 def _box_lines(stats: list[dict], home_team: dict, away_team: dict,
                lineup: Optional[list[dict]],
-               plays_sorted: list[dict]) -> tuple[dict, dict]:
+               plays_sorted: list[dict],
+               pas: list[dict]) -> tuple[dict, dict]:
     """Per-player batting + pitching lines from /stats, sorted for display.
     Batting order joins /lineups (stats carries none); pitching order uses each
-    pitcher's first appearance in the play feed (no extra BDL call). Behavior is
-    unchanged from the pre-refactor inline assembly."""
+    pitcher's first appearance in the play feed (no extra BDL call). Per-pitcher
+    pitch count (`pc`) is attached from the /plate_appearances feed (already
+    fetched) — the ONLY feed carrying it. Otherwise unchanged from the
+    pre-refactor inline assembly."""
     batting_order: dict[int, int] = {}
     for row in (lineup or []):
         pid = (row.get("player") or {}).get("id")
@@ -574,6 +611,8 @@ def _box_lines(stats: list[dict], home_team: dict, away_team: dict,
         if ppid is not None and ppid not in pitch_appearance:
             pitch_appearance[ppid] = idx
 
+    pitch_counts = _pitch_counts_from_pas(pas)
+
     batting: dict[str, list] = {"away": [], "home": []}
     pitching: dict[str, list] = {"away": [], "home": []}
     for s in stats:
@@ -584,7 +623,7 @@ def _box_lines(stats: list[dict], home_team: dict, away_team: dict,
         if b:
             b["batting_order"] = batting_order.get(b.get("id"))
             batting[side].append(b)
-        p = _pit_row(s)
+        p = _pit_row(s, pitch_counts)
         if p:
             pitching[side].append(p)
 
@@ -640,7 +679,7 @@ def assemble_unified(game: dict, stats: list[dict],
         pas, state["inning"], state["half"],
     )
     batting, pitching = _box_lines(                            # stats (+lineup/plays order)
-        stats, home_team, away_team, lineup, plays_sorted,
+        stats, home_team, away_team, lineup, plays_sorted, pas,
     )
     batter_id = state["batter_id"]
     pitcher_id = state["pitcher_id"]
