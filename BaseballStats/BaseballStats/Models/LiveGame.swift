@@ -547,4 +547,50 @@ extension Game {
             bdlHomeTeamId: bdlHomeTeamId,
         )
     }
+
+    /// A `.final` copy of this game carrying the given authoritative score +
+    /// linescore, preserving everything else (teams, venue, records, ids).
+    /// Mirrors `merging(live:)` but forces the FINAL state. Used by the box
+    /// score's end-transition to fold the last live snapshot (then the refetched
+    /// box score) into a single coherent final `Game` that every display path
+    /// reads uniformly — so `phase == .final` + a nil live snapshot flip the
+    /// whole view to final at once, with no per-path suppression.
+    func asFinal(awayScore: Int?, homeScore: Int?, linescore: Linescore?) -> Game {
+        let finalStatus = GameStatus(
+            abstractGameState: "Final",
+            detailedState:     "Final",
+            statusCode:        status.statusCode,
+            codedGameState:    status.codedGameState,
+        )
+        // Derive the winner from the final score when both are known (nil on a
+        // tie / unknown), so the scores-list winner styling is right if this
+        // final game object ever flows back out.
+        let awayWon: Bool? = {
+            guard let a = awayScore, let h = homeScore, a != h else { return nil }
+            return a > h
+        }()
+        let newAway = GameTeam(
+            team: teams.away.team, score: awayScore ?? teams.away.score,
+            leagueRecord: teams.away.leagueRecord,
+            isWinner: awayWon ?? teams.away.isWinner,
+            probablePitcher: teams.away.probablePitcher,
+        )
+        let newHome = GameTeam(
+            team: teams.home.team, score: homeScore ?? teams.home.score,
+            leagueRecord: teams.home.leagueRecord,
+            isWinner: awayWon.map { !$0 } ?? teams.home.isWinner,
+            probablePitcher: teams.home.probablePitcher,
+        )
+        return Game(
+            gamePk:        gamePk,
+            gameDate:      gameDate,
+            status:        finalStatus,
+            teams:         GameTeams(away: newAway, home: newHome),
+            venue:         venue,
+            linescore:     linescore ?? self.linescore,
+            decisions:     decisions,
+            bdlAwayTeamId: bdlAwayTeamId,
+            bdlHomeTeamId: bdlHomeTeamId,
+        )
+    }
 }

@@ -17,7 +17,12 @@ import SwiftUI
 
 @MainActor
 final class BoxScoreViewModel: ObservableObject {
-    let game: Game
+    /// Mutable so the end-transition can replace it with a coherent `.final`
+    /// game (see `beginFinalize`). Every display path reads `game` as its
+    /// not-live fallback, so swapping in a final game — together with clearing
+    /// `live` — flips the whole view to final at once (single source, no
+    /// per-path suppression).
+    @Published private(set) var game: Game
 
     @Published var boxScore: BoxScoreResponse?
     /// Cumulative W-L-SV through this game's date for each decision
@@ -153,6 +158,60 @@ final class BoxScoreViewModel: ObservableObject {
             Task { await self.loadPitcherRecords() }
             Task { await self.loadBatterStatsAtDate() }
         }
+    }
+
+    /// SYNCHRONOUS first half of the end-transition. Folds the last live
+    /// snapshot into a coherent `.final` `game` — capturing the on-screen
+    /// near-final score/linescore via the existing display accessors (which read
+    /// `live`) BEFORE clearing `live`, so the provisional final equals exactly
+    /// what was on screen — then drops `live`. Runs in the same actor turn as the
+    /// membership `onChange`, so the next frame already reads final everywhere:
+    /// no stale-mid-game flash. Idempotent: once `live` is nil this early-returns.
+    func beginFinalize() {
+        guard live != nil else { return }
+        game = game.asFinal(
+            awayScore: displayAwayScore,
+            homeScore: displayHomeScore,
+            linescore: displayLinescore,
+        )
+        live = nil
+    }
+
+    /// ASYNC second half. Refetches the AUTHORITATIVE final box score / plays /
+    /// decision records (the same fetches a game opened after it ended runs),
+    /// then reconciles the final `game`'s SCORE from the box score — team runs =
+    /// sum of that side's batters' runs — catching a walk-off run that scored
+    /// after the last live poll, or an official scoring change. The BDL box score
+    /// carries no team linescore grid, so the grid stays on the near-final
+    /// snapshot values from `beginFinalize` (acceptable). Best-effort: on fetch
+    /// failure the provisional final stands, so the view is still coherently
+    /// FINAL. `load()` can't be reused (its `guard game.phase != .live` — and
+    /// `game` is now `.final` — would short-circuit).
+    func completeFinalize() async {
+        async let boxTask   = loadBoxScore()
+        async let playsTask = loadPlays()
+        _ = await boxTask
+        _ = await playsTask
+        if let bs = boxScore {
+            game = game.asFinal(
+                awayScore: Self.teamRuns(bs.teams.away) ?? game.teams.away.score,
+                homeScore: Self.teamRuns(bs.teams.home) ?? game.teams.home.score,
+                linescore: game.linescore,   // grid stays on the near-final snapshot
+            )
+        }
+        async let pitcherRecordsTask = loadPitcherRecords()
+        async let batterStatsTask    = loadBatterStatsAtDate()
+        _ = await pitcherRecordsTask
+        _ = await batterStatsTask
+        isLoading = false
+    }
+
+    /// A team's total runs from the box score = the sum of its batters' runs
+    /// scored. Returns nil if no batter carries a `runs` value (incomplete box
+    /// score) so the caller keeps the provisional near-final score.
+    private static func teamRuns(_ team: BoxScoreTeam) -> Int? {
+        let runs = team.players.values.compactMap { $0.stats?.batting?.runs }
+        return runs.isEmpty ? nil : runs.reduce(0, +)
     }
 
     /// Resolve each decision pitcher's MLBAM id (via the backend's
@@ -503,6 +562,10 @@ struct BoxScoreView: View {
     /// initial `game.phase`. Drives the live subscription so a game opened
     /// pre-game that flips to live starts streaming (Option (b) of the fix).
     private var isLive: Bool {
+        // `liveList` membership is the backend's live definition; the
+        // `game.phase == .live` fallback covers a game opened while live before
+        // the local `liveList` populated. On end, `beginFinalize` sets
+        // `game.phase = .final`, so this resolves false — no re-subscribe.
         liveStore.liveList[vm.game.gamePk] != nil || vm.game.phase == .live
     }
 
@@ -610,6 +673,21 @@ struct BoxScoreView: View {
                 liveStore.subscribeDetail(vm.game.gamePk, owner: subscriberID, immediate: true)
             } else {
                 liveStore.unsubscribeDetail(vm.game.gamePk, owner: subscriberID)
+            }
+        }
+        // END transition: the game left the store's live set while we were
+        // streaming it. `beginFinalize()` (SYNCHRONOUS, this same actor turn)
+        // folds the last snapshot into a coherent `.final` game and clears
+        // `vm.live`, so every display path resolves to final on the very next
+        // frame — no stale-mid-game flash. `completeFinalize()` then refetches
+        // the authoritative final box score / plays and reconciles the score.
+        // Idempotent without a latch: after `beginFinalize` `vm.live` is nil so
+        // this guard blocks re-entry, and a final game never re-enters `liveList`.
+        .onChange(of: liveStore.liveList[vm.game.gamePk] != nil) { wasInList, isInList in
+            if wasInList, !isInList, vm.live != nil {
+                liveStore.unsubscribeDetail(vm.game.gamePk, owner: subscriberID)
+                vm.beginFinalize()
+                Task { await vm.completeFinalize() }
             }
         }
         .onDisappear { liveStore.unsubscribeDetail(vm.game.gamePk, owner: subscriberID) }
