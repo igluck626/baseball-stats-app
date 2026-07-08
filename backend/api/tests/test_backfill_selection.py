@@ -130,5 +130,64 @@ class TestRegularSeasonSelection(unittest.TestCase):
         self.assertEqual(s["batting_ab"], 500)
 
 
+class TestPitcherEntryDecimalIPAndFIP(unittest.TestCase):
+    """`_build_backfill_pitcher_entry` must store IP as TRUE DECIMAL (BDL ships
+    baseball notation, 75.1 = 75⅓ = 75.333) and compute FIP from components
+    (HBP=0), reproducing the nightly builder — not persist raw notation with a
+    null FIP."""
+
+    def setUp(self):
+        self._orig = ds._bdl_get_json
+
+    def tearDown(self):
+        ds._bdl_get_json = self._orig
+
+    def _stub_bdl(self, regular, postseason=None):
+        data = [regular] + ([postseason] if postseason else [])
+        ds._bdl_get_json = lambda path, params: {"data": data}
+
+    def test_stores_decimal_ip_not_notation_and_computes_fip(self):
+        # Cade Smith 2024 regular season, with the postseason row FIRST.
+        self._stub_bdl(
+            regular={
+                "postseason": False, "team_name": "Guardians",
+                "pitching_ip": 75.1,   # baseball notation -> 75.333 decimal
+                "pitching_gp": 74, "pitching_gs": 0, "pitching_w": 6,
+                "pitching_l": 1, "pitching_sv": 1, "pitching_h": 51,
+                "pitching_er": 16, "pitching_hr": 1, "pitching_bb": 17,
+                "pitching_k": 103, "pitching_era": 1.9115,
+                "pitching_whip": 0.9026, "pitching_k_per_9": 12.3,
+            },
+            postseason={"postseason": True, "pitching_ip": 10.0,
+                        "pitching_hr": 1, "pitching_bb": 2, "pitching_k": 16},
+        )
+        e = ds._build_backfill_pitcher_entry(841, 2024)
+        # IP stored DECIMAL (75.333), NOT the raw notation 75.1.
+        self.assertEqual(e["IP"], 75.333)
+        self.assertNotEqual(e["IP"], 75.1)
+        # FIP computed from the REGULAR-season components (HBP=0).
+        self.assertEqual(e["FIP"], ds._fip(1, 17, 0, 103, 75.333))
+        self.assertIsNotNone(e["FIP"])
+        # Selection still picked regular (74 G), not postseason (9 G).
+        self.assertEqual(e["G"], 74)
+
+    def test_reproduces_2026_fip_1_98(self):
+        # 2026 shape (40.1 notation -> 40.333; HR 3, BB 10, SO 57) -> FIP 1.98.
+        self._stub_bdl(regular={
+            "postseason": False, "team_name": "Guardians",
+            "pitching_ip": 40.1, "pitching_gp": 38, "pitching_hr": 3,
+            "pitching_bb": 10, "pitching_k": 57, "pitching_er": 13,
+            "pitching_era": 2.9,
+        })
+        e = ds._build_backfill_pitcher_entry(841, 2026)
+        self.assertEqual(e["IP"], 40.333)
+        self.assertEqual(e["FIP"], 1.98)
+
+    def test_fip_guard_no_divide_by_zero(self):
+        # _fip returns None for None/0 IP (the ip_dec guard) — never raises.
+        self.assertIsNone(ds._fip(1, 17, 0, 103, None))
+        self.assertIsNone(ds._fip(1, 17, 0, 103, 0))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

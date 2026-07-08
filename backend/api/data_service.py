@@ -4570,7 +4570,9 @@ def _build_backfill_pitcher_entry(bdl_id: Optional[int], year: int) -> Optional[
     """Pitcher counterpart to `_build_backfill_batter_entry`. BDL
     doesn't ship per-9 rates other than K/9 on season_stats; we
     round ERA / WHIP / K/9 to 2 dp to match the nightly entry
-    builder's precision. FIP is derived elsewhere from components."""
+    builder's precision. IP is stored as TRUE DECIMAL (BDL ships
+    baseball notation, "75.1" = 75⅓), and FIP is computed from the
+    HR/BB/SO components — both mirroring the nightly builder."""
     if bdl_id is None:
         return None
     try:
@@ -4592,6 +4594,17 @@ def _build_backfill_pitcher_entry(bdl_id: Optional[int], year: int) -> Optional[
         return None
     team_code = _BDL_TEAM_NAME_TO_LAHMAN.get(s.get("team_name") or "")
 
+    # BDL ships `pitching_ip` in baseball notation ("75.1" = 75⅓); convert to
+    # TRUE DECIMAL (75.333) for storage — the DB stores decimal and the client
+    # renders notation for display (`formatIP`). `_safe_rate` would persist the
+    # raw notation (the bug that made 2024/2025 display "75.0"/"73.1").
+    ip_dec = _ip_str_to_decimal(s.get("pitching_ip"))
+    # FIP components — default a missing count to 0 for the formula ONLY (the
+    # stored HR/BB/SO cells below keep their None-preserving mapping unchanged).
+    fip_hr = _to_int(s.get("pitching_hr")) or 0
+    fip_bb = _to_int(s.get("pitching_bb")) or 0
+    fip_so = _to_int(s.get("pitching_k"))  or 0
+
     entry: dict = {
         "year":   year,
         "G":      _to_int(s.get("pitching_gp")),
@@ -4599,7 +4612,7 @@ def _build_backfill_pitcher_entry(bdl_id: Optional[int], year: int) -> Optional[
         "W":      _to_int(s.get("pitching_w")),
         "L":      _to_int(s.get("pitching_l")),
         "SV":     _to_int(s.get("pitching_sv")),
-        "IP":     _safe_rate(s.get("pitching_ip")),
+        "IP":     ip_dec,
         "H":      _to_int(s.get("pitching_h")),
         "ER":     _to_int(s.get("pitching_er")),
         "HR":     _to_int(s.get("pitching_hr")),
@@ -4608,6 +4621,10 @@ def _build_backfill_pitcher_entry(bdl_id: Optional[int], year: int) -> Optional[
         "ERA":    _round_or_none(_safe_rate(s.get("pitching_era")), 2),
         "WHIP":   _round_or_none(_safe_rate(s.get("pitching_whip")), 2),
         "K_per9": _round_or_none(_safe_rate(s.get("pitching_k_per_9")), 2),
+        # FIP from components, HBP=0 (matches the nightly current-year build,
+        # which reproduces 2026's 1.98). `_fip` returns None when ip_dec is
+        # None/0, so no divide-by-zero.
+        "FIP":    _fip(fip_hr, fip_bb, 0, fip_so, ip_dec),
     }
     if team_code:
         entry["team"] = team_code
