@@ -4849,6 +4849,77 @@ def _resolve_side(stat: dict, ctx: dict) -> Optional[str]:
 _BATTING_COUNTING_FIELDS = ("PA", "H", "HBP", "SF", "CS", "IBB", "GIDP", "SH")
 
 
+def _apply_counting_aggregation(
+    db, *, season: int, player_id: Optional[int],
+    season_table: str, gamelog_table: str, fields: tuple,
+) -> int:
+    """Shared engine for `recalculate_batting_counting` /
+    `recalculate_pitching_counting` — sum the counting fields BDL's season_stats
+    omits from the per-game logs into the season row.
+
+    CURRENT season (`season >= _current_year()`) — OVERWRITE: one combined UPDATE,
+    each field = the bare game-log SUM. The logs are the freshest source. Unchanged
+    from the original (bare-subquery SET, which writes correctly in Postgres).
+
+    PAST seasons — FILL-NULL: ONE UPDATE PER FIELD, the same bare SUM guarded by
+    `WHERE "F" IS NULL`. This REPLACES the old
+    `SET "F" = COALESCE(<season_table>."F", (SELECT SUM…))` form, which — with the
+    target column self-referenced in the SET RHS — MATCHES the row but does NOT
+    write the value in Postgres (confirmed against Cade Smith: seasons_updated=1
+    yet R/HBP stayed null). The `WHERE "F" IS NULL` guard gives the identical
+    fill-null-only protection (legacy non-null values are never touched) using only
+    the bare-subquery SET the overwrite path proves works. Per-field (not one
+    combined UPDATE) is REQUIRED: a single field's null-guard on a combined SET
+    would skip filling a sibling null field, or clobber a sibling's non-null legacy
+    value.
+
+    Returns rows matched (overwrite) / total field-cells filled (fill-null; a row
+    with two null fields counts twice). The `EXISTS` guard means rows without game
+    logs for the year are never touched."""
+    overwrite = season >= _current_year()
+    player_filter = (
+        f"AND {season_table}.player_id = :player_id" if player_id is not None else ""
+    )
+    params: dict = {"season": season}
+    if player_id is not None:
+        params["player_id"] = player_id
+
+    def _sum(f: str) -> str:
+        return (
+            f'(SELECT SUM(COALESCE(g."{f}", 0)) FROM {gamelog_table} g '
+            f"WHERE g.player_id = {season_table}.player_id "
+            f"AND g.season = {season_table}.year)"
+        )
+
+    exists = (
+        f"EXISTS (SELECT 1 FROM {gamelog_table} g "
+        f"WHERE g.player_id = {season_table}.player_id "
+        f"AND g.season = {season_table}.year)"
+    )
+
+    if overwrite:
+        set_clause = ",\n          ".join(f'"{f}" = {_sum(f)}' for f in fields)
+        sql = _sa_text(
+            f"UPDATE {season_table} SET\n          {set_clause}\n"
+            f"        WHERE year = :season\n"
+            f"          AND {exists}\n"
+            f"          {player_filter}"
+        )
+        return db.execute(sql, params).rowcount or 0
+
+    total = 0
+    for f in fields:
+        sql = _sa_text(
+            f'UPDATE {season_table} SET\n          "{f}" = {_sum(f)}\n'
+            f'        WHERE year = :season\n'
+            f'          AND "{f}" IS NULL\n'
+            f"          AND {exists}\n"
+            f"          {player_filter}"
+        )
+        total += db.execute(sql, params).rowcount or 0
+    return total
+
+
 def recalculate_batting_counting(
     db, season: int, player_id: Optional[int] = None,
 ) -> int:
@@ -4873,40 +4944,11 @@ def recalculate_batting_counting(
     The EXISTS guard means rows WITHOUT game logs for the year are never
     touched (so a Lahman-only historical row, or a current row before its
     logs land, is left alone rather than zeroed)."""
-    overwrite = season >= _current_year()
-    assignments = []
-    for f in _BATTING_COUNTING_FIELDS:
-        summ = (
-            f'(SELECT SUM(COALESCE(g."{f}", 0)) FROM batting_gamelogs g '
-            f"WHERE g.player_id = player_seasons.player_id "
-            f"AND g.season = player_seasons.year)"
-        )
-        if overwrite:
-            assignments.append(f'"{f}" = {summ}')
-        else:
-            assignments.append(f'"{f}" = COALESCE(player_seasons."{f}", {summ})')
-    set_clause = ",\n          ".join(assignments)
-    player_filter = (
-        "AND player_seasons.player_id = :player_id" if player_id is not None else ""
+    return _apply_counting_aggregation(
+        db, season=season, player_id=player_id,
+        season_table="player_seasons", gamelog_table="batting_gamelogs",
+        fields=_BATTING_COUNTING_FIELDS,
     )
-    sql = _sa_text(
-        f"""
-        UPDATE player_seasons SET
-          {set_clause}
-        WHERE year = :season
-          AND EXISTS (
-              SELECT 1 FROM batting_gamelogs g
-              WHERE g.player_id = player_seasons.player_id
-                AND g.season    = player_seasons.year
-          )
-          {player_filter}
-        """
-    )
-    params: dict = {"season": season}
-    if player_id is not None:
-        params["player_id"] = player_id
-    result = db.execute(sql, params)
-    return result.rowcount or 0
 
 
 # Pitcher counterpart to `_BATTING_COUNTING_FIELDS`. BDL's season_stats omits R
@@ -4940,40 +4982,11 @@ def recalculate_pitching_counting(
     The EXISTS guard means rows WITHOUT game logs for the year are never touched
     (a Lahman-only historical row, or a current row before its logs land, is
     left alone rather than zeroed)."""
-    overwrite = season >= _current_year()
-    assignments = []
-    for f in _PITCHING_COUNTING_FIELDS:
-        summ = (
-            f'(SELECT SUM(COALESCE(g."{f}", 0)) FROM pitching_gamelogs g '
-            f"WHERE g.player_id = pitcher_seasons.player_id "
-            f"AND g.season = pitcher_seasons.year)"
-        )
-        if overwrite:
-            assignments.append(f'"{f}" = {summ}')
-        else:
-            assignments.append(f'"{f}" = COALESCE(pitcher_seasons."{f}", {summ})')
-    set_clause = ",\n          ".join(assignments)
-    player_filter = (
-        "AND pitcher_seasons.player_id = :player_id" if player_id is not None else ""
+    return _apply_counting_aggregation(
+        db, season=season, player_id=player_id,
+        season_table="pitcher_seasons", gamelog_table="pitching_gamelogs",
+        fields=_PITCHING_COUNTING_FIELDS,
     )
-    sql = _sa_text(
-        f"""
-        UPDATE pitcher_seasons SET
-          {set_clause}
-        WHERE year = :season
-          AND EXISTS (
-              SELECT 1 FROM pitching_gamelogs g
-              WHERE g.player_id = pitcher_seasons.player_id
-                AND g.season    = pitcher_seasons.year
-          )
-          {player_filter}
-        """
-    )
-    params: dict = {"season": season}
-    if player_id is not None:
-        params["player_id"] = player_id
-    result = db.execute(sql, params)
-    return result.rowcount or 0
 
 
 def recalculate_batting_rates(db, season: int, player_id: Optional[int] = None) -> int:

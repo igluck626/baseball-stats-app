@@ -92,6 +92,21 @@ class _SqliteDB:
         return self.con.execute(sql, params or {})
 
 
+class _CapturingSqliteDB(_SqliteDB):
+    """Records every SQL passed to `execute` (and still runs it), so tests can
+    assert on the GENERATED SQL structure — the only way to catch a regression
+    to the Postgres-broken fill-null form, since sqlite happily fills BOTH the
+    broken `COALESCE(<table>."F", …)` form and the fixed bare-subquery form."""
+
+    def __init__(self, con):
+        super().__init__(con)
+        self.sqls: list = []
+
+    def execute(self, sql, params=None):
+        self.sqls.append(str(sql))
+        return super().execute(sql, params)
+
+
 class TestRecalculatePitchingCounting(unittest.TestCase):
 
     CURRENT_YEAR = 2026
@@ -182,6 +197,85 @@ class TestRecalculatePitchingCounting(unittest.TestCase):
         self.assertEqual(self._season_row(1, 2026), (4, 1))       # targeted
         self.assertEqual(self._season_row(2, 2026), (None, None)) # untouched
         self.assertEqual(updated, 1)
+
+    # PAST season, MIXED nulls: fill the null field, PRESERVE the non-null
+    # sibling. This is why fill-null must be per-field — a single combined
+    # null-guard would either skip R or clobber the legacy HBP.
+    def test_past_season_mixed_fills_null_preserves_sibling(self):
+        # R null (needs fill), HBP=9 legacy (must survive). Gamelog sums: R=5, HBP=1.
+        self.con.execute('INSERT INTO pitcher_seasons VALUES (1, 2024, NULL, 9)')
+        self._add_gamelogs(1, 2024, [("g1", 3, 1), ("g2", 2, 0)])
+
+        ds.recalculate_pitching_counting(self.db, 2024)
+
+        self.assertEqual(self._season_row(1, 2024), (5, 9))  # R filled, HBP legacy kept
+
+    # ---- Structural guards on the GENERATED SQL (catch a regression to the
+    # ---- Postgres-broken self-referential COALESCE form that sqlite can't) ----
+
+    def test_fillnull_sql_is_per_field_bare_subquery_no_self_coalesce(self):
+        # NOTE: sqlite fills BOTH the broken `COALESCE(pitcher_seasons."F", …)`
+        # form and the fixed bare-subquery form, so the semantic tests above pass
+        # on the broken code too. THIS is the regression guard: it asserts the
+        # fill-null path emits one bare-subquery UPDATE PER FIELD with a
+        # `WHERE "F" IS NULL` guard and NO target-table self-reference in SET.
+        self.con.execute('INSERT INTO pitcher_seasons VALUES (1, 2024, NULL, NULL)')
+        self._add_gamelogs(1, 2024, [("g1", 5, 1)])
+        cap = _CapturingSqliteDB(self.con)
+
+        ds.recalculate_pitching_counting(cap, 2024)  # past -> fill-null
+
+        # one UPDATE per field
+        self.assertEqual(len(cap.sqls), len(ds._PITCHING_COUNTING_FIELDS))
+        for sql in cap.sqls:
+            self.assertIn("IS NULL", sql)                          # WHERE null-guard
+            self.assertNotIn("COALESCE(pitcher_seasons", sql)      # NOT the broken self-ref SET
+            self.assertRegex(sql, r'SET\s+"\w+"\s*=\s*\(SELECT SUM')  # bare-subquery SET
+
+    def test_overwrite_sql_is_single_combined_unchanged(self):
+        self.con.execute('INSERT INTO pitcher_seasons VALUES (1, 2026, NULL, NULL)')
+        self._add_gamelogs(1, 2026, [("g1", 4, 1)])
+        cap = _CapturingSqliteDB(self.con)
+
+        ds.recalculate_pitching_counting(cap, 2026)  # current -> overwrite
+
+        self.assertEqual(len(cap.sqls), 1)               # single combined UPDATE
+        sql = cap.sqls[0]
+        self.assertNotIn("IS NULL", sql)                 # no per-field null-guard
+        self.assertNotIn("COALESCE(pitcher_seasons", sql)  # bare subquery, no self-ref
+
+
+class TestBattingCountingSharesFix(unittest.TestCase):
+    """The batting aggregator routes through the SAME `_apply_counting_aggregation`
+    engine, so it gets the identical fix. Confirm its fill-null SQL is also the
+    safe bare-subquery + WHERE-null form (not the Postgres-broken self-ref)."""
+
+    def setUp(self):
+        self._orig = ds._current_year
+        ds._current_year = lambda: 2026
+        self.con = sqlite3.connect(":memory:")
+        self.con.execute('CREATE TABLE player_seasons (player_id INT, year INT, "IBB" INT, "GIDP" INT, "SF" INT, "PA" INT, "H" INT, "HBP" INT, "CS" INT, "SH" INT)')
+        self.con.execute('CREATE TABLE batting_gamelogs (player_id INT, game_id TEXT, season INT, "IBB" INT, "GIDP" INT, "SF" INT, "PA" INT, "H" INT, "HBP" INT, "CS" INT, "SH" INT)')
+
+    def tearDown(self):
+        ds._current_year = self._orig
+        self.con.close()
+
+    def test_batting_fillnull_sql_is_bare_subquery_no_self_coalesce(self):
+        self.con.execute('INSERT INTO player_seasons VALUES (1, 2024, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)')
+        self.con.execute('INSERT INTO batting_gamelogs VALUES (1, "g1", 2024, 2, 1, 0, 4, 1, 0, 0, 0)')
+        cap = _CapturingSqliteDB(self.con)
+
+        ds.recalculate_batting_counting(cap, 2024)  # past -> fill-null
+
+        self.assertEqual(len(cap.sqls), len(ds._BATTING_COUNTING_FIELDS))
+        for sql in cap.sqls:
+            self.assertIn("IS NULL", sql)
+            self.assertNotIn("COALESCE(player_seasons", sql)  # NOT the broken self-ref
+            self.assertRegex(sql, r'SET\s+"\w+"\s*=\s*\(SELECT SUM')
+        # and it actually fills the null IBB from the gamelog sum in sqlite
+        ibb = self.con.execute('SELECT "IBB" FROM player_seasons WHERE player_id=1').fetchone()[0]
+        self.assertEqual(ibb, 2)
 
 
 if __name__ == "__main__":
