@@ -241,9 +241,12 @@ struct LivePitcherRow: Codable, Hashable {
     let w: Int?
     let l: Int?
     let sv: Int?
+    /// Per-pitcher game pitch count from the backend (`pc`), sourced from the PA
+    /// feed. nil when the feed carries no count yet (never 0 for that reason).
+    let pc: Int?
 
     enum CodingKeys: String, CodingKey {
-        case id, name, ip, h, r, er, bb, k, hr, era, w, l, sv
+        case id, name, ip, h, r, er, bb, k, hr, era, w, l, sv, pc
     }
 
     init(from decoder: Decoder) throws {
@@ -276,6 +279,7 @@ struct LivePitcherRow: Codable, Hashable {
         w   = try c.decodeIfPresent(Int.self,    forKey: .w)
         l   = try c.decodeIfPresent(Int.self,    forKey: .l)
         sv  = try c.decodeIfPresent(Int.self,    forKey: .sv)
+        pc  = try c.decodeIfPresent(Int.self,    forKey: .pc)
     }
 }
 
@@ -479,7 +483,7 @@ extension LiveGameDetail {
                 inningsPitched: p.ip, hits: p.h, runs: p.r, earnedRuns: p.er,
                 baseOnBalls: p.bb, strikeOuts: p.k, homeRuns: p.hr,
                 era: liveEraString(p.era), wins: p.w, losses: p.l,
-                saves: p.sv, pitchCount: nil,
+                saves: p.sv, pitchCount: p.pc,
             )
             // Season ERA lives in `seasonStats` — the slot the box-score table's
             // ERA column reads (BoxScoreView `pitchingRow`). Counting stats
