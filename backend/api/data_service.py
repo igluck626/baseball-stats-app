@@ -4472,6 +4472,37 @@ _BDL_TEAM_NAME_TO_LAHMAN: dict[str, str] = {
 }
 
 
+def _pick_regular_season_row(rows: list[dict], stat_key: str) -> Optional[dict]:
+    """From BDL `/season_stats` rows, pick the REGULAR-season row carrying
+    `stat_key` (e.g. `pitching_ip` / `batting_ab`).
+
+    BDL returns one row per (player, season_type): a completed season has BOTH a
+    `regular` row (`postseason == False`) and a `postseason` row
+    (`postseason == True`), in NON-guaranteed order. The old "first row with the
+    stat" pick could therefore select the postseason line (e.g. Cade Smith 2024
+    ships the postseason row first — 9 G / 10 IP — which would masquerade as his
+    74 G / 75.1 IP regular season). So:
+
+      • Prefer the explicit regular row (`postseason is False`).
+      • NEVER fall back to a `postseason is True` row — a player who only appeared
+        in the postseason that year yields None (skip the year) rather than a
+        playoff line written as the season.
+      • Back-compat: if the rows carry no `postseason` flag at all (older single-
+        row shape), keep the legacy "first row with the stat" behavior.
+    """
+    candidates = [r for r in rows if r.get(stat_key) is not None]
+    if not candidates:
+        return None
+    regular = [r for r in candidates if r.get("postseason") is False]
+    if regular:
+        return regular[0]
+    # No explicit regular row. Rows that aren't explicitly postseason (flag
+    # absent -> None) are the legacy single-row shape; keep them. Anything left
+    # is explicitly postseason -> refuse (return None).
+    non_postseason = [r for r in candidates if r.get("postseason") is not True]
+    return non_postseason[0] if non_postseason else None
+
+
 def _build_backfill_batter_entry(bdl_id: Optional[int], year: int) -> Optional[dict]:
     """Build a `player_seasons` row from BDL `/season_stats` for
     one historical year. Returns None when:
@@ -4497,10 +4528,13 @@ def _build_backfill_batter_entry(bdl_id: Optional[int], year: int) -> Optional[d
     rows = data.get("data") or []
     if not rows:
         return None
-    # BDL ships one row per (player, side); for two-way players
-    # the batting row is the one with AB / PA. Pick the row with
-    # non-null at_bats; fall back to first if none match.
-    s = next((r for r in rows if r.get("batting_ab") is not None), rows[0])
+    # BDL ships one row per (player, season_type); pick the REGULAR-season row
+    # with batting activity (never the postseason row — see
+    # `_pick_regular_season_row`). None when the year has no regular batting line
+    # (e.g. a pitcher's pitching-only season, or postseason-only appearance).
+    s = _pick_regular_season_row(rows, "batting_ab")
+    if s is None:
+        return None
 
     h  = _to_int(s.get("batting_h"))     or 0
     d2 = _to_int(s.get("batting_2b"))    or 0
@@ -4550,8 +4584,11 @@ def _build_backfill_pitcher_entry(bdl_id: Optional[int], year: int) -> Optional[
     rows = data.get("data") or []
     if not rows:
         return None
-    s = next((r for r in rows if r.get("pitching_ip") is not None), rows[0])
-    if s.get("pitching_ip") is None:
+    # Pick the REGULAR-season row with innings pitched, never the postseason row
+    # (BDL ships both for a completed season, in non-guaranteed order — see
+    # `_pick_regular_season_row`). None when the year has no regular pitching line.
+    s = _pick_regular_season_row(rows, "pitching_ip")
+    if s is None:
         return None
     team_code = _BDL_TEAM_NAME_TO_LAHMAN.get(s.get("team_name") or "")
 
