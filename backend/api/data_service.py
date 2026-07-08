@@ -5006,8 +5006,7 @@ def _parse_bdl_batting_gamelog(stat: dict, ctx: dict) -> Optional[dict]:
         "HR":         _to_int(stat.get("hr")),
         "RBI":        _to_int(stat.get("rbi")),
         "BB":         _to_int(stat.get("bb")),
-        # BDL doesn't ship IBB on /stats — column stays null.
-        "IBB":        None,
+        "IBB":        _to_int(stat.get("intentional_walks")),
         "SO":         _to_int(stat.get("k")),
         "SB":         _to_int(stat.get("stolen_bases")),
         "CS":         _to_int(stat.get("caught_stealing")),
@@ -5417,6 +5416,149 @@ def backfill_pitching_hbp(season: int, max_games: Optional[int] = None) -> dict:
         "games_failed":    games_failed,
         "rows_updated":    total_updated,
         "remaining":       remaining,
+    }
+
+
+def backfill_batting_ibb(season: int, max_games: Optional[int] = None) -> dict:
+    """One-time backfill of batter IBB on `season` batting_gamelogs — the batter
+    analog of `backfill_pitching_hbp`.
+
+    IBB was hardcoded to NULL by the gamelog parser (a stale "BDL doesn't ship
+    IBB" comment) even though BDL's per-game `/stats` carries `intentional_walks`,
+    so every pre-fix row has `IBB IS NULL`. This re-fetches `/stats` for each
+    distinct BDL game id that still has a null-IBB batting row, reads
+    `intentional_walks` off the raw stat line, maps the BDL player id to MLBAM,
+    and fills ONLY the NULL `IBB` cells — no other column is touched. Idempotent
+    and resumable.
+
+    CURRENT-SEASON ONLY by design (the endpoint never passes a past season):
+    past-season `player_seasons.IBB` is authoritative legacy data protected by
+    `recalculate_batting_counting`'s fill-null-only path, so re-parsing past
+    game logs is both unnecessary and risky. The current season is the ONLY one
+    the aggregator OVERWRITES from game-log sums — which zeroed IBB while the
+    logs were null — so it's the only season that needs this.
+
+    When the season's affected games are all processed (`remaining == 0`), this
+    also runs `recalculate_batting_counting` for `season` so the now-real IBB
+    (and the other current-season counting fields) roll into `player_seasons`
+    immediately, instead of waiting for the nightly.
+
+    `max_games` caps games per call so a long run can be chunked under the HTTP
+    timeout; `remaining` reports how many affected games were left when a cap was
+    hit (the final chunk, `remaining == 0`, triggers the season rollup)."""
+    if not connection.db_available():
+        return {"status": "no_db"}
+    _get_bdl_key()
+
+    from database.models import BattingGameLog as _BGL
+
+    with connection.get_session() as db:
+        rows = (
+            db.query(_BGL.game_id)
+              .filter(_BGL.season == season)
+              .filter(_BGL.IBB.is_(None))
+              .distinct()
+              .all()
+        )
+        all_game_ids = [r.game_id for r in rows]
+        bdl_to_mlbam = _bdl_to_mlbam_map(db)
+
+    remaining = 0
+    if max_games is not None and max_games >= 0 and len(all_game_ids) > max_games:
+        remaining = len(all_game_ids) - max_games
+        game_ids = all_game_ids[:max_games]
+    else:
+        game_ids = all_game_ids
+
+    if not game_ids:
+        return {
+            "status": "ok", "season": season,
+            "games_processed": 0, "games_failed": 0,
+            "rows_updated": 0, "remaining": remaining,
+            "season_rows_recalculated": 0,
+        }
+
+    total_updated   = 0
+    games_processed = 0
+    games_failed    = 0
+
+    for i, gid_str in enumerate(game_ids):
+        # Stored game_id is a string; the BDL `/stats` filter needs the int id.
+        # Non-numeric / out-of-range ids belong to the MLB Stats API historical
+        # path, which BDL can't serve — skip them.
+        try:
+            gid_int = int(gid_str)
+        except (TypeError, ValueError):
+            continue
+
+        ibb_by_pid: dict[int, int] = {}
+        cursor: Optional[int] = None
+        try:
+            while True:
+                params: dict = {"game_ids[]": [gid_int], "per_page": 100}
+                if cursor is not None:
+                    params["cursor"] = cursor
+                data = _bdl_get_json("stats", params)
+                for stat in (data.get("data") or []):
+                    # Batting lines only — a pure pitching line (ip present, no
+                    # AB/PA) has no batting_gamelogs row to fill. Mirrors
+                    # `_parse_bdl_batting_gamelog`'s guard.
+                    if (stat.get("ip") is not None
+                            and stat.get("at_bats") is None
+                            and stat.get("plate_appearances") is None):
+                        continue
+                    bdl_pid = (stat.get("player") or {}).get("id")
+                    if bdl_pid is None:
+                        continue
+                    mlbam = bdl_to_mlbam.get(int(bdl_pid))
+                    if mlbam is None:
+                        continue
+                    ibb = _to_int(stat.get("intentional_walks"))
+                    if ibb is not None:
+                        ibb_by_pid[mlbam] = ibb
+                cursor = (data.get("meta") or {}).get("next_cursor")
+                if cursor is None:
+                    break
+        except Exception as exc:
+            log.exception("backfill_batting_ibb: game %s fetch failed: %s", gid_str, exc)
+            games_failed += 1
+            continue
+        games_processed += 1
+
+        if ibb_by_pid:
+            with connection.get_session() as db:
+                for pid, ibb in ibb_by_pid.items():
+                    updated = (
+                        db.query(_BGL)
+                          .filter(_BGL.player_id == pid)
+                          .filter(_BGL.game_id   == gid_str)
+                          .filter(_BGL.season    == season)
+                          .filter(_BGL.IBB.is_(None))
+                          .update({_BGL.IBB: ibb}, synchronize_session=False)
+                    )
+                    total_updated += int(updated or 0)
+                db.commit()
+
+        if i < len(game_ids) - 1:
+            time.sleep(_BDL_RATE_LIMIT_SLEEP)
+
+    # Roll the filled game-log IBB into player_seasons once the season is fully
+    # backfilled (final chunk). recalculate_batting_counting OVERWRITES the
+    # current season from game-log sums, so this is where 2026 IBB becomes real.
+    season_rows_recalculated = 0
+    if remaining == 0:
+        with connection.get_session() as db:
+            season_rows_recalculated = recalculate_batting_counting(db, season)
+            db.commit()
+
+    return {
+        "status":                   "ok",
+        "season":                   season,
+        "games_processed":          games_processed,
+        "games_failed":             games_failed,
+        "rows_updated":             total_updated,
+        "remaining":                remaining,
+        "season_rows_recalculated": season_rows_recalculated,
     }
 
 

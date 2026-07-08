@@ -2035,6 +2035,44 @@ def admin_backfill_pitching_hbp(
     return result
 
 
+@app.post("/admin/backfill-batting-ibb")
+def admin_backfill_batting_ibb(
+    max_games: int | None = Query(
+        None,
+        description=(
+            "Cap on games processed this call (chunking for long runs). "
+            "Omit to process every affected game."
+        ),
+    ),
+):
+    """One-time backfill of batter intentional-walks (IBB) on the CURRENT
+    season's game logs.
+
+    The gamelog parser hardcoded `IBB: None` (stale comment) though BDL's
+    per-game `/stats` carries `intentional_walks`, so existing
+    `batting_gamelogs` rows have `IBB IS NULL`. Because the season-counting
+    aggregator OVERWRITES the current season from game-log sums, that zeroed
+    the current-season `player_seasons.IBB` while past seasons keep their
+    authoritative legacy IBB (fill-null-only, untouched).
+
+    CURRENT SEASON ONLY — there is intentionally NO `season` parameter: the
+    endpoint always targets `_current_year()`, so it can never re-parse
+    past-season game logs (which would risk clobbering good legacy data). It
+    re-fetches `/stats` per affected game, fills only the NULL `IBB` cells
+    from `intentional_walks`, then (on the final chunk) runs
+    `recalculate_batting_counting` so the season rollup updates immediately.
+
+    Runs synchronously at the BDL rate limit (~0.22s/game); pass `max_games`
+    to chunk long runs and re-invoke until `remaining` reaches 0."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    season = data_service._current_year()
+    result = data_service.backfill_batting_ibb(season, max_games=max_games)
+    if result.get("status") == "no_db":
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    return result
+
+
 @app.post("/admin/add-historical-player")
 def admin_add_historical_player(
     mlbam_id:    int  = Query(..., description="MLBAM player id (our primary key)."),
