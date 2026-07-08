@@ -1210,6 +1210,16 @@ def main() -> None:
     except Exception as exc:
         log.error(f"Batting counting aggregation FAILED (non-fatal): {exc}")
 
+    # Pitcher counterpart — R / HBP summed from pitching_gamelogs into
+    # pitcher_seasons (BDL's pitcher season phase omits them). Non-fatal.
+    try:
+        with connection.get_session() as db:
+            pc_updated = data_service.recalculate_pitching_counting(db, current_year)
+            db.commit()
+        log.info(f"Pitching counting aggregation — rows updated: {pc_updated}")
+    except Exception as exc:
+        log.error(f"Pitching counting aggregation FAILED (non-fatal): {exc}")
+
     log.info("=" * 52)
     log.info("Phase 4c: advanced batting rates (wOBA / K% / BB% / ISO)")
     log.info("=" * 52)

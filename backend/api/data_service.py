@@ -4909,6 +4909,73 @@ def recalculate_batting_counting(
     return result.rowcount or 0
 
 
+# Pitcher counterpart to `_BATTING_COUNTING_FIELDS`. BDL's season_stats omits R
+# (runs allowed) and HBP for pitchers, but the per-game `/stats` carries them
+# (`p_runs` → R, `pitching_hbp` → HBP) and the parser already stores them on
+# `pitching_gamelogs`, so they can be summed up. BFP is intentionally NOT here:
+# `batters_faced` isn't captured on the gamelog yet (no column / parser field).
+_PITCHING_COUNTING_FIELDS = ("R", "HBP")
+
+
+def recalculate_pitching_counting(
+    db, season: int, player_id: Optional[int] = None,
+) -> int:
+    """Pitcher analog of `recalculate_batting_counting`: aggregate the counting
+    stats BDL's season_stats omits — R / HBP — from `pitching_gamelogs` into the
+    matching `pitcher_seasons` row. Returns the number of season rows updated.
+    Caller owns the session/commit.
+
+    The per-game data already exists (the gamelog parser reads `p_runs` → R and
+    `pitching_hbp` → HBP), so unlike the batting-IBB case NO gamelog backfill is
+    needed — only this rollup, which the current pipeline was missing.
+
+    Overwrite vs. fill, scoped by season (identical to the batting aggregator):
+      • CURRENT season (`season >= _current_year()`): each field is OVERWRITTEN
+        with the game-log SUM — the logs are the freshest, most accurate source,
+        and repair-built rows (e.g. Cade Smith) land with these NULL.
+      • PAST seasons: COALESCE-only (fill NULLs, never overwrite), so the
+        authoritative legacy Lahman/bref R/HBP are never clobbered by a partial
+        game-log sum.
+
+    The EXISTS guard means rows WITHOUT game logs for the year are never touched
+    (a Lahman-only historical row, or a current row before its logs land, is
+    left alone rather than zeroed)."""
+    overwrite = season >= _current_year()
+    assignments = []
+    for f in _PITCHING_COUNTING_FIELDS:
+        summ = (
+            f'(SELECT SUM(COALESCE(g."{f}", 0)) FROM pitching_gamelogs g '
+            f"WHERE g.player_id = pitcher_seasons.player_id "
+            f"AND g.season = pitcher_seasons.year)"
+        )
+        if overwrite:
+            assignments.append(f'"{f}" = {summ}')
+        else:
+            assignments.append(f'"{f}" = COALESCE(pitcher_seasons."{f}", {summ})')
+    set_clause = ",\n          ".join(assignments)
+    player_filter = (
+        "AND pitcher_seasons.player_id = :player_id" if player_id is not None else ""
+    )
+    sql = _sa_text(
+        f"""
+        UPDATE pitcher_seasons SET
+          {set_clause}
+        WHERE year = :season
+          AND EXISTS (
+              SELECT 1 FROM pitching_gamelogs g
+              WHERE g.player_id = pitcher_seasons.player_id
+                AND g.season    = pitcher_seasons.year
+          )
+          {player_filter}
+        """
+    )
+    params: dict = {"season": season}
+    if player_id is not None:
+        params["player_id"] = player_id
+    result = db.execute(sql, params)
+    return result.rowcount or 0
+
+
 def recalculate_batting_rates(db, season: int, player_id: Optional[int] = None) -> int:
     """Compute the advanced batting RATE columns — wOBA, K_pct, BB_pct, ISO —
     on `player_seasons` for `season` from the stored components. BDL's

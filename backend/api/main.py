@@ -669,6 +669,17 @@ def _run_nightly_update() -> None:
         except Exception as exc:
             log.error(f"[nightly] batting-counting aggregation FAILED (non-fatal): {exc}")
 
+        # Pitcher counterpart — overwrites the current-season R/HBP the BDL
+        # pitcher phase doesn't write, summed from pitching_gamelogs. Non-fatal.
+        log.info("[nightly] starting pitching-counting aggregation phase")
+        try:
+            with connection.get_session() as db:
+                pc_updated = data_service.recalculate_pitching_counting(db, current_year)
+                db.commit()
+            log.info(f"[nightly] pitching-counting aggregation done: rows updated={pc_updated}")
+        except Exception as exc:
+            log.error(f"[nightly] pitching-counting aggregation FAILED (non-fatal): {exc}")
+
         # Phase 4c — advanced batting rates (wOBA / K% / BB% / ISO). Runs
         # AFTER 4b so the components it derives from are correct. BDL omits
         # these, so without this pass current-season rows stay NULL. Non-fatal.
@@ -1919,6 +1930,57 @@ def admin_recalculate_batting_counting(
         "player_id":       player_id,
         "mode":            "overwrite" if season >= data_service._current_year() else "fill-nulls",
         "fields":          list(data_service._BATTING_COUNTING_FIELDS),
+        "seasons_updated": int(seasons_updated),
+    }
+
+
+@app.post("/admin/recalculate-pitching-counting")
+def admin_recalculate_pitching_counting(
+    season: int | None = Query(
+        None,
+        description="Season year to aggregate. Defaults to the current season.",
+    ),
+    player_id: int | None = Query(
+        None,
+        description="Optional — target one player. Omit for a league-wide pass.",
+    ),
+):
+    """Pitcher analog of `/admin/recalculate-batting-counting`. Fill the pitcher
+    counting stats BDL's season-stats payload omits — R (runs allowed) and HBP —
+    by summing them from `pitching_gamelogs` into the matching `pitcher_seasons`
+    row. The per-game data already exists (the parser reads `p_runs` / `pitching_hbp`),
+    so no game-log backfill is needed — only this rollup, which the pipeline was
+    missing.
+
+    Motivating case: a pitcher whose current-season row was built fresh from BDL
+    (`/admin/backfill-player-history` / seed-then-nightly, e.g. Cade Smith) lands
+    with R/HBP NULL because the BDL pitcher phase never writes them.
+
+    Delegates to `data_service.recalculate_pitching_counting`, which OVERWRITES
+    from the game-log sum for the CURRENT season (freshest source) but is
+    COALESCE-only (fill-NULLs) for PAST seasons so historical Lahman/bref totals
+    are never clobbered. The EXISTS guard means only rows that actually have game
+    logs for the year are touched. Idempotent.
+
+    BFP is intentionally excluded — `batters_faced` isn't captured on
+    `pitching_gamelogs` yet (needs a schema column + parser change + gamelog
+    backfill; separate task)."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+
+    if season is None:
+        season = data_service._current_year()
+
+    with connection.get_session() as db:
+        seasons_updated = data_service.recalculate_pitching_counting(db, season, player_id)
+        db.commit()
+
+    return {
+        "status":          "ok",
+        "season":          season,
+        "player_id":       player_id,
+        "mode":            "overwrite" if season >= data_service._current_year() else "fill-nulls",
+        "fields":          list(data_service._PITCHING_COUNTING_FIELDS),
         "seasons_updated": int(seasons_updated),
     }
 
