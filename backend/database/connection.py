@@ -74,6 +74,10 @@ _BIO_COLUMNS: list[tuple[str, str]] = [
     # row in each, and both need to resolve to BDL's single player
     # id from either side.
     ("bdl_id",        "INTEGER"),
+    # Retrosheet person id (Chadwick key_retro). Added on both players +
+    # pitchers (this list runs on both); index created via the model's
+    # __table_args__ in init_db() step 3.
+    ("retro_id",      "VARCHAR"),
 ]
 
 
@@ -148,6 +152,9 @@ _PLAYER_SEASONS_NEW_COLUMNS: list[tuple[str, str]] = [
     # box-score lines need overlaying — anything started after this
     # ts isn't in the row yet, anything before is already counted.
     ("last_updated", "TIMESTAMP"),
+    # Row-level provenance for the raw counting stats
+    # ('retrosheet' | 'bdl' | 'lahman'); see PlayerSeason.source.
+    ("source",       "VARCHAR"),
 ]
 _PITCHER_SEASONS_NEW_COLUMNS: list[tuple[str, str]] = [
     ("CG",           "INTEGER"),
@@ -167,6 +174,9 @@ _PITCHER_SEASONS_NEW_COLUMNS: list[tuple[str, str]] = [
     ("SF",           "INTEGER"),
     ("GIDP",         "INTEGER"),
     ("last_updated", "TIMESTAMP"),
+    # Row-level provenance for the raw counting stats
+    # ('retrosheet' | 'bdl' | 'lahman'); see PitcherSeason.source.
+    ("source",       "VARCHAR"),
 ]
 
 

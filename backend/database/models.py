@@ -19,11 +19,20 @@ class Base(DeclarativeBase):
 
 class Player(Base):
     __tablename__ = "players"
-    __table_args__ = (Index("ix_players_name", "name"),)
+    __table_args__ = (
+        Index("ix_players_name", "name"),
+        # Retrosheet person id (e.g. "acunr001"), mapped from the Chadwick
+        # register (key_retro -> key_mlbam). Indexed because the Retrosheet
+        # historical ingest resolves players by retro_id heavily.
+        Index("ix_players_retro_id", "retro_id"),
+    )
 
     player_id       = Column(Integer, primary_key=True)
     name            = Column(String, nullable=False)
     bbref_id        = Column(String)
+    # Retrosheet person id (Chadwick key_retro). NULL until the historical
+    # ingest / register bridge stamps it; distinct from bbref_id.
+    retro_id        = Column(String)
     # BallDontLie's internal player id. Populated by the one-shot
     # `/admin/build-bdl-player-mapping` walk and used by the
     # BDL-migration code paths. NULL for historical players BDL
@@ -62,6 +71,11 @@ class PlayerSeason(Base):
     year           = Column(Integer, primary_key=True)
     team           = Column(String)
     league         = Column(String)
+    # Row-level provenance for the RAW COUNTING stats: 'retrosheet' | 'bdl' |
+    # 'lahman'. WAR/OPS+ are a separate BRef column-overlay, not a row source.
+    # Backfilled by year-inference (pre-2008=lahman, 2008+=bdl), then flipped
+    # to 'retrosheet' as the historical ingest overwrites the counting stats.
+    source         = Column(String)
     WAR            = Column(Float)
     WAR_off        = Column(Float)
     WAR_def        = Column(Float)
@@ -111,11 +125,19 @@ class PlayerSeason(Base):
 
 class Pitcher(Base):
     __tablename__ = "pitchers"
-    __table_args__ = (Index("ix_pitchers_name", "name"),)
+    __table_args__ = (
+        Index("ix_pitchers_name", "name"),
+        # Retrosheet person id (Chadwick key_retro); indexed for the historical
+        # ingest's retro_id lookups. Mirrors Player.retro_id (two-way players
+        # carry the same retro_id on both sides).
+        Index("ix_pitchers_retro_id", "retro_id"),
+    )
 
     player_id       = Column(Integer, primary_key=True)
     name            = Column(String, nullable=False)
     bbref_id        = Column(String)
+    # Retrosheet person id (Chadwick key_retro). See Player.retro_id.
+    retro_id        = Column(String)
     # See Player.bdl_id — same mapping, populated for two-way
     # players (Ohtani) on both sides with the same BDL id.
     bdl_id          = Column(Integer)
@@ -155,6 +177,9 @@ class PitcherSeason(Base):
     year           = Column(Integer, primary_key=True)
     team           = Column(String)
     league         = Column(String)
+    # Row-level provenance for the RAW COUNTING stats: 'retrosheet' | 'bdl' |
+    # 'lahman'. See PlayerSeason.source.
+    source         = Column(String)
     W              = Column(Integer)
     L              = Column(Integer)
     G              = Column(Integer)

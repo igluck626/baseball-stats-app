@@ -1985,6 +1985,40 @@ def admin_recalculate_pitching_counting(
     }
 
 
+@app.post("/admin/backfill-season-source")
+def admin_backfill_season_source():
+    """One-time, idempotent labeling of PRE-INGEST row provenance on
+    `player_seasons` / `pitcher_seasons`.
+
+    Uses the documented Lahman-vs-BDL boundary (see `lahman_load`): rows before
+    2008 were loaded from the Lahman bulk archive; 2008+ come from the BDL /
+    current pipeline. WAR/OPS+ are a separate BRef column-overlay, not a row
+    source, so the row `source` is only ever 'lahman' or 'bdl' at this stage.
+
+    `WHERE source IS NULL` makes it idempotent and safe to re-run — it never
+    relabels a row the Retrosheet historical ingest has since flipped to
+    'retrosheet'. Returns rows labeled per table + source."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+
+    labeled: dict = {}
+    with connection.get_session() as db:
+        for table in ("player_seasons", "pitcher_seasons"):
+            # Table names are hardcoded literals (not user input) — safe.
+            lahman = db.execute(_sa_text(
+                f"UPDATE {table} SET source = 'lahman' "
+                "WHERE year < 2008 AND source IS NULL"
+            )).rowcount or 0
+            bdl = db.execute(_sa_text(
+                f"UPDATE {table} SET source = 'bdl' "
+                "WHERE year >= 2008 AND source IS NULL"
+            )).rowcount or 0
+            labeled[table] = {"lahman": int(lahman), "bdl": int(bdl)}
+        db.commit()
+
+    return {"status": "ok", "labeled": labeled}
+
+
 @app.post("/admin/recalculate-batting-rates")
 def admin_recalculate_batting_rates(
     season: int | None = Query(
