@@ -40,4 +40,14 @@ backend/data/lahman/*
 !backend/data/lahman/Teams.csv
 !backend/data/lahman/HallOfFame.csv
 !backend/data/lahman/SeriesPost.csv
+
+# Retrosheet data: only the Chadwick retro bridge + the off-Railway-aggregated
+# season/stint reference CSVs are committed. Raw daybyday dumps and scratch
+# aggregation files stay local.
+backend/data/retrosheet/*
+!backend/data/retrosheet/chadwick_retro_bridge.csv
+!backend/data/retrosheet/retrosheet_batting_seasons.csv
+!backend/data/retrosheet/retrosheet_pitching_seasons.csv
+!backend/data/retrosheet/retrosheet_batting_stints.csv
+!backend/data/retrosheet/retrosheet_pitching_stints.csv
 *.xcuserstate
