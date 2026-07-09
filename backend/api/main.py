@@ -36,10 +36,10 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 # database imports work after data_service is imported (it adds backend/ to sys.path)
 from database import connection, crud                       # noqa: E402
 from database.models import (                                # noqa: E402
-    BattingGameLog, Pitcher, PitcherSeason, PitchingGameLog,
+    BattingGameLog, Pitcher, PitcherSeason, PitcherSeasonStint, PitchingGameLog,
     Player, PlayerAllstar, PlayerAward, PlayerFielding,
     PlayerHof, PlayerPostseasonBatting, PlayerPostseasonPitching,
-    PlayerSeason, SeriesPost, TeamSeason,
+    PlayerSeason, PlayerSeasonStint, SeriesPost, TeamSeason,
 )
 
 # scripts/ holds the Lahman loader, WAR backfill, and nightly update logic;
@@ -49,6 +49,7 @@ import backfill_war                                         # noqa: E402
 import lahman_load                                          # noqa: E402
 import nightly_update                                       # noqa: E402
 import reset_db                                             # noqa: E402
+import retrosheet_ingest                                    # noqa: E402
 
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8000"))
@@ -72,6 +73,47 @@ _bulk_state: dict = {
     "last_run": None,
 }
 _bulk_lock = threading.Lock()
+
+
+# ---------------------------------------------------------------------------
+# Retrosheet-ingest state (shared between background thread + status endpoint)
+# Phases: "snapshot" → "batting_seasons" → "pitching_seasons"
+#         → "batting_stints" → "pitching_stints" → "done"
+# ---------------------------------------------------------------------------
+_retro_state: dict = {
+    "running":  False,
+    "phase":    None,
+    "year":     None,
+    "batting_upserted":          0,
+    "pitching_upserted":         0,
+    "batting_stints_upserted":   0,
+    "pitching_stints_upserted":  0,
+    "summary":  None,
+    "error":    None,
+    "last_run": None,
+}
+_retro_lock = threading.Lock()
+
+
+def _run_retrosheet_ingest(year: int | None) -> None:
+    """Background thread: ingest the committed Retrosheet CSVs (OVERWRITE the
+    combined season rows + populate the stint tables)."""
+    with _retro_lock:
+        _retro_state.update(
+            running=True, phase=None, year=year,
+            batting_upserted=0, pitching_upserted=0,
+            batting_stints_upserted=0, pitching_stints_upserted=0,
+            summary=None, error=None,
+        )
+    try:
+        retrosheet_ingest.run(year=year, state=_retro_state, lock=_retro_lock)
+    except Exception as exc:
+        with _retro_lock:
+            _retro_state["error"] = str(exc)
+    finally:
+        with _retro_lock:
+            _retro_state["running"]  = False
+            _retro_state["last_run"] = datetime.datetime.utcnow().isoformat() + "Z"
 
 
 def _run_bulk_load() -> None:
@@ -4484,6 +4526,44 @@ def start_bulk_load():
     t = threading.Thread(target=_run_bulk_load, daemon=True)
     t.start()
     return {"status": "started"}
+
+
+@app.post("/admin/ingest-retrosheet")
+def start_ingest_retrosheet(year: int | None = Query(default=None)):
+    """Ingest the committed Retrosheet season/stint CSVs (background thread).
+    `?year=YYYY` restricts to one season (dry run); omit for all years."""
+    with _retro_lock:
+        if _retro_state["running"]:
+            return {"status": "already_running", **_retro_state}
+
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+
+    t = threading.Thread(target=_run_retrosheet_ingest, args=(year,), daemon=True)
+    t.start()
+    return {"status": "started", "year": year}
+
+
+@app.get("/admin/ingest-retrosheet/status")
+def ingest_retrosheet_status():
+    counts: dict[str, int] = {}
+    if connection.db_available():
+        try:
+            with connection.get_session() as db:
+                counts = {
+                    "player_seasons_retrosheet":
+                        db.query(PlayerSeason).filter(PlayerSeason.source == "retrosheet").count(),
+                    "pitcher_seasons_retrosheet":
+                        db.query(PitcherSeason).filter(PitcherSeason.source == "retrosheet").count(),
+                    "player_season_stints":  db.query(PlayerSeasonStint).count(),
+                    "pitcher_season_stints": db.query(PitcherSeasonStint).count(),
+                }
+        except Exception:
+            pass
+
+    with _retro_lock:
+        state = dict(_retro_state)
+    return {"counts": counts, **state}
 
 
 @app.get("/admin/bulk-load/status")

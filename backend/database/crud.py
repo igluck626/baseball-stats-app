@@ -15,9 +15,11 @@ from .models import (
     PlayerAwardShare,
     PlayerFielding,
     PlayerHof,
+    PitcherSeasonStint,
     PlayerPostseasonBatting,
     PlayerPostseasonPitching,
     PlayerSeason,
+    PlayerSeasonStint,
     SeriesPost,
     TeamSeason,
 )
@@ -161,6 +163,49 @@ def save_pitcher_seasons(db: Session, player_id: int, seasons: list[dict]) -> No
             "last_updated": now,
             **season,
         })
+
+
+def _upsert_stint(db: Session, model, row: dict) -> None:
+    """Insert-or-update one per-team stint row keyed on the composite PK
+    (player_id, year, team). Same PG-native ON CONFLICT path as
+    _upsert_season, but with the three-column conflict target. `row` must
+    contain player_id, year, and team; every other key becomes the SET."""
+    dialect = db.bind.dialect.name if db.bind is not None else ""
+    if dialect == "postgresql":
+        stmt = pg_insert(model).values(**row)
+        update_cols = {
+            k: stmt.excluded[k]
+            for k in row.keys()
+            if k not in ("player_id", "year", "team")
+        }
+        if update_cols:
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["player_id", "year", "team"],
+                set_=update_cols,
+            )
+        else:
+            stmt = stmt.on_conflict_do_nothing(
+                index_elements=["player_id", "year", "team"],
+            )
+        db.execute(stmt)
+    else:
+        db.merge(model(**row))
+
+
+def save_player_season_stints(db: Session, stints: list[dict]) -> None:
+    """Upsert per-team batting stint rows (one per player-year-team).
+    Each dict carries its own player_id/year/team. last_updated stamped
+    like the season saves."""
+    now = datetime.datetime.utcnow()
+    for stint in stints:
+        _upsert_stint(db, PlayerSeasonStint, {"last_updated": now, **stint})
+
+
+def save_pitcher_season_stints(db: Session, stints: list[dict]) -> None:
+    """Upsert per-team pitching stint rows (one per player-year-team)."""
+    now = datetime.datetime.utcnow()
+    for stint in stints:
+        _upsert_stint(db, PitcherSeasonStint, {"last_updated": now, **stint})
 
 
 def get_all_pitcher_ids(db: Session) -> list[int]:

@@ -225,6 +225,84 @@ class PitcherSeason(Base):
 
 
 # ---------------------------------------------------------------------------
+# Retrosheet per-team stints — one row per (player, year, team). The
+# player_seasons / pitcher_seasons tables keep ONE combined row per
+# player-year; these companion tables hold the per-team breakdown for
+# traded players. Raw counting only (no rates/WAR) — populated by the
+# Retrosheet ingest; the combined tables remain the display source.
+# ---------------------------------------------------------------------------
+
+class PlayerSeasonStint(Base):
+    __tablename__ = "player_season_stints"
+    __table_args__ = (
+        Index("ix_player_season_stints_py", "player_id", "year"),
+    )
+
+    player_id      = Column(Integer, primary_key=True)
+    year           = Column(Integer, primary_key=True)
+    team           = Column(String,  primary_key=True)
+    stint_order    = Column(Integer)
+    G              = Column(Integer)
+    PA             = Column(Integer)
+    AB             = Column(Integer)
+    R              = Column(Integer)
+    H              = Column(Integer)
+    doubles        = Column(Integer)
+    triples        = Column(Integer)
+    HR             = Column(Integer)
+    RBI            = Column(Integer)
+    BB             = Column(Integer)
+    SO             = Column(Integer)
+    SB             = Column(Integer)
+    CS             = Column(Integer)
+    IBB            = Column(Integer)
+    HBP            = Column(Integer)
+    SH             = Column(Integer)
+    SF             = Column(Integer)
+    GIDP           = Column(Integer)
+    TB             = Column(Integer)
+    source         = Column(String)
+    last_updated   = Column(DateTime)
+
+
+class PitcherSeasonStint(Base):
+    __tablename__ = "pitcher_season_stints"
+    __table_args__ = (
+        Index("ix_pitcher_season_stints_py", "player_id", "year"),
+    )
+
+    player_id      = Column(Integer, primary_key=True)
+    year           = Column(Integer, primary_key=True)
+    team           = Column(String,  primary_key=True)
+    stint_order    = Column(Integer)
+    W              = Column(Integer)
+    L              = Column(Integer)
+    G              = Column(Integer)
+    GS             = Column(Integer)
+    IP             = Column(Float)     # decimal innings (IPouts / 3)
+    SO             = Column(Integer)
+    BB             = Column(Integer)
+    HR             = Column(Integer)
+    CG             = Column(Integer)
+    SHO            = Column(Integer)
+    SV             = Column(Integer)
+    H              = Column(Integer)
+    ER             = Column(Integer)
+    R              = Column(Integer)
+    IBB            = Column(Integer)
+    WP             = Column(Integer)
+    HBP            = Column(Integer)
+    BK             = Column(Integer)
+    BFP            = Column(Integer)
+    GF             = Column(Integer)
+    SH             = Column(Integer)
+    SF             = Column(Integer)
+    GIDP           = Column(Integer)
+    source         = Column(String)
+    last_updated   = Column(DateTime)
+
+
+# ---------------------------------------------------------------------------
 # Fielding — one row per (player, year, position); stints are summed.
 # ---------------------------------------------------------------------------
 
