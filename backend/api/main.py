@@ -111,6 +111,12 @@ def _run_retrosheet_ingest(year: int | None) -> None:
         with _retro_lock:
             _retro_state["error"] = str(exc)
     finally:
+        # Drop the in-process cache so post-ingest reads see the rewritten
+        # season rows instead of the stale pre-ingest snapshot (player_career:,
+        # pitcher_career:, leaders, …) until their TTLs lapse. Same call the
+        # nightly makes in its finally; runs after retrosheet_ingest.run() has
+        # committed every batch (get_session commits on context exit).
+        _cache.clear()
         with _retro_lock:
             _retro_state["running"]  = False
             _retro_state["last_run"] = datetime.datetime.utcnow().isoformat() + "Z"
