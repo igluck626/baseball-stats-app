@@ -161,6 +161,15 @@ _CHADWICK_CSV = os.path.join(
     "data", "lahman", "chadwick_mlb.csv",
 )
 
+# Chadwick key_retro ↔ key_mlbam bridge — slimmed (3 cols, rows with a
+# non-empty key_retro) from the full 16-shard register. Shipped in
+# `backend/data/retrosheet/`. Used to stamp `retro_id` on player/pitcher
+# bio rows for the Retrosheet historical ingest.
+_CHADWICK_RETRO_CSV = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "data", "retrosheet", "chadwick_retro_bridge.csv",
+)
+
 # ---------------------------------------------------------------------------
 # Simple in-memory TTL cache (used only by the fetch_and_save_* helpers).
 # ---------------------------------------------------------------------------
@@ -170,6 +179,9 @@ _store: dict = {}
 # Cached Chadwick mlbam → bbref reverse map; populated on first access
 # and reused for the life of the process.
 _chadwick_mlbam_to_bbref: Optional[dict[int, str]] = None
+
+# Cached Chadwick mlbam → retro map; same lifecycle as the bbref map.
+_chadwick_mlbam_to_retro: Optional[dict[int, str]] = None
 
 
 def _load_chadwick_mlbam_to_bbref() -> dict[int, str]:
@@ -195,6 +207,32 @@ def _load_chadwick_mlbam_to_bbref() -> dict[int, str]:
         log.warning("Chadwick bridge CSV not found at %s — bbref_id "
                     "lookups will return None", _CHADWICK_CSV)
     _chadwick_mlbam_to_bbref = bridge
+    return bridge
+
+
+def _load_chadwick_mlbam_to_retro() -> dict[int, str]:
+    """Return the {key_mlbam: key_retro} map from the slimmed Chadwick retro
+    bridge. Cached after the first load — the CSV is ~0.63 MB and only read
+    once per process. Returns an empty dict (and logs once) if the CSV is
+    missing, so callers can degrade gracefully."""
+    global _chadwick_mlbam_to_retro
+    if _chadwick_mlbam_to_retro is not None:
+        return _chadwick_mlbam_to_retro
+    bridge: dict[int, str] = {}
+    try:
+        with open(_CHADWICK_RETRO_CSV, newline="", encoding="utf-8-sig") as fh:
+            for row in csv.DictReader(fh):
+                retro = row.get("key_retro")
+                mlbam = row.get("key_mlbam")
+                if retro and mlbam:
+                    try:
+                        bridge[int(mlbam)] = retro
+                    except (TypeError, ValueError):
+                        continue
+    except FileNotFoundError:
+        log.warning("Chadwick retro bridge CSV not found at %s — retro_id "
+                    "population will be a no-op", _CHADWICK_RETRO_CSV)
+    _chadwick_mlbam_to_retro = bridge
     return bridge
 
 

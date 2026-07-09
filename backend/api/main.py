@@ -2019,6 +2019,55 @@ def admin_backfill_season_source():
     return {"status": "ok", "labeled": labeled}
 
 
+@app.post("/admin/populate-retro-id")
+def admin_populate_retro_id():
+    """Stamp `retro_id` on `players` + `pitchers` bio rows from the Chadwick
+    key_mlbam → key_retro bridge (`backend/data/retrosheet/chadwick_retro_bridge.csv`).
+
+    Matches the register's `key_mlbam` to our MLBAM primary key and sets
+    `retro_id = key_retro`. OVERWRITE (not fill-null): the register is
+    authoritative and retro ids are stable, so re-running re-applies the same
+    value (and would pick up any register correction). A player with a row in
+    BOTH tables (two-way / dual-bio) gets the same retro_id on each, since both
+    are updated by `player_id`.
+
+    Returns the map size applied plus the resulting count of bio rows that now
+    carry a retro_id (the useful verification figure — non-null after the run)."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+
+    mp = data_service._load_chadwick_mlbam_to_retro()
+    if not mp:
+        return {"status": "ok", "distinct_retro_applied": 0,
+                "players_updated": 0, "pitchers_updated": 0,
+                "note": "retro bridge CSV empty or missing — no-op"}
+
+    params = [{"mlbam": m, "retro": r} for m, r in mp.items()]
+    with connection.get_session() as db:
+        for table in ("players", "pitchers"):
+            # Table names are hardcoded literals (not user input) — safe.
+            db.execute(
+                _sa_text(f"UPDATE {table} SET retro_id = :retro "
+                         "WHERE player_id = :mlbam"),
+                params,
+            )
+        db.commit()
+        # executemany rowcount isn't reliable across drivers; count the result
+        # directly — rows now carrying a retro_id (== rows populated this run
+        # on a fresh column; stable on re-run since it's an overwrite).
+        players_pop = db.execute(_sa_text(
+            "SELECT COUNT(*) FROM players WHERE retro_id IS NOT NULL")).scalar() or 0
+        pitchers_pop = db.execute(_sa_text(
+            "SELECT COUNT(*) FROM pitchers WHERE retro_id IS NOT NULL")).scalar() or 0
+
+    return {
+        "status":                "ok",
+        "distinct_retro_applied": len(mp),
+        "players_updated":        int(players_pop),
+        "pitchers_updated":       int(pitchers_pop),
+    }
+
+
 @app.post("/admin/recalculate-batting-rates")
 def admin_recalculate_batting_rates(
     season: int | None = Query(
