@@ -5148,6 +5148,53 @@ def promote_staging_gamelogs_status():
     return dict(_promote_state)
 
 
+@app.get("/admin/volume-check")
+def volume_check(path: str = Query(default="/data")):
+    """Verify the mounted volume is present, writable, and readable from INSIDE
+    the running backend, and report free space — the gate before uploading the
+    plays.duckdb. Writes ONE tiny test file, reads it back, then deletes it (the
+    only write). A permission error here means the container runs non-root and
+    can't write the volume → set RAILWAY_RUN_UID=0 (runtime_uid shows the uid)."""
+    import shutil
+    r = {
+        "checked_path":    path,
+        "mount_path_env":  os.getenv("RAILWAY_VOLUME_MOUNT_PATH"),
+        "volume_name_env": os.getenv("RAILWAY_VOLUME_NAME"),
+        "runtime_uid":     os.getuid() if hasattr(os, "getuid") else None,
+        "mount_exists":    os.path.exists(path),
+        "is_dir":          os.path.isdir(path),
+        "write_ok":        False,
+        "read_ok":         False,
+        "free_space_gb":   None,
+        "total_space_gb":  None,
+        "error":           None,
+    }
+    if not r["is_dir"]:
+        return r
+    try:
+        du = shutil.disk_usage(path)
+        r["free_space_gb"]  = round(du.free / 1024 ** 3, 2)
+        r["total_space_gb"] = round(du.total / 1024 ** 3, 2)
+    except Exception as exc:  # noqa: BLE001
+        r["error"] = f"disk_usage: {exc}"
+    test = os.path.join(path, "_volume_write_test.txt")
+    content = "volume-check " + datetime.datetime.utcnow().isoformat() + "Z"
+    try:
+        with open(test, "w") as fh:
+            fh.write(content)
+        r["write_ok"] = True
+        with open(test) as fh:
+            r["read_ok"] = (fh.read() == content)
+    except Exception as exc:  # noqa: BLE001 - a permission/IO error IS the answer we want
+        r["error"] = ((r["error"] + "; ") if r["error"] else "") + f"write/read: {exc}"
+    finally:
+        try:
+            os.remove(test)
+        except OSError:
+            pass
+    return r
+
+
 @app.get("/admin/bulk-load/status")
 def bulk_load_status():
     counts: dict[str, int] = {}
