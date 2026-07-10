@@ -207,9 +207,18 @@ def _ingest_year(year: int, bridge: dict, state, lock,
         # Gate: appearance (B_G>0, includes 0-outcome reliever/sub/PR lines — a
         # SUPERSET of the DB's batting keys, used for the 2000-2025 replacement)
         # vs outcome (any batting stat > 0 — the leaner historical 1898-1999
-        # default that drops empty appearances).
-        bat_included = (_i(r.get("B_G")) > 0) if appearance_gate \
-            else any(_i(r.get(c)) > 0 for c in _BAT_SIGNAL)
+        # default that drops empty appearances). In the appearance gate, still
+        # drop EMPTY pitcher-appearance batting rows (B_G>0 but no batting stat
+        # AND the player pitched this game) — those are the DH-era non-batting
+        # pitcher lines the live data omits; keep empty non-pitcher subs.
+        has_outcome = any(_i(r.get(c)) > 0 for c in _BAT_SIGNAL)
+        pitched = _i(r.get("P_G")) > 0 or _i(r.get("P_OUT")) > 0
+        if appearance_gate:
+            # Drop empty pitcher-appearance rows only for 2022+ (universal DH):
+            # pre-2022 live carries the same empty reliever rows, so keep them.
+            bat_included = _i(r.get("B_G")) > 0 and (has_outcome or not pitched or year < 2022)
+        else:
+            bat_included = has_outcome
         if bat_included:
             pa = _effective_pa(_i(r.get("B_PA")), _i(r.get("B_AB")), _i(r.get("B_BB")),
                                _i(r.get("B_HP")), _i(r.get("B_SF")), _i(r.get("B_SH")))

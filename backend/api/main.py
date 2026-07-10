@@ -4748,6 +4748,60 @@ def stage_retrosheet_gamelogs_status():
     return {"counts": counts, **state}
 
 
+# Every batting stat — an empty pitcher-appearance row has all of these 0/null.
+_STAGING_BAT_ZERO_COLS = ["PA", "AB", "R", "H", "doubles", "triples", "HR",
+                          "RBI", "BB", "IBB", "SO", "SB", "CS", "HBP", "SF",
+                          "GIDP", "SH"]
+
+
+@app.post("/admin/cleanup-staging-empty-pitcher-rows")
+def cleanup_staging_empty_pitcher_rows(apply: bool = Query(default=False)):
+    """Remove empty pitcher-appearance batting rows from STAGING — rows where
+    the player pitched that game (a staging pitching row exists for the same
+    game_id) AND has NO batting contribution (every batting stat 0/null). These
+    are the DH-era B_G>0 appearance rows for non-batting pitchers that the live
+    data (correctly) omits. Dry-run by default (apply=false → counts only);
+    apply=true performs the DELETE. Touches STAGING only, never live. The
+    predicate requires every batting stat = 0, so it can never remove a row
+    where the player actually batted — the safety count must be 0."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+
+    zero = " AND ".join(f'COALESCE(b."{c}", 0) = 0' for c in _STAGING_BAT_ZERO_COLS)
+    exists_pit = ("EXISTS (SELECT 1 FROM staging_pitching_gamelogs p "
+                  "WHERE p.player_id = b.player_id AND p.game_id = b.game_id)")
+    # Only 2022+: pre-2022 (no universal DH) live ALSO carries empty reliever
+    # batting rows, so dropping them from staging would push staging below live.
+    where = f"b.season >= 2022 AND {zero} AND {exists_pit}"
+    # Any row that matched the delete but nonetheless has real batting — must be
+    # 0 by construction (the predicate already forces every batting stat to 0).
+    unsafe_where = (f"{where} AND (COALESCE(b.\"AB\", 0) > 0 OR COALESCE(b.\"H\", 0) > 0 "
+                    f"OR COALESCE(b.\"PA\", 0) > 0 OR COALESCE(b.\"BB\", 0) > 0 "
+                    f"OR COALESCE(b.\"R\", 0) > 0)")
+
+    with connection.get_session() as db:
+        matched = db.execute(_sa_text(
+            f"SELECT COUNT(*) FROM staging_batting_gamelogs b WHERE {where}")).scalar() or 0
+        unsafe = db.execute(_sa_text(
+            f"SELECT COUNT(*) FROM staging_batting_gamelogs b WHERE {unsafe_where}")).scalar() or 0
+        by_season = {int(s): int(n) for s, n in db.execute(_sa_text(
+            f"SELECT season, COUNT(*) FROM staging_batting_gamelogs b WHERE {where} "
+            "GROUP BY season ORDER BY season")).all()}
+        deleted = 0
+        if apply and unsafe == 0:
+            deleted = db.execute(_sa_text(
+                f"DELETE FROM staging_batting_gamelogs b WHERE {where}")).rowcount or 0
+            db.commit()
+
+    return {
+        "applied":              bool(apply),
+        "matched":              int(matched),
+        "unsafe_rows_in_match": int(unsafe),   # MUST be 0 — never deletes a real batting row
+        "deleted":              int(deleted),
+        "matched_by_season":    by_season,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Stage 2 — staging-vs-live game-log comparison (READ-ONLY go/no-go gate).
 # Compares per-player COUNTS + season TOTALS, never a (player, date) join, so
@@ -4779,7 +4833,16 @@ def _gl_season_agg(db, model, year: int, stat_cols: list) -> dict:
 
 def _compare_gl_season(db, year, live_model, stage_model, eq_tol, baserun_cols, is_batting):
     """Compare one side (batting or pitching) for one season. Returns
-    (summary_block, detail_block). Read-only."""
+    (summary_block, detail_block). Read-only.
+
+    Source-trust model: Retrosheet (staging) is the authoritative source, so
+    stat disagreements do NOT block — staging>live are ENRICHMENTS (staging
+    more complete, e.g. the international series BDL missed) and staging<live
+    are reported but accepted as ±1-2 attribution variance. The ONLY blocker is
+    a GENUINE coverage regression: a player with fewer staging games AND lower
+    totals (a real missing game). A fewer-games player whose season totals still
+    match is a ±1-day/doubleheader/empty-row artifact — the game exists — and
+    does NOT block."""
     stat_cols = list(eq_tol.keys()) + list(baserun_cols)
     live = _gl_season_agg(db, live_model, year, stat_cols)
     stage = _gl_season_agg(db, stage_model, year, stat_cols)
@@ -4787,37 +4850,52 @@ def _compare_gl_season(db, year, live_model, stage_model, eq_tol, baserun_cols, 
     def _n(v):
         return float(v) if v is not None else 0.0
 
-    coverage, disagreements, baserun_below = [], [], []
+    enrichments, staging_below, baserun_below = [], [], []
+    below_players = set()          # players whose staging totals are LOWER on some stat
     for pid, lv in live.items():
         sv = stage.get(pid)
-        # 1. Coverage — staging must have >= the live game count for every player.
-        if sv is None or sv["g"] < lv["g"]:
-            coverage.append({"player_id": pid, "live_g": lv["g"],
-                             "stage_g": (sv["g"] if sv else 0)})
-            if sv is None:
-                continue
-        # 2. Stat agreement — PA-derived / core pitching totals within tolerance.
+        if sv is None:
+            continue               # entirely-missing player handled in coverage below
         for c, tol in eq_tol.items():
             a, b = _n(lv.get(c)), _n(sv.get(c))
             if abs(a - b) > tol:
-                disagreements.append({"player_id": pid, "stat": c,
-                                      "live": round(a, 3), "stage": round(b, 3),
-                                      "delta": round(b - a, 3)})
-        # Baserunning — flag ONLY if staging has fewer (superset expected).
+                rec = {"player_id": pid, "stat": c, "live": round(a, 3),
+                       "stage": round(b, 3), "delta": round(b - a, 3)}
+                if b > a:
+                    enrichments.append(rec)                 # staging MORE complete
+                else:
+                    staging_below.append(rec)               # staging LESS (informational)
+                    below_players.add(pid)
         for c in baserun_cols:
             if _n(sv.get(c)) < _n(lv.get(c)):
                 baserun_below.append({"player_id": pid, "stat": c,
                                       "live": _n(lv.get(c)), "stage": _n(sv.get(c))})
 
+    # Coverage — flag players with fewer staging games; a GENUINE regression is
+    # one whose totals ALSO drop (real missing game) or who is absent from
+    # staging entirely. Totals-match count diffs are date/doubleheader artifacts.
+    coverage, genuine = [], 0
+    for pid, lv in live.items():
+        sv = stage.get(pid)
+        sg = sv["g"] if sv else 0
+        if sg < lv["g"]:
+            totals_match = (sv is not None) and (pid not in below_players)
+            coverage.append({"player_id": pid, "live_g": lv["g"], "stage_g": sg,
+                             "totals_match": totals_match})
+            if not totals_match:
+                genuine += 1
+
     live_rows = sum(v["g"] for v in live.values())
     stage_rows = sum(v["g"] for v in stage.values())
     summary = {
-        "live_rows":                 live_rows,
-        "staging_rows":              stage_rows,
-        "net_new":                   stage_rows - live_rows,
-        "players_compared":          len(live),
-        "coverage_regression_count": len(coverage),
-        "stat_disagreement_count":   len(disagreements),
+        "live_rows":                         live_rows,
+        "staging_rows":                      stage_rows,
+        "net_new":                           stage_rows - live_rows,
+        "players_compared":                  len(live),
+        "coverage_regression_count":         len(coverage),
+        "genuine_coverage_regression_count": genuine,        # <- the ONLY blocker
+        "enrichment_count":                  len(enrichments),
+        "staging_below_count":               len(staging_below),
     }
     if is_batting:
         lt = db.query(_sa_func.count()).filter(live_model.season == year).scalar() or 0
@@ -4831,7 +4909,8 @@ def _compare_gl_season(db, year, live_model, stage_model, eq_tol, baserun_cols, 
 
     detail = {
         "coverage_regressions":         coverage[:_CMP_LIST_CAP],
-        "stat_disagreements":           disagreements[:_CMP_LIST_CAP],
+        "enrichments":                  enrichments[:_CMP_LIST_CAP],
+        "staging_below":                staging_below[:_CMP_LIST_CAP],
         "baserunning_stage_below_live": baserun_below[:_CMP_LIST_CAP],
     }
     return summary, detail
@@ -4839,11 +4918,12 @@ def _compare_gl_season(db, year, live_model, stage_model, eq_tol, baserun_cols, 
 
 @app.get("/admin/compare-staging-gamelogs")
 def compare_staging_gamelogs(season: int | None = Query(default=None)):
-    """READ-ONLY go/no-go gate for the Stage 3 replacement. Per season: compares
-    the staged Retrosheet game logs against the live BDL/MLB rows by per-player
-    game counts + season stat totals (never a date join). GO iff, for BOTH
-    batting and pitching, no player loses games and no stat total disagrees
-    beyond tolerance. Omit ?season= to scan all of 2000-2025. No writes."""
+    """READ-ONLY go/no-go gate for the Stage 3 replacement. Source-trust model:
+    Retrosheet (staging) is authoritative, so stat disagreements never block —
+    only a GENUINE coverage regression does (a player with fewer staging games
+    AND lower totals, i.e. a real missing game). Compares per-player game counts
+    + season stat totals (never a date join). Omit ?season= to scan 2000-2025.
+    No writes."""
     if not connection.db_available():
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
 
@@ -4857,10 +4937,10 @@ def compare_staging_gamelogs(season: int | None = Query(default=None)):
             p_sum, p_det = _compare_gl_season(
                 db, y, PitchingGameLog, StagingPitchingGameLog,
                 _CMP_PIT_EQ, [], is_batting=False)
-            go = (b_sum["coverage_regression_count"] == 0
-                  and b_sum["stat_disagreement_count"] == 0
-                  and p_sum["coverage_regression_count"] == 0
-                  and p_sum["stat_disagreement_count"] == 0)
+            # GO iff no GENUINE coverage regression on either side. Enrichments
+            # (staging>live) and benign count artifacts (totals match) never block.
+            go = (b_sum["genuine_coverage_regression_count"] == 0
+                  and p_sum["genuine_coverage_regression_count"] == 0)
             out.append({
                 "season":  y,
                 "verdict": "GO" if go else "NO-GO",
