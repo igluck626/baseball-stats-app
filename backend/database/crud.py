@@ -442,6 +442,28 @@ def save_pitching_gamelogs(db: Session, player_id: int, games: list[dict]) -> No
         db.merge(PitchingGameLog(**merged))
 
 
+def bulk_insert_gamelogs(db: Session, model, rows: list[dict]) -> int:
+    """Fast batched INSERT ... ON CONFLICT (player_id, game_id) DO NOTHING for
+    gamelog rows (each dict carries its own player_id + game_id). Used by the
+    Retrosheet historical backfill, which writes millions of rows and can't
+    afford the per-row SELECT of db.merge(). Existing rows (e.g. a re-run, or
+    the 2000+ BDL/MLB rows) are left untouched — DO NOTHING, never overwrite.
+    SQLite falls back to per-row merge. Returns the number of rows submitted."""
+    if not rows:
+        return 0
+    dialect = db.bind.dialect.name if db.bind is not None else ""
+    if dialect == "postgresql":
+        db.execute(
+            pg_insert(model).values(rows).on_conflict_do_nothing(
+                index_elements=["player_id", "game_id"],
+            )
+        )
+    else:
+        for r in rows:
+            db.merge(model(**r))
+    return len(rows)
+
+
 # ---------------------------------------------------------------------------
 # Team standings
 # ---------------------------------------------------------------------------

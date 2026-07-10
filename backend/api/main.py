@@ -50,6 +50,7 @@ import lahman_load                                          # noqa: E402
 import nightly_update                                       # noqa: E402
 import reset_db                                             # noqa: E402
 import retrosheet_ingest                                    # noqa: E402
+import retrosheet_gamelogs                                  # noqa: E402
 
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8000"))
@@ -120,6 +121,49 @@ def _run_retrosheet_ingest(year: int | None) -> None:
         with _retro_lock:
             _retro_state["running"]  = False
             _retro_state["last_run"] = datetime.datetime.utcnow().isoformat() + "Z"
+
+
+# ---------------------------------------------------------------------------
+# Retrosheet historical GAME-LOG backfill state (1898-1999, runtime download)
+# ---------------------------------------------------------------------------
+_retro_gl_state: dict = {
+    "running":  False,
+    "phase":    None,
+    "year_from": None,
+    "year_to":   None,
+    "current_year":     None,
+    "years_done":       0,
+    "batting_written":  0,
+    "pitching_written": 0,
+    "unmapped_skipped": 0,
+    "summary":  None,
+    "error":    None,
+    "last_run": None,
+}
+_retro_gl_lock = threading.Lock()
+
+
+def _run_retrosheet_gamelogs(year_from: int, year_to: int) -> None:
+    """Background thread: download Retrosheet daybyday per year and write
+    historical gamelog rows. Clears the cache at the end like the season
+    ingest / nightly so post-backfill reads aren't stale."""
+    with _retro_gl_lock:
+        _retro_gl_state.update(
+            running=True, phase=None, year_from=year_from, year_to=year_to,
+            current_year=None, years_done=0, batting_written=0,
+            pitching_written=0, unmapped_skipped=0, summary=None, error=None,
+        )
+    try:
+        retrosheet_gamelogs.run(year_from=year_from, year_to=year_to,
+                                state=_retro_gl_state, lock=_retro_gl_lock)
+    except Exception as exc:
+        with _retro_gl_lock:
+            _retro_gl_state["error"] = str(exc)
+    finally:
+        _cache.clear()
+        with _retro_gl_lock:
+            _retro_gl_state["running"]  = False
+            _retro_gl_state["last_run"] = datetime.datetime.utcnow().isoformat() + "Z"
 
 
 def _run_bulk_load() -> None:
@@ -4569,6 +4613,48 @@ def ingest_retrosheet_status():
 
     with _retro_lock:
         state = dict(_retro_state)
+    return {"counts": counts, **state}
+
+
+@app.post("/admin/ingest-retrosheet-gamelogs")
+def start_ingest_retrosheet_gamelogs(
+    year_from: int = Query(default=1898),
+    year_to: int = Query(default=1999),
+):
+    """Backfill historical game logs from Retrosheet daybyday (runtime download).
+    Defaults to the full 1898-1999 range; narrow with ?year_from=&year_to= for
+    a single-year/decade dry run."""
+    with _retro_gl_lock:
+        if _retro_gl_state["running"]:
+            return {"status": "already_running", **_retro_gl_state}
+
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+
+    t = threading.Thread(
+        target=_run_retrosheet_gamelogs, args=(year_from, year_to), daemon=True,
+    )
+    t.start()
+    return {"status": "started", "year_from": year_from, "year_to": year_to}
+
+
+@app.get("/admin/ingest-retrosheet-gamelogs/status")
+def ingest_retrosheet_gamelogs_status():
+    counts: dict[str, int] = {}
+    if connection.db_available():
+        try:
+            with connection.get_session() as db:
+                counts = {
+                    "batting_gamelogs_pre2000":
+                        db.query(BattingGameLog).filter(BattingGameLog.season < 2000).count(),
+                    "pitching_gamelogs_pre2000":
+                        db.query(PitchingGameLog).filter(PitchingGameLog.season < 2000).count(),
+                }
+        except Exception:
+            pass
+
+    with _retro_gl_lock:
+        state = dict(_retro_gl_state)
     return {"counts": counts, **state}
 
 
