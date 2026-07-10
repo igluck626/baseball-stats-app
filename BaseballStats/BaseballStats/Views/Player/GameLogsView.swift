@@ -21,6 +21,8 @@ import SwiftUI
 final class GameLogsViewModel: ObservableObject {
     let playerId: Int
     let isPitcher: Bool
+    let mlbDebut: Int?
+    let mlbLastSeason: Int?
 
     @Published var gameLogResponse: GameLogResponse?
     @Published var isLoading = false
@@ -35,15 +37,36 @@ final class GameLogsViewModel: ObservableObject {
         Calendar.current.component(.year, from: Date())
     }
 
-    init(playerId: Int, isPitcher: Bool, initialSeason: Int? = nil, api: APIClient = .shared) {
+    /// Lowest selectable season — the player's debut, clamped to 1898 (the
+    /// game-log data floor) so we don't offer known-empty pre-1898 years for
+    /// a 19th-century debut (e.g. Cy Young debuted 1890).
+    var seasonLowerBound: Int { max(mlbDebut ?? 1898, 1898) }
+
+    /// Highest selectable season. A retired player stops at their real last
+    /// season; an active player (null last_season, or last >= current year —
+    /// mirroring PlayerProfileView.isActive) extends to the current year.
+    var seasonUpperBound: Int {
+        if let last = mlbLastSeason, last < Self.currentYear { return last }
+        return Self.currentYear
+    }
+
+    init(playerId: Int, isPitcher: Bool, mlbDebut: Int? = nil,
+         mlbLastSeason: Int? = nil, initialSeason: Int? = nil,
+         api: APIClient = .shared) {
         self.playerId = playerId
         self.isPitcher = isPitcher
+        self.mlbDebut = mlbDebut
+        self.mlbLastSeason = mlbLastSeason
         self.api = api
-        // Honor an explicit initial year so the screen can be opened on
-        // a specific season (e.g. when a career-table row taps in).
-        // Falls back to the current year for the default search-then-
-        // open-the-game-logs path.
-        self.selectedSeason = initialSeason ?? Self.currentYear
+        // Bound the initial season to the player's real span. An explicit
+        // initialSeason (career-table tap) is honored but clamped; otherwise
+        // default to the upper bound (most recent season with data) — so a
+        // retired player opens on their last season, not an empty current year.
+        let lo = max(mlbDebut ?? 1898, 1898)
+        let hi: Int
+        if let last = mlbLastSeason, last < Self.currentYear { hi = last }
+        else { hi = Self.currentYear }
+        self.selectedSeason = min(max(initialSeason ?? hi, lo), hi)
     }
 
     func load() async {
@@ -83,6 +106,8 @@ private enum SplitRow: Hashable {
 struct GameLogsView: View {
     let playerId: Int
     let isPitcher: Bool
+    let mlbDebut: Int?
+    let mlbLastSeason: Int?
 
     @StateObject private var vm: GameLogsViewModel
     @State private var selectedRow: SplitRow = .season
@@ -98,16 +123,23 @@ struct GameLogsView: View {
     /// which doesn't need to push a year in from outside. Synthesizes
     /// a binding to a discarded local so the public API of GameLogsView
     /// stays a single source of truth (Binding<Int>).
-    init(playerId: Int, isPitcher: Bool) {
-        self.init(playerId: playerId, isPitcher: isPitcher, year: .constant(GameLogsViewModel.currentYear))
+    init(playerId: Int, isPitcher: Bool, mlbDebut: Int? = nil, mlbLastSeason: Int? = nil) {
+        self.init(playerId: playerId, isPitcher: isPitcher,
+                  mlbDebut: mlbDebut, mlbLastSeason: mlbLastSeason,
+                  year: .constant(GameLogsViewModel.currentYear))
     }
 
-    init(playerId: Int, isPitcher: Bool, year: Binding<Int>) {
+    init(playerId: Int, isPitcher: Bool, mlbDebut: Int? = nil,
+         mlbLastSeason: Int? = nil, year: Binding<Int>) {
         self.playerId = playerId
         self.isPitcher = isPitcher
+        self.mlbDebut = mlbDebut
+        self.mlbLastSeason = mlbLastSeason
         self._year = year
         _vm = StateObject(wrappedValue: GameLogsViewModel(
-            playerId: playerId, isPitcher: isPitcher, initialSeason: year.wrappedValue
+            playerId: playerId, isPitcher: isPitcher,
+            mlbDebut: mlbDebut, mlbLastSeason: mlbLastSeason,
+            initialSeason: year.wrappedValue
         ))
     }
 
@@ -118,12 +150,16 @@ struct GameLogsView: View {
             gamesTable
         }
         .task { await vm.load() }
-        // Pull external year changes (career-table row tap) into the VM.
-        // != guard prevents the bidirectional onChange pair below from
-        // bouncing the same value back and forth.
+        // Pull external year changes (career-table row tap) into the VM,
+        // clamped to the player's game-log span — a career/season-stats row can
+        // predate our game-log floor (season data goes back further), so an
+        // out-of-range tap lands on the nearest in-range season instead of a
+        // blank picker. != guard prevents the bidirectional onChange pair below
+        // from bouncing the same value back and forth.
         .onChange(of: year) { _, newYear in
-            if vm.selectedSeason != newYear {
-                vm.selectedSeason = newYear
+            let clamped = min(max(newYear, vm.seasonLowerBound), vm.seasonUpperBound)
+            if vm.selectedSeason != clamped {
+                vm.selectedSeason = clamped
             }
         }
         // Picker-driven year changes propagate back out to the parent
@@ -386,7 +422,11 @@ struct GameLogsView: View {
     // MARK: - Season picker
 
     private var seasonPicker: some View {
-        let years = Array((2000...GameLogsViewModel.currentYear).reversed())
+        // Per-player span: debut (clamped to 1898) → last season (retired) or
+        // current year (active). min/max guards against odd bio data (lo > hi).
+        let lo = vm.seasonLowerBound
+        let hi = vm.seasonUpperBound
+        let years = Array((min(lo, hi)...max(lo, hi)).reversed())
         return HStack {
             Text("Season")
                 .font(.subheadline)

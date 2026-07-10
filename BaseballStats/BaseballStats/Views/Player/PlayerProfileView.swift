@@ -1369,6 +1369,8 @@ struct PlayerProfileView: View {
         GameLogsView(
             playerId: player.player_id,
             isPitcher: !showingBatting,
+            mlbDebut: player.mlb_debut,
+            mlbLastSeason: player.mlb_last_season,
             year: $gameLogYear
         )
         .id(showingBatting)
