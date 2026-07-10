@@ -5195,6 +5195,46 @@ def volume_check(path: str = Query(default="/data")):
     return r
 
 
+@app.get("/admin/volume-ls")
+def volume_ls(path: str = Query(default="/data")):
+    """READ-ONLY listing of the mounted volume — per entry: name, is_dir, and
+    size (files via getsize; directories summed recursively so we can see what's
+    actually consuming space), plus the total. listdir + getsize + walk only —
+    no writes or deletes."""
+    def _dir_size(p: str) -> int:
+        tot = 0
+        for root, _dirs, files in os.walk(p):
+            for f in files:
+                try:
+                    tot += os.path.getsize(os.path.join(root, f))
+                except OSError:
+                    pass
+        return tot
+
+    if not os.path.isdir(path):
+        return {"path": path, "exists": os.path.exists(path), "is_dir": False,
+                "entries": [], "total_mb": 0.0, "count": 0}
+
+    entries = []
+    total = 0
+    for name in sorted(os.listdir(path)):
+        full = os.path.join(path, name)
+        is_dir = os.path.isdir(full)
+        try:
+            size = _dir_size(full) if is_dir else os.path.getsize(full)
+        except OSError:
+            size = None
+        entries.append({
+            "name":    name,
+            "is_dir":  is_dir,
+            "size_mb": round(size / 1024 / 1024, 2) if size is not None else None,
+        })
+        if size:
+            total += size
+    return {"path": path, "entries": entries,
+            "total_mb": round(total / 1024 / 1024, 2), "count": len(entries)}
+
+
 @app.get("/admin/bulk-load/status")
 def bulk_load_status():
     counts: dict[str, int] = {}
