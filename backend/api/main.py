@@ -4966,6 +4966,20 @@ def compare_staging_gamelogs(season: int | None = Query(default=None)):
 # ---------------------------------------------------------------------------
 _promote_lock = threading.Lock()
 
+# Last-run outcome, captured server-side so a swap_failed error survives beyond
+# the HTTP response / log stream. Written only after a run (no swap behavior).
+_promote_state: dict = {
+    "running":          False,
+    "last_run":         None,
+    "confirm":          None,
+    "swapped":          [],
+    "already_promoted": [],
+    "skipped_no_go":    [],
+    "would_swap":       [],
+    "swap_failed":      [],
+    "errors":           {},   # {season: {"error": str, "traceback": str}}
+}
+
 _BAT_GL_COLS = ["player_id", "game_id", "game_date", "season", "opponent",
                 "home_away", "result", "team_score", "opp_score", "PA", "AB",
                 "R", "H", "doubles", "triples", "HR", "RBI", "BB", "IBB", "SO",
@@ -4976,12 +4990,13 @@ _PIT_GL_COLS = ["player_id", "game_id", "game_date", "season", "opponent",
 
 
 def _promote_insert_sql(live_table: str, stage_table: str, cols: list) -> str:
-    """INSERT INTO <live> (<cols>, last_updated) SELECT <cols>, now() FROM
-    <staging> WHERE season=:y — explicit column list; last_updated STAMPED
-    now() (swapped-at provenance), not copied from staging's null."""
+    """INSERT INTO <live> (<cols>) SELECT <cols> FROM <staging> WHERE season=:y.
+    Explicit column list = the exact table columns (the gamelog tables have NO
+    last_updated column, so we don't stamp one — provenance is the retro- game_id
+    prefix). `cols` must be every column of both the live and staging table."""
     q = ", ".join(f'"{c}"' for c in cols)
-    return (f'INSERT INTO {live_table} ({q}, "last_updated") '
-            f'SELECT {q}, now() FROM {stage_table} WHERE season = :y')
+    return (f'INSERT INTO {live_table} ({q}) '
+            f'SELECT {q} FROM {stage_table} WHERE season = :y')
 
 
 _BAT_PROMOTE_SQL = _promote_insert_sql("batting_gamelogs", "staging_batting_gamelogs", _BAT_GL_COLS)
@@ -5065,8 +5080,9 @@ def _promote_one_season(year: int, confirm: bool) -> dict:
                     "timestamp": ts}
             # <- get_session commits here on clean exit
     except Exception as exc:  # noqa: BLE001 - assertion/SQL failure rolled the season back
-        log.error("[promote] %d swap_failed (rolled back): %s", year, exc)
-        return {"season": year, "action": "swap_failed", "error": str(exc)}
+        tb = traceback.format_exc()
+        log.error("[promote] %d swap_failed (rolled back): %s\n%s", year, exc, tb)
+        return {"season": year, "action": "swap_failed", "error": str(exc), "traceback": tb}
 
 
 @app.post("/admin/promote-staging-gamelogs")
@@ -5082,27 +5098,54 @@ def promote_staging_gamelogs(
     if not connection.db_available():
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
     if not _promote_lock.acquire(blocking=False):
-        return {"status": "already_running"}
+        return {"status": "already_running", **_promote_state}
+    _promote_state["running"] = True
     try:
         seasons = [season] if season is not None else list(range(2000, 2026))
         records = [_promote_one_season(y, confirm) for y in seasons]
 
-        swapped = [r["season"] for r in records if r["action"] == "swapped"]
+        def _of(action):
+            return [r["season"] for r in records if r["action"] == action]
+        swapped = _of("swapped")
         if confirm and swapped:
             _cache.clear()
 
-        return {
+        result = {
             "confirm":          confirm,
             "season":           season,
             "seasons":          records,
             "swapped":          swapped,
-            "already_promoted": [r["season"] for r in records if r["action"] == "already_promoted"],
-            "skipped_no_go":    [r["season"] for r in records if r["action"] == "skipped_no_go"],
-            "would_swap":       [r["season"] for r in records if r["action"] == "would_swap"],
-            "swap_failed":      [r["season"] for r in records if r["action"] == "swap_failed"],
+            "already_promoted": _of("already_promoted"),
+            "skipped_no_go":    _of("skipped_no_go"),
+            "would_swap":       _of("would_swap"),
+            "swap_failed":      _of("swap_failed"),
         }
+        # Capture the outcome server-side (survives the HTTP response / log
+        # rotation). Only records what happened — no swap behavior here.
+        _promote_state.update({
+            "last_run":         datetime.datetime.utcnow().isoformat() + "Z",
+            "confirm":          confirm,
+            "swapped":          swapped,
+            "already_promoted": result["already_promoted"],
+            "skipped_no_go":    result["skipped_no_go"],
+            "would_swap":       result["would_swap"],
+            "swap_failed":      result["swap_failed"],
+            "errors":           {r["season"]: {"error": r.get("error"),
+                                               "traceback": r.get("traceback")}
+                                 for r in records if r["action"] == "swap_failed"},
+        })
+        return result
     finally:
+        _promote_state["running"] = False
         _promote_lock.release()
+
+
+@app.get("/admin/promote-staging-gamelogs/status")
+def promote_staging_gamelogs_status():
+    """Last promote-run outcome captured server-side — swapped / already_promoted
+    / skipped_no_go / would_swap / swap_failed lists, plus per-season error +
+    traceback for any swap_failed. Read-only."""
+    return dict(_promote_state)
 
 
 @app.get("/admin/bulk-load/status")
