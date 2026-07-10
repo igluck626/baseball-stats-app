@@ -4851,35 +4851,39 @@ def _compare_gl_season(db, year, live_model, stage_model, eq_tol, baserun_cols, 
         return float(v) if v is not None else 0.0
 
     enrichments, staging_below, baserun_below = [], [], []
-    below_players = set()          # players whose staging totals are LOWER on some stat
+    below_players = set()          # players whose staging totals are LOWER on a REAL stat
     for pid, lv in live.items():
-        sv = stage.get(pid)
-        if sv is None:
-            continue               # entirely-missing player handled in coverage below
+        # {} when the player is absent from staging entirely — his staging stats
+        # then read as 0, so the comparison still runs (a reliever whose only
+        # empty rows were dropped must be judged by whether he had REAL stats,
+        # not by his mere absence).
+        svd = stage.get(pid) or {}
         for c, tol in eq_tol.items():
-            a, b = _n(lv.get(c)), _n(sv.get(c))
+            a, b = _n(lv.get(c)), _n(svd.get(c))
             if abs(a - b) > tol:
                 rec = {"player_id": pid, "stat": c, "live": round(a, 3),
                        "stage": round(b, 3), "delta": round(b - a, 3)}
                 if b > a:
                     enrichments.append(rec)                 # staging MORE complete
                 else:
-                    staging_below.append(rec)               # staging LESS (informational)
+                    staging_below.append(rec)               # staging LESS on a REAL stat
                     below_players.add(pid)
         for c in baserun_cols:
-            if _n(sv.get(c)) < _n(lv.get(c)):
+            if _n(svd.get(c)) < _n(lv.get(c)):
                 baserun_below.append({"player_id": pid, "stat": c,
-                                      "live": _n(lv.get(c)), "stage": _n(sv.get(c))})
+                                      "live": _n(lv.get(c)), "stage": _n(svd.get(c))})
 
-    # Coverage — flag players with fewer staging games; a GENUINE regression is
-    # one whose totals ALSO drop (real missing game) or who is absent from
-    # staging entirely. Totals-match count diffs are date/doubleheader artifacts.
+    # Coverage — flag players with fewer staging games. A GENUINE regression is
+    # one where staging is ALSO short on a REAL equality-checked stat (staging
+    # missing actual batting → `below_players`). A fewer-games player whose real
+    # totals still match — INCLUDING a reliever absent from staging whose live
+    # rows are all empty (0 == 0) — is a benign artifact and does NOT block.
     coverage, genuine = [], 0
     for pid, lv in live.items():
         sv = stage.get(pid)
         sg = sv["g"] if sv else 0
         if sg < lv["g"]:
-            totals_match = (sv is not None) and (pid not in below_players)
+            totals_match = pid not in below_players
             coverage.append({"player_id": pid, "live_g": lv["g"], "stage_g": sg,
                              "totals_match": totals_match})
             if not totals_match:
