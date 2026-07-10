@@ -4748,6 +4748,131 @@ def stage_retrosheet_gamelogs_status():
     return {"counts": counts, **state}
 
 
+# ---------------------------------------------------------------------------
+# Stage 2 — staging-vs-live game-log comparison (READ-ONLY go/no-go gate).
+# Compares per-player COUNTS + season TOTALS, never a (player, date) join, so
+# the recon's ±1-day date-attribution cases don't throw false discrepancies.
+# ---------------------------------------------------------------------------
+# PA-derived batting stats + core pitching stats are equality-checked (the ±1
+# tolerance absorbs the rare Retrosheet variance). Baserunning (R/SB/CS) is
+# superset-tolerant — the appearance gate legitimately adds pinch-run rows — so
+# it's reported (stage < live only) but never gates the verdict.
+_CMP_BAT_EQ = {"AB": 1, "H": 1, "doubles": 1, "triples": 1, "HR": 1,
+               "RBI": 1, "BB": 1, "SO": 1}
+_CMP_BAT_BASERUN = ["R", "SB", "CS"]
+_CMP_PIT_EQ = {"IP": 0.5, "H": 1, "ER": 1, "SO": 1, "BB": 1, "HR": 1}
+_CMP_LIST_CAP = 500   # cap discrepancy lists so a broken season can't blow up the payload
+
+
+def _gl_season_agg(db, model, year: int, stat_cols: list) -> dict:
+    """Per-player aggregates for one season — {player_id: {"g": count, col: sum}}.
+    Pure SELECT + GROUP BY (no writes)."""
+    cols = [model.player_id, _sa_func.count().label("g")]
+    cols += [_sa_func.sum(getattr(model, c)).label(c) for c in stat_cols]
+    out: dict = {}
+    for row in (db.query(*cols)
+                  .filter(model.season == year)
+                  .group_by(model.player_id).all()):
+        out[row.player_id] = {"g": row.g, **{c: getattr(row, c) for c in stat_cols}}
+    return out
+
+
+def _compare_gl_season(db, year, live_model, stage_model, eq_tol, baserun_cols, is_batting):
+    """Compare one side (batting or pitching) for one season. Returns
+    (summary_block, detail_block). Read-only."""
+    stat_cols = list(eq_tol.keys()) + list(baserun_cols)
+    live = _gl_season_agg(db, live_model, year, stat_cols)
+    stage = _gl_season_agg(db, stage_model, year, stat_cols)
+
+    def _n(v):
+        return float(v) if v is not None else 0.0
+
+    coverage, disagreements, baserun_below = [], [], []
+    for pid, lv in live.items():
+        sv = stage.get(pid)
+        # 1. Coverage — staging must have >= the live game count for every player.
+        if sv is None or sv["g"] < lv["g"]:
+            coverage.append({"player_id": pid, "live_g": lv["g"],
+                             "stage_g": (sv["g"] if sv else 0)})
+            if sv is None:
+                continue
+        # 2. Stat agreement — PA-derived / core pitching totals within tolerance.
+        for c, tol in eq_tol.items():
+            a, b = _n(lv.get(c)), _n(sv.get(c))
+            if abs(a - b) > tol:
+                disagreements.append({"player_id": pid, "stat": c,
+                                      "live": round(a, 3), "stage": round(b, 3),
+                                      "delta": round(b - a, 3)})
+        # Baserunning — flag ONLY if staging has fewer (superset expected).
+        for c in baserun_cols:
+            if _n(sv.get(c)) < _n(lv.get(c)):
+                baserun_below.append({"player_id": pid, "stat": c,
+                                      "live": _n(lv.get(c)), "stage": _n(sv.get(c))})
+
+    live_rows = sum(v["g"] for v in live.values())
+    stage_rows = sum(v["g"] for v in stage.values())
+    summary = {
+        "live_rows":                 live_rows,
+        "staging_rows":              stage_rows,
+        "net_new":                   stage_rows - live_rows,
+        "players_compared":          len(live),
+        "coverage_regression_count": len(coverage),
+        "stat_disagreement_count":   len(disagreements),
+    }
+    if is_batting:
+        lt = db.query(_sa_func.count()).filter(live_model.season == year).scalar() or 0
+        ln = db.query(_sa_func.count()).filter(live_model.season == year,
+                                               live_model.PA.is_(None)).scalar() or 0
+        st = db.query(_sa_func.count()).filter(stage_model.season == year).scalar() or 0
+        sn = db.query(_sa_func.count()).filter(stage_model.season == year,
+                                               stage_model.PA.is_(None)).scalar() or 0
+        summary["null_pa_live_pct"] = round(100 * ln / lt, 1) if lt else None
+        summary["null_pa_staging_pct"] = round(100 * sn / st, 1) if st else None
+
+    detail = {
+        "coverage_regressions":         coverage[:_CMP_LIST_CAP],
+        "stat_disagreements":           disagreements[:_CMP_LIST_CAP],
+        "baserunning_stage_below_live": baserun_below[:_CMP_LIST_CAP],
+    }
+    return summary, detail
+
+
+@app.get("/admin/compare-staging-gamelogs")
+def compare_staging_gamelogs(season: int | None = Query(default=None)):
+    """READ-ONLY go/no-go gate for the Stage 3 replacement. Per season: compares
+    the staged Retrosheet game logs against the live BDL/MLB rows by per-player
+    game counts + season stat totals (never a date join). GO iff, for BOTH
+    batting and pitching, no player loses games and no stat total disagrees
+    beyond tolerance. Omit ?season= to scan all of 2000-2025. No writes."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+
+    seasons = [season] if season is not None else list(range(2000, 2026))
+    out = []
+    with connection.get_session() as db:
+        for y in seasons:
+            b_sum, b_det = _compare_gl_season(
+                db, y, BattingGameLog, StagingBattingGameLog,
+                _CMP_BAT_EQ, _CMP_BAT_BASERUN, is_batting=True)
+            p_sum, p_det = _compare_gl_season(
+                db, y, PitchingGameLog, StagingPitchingGameLog,
+                _CMP_PIT_EQ, [], is_batting=False)
+            go = (b_sum["coverage_regression_count"] == 0
+                  and b_sum["stat_disagreement_count"] == 0
+                  and p_sum["coverage_regression_count"] == 0
+                  and p_sum["stat_disagreement_count"] == 0)
+            out.append({
+                "season":  y,
+                "verdict": "GO" if go else "NO-GO",
+                "summary": {"batting": b_sum, "pitching": p_sum},
+                "batting":  b_det,
+                "pitching": p_det,
+            })
+
+    overall = "GO" if out and all(s["verdict"] == "GO" for s in out) else "NO-GO"
+    return {"overall_verdict": overall, "seasons": out}
+
+
 @app.get("/admin/bulk-load/status")
 def bulk_load_status():
     counts: dict[str, int] = {}
