@@ -4957,6 +4957,154 @@ def compare_staging_gamelogs(season: int | None = Query(default=None)):
     return {"overall_verdict": overall, "seasons": out}
 
 
+# ---------------------------------------------------------------------------
+# Stage 3 — promote staging → live game logs (THE destructive swap).
+# Per season, atomic: (a) already-promoted? skip → (b) inline gate re-check
+# (GO iff genuine==0 both sides) → (c) dry-run report OR wholesale
+# delete-live-then-insert-staging in ONE transaction with pre-commit assertions.
+# confirm=false is a no-write dry run; confirm=true executes. Never auto-run.
+# ---------------------------------------------------------------------------
+_promote_lock = threading.Lock()
+
+_BAT_GL_COLS = ["player_id", "game_id", "game_date", "season", "opponent",
+                "home_away", "result", "team_score", "opp_score", "PA", "AB",
+                "R", "H", "doubles", "triples", "HR", "RBI", "BB", "IBB", "SO",
+                "SB", "CS", "HBP", "SF", "GIDP", "SH", "LOB"]
+_PIT_GL_COLS = ["player_id", "game_id", "game_date", "season", "opponent",
+                "home_away", "result", "IP", "H", "R", "ER", "BB", "SO", "HR",
+                "HBP", "WP", "pitches", "strikes"]
+
+
+def _promote_insert_sql(live_table: str, stage_table: str, cols: list) -> str:
+    """INSERT INTO <live> (<cols>, last_updated) SELECT <cols>, now() FROM
+    <staging> WHERE season=:y — explicit column list; last_updated STAMPED
+    now() (swapped-at provenance), not copied from staging's null."""
+    q = ", ".join(f'"{c}"' for c in cols)
+    return (f'INSERT INTO {live_table} ({q}, "last_updated") '
+            f'SELECT {q}, now() FROM {stage_table} WHERE season = :y')
+
+
+_BAT_PROMOTE_SQL = _promote_insert_sql("batting_gamelogs", "staging_batting_gamelogs", _BAT_GL_COLS)
+_PIT_PROMOTE_SQL = _promote_insert_sql("pitching_gamelogs", "staging_pitching_gamelogs", _PIT_GL_COLS)
+
+
+def _promote_one_season(year: int, confirm: bool) -> dict:
+    """One season, one transaction. Ordering: already-promoted → gate → swap.
+    Returns an audit record; the get_session commits on clean exit and rolls
+    back the whole season if a post-swap assertion raises."""
+    ts = datetime.datetime.utcnow().isoformat() + "Z"
+    try:
+        with connection.get_session() as db:
+            def cnt(sql: str) -> int:
+                return int(db.execute(_sa_text(sql), {"y": year}).scalar() or 0)
+
+            live_bat = cnt("SELECT COUNT(*) FROM batting_gamelogs WHERE season = :y")
+            live_pit = cnt("SELECT COUNT(*) FROM pitching_gamelogs WHERE season = :y")
+            nonretro_bat = cnt("SELECT COUNT(*) FROM batting_gamelogs "
+                               "WHERE season = :y AND game_id NOT LIKE 'retro-%'")
+            nonretro_pit = cnt("SELECT COUNT(*) FROM pitching_gamelogs "
+                               "WHERE season = :y AND game_id NOT LIKE 'retro-%'")
+            stg_bat = cnt("SELECT COUNT(*) FROM staging_batting_gamelogs WHERE season = :y")
+            stg_pit = cnt("SELECT COUNT(*) FROM staging_pitching_gamelogs WHERE season = :y")
+
+            # (a) Already promoted — live is entirely retro- on both tables. Skip
+            # cleanly; do NOT re-churn correct production data (loop re-runnable).
+            if nonretro_bat == 0 and nonretro_pit == 0:
+                log.info("[promote] %d already_promoted (batting=%d pitching=%d retro-)",
+                         year, live_bat, live_pit)
+                return {"season": year, "action": "already_promoted",
+                        "live_batting": live_bat, "live_pitching": live_pit,
+                        "staging_batting": stg_bat, "staging_pitching": stg_pit}
+
+            # (b) Inline gate re-check — same snapshot as the swap.
+            b_sum, _ = _compare_gl_season(db, year, BattingGameLog, StagingBattingGameLog,
+                                          _CMP_BAT_EQ, _CMP_BAT_BASERUN, is_batting=True)
+            p_sum, _ = _compare_gl_season(db, year, PitchingGameLog, StagingPitchingGameLog,
+                                          _CMP_PIT_EQ, [], is_batting=False)
+            gb = b_sum["genuine_coverage_regression_count"]
+            gp = p_sum["genuine_coverage_regression_count"]
+            if gb != 0 or gp != 0:
+                log.info("[promote] %d skipped_no_go (genuine batting=%d pitching=%d)", year, gb, gp)
+                return {"season": year, "action": "skipped_no_go",
+                        "genuine_batting": gb, "genuine_pitching": gp,
+                        "live_batting": live_bat, "staging_batting": stg_bat,
+                        "live_pitching": live_pit, "staging_pitching": stg_pit}
+
+            # (c) Dry run — report the plan, write nothing.
+            if not confirm:
+                return {"season": year, "action": "would_swap", "verdict": "GO",
+                        "live_batting": live_bat, "staging_batting": stg_bat,
+                        "net_batting": stg_bat - live_bat,
+                        "live_pitching": live_pit, "staging_pitching": stg_pit,
+                        "net_pitching": stg_pit - live_pit}
+
+            # (c) Swap — wholesale delete live + insert staging, both tables, one txn.
+            db.execute(_sa_text("DELETE FROM batting_gamelogs WHERE season = :y"), {"y": year})
+            db.execute(_sa_text(_BAT_PROMOTE_SQL), {"y": year})
+            db.execute(_sa_text("DELETE FROM pitching_gamelogs WHERE season = :y"), {"y": year})
+            db.execute(_sa_text(_PIT_PROMOTE_SQL), {"y": year})
+
+            # (d) Pre-commit assertions — raise → get_session rolls back the season.
+            post_bat = cnt("SELECT COUNT(*) FROM batting_gamelogs WHERE season = :y")
+            post_pit = cnt("SELECT COUNT(*) FROM pitching_gamelogs WHERE season = :y")
+            left_bat = cnt("SELECT COUNT(*) FROM batting_gamelogs "
+                           "WHERE season = :y AND game_id NOT LIKE 'retro-%'")
+            left_pit = cnt("SELECT COUNT(*) FROM pitching_gamelogs "
+                           "WHERE season = :y AND game_id NOT LIKE 'retro-%'")
+            if post_bat != stg_bat or post_pit != stg_pit or left_bat != 0 or left_pit != 0:
+                raise RuntimeError(
+                    f"post-swap assertion failed for {year}: "
+                    f"batting {post_bat}/{stg_bat} (leftover {left_bat}), "
+                    f"pitching {post_pit}/{stg_pit} (leftover {left_pit})")
+
+            log.info("[promote] %d SWAPPED batting %d->%d, pitching %d->%d at %s",
+                     year, live_bat, post_bat, live_pit, post_pit, ts)
+            return {"season": year, "action": "swapped",
+                    "pre_live_batting": live_bat, "post_live_batting": post_bat, "staging_batting": stg_bat,
+                    "pre_live_pitching": live_pit, "post_live_pitching": post_pit, "staging_pitching": stg_pit,
+                    "timestamp": ts}
+            # <- get_session commits here on clean exit
+    except Exception as exc:  # noqa: BLE001 - assertion/SQL failure rolled the season back
+        log.error("[promote] %d swap_failed (rolled back): %s", year, exc)
+        return {"season": year, "action": "swap_failed", "error": str(exc)}
+
+
+@app.post("/admin/promote-staging-gamelogs")
+def promote_staging_gamelogs(
+    season: int | None = Query(default=None),
+    confirm: bool = Query(default=False),
+):
+    """DESTRUCTIVE (confirm=true only). Replace live game logs with the staged
+    Retrosheet rows, per season, atomically. Per season: skip if already
+    promoted; else re-check the gate and swap ONLY if GO. confirm=false is a
+    no-write dry run reporting exactly what would happen. Omit ?season= to loop
+    2000-2025 (re-runnable — already-promoted seasons are skipped)."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    if not _promote_lock.acquire(blocking=False):
+        return {"status": "already_running"}
+    try:
+        seasons = [season] if season is not None else list(range(2000, 2026))
+        records = [_promote_one_season(y, confirm) for y in seasons]
+
+        swapped = [r["season"] for r in records if r["action"] == "swapped"]
+        if confirm and swapped:
+            _cache.clear()
+
+        return {
+            "confirm":          confirm,
+            "season":           season,
+            "seasons":          records,
+            "swapped":          swapped,
+            "already_promoted": [r["season"] for r in records if r["action"] == "already_promoted"],
+            "skipped_no_go":    [r["season"] for r in records if r["action"] == "skipped_no_go"],
+            "would_swap":       [r["season"] for r in records if r["action"] == "would_swap"],
+            "swap_failed":      [r["season"] for r in records if r["action"] == "swap_failed"],
+        }
+    finally:
+        _promote_lock.release()
+
+
 @app.get("/admin/bulk-load/status")
 def bulk_load_status():
     counts: dict[str, int] = {}
