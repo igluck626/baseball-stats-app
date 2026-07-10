@@ -163,7 +163,9 @@ def _parse_date(s: str):
         return None
 
 
-def _ingest_year(year: int, bridge: dict, state, lock) -> dict:
+def _ingest_year(year: int, bridge: dict, state, lock,
+                 bat_model=BattingGameLog, pit_model=PitchingGameLog,
+                 appearance_gate: bool = False) -> dict:
     playing = _download_csv(_PLAYING_URL.format(year=year))
     if not playing:
         log.warning("year %d: playing file missing/unreachable — skipped", year)
@@ -202,7 +204,13 @@ def _ingest_year(year: int, bridge: dict, state, lock) -> dict:
         team_score, opp_score, result = scores.get((gk, team), (None, None, None))
         gid = "retro-" + gk
 
-        if any(_i(r.get(c)) > 0 for c in _BAT_SIGNAL):
+        # Gate: appearance (B_G>0, includes 0-outcome reliever/sub/PR lines — a
+        # SUPERSET of the DB's batting keys, used for the 2000-2025 replacement)
+        # vs outcome (any batting stat > 0 — the leaner historical 1898-1999
+        # default that drops empty appearances).
+        bat_included = (_i(r.get("B_G")) > 0) if appearance_gate \
+            else any(_i(r.get(c)) > 0 for c in _BAT_SIGNAL)
+        if bat_included:
             pa = _effective_pa(_i(r.get("B_PA")), _i(r.get("B_AB")), _i(r.get("B_BB")),
                                _i(r.get("B_HP")), _i(r.get("B_SF")), _i(r.get("B_SH")))
             bat_rows.append({
@@ -230,8 +238,8 @@ def _ingest_year(year: int, bridge: dict, state, lock) -> dict:
                 "pitches": _io(r.get("P_PITCH")), "strikes": _io(r.get("P_STRIKE")),
             })
 
-    bw = _write(BattingGameLog, bat_rows)
-    pw = _write(PitchingGameLog, pit_rows)
+    bw = _write(bat_model, bat_rows)
+    pw = _write(pit_model, pit_rows)
     _set_state(state, lock, current_year=year)
     log.info("year %d: batting %d, pitching %d, unmapped %d", year, bw, pw, len(unmapped))
     return {"year": year, "status": "ok", "batting": bw, "pitching": pw, "unmapped": len(unmapped)}
@@ -245,10 +253,13 @@ def _write(model, rows: list[dict]) -> int:
     return written
 
 
-def run(year_from: int = 1898, year_to: int = 1999, state=None, lock=None) -> dict:
+def run(year_from: int = 1898, year_to: int = 1999, state=None, lock=None,
+        bat_model=BattingGameLog, pit_model=PitchingGameLog,
+        appearance_gate: bool = False) -> dict:
     connection.init_db()
     log.info("=" * 52)
-    log.info("Retrosheet gamelog backfill — %d..%d", year_from, year_to)
+    log.info("Retrosheet gamelog backfill — %d..%d (target=%s, appearance_gate=%s)",
+             year_from, year_to, bat_model.__tablename__, appearance_gate)
     log.info("=" * 52)
     bridge = _load_bridge()
 
@@ -257,7 +268,9 @@ def run(year_from: int = 1898, year_to: int = 1999, state=None, lock=None) -> di
     for year in range(year_from, year_to + 1):
         _set_state(state, lock, phase="ingesting", current_year=year)
         try:
-            res = _ingest_year(year, bridge, state, lock)
+            res = _ingest_year(year, bridge, state, lock,
+                               bat_model=bat_model, pit_model=pit_model,
+                               appearance_gate=appearance_gate)
         except Exception as exc:  # noqa: BLE001 - one bad year shouldn't kill the run
             log.exception("year %d FAILED: %s", year, exc)
             res = {"year": year, "status": "error", "error": str(exc),

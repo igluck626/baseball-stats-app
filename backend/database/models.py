@@ -505,6 +505,76 @@ class PitchingGameLog(Base):
     strikes     = Column(Integer)
 
 
+# ---------------------------------------------------------------------------
+# Staging game-log tables — a COLUMN-IDENTICAL copy of batting_gamelogs /
+# pitching_gamelogs, written by the Retrosheet 2000-2025 replacement ingest so
+# the LIVE tables are untouched during verification. A later swap is a clean
+# column-match copy. Not read by the app.
+# ---------------------------------------------------------------------------
+
+class StagingBattingGameLog(Base):
+    __tablename__ = "staging_batting_gamelogs"
+    __table_args__ = (
+        Index("ix_staging_batting_gamelogs_player_season", "player_id", "season"),
+        Index("ix_staging_batting_gamelogs_date",          "game_date"),
+    )
+
+    player_id   = Column(Integer, primary_key=True)
+    game_id     = Column(String,  primary_key=True)
+    game_date   = Column(Date)
+    season      = Column(Integer)
+    opponent    = Column(String)
+    home_away   = Column(String)
+    result      = Column(String)
+    team_score  = Column(Integer)
+    opp_score   = Column(Integer)
+    PA          = Column(Integer, nullable=True)
+    AB          = Column(Integer)
+    R           = Column(Integer)
+    H           = Column(Integer)
+    doubles     = Column(Integer)
+    triples     = Column(Integer)
+    HR          = Column(Integer)
+    RBI         = Column(Integer)
+    BB          = Column(Integer)
+    IBB         = Column(Integer)
+    SO          = Column(Integer)
+    SB          = Column(Integer)
+    CS          = Column(Integer)
+    HBP         = Column(Integer)
+    SF          = Column(Integer)
+    GIDP        = Column(Integer)
+    SH          = Column(Integer)
+    LOB         = Column(Integer)
+
+
+class StagingPitchingGameLog(Base):
+    __tablename__ = "staging_pitching_gamelogs"
+    __table_args__ = (
+        Index("ix_staging_pitching_gamelogs_player_season", "player_id", "season"),
+        Index("ix_staging_pitching_gamelogs_date",          "game_date"),
+    )
+
+    player_id   = Column(Integer, primary_key=True)
+    game_id     = Column(String,  primary_key=True)
+    game_date   = Column(Date)
+    season      = Column(Integer)
+    opponent    = Column(String)
+    home_away   = Column(String)
+    result      = Column(String)
+    IP          = Column(Float)
+    H           = Column(Integer)
+    R           = Column(Integer)
+    ER          = Column(Integer)
+    BB          = Column(Integer)
+    SO          = Column(Integer)
+    HR          = Column(Integer)
+    HBP         = Column(Integer)
+    WP          = Column(Integer)
+    pitches     = Column(Integer)
+    strikes     = Column(Integer)
+
+
 class PlayerHof(Base):
     __tablename__ = "player_hof"
 

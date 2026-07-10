@@ -39,7 +39,8 @@ from database.models import (                                # noqa: E402
     BattingGameLog, Pitcher, PitcherSeason, PitcherSeasonStint, PitchingGameLog,
     Player, PlayerAllstar, PlayerAward, PlayerFielding,
     PlayerHof, PlayerPostseasonBatting, PlayerPostseasonPitching,
-    PlayerSeason, PlayerSeasonStint, SeriesPost, TeamSeason,
+    PlayerSeason, PlayerSeasonStint, SeriesPost,
+    StagingBattingGameLog, StagingPitchingGameLog, TeamSeason,
 )
 
 # scripts/ holds the Lahman loader, WAR backfill, and nightly update logic;
@@ -164,6 +165,54 @@ def _run_retrosheet_gamelogs(year_from: int, year_to: int) -> None:
         with _retro_gl_lock:
             _retro_gl_state["running"]  = False
             _retro_gl_state["last_run"] = datetime.datetime.utcnow().isoformat() + "Z"
+
+
+# ---------------------------------------------------------------------------
+# Retrosheet 2000-2025 game-log STAGING backfill (writes the separate staging
+# tables — LIVE batting_gamelogs/pitching_gamelogs are never touched here).
+# Uses the B_G>0 APPEARANCE gate so staging is a superset of the live keys.
+# ---------------------------------------------------------------------------
+_stage_gl_state: dict = {
+    "running":  False,
+    "phase":    None,
+    "year_from": None,
+    "year_to":   None,
+    "current_year":     None,
+    "years_done":       0,
+    "batting_written":  0,
+    "pitching_written": 0,
+    "unmapped_skipped": 0,
+    "summary":  None,
+    "error":    None,
+    "last_run": None,
+}
+_stage_gl_lock = threading.Lock()
+
+
+def _run_stage_retrosheet_gamelogs(year_from: int, year_to: int) -> None:
+    """Background thread: ingest Retrosheet 2000-2025 game logs into the
+    STAGING tables with the appearance gate. Does NOT touch the live tables or
+    the cache (staging isn't read by the app)."""
+    with _stage_gl_lock:
+        _stage_gl_state.update(
+            running=True, phase=None, year_from=year_from, year_to=year_to,
+            current_year=None, years_done=0, batting_written=0,
+            pitching_written=0, unmapped_skipped=0, summary=None, error=None,
+        )
+    try:
+        retrosheet_gamelogs.run(
+            year_from=year_from, year_to=year_to,
+            state=_stage_gl_state, lock=_stage_gl_lock,
+            bat_model=StagingBattingGameLog, pit_model=StagingPitchingGameLog,
+            appearance_gate=True,
+        )
+    except Exception as exc:
+        with _stage_gl_lock:
+            _stage_gl_state["error"] = str(exc)
+    finally:
+        with _stage_gl_lock:
+            _stage_gl_state["running"]  = False
+            _stage_gl_state["last_run"] = datetime.datetime.utcnow().isoformat() + "Z"
 
 
 def _run_bulk_load() -> None:
@@ -4655,6 +4704,47 @@ def ingest_retrosheet_gamelogs_status():
 
     with _retro_gl_lock:
         state = dict(_retro_gl_state)
+    return {"counts": counts, **state}
+
+
+@app.post("/admin/stage-retrosheet-gamelogs")
+def start_stage_retrosheet_gamelogs(
+    year_from: int = Query(default=2000),
+    year_to: int = Query(default=2025),
+):
+    """Ingest Retrosheet 2000-2025 game logs into the SEPARATE staging tables
+    (appearance gate). Live game logs are NOT touched — this stages a candidate
+    replacement for later comparison/swap. Narrow with ?year_from=&year_to= for
+    a single-year dry run."""
+    with _stage_gl_lock:
+        if _stage_gl_state["running"]:
+            return {"status": "already_running", **_stage_gl_state}
+
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+
+    t = threading.Thread(
+        target=_run_stage_retrosheet_gamelogs, args=(year_from, year_to), daemon=True,
+    )
+    t.start()
+    return {"status": "started", "year_from": year_from, "year_to": year_to}
+
+
+@app.get("/admin/stage-retrosheet-gamelogs/status")
+def stage_retrosheet_gamelogs_status():
+    counts: dict[str, int] = {}
+    if connection.db_available():
+        try:
+            with connection.get_session() as db:
+                counts = {
+                    "staging_batting_gamelogs":  db.query(StagingBattingGameLog).count(),
+                    "staging_pitching_gamelogs": db.query(StagingPitchingGameLog).count(),
+                }
+        except Exception:
+            pass
+
+    with _stage_gl_lock:
+        state = dict(_stage_gl_state)
     return {"counts": counts, **state}
 
 
