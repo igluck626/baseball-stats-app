@@ -5384,6 +5384,203 @@ def fetch_plays_db(
         _fetch_lock.release()
 
 
+PLAYS_DB_PATH = "/data/plays.duckdb"
+
+# Friendly event name -> Retrosheet EVENT_CD (whitelist; user input is matched
+# against these keys only, never interpolated into SQL).
+_PLAYS_EVENT_CD = {
+    "HR": 23, "HOMERUN": 23, "HOME_RUN": 23,
+    "K": 3, "SO": 3, "STRIKEOUT": 3,
+    "BB": 14, "WALK": 14,
+    "HBP": 16, "HITBYPITCH": 16,
+    "1B": 20, "SINGLE": 20,
+    "2B": 21, "DOUBLE": 21,
+    "3B": 22, "TRIPLE": 22,
+}
+
+
+def _plays_connect():
+    """Open the play-by-play store READ-ONLY. We open a FRESH connection per
+    request rather than holding a persistent one: read_only mode permits any
+    number of concurrent readers, a per-request open is ~1ms, and it sidesteps
+    sharing a single (not thread-safe) duckdb connection across FastAPI's
+    threadpool. Raises FileNotFoundError if the store hasn't been fetched yet
+    (so the endpoint returns a clean 503 instead of crashing the app)."""
+    if not os.path.exists(PLAYS_DB_PATH):
+        raise FileNotFoundError(
+            f"{PLAYS_DB_PATH} not found — run POST /admin/fetch-plays-db first")
+    import duckdb
+    return duckdb.connect(PLAYS_DB_PATH, read_only=True)
+
+
+def _resolve_retro_id(player: str, role: str):
+    """Map an app player (MLBAM id if all-digits, else a name) to the Retrosheet
+    person id the plays table keys on. Batters resolve via `players`, pitchers
+    via `pitchers` (both carry retro_id, stamped by /admin/populate-retro-id).
+    Returns a list of {mlbam_id, name, retro_id} candidates — 1 = resolved,
+    0 = not found, >1 (distinct retro_id) = ambiguous, let the caller decide."""
+    table = "pitchers" if role == "pit" else "players"
+    p = player.strip()
+    with connection.get_session() as db:
+        if p.isdigit():
+            rows = db.execute(_sa_text(
+                f"SELECT player_id, name, retro_id FROM {table} "
+                "WHERE player_id = :pid"), {"pid": int(p)}).fetchall()
+        else:
+            rows = db.execute(_sa_text(
+                f"SELECT player_id, name, retro_id FROM {table} "
+                "WHERE name ILIKE :nm ORDER BY name LIMIT 25"),
+                {"nm": f"%{p}%"}).fetchall()
+    return [{"mlbam_id": r[0], "name": r[1], "retro_id": r[2]} for r in rows]
+
+
+@app.get("/plays/situational")
+def plays_situational(
+    player:       str        = Query(..., description="Player name or MLBAM id"),
+    role:         str        = Query("bat", description="'bat' (BAT_ID) or 'pit' (PIT_ID)"),
+    event:        str | None = Query(None, description="HR/K/BB/HBP/1B/2B/3B (friendly name)"),
+    balls:        int | None = Query(None, ge=0, le=4),
+    strikes:      int | None = Query(None, ge=0, le=3),
+    outs:         int | None = Query(None, ge=0, le=2),
+    inning:       int | None = Query(None, ge=1),
+    base_state:   str | None = Query(None, description="'risp' or 'loaded'"),
+    season:       int | None = Query(None, description="Exact season"),
+    season_start: int | None = Query(None),
+    season_end:   int | None = Query(None),
+    game_type:    str | None = Query(None, description="R (regular) / P (postseason) / A (allstar)"),
+    sample_limit: int        = Query(10, ge=0, le=50),
+):
+    """READ-ONLY situational query over the play-by-play store. Structured
+    filters only — every user value is bound as a DuckDB parameter, so there is
+    no SQL-injection surface. Resolves the player to a Retrosheet id via the
+    existing bridge (players/pitchers.retro_id), filters on the situation, and
+    returns the COUNT + a sample of matching plays with query latency.
+
+    e.g. /plays/situational?player=Max Muncy&event=HR&balls=3&strikes=2
+         /plays/situational?player=Pete Alonso&event=HR&balls=3&strikes=2&season=2019 -> 4"""
+    role = role.lower()
+    if role not in ("bat", "pit"):
+        raise HTTPException(status_code=400, detail="role must be 'bat' or 'pit'")
+
+    event_cd = None
+    if event is not None:
+        event_cd = _PLAYS_EVENT_CD.get(event.strip().upper().replace(" ", "_"))
+        if event_cd is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"unknown event '{event}'. Known: {sorted(set(_PLAYS_EVENT_CD))}")
+
+    gt = None
+    if game_type is not None:
+        gt = game_type.strip().upper()
+        if gt not in ("R", "P", "A"):
+            raise HTTPException(status_code=400, detail="game_type must be R, P, or A")
+
+    bs = None
+    if base_state is not None:
+        bs = base_state.strip().lower()
+        if bs not in ("risp", "loaded"):
+            raise HTTPException(status_code=400, detail="base_state must be 'risp' or 'loaded'")
+
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+
+    # ---- resolve player -> retro_id -------------------------------------
+    cands = _resolve_retro_id(player, role)
+    cands = [c for c in cands if c["retro_id"]]  # only usable (retro_id present)
+    if not cands:
+        raise HTTPException(status_code=404,
+                            detail=f"No player with a retro_id matching '{player}'")
+    distinct = {c["retro_id"] for c in cands}
+    if len(distinct) > 1:
+        # ambiguous name — hand back the candidates instead of guessing
+        return {"resolved": False, "ambiguous": True, "query": player,
+                "candidates": cands[:25]}
+    resolved = cands[0]
+    retro_id = resolved["retro_id"]
+
+    # ---- build parameterized filters ------------------------------------
+    id_col = "PIT_ID" if role == "pit" else "BAT_ID"
+    where = [f"{id_col} = ?"]
+    params: list = [retro_id]
+    if event_cd is not None:
+        where.append("EVENT_CD = ?");    params.append(event_cd)
+    if balls is not None:
+        where.append("BALLS_CT = ?");    params.append(balls)
+    if strikes is not None:
+        where.append("STRIKES_CT = ?");  params.append(strikes)
+    if outs is not None:
+        where.append("OUTS_CT = ?");     params.append(outs)
+    if inning is not None:
+        where.append("INN_CT = ?");      params.append(inning)
+    if season is not None:
+        where.append("SEASON = ?");      params.append(season)
+    if season_start is not None:
+        where.append("SEASON >= ?");     params.append(season_start)
+    if season_end is not None:
+        where.append("SEASON <= ?");     params.append(season_end)
+    if gt is not None:
+        where.append("GAME_TYPE = ?");   params.append(gt)
+    if bs == "risp":
+        where.append("(BASE2_RUN_ID IS NOT NULL OR BASE3_RUN_ID IS NOT NULL)")
+    elif bs == "loaded":
+        where.append("(BASE1_RUN_ID IS NOT NULL AND BASE2_RUN_ID IS NOT NULL "
+                      "AND BASE3_RUN_ID IS NOT NULL)")
+    clause = " AND ".join(where)
+
+    # ---- run (count + sample), timed ------------------------------------
+    try:
+        con = _plays_connect()
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    try:
+        t0 = time.perf_counter()
+        count = con.execute(
+            f"SELECT count(*) FROM plays WHERE {clause}", params).fetchone()[0]
+        sample = []
+        if sample_limit:
+            rows = con.execute(
+                "SELECT GAME_DATE, HOME_TEAM_ID, AWAY_TEAM_ID, BAT_HOME_ID, "
+                "INN_CT, BALLS_CT, STRIKES_CT, EVENT_TX, PIT_ID, BAT_ID "
+                f"FROM plays WHERE {clause} ORDER BY GAME_DATE LIMIT ?",
+                params + [sample_limit]).fetchall()
+            for gd, home, away, bat_home, inn, b, s, tx, pit, bat in rows:
+                # opponent = the team the batter is NOT on
+                opp = away if bat_home == 1 else home
+                sample.append({
+                    "game_date":   str(gd),
+                    "opponent":    opp,
+                    "inning":      inn,
+                    "count":       f"{b}-{s}",
+                    "pitcher_id":  pit if role == "bat" else None,
+                    "batter_id":   bat if role == "pit" else None,
+                    "description": tx,
+                })
+        query_ms = round((time.perf_counter() - t0) * 1000, 1)
+    finally:
+        con.close()
+
+    return {
+        "resolved": True,
+        "player": {
+            "query":    player,
+            "name":     resolved["name"],
+            "mlbam_id": resolved["mlbam_id"],
+            "retro_id": retro_id,
+            "role":     role,
+        },
+        "filters": {
+            "event": event, "event_cd": event_cd, "balls": balls,
+            "strikes": strikes, "outs": outs, "inning": inning,
+            "base_state": bs, "season": season, "season_start": season_start,
+            "season_end": season_end, "game_type": gt,
+        },
+        "count":     count,
+        "sample":    sample,
+        "query_ms":  query_ms,
+    }
+
+
 @app.get("/admin/bulk-load/status")
 def bulk_load_status():
     counts: dict[str, int] = {}
