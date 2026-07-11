@@ -5581,6 +5581,113 @@ def plays_situational(
     }
 
 
+@app.get("/admin/plays-diag")
+def plays_diag(
+    bat_id:  str = Query("alonp001", description="test batter retro id (Alonso)"),
+    pit_id:  str = Query("kersc001", description="test pitcher retro id (Kershaw)"),
+    season:  int = Query(2019),
+    read_mb: int = Query(200, ge=1, le=700, description="MB to sequentially read for throughput"),
+):
+    """TEMPORARY read-only latency diagnosis for the plays store. Splits
+    connect-time vs query-time, lists persisted indexes, measures raw volume
+    read throughput, and compares a real full scan vs indexed lookups — with a
+    warm re-run to separate cold volume I/O from CPU. Reads only; writes
+    nothing. (Remove after diagnosis.)"""
+    import duckdb
+    rep = {"path": PLAYS_DB_PATH, "exists": os.path.exists(PLAYS_DB_PATH),
+           "file_size_mb": None, "steps": {}, "error": None}
+    if not rep["exists"]:
+        rep["error"] = "file missing — run /admin/fetch-plays-db"
+        return rep
+    rep["file_size_mb"] = round(os.path.getsize(PLAYS_DB_PATH) / 1024 / 1024, 1)
+
+    def timed(fn):
+        # NB: must evaluate fn() BEFORE measuring elapsed — a tuple literal
+        # like (elapsed, fn(), None) would compute elapsed first (always ~0).
+        t = time.perf_counter()
+        try:
+            v = fn()
+            return round((time.perf_counter() - t) * 1000, 1), v, None
+        except Exception as exc:  # noqa: BLE001
+            return round((time.perf_counter() - t) * 1000, 1), None, str(exc)
+
+    # --- 1. raw volume read throughput -----------------------------------
+    try:
+        target = read_mb * 1024 * 1024
+        chunk = 8 * 1024 * 1024
+        read = 0
+        t = time.perf_counter()
+        with open(PLAYS_DB_PATH, "rb") as fh:
+            while read < target:
+                b = fh.read(min(chunk, target - read))
+                if not b:
+                    break
+                read += len(b)
+        secs = time.perf_counter() - t
+        rep["steps"]["raw_read"] = {
+            "bytes_read": read, "secs": round(secs, 3),
+            "MB_per_s": round((read / 1024 / 1024) / secs, 1) if secs > 0 else None,
+        }
+    except Exception as exc:  # noqa: BLE001
+        rep["steps"]["raw_read"] = {"error": str(exc)}
+
+    # --- 2. connect time (cold = first open, warm = second) --------------
+    ms1, con, err = timed(lambda: duckdb.connect(PLAYS_DB_PATH, read_only=True))
+    rep["steps"]["connect_cold_ms"] = ms1
+    if err:
+        rep["error"] = "connect: " + err
+        return rep
+    ms2, con2, _ = timed(lambda: duckdb.connect(PLAYS_DB_PATH, read_only=True))
+    rep["steps"]["connect_warm_ms"] = ms2
+    if con2:
+        con2.close()
+
+    try:
+        # --- 3. indexes present in the uploaded file? --------------------
+        try:
+            idx = con.execute(
+                "SELECT index_name, table_name, expressions "
+                "FROM duckdb_indexes()").fetchall()
+            rep["steps"]["indexes"] = [
+                {"name": i[0], "table": i[1], "expr": i[2]} for i in idx]
+        except Exception as exc:  # noqa: BLE001
+            rep["steps"]["indexes"] = {"error": str(exc)}
+
+        # --- 4. query timings on the persistent connection ---------------
+        # count(*) answers from metadata (NOT a real scan) — baseline.
+        ms, v, e = timed(lambda: con.execute(
+            "SELECT count(*) FROM plays").fetchone()[0])
+        rep["steps"]["count_star"] = {"ms": ms, "value": v, "error": e,
+                                      "note": "metadata, not a scan"}
+        # real full scan: non-indexed predicate forces a column scan of 10M rows.
+        ms, v, e = timed(lambda: con.execute(
+            "SELECT count(*) FROM plays WHERE OUTS_CT = 1").fetchone()[0])
+        rep["steps"]["full_scan"] = {"ms": ms, "value": v, "error": e,
+                                     "note": "OUTS_CT=1, non-indexed → true scan"}
+        # season-filtered (the fast "Alonso 2019" shape) — uses ix_seas/ix_bat.
+        ms, v, e = timed(lambda: con.execute(
+            "SELECT count(*) FROM plays WHERE BAT_ID=? AND EVENT_CD=23 "
+            "AND BALLS_CT=3 AND STRIKES_CT=2 AND SEASON=?",
+            [bat_id, season]).fetchone()[0])
+        rep["steps"]["query_season_filtered"] = {
+            "ms": ms, "value": v, "error": e, "shape": "BAT_ID+SEASON"}
+        # career all-seasons (the slow "Kershaw career" shape) — uses ix_pit.
+        ms, v, e = timed(lambda: con.execute(
+            "SELECT count(*) FROM plays WHERE PIT_ID=? AND EVENT_CD=3",
+            [pit_id]).fetchone()[0])
+        rep["steps"]["query_career_cold"] = {
+            "ms": ms, "value": v, "error": e, "shape": "PIT_ID all seasons"}
+        # SAME query again — warm cache. If cold≫warm, it's cold volume I/O,
+        # not compute; if cold≈warm, the cost is CPU/plan, not the volume.
+        ms, v, e = timed(lambda: con.execute(
+            "SELECT count(*) FROM plays WHERE PIT_ID=? AND EVENT_CD=3",
+            [pit_id]).fetchone()[0])
+        rep["steps"]["query_career_warm"] = {"ms": ms, "value": v, "error": e}
+    finally:
+        con.close()
+    return rep
+
+
 @app.get("/admin/bulk-load/status")
 def bulk_load_status():
     counts: dict[str, int] = {}
