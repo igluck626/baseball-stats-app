@@ -5235,6 +5235,155 @@ def volume_ls(path: str = Query(default="/data")):
             "total_mb": round(total / 1024 / 1024, 2), "count": len(entries)}
 
 
+_fetch_lock = threading.Lock()
+
+
+@app.post("/admin/fetch-plays-db")
+def fetch_plays_db(
+    url: str = Query(
+        default="https://github.com/igluck626/baseball-stats-app/releases/"
+                "download/plays-data-v1/plays.duckdb"),
+    confirm: bool = Query(default=False),
+):
+    """Deliver plays.duckdb (~734MB) from a public GitHub Release asset onto the
+    mounted volume at /data.
+
+    confirm=false (default) = DRY-RUN: HEAD the url (FOLLOWING redirects to the
+    signed CDN — a non-following request would report content-length 0) to
+    confirm reachability + expected size, and report dest, free space, and
+    whether a file already exists. No write.
+
+    confirm=true = STREAM-download to /data/plays.duckdb.tmp in 8MB chunks
+    (stream=True — NEVER loads 734MB into memory), retry/backoff on transient
+    failures, then atomic os.replace(tmp, dest). A partial/failed download never
+    leaves a corrupt file at the real path (the .tmp is always cleaned up).
+    After download it VERIFIES: final size == expected, duckdb opens it
+    read-only, and SELECT count(*) FROM plays (expect ~10,050,281). If the
+    open/query fails the file is left in place but flagged via `error`."""
+    import requests
+
+    dest_dir = "/data"
+    dest = os.path.join(dest_dir, "plays.duckdb")
+    tmp = dest + ".tmp"
+    expected_bytes = 769_142_784
+    r = {
+        "url":                 url,
+        "dest":                dest,
+        "expected_bytes":      expected_bytes,
+        "downloaded_bytes":    None,
+        "downloaded_mb":       None,
+        "free_space_after_gb": None,
+        "duckdb_open_ok":      None,
+        "plays_row_count":     None,
+        "error":               None,
+    }
+
+    def _free_gb():
+        try:
+            import shutil
+            return round(shutil.disk_usage(dest_dir).free / 1024 ** 3, 2)
+        except Exception:  # noqa: BLE001
+            return None
+
+    if not os.path.isdir(dest_dir):
+        r["error"] = f"{dest_dir} is not a directory (volume not mounted?)"
+        return r
+
+    # ---- DRY-RUN (confirm=false) ----------------------------------------
+    if not confirm:
+        r["dry_run"] = True
+        r["file_exists"] = os.path.exists(dest)
+        r["existing_size_mb"] = (round(os.path.getsize(dest) / 1024 / 1024, 2)
+                                 if os.path.exists(dest) else None)
+        r["free_space_after_gb"] = _free_gb()  # free space now (pre-download)
+        try:
+            head = requests.head(url, allow_redirects=True, timeout=30)
+            r["remote_status"] = head.status_code
+            cl = head.headers.get("Content-Length")
+            r["remote_content_length"] = int(cl) if cl else None
+            r["remote_content_length_mb"] = (round(int(cl) / 1024 / 1024, 2)
+                                             if cl else None)
+        except Exception as exc:  # noqa: BLE001
+            r["error"] = f"HEAD: {exc}"
+        return r
+
+    # ---- DOWNLOAD (confirm=true) ----------------------------------------
+    if not _fetch_lock.acquire(blocking=False):
+        r["error"] = "another fetch is already in progress"
+        return r
+    try:
+        downloaded = 0
+        last_exc = None
+        for attempt in range(1, 4):
+            downloaded = 0
+            try:
+                with requests.get(url, stream=True, allow_redirects=True,
+                                  timeout=(30, 300)) as resp:
+                    resp.raise_for_status()
+                    with open(tmp, "wb") as fh:
+                        for chunk in resp.iter_content(chunk_size=8 * 1024 * 1024):
+                            if chunk:
+                                fh.write(chunk)
+                                downloaded += len(chunk)
+                last_exc = None
+                break
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                try:
+                    os.remove(tmp)          # never keep a partial file
+                except OSError:
+                    pass
+                time.sleep(2 ** attempt)    # 2s, 4s backoff
+        if last_exc is not None:
+            r["error"] = f"download failed after retries: {last_exc}"
+            return r
+
+        # sanity floor BEFORE promoting into place
+        if downloaded < 500 * 1024 * 1024:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            r["downloaded_bytes"] = downloaded
+            r["downloaded_mb"] = round(downloaded / 1024 / 1024, 2)
+            r["error"] = (f"downloaded {downloaded} bytes < 500MB sanity floor; "
+                          "aborted, tmp removed")
+            return r
+
+        os.replace(tmp, dest)               # atomic promote (same filesystem)
+        r["free_space_after_gb"] = _free_gb()
+
+        # ---- VERIFY -----------------------------------------------------
+        final = os.path.getsize(dest)
+        r["downloaded_bytes"] = final
+        r["downloaded_mb"] = round(final / 1024 / 1024, 2)
+        if final != expected_bytes:
+            r["error"] = (f"size mismatch: got {final}, expected "
+                          f"{expected_bytes} (file left in place; flagged)")
+        try:
+            import duckdb
+            con = duckdb.connect(dest, read_only=True)
+            try:
+                r["plays_row_count"] = con.execute(
+                    "SELECT count(*) FROM plays").fetchone()[0]
+                r["duckdb_open_ok"] = True
+            finally:
+                con.close()
+        except Exception as exc:  # noqa: BLE001
+            r["duckdb_open_ok"] = False
+            r["error"] = (((r["error"] + "; ") if r["error"] else "")
+                          + f"duckdb verify: {exc} "
+                            "(download may be corrupt; file left, flagged)")
+        return r
+    finally:
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)              # never leave a stray .tmp
+        except OSError:
+            pass
+        _fetch_lock.release()
+
+
 @app.get("/admin/bulk-load/status")
 def bulk_load_status():
     counts: dict[str, int] = {}
