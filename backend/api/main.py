@@ -5248,39 +5248,47 @@ _fetch_lock = threading.Lock()
 def fetch_plays_db(
     url: str = Query(
         default="https://github.com/igluck626/baseball-stats-app/releases/"
-                "download/plays-data-v1/plays.duckdb"),
+                "download/plays-data-v2/plays.duckdb"),
     confirm: bool = Query(default=False),
+    expect_rows: int | None = Query(
+        default=None, description="if set, fail unless plays row count matches exactly"),
 ):
-    """Deliver plays.duckdb (~734MB) from a public GitHub Release asset onto the
-    mounted volume at /data.
+    """Deliver plays.duckdb from a public GitHub Release asset onto the mounted
+    volume at /data.
 
     confirm=false (default) = DRY-RUN: HEAD the url (FOLLOWING redirects to the
     signed CDN — a non-following request would report content-length 0) to
-    confirm reachability + expected size, and report dest, free space, and
-    whether a file already exists. No write.
+    confirm reachability + size, and report dest, free space, and whether a file
+    already exists. No write.
 
     confirm=true = STREAM-download to /data/plays.duckdb.tmp in 8MB chunks
-    (stream=True — NEVER loads 734MB into memory), retry/backoff on transient
+    (stream=True — never loads the file into memory), retry/backoff on transient
     failures, then atomic os.replace(tmp, dest). A partial/failed download never
     leaves a corrupt file at the real path (the .tmp is always cleaned up).
-    After download it VERIFIES: final size == expected, duckdb opens it
-    read-only, and SELECT count(*) FROM plays (expect ~10,050,281). If the
-    open/query fails the file is left in place but flagged via `error`."""
+
+    VERIFY (the real intactness proof — NO hardcoded byte count, which would be
+    a maintenance trap on every rebuild): a >500MB sanity floor before promoting,
+    then duckdb opens it read-only and we report count(*) FROM plays (~15.8M),
+    count(*) FROM coverage (116 — confirms the NEW store, since the old one has
+    no coverage table), and min/max SEASON (1910/2025). Pass expect_rows for an
+    exact row-count gate. Any check failing is flagged via `error`; the file is
+    left in place for inspection."""
     import requests
 
     dest_dir = "/data"
     dest = os.path.join(dest_dir, "plays.duckdb")
     tmp = dest + ".tmp"
-    expected_bytes = 769_142_784
     r = {
         "url":                 url,
         "dest":                dest,
-        "expected_bytes":      expected_bytes,
         "downloaded_bytes":    None,
         "downloaded_mb":       None,
         "free_space_after_gb": None,
         "duckdb_open_ok":      None,
         "plays_row_count":     None,
+        "coverage_row_count":  None,
+        "plays_min_season":    None,
+        "plays_max_season":    None,
         "error":               None,
     }
 
@@ -5359,27 +5367,40 @@ def fetch_plays_db(
         os.replace(tmp, dest)               # atomic promote (same filesystem)
         r["free_space_after_gb"] = _free_gb()
 
-        # ---- VERIFY -----------------------------------------------------
+        # ---- VERIFY (open + query, not a byte count) --------------------
         final = os.path.getsize(dest)
         r["downloaded_bytes"] = final
         r["downloaded_mb"] = round(final / 1024 / 1024, 2)
-        if final != expected_bytes:
-            r["error"] = (f"size mismatch: got {final}, expected "
-                          f"{expected_bytes} (file left in place; flagged)")
+
+        def _flag(msg):
+            r["error"] = ((r["error"] + "; ") if r["error"] else "") + msg
+
         try:
             import duckdb
             con = duckdb.connect(dest, read_only=True)
             try:
                 r["plays_row_count"] = con.execute(
                     "SELECT count(*) FROM plays").fetchone()[0]
+                r["plays_min_season"], r["plays_max_season"] = con.execute(
+                    "SELECT min(SEASON), max(SEASON) FROM plays").fetchone()
+                try:
+                    r["coverage_row_count"] = con.execute(
+                        "SELECT count(*) FROM coverage").fetchone()[0]
+                except Exception:  # noqa: BLE001 - old store has no coverage table
+                    _flag("no `coverage` table — this looks like the OLD store, "
+                          "not the new 1910-2025 build")
                 r["duckdb_open_ok"] = True
             finally:
                 con.close()
         except Exception as exc:  # noqa: BLE001
             r["duckdb_open_ok"] = False
-            r["error"] = (((r["error"] + "; ") if r["error"] else "")
-                          + f"duckdb verify: {exc} "
-                            "(download may be corrupt; file left, flagged)")
+            _flag(f"duckdb verify: {exc} (download may be corrupt; file left)")
+            return r
+
+        # optional exact row-count gate
+        if expect_rows is not None and r["plays_row_count"] != expect_rows:
+            _flag(f"row-count mismatch: got {r['plays_row_count']}, "
+                  f"expected {expect_rows}")
         return r
     finally:
         try:
@@ -5485,6 +5506,8 @@ _PLAYS_WARMUP = [
      "BALLS_CT, STRIKES_CT, EVENT_TX, PIT_ID, BAT_ID FROM plays "
      "WHERE BAT_ID = ? AND EVENT_CD = 23 AND BALLS_CT = 3 AND STRIKES_CT = 2 "
      "ORDER BY GAME_DATE LIMIT 10", ["muncm001"]),
+    # (e) the coverage table — the honesty gates join it on every plays query
+    ("SELECT count(*), min(season), max(season) FROM coverage", []),
 ]
 
 
@@ -5503,7 +5526,10 @@ def _plays_warmup_worker():
     try:
         cur = conn.cursor()
         for sql, prm in _PLAYS_WARMUP:
-            cur.execute(sql, prm).fetchall()
+            try:
+                cur.execute(sql, prm).fetchall()
+            except Exception as exc:  # noqa: BLE001 - e.g. no coverage table on old store
+                log.warning("plays warmup query skipped: %s", exc)
         cur.close()
         _plays_warm_secs = round(time.perf_counter() - t, 2)
         _plays_warm = True
