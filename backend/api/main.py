@@ -2,6 +2,7 @@
 
 import csv
 import datetime
+import json
 import logging
 import os
 import threading
@@ -13,7 +14,7 @@ from urllib.parse import urlparse
 import pandas as pd
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query
 from sqlalchemy import (
     func as _sa_func,
     inspect as _sa_inspect,
@@ -5532,31 +5533,19 @@ def _resolve_retro_id(player: str, role: str):
     return [{"mlbam_id": r[0], "name": r[1], "retro_id": r[2]} for r in rows]
 
 
-@app.get("/plays/situational")
-def plays_situational(
-    player:       str        = Query(..., description="Player name or MLBAM id"),
-    role:         str        = Query("bat", description="'bat' (BAT_ID) or 'pit' (PIT_ID)"),
-    event:        str | None = Query(None, description="HR/K/BB/HBP/1B/2B/3B (friendly name)"),
-    balls:        int | None = Query(None, ge=0, le=4),
-    strikes:      int | None = Query(None, ge=0, le=3),
-    outs:         int | None = Query(None, ge=0, le=2),
-    inning:       int | None = Query(None, ge=1),
-    base_state:   str | None = Query(None, description="'risp' or 'loaded'"),
-    season:       int | None = Query(None, description="Exact season"),
-    season_start: int | None = Query(None),
-    season_end:   int | None = Query(None),
-    game_type:    str | None = Query(None, description="R (regular) / P (postseason) / A (allstar)"),
-    sample_limit: int        = Query(10, ge=0, le=50),
+def _run_situational(
+    player: str, role: str = "bat", event: str | None = None,
+    balls: int | None = None, strikes: int | None = None,
+    outs: int | None = None, inning: int | None = None,
+    base_state: str | None = None, season: int | None = None,
+    season_start: int | None = None, season_end: int | None = None,
+    game_type: str | None = None, sample_limit: int = 10,
 ):
-    """READ-ONLY situational query over the play-by-play store. Structured
-    filters only — every user value is bound as a DuckDB parameter, so there is
-    no SQL-injection surface. Resolves the player to a Retrosheet id via the
-    existing bridge (players/pitchers.retro_id), filters on the situation, and
-    returns the COUNT + a sample of matching plays with query latency.
-
-    e.g. /plays/situational?player=Max Muncy&event=HR&balls=3&strikes=2
-         /plays/situational?player=Pete Alonso&event=HR&balls=3&strikes=2&season=2019 -> 4"""
-    role = role.lower()
+    """Core situational query, shared by GET /plays/situational and POST /ask.
+    Raises HTTPException on bad input / missing store (400/404/503); returns the
+    ambiguous-candidates dict when a name maps to >1 player; otherwise returns
+    the resolved {count, sample, player, filters, query_ms} dict."""
+    role = (role or "bat").lower()
     if role not in ("bat", "pit"):
         raise HTTPException(status_code=400, detail="role must be 'bat' or 'pit'")
 
@@ -5678,6 +5667,248 @@ def plays_situational(
         "sample":    sample,
         "query_ms":  query_ms,
     }
+
+
+@app.get("/plays/situational")
+def plays_situational(
+    player:       str        = Query(..., description="Player name or MLBAM id"),
+    role:         str        = Query("bat", description="'bat' (BAT_ID) or 'pit' (PIT_ID)"),
+    event:        str | None = Query(None, description="HR/K/BB/HBP/1B/2B/3B (friendly name)"),
+    balls:        int | None = Query(None, ge=0, le=4),
+    strikes:      int | None = Query(None, ge=0, le=3),
+    outs:         int | None = Query(None, ge=0, le=2),
+    inning:       int | None = Query(None, ge=1),
+    base_state:   str | None = Query(None, description="'risp' or 'loaded'"),
+    season:       int | None = Query(None, description="Exact season"),
+    season_start: int | None = Query(None),
+    season_end:   int | None = Query(None),
+    game_type:    str | None = Query(None, description="R (regular) / P (postseason) / A (allstar)"),
+    sample_limit: int        = Query(10, ge=0, le=50),
+):
+    """READ-ONLY situational query over the play-by-play store. Structured
+    filters only — every user value is bound as a DuckDB parameter, so there is
+    no SQL-injection surface. Resolves the player to a Retrosheet id via the
+    existing bridge (players/pitchers.retro_id), filters on the situation, and
+    returns the COUNT + a sample of matching plays with query latency.
+
+    e.g. /plays/situational?player=Max Muncy&event=HR&balls=3&strikes=2
+         /plays/situational?player=Pete Alonso&event=HR&balls=3&strikes=2&season=2019 -> 4"""
+    return _run_situational(
+        player=player, role=role, event=event, balls=balls, strikes=strikes,
+        outs=outs, inning=inning, base_state=base_state, season=season,
+        season_start=season_start, season_end=season_end, game_type=game_type,
+        sample_limit=sample_limit)
+
+
+# --- Phase 6 Stage 1: NLP /ask ----------------------------------------------
+# Cheap/fast model — translating a question into structured params is a simple
+# extraction task, so Haiku is plenty.
+_ASK_MODEL = "claude-haiku-4-5-20251001"
+
+# Tool the model calls to run a situational count. Its input schema mirrors
+# _run_situational's params EXACTLY, so whatever the model fills in maps 1:1.
+_ASK_QUERY_TOOL = {
+    "name": "query_situational",
+    "description": (
+        "Count how many times ONE specific player produced ONE specific outcome "
+        "in a specific situation, from the 1969-2025 play-by-play data. Use this "
+        "only for a single-player situational COUNT."),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "player": {"type": "string", "description":
+                       "Player full name (e.g. 'Max Muncy') or numeric MLBAM id. Required."},
+            "role": {"type": "string", "enum": ["bat", "pit"], "description":
+                     "'bat' if the player is the hitter, 'pit' if the pitcher. Default 'bat'."},
+            "event": {"type": "string", "enum": ["HR", "K", "BB", "HBP", "1B", "2B", "3B"],
+                      "description": "Outcome: HR=home run, K=strikeout, BB=walk, "
+                                     "HBP=hit by pitch, 1B=single, 2B=double, 3B=triple."},
+            "balls": {"type": "integer", "minimum": 0, "maximum": 3, "description":
+                      "Ball count if specified (a '3-2'/'full count' -> balls 3)."},
+            "strikes": {"type": "integer", "minimum": 0, "maximum": 2, "description":
+                        "Strike count if specified (a '3-2'/'full count' -> strikes 2)."},
+            "outs": {"type": "integer", "minimum": 0, "maximum": 2, "description": "Outs, if specified."},
+            "inning": {"type": "integer", "minimum": 1, "description": "Inning number, if specified."},
+            "base_state": {"type": "string", "enum": ["risp", "loaded"], "description":
+                           "'risp' = runners in scoring position, 'loaded' = bases loaded."},
+            "season": {"type": "integer", "description": "A single season, e.g. 2019."},
+            "season_start": {"type": "integer", "description": "Start of an inclusive season range."},
+            "season_end": {"type": "integer", "description": "End of an inclusive season range."},
+            "game_type": {"type": "string", "enum": ["R", "P", "A"], "description":
+                          "R=regular season, P=postseason, A=all-star. Omit for all."},
+        },
+        "required": ["player"],
+    },
+}
+
+# The escape hatch — anything the store can't answer must land here, not in a
+# forced (and wrong) query_situational call.
+_ASK_CANNOT_TOOL = {
+    "name": "cannot_answer",
+    "description": (
+        "Use this when the question is NOT a single-player situational count the "
+        "play-by-play store can answer — e.g. leaderboards/comparisons across "
+        "players, rate stats or averages, career totals not tied to a situation, "
+        "streaks or spans, or pitch type/velocity/location. Do NOT force a "
+        "query_situational call; call this instead."),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "reason": {"type": "string", "description":
+                       "Brief, user-facing explanation of why this store can't answer it."},
+        },
+        "required": ["reason"],
+    },
+}
+
+_ASK_SYSTEM = (
+    "You translate a baseball fan's English question into a single structured "
+    "query over a play-by-play database by calling exactly one tool.\n\n"
+    "The database holds every pitch-level play from 1969 to 2025, regular "
+    "season AND postseason. It CAN answer: how many times ONE specific player "
+    "had ONE specific outcome (home run, strikeout, walk, hit-by-pitch, single, "
+    "double, triple) in a specific situation — filtered by ball/strike count, "
+    "outs, inning, base state (runners in scoring position / bases loaded), a "
+    "season or season range, and regular-season vs postseason.\n\n"
+    "It CANNOT answer: leaderboards or comparisons ACROSS players ('who has the "
+    "most...'), rate stats or averages (batting average, ERA, OBP), career "
+    "totals NOT tied to a situation, streaks or spans (hitting streaks, "
+    "consecutive-game feats), or anything about pitch type, velocity, or "
+    "location (not in the data). For any of those, call cannot_answer.\n\n"
+    "Map the outcome to the event enum (home run->HR, strikeout->K, walk->BB, "
+    "hit by pitch->HBP, single->1B, double->2B, triple->3B). A 'full count' or "
+    "'3-2 count' means balls=3, strikes=2. If the player is described as the "
+    "pitcher (e.g. 'strikeouts thrown by', 'batters walked by'), set role=pit; "
+    "otherwise role=bat. Call exactly one tool."
+)
+
+
+@app.post("/ask")
+def ask(question: str = Body(..., embed=True,
+                             description="A plain-English baseball question")):
+    """Phase 6 Stage 1: English question -> Claude tool-use (structured params)
+    -> the situational play-by-play query -> a natural-language answer. Scoped
+    to single-player situational COUNT questions; anything else comes back as
+    out_of_scope. Surfaces the extracted params (`understood_as`) and the
+    matched player for transparency, and ambiguous names as candidates."""
+    key = os.environ.get("ANTHROPIC_API_KEY")
+    if not key:
+        raise HTTPException(status_code=503,
+                            detail="ANTHROPIC_API_KEY is not configured")
+    q = (question or "").strip()
+    if not q:
+        raise HTTPException(status_code=400, detail="question is required")
+
+    import anthropic
+    client = anthropic.Anthropic(api_key=key)
+    timing: dict = {}
+    t_all = time.perf_counter()
+
+    # ---- 1. translate: question -> exactly one tool call ----------------
+    t0 = time.perf_counter()
+    try:
+        msg = client.messages.create(
+            model=_ASK_MODEL, max_tokens=1024, system=_ASK_SYSTEM,
+            tools=[_ASK_QUERY_TOOL, _ASK_CANNOT_TOOL],
+            tool_choice={"type": "any"},   # force one of the two tools
+            messages=[{"role": "user", "content": q}],
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"LLM translate failed: {exc}")
+    timing["llm_translate"] = round((time.perf_counter() - t0) * 1000, 1)
+
+    tool_name, tool_input = None, None
+    for block in msg.content:
+        if getattr(block, "type", None) == "tool_use":
+            tool_name = block.name
+            tool_input = dict(block.input or {})
+            break
+
+    base = {
+        "question":        q,
+        "understood_as":   tool_input if tool_name == "query_situational" else None,
+        "answer":          None,
+        "count":           None,
+        "sample":          [],
+        "player_resolved": None,
+        "ambiguous":       False,
+        "out_of_scope":    False,
+        "reason":          None,
+        "timing_ms":       timing,
+    }
+
+    def _finish():
+        timing["total"] = round((time.perf_counter() - t_all) * 1000, 1)
+        return base
+
+    # ---- out of scope / no usable tool call -----------------------------
+    if tool_name != "query_situational":
+        reason = ((tool_input or {}).get("reason") if tool_name == "cannot_answer"
+                  else "The question could not be interpreted as a situational count.")
+        base["out_of_scope"] = True
+        base["reason"] = reason
+        base["answer"] = reason
+        return _finish()
+
+    # ---- 2. execute the situational query -------------------------------
+    params = {k: tool_input.get(k) for k in (
+        "player", "role", "event", "balls", "strikes", "outs", "inning",
+        "base_state", "season", "season_start", "season_end", "game_type")
+        if tool_input.get(k) is not None}
+    if not params.get("player"):
+        base["out_of_scope"] = True
+        base["reason"] = "No player identified in the question."
+        base["answer"] = base["reason"]
+        return _finish()
+
+    t0 = time.perf_counter()
+    try:
+        result = _run_situational(**params)
+    except HTTPException as exc:
+        timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
+        base["reason"] = str(exc.detail)
+        base["answer"] = f"Couldn't answer that: {exc.detail}"
+        return _finish()
+    timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
+
+    # ambiguous name -> surface candidates instead of guessing
+    if result.get("ambiguous"):
+        cands = result.get("candidates", [])
+        names = ", ".join(f'{c["name"]} (id {c["mlbam_id"]})' for c in cands[:5])
+        base["ambiguous"] = True
+        base["player_resolved"] = {"candidates": cands}
+        base["answer"] = (f'There are multiple players matching '
+                          f'"{params["player"]}": {names}. Which did you mean?')
+        return _finish()
+
+    base["count"] = result["count"]
+    base["sample"] = result["sample"]
+    base["player_resolved"] = result["player"]
+
+    # ---- 3. phrase the answer (factual, no invention) -------------------
+    t0 = time.perf_counter()
+    facts = {"question": q, "player": result["player"]["name"],
+             "count": result["count"], "filters": result["filters"]}
+    answer = None
+    try:
+        phrased = client.messages.create(
+            model=_ASK_MODEL, max_tokens=256,
+            system=("You state a single baseball statistic as one short, factual "
+                    "sentence. You are given the player, the exact count, and the "
+                    "situation filters. State ONLY what the number says — never "
+                    "add, estimate, or infer anything beyond the given number and "
+                    "filters, and do not editorialize."),
+            messages=[{"role": "user",
+                       "content": "Question: " + q + "\nData: " + json.dumps(facts)}],
+        )
+        answer = "".join(getattr(b, "text", "") for b in phrased.content
+                         if getattr(b, "type", None) == "text").strip()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("ask phrasing failed: %s", exc)
+    timing["llm_phrase"] = round((time.perf_counter() - t0) * 1000, 1)
+    # deterministic fallback if phrasing failed
+    base["answer"] = answer or f'{result["player"]["name"]}: {result["count"]}.'
+    return _finish()
 
 
 @app.get("/admin/plays-status")
