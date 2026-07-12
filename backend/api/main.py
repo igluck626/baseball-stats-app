@@ -6834,6 +6834,114 @@ def plays_diag(
     return rep
 
 
+_CHADWICK_BRIDGE_CSV = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "data", "retrosheet", "chadwick_retro_bridge.csv")
+
+
+@app.post("/admin/backfill-missing-bios")
+def backfill_missing_bios(
+    confirm: bool = Query(False),
+    limit: int | None = Query(None, description="cap inserts for a partial run; omit = all"),
+):
+    """Backfill bio rows for players that have SEASON STATS but NO row in
+    players/pitchers — the stats-without-identity gap (e.g. CC Sabathia:
+    unsearchable, nameless profile) left by the Lahman loader silently dropping
+    divergent-id players. INSERT-ONLY: never modifies an existing bio. Name from
+    the shipped retro_names biofile (100% coverage), retro/bbref ids from the
+    Chadwick bridge, debut/last season derived from the season rows themselves
+    (no People.csv needed — it isn't in the deploy). confirm=false = DRY RUN
+    (counts + top 20 by career volume; no writes)."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+
+    # mlbam -> (retro_id, bbref_id) from the shipped Chadwick bridge
+    m2r: dict[int, tuple] = {}
+    try:
+        with open(_CHADWICK_BRIDGE_CSV, newline="", encoding="utf-8-sig") as f:
+            for row in csv.DictReader(f):
+                mm = row.get("key_mlbam")
+                if mm:
+                    m2r[int(mm)] = (row.get("key_retro") or None, row.get("key_bbref") or None)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"bridge load failed: {exc}")
+    names = _retro_names()   # retro_id -> display name (biofile, 100% coverage)
+
+    # season players with NO bio row, + career span + a volume proxy
+    with connection.get_session() as db:
+        bat = db.execute(_sa_text(
+            'SELECT ps.player_id, MIN(ps.year), MAX(ps.year), COALESCE(SUM(ps."PA"),0) '
+            "FROM player_seasons ps LEFT JOIN players p ON p.player_id = ps.player_id "
+            "WHERE p.player_id IS NULL GROUP BY ps.player_id")).fetchall()
+        pit = db.execute(_sa_text(
+            'SELECT qs.player_id, MIN(qs.year), MAX(qs.year), COALESCE(SUM(qs."IP"),0) '
+            "FROM pitcher_seasons qs LEFT JOIN pitchers p ON p.player_id = qs.player_id "
+            "WHERE p.player_id IS NULL GROUP BY qs.player_id")).fetchall()
+
+    plan: dict[int, dict] = {}
+    for pid, mn, mx, pa in bat:
+        e = plan.setdefault(pid, {"in_bat": False, "in_pit": False, "pa": 0.0, "ip": 0.0})
+        e.update(in_bat=True, debut=mn, last=mx, pa=float(pa or 0))
+    for pid, mn, mx, ip in pit:
+        e = plan.setdefault(pid, {"in_bat": False, "in_pit": False, "pa": 0.0, "ip": 0.0})
+        e["in_pit"] = True
+        e["debut"] = min(e.get("debut", mn), mn)
+        e["last"] = max(e.get("last", mx), mx)
+        e["ip"] = float(ip or 0)
+
+    items = []
+    for mlbam, e in plan.items():
+        retro, bbref = m2r.get(mlbam, (None, None))
+        items.append({
+            "mlbam": mlbam, "retro_id": retro, "bbref_id": bbref,
+            "name": names.get(retro) if retro else None,
+            "in_bat": e["in_bat"], "in_pit": e["in_pit"],
+            "mlb_debut": e.get("debut"), "mlb_last_season": e.get("last"),
+            "volume": round(e["pa"] + e["ip"] * 4.3),   # PA + rough batters-faced
+        })
+    items.sort(key=lambda x: x["volume"], reverse=True)
+    unnamed = [i for i in items if not i["name"]]
+
+    def _role(i):
+        return "bat+pit" if i["in_bat"] and i["in_pit"] else ("pit" if i["in_pit"] else "bat")
+
+    # ---- DRY RUN --------------------------------------------------------
+    if not confirm:
+        return {
+            "dry_run": True,
+            "missing_total": len(items),
+            "resolvable_names": len(items) - len(unnamed),
+            "unnamed": len(unnamed),
+            "sample_unnamed_mlbam": [i["mlbam"] for i in unnamed[:10]],
+            "top_20": [{
+                "name": i["name"], "mlbam": i["mlbam"], "retro_id": i["retro_id"],
+                "role": _role(i), "seasons": f'{i["mlb_debut"]}-{i["mlb_last_season"]}',
+                "volume": i["volume"],
+            } for i in items[:20]],
+        }
+
+    # ---- INSERT (confirm=true) — INSERT-ONLY, never touch existing ------
+    to_do = items[:limit] if limit else items
+    ins_p = ins_pit = skipped_no_name = 0
+    with connection.get_session() as db:
+        for i in to_do:
+            if not i["name"]:
+                skipped_no_name += 1
+                continue
+            info = {"player_id": i["mlbam"], "name": i["name"],
+                    "retro_id": i["retro_id"], "bbref_id": i["bbref_id"],
+                    "mlb_debut": i["mlb_debut"], "mlb_last_season": i["mlb_last_season"]}
+            if i["in_bat"] and db.get(Player, i["mlbam"]) is None:
+                crud.save_player(db, info)
+                ins_p += 1
+            if i["in_pit"] and db.get(Pitcher, i["mlbam"]) is None:
+                crud.save_pitcher(db, {**info, "position": "P"})
+                ins_pit += 1
+    return {"confirmed": True, "inserted_players": ins_p,
+            "inserted_pitchers": ins_pit, "skipped_no_name": skipped_no_name,
+            "considered": len(to_do)}
+
+
 @app.get("/admin/bulk-load/status")
 def bulk_load_status():
     counts: dict[str, int] = {}

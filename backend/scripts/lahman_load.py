@@ -159,14 +159,52 @@ def _f_or_none_safe(v):
 # ---------------------------------------------------------------------------
 
 def _load_chadwick_bridge() -> dict[str, int]:
-    """key_bbref → key_mlbam dict, loaded from the trimmed Chadwick file."""
-    bridge: dict[str, int] = {}
+    """Lahman id → mlbam, resolving EVERY id form Lahman uses to key its files:
+    the season loaders look up by Lahman `playerID`, the bio loader by `bbrefID`,
+    and BOTH diverge from Chadwick's `key_bbref` for ~1% of players (e.g. CC
+    Sabathia: playerID `sabatcc01` / bbrefID `sabatc.01` / retroID `sabac001`).
+    A bbref-only bridge dropped those players' Lahman seasons — which then made
+    the bio loader skip them too — so they ended up as stats-without-identity
+    (unsearchable, nameless profiles). Keying playerID, bbrefID AND retroID all
+    to the same mlbam stops the silent drops. Any Lahman id that STILL can't map
+    is logged loudly, not swallowed."""
+    by_bbref: dict[str, int] = {}
+    by_retro: dict[str, int] = {}
     with open(CHADWICK_CSV, newline="", encoding="utf-8-sig") as fh:
         for row in csv.DictReader(fh):
-            bbref = row["key_bbref"]
-            mlbam = row["key_mlbam"]
-            if bbref and mlbam:
-                bridge[bbref] = int(mlbam)
+            mlbam = row.get("key_mlbam")
+            if not mlbam:
+                continue
+            mlbam = int(mlbam)
+            if row.get("key_bbref"):
+                by_bbref[row["key_bbref"]] = mlbam
+            if row.get("key_retro"):
+                by_retro[row["key_retro"]] = mlbam
+
+    bridge: dict[str, int] = dict(by_bbref)   # bbrefID keys (bio loader + most seasons)
+    unmapped: list[str] = []
+    try:
+        with open(PEOPLE_CSV, newline="", encoding="utf-8-sig") as fh:
+            for row in csv.DictReader(fh):
+                pid = (row.get("playerID") or "").strip()
+                if not pid:
+                    continue
+                retro = (row.get("retroID") or "").strip()
+                bbref = (row.get("bbrefID") or "").strip()
+                mlbam = by_retro.get(retro) or by_bbref.get(bbref)   # retroID is proven 100%
+                if mlbam is None:
+                    unmapped.append(pid)
+                    continue
+                bridge.setdefault(pid, mlbam)      # Lahman playerID -> mlbam
+                if retro:
+                    bridge.setdefault(retro, mlbam)
+    except FileNotFoundError:
+        log.warning("People.csv not found; bridge covers bbref keys only "
+                    "(divergent-id players may be dropped)")
+    if unmapped:
+        log.warning("chadwick bridge: %d Lahman playerIDs could not map to an "
+                    "mlbam and will be dropped: %s%s", len(unmapped),
+                    ", ".join(unmapped[:20]), " ..." if len(unmapped) > 20 else "")
     return bridge
 
 
@@ -387,12 +425,14 @@ def _load_batting(
 
     by_player_id: dict[int, list[dict]] = defaultdict(list)
     skipped_no_id = 0
+    dropped_ids: set[str] = set()
     skipped_existing = 0
 
     for (lahman_id, year), agg in aggregated.items():
         mlbam = bridge.get(lahman_id)
         if mlbam is None:
             skipped_no_id += 1
+            dropped_ids.add(lahman_id)      # log these LOUDLY below — a silent drop is how a player goes missing
             continue
         if (mlbam, year) in existing_keys:
             skipped_existing += 1
@@ -456,6 +496,10 @@ def _load_batting(
         _set_state(state, lock, batting_loaded=saved)
 
     log.info(f"  batting: saved {saved:,}, skipped (no Chadwick id): {skipped_no_id:,}, skipped (already in DB): {skipped_existing:,}")
+    if dropped_ids:
+        log.warning("  batting: %d Lahman ids unmapped to mlbam (seasons DROPPED): %s%s",
+                    len(dropped_ids), ", ".join(sorted(dropped_ids)[:20]),
+                    " ..." if len(dropped_ids) > 20 else "")
     return saved, skipped_existing, skipped_no_id
 
 
@@ -476,12 +520,14 @@ def _load_pitching(
 
     by_player_id: dict[int, list[dict]] = defaultdict(list)
     skipped_no_id = 0
+    dropped_ids: set[str] = set()
     skipped_existing = 0
 
     for (lahman_id, year), agg in aggregated.items():
         mlbam = bridge.get(lahman_id)
         if mlbam is None:
             skipped_no_id += 1
+            dropped_ids.add(lahman_id)      # logged LOUDLY below
             continue
         if (mlbam, year) in existing_keys:
             skipped_existing += 1
@@ -552,6 +598,10 @@ def _load_pitching(
         _set_state(state, lock, pitching_loaded=saved)
 
     log.info(f"  pitching: saved {saved:,}, skipped (no Chadwick id): {skipped_no_id:,}, skipped (already in DB): {skipped_existing:,}")
+    if dropped_ids:
+        log.warning("  pitching: %d Lahman ids unmapped to mlbam (seasons DROPPED): %s%s",
+                    len(dropped_ids), ", ".join(sorted(dropped_ids)[:20]),
+                    " ..." if len(dropped_ids) > 20 else "")
     return saved, skipped_existing, skipped_no_id
 
 
