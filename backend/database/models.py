@@ -1,5 +1,5 @@
 from sqlalchemy import (
-    Boolean, Column, Date, DateTime, Float, Index, Integer, String,
+    Boolean, Column, Date, DateTime, Float, Index, Integer, String, Text,
     UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase
@@ -676,3 +676,33 @@ class SeriesPost(Base):
     wins             = Column(Integer)
     losses           = Column(Integer)
     ties             = Column(Integer)
+
+
+# ---------------------------------------------------------------------------
+# /ask cost controls: one append-only row per question. Doubles as (a) the
+# translation cache (look up the most recent successful translation of a
+# normalized question) and (b) the question log for analysis / an eventual
+# deterministic parser fast-path. No raw IP — identity is hashed.
+# ---------------------------------------------------------------------------
+
+class AskLog(Base):
+    __tablename__ = "ask_log"
+    __table_args__ = (
+        Index("ix_ask_log_normalized", "normalized"),
+        Index("ix_ask_log_created", "created_at"),
+    )
+
+    id             = Column(Integer, primary_key=True)
+    created_at     = Column(DateTime)
+    question       = Column(Text)          # raw question as asked
+    normalized     = Column(String)        # cache key (see _normalize_question)
+    tool_name      = Column(String)        # which tool the model chose (NULL = no translation)
+    understood_as  = Column(Text)          # extracted params, JSON string
+    source         = Column(String)        # plays / season_stats / *_leaderboard / ...
+    status         = Column(String)        # ok / declined / out_of_scope / ambiguous / error
+    answer         = Column(Text)
+    cached         = Column(Boolean)       # translation served from the cache?
+    identity_hash  = Column(String)        # sha256(device-id or IP + salt) — never the raw value
+    input_tokens   = Column(Integer)
+    output_tokens  = Column(Integer)
+    timing_ms      = Column(Text)          # timings, JSON string

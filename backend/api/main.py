@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 import pandas as pd
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import Body, FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, Header, HTTPException, Query, Request
 from sqlalchemy import (
     func as _sa_func,
     inspect as _sa_inspect,
@@ -37,8 +37,8 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 # database imports work after data_service is imported (it adds backend/ to sys.path)
 from database import connection, crud                       # noqa: E402
 from database.models import (                                # noqa: E402
-    BattingGameLog, Pitcher, PitcherSeason, PitcherSeasonStint, PitchingGameLog,
-    Player, PlayerAllstar, PlayerAward, PlayerFielding,
+    AskLog, BattingGameLog, Pitcher, PitcherSeason, PitcherSeasonStint,
+    PitchingGameLog, Player, PlayerAllstar, PlayerAward, PlayerFielding,
     PlayerHof, PlayerPostseasonBatting, PlayerPostseasonPitching,
     PlayerSeason, PlayerSeasonStint, SeriesPost,
     StagingBattingGameLog, StagingPitchingGameLog, TeamSeason,
@@ -6941,9 +6941,119 @@ _ASK_SYSTEM = (
 )
 
 
+# ---- /ask cost controls ----------------------------------------------------
+# Per-identity + global daily caps (env-tunable, no deploy needed). Rate-limit
+# counters live in memory: single-worker app (see live_service), and a reset on
+# deploy is acceptable. The translation cache + question log live in Postgres
+# (survive deploys, queryable). We cache the TRANSLATION (question -> params),
+# never the answer — the LLM parse is the ~half-cent cost; the DuckDB query is
+# ~25ms and free, so we re-run it every time and the data is always FRESH.
+_ASK_DAILY_LIMIT        = int(os.getenv("ASK_DAILY_LIMIT", "30"))
+_ASK_GLOBAL_DAILY_LIMIT = int(os.getenv("ASK_GLOBAL_DAILY_LIMIT", "5000"))
+_ASK_HASH_SALT          = os.getenv("ASK_HASH_SALT", "baseball-ask")
+_ask_counts: dict = {}   # (day, id_hash) -> count
+_ask_global: dict = {}   # day -> count
+_ask_rl_lock = threading.Lock()
+
+# Anthropic prompt caching: mark the fixed ~2.5k-token prefix (all tool schemas +
+# system prompt) cacheable, so repeat translate calls within the 5-min TTL read
+# it at ~10% of input price instead of resending it. Breakpoints on the last
+# tool (caches the whole tools array) and the system block.
+_ASK_TOOLS = [_ASK_QUERY_TOOL, _ASK_LEADERBOARD_TOOL, _ASK_RATES_TOOL,
+              _ASK_SPLITS_TOOL, _ASK_RATE_LB_TOOL,
+              {**_ASK_CANNOT_TOOL, "cache_control": {"type": "ephemeral"}}]
+_ASK_SYSTEM_BLOCKS = [{"type": "text", "text": _ASK_SYSTEM,
+                       "cache_control": {"type": "ephemeral"}}]
+
+
+def _hash_identity(identity):
+    import hashlib
+    return hashlib.sha256((_ASK_HASH_SALT + "|" + (identity or "?")).encode()).hexdigest()[:32]
+
+
+def _normalize_question(qtext):
+    """Cache key: lowercase, drop the trailing '?', strip apostrophes (so
+    'Judge's' == 'Judges'), replace other punctuation with a space, collapse
+    whitespace. Conservative on purpose — we'd rather miss a near-duplicate than
+    collide two different questions into one cached (and possibly wrong) parse."""
+    import re
+    s = (qtext or "").lower().strip().rstrip("?").strip().replace("'", "")
+    s = re.sub(r"[^\w\s]", " ", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _ask_rate_check(id_hash):
+    """(allowed, message). Increments the per-identity and global daily counters.
+    Cache hits still count — they still cost the phrasing call and still enable
+    abuse. Returns a friendly 429 message when a cap is hit."""
+    day = datetime.date.today().isoformat()
+    with _ask_rl_lock:
+        for k in [k for k in _ask_counts if k[0] != day]:
+            del _ask_counts[k]
+        for k in [k for k in _ask_global if k != day]:
+            del _ask_global[k]
+        g = _ask_global.get(day, 0)
+        if g >= _ASK_GLOBAL_DAILY_LIMIT:
+            log.warning("ASK GLOBAL DAILY CAP HIT (%d) — refusing further questions today",
+                        _ASK_GLOBAL_DAILY_LIMIT)
+            return False, ("The service has reached today's overall question limit. "
+                           "Please try again tomorrow.")
+        c = _ask_counts.get((day, id_hash), 0)
+        if c >= _ASK_DAILY_LIMIT:
+            return False, (f"You've reached today's limit of {_ASK_DAILY_LIMIT} "
+                           "questions — try again tomorrow.")
+        _ask_counts[(day, id_hash)] = c + 1
+        _ask_global[day] = g + 1
+    return True, None
+
+
+def _ask_cache_get(norm):
+    """Most recent successful translation of this normalized question, or None."""
+    if not connection.db_available():
+        return None
+    try:
+        with connection.get_session() as db:
+            row = db.execute(_sa_text(
+                "SELECT tool_name, understood_as FROM ask_log "
+                "WHERE normalized = :n AND tool_name IS NOT NULL "
+                "ORDER BY id DESC LIMIT 1"), {"n": norm}).fetchone()
+        if row and row[0]:
+            return row[0], (json.loads(row[1]) if row[1] else {})
+    except Exception as exc:  # noqa: BLE001
+        log.warning("ask cache lookup failed: %s", exc)
+    return None
+
+
+def _ask_log_write(q, norm, tool_name, tool_input, base, cached, id_hash,
+                   in_tok, out_tok, timing):
+    """Append one row per question (log + cache source). Never fails the request."""
+    if not connection.db_available():
+        return
+    status = ("ambiguous" if base.get("ambiguous") else
+              "declined" if base.get("declined") else
+              "out_of_scope" if base.get("out_of_scope") else
+              "error" if base.get("error") else "ok")
+    try:
+        with connection.get_session() as db:
+            db.add(AskLog(
+                created_at=datetime.datetime.utcnow(), question=q, normalized=norm,
+                tool_name=tool_name,
+                understood_as=json.dumps(tool_input) if tool_input is not None else None,
+                source=base.get("source"), status=status,
+                answer=(base.get("answer") or "")[:2000], cached=cached,
+                identity_hash=id_hash, input_tokens=in_tok, output_tokens=out_tok,
+                timing_ms=json.dumps(timing)))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("ask log write failed: %s", exc)
+
+
 @app.post("/ask")
-def ask(question: str = Body(..., embed=True,
-                             description="A plain-English baseball question")):
+def ask(request: Request,
+        question: str = Body(..., embed=True,
+                             description="A plain-English baseball question"),
+        x_device_id: str | None = Header(default=None,
+                             description="stable per-install id (iOS identifierForVendor); "
+                                         "falls back to client IP for rate limiting")):
     """Phase 6 Stage 1: English question -> Claude tool-use (structured params)
     -> the situational play-by-play query -> a natural-language answer. Scoped
     to single-player situational COUNT questions; anything else comes back as
@@ -6957,31 +7067,50 @@ def ask(question: str = Body(..., embed=True,
     if not q:
         raise HTTPException(status_code=400, detail="question is required")
 
+    # ---- rate limit (per-identity + global daily) -----------------------
+    identity = x_device_id or (request.client.host if request.client else "?")
+    id_hash = _hash_identity(identity)
+    allowed, why = _ask_rate_check(id_hash)
+    if not allowed:
+        raise HTTPException(status_code=429, detail=why)
+
+    norm = _normalize_question(q)
     import anthropic
     client = anthropic.Anthropic(api_key=key)
     timing: dict = {}
     t_all = time.perf_counter()
+    in_tok = out_tok = 0
 
-    # ---- 1. translate: question -> exactly one tool call ----------------
-    t0 = time.perf_counter()
-    try:
-        msg = client.messages.create(
-            model=_ASK_MODEL, max_tokens=1024, system=_ASK_SYSTEM,
-            tools=[_ASK_QUERY_TOOL, _ASK_LEADERBOARD_TOOL, _ASK_RATES_TOOL,
-                   _ASK_SPLITS_TOOL, _ASK_RATE_LB_TOOL, _ASK_CANNOT_TOOL],
-            tool_choice={"type": "any"},   # force one of the tools
-            messages=[{"role": "user", "content": q}],
-        )
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=502, detail=f"LLM translate failed: {exc}")
-    timing["llm_translate"] = round((time.perf_counter() - t0) * 1000, 1)
-
+    # ---- 1. translate — serve the cached parse if we have one -----------
+    cached = False
     tool_name, tool_input = None, None
-    for block in msg.content:
-        if getattr(block, "type", None) == "tool_use":
-            tool_name = block.name
-            tool_input = dict(block.input or {})
-            break
+    cached_tr = _ask_cache_get(norm)
+    if cached_tr:
+        tool_name, tool_input = cached_tr           # skip the LLM; query still re-runs (fresh data)
+        cached = True
+        timing["llm_translate"] = 0.0
+    else:
+        t0 = time.perf_counter()
+        try:
+            msg = client.messages.create(
+                model=_ASK_MODEL, max_tokens=1024, system=_ASK_SYSTEM_BLOCKS,
+                tools=_ASK_TOOLS, tool_choice={"type": "any"},   # cached prefix + force a tool
+                messages=[{"role": "user", "content": q}],
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=502, detail=f"LLM translate failed: {exc}")
+        timing["llm_translate"] = round((time.perf_counter() - t0) * 1000, 1)
+        u = getattr(msg, "usage", None)
+        if u:
+            in_tok = ((getattr(u, "input_tokens", 0) or 0)
+                      + (getattr(u, "cache_read_input_tokens", 0) or 0)
+                      + (getattr(u, "cache_creation_input_tokens", 0) or 0))
+            out_tok = getattr(u, "output_tokens", 0) or 0
+        for block in msg.content:
+            if getattr(block, "type", None) == "tool_use":
+                tool_name = block.name
+                tool_input = dict(block.input or {})
+                break
 
     _ANSWERABLE = ("query_situational", "query_leaderboard", "query_rates",
                    "query_splits", "query_rate_leaderboard")
@@ -7003,11 +7132,14 @@ def ask(question: str = Body(..., embed=True,
         "out_of_scope":    False,
         "reason":          None,
         "error":           None,
+        "cached":          cached,
         "timing_ms":       timing,
     }
 
     def _finish():
         timing["total"] = round((time.perf_counter() - t_all) * 1000, 1)
+        _ask_log_write(q, norm, tool_name, tool_input, base, cached, id_hash,
+                       in_tok, out_tok, timing)
         return base
 
     def _phrase(system, facts, max_tokens=400):
@@ -7747,6 +7879,41 @@ def duplicate_identities(limit: int = Query(1000, ge=1, le=5000)):
         "pairs_outside_negro_leagues_range": len(outside),
         "pairs": pairs[:limit],
     }
+
+
+@app.get("/admin/question-log")
+def question_log(
+    limit: int = Query(100, ge=1, le=1000),
+    since: str | None = Query(None, description="ISO date/datetime — only rows at/after"),
+    status: str | None = Query(None, description="filter: ok/declined/out_of_scope/ambiguous/error"),
+):
+    """Review the /ask question log (raw + normalized question, extracted params,
+    tool/source, status, answer, cache hit, tokens, timings). Read-only."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    with connection.get_session() as db:
+        query = db.query(AskLog).order_by(AskLog.id.desc())
+        if since:
+            query = query.filter(AskLog.created_at >= since)
+        if status:
+            query = query.filter(AskLog.status == status)
+        rows = query.limit(limit).all()
+        total = db.query(AskLog).count()
+        cached_n = db.query(AskLog).filter(AskLog.cached.is_(True)).count()
+    def _row(r):
+        return {
+            "id": r.id, "created_at": r.created_at.isoformat() if r.created_at else None,
+            "question": r.question, "normalized": r.normalized,
+            "tool_name": r.tool_name,
+            "understood_as": json.loads(r.understood_as) if r.understood_as else None,
+            "source": r.source, "status": r.status, "answer": r.answer,
+            "cached": r.cached, "input_tokens": r.input_tokens,
+            "output_tokens": r.output_tokens,
+            "timing_ms": json.loads(r.timing_ms) if r.timing_ms else None,
+        }
+    return {"total": total, "cache_hits": cached_n,
+            "cache_hit_rate": round(cached_n / total, 3) if total else None,
+            "returned": len(rows), "entries": [_row(r) for r in rows]}
 
 
 @app.get("/admin/bulk-load/status")
