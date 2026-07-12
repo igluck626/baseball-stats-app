@@ -5533,6 +5533,150 @@ def _resolve_retro_id(player: str, role: str):
     return [{"mlbam_id": r[0], "name": r[1], "retro_id": r[2]} for r in rows]
 
 
+# --- Phase 4 extension: routing + honesty gates -----------------------------
+_PLAYS_FLOOR       = 1910    # play-by-play data floor (nothing before this)
+_COVERAGE_MIN_PCT  = 99.0    # game-coverage: caveat when a queried season is below this
+_COUNT_DECLINE_PCT = 90.0    # count-data: DECLINE (count=null) below this
+_COUNT_CLEAN_PCT   = 99.0    # count-data: clean >= this; caveat in the band between
+
+# Friendly/enum event -> canonical token (used by the season-stats route).
+_CANON_EVENT = {
+    "HR": "HR", "HOMERUN": "HR", "HOME_RUN": "HR",
+    "K": "K", "SO": "K", "STRIKEOUT": "K",
+    "BB": "BB", "WALK": "BB", "HBP": "HBP", "HITBYPITCH": "HBP",
+    "1B": "1B", "SINGLE": "1B", "2B": "2B", "DOUBLE": "2B", "3B": "3B", "TRIPLE": "3B",
+}
+
+# (role, canonical event) -> season-stats column expression. Combos NOT here
+# (HBP for anyone; 1B/2B/3B for pitchers) can't be expressed as a complete
+# season total, so the caller falls through to the plays store instead.
+_SEASON_COL = {
+    ("bat", "HR"): "HR", ("bat", "K"): "SO", ("bat", "BB"): "BB",
+    ("bat", "2B"): "doubles", ("bat", "3B"): "triples",
+    ("bat", "1B"): "(H - doubles - triples - HR)",
+    ("pit", "HR"): "HR", ("pit", "K"): "SO", ("pit", "BB"): "BB",
+}
+
+
+def _canon_event(event):
+    if event is None:
+        return None
+    return _CANON_EVENT.get(event.strip().upper().replace(" ", "_"))
+
+
+def _run_season_total(player, role="bat", event=None, season=None,
+                      season_start=None, season_end=None, game_type=None):
+    """GATE 0 (plain-total branch): answer a non-situational count from the
+    COMPLETE season-stats tables (player_seasons / pitcher_seasons, or the
+    postseason tables when game_type='P'), keyed by mlbam player_id. Career =
+    sum across years, single season = one year, range = sum over the range.
+    Returns the resolved dict, the ambiguous-candidates dict, or None when
+    season-stats can't express this (role, event) — the caller then falls
+    through to the plays store (game-coverage gate only, no official number to
+    contradict). No coverage caveat on this path: these totals are complete."""
+    role = (role or "bat").lower()
+    canon = _canon_event(event)
+    gt = (game_type or "").strip().upper() or None
+    col = _SEASON_COL.get((role, canon))
+    # All-Star totals and unsupported (role, event) combos aren't in season-stats
+    if col is None or gt == "A":
+        return None
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+
+    cands = [c for c in _resolve_retro_id(player, role) if c["mlbam_id"] is not None]
+    if not cands:
+        raise HTTPException(status_code=404, detail=f"No player matching '{player}'")
+    ids = {c["mlbam_id"] for c in cands}
+    if len(ids) > 1:
+        return {"resolved": False, "ambiguous": True, "query": player,
+                "candidates": cands[:25]}
+    resolved = cands[0]
+    pid = resolved["mlbam_id"]
+
+    if gt == "P":
+        table = "player_postseason_pitching" if role == "pit" else "player_postseason_batting"
+    else:
+        table = "pitcher_seasons" if role == "pit" else "player_seasons"
+    where = ["player_id = :pid"]
+    p: dict = {"pid": int(pid)}
+    if season is not None:
+        where.append("year = :y"); p["y"] = int(season)
+    else:
+        if season_start is not None:
+            where.append("year >= :ys"); p["ys"] = int(season_start)
+        if season_end is not None:
+            where.append("year <= :ye"); p["ye"] = int(season_end)
+    sql = (f"SELECT COALESCE(SUM({col}),0), MIN(year), MAX(year), COUNT(*) "
+           f"FROM {table} WHERE {' AND '.join(where)}")
+    with connection.get_session() as db:
+        total, minyr, maxyr, nrows = db.execute(_sa_text(sql), p).fetchone()
+
+    return {
+        "resolved": True, "source": "season_stats",
+        "player": {"query": player, "name": resolved["name"],
+                   "mlbam_id": pid, "role": role},
+        "filters": {"event": canon, "season": season, "season_start": season_start,
+                    "season_end": season_end, "game_type": gt},
+        "count": int(total) if nrows else 0,
+        "empty": nrows == 0,           # no season rows (e.g. season outside the career)
+        "span": [minyr, maxyr],
+        "sample": [],
+        # complete source -> gates always clear
+        "game_coverage": {"complete": True},
+        "count_data": None,
+    }
+
+
+def _coverage_gates(cur, lo, hi, uses_count, single_season):
+    """GATE 1 + GATE 2 for a plays query over season span [lo, hi]:
+      - game_coverage: caveat if any season in span has coverage_pct < 99.
+      - count_data: only when the query filters on balls/strikes — DECLINE
+        (available False) below 90% count-data availability, CAVEAT 90-99%,
+        clean at >=99%. Availability is events-weighted over the span (so a
+        modern career isn't dragged down by one thin early year).
+    Degrades to complete/None if the coverage table isn't present (older store)."""
+    try:
+        row = cur.execute(
+            "SELECT min(coverage_pct), "
+            "       sum(games_with_pbp)*100.0/nullif(sum(games_played),0), "
+            "       sum(events_with_count)*100.0/nullif(sum(events),0), "
+            "       list(season) FILTER (WHERE coverage_pct < ?) "
+            "FROM coverage WHERE season BETWEEN ? AND ?",
+            [_COVERAGE_MIN_PCT, lo, hi]).fetchone()
+    except Exception:  # noqa: BLE001 - coverage table absent on the old store
+        return {"complete": True}, None
+    min_pct, era_games_pct, era_count_pct, low_seasons = row
+    low_seasons = sorted(low_seasons) if low_seasons else []
+
+    if low_seasons:
+        if single_season:
+            note = f"Based on the {round(min_pct)}% of {lo} games with play-by-play data."
+        else:
+            note = (f"Based on the {round(era_games_pct or 0)}% of games from this "
+                    "player's era that have play-by-play data.")
+        game_coverage = {"complete": False, "min_pct": min_pct,
+                         "low_seasons": low_seasons, "note": note}
+    else:
+        game_coverage = {"complete": True}
+
+    count_data = None
+    if uses_count:
+        pct = round(era_count_pct, 1) if era_count_pct is not None else 0.0
+        if pct < _COUNT_DECLINE_PCT:
+            count_data = {"available": False, "pct": pct,
+                          "note": ("Pitch-count data wasn't recorded for most games in "
+                                   f"this era (only {pct}% of plays have it), so a "
+                                   "count-based total would be misleading, not zero.")}
+        elif pct < _COUNT_CLEAN_PCT:
+            count_data = {"available": True, "pct": pct,
+                          "note": f"Based on the {pct}% of plays in this span with "
+                                  "recorded pitch counts."}
+        else:
+            count_data = {"available": True, "pct": pct}
+    return game_coverage, count_data
+
+
 def _run_situational(
     player: str, role: str = "bat", event: str | None = None,
     balls: int | None = None, strikes: int | None = None,
@@ -5568,6 +5712,15 @@ def _run_situational(
         bs = base_state.strip().lower()
         if bs not in ("risp", "loaded"):
             raise HTTPException(status_code=400, detail="base_state must be 'risp' or 'loaded'")
+
+    # GATE 3: data floor — decline (never return 0) if the WHOLE queried range
+    # predates the 1910 play-by-play floor.
+    asked = [s for s in (season, season_start, season_end) if s is not None]
+    if asked and max(asked) < _PLAYS_FLOOR:
+        raise HTTPException(
+            status_code=400,
+            detail=f"before the {_PLAYS_FLOOR} play-by-play data floor")
+    uses_count = balls is not None or strikes is not None   # GATE 2 applies only then
 
     if not connection.db_available():
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
@@ -5644,12 +5797,32 @@ def _run_situational(
                     "batter_id":   bat if role == "pit" else None,
                     "description": tx,
                 })
+        # ---- season span for the coverage gates -------------------------
+        if season is not None:
+            lo = hi = season; single_season = True
+        elif season_start is not None or season_end is not None:
+            lo = season_start or _PLAYS_FLOOR; hi = season_end or 2025
+            single_season = (lo == hi)
+        else:  # career: span the matched rows actually cover
+            mm = cur.execute(
+                f"SELECT min(SEASON), max(SEASON) FROM plays WHERE {clause}",
+                params).fetchone()
+            lo, hi = (mm[0], mm[1]) if mm and mm[0] is not None else (_PLAYS_FLOOR, 2025)
+            single_season = (lo == hi)
+        game_coverage, count_data = _coverage_gates(cur, lo, hi, uses_count, single_season)
         query_ms = round((time.perf_counter() - t0) * 1000, 1)
     finally:
         cur.close()   # closes only the cursor, not the shared connection
 
-    return {
+    # GATE 2 decline: below the count-data floor, never return a misleading
+    # near-zero count — null it out and drop the (also-misleading) sample.
+    if count_data is not None and count_data.get("available") is False:
+        count = None
+        sample = []
+
+    result = {
         "resolved": True,
+        "source":   "plays",
         "player": {
             "query":    player,
             "name":     resolved["name"],
@@ -5663,10 +5836,14 @@ def _run_situational(
             "base_state": bs, "season": season, "season_start": season_start,
             "season_end": season_end, "game_type": gt,
         },
-        "count":     count,
-        "sample":    sample,
-        "query_ms":  query_ms,
+        "count":         count,
+        "sample":        sample,
+        "query_ms":      query_ms,
+        "game_coverage": game_coverage,
     }
+    if uses_count:
+        result["count_data"] = count_data
+    return result
 
 
 @app.get("/plays/situational")
@@ -5764,7 +5941,7 @@ _ASK_CANNOT_TOOL = {
 _ASK_SYSTEM = (
     "You translate a baseball fan's English question into a single structured "
     "query over a play-by-play database by calling exactly one tool.\n\n"
-    "The database holds every pitch-level play from 1969 to 2025, regular "
+    "The database holds every pitch-level play from 1910 to 2025, regular "
     "season AND postseason. It counts how many times ONE specific named player "
     "had ONE specific outcome (home run, strikeout, walk, hit-by-pitch, single, "
     "double, triple), optionally narrowed by ball/strike count, outs, inning, "
@@ -5804,7 +5981,7 @@ _ASK_SYSTEM = (
     "COUNT events, we do not compute rates.\n"
     "- Streaks or spans ('in a row', 'consecutive', 'hitting streak').\n"
     "- Pitch type, velocity, exit velocity, or launch angle (not in Retrosheet).\n"
-    "- Anything requiring data before 1969 (the store starts at 1969).\n\n"
+    "- Anything requiring data before 1910 (the play-by-play starts at 1910).\n\n"
     "Call exactly one tool."
 )
 
@@ -5857,6 +6034,9 @@ def ask(question: str = Body(..., embed=True,
         "count":           None,
         "sample":          [],
         "player_resolved": None,
+        "source":          None,
+        "game_coverage":   None,
+        "count_data":      None,
         "ambiguous":       False,
         "out_of_scope":    False,
         "reason":          None,
@@ -5887,9 +6067,34 @@ def ask(question: str = Body(..., embed=True,
         base["answer"] = base["reason"]
         return _finish()
 
+    # ---- GATE 0: routing predicate (deterministic, not LLM judgment) ----
+    # A SITUATIONAL SPLIT iff any of these is present; else a PLAIN TOTAL.
+    situ_keys = ("balls", "strikes", "outs", "inning", "base_state")
+    is_split = any(params.get(k) is not None for k in situ_keys)
+
+    # GATE 3 (floor) for the plays route: whole queried range before 1910.
+    asked = [params[k] for k in ("season", "season_start", "season_end")
+             if params.get(k) is not None]
+    if is_split and asked and max(asked) < _PLAYS_FLOOR:
+        base["out_of_scope"] = True
+        base["reason"] = (f"Play-by-play data starts in {_PLAYS_FLOOR}; there is no "
+                          f"pitch-level data for {max(asked)}.")
+        base["answer"] = base["reason"]
+        return _finish()
+
     t0 = time.perf_counter()
     try:
-        result = _run_situational(**params)
+        if is_split:
+            result = _run_situational(**params)                 # -> plays store + gates
+        else:
+            result = _run_season_total(                         # -> complete season stats
+                player=params.get("player"), role=params.get("role"),
+                event=params.get("event"), season=params.get("season"),
+                season_start=params.get("season_start"),
+                season_end=params.get("season_end"),
+                game_type=params.get("game_type"))
+            if result is None:  # season-stats can't express it (e.g. HBP) -> plays
+                result = _run_situational(**params)
     except HTTPException as exc:
         timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
         base["reason"] = str(exc.detail)
@@ -5907,23 +6112,35 @@ def ask(question: str = Body(..., embed=True,
                           f'"{params["player"]}": {names}. Which did you mean?')
         return _finish()
 
-    base["count"] = result["count"]
-    base["sample"] = result["sample"]
-    base["player_resolved"] = result["player"]
+    base["count"]          = result.get("count")
+    base["sample"]         = result.get("sample", [])
+    base["player_resolved"] = result.get("player")
+    base["source"]         = result.get("source")
+    base["game_coverage"]  = result.get("game_coverage")
+    base["count_data"]     = result.get("count_data")
 
-    # ---- 3. phrase the answer (factual, no invention) -------------------
+    # ---- 3. phrase the answer (factual; honest about the two gates) -----
     t0 = time.perf_counter()
     facts = {"question": q, "player": result["player"]["name"],
-             "count": result["count"], "filters": result["filters"]}
+             "count": result.get("count"), "filters": result.get("filters"),
+             "source": result.get("source"),
+             "game_coverage": result.get("game_coverage"),
+             "count_data": result.get("count_data")}
     answer = None
     try:
         phrased = client.messages.create(
             model=_ASK_MODEL, max_tokens=256,
-            system=("You state a single baseball statistic as one short, factual "
-                    "sentence. You are given the player, the exact count, and the "
-                    "situation filters. State ONLY what the number says — never "
-                    "add, estimate, or infer anything beyond the given number and "
-                    "filters, and do not editorialize."),
+            system=(
+                "You state a single baseball statistic as one short, factual "
+                "sentence from the given data. RULES: (1) If count is null OR "
+                "count_data.available is false, DO NOT invent a number — say "
+                "plainly that the pitch-count data wasn't recorded for that era "
+                "(use count_data.note). (2) If game_coverage.complete is false, "
+                "work its note into the sentence naturally (e.g. 'Based on the "
+                "94% of 1927 games with play-by-play data, ...'). (3) If "
+                "count_data has a note and a number is given, include the note. "
+                "Never present a partial or no-data count as a definitive total. "
+                "No editorializing."),
             messages=[{"role": "user",
                        "content": "Question: " + q + "\nData: " + json.dumps(facts)}],
         )
@@ -5933,7 +6150,12 @@ def ask(question: str = Body(..., embed=True,
         log.warning("ask phrasing failed: %s", exc)
     timing["llm_phrase"] = round((time.perf_counter() - t0) * 1000, 1)
     # deterministic fallback if phrasing failed
-    base["answer"] = answer or f'{result["player"]["name"]}: {result["count"]}.'
+    if answer:
+        base["answer"] = answer
+    elif result.get("count") is None and (result.get("count_data") or {}).get("note"):
+        base["answer"] = result["count_data"]["note"]
+    else:
+        base["answer"] = f'{result["player"]["name"]}: {result.get("count")}.'
     return _finish()
 
 
