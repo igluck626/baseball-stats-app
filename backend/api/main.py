@@ -6954,6 +6954,7 @@ _ASK_HASH_SALT          = os.getenv("ASK_HASH_SALT", "baseball-ask")
 _ask_counts: dict = {}   # (day, id_hash) -> count
 _ask_global: dict = {}   # day -> count
 _ask_rl_lock = threading.Lock()
+_ask_log_write_failed = False   # so a broken log surfaces LOUDLY once (not per-request spam)
 
 # Anthropic prompt caching: mark the fixed ~2.5k-token prefix (all tool schemas +
 # system prompt) cacheable, so repeat translate calls within the 5-min TTL read
@@ -7043,8 +7044,13 @@ def _ask_log_write(q, norm, tool_name, tool_input, base, cached, id_hash,
                 answer=(base.get("answer") or "")[:2000], cached=cached,
                 identity_hash=id_hash, input_tokens=in_tok, output_tokens=out_tok,
                 timing_ms=json.dumps(timing)))
-    except Exception as exc:  # noqa: BLE001
-        log.warning("ask log write failed: %s", exc)
+    except Exception as exc:  # noqa: BLE001 - never fail /ask; but surface a BROKEN log loudly, once
+        global _ask_log_write_failed
+        if not _ask_log_write_failed:
+            _ask_log_write_failed = True
+            log.warning("ask log write FAILED (first occurrence — the question log "
+                        "is not recording; further failures suppressed): %s", exc,
+                        exc_info=True)
 
 
 @app.post("/ask")
@@ -7891,29 +7897,42 @@ def question_log(
     tool/source, status, answer, cache hit, tokens, timings). Read-only."""
     if not connection.db_available():
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
-    with connection.get_session() as db:
-        query = db.query(AskLog).order_by(AskLog.id.desc())
-        if since:
-            query = query.filter(AskLog.created_at >= since)
-        if status:
-            query = query.filter(AskLog.status == status)
-        rows = query.limit(limit).all()
-        total = db.query(AskLog).count()
-        cached_n = db.query(AskLog).filter(AskLog.cached.is_(True)).count()
+
     def _row(r):
+        # tolerant: a bad JSON blob in one row must not sink the whole report
+        def _j(s):
+            try:
+                return json.loads(s) if s else None
+            except Exception:  # noqa: BLE001
+                return s
         return {
             "id": r.id, "created_at": r.created_at.isoformat() if r.created_at else None,
             "question": r.question, "normalized": r.normalized,
-            "tool_name": r.tool_name,
-            "understood_as": json.loads(r.understood_as) if r.understood_as else None,
+            "tool_name": r.tool_name, "understood_as": _j(r.understood_as),
             "source": r.source, "status": r.status, "answer": r.answer,
             "cached": r.cached, "input_tokens": r.input_tokens,
-            "output_tokens": r.output_tokens,
-            "timing_ms": json.loads(r.timing_ms) if r.timing_ms else None,
+            "output_tokens": r.output_tokens, "timing_ms": _j(r.timing_ms),
         }
+
+    # A diagnostic must never 500: materialize the rows INSIDE the session
+    # (objects detach + expire on commit), and hand any failure back cleanly.
+    try:
+        with connection.get_session() as db:
+            query = db.query(AskLog).order_by(AskLog.id.desc())
+            if since:
+                query = query.filter(AskLog.created_at >= since)
+            if status:
+                query = query.filter(AskLog.status == status)
+            entries = [_row(r) for r in query.limit(limit).all()]
+            total = db.query(AskLog).count()
+            cached_n = db.query(AskLog).filter(AskLog.cached.is_(True)).count()
+    except Exception as exc:  # noqa: BLE001
+        log.exception("question-log query failed")
+        return {"error": str(exc), "total": None, "entries": []}
+
     return {"total": total, "cache_hits": cached_n,
             "cache_hit_rate": round(cached_n / total, 3) if total else None,
-            "returned": len(rows), "entries": [_row(r) for r in rows]}
+            "returned": len(entries), "entries": entries}
 
 
 @app.get("/admin/bulk-load/status")
