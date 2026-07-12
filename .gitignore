@@ -47,6 +47,7 @@ backend/data/lahman/*
 backend/data/retrosheet/*
 !backend/data/retrosheet/chadwick_retro_bridge.csv
 !backend/data/retrosheet/retro_names.csv
+!backend/data/retrosheet/mlbam_names.csv
 !backend/data/retrosheet/retrosheet_batting_seasons.csv
 !backend/data/retrosheet/retrosheet_pitching_seasons.csv
 !backend/data/retrosheet/retrosheet_batting_stints.csv

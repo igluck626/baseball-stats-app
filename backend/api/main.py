@@ -5957,6 +5957,38 @@ def _retro_names():
     return _retro_names_map
 
 
+# mlbam -> name from the full Chadwick register. The Retrosheet biofile above is
+# keyed by retro_id and so CANNOT reach Negro Leagues players (no Retrosheet
+# play-by-play -> no retro_id), whose season stats came from Lahman. The register
+# keys names by mlbam directly, so it names them. Used as the second name source
+# for the bio backfill.
+_MLBAM_NAMES_CSV = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "data", "retrosheet", "mlbam_names.csv")
+_mlbam_names_map: dict | None = None
+_mlbam_names_lock = threading.Lock()
+
+
+def _mlbam_names():
+    """Cached mlbam(int) -> name map from the shipped Chadwick register slim."""
+    global _mlbam_names_map
+    if _mlbam_names_map is None:
+        with _mlbam_names_lock:
+            if _mlbam_names_map is None:
+                m: dict = {}
+                try:
+                    with open(_MLBAM_NAMES_CSV, newline="") as f:
+                        for row in csv.DictReader(f):
+                            mm = (row.get("key_mlbam") or "").strip()
+                            nm = (row.get("name") or "").strip()
+                            if mm.isdigit() and nm:
+                                m[int(mm)] = nm
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("mlbam_names load failed: %s", exc)
+                _mlbam_names_map = m
+    return _mlbam_names_map
+
+
 def _leaderboard_gates(cur, lo, hi, uses_count, scoped):
     """Coverage gates for a LEADERBOARD over span [lo, hi] — stricter than the
     single-player gates, because incomplete coverage distorts the RANKING itself
@@ -6865,7 +6897,8 @@ def backfill_missing_bios(
                     m2r[int(mm)] = (row.get("key_retro") or None, row.get("key_bbref") or None)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=f"bridge load failed: {exc}")
-    names = _retro_names()   # retro_id -> display name (biofile, 100% coverage)
+    names = _retro_names()    # retro_id -> name (Retrosheet biofile)
+    mnames = _mlbam_names()   # mlbam -> name (Chadwick register; names Negro Leagues players)
 
     # season players with NO bio row, + career span + a volume proxy
     with connection.get_session() as db:
@@ -6892,9 +6925,10 @@ def backfill_missing_bios(
     items = []
     for mlbam, e in plan.items():
         retro, bbref = m2r.get(mlbam, (None, None))
+        # name: Retrosheet biofile (by retro_id) -> Chadwick register (by mlbam)
+        name = (names.get(retro) if retro else None) or mnames.get(mlbam)
         items.append({
-            "mlbam": mlbam, "retro_id": retro, "bbref_id": bbref,
-            "name": names.get(retro) if retro else None,
+            "mlbam": mlbam, "retro_id": retro, "bbref_id": bbref, "name": name,
             "in_bat": e["in_bat"], "in_pit": e["in_pit"],
             "mlb_debut": e.get("debut"), "mlb_last_season": e.get("last"),
             "volume": round(e["pa"] + e["ip"] * 4.3),   # PA + rough batters-faced
@@ -6907,12 +6941,27 @@ def backfill_missing_bios(
 
     # ---- DRY RUN --------------------------------------------------------
     if not confirm:
+        # for any residual unnamed, pull their teams so we can see exactly who
+        teams: dict = {}
+        if unnamed:
+            ids = [i["mlbam"] for i in unnamed]
+            with connection.get_session() as db:
+                for tbl in ("player_seasons", "pitcher_seasons"):
+                    for pid, tm in db.execute(_sa_text(
+                            f"SELECT player_id, string_agg(DISTINCT team, ',') "
+                            f"FROM {tbl} WHERE player_id = ANY(:ids) GROUP BY player_id"),
+                            {"ids": ids}).fetchall():
+                        teams[pid] = (teams.get(pid, "") + "," + (tm or "")).strip(",")
         return {
             "dry_run": True,
             "missing_total": len(items),
             "resolvable_names": len(items) - len(unnamed),
             "unnamed": len(unnamed),
-            "sample_unnamed_mlbam": [i["mlbam"] for i in unnamed[:10]],
+            "unnamed_detail": [{
+                "mlbam": i["mlbam"],
+                "seasons": f'{i["mlb_debut"]}-{i["mlb_last_season"]}',
+                "role": _role(i), "teams": teams.get(i["mlbam"]),
+            } for i in unnamed],
             "top_20": [{
                 "name": i["name"], "mlbam": i["mlbam"], "retro_id": i["retro_id"],
                 "role": _role(i), "seasons": f'{i["mlb_debut"]}-{i["mlb_last_season"]}',
@@ -6926,7 +6975,10 @@ def backfill_missing_bios(
     with connection.get_session() as db:
         for i in to_do:
             if not i["name"]:
+                # LOUD: never silently insert a nameless bio — skip and log it
                 skipped_no_name += 1
+                log.warning("backfill: no name for mlbam %s (%s-%s) — skipped",
+                            i["mlbam"], i["mlb_debut"], i["mlb_last_season"])
                 continue
             info = {"player_id": i["mlbam"], "name": i["name"],
                     "retro_id": i["retro_id"], "bbref_id": i["bbref_id"],
