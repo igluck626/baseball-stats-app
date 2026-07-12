@@ -6299,8 +6299,10 @@ _ASK_LEADERBOARD_TOOL = {
             "season_end": {"type": "integer"},
             "game_type": {"type": "string", "enum": ["R", "P", "A"], "description":
                           "R = regular season, P = postseason, A = all-star."},
-            "limit": {"type": "integer", "minimum": 1, "maximum": 25,
-                      "description": "How many players to rank (default 10)."},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 25, "default": 10,
+                      "description": "How many players to return; default 10. Do NOT "
+                                     "set this to 1 just because the question says "
+                                     "'the most' — a leaderboard wants the ranked list."},
         },
         "required": ["event"],
     },
@@ -6381,7 +6383,11 @@ _ASK_SYSTEM = (
     "- 'Who has the most career grand slams?' -> {event:'HR', base_state:'loaded'}\n"
     "- 'Top 5 pitchers by strikeouts on a full count' -> "
     "{event:'K', role:'pit', balls:3, strikes:2, limit:5}\n"
-    "Named player -> query_situational; no named player -> query_leaderboard.\n\n"
+    "Named player -> query_situational; no named player -> query_leaderboard.\n"
+    "LIMIT: do NOT set limit to 1 just because the question is phrased singularly "
+    "('who has the MOST X'). Leaderboard questions want the ranked LIST — default "
+    "to 10 so the user sees the leader AND the players behind them. Use a smaller "
+    "limit only when explicitly asked ('top 3', 'the single leader').\n\n"
     "OUT OF SCOPE (call cannot_answer) — only when the QUERY SHAPE can't do it:\n"
     "- Rate stats or averages (batting average, OBP, OPS, ERA, whiff rate) — we "
     "COUNT events, we do not compute rates.\n"
@@ -6534,12 +6540,14 @@ def ask(question: str = Body(..., embed=True,
             phrased = client.messages.create(
                 model=_ASK_MODEL, max_tokens=400,
                 system=(
-                    "You present a baseball LEADERBOARD from the given ranked data "
-                    "as a short natural answer: name the leader and count, then "
-                    "list the next few (rank. name — count). Use ONLY the given "
-                    "rows; invent nothing. If game_coverage.complete is false, "
-                    "state its note (coverage may distort the ranking). If "
-                    "count_data has a note, include it. No editorializing."),
+                    "You present a baseball LEADERBOARD from the given ranked data. "
+                    "Lead with the leader and their count, then list the players "
+                    "behind them — e.g. 'Barry Bonds leads with 762 career home "
+                    "runs. Behind him: Hank Aaron (755), Babe Ruth (714), ...'. "
+                    "Include ALL the given rows, in order. Use ONLY the given rows; "
+                    "invent nothing. If game_coverage.complete is false, state its "
+                    "note (coverage may distort the ranking). If count_data has a "
+                    "note, include it. No editorializing."),
                 messages=[{"role": "user",
                            "content": "Question: " + q + "\nData: " + json.dumps(facts)}],
             )
