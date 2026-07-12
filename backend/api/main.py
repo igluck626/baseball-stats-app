@@ -6235,6 +6235,335 @@ def _run_season_leaderboard(event=None, role="bat", season=None, season_start=No
             "game_coverage": {"complete": True}, "count_data": None}
 
 
+# ============================================================================
+# Rate stats + splits (Phase 6). Formulas verified EXACT vs official on
+# 100%-covered seasons (Judge 2022 .311/.425/.686/1.111, Betts 2018, Trout 2019):
+#   AVG = H/AB   OBP = (H+BB+HBP)/(AB+BB+HBP+SF)   SLG = TB/AB   OPS = OBP+SLG
+#   TB = 1B + 2*2B + 3*3B + 4*HR ; PA = AB+BB+HBP+SF+SH ; SH is NOT in the OBP denom.
+#   H = EVENT_CD in (20,21,22,23); BB = 14/15 (incl. intentional); HBP = 16.
+# ============================================================================
+_RATE_STATS = ("AVG", "OBP", "SLG", "OPS")
+_RATE_COLS = ["ab", "h", "d1", "d2", "d3", "hr", "bb", "hbp", "sf", "sh"]
+
+
+def _rate_components_sql(prefix=""):
+    p = prefix
+    return (
+        f"SUM(CASE WHEN {p}AB_FL THEN 1 ELSE 0 END) AS ab, "
+        f"SUM(CASE WHEN {p}EVENT_CD IN (20,21,22,23) THEN 1 ELSE 0 END) AS h, "
+        f"SUM(CASE WHEN {p}EVENT_CD=20 THEN 1 ELSE 0 END) AS d1, "
+        f"SUM(CASE WHEN {p}EVENT_CD=21 THEN 1 ELSE 0 END) AS d2, "
+        f"SUM(CASE WHEN {p}EVENT_CD=22 THEN 1 ELSE 0 END) AS d3, "
+        f"SUM(CASE WHEN {p}EVENT_CD=23 THEN 1 ELSE 0 END) AS hr, "
+        f"SUM(CASE WHEN {p}EVENT_CD IN (14,15) THEN 1 ELSE 0 END) AS bb, "
+        f"SUM(CASE WHEN {p}EVENT_CD=16 THEN 1 ELSE 0 END) AS hbp, "
+        f"SUM(CASE WHEN {p}SF_FL THEN 1 ELSE 0 END) AS sf, "
+        f"SUM(CASE WHEN {p}SH_FL THEN 1 ELSE 0 END) AS sh")
+
+
+def _derive_rates(c):
+    """Components dict -> {PA,AB,H,doubles,triples,HR,BB,HBP,SF,AVG,OBP,SLG,OPS}."""
+    ab = c["ab"] or 0; h = c["h"] or 0; bb = c["bb"] or 0
+    hbp = c["hbp"] or 0; sf = c["sf"] or 0; sh = c["sh"] or 0
+    tb = (c["d1"] or 0) + 2 * (c["d2"] or 0) + 3 * (c["d3"] or 0) + 4 * (c["hr"] or 0)
+    pa = ab + bb + hbp + sf + sh
+    obp_den = ab + bb + hbp + sf
+    avg = round(h / ab, 3) if ab else None
+    obp = round((h + bb + hbp) / obp_den, 3) if obp_den else None
+    slg = round(tb / ab, 3) if ab else None
+    ops = round(obp + slg, 3) if (obp is not None and slg is not None) else None
+    return {"PA": pa, "AB": ab, "H": h, "doubles": c["d2"] or 0, "triples": c["d3"] or 0,
+            "HR": c["hr"] or 0, "BB": bb, "HBP": hbp, "SF": sf,
+            "AVG": avg, "OBP": obp, "SLG": slg, "OPS": ops}
+
+
+def _situ_clauses(balls, strikes, outs, inning, base_state,
+                  season, season_start, season_end, game_type):
+    """Shared situational filters (no player, no event) — the same set
+    _run_situational uses. Returns (clauses, params, echo_meta); validates enums."""
+    where = []; params = []
+    if balls is not None:        where.append("BALLS_CT = ?");   params.append(balls)
+    if strikes is not None:      where.append("STRIKES_CT = ?"); params.append(strikes)
+    if outs is not None:         where.append("OUTS_CT = ?");    params.append(outs)
+    if inning is not None:       where.append("INN_CT = ?");     params.append(inning)
+    if season is not None:       where.append("SEASON = ?");     params.append(season)
+    if season_start is not None: where.append("SEASON >= ?");    params.append(season_start)
+    if season_end is not None:   where.append("SEASON <= ?");    params.append(season_end)
+    gt = None
+    if game_type is not None:
+        gt = game_type.strip().upper()
+        if gt not in ("R", "P", "A"):
+            raise HTTPException(status_code=400, detail="game_type must be R, P, or A")
+        where.append("GAME_TYPE = ?"); params.append(gt)
+    bs = None
+    if base_state is not None:
+        bs = base_state.strip().lower()
+        if bs not in ("risp", "loaded"):
+            raise HTTPException(status_code=400, detail="base_state must be 'risp' or 'loaded'")
+        if bs == "risp":
+            where.append("(BASE2_RUN_ID IS NOT NULL OR BASE3_RUN_ID IS NOT NULL)")
+        else:
+            where.append("(BASE1_RUN_ID IS NOT NULL AND BASE2_RUN_ID IS NOT NULL "
+                         "AND BASE3_RUN_ID IS NOT NULL)")
+    meta = {"balls": balls, "strikes": strikes, "outs": outs, "inning": inning,
+            "base_state": bs, "season": season, "season_start": season_start,
+            "season_end": season_end, "game_type": gt}
+    return where, params, meta
+
+
+def _rate_span(cur, clause, params, season, season_start, season_end):
+    """(lo, hi, single_season) for the coverage gate over a rate query's span."""
+    if season is not None:
+        return season, season, True
+    if season_start is not None or season_end is not None:
+        lo = season_start or _PLAYS_FLOOR; hi = season_end or 2025
+        return lo, hi, (lo == hi)
+    mm = cur.execute(f"SELECT min(SEASON), max(SEASON) FROM plays WHERE {clause}",
+                     params).fetchone()
+    if mm and mm[0] is not None:
+        return mm[0], mm[1], (mm[0] == mm[1])
+    return _PLAYS_FLOOR, 2025, False
+
+
+def _run_rates(player, role="bat", balls=None, strikes=None, outs=None, inning=None,
+               base_state=None, season=None, season_start=None, season_end=None,
+               game_type=None):
+    """Situational RATE line (AVG/OBP/SLG/OPS + components) for one player.
+    Coverage: game-coverage only CAVEATS (a rate is a ratio — numerator and
+    denominator miss the same ~6%, so the rate stays a valid estimate; unlike a
+    count, it isn't 'wrong'). The count-data gate still applies HARD when the
+    query filters on balls/strikes — with no recorded counts there's no
+    count-based rate to compute at all."""
+    role = (role or "bat").lower()
+    if role not in ("bat", "pit"):
+        raise HTTPException(status_code=400, detail="role must be 'bat' or 'pit'")
+    asked = [s for s in (season, season_start, season_end) if s is not None]
+    if asked and max(asked) < _PLAYS_FLOOR:
+        raise HTTPException(status_code=400,
+                            detail=f"before the {_PLAYS_FLOOR} play-by-play data floor")
+    uses_count = balls is not None or strikes is not None
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    cands = [c for c in _resolve_retro_id(player, role) if c["retro_id"]]
+    if not cands:
+        raise HTTPException(status_code=404,
+                            detail=f"No player with a retro_id matching '{player}'")
+    if len({c["retro_id"] for c in cands}) > 1:
+        return {"resolved": False, "ambiguous": True, "query": player, "candidates": cands[:25]}
+    resolved = cands[0]; retro = resolved["retro_id"]
+    id_col = "PIT_ID" if role == "pit" else "BAT_ID"
+    sclauses, sparams, meta = _situ_clauses(balls, strikes, outs, inning, base_state,
+                                            season, season_start, season_end, game_type)
+    clause = " AND ".join([f"{id_col} = ?"] + sclauses)
+    params = [retro] + sparams
+    try:
+        cur = _plays_cursor()
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    try:
+        t0 = time.perf_counter()
+        row = cur.execute(f"SELECT {_rate_components_sql()} FROM plays WHERE {clause}",
+                          params).fetchone()
+        rates = _derive_rates(dict(zip(_RATE_COLS, row)))
+        lo, hi, single = _rate_span(cur, clause, params, season, season_start, season_end)
+        game_coverage, count_data = _coverage_gates(cur, lo, hi, uses_count, single)
+        query_ms = round((time.perf_counter() - t0) * 1000, 1)
+    finally:
+        cur.close()
+    declined = count_data is not None and count_data.get("available") is False
+    result = {
+        "resolved": True, "source": "plays_rates",
+        "player": {"query": player, "name": resolved["name"],
+                   "mlbam_id": resolved["mlbam_id"], "retro_id": retro, "role": role},
+        "filters": meta,
+        "rates": None if declined else rates,
+        "game_coverage": game_coverage, "query_ms": query_ms,
+    }
+    if uses_count:
+        result["count_data"] = count_data
+    return result
+
+
+# split dimension -> (column, value-labeler). GROUP BY that column, rate each group.
+_SPLIT_DIMS = {
+    "pitcher_hand": ("PIT_HAND_CD",
+                     lambda v: f"vs {'LHP' if v == 'L' else 'RHP' if v == 'R' else v or '?'}"),
+    "batter_side":  ("BAT_HAND_CD", lambda v: f"batting {v or '?'}"),
+    "home_away":    ("BAT_HOME_ID", lambda v: "home" if v == 1 else "away"),
+    "season":       ("SEASON", lambda v: str(v)),
+    "game_type":    ("GAME_TYPE",
+                     lambda v: {"R": "regular season", "P": "postseason",
+                                "A": "all-star"}.get(v, v)),
+}
+
+
+def _run_splits(player, split_by, role="bat", balls=None, strikes=None, outs=None,
+                inning=None, base_state=None, season=None, season_start=None,
+                season_end=None, game_type=None):
+    """Rate line broken out BY a dimension (pitcher_hand / batter_side / home_away
+    / season / game_type) — a table of {split_value, PA, AB, H, AVG, OBP, SLG, OPS}."""
+    role = (role or "bat").lower()
+    if role not in ("bat", "pit"):
+        raise HTTPException(status_code=400, detail="role must be 'bat' or 'pit'")
+    dim = _SPLIT_DIMS.get((split_by or "").strip().lower())
+    if dim is None:
+        raise HTTPException(status_code=400,
+                            detail=f"unknown split_by; options: {sorted(_SPLIT_DIMS)}")
+    col, labeler = dim
+    asked = [s for s in (season, season_start, season_end) if s is not None]
+    if asked and max(asked) < _PLAYS_FLOOR:
+        raise HTTPException(status_code=400,
+                            detail=f"before the {_PLAYS_FLOOR} play-by-play data floor")
+    uses_count = balls is not None or strikes is not None
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    cands = [c for c in _resolve_retro_id(player, role) if c["retro_id"]]
+    if not cands:
+        raise HTTPException(status_code=404,
+                            detail=f"No player with a retro_id matching '{player}'")
+    if len({c["retro_id"] for c in cands}) > 1:
+        return {"resolved": False, "ambiguous": True, "query": player, "candidates": cands[:25]}
+    resolved = cands[0]; retro = resolved["retro_id"]
+    id_col = "PIT_ID" if role == "pit" else "BAT_ID"
+    sclauses, sparams, meta = _situ_clauses(balls, strikes, outs, inning, base_state,
+                                            season, season_start, season_end, game_type)
+    clause = " AND ".join([f"{id_col} = ?"] + sclauses)
+    params = [retro] + sparams
+    try:
+        cur = _plays_cursor()
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    try:
+        t0 = time.perf_counter()
+        rows = cur.execute(
+            f"SELECT {col} AS sv, {_rate_components_sql()} FROM plays WHERE {clause} "
+            f"GROUP BY {col} ORDER BY {col}", params).fetchall()
+        lo, hi, single = _rate_span(cur, clause, params, season, season_start, season_end)
+        game_coverage, count_data = _coverage_gates(cur, lo, hi, uses_count, single)
+        query_ms = round((time.perf_counter() - t0) * 1000, 1)
+    finally:
+        cur.close()
+    declined = count_data is not None and count_data.get("available") is False
+    splits = []
+    if not declined:
+        for r in rows:
+            line = _derive_rates(dict(zip(_RATE_COLS, r[1:])))
+            splits.append({"split_value": labeler(r[0]), "raw": r[0], **line})
+    result = {"resolved": True, "source": "plays_splits", "split_by": split_by,
+              "player": {"query": player, "name": resolved["name"],
+                         "mlbam_id": resolved["mlbam_id"], "retro_id": retro, "role": role},
+              "filters": meta, "splits": splits,
+              "game_coverage": game_coverage, "query_ms": query_ms}
+    if uses_count:
+        result["count_data"] = count_data
+    return result
+
+
+# Situational rates need a minimum-opportunity QUALIFIER: without it, "best average
+# with the bases loaded" returns a 2-for-2 fluke. Default 50 PA in the situation —
+# MLB's batting-title rule (502 PA) is for full seasons; situational samples are far
+# smaller (a regular gets ~50-150 bases-loaded PA in a whole CAREER), so 50 keeps
+# the board populated while excluding tiny-sample flukes. Always stated; overridable
+# (min_pa=0 = include everyone). For broad season/career rate boards, pass a higher min_pa.
+_RATE_LB_DEFAULT_MIN_PA = 50
+
+
+def _run_rate_leaderboard(stat="OPS", role="bat", balls=None, strikes=None, outs=None,
+                          inning=None, base_state=None, season=None, season_start=None,
+                          season_end=None, game_type=None, min_pa=None, limit=10):
+    stat = (stat or "OPS").upper()
+    if stat not in _RATE_STATS:
+        raise HTTPException(status_code=400, detail=f"stat must be one of {_RATE_STATS}")
+    role = (role or "bat").lower()
+    if role not in ("bat", "pit"):
+        raise HTTPException(status_code=400, detail="role must be 'bat' or 'pit'")
+    asked = [s for s in (season, season_start, season_end) if s is not None]
+    if asked and max(asked) < _PLAYS_FLOOR:
+        raise HTTPException(status_code=400,
+                            detail=f"before the {_PLAYS_FLOOR} play-by-play data floor")
+    if min_pa is None:
+        min_pa = _RATE_LB_DEFAULT_MIN_PA
+    min_pa = max(0, int(min_pa))
+    limit = max(1, min(int(limit or 10), 25))
+    uses_count = balls is not None or strikes is not None
+    scoped = bool(asked)
+
+    id_col = "PIT_ID" if role == "pit" else "BAT_ID"
+    sclauses, sparams, meta = _situ_clauses(balls, strikes, outs, inning, base_state,
+                                            season, season_start, season_end, game_type)
+    clause = " AND ".join([f"{id_col} IS NOT NULL", f"{id_col} <> ''"] + sclauses)
+    params = list(sparams)
+    order = {"AVG": "avg", "OBP": "obp", "SLG": "slg", "OPS": "ops"}[stat]
+
+    try:
+        cur = _plays_cursor()
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    try:
+        t0 = time.perf_counter()
+        mm = cur.execute(f"SELECT min(SEASON), max(SEASON) FROM plays WHERE {clause}",
+                         params).fetchone()
+        base = {"resolved": True, "source": "plays_rate_leaderboard", "stat": stat,
+                "min_pa": min_pa, "filters": meta, "limit": limit}
+        if not mm or mm[0] is None:
+            return {**base, "leaders": [], "game_coverage": {"complete": True},
+                    "count_data": None, "query_ms": round((time.perf_counter() - t0) * 1000, 1)}
+        lo, hi = mm
+        # rates leaderboards: game-coverage caveats (forgiving), count-data HARD
+        game_coverage, count_data = _coverage_gates(cur, lo, hi, uses_count, lo == hi)
+        if uses_count and count_data is not None and count_data.get("available") is False:
+            return {**base, "leaders": None, "declined": True,
+                    "reason": count_data.get("note"), "game_coverage": game_coverage,
+                    "count_data": count_data, "query_ms": round((time.perf_counter() - t0) * 1000, 1)}
+        rows = cur.execute(
+            f"WITH c AS (SELECT {id_col} AS pid, {_rate_components_sql()} "
+            f"FROM plays WHERE {clause} GROUP BY {id_col}) "
+            "SELECT pid, ab, h, d1, d2, d3, hr, bb, hbp, sf, sh, "
+            "(ab+bb+hbp+sf+sh) AS pa, "
+            "CASE WHEN ab>0 THEN h::DOUBLE/ab END AS avg, "
+            "CASE WHEN (ab+bb+hbp+sf)>0 THEN (h+bb+hbp)::DOUBLE/(ab+bb+hbp+sf) END AS obp, "
+            "CASE WHEN ab>0 THEN (d1+2*d2+3*d3+4*hr)::DOUBLE/ab END AS slg, "
+            "CASE WHEN ab>0 AND (ab+bb+hbp+sf)>0 "
+            "THEN (h+bb+hbp)::DOUBLE/(ab+bb+hbp+sf) + (d1+2*d2+3*d3+4*hr)::DOUBLE/ab END AS ops "
+            f"FROM c WHERE (ab+bb+hbp+sf+sh) >= ? AND {order} IS NOT NULL "
+            f"ORDER BY {order} DESC, pa DESC, pid LIMIT ?",
+            params + [min_pa, limit]).fetchall()
+        query_ms = round((time.perf_counter() - t0) * 1000, 1)
+    finally:
+        cur.close()
+
+    retro_ids = [r[0] for r in rows]
+    name_map: dict = {}
+    if retro_ids and connection.db_available():
+        ptable = "pitchers" if role == "pit" else "players"
+        try:
+            with connection.get_session() as db:
+                for rid, pid, nm in db.execute(_sa_text(
+                        f"SELECT retro_id, player_id, name FROM {ptable} "
+                        "WHERE retro_id = ANY(:ids)"), {"ids": retro_ids}).fetchall():
+                    name_map[rid] = {"mlbam_id": pid, "name": nm}
+        except Exception as exc:  # noqa: BLE001
+            log.warning("rate leaderboard name resolution failed: %s", exc)
+    biofile = _retro_names()
+    cols = ["pid", "ab", "h", "d1", "d2", "d3", "hr", "bb", "hbp", "sf", "sh",
+            "pa", "avg", "obp", "slg", "ops"]
+    leaders = []
+    for i, r in enumerate(rows, 1):
+        d = dict(zip(cols, r))
+        info = name_map.get(d["pid"]) or {}
+        leaders.append({
+            "rank": i, "player_name": info.get("name") or biofile.get(d["pid"]) or d["pid"],
+            "mlbam_id": info.get("mlbam_id"), "retro_id": d["pid"],
+            "PA": d["pa"], "AB": d["ab"], "H": d["h"], "HR": d["hr"],
+            "AVG": round(d["avg"], 3) if d["avg"] is not None else None,
+            "OBP": round(d["obp"], 3) if d["obp"] is not None else None,
+            "SLG": round(d["slg"], 3) if d["slg"] is not None else None,
+            "OPS": round(d["ops"], 3) if d["ops"] is not None else None,
+        })
+    return {**base, "leaders": leaders, "game_coverage": game_coverage,
+            "count_data": count_data if uses_count else None, "query_ms": query_ms}
+
+
 @app.get("/plays/situational")
 def plays_situational(
     player:       str        = Query(..., description="Player name or MLBAM id"),
@@ -6291,6 +6620,72 @@ def plays_leaderboard(
         inning=inning, base_state=base_state, season=season,
         season_start=season_start, season_end=season_end, game_type=game_type,
         limit=limit)
+
+
+@app.get("/plays/rates")
+def plays_rates(
+    player:       str        = Query(..., description="Player name or MLBAM id"),
+    role:         str        = Query("bat"),
+    balls:        int | None = Query(None, ge=0, le=3),
+    strikes:      int | None = Query(None, ge=0, le=2),
+    outs:         int | None = Query(None, ge=0, le=2),
+    inning:       int | None = Query(None, ge=1),
+    base_state:   str | None = Query(None, description="'risp' or 'loaded'"),
+    season:       int | None = Query(None),
+    season_start: int | None = Query(None),
+    season_end:   int | None = Query(None),
+    game_type:    str | None = Query(None),
+):
+    """READ-ONLY situational rate line (AVG/OBP/SLG/OPS + components) for a player."""
+    return _run_rates(player=player, role=role, balls=balls, strikes=strikes, outs=outs,
+                      inning=inning, base_state=base_state, season=season,
+                      season_start=season_start, season_end=season_end, game_type=game_type)
+
+
+@app.get("/plays/splits")
+def plays_splits(
+    player:       str        = Query(..., description="Player name or MLBAM id"),
+    split_by:     str        = Query(..., description="pitcher_hand/batter_side/home_away/season/game_type"),
+    role:         str        = Query("bat"),
+    balls:        int | None = Query(None, ge=0, le=3),
+    strikes:      int | None = Query(None, ge=0, le=2),
+    outs:         int | None = Query(None, ge=0, le=2),
+    inning:       int | None = Query(None, ge=1),
+    base_state:   str | None = Query(None),
+    season:       int | None = Query(None),
+    season_start: int | None = Query(None),
+    season_end:   int | None = Query(None),
+    game_type:    str | None = Query(None),
+):
+    """READ-ONLY rate line broken out BY a dimension."""
+    return _run_splits(player=player, split_by=split_by, role=role, balls=balls,
+                       strikes=strikes, outs=outs, inning=inning, base_state=base_state,
+                       season=season, season_start=season_start, season_end=season_end,
+                       game_type=game_type)
+
+
+@app.get("/plays/rate-leaderboard")
+def plays_rate_leaderboard(
+    stat:         str        = Query("OPS", description="AVG/OBP/SLG/OPS"),
+    role:         str        = Query("bat"),
+    balls:        int | None = Query(None, ge=0, le=3),
+    strikes:      int | None = Query(None, ge=0, le=2),
+    outs:         int | None = Query(None, ge=0, le=2),
+    inning:       int | None = Query(None, ge=1),
+    base_state:   str | None = Query(None),
+    season:       int | None = Query(None),
+    season_start: int | None = Query(None),
+    season_end:   int | None = Query(None),
+    game_type:    str | None = Query(None),
+    min_pa:       int | None = Query(None, description="qualifier; default 50, 0 = include everyone"),
+    limit:        int        = Query(10, ge=1, le=25),
+):
+    """READ-ONLY rate leaderboard, ranked by `stat`, qualified by `min_pa`."""
+    return _run_rate_leaderboard(stat=stat, role=role, balls=balls, strikes=strikes,
+                                 outs=outs, inning=inning, base_state=base_state,
+                                 season=season, season_start=season_start,
+                                 season_end=season_end, game_type=game_type,
+                                 min_pa=min_pa, limit=limit)
 
 
 # --- Phase 6 Stage 1: NLP /ask ----------------------------------------------
@@ -6373,6 +6768,63 @@ _ASK_LEADERBOARD_TOOL = {
     },
 }
 
+# --- Phase 6: rate stats + splits -------------------------------------------
+_ASK_SITU_PROPS = {   # the shared situational params (reused by the rate tools)
+    "role": {"type": "string", "enum": ["bat", "pit"]},
+    "balls": {"type": "integer", "minimum": 0, "maximum": 3},
+    "strikes": {"type": "integer", "minimum": 0, "maximum": 2},
+    "outs": {"type": "integer", "minimum": 0, "maximum": 2},
+    "inning": {"type": "integer", "minimum": 1},
+    "base_state": {"type": "string", "enum": ["risp", "loaded"]},
+    "season": {"type": "integer"}, "season_start": {"type": "integer"},
+    "season_end": {"type": "integer"},
+    "game_type": {"type": "string", "enum": ["R", "P", "A"]},
+}
+
+_ASK_RATES_TOOL = {
+    "name": "query_rates",
+    "description": (
+        "A player's RATE stats (batting average, on-base %, slugging, OPS) in a "
+        "situation — 'what's X's average with RISP', 'how well does X hit on a "
+        "full count', 'X's OPS in the postseason'. One player + optional situation."),
+    "input_schema": {"type": "object",
+        "properties": {"player": {"type": "string", "description": "name or MLBAM id"},
+                       **_ASK_SITU_PROPS}, "required": ["player"]},
+}
+
+_ASK_SPLITS_TOOL = {
+    "name": "query_splits",
+    "description": (
+        "A player's rate stats broken out BY a dimension — 'X's stats by/against "
+        "pitcher hand', 'X's numbers home vs away', 'X year by year'. Returns a "
+        "table (e.g. vs LHP / vs RHP)."),
+    "input_schema": {"type": "object",
+        "properties": {"player": {"type": "string"},
+                       "split_by": {"type": "string",
+                           "enum": ["pitcher_hand", "batter_side", "home_away",
+                                    "season", "game_type"],
+                           "description": "the dimension to break out by"},
+                       **_ASK_SITU_PROPS},
+        "required": ["player", "split_by"]},
+}
+
+_ASK_RATE_LB_TOOL = {
+    "name": "query_rate_leaderboard",
+    "description": (
+        "Rank players by a RATE in a situation — 'best batting average with the "
+        "bases loaded', 'highest OPS with two strikes', 'who slugs best in the "
+        "postseason'. Qualified by a minimum plate-appearance threshold by default "
+        "(so a 2-for-2 fluke can't top it); set min_pa=0 only if the user asks to "
+        "include everyone regardless of playing time."),
+    "input_schema": {"type": "object",
+        "properties": {"stat": {"type": "string", "enum": ["AVG", "OBP", "SLG", "OPS"]},
+                       "min_pa": {"type": "integer", "minimum": 0,
+                           "description": "qualifier; omit for the default, 0 = include everyone"},
+                       "limit": {"type": "integer", "minimum": 1, "maximum": 25},
+                       **_ASK_SITU_PROPS},
+        "required": ["stat"]},
+}
+
 # The escape hatch — anything the store can't answer must land here, not in a
 # forced (and wrong) query_situational call.
 _ASK_CANNOT_TOOL = {
@@ -6453,9 +6905,22 @@ _ASK_SYSTEM = (
     "('who has the MOST X'). Leaderboard questions want the ranked LIST — default "
     "to 10 so the user sees the leader AND the players behind them. Use a smaller "
     "limit only when explicitly asked ('top 3', 'the single leader').\n\n"
+    "RATE STATS (batting average / on-base / slugging / OPS — 'how well does X "
+    "hit'):\n"
+    "- One player's rate in a situation -> query_rates. "
+    "'What's Judge's average with RISP?' -> {player:'Judge', base_state:'risp'}. "
+    "'Ohtani's OPS in the postseason' -> {player:'Ohtani', game_type:'P'}.\n"
+    "- A player's rates broken out BY a dimension -> query_splits (split_by = "
+    "pitcher_hand / batter_side / home_away / season / game_type). 'Judge's stats "
+    "by pitcher hand' -> {player:'Judge', split_by:'pitcher_hand'}. 'Betts home vs "
+    "away' -> {player:'Betts', split_by:'home_away'}.\n"
+    "- Rank players by a rate -> query_rate_leaderboard. 'Best average with the "
+    "bases loaded' -> {stat:'AVG', base_state:'loaded'}. 'Highest OPS with two "
+    "strikes' -> {stat:'OPS', strikes:2}. Set min_pa=0 ONLY if the user says to "
+    "include everyone regardless of playing time.\n\n"
     "OUT OF SCOPE (call cannot_answer) — only when the QUERY SHAPE can't do it:\n"
-    "- Rate stats or averages (batting average, OBP, OPS, ERA, whiff rate) — we "
-    "COUNT events, we do not compute rates.\n"
+    "- ERA / WHIP / pitcher rate stats and other computed rates we don't support "
+    "(we do AVG/OBP/SLG/OPS for hitters).\n"
     "- Streaks or spans ('in a row', 'consecutive', 'hitting streak').\n"
     "- Pitch type, velocity, exit velocity, or launch angle (not in Retrosheet).\n"
     "- Anything requiring data before 1910 (the play-by-play starts at 1910).\n\n"
@@ -6489,7 +6954,8 @@ def ask(question: str = Body(..., embed=True,
     try:
         msg = client.messages.create(
             model=_ASK_MODEL, max_tokens=1024, system=_ASK_SYSTEM,
-            tools=[_ASK_QUERY_TOOL, _ASK_LEADERBOARD_TOOL, _ASK_CANNOT_TOOL],
+            tools=[_ASK_QUERY_TOOL, _ASK_LEADERBOARD_TOOL, _ASK_RATES_TOOL,
+                   _ASK_SPLITS_TOOL, _ASK_RATE_LB_TOOL, _ASK_CANNOT_TOOL],
             tool_choice={"type": "any"},   # force one of the tools
             messages=[{"role": "user", "content": q}],
         )
@@ -6504,14 +6970,17 @@ def ask(question: str = Body(..., embed=True,
             tool_input = dict(block.input or {})
             break
 
+    _ANSWERABLE = ("query_situational", "query_leaderboard", "query_rates",
+                   "query_splits", "query_rate_leaderboard")
     base = {
         "question":        q,
-        "understood_as":   tool_input if tool_name in ("query_situational",
-                                                       "query_leaderboard") else None,
+        "understood_as":   tool_input if tool_name in _ANSWERABLE else None,
         "answer":          None,
         "count":           None,
         "sample":          [],
         "leaders":         None,
+        "rates":           None,
+        "splits":          None,
         "player_resolved": None,
         "source":          None,
         "game_coverage":   None,
@@ -6528,8 +6997,24 @@ def ask(question: str = Body(..., embed=True,
         timing["total"] = round((time.perf_counter() - t_all) * 1000, 1)
         return base
 
+    def _phrase(system, facts, max_tokens=400):
+        """Run the phrasing model; return its text or None on failure."""
+        t0 = time.perf_counter()
+        out = None
+        try:
+            m = client.messages.create(
+                model=_ASK_MODEL, max_tokens=max_tokens, system=system,
+                messages=[{"role": "user",
+                           "content": "Question: " + q + "\nData: " + json.dumps(facts)}])
+            out = "".join(getattr(b, "text", "") for b in m.content
+                          if getattr(b, "type", None) == "text").strip()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("ask phrasing failed: %s", exc)
+        timing["llm_phrase"] = round((time.perf_counter() - t0) * 1000, 1)
+        return out or None
+
     # ---- out of scope / no usable tool call -----------------------------
-    if tool_name not in ("query_situational", "query_leaderboard"):
+    if tool_name not in _ANSWERABLE:
         reason = ((tool_input or {}).get("reason") if tool_name == "cannot_answer"
                   else "The question could not be interpreted as a situational count.")
         base["out_of_scope"] = True
@@ -6627,6 +7112,120 @@ def ask(question: str = Body(..., embed=True,
             base["answer"] = "; ".join(f'{t["rank"]}. {t["player"]} ({t["count"]})' for t in top)
         else:
             base["answer"] = "No players matched that situation."
+        return _finish()
+
+    # ==== RATE tools (query_rates / query_splits / query_rate_leaderboard) ====
+    if tool_name in ("query_rates", "query_splits", "query_rate_leaderboard"):
+        situ_keys = ("role", "balls", "strikes", "outs", "inning", "base_state",
+                     "season", "season_start", "season_end", "game_type")
+        t0 = time.perf_counter()
+        try:
+            if tool_name == "query_rates":
+                kw = {k: tool_input.get(k) for k in ("player",) + situ_keys
+                      if tool_input.get(k) is not None}
+                if not kw.get("player"):
+                    base["out_of_scope"] = True; base["reason"] = "No player identified."
+                    base["answer"] = base["reason"]; return _finish()
+                result = _run_rates(**kw)
+            elif tool_name == "query_splits":
+                kw = {k: tool_input.get(k) for k in ("player", "split_by") + situ_keys
+                      if tool_input.get(k) is not None}
+                if not kw.get("player") or not kw.get("split_by"):
+                    base["out_of_scope"] = True
+                    base["reason"] = "A split needs a player and a split_by dimension."
+                    base["answer"] = base["reason"]; return _finish()
+                result = _run_splits(**kw)
+            else:  # query_rate_leaderboard
+                kw = {k: tool_input.get(k) for k in ("stat", "min_pa", "limit") + situ_keys
+                      if tool_input.get(k) is not None}
+                result = _run_rate_leaderboard(**kw)
+        except HTTPException as exc:
+            timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
+            base["reason"] = str(exc.detail)
+            base["answer"] = f"Couldn't answer that: {exc.detail}"
+            return _finish()
+        except Exception as exc:  # noqa: BLE001
+            timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
+            log.exception("ask rate tool failed for %r", q)
+            base["error"] = str(exc); base["reason"] = "query failed"
+            base["answer"] = ("Sorry — something went wrong looking that up. "
+                              "Try rephrasing the question.")
+            return _finish()
+        timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
+
+        if result.get("ambiguous"):
+            cands = result.get("candidates", [])
+            names = ", ".join(f'{c["name"]} (id {c["mlbam_id"]})' for c in cands[:5])
+            base["ambiguous"] = True
+            base["player_resolved"] = {"candidates": cands}
+            base["answer"] = (f'There are multiple players matching '
+                              f'"{kw.get("player")}": {names}. Which did you mean?')
+            return _finish()
+
+        base["source"] = result.get("source")
+        base["game_coverage"] = result.get("game_coverage")
+        base["count_data"] = result.get("count_data")
+        base["player_resolved"] = result.get("player")
+        rate_rules = (
+            "You state baseball rate stats (AVG/OBP/SLG/OPS) factually from the "
+            "given data. Format rates as .311 (three decimals). Use ONLY the given "
+            "numbers. If rates is null or count_data.available is false, say the "
+            "pitch-count data wasn't recorded for that situation — do NOT invent. "
+            "If game_coverage.complete is false, include its note (a rate from "
+            "partial coverage is a fair estimate, so present it but note the "
+            "coverage). No editorializing.")
+
+        if tool_name == "query_rates":
+            base["rates"] = result.get("rates")
+            facts = {"question": q, "player": result["player"]["name"],
+                     "filters": result.get("filters"), "rates": result.get("rates"),
+                     "game_coverage": result.get("game_coverage"),
+                     "count_data": result.get("count_data")}
+            ans = _phrase(rate_rules, facts, 256)
+            r = result.get("rates")
+            base["answer"] = ans or (
+                f'{result["player"]["name"]}: {r.get("AVG")}/{r.get("OBP")}/{r.get("SLG")} '
+                f'({r.get("PA")} PA)' if r else
+                (result.get("count_data") or {}).get("note") or "No data for that situation.")
+
+        elif tool_name == "query_splits":
+            base["splits"] = result.get("splits")
+            facts = {"question": q, "player": result["player"]["name"],
+                     "split_by": result.get("split_by"),
+                     "splits": [{k: s.get(k) for k in ("split_value", "PA", "AVG", "OBP", "SLG", "OPS")}
+                                for s in (result.get("splits") or [])],
+                     "game_coverage": result.get("game_coverage"),
+                     "count_data": result.get("count_data")}
+            ans = _phrase(rate_rules + " Present each split as a short line.", facts, 400)
+            sp = result.get("splits") or []
+            base["answer"] = ans or (
+                "; ".join(f'{s["split_value"]}: {s.get("AVG")}/{s.get("OBP")}/{s.get("SLG")}'
+                          for s in sp) if sp else "No data for that split.")
+
+        else:  # query_rate_leaderboard
+            base["leaders"] = result.get("leaders")
+            base["stat"] = result.get("stat"); base["min_pa"] = result.get("min_pa")
+            if result.get("declined"):
+                base["declined"] = True; base["reason"] = result.get("reason")
+                base["answer"] = result.get("reason"); return _finish()
+            stat = result.get("stat"); mp = result.get("min_pa")
+            top = [{"rank": l["rank"], "player": l["player_name"],
+                    "value": l.get(stat), "PA": l.get("PA")}
+                   for l in (result.get("leaders") or [])]
+            facts = {"question": q, "stat": stat, "min_pa": mp, "leaders": top,
+                     "filters": result.get("filters"),
+                     "game_coverage": result.get("game_coverage"),
+                     "count_data": result.get("count_data")}
+            ans = _phrase(
+                "You present a baseball RATE leaderboard. Lead with the leader and "
+                f"their {stat} (three decimals), then the rest in order. ALWAYS "
+                f"state the qualifier: 'minimum {mp} plate appearances in the "
+                "situation'. Use ONLY the given rows. If game_coverage.complete is "
+                "false, include its note. No editorializing.", facts, 400)
+            base["answer"] = ans or (
+                f"(min. {mp} PA) " + "; ".join(
+                    f'{t["rank"]}. {t["player"]} {t["value"]}' for t in top)
+                if top else "No qualified players for that situation.")
         return _finish()
 
     # ---- 2. execute the situational query -------------------------------
