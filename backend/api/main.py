@@ -6994,6 +6994,149 @@ def backfill_missing_bios(
             "considered": len(to_do)}
 
 
+@app.get("/admin/duplicate-identities")
+def duplicate_identities(limit: int = Query(1000, ge=1, le=5000)):
+    """READ-ONLY. Enumerate the Negro-Leagues id-churn fingerprint: two mlbam
+    rows sharing a NORMALIZED name (case/punctuation/accent-insensitive) with
+    OVERLAPPING or ADJACENT eras, where one row carries bbref_id/retro_id (the
+    Chadwick-canonical bio) and the other does NOT (the orphan our season stats
+    key on). No writes — diagnosis only.
+
+    Confidence: HIGH = same-or-null position + overlapping/adjacent era + a
+    multi-token (distinctive) name; LOW = single-token surname, conflicting
+    position, or non-overlapping eras (flagged for manual review — a shared
+    surname is NOT assumed to be the same person)."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    import re
+    import unicodedata
+
+    def norm(s):
+        s = unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode()
+        return re.sub(r"[^a-z0-9 ]", "", s.lower()).strip()
+
+    with connection.get_session() as db:
+        rows = db.execute(_sa_text(
+            "SELECT player_id, name, bbref_id, retro_id, birth_year, death_year, "
+            "position, mlb_debut, mlb_last_season FROM players "
+            "UNION ALL "
+            "SELECT player_id, name, bbref_id, retro_id, birth_year, death_year, "
+            "position, mlb_debut, mlb_last_season FROM pitchers")).fetchall()
+
+    P: dict = {}
+    for pid, name, bb, rt, by, dy, pos, deb, last in rows:
+        e = P.setdefault(pid, {"name": name, "bbref": None, "retro": None,
+                               "birth": None, "death": None, "pos": None,
+                               "debut": None, "last": None})
+        e["name"] = e["name"] or name
+        e["bbref"] = e["bbref"] or bb
+        e["retro"] = e["retro"] or rt
+        e["birth"] = e["birth"] or by
+        e["death"] = e["death"] or dy
+        e["pos"] = e["pos"] or pos
+        if deb is not None:
+            e["debut"] = deb if e["debut"] is None else min(e["debut"], deb)
+        if last is not None:
+            e["last"] = last if e["last"] is None else max(e["last"], last)
+
+    # group by normalized name; keep groups that have BOTH an id-bearing row and
+    # an id-less row (the churn split)
+    from collections import defaultdict
+    groups = defaultdict(list)
+    for pid, e in P.items():
+        groups[norm(e["name"])].append(pid)
+    cand_ids: set = set()
+    cand_groups = []
+    for nm, ids in groups.items():
+        if not nm or len(ids) < 2:
+            continue
+        withid = [i for i in ids if P[i]["bbref"] or P[i]["retro"]]
+        without = [i for i in ids if not (P[i]["bbref"] or P[i]["retro"])]
+        if withid and without:
+            cand_groups.append((nm, withid, without))
+            cand_ids.update(ids)
+
+    # season span/count/teams for just the candidate ids
+    span: dict = {}
+    if cand_ids:
+        ids_list = list(cand_ids)
+        with connection.get_session() as db:
+            for tbl in ("player_seasons", "pitcher_seasons"):
+                for pid, mn, mx, n, tm in db.execute(_sa_text(
+                        f"SELECT player_id, MIN(year), MAX(year), COUNT(*), "
+                        f"string_agg(DISTINCT team, ',') FROM {tbl} "
+                        "WHERE player_id = ANY(:ids) GROUP BY player_id"),
+                        {"ids": ids_list}).fetchall():
+                    s = span.setdefault(pid, [mn, mx, 0, set()])
+                    s[0] = min(s[0], mn); s[1] = max(s[1], mx); s[2] += n
+                    if tm:
+                        s[3].update(tm.split(","))
+
+    def era(pid):
+        s = span.get(pid)
+        d = P[pid]["debut"] if P[pid]["debut"] is not None else (s[0] if s else None)
+        l = P[pid]["last"] if P[pid]["last"] is not None else (s[1] if s else None)
+        return d, l
+
+    def detail(pid):
+        s = span.get(pid)
+        d, l = era(pid)
+        return {"mlbam": pid, "name": P[pid]["name"],
+                "bbref_id": P[pid]["bbref"], "retro_id": P[pid]["retro"],
+                "has_bio": bool(P[pid]["birth"] or P[pid]["death"]),
+                "birth_year": P[pid]["birth"], "death_year": P[pid]["death"],
+                "position": P[pid]["pos"], "era": f"{d}-{l}" if d else None,
+                "seasons": s[2] if s else 0,
+                "teams": ",".join(sorted(s[3])) if s else None}
+
+    pairs = []
+    for nm, withid, without in cand_groups:
+        single_token = len(nm.split()) < 2
+        for o in without:
+            do, lo = era(o)
+            for c in withid:
+                dc, lc = era(c)
+                overlap = None
+                if None not in (do, lo, dc, lc):
+                    overlap = not (lo < dc - 2 or lc < do - 2)   # overlap or within 2 yrs
+                po, pc = P[o]["pos"], P[c]["pos"]
+                pos_conflict = bool(po and pc and po != pc)
+                reasons = []
+                conf = "high"
+                if single_token:
+                    conf = "low"; reasons.append("single-token name (common surname)")
+                if pos_conflict:
+                    conf = "low"; reasons.append(f"position conflict ({po} vs {pc})")
+                if overlap is False:
+                    conf = "low"; reasons.append("eras do not overlap")
+                if overlap is None:
+                    reasons.append("era unknown for one side")
+                pairs.append({
+                    "name": P[o]["name"], "confidence": conf, "reasons": reasons,
+                    "orphan": detail(o), "canonical": detail(c),
+                    "both_have_seasons": (span.get(o, [0, 0, 0])[2] > 0
+                                          and span.get(c, [0, 0, 0])[2] > 0),
+                })
+
+    pairs.sort(key=lambda p: (p["confidence"] != "high",
+                              -(p["orphan"]["seasons"] + p["canonical"]["seasons"])))
+    hi = [p for p in pairs if p["confidence"] == "high"]
+    lo = [p for p in pairs if p["confidence"] == "low"]
+    # id-range spread (is churn confined to the Negro Leagues 816k-820k block?)
+    def rng(pid):
+        return "816k-820k" if 816000 <= pid <= 820999 else "other"
+    outside = [p for p in pairs
+               if rng(p["orphan"]["mlbam"]) != "816k-820k"
+               or rng(p["canonical"]["mlbam"]) != "816k-820k"]
+    return {
+        "total_pairs": len(pairs),
+        "high_confidence": len(hi),
+        "low_confidence": len(lo),
+        "pairs_outside_negro_leagues_range": len(outside),
+        "pairs": pairs[:limit],
+    }
+
+
 @app.get("/admin/bulk-load/status")
 def bulk_load_status():
     counts: dict[str, int] = {}
