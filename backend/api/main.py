@@ -5645,6 +5645,20 @@ def _canon_event(event):
     return _CANON_EVENT.get(event.strip().upper().replace(" ", "_"))
 
 
+def _game_type_filter(game_type):
+    """Normalize game_type for the plays store. DEFAULT (unspecified) = REGULAR
+    SEASON only — a career/season stat means regular season unless the user asks
+    otherwise, and this keeps the plays path consistent with the (regular-season)
+    season-stats route. 'P' = postseason, 'A' = all-star, 'ALL' = every game type
+    (widen). Returns (clause_or_None, param_or_None, echo_value)."""
+    gt = (game_type or "R").strip().upper()
+    if gt == "ALL":
+        return None, None, "ALL"
+    if gt not in ("R", "P", "A"):
+        raise HTTPException(status_code=400, detail="game_type must be R, P, A, or ALL")
+    return "GAME_TYPE = ?", gt, gt
+
+
 def _run_season_total(player, role="bat", event=None, season=None,
                       season_start=None, season_end=None, game_type=None):
     """GATE 0 (plain-total branch): answer a non-situational count from the
@@ -5782,11 +5796,7 @@ def _run_situational(
                 status_code=400,
                 detail=f"unknown event '{event}'. Known: {sorted(set(_PLAYS_EVENT_CD))}")
 
-    gt = None
-    if game_type is not None:
-        gt = game_type.strip().upper()
-        if gt not in ("R", "P", "A"):
-            raise HTTPException(status_code=400, detail="game_type must be R, P, or A")
+    gt_clause, gt_param, gt = _game_type_filter(game_type)   # default -> regular season
 
     bs = None
     if base_state is not None:
@@ -5840,8 +5850,8 @@ def _run_situational(
         where.append("SEASON >= ?");     params.append(season_start)
     if season_end is not None:
         where.append("SEASON <= ?");     params.append(season_end)
-    if gt is not None:
-        where.append("GAME_TYPE = ?");   params.append(gt)
+    if gt_clause:
+        where.append(gt_clause);         params.append(gt_param)
     if bs == "risp":
         where.append("(BASE2_RUN_ID IS NOT NULL OR BASE3_RUN_ID IS NOT NULL)")
     elif bs == "loaded":
@@ -6078,11 +6088,7 @@ def _run_leaderboard(event=None, role="bat", balls=None, strikes=None, outs=None
         raise HTTPException(status_code=400,
                             detail=f"leaderboard needs a known event; got {event!r}")
     canon = _canon_event(event)
-    gt = None
-    if game_type is not None:
-        gt = game_type.strip().upper()
-        if gt not in ("R", "P", "A"):
-            raise HTTPException(status_code=400, detail="game_type must be R, P, or A")
+    gt_clause, gt_param, gt = _game_type_filter(game_type)   # default -> regular season
     bs = None
     if base_state is not None:
         bs = base_state.strip().lower()
@@ -6114,8 +6120,8 @@ def _run_leaderboard(event=None, role="bat", balls=None, strikes=None, outs=None
         where.append("SEASON >= ?");     params.append(season_start)
     if season_end is not None:
         where.append("SEASON <= ?");     params.append(season_end)
-    if gt is not None:
-        where.append("GAME_TYPE = ?");   params.append(gt)
+    if gt_clause:
+        where.append(gt_clause);         params.append(gt_param)
     if bs == "risp":
         where.append("(BASE2_RUN_ID IS NOT NULL OR BASE3_RUN_ID IS NOT NULL)")
     elif bs == "loaded":
@@ -6289,12 +6295,9 @@ def _situ_clauses(balls, strikes, outs, inning, base_state,
     if season is not None:       where.append("SEASON = ?");     params.append(season)
     if season_start is not None: where.append("SEASON >= ?");    params.append(season_start)
     if season_end is not None:   where.append("SEASON <= ?");    params.append(season_end)
-    gt = None
-    if game_type is not None:
-        gt = game_type.strip().upper()
-        if gt not in ("R", "P", "A"):
-            raise HTTPException(status_code=400, detail="game_type must be R, P, or A")
-        where.append("GAME_TYPE = ?"); params.append(gt)
+    gt_clause, gt_param, gt = _game_type_filter(game_type)   # default -> regular season
+    if gt_clause:
+        where.append(gt_clause); params.append(gt_param)
     bs = None
     if base_state is not None:
         bs = base_state.strip().lower()
@@ -6722,8 +6725,10 @@ _ASK_QUERY_TOOL = {
             "season": {"type": "integer", "description": "A single season, e.g. 2019."},
             "season_start": {"type": "integer", "description": "Start of an inclusive season range."},
             "season_end": {"type": "integer", "description": "End of an inclusive season range."},
-            "game_type": {"type": "string", "enum": ["R", "P", "A"], "description":
-                          "R=regular season, P=postseason, A=all-star. Omit for all."},
+            "game_type": {"type": "string", "enum": ["R", "P", "ALL"], "description":
+                          "R=regular season (DEFAULT — omit for normal questions), "
+                          "P=postseason/playoffs/World Series, ALL=regular season + "
+                          "postseason combined. Only set this when the user explicitly asks."},
         },
         "required": ["player"],
     },
@@ -6757,8 +6762,9 @@ _ASK_LEADERBOARD_TOOL = {
             "season": {"type": "integer"},
             "season_start": {"type": "integer"},
             "season_end": {"type": "integer"},
-            "game_type": {"type": "string", "enum": ["R", "P", "A"], "description":
-                          "R = regular season, P = postseason, A = all-star."},
+            "game_type": {"type": "string", "enum": ["R", "P", "ALL"], "description":
+                          "R=regular season (DEFAULT — omit for normal questions), "
+                          "P=postseason, ALL=both. Only set when the user asks."},
             "limit": {"type": "integer", "minimum": 1, "maximum": 25, "default": 10,
                       "description": "How many players to return; default 10. Do NOT "
                                      "set this to 1 just because the question says "
@@ -6778,7 +6784,8 @@ _ASK_SITU_PROPS = {   # the shared situational params (reused by the rate tools)
     "base_state": {"type": "string", "enum": ["risp", "loaded"]},
     "season": {"type": "integer"}, "season_start": {"type": "integer"},
     "season_end": {"type": "integer"},
-    "game_type": {"type": "string", "enum": ["R", "P", "A"]},
+    "game_type": {"type": "string", "enum": ["R", "P", "ALL"], "description":
+                  "R=regular season (DEFAULT), P=postseason, ALL=both; set only if asked"},
 }
 
 _ASK_RATES_TOOL = {
@@ -6868,6 +6875,12 @@ _ASK_SYSTEM = (
     "COUNT: a 'full count' or '3-2 count' means balls=3, strikes=2. If the "
     "player is described as the pitcher ('strikeouts thrown by', 'batters walked "
     "by', 'K's <pitcher> got'), set role=pit; otherwise role=bat.\n\n"
+    "GAME TYPE: career and season stats mean REGULAR SEASON. Do NOT set game_type "
+    "for a normal question — the default is regular season. Set game_type='P' "
+    "ONLY when the user explicitly asks about the postseason / playoffs / World "
+    "Series ('Ohtani's postseason HRs' -> game_type:'P'). Set game_type='ALL' "
+    "ONLY when they explicitly ask to INCLUDE the postseason ('regular season and "
+    "playoffs combined', 'including the postseason').\n\n"
     "IN-SCOPE EXAMPLES (call query_situational):\n"
     "- 'How many grand slams has Aaron Judge hit?' -> {player:'Aaron Judge', "
     "event:'HR', base_state:'loaded'}  (career — no season)\n"
