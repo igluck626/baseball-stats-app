@@ -5459,11 +5459,40 @@ def _plays_cursor():
     return conn.cursor()
 
 
+# Warmup query set — pulls the FULL working set of /plays/situational through
+# so no real query pays a cold-page cost on its first run. DuckDB reads only the
+# columns a query touches, so warming one column isn't enough; these queries
+# together read every filter/select column plus every ART index the endpoint
+# uses. On the ~50 MB/s volume the two full-column scans dominate (they pull the
+# bulk of the 734MB through), so this takes ~15-30s — fine in a daemon thread.
+_PLAYS_WARMUP = [
+    # (a) every filter/index column the endpoint filters on -> one full scan
+    ("SELECT count(*) FROM plays WHERE BAT_ID IS NOT NULL AND PIT_ID IS NOT NULL "
+     "AND EVENT_CD >= 0 AND BALLS_CT >= 0 AND STRIKES_CT >= 0 AND OUTS_CT >= 0 "
+     "AND INN_CT >= 0 AND SEASON >= 0 AND GAME_TYPE IS NOT NULL", []),
+    # (b) base-state + the sample SELECT columns -> a second full scan
+    ("SELECT count(BASE1_RUN_ID), count(BASE2_RUN_ID), count(BASE3_RUN_ID), "
+     "count(GAME_ID), max(GAME_DATE), count(EVENT_TX), count(AWAY_TEAM_ID), "
+     "count(HOME_TEAM_ID), sum(BAT_HOME_ID) FROM plays", []),
+    # (c) ART index pages: BAT_ID / PIT_ID equality, EVENT_CD + SEASON filters
+    ("SELECT count(*) FROM plays WHERE BAT_ID = ?", ["alonp001"]),
+    ("SELECT count(*) FROM plays WHERE PIT_ID = ?", ["kersc001"]),
+    ("SELECT count(*) FROM plays WHERE EVENT_CD = ?", [23]),
+    ("SELECT count(*) FROM plays WHERE SEASON = ?", [2019]),
+    # (d) one representative real /plays/situational shape (count + ordered sample)
+    ("SELECT GAME_DATE, HOME_TEAM_ID, AWAY_TEAM_ID, BAT_HOME_ID, INN_CT, "
+     "BALLS_CT, STRIKES_CT, EVENT_TX, PIT_ID, BAT_ID FROM plays "
+     "WHERE BAT_ID = ? AND EVENT_CD = 23 AND BALLS_CT = 3 AND STRIKES_CT = 2 "
+     "ORDER BY GAME_DATE LIMIT 10", ["muncm001"]),
+]
+
+
 def _plays_warmup_worker():
     """Open (paying the ~900ms cold tax off the request path) then warm the OS
-    page cache: a full scan to pull the main columns hot, plus an indexed BAT_ID
-    lookup to pull the ART index pages hot. Runs in a daemon thread from startup
-    so the app serves every other endpoint immediately while the store warms."""
+    page cache by pulling the columns AND index pages that /plays/situational
+    actually touches (see _PLAYS_WARMUP) — so every query shape is fast from its
+    first request, not just the OUTS_CT column. Runs in a daemon thread from
+    startup so the app serves every other endpoint immediately while it warms."""
     global _plays_warm, _plays_warm_secs
     conn = _ensure_plays_conn()
     if conn is None:
@@ -5472,11 +5501,8 @@ def _plays_warmup_worker():
     t = time.perf_counter()
     try:
         cur = conn.cursor()
-        # full scan — warms the main data columns (the 10M-row ~25ms warm query)
-        cur.execute("SELECT count(*) FROM plays WHERE OUTS_CT = 1").fetchone()
-        # indexed lookup — warms the ART index pages that cold opens read slowly
-        cur.execute("SELECT count(*) FROM plays WHERE BAT_ID = ?",
-                    ["alonp001"]).fetchone()
+        for sql, prm in _PLAYS_WARMUP:
+            cur.execute(sql, prm).fetchall()
         cur.close()
         _plays_warm_secs = round(time.perf_counter() - t, 2)
         _plays_warm = True
