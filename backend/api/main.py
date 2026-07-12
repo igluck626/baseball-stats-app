@@ -5550,11 +5550,14 @@ _CANON_EVENT = {
 # (role, canonical event) -> season-stats column expression. Combos NOT here
 # (HBP for anyone; 1B/2B/3B for pitchers) can't be expressed as a complete
 # season total, so the caller falls through to the plays store instead.
+# NB: the capitalized columns ("HR"/"SO"/"BB"/"H") MUST be double-quoted —
+# Postgres folds unquoted identifiers to lowercase, and there is no `hr`
+# column. `doubles`/`triples` are physically lowercase, so left unquoted.
 _SEASON_COL = {
-    ("bat", "HR"): "HR", ("bat", "K"): "SO", ("bat", "BB"): "BB",
+    ("bat", "HR"): '"HR"', ("bat", "K"): '"SO"', ("bat", "BB"): '"BB"',
     ("bat", "2B"): "doubles", ("bat", "3B"): "triples",
-    ("bat", "1B"): "(H - doubles - triples - HR)",
-    ("pit", "HR"): "HR", ("pit", "K"): "SO", ("pit", "BB"): "BB",
+    ("bat", "1B"): '("H" - doubles - triples - "HR")',
+    ("pit", "HR"): '"HR"', ("pit", "K"): '"SO"', ("pit", "BB"): '"BB"',
 }
 
 
@@ -6040,6 +6043,7 @@ def ask(question: str = Body(..., embed=True,
         "ambiguous":       False,
         "out_of_scope":    False,
         "reason":          None,
+        "error":           None,
         "timing_ms":       timing,
     }
 
@@ -6099,6 +6103,18 @@ def ask(question: str = Body(..., embed=True,
         timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
         base["reason"] = str(exc.detail)
         base["answer"] = f"Couldn't answer that: {exc.detail}"
+        return _finish()
+    except Exception as exc:  # noqa: BLE001 - a user-facing endpoint must never 500
+        # Any unexpected failure (bad SQL, a data edge case) returns a clean,
+        # honest response instead of "Internal Server Error". We do NOT silently
+        # fall back to the plays store here: for a plain total that would risk
+        # the very short-count answer this whole design exists to prevent.
+        timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
+        log.exception("ask query failed for %r", q)
+        base["error"] = str(exc)
+        base["reason"] = "query failed"
+        base["answer"] = ("Sorry — something went wrong looking that up. "
+                          "Try rephrasing the question.")
         return _finish()
     timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
 
