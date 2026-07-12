@@ -5610,6 +5610,12 @@ _PLAYS_FLOOR       = 1910    # play-by-play data floor (nothing before this)
 _COVERAGE_MIN_PCT  = 99.0    # game-coverage: caveat when a queried season is below this
 _COUNT_DECLINE_PCT = 90.0    # count-data: DECLINE (count=null) below this
 _COUNT_CLEAN_PCT   = 99.0    # count-data: clean >= this; caveat in the band between
+# Leaderboards: incomplete coverage distorts the RANKING (not just one count),
+# and the gaps are era-correlated. If a queried span is less than this fraction
+# of games covered (events-weighted), the ranking is too unreliable to present
+# and we DECLINE rather than caveat. Above it, we rank + caveat.
+_LB_WEIGHTED_DECLINE = 95.0
+_COUNT_ERA = 1988           # pitch-count data becomes usable here (see coverage recon)
 
 # Friendly/enum event -> canonical token (used by the season-stats route).
 _CANON_EVENT = {
@@ -5921,6 +5927,249 @@ def _run_situational(
     return result
 
 
+def _leaderboard_gates(cur, lo, hi, uses_count, scoped):
+    """Coverage gates for a LEADERBOARD over span [lo, hi] — stricter than the
+    single-player gates, because incomplete coverage distorts the RANKING itself
+    and the gaps are era-correlated (WWII, the 1920s-30s). Returns
+    (game_coverage, count_data, decline_reason); decline_reason is set when the
+    span is too incomplete to rank fairly (the caller then returns no leaders).
+
+    Game coverage: complete if every season >= 99%; else if the span is still
+    >=95% games-covered (events-weighted) — e.g. an all-time board whose top is
+    modern-dominated — rank + caveat naming the worst season; below 95%
+    (typically a query scoped INTO a bad era) the ranking is noise -> DECLINE.
+    Count data (only with balls/strikes): a SCOPED count board over a low-count
+    era -> DECLINE; an unscoped count board self-restricts to the recorded-count
+    era (the filter only matches plays that HAVE a count) -> rank + note."""
+    try:
+        row = cur.execute(
+            "SELECT min(coverage_pct), "
+            "       sum(games_with_pbp)*100.0/nullif(sum(games_played),0), "
+            "       sum(events_with_count)*100.0/nullif(sum(events),0), "
+            "       arg_min(season, coverage_pct) "
+            "FROM coverage WHERE season BETWEEN ? AND ?", [lo, hi]).fetchone()
+    except Exception:  # noqa: BLE001 - coverage table absent on the old store
+        return {"complete": True}, None, None
+    min_pct, wtd_games, wtd_count, worst = row
+    decline = None
+
+    if uses_count and not scoped:
+        # A count-based, unscoped board self-restricts to the recorded-count era
+        # (~1988+, since the balls/strikes filter only matches plays that HAVE a
+        # count), where game coverage is complete — so the raw span's early
+        # game-coverage gaps are irrelevant. The count_data note carries the era.
+        game_coverage = {"complete": True}
+    elif min_pct is None or min_pct >= _COVERAGE_MIN_PCT:
+        game_coverage = {"complete": True}
+    elif (wtd_games or 0) >= _LB_WEIGHTED_DECLINE:
+        game_coverage = {
+            "complete": False, "min_pct": round(min_pct, 1),
+            "weighted_pct": round(wtd_games, 1), "worst_season": worst,
+            "note": (f"Rankings span seasons with uneven play-by-play coverage "
+                     f"(as low as {round(min_pct)}% in {worst}); players from the "
+                     "less-covered early seasons may be undercounted.")}
+    else:
+        game_coverage = {"complete": False, "min_pct": round(min_pct, 1),
+                         "weighted_pct": round(wtd_games or 0, 1), "worst_season": worst}
+        decline = (f"Play-by-play coverage across {lo}-{hi} is too incomplete to rank "
+                   f"players fairly — only {round(wtd_games or 0)}% of games have "
+                   "play-by-play, unevenly across seasons. Ask about a specific player instead.")
+
+    count_data = None
+    if uses_count:
+        if scoped:
+            cp = round(wtd_count or 0, 1)
+            if cp < _COUNT_DECLINE_PCT:
+                count_data = {"available": False, "pct": cp}
+                decline = decline or (
+                    f"Pitch-count data across {lo}-{hi} is too sparse to rank players "
+                    f"by count — only {cp}% of plays have a recorded count.")
+            else:
+                count_data = {"available": True, "pct": cp}
+        else:
+            # unscoped count board: the balls/strikes filter only matches plays
+            # that HAVE a count, so the board self-restricts to the recorded era.
+            count_data = {"available": True,
+                          "note": f"Reflects seasons since pitch counts were "
+                                  f"recorded (~{_COUNT_ERA} on)."}
+    return game_coverage, count_data, decline
+
+
+def _run_leaderboard(event=None, role="bat", balls=None, strikes=None, outs=None,
+                     inning=None, base_state=None, season=None, season_start=None,
+                     season_end=None, game_type=None, limit=10):
+    """'Who has the most <event> in situation Y' — the plays store keyed the same
+    way, but GROUP BY the batter/pitcher id instead of filtering to one player,
+    ranked DESC. Coverage gates (see _leaderboard_gates) can DECLINE a badly
+    covered span rather than present a distorted ranking as fact. Retro ids are
+    resolved to display names via players/pitchers. Returns a ranked dict, or a
+    {declined:true, reason} dict when coverage won't support a fair ranking.
+
+    NOTE: pure COUNT leaderboards need no minimum-opportunity qualifier (most is
+    most). A future rate-stat leaderboard WOULD — the HAVING clause on the
+    GROUP BY below (e.g. `HAVING count(*) >= :min_pa`) is where it belongs."""
+    role = (role or "bat").lower()
+    if role not in ("bat", "pit"):
+        raise HTTPException(status_code=400, detail="role must be 'bat' or 'pit'")
+    event_cd = _PLAYS_EVENT_CD.get((event or "").strip().upper().replace(" ", "_"))
+    if event_cd is None:
+        raise HTTPException(status_code=400,
+                            detail=f"leaderboard needs a known event; got {event!r}")
+    canon = _canon_event(event)
+    gt = None
+    if game_type is not None:
+        gt = game_type.strip().upper()
+        if gt not in ("R", "P", "A"):
+            raise HTTPException(status_code=400, detail="game_type must be R, P, or A")
+    bs = None
+    if base_state is not None:
+        bs = base_state.strip().lower()
+        if bs not in ("risp", "loaded"):
+            raise HTTPException(status_code=400, detail="base_state must be 'risp' or 'loaded'")
+    limit = max(1, min(int(limit or 10), 25))
+
+    asked = [s for s in (season, season_start, season_end) if s is not None]
+    if asked and max(asked) < _PLAYS_FLOOR:
+        raise HTTPException(status_code=400,
+                            detail=f"before the {_PLAYS_FLOOR} play-by-play data floor")
+    uses_count = balls is not None or strikes is not None
+    scoped = bool(asked)
+
+    id_col = "PIT_ID" if role == "pit" else "BAT_ID"
+    where = [f"{id_col} IS NOT NULL", f"{id_col} <> ''", "EVENT_CD = ?"]
+    params: list = [event_cd]
+    if balls is not None:
+        where.append("BALLS_CT = ?");    params.append(balls)
+    if strikes is not None:
+        where.append("STRIKES_CT = ?");  params.append(strikes)
+    if outs is not None:
+        where.append("OUTS_CT = ?");     params.append(outs)
+    if inning is not None:
+        where.append("INN_CT = ?");      params.append(inning)
+    if season is not None:
+        where.append("SEASON = ?");      params.append(season)
+    if season_start is not None:
+        where.append("SEASON >= ?");     params.append(season_start)
+    if season_end is not None:
+        where.append("SEASON <= ?");     params.append(season_end)
+    if gt is not None:
+        where.append("GAME_TYPE = ?");   params.append(gt)
+    if bs == "risp":
+        where.append("(BASE2_RUN_ID IS NOT NULL OR BASE3_RUN_ID IS NOT NULL)")
+    elif bs == "loaded":
+        where.append("(BASE1_RUN_ID IS NOT NULL AND BASE2_RUN_ID IS NOT NULL "
+                     "AND BASE3_RUN_ID IS NOT NULL)")
+    clause = " AND ".join(where)
+    filters = {"event": canon, "role": role, "balls": balls, "strikes": strikes,
+               "outs": outs, "inning": inning, "base_state": bs, "season": season,
+               "season_start": season_start, "season_end": season_end, "game_type": gt}
+
+    def _base(**extra):
+        out = {"resolved": True, "source": "plays_leaderboard", "filters": filters,
+               "limit": limit}
+        out.update(extra)
+        return out
+
+    try:
+        cur = _plays_cursor()
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    try:
+        t0 = time.perf_counter()
+        mm = cur.execute(
+            f"SELECT min(SEASON), max(SEASON) FROM plays WHERE {clause}", params).fetchone()
+        if not mm or mm[0] is None:                       # nothing matched at all
+            return _base(leaders=[], game_coverage={"complete": True},
+                         count_data=None,
+                         query_ms=round((time.perf_counter() - t0) * 1000, 1))
+        lo, hi = mm
+        game_coverage, count_data, decline = _leaderboard_gates(cur, lo, hi, uses_count, scoped)
+        if decline is not None:
+            return _base(leaders=None, declined=True, reason=decline,
+                         game_coverage=game_coverage, count_data=count_data,
+                         query_ms=round((time.perf_counter() - t0) * 1000, 1))
+        rows = cur.execute(
+            f"SELECT {id_col}, count(*) AS n FROM plays WHERE {clause} "
+            f"GROUP BY {id_col} ORDER BY n DESC, {id_col} LIMIT ?",
+            params + [limit]).fetchall()
+        query_ms = round((time.perf_counter() - t0) * 1000, 1)
+    finally:
+        cur.close()
+
+    # resolve retro ids -> display names (batters via players, pitchers via pitchers)
+    retro_ids = [r[0] for r in rows]
+    name_map: dict = {}
+    if retro_ids and connection.db_available():
+        ptable = "pitchers" if role == "pit" else "players"
+        try:
+            with connection.get_session() as db:
+                for rid, pid, nm in db.execute(_sa_text(
+                        f"SELECT retro_id, player_id, name FROM {ptable} "
+                        "WHERE retro_id = ANY(:ids)"), {"ids": retro_ids}).fetchall():
+                    name_map[rid] = {"mlbam_id": pid, "name": nm}
+        except Exception as exc:  # noqa: BLE001
+            log.warning("leaderboard name resolution failed: %s", exc)
+
+    leaders = []
+    for i, (rid, n) in enumerate(rows, 1):
+        info = name_map.get(rid) or {}
+        leaders.append({"rank": i, "player_name": info.get("name") or rid,
+                        "mlbam_id": info.get("mlbam_id"), "retro_id": rid, "count": n})
+    return _base(leaders=leaders, game_coverage=game_coverage,
+                 count_data=count_data, query_ms=query_ms)
+
+
+def _run_season_leaderboard(event=None, role="bat", season=None, season_start=None,
+                            season_end=None, game_type=None, limit=10):
+    """Plain (non-situational) leaderboard from the COMPLETE season-stats tables
+    — the leaderboard analogue of _run_season_total, so 'most career home runs'
+    ranks by real totals (Ruth included) instead of coverage-limited plays.
+    Returns None for (role, event) season-stats can't express (HBP, pitcher
+    1B/2B/3B, All-Star) so the caller falls through to the plays leaderboard."""
+    role = (role or "bat").lower()
+    canon = _canon_event(event)
+    gt = (game_type or "").strip().upper() or None
+    col = _SEASON_COL.get((role, canon))
+    if col is None or gt == "A":
+        return None
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    limit = max(1, min(int(limit or 10), 25))
+    if gt == "P":
+        table = "player_postseason_pitching" if role == "pit" else "player_postseason_batting"
+    else:
+        table = "pitcher_seasons" if role == "pit" else "player_seasons"
+    where = ["1=1"]
+    p: dict = {"lim": limit}
+    if season is not None:
+        where.append("year = :y"); p["y"] = int(season)
+    else:
+        if season_start is not None:
+            where.append("year >= :ys"); p["ys"] = int(season_start)
+        if season_end is not None:
+            where.append("year <= :ye"); p["ye"] = int(season_end)
+    sql = (f"SELECT player_id, SUM({col}) AS n FROM {table} WHERE {' AND '.join(where)} "
+           f"GROUP BY player_id HAVING SUM({col}) > 0 ORDER BY n DESC, player_id LIMIT :lim")
+    with connection.get_session() as db:
+        rows = db.execute(_sa_text(sql), p).fetchall()
+        ids = [r[0] for r in rows]
+        names = {}
+        if ids:
+            for pid, nm in db.execute(_sa_text(
+                    "SELECT player_id, name FROM players WHERE player_id = ANY(:ids)"),
+                    {"ids": ids}).fetchall():
+                names[pid] = nm
+    leaders = [{"rank": i, "player_name": names.get(pid) or str(pid),
+                "mlbam_id": pid, "count": int(n)}
+               for i, (pid, n) in enumerate(rows, 1)]
+    return {"resolved": True, "source": "season_stats_leaderboard",
+            "filters": {"event": canon, "role": role, "season": season,
+                        "season_start": season_start, "season_end": season_end,
+                        "game_type": gt},
+            "limit": limit, "leaders": leaders,
+            "game_coverage": {"complete": True}, "count_data": None}
+
+
 @app.get("/plays/situational")
 def plays_situational(
     player:       str        = Query(..., description="Player name or MLBAM id"),
@@ -5950,6 +6199,33 @@ def plays_situational(
         outs=outs, inning=inning, base_state=base_state, season=season,
         season_start=season_start, season_end=season_end, game_type=game_type,
         sample_limit=sample_limit)
+
+
+@app.get("/plays/leaderboard")
+def plays_leaderboard(
+    event:        str        = Query(..., description="HR/K/BB/HBP/1B/2B/3B — the outcome to rank by"),
+    role:         str        = Query("bat", description="'bat' (BAT_ID) or 'pit' (PIT_ID)"),
+    balls:        int | None = Query(None, ge=0, le=4),
+    strikes:      int | None = Query(None, ge=0, le=3),
+    outs:         int | None = Query(None, ge=0, le=2),
+    inning:       int | None = Query(None, ge=1),
+    base_state:   str | None = Query(None, description="'risp' or 'loaded'"),
+    season:       int | None = Query(None),
+    season_start: int | None = Query(None),
+    season_end:   int | None = Query(None),
+    game_type:    str | None = Query(None, description="R / P / A"),
+    limit:        int        = Query(10, ge=1, le=25),
+):
+    """READ-ONLY situational leaderboard — 'who has the most <event> in
+    situation Y'. Same structured, parameter-bound filters as /plays/situational
+    (no SQL injection surface), minus the player, plus a GROUP BY + rank. Applies
+    the leaderboard coverage gates, which can DECLINE a badly-covered span rather
+    than present a distorted ranking (see _run_leaderboard)."""
+    return _run_leaderboard(
+        event=event, role=role, balls=balls, strikes=strikes, outs=outs,
+        inning=inning, base_state=base_state, season=season,
+        season_start=season_start, season_end=season_end, game_type=game_type,
+        limit=limit)
 
 
 # --- Phase 6 Stage 1: NLP /ask ----------------------------------------------
@@ -5990,6 +6266,43 @@ _ASK_QUERY_TOOL = {
                           "R=regular season, P=postseason, A=all-star. Omit for all."},
         },
         "required": ["player"],
+    },
+}
+
+# Leaderboard tool — 'who has the most ...'. Same situational params, NO player,
+# plus a limit. The presence of a player (query_situational) vs its absence
+# (query_leaderboard) IS the signal, so the model's tool choice routes cleanly.
+_ASK_LEADERBOARD_TOOL = {
+    "name": "query_leaderboard",
+    "description": (
+        "RANK the players with the MOST of an outcome in a situation — for "
+        "'who has the most...', 'which player has the most...', 'top N...', "
+        "'leaders in...'. No specific player is named; returns a ranked list. "
+        "If the question names a specific player, use query_situational instead."),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "event": {"type": "string", "enum": ["HR", "K", "BB", "HBP", "1B", "2B", "3B"],
+                      "description": "Outcome to rank by (required). HR=home run, "
+                                     "K=strikeout, BB=walk, HBP=hit by pitch, "
+                                     "1B=single, 2B=double, 3B=triple."},
+            "role": {"type": "string", "enum": ["bat", "pit"], "description":
+                     "'bat' for hitters, 'pit' for pitchers. Default 'bat'."},
+            "balls": {"type": "integer", "minimum": 0, "maximum": 3},
+            "strikes": {"type": "integer", "minimum": 0, "maximum": 2},
+            "outs": {"type": "integer", "minimum": 0, "maximum": 2},
+            "inning": {"type": "integer", "minimum": 1},
+            "base_state": {"type": "string", "enum": ["risp", "loaded"], "description":
+                           "'risp' = runners in scoring position, 'loaded' = bases loaded."},
+            "season": {"type": "integer"},
+            "season_start": {"type": "integer"},
+            "season_end": {"type": "integer"},
+            "game_type": {"type": "string", "enum": ["R", "P", "A"], "description":
+                          "R = regular season, P = postseason, A = all-star."},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 25,
+                      "description": "How many players to rank (default 10)."},
+        },
+        "required": ["event"],
     },
 }
 
@@ -6049,9 +6362,15 @@ _ASK_SYSTEM = (
     "event:'BB', outs:2}\n"
     "- 'How many home runs has Ohtani hit in the postseason?' -> "
     "{player:'Ohtani', event:'HR', game_type:'P'}\n\n"
+    "LEADERBOARDS (call query_leaderboard — NO player named): 'who has the "
+    "most...', 'which player/pitcher has the most...', 'top N...', 'leaders "
+    "in...'. Same situation params, plus an optional limit; event is required.\n"
+    "- 'Who has the most home runs on a 3-2 count?' -> {event:'HR', balls:3, strikes:2}\n"
+    "- 'Who has the most career grand slams?' -> {event:'HR', base_state:'loaded'}\n"
+    "- 'Top 5 pitchers by strikeouts on a full count' -> "
+    "{event:'K', role:'pit', balls:3, strikes:2, limit:5}\n"
+    "Named player -> query_situational; no named player -> query_leaderboard.\n\n"
     "OUT OF SCOPE (call cannot_answer) — only when the QUERY SHAPE can't do it:\n"
-    "- Leaderboards or comparisons ACROSS players ('who has the most...', 'which "
-    "pitcher...', 'rank the...').\n"
     "- Rate stats or averages (batting average, OBP, OPS, ERA, whiff rate) — we "
     "COUNT events, we do not compute rates.\n"
     "- Streaks or spans ('in a row', 'consecutive', 'hitting streak').\n"
@@ -6087,8 +6406,8 @@ def ask(question: str = Body(..., embed=True,
     try:
         msg = client.messages.create(
             model=_ASK_MODEL, max_tokens=1024, system=_ASK_SYSTEM,
-            tools=[_ASK_QUERY_TOOL, _ASK_CANNOT_TOOL],
-            tool_choice={"type": "any"},   # force one of the two tools
+            tools=[_ASK_QUERY_TOOL, _ASK_LEADERBOARD_TOOL, _ASK_CANNOT_TOOL],
+            tool_choice={"type": "any"},   # force one of the tools
             messages=[{"role": "user", "content": q}],
         )
     except Exception as exc:  # noqa: BLE001
@@ -6104,15 +6423,18 @@ def ask(question: str = Body(..., embed=True,
 
     base = {
         "question":        q,
-        "understood_as":   tool_input if tool_name == "query_situational" else None,
+        "understood_as":   tool_input if tool_name in ("query_situational",
+                                                       "query_leaderboard") else None,
         "answer":          None,
         "count":           None,
         "sample":          [],
+        "leaders":         None,
         "player_resolved": None,
         "source":          None,
         "game_coverage":   None,
         "count_data":      None,
         "ambiguous":       False,
+        "declined":        False,
         "out_of_scope":    False,
         "reason":          None,
         "error":           None,
@@ -6124,12 +6446,102 @@ def ask(question: str = Body(..., embed=True,
         return base
 
     # ---- out of scope / no usable tool call -----------------------------
-    if tool_name != "query_situational":
+    if tool_name not in ("query_situational", "query_leaderboard"):
         reason = ((tool_input or {}).get("reason") if tool_name == "cannot_answer"
                   else "The question could not be interpreted as a situational count.")
         base["out_of_scope"] = True
         base["reason"] = reason
         base["answer"] = reason
+        return _finish()
+
+    # ==== LEADERBOARD branch ('who has the most ...') ====================
+    if tool_name == "query_leaderboard":
+        lb_params = {k: tool_input.get(k) for k in (
+            "event", "role", "balls", "strikes", "outs", "inning", "base_state",
+            "season", "season_start", "season_end", "game_type", "limit")
+            if tool_input.get(k) is not None}
+        asked = [lb_params[k] for k in ("season", "season_start", "season_end")
+                 if lb_params.get(k) is not None]
+        if asked and max(asked) < _PLAYS_FLOOR:
+            base["out_of_scope"] = True
+            base["reason"] = (f"Play-by-play data starts in {_PLAYS_FLOOR}; there is "
+                              f"no pitch-level data for {max(asked)}.")
+            base["answer"] = base["reason"]
+            return _finish()
+        t0 = time.perf_counter()
+        try:
+            # plain (no situation) -> complete season-stats leaderboard; else plays
+            lb_situ = any(lb_params.get(k) is not None
+                          for k in ("balls", "strikes", "outs", "inning", "base_state"))
+            result = None
+            if not lb_situ:
+                result = _run_season_leaderboard(
+                    event=lb_params.get("event"), role=lb_params.get("role"),
+                    season=lb_params.get("season"),
+                    season_start=lb_params.get("season_start"),
+                    season_end=lb_params.get("season_end"),
+                    game_type=lb_params.get("game_type"),
+                    limit=lb_params.get("limit", 10))
+            if result is None:
+                result = _run_leaderboard(**lb_params)
+        except HTTPException as exc:
+            timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
+            base["reason"] = str(exc.detail)
+            base["answer"] = f"Couldn't answer that: {exc.detail}"
+            return _finish()
+        except Exception as exc:  # noqa: BLE001
+            timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
+            log.exception("ask leaderboard failed for %r", q)
+            base["error"] = str(exc)
+            base["reason"] = "query failed"
+            base["answer"] = ("Sorry — something went wrong looking that up. "
+                              "Try rephrasing the question.")
+            return _finish()
+        timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
+
+        base["source"] = result.get("source")
+        base["game_coverage"] = result.get("game_coverage")
+        base["count_data"] = result.get("count_data")
+        if result.get("declined"):
+            base["declined"] = True
+            base["reason"] = result.get("reason")
+            base["answer"] = result.get("reason")
+            return _finish()
+        base["leaders"] = result.get("leaders", [])
+
+        # phrase the ranked answer (factual; honest about coverage)
+        t0 = time.perf_counter()
+        top = [{"rank": l["rank"], "player": l["player_name"], "count": l["count"]}
+               for l in (base["leaders"] or [])]
+        facts = {"question": q, "leaders": top, "filters": result.get("filters"),
+                 "source": result.get("source"),
+                 "game_coverage": result.get("game_coverage"),
+                 "count_data": result.get("count_data")}
+        answer = None
+        try:
+            phrased = client.messages.create(
+                model=_ASK_MODEL, max_tokens=400,
+                system=(
+                    "You present a baseball LEADERBOARD from the given ranked data "
+                    "as a short natural answer: name the leader and count, then "
+                    "list the next few (rank. name — count). Use ONLY the given "
+                    "rows; invent nothing. If game_coverage.complete is false, "
+                    "state its note (coverage may distort the ranking). If "
+                    "count_data has a note, include it. No editorializing."),
+                messages=[{"role": "user",
+                           "content": "Question: " + q + "\nData: " + json.dumps(facts)}],
+            )
+            answer = "".join(getattr(b, "text", "") for b in phrased.content
+                             if getattr(b, "type", None) == "text").strip()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("ask leaderboard phrasing failed: %s", exc)
+        timing["llm_phrase"] = round((time.perf_counter() - t0) * 1000, 1)
+        if answer:
+            base["answer"] = answer
+        elif top:
+            base["answer"] = "; ".join(f'{t["rank"]}. {t["player"]} ({t["count"]})' for t in top)
+        else:
+            base["answer"] = "No players matched that situation."
         return _finish()
 
     # ---- 2. execute the situational query -------------------------------
