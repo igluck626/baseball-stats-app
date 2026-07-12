@@ -999,6 +999,11 @@ async def lifespan(app: FastAPI):
     # Start the in-process live-game proxy loop (single-worker assumption —
     # see live_service.py). Guarded so it starts at most once per process.
     live_service.start_live_loop()
+    # Open + warm the play-by-play store in a daemon thread so boot isn't
+    # blocked by the ~900ms cold open + full-scan warmup over the slow volume;
+    # every other endpoint serves immediately while it warms.
+    threading.Thread(target=_plays_warmup_worker, name="plays-warmup",
+                     daemon=True).start()
     yield
     live_service.stop_live_loop()
 
@@ -5399,18 +5404,85 @@ _PLAYS_EVENT_CD = {
 }
 
 
-def _plays_connect():
-    """Open the play-by-play store READ-ONLY. We open a FRESH connection per
-    request rather than holding a persistent one: read_only mode permits any
-    number of concurrent readers, a per-request open is ~1ms, and it sidesteps
-    sharing a single (not thread-safe) duckdb connection across FastAPI's
-    threadpool. Raises FileNotFoundError if the store hasn't been fetched yet
-    (so the endpoint returns a clean 503 instead of crashing the app)."""
-    if not os.path.exists(PLAYS_DB_PATH):
+# Persistent read-only connection to the plays store. The Railway volume is
+# network-attached (~50 MB/s), so a COLD duckdb.connect() costs ~900ms (reading
+# metadata + ART indexes over slow storage) — but a warm one is ~0.1ms. Opening
+# fresh per request made every query pay that tax. Instead we open ONCE and
+# reuse it, handing each request its own cursor().
+#
+# Thread-safety: a single duckdb connection object is NOT safe for concurrent
+# execute() from FastAPI's threadpool, but DuckDB's documented pattern is one
+# shared connection + a per-thread .cursor() (each cursor is an independent
+# execution context over the same read-only database). So requests never
+# serialize on one connection and never re-pay the cold-open cost.
+_plays_conn = None                     # the shared read-only connection (or None)
+_plays_conn_lock = threading.Lock()    # guards the lazy/idempotent open
+_plays_conn_error = None               # last open error / "not loaded" reason
+_plays_warm = False                    # background warmup completed?
+_plays_warm_secs = None                # how long the warmup took
+
+
+def _ensure_plays_conn():
+    """Return the shared read-only connection, opening it once (idempotently,
+    under a lock) on first need. If the file is missing or the open fails, set
+    `_plays_conn_error` and return None — the app must boot and run fine without
+    the store; callers turn None into a clean 503."""
+    global _plays_conn, _plays_conn_error
+    if _plays_conn is not None:
+        return _plays_conn
+    with _plays_conn_lock:
+        if _plays_conn is not None:            # double-checked after acquiring
+            return _plays_conn
+        if not os.path.exists(PLAYS_DB_PATH):
+            _plays_conn_error = (
+                "plays store not loaded, run /admin/fetch-plays-db")
+            return None
+        try:
+            import duckdb
+            _plays_conn = duckdb.connect(PLAYS_DB_PATH, read_only=True)
+            _plays_conn_error = None
+            log.info("plays store connection opened (read-only)")
+        except Exception as exc:  # noqa: BLE001
+            _plays_conn_error = f"plays store open failed: {exc}"
+            _plays_conn = None
+            log.warning("plays store open failed: %s", exc)
+        return _plays_conn
+
+
+def _plays_cursor():
+    """A fresh cursor over the shared connection for one request. Raises
+    FileNotFoundError (→ 503) if the store isn't loaded."""
+    conn = _ensure_plays_conn()
+    if conn is None:
         raise FileNotFoundError(
-            f"{PLAYS_DB_PATH} not found — run POST /admin/fetch-plays-db first")
-    import duckdb
-    return duckdb.connect(PLAYS_DB_PATH, read_only=True)
+            _plays_conn_error or "plays store not loaded, run /admin/fetch-plays-db")
+    return conn.cursor()
+
+
+def _plays_warmup_worker():
+    """Open (paying the ~900ms cold tax off the request path) then warm the OS
+    page cache: a full scan to pull the main columns hot, plus an indexed BAT_ID
+    lookup to pull the ART index pages hot. Runs in a daemon thread from startup
+    so the app serves every other endpoint immediately while the store warms."""
+    global _plays_warm, _plays_warm_secs
+    conn = _ensure_plays_conn()
+    if conn is None:
+        log.warning("plays warmup skipped: %s", _plays_conn_error)
+        return
+    t = time.perf_counter()
+    try:
+        cur = conn.cursor()
+        # full scan — warms the main data columns (the 10M-row ~25ms warm query)
+        cur.execute("SELECT count(*) FROM plays WHERE OUTS_CT = 1").fetchone()
+        # indexed lookup — warms the ART index pages that cold opens read slowly
+        cur.execute("SELECT count(*) FROM plays WHERE BAT_ID = ?",
+                    ["alonp001"]).fetchone()
+        cur.close()
+        _plays_warm_secs = round(time.perf_counter() - t, 2)
+        _plays_warm = True
+        log.info("plays store warmed in %ss", _plays_warm_secs)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("plays warmup failed: %s", exc)
 
 
 def _resolve_retro_id(player: str, role: str):
@@ -5529,17 +5601,18 @@ def plays_situational(
     clause = " AND ".join(where)
 
     # ---- run (count + sample), timed ------------------------------------
+    # Per-request cursor over the shared, pre-warmed connection (no cold open).
     try:
-        con = _plays_connect()
+        cur = _plays_cursor()
     except FileNotFoundError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
     try:
         t0 = time.perf_counter()
-        count = con.execute(
+        count = cur.execute(
             f"SELECT count(*) FROM plays WHERE {clause}", params).fetchone()[0]
         sample = []
         if sample_limit:
-            rows = con.execute(
+            rows = cur.execute(
                 "SELECT GAME_DATE, HOME_TEAM_ID, AWAY_TEAM_ID, BAT_HOME_ID, "
                 "INN_CT, BALLS_CT, STRIKES_CT, EVENT_TX, PIT_ID, BAT_ID "
                 f"FROM plays WHERE {clause} ORDER BY GAME_DATE LIMIT ?",
@@ -5558,7 +5631,7 @@ def plays_situational(
                 })
         query_ms = round((time.perf_counter() - t0) * 1000, 1)
     finally:
-        con.close()
+        cur.close()   # closes only the cursor, not the shared connection
 
     return {
         "resolved": True,
@@ -5578,6 +5651,21 @@ def plays_situational(
         "count":     count,
         "sample":    sample,
         "query_ms":  query_ms,
+    }
+
+
+@app.get("/admin/plays-status")
+def plays_status():
+    """Cheap readiness probe for the plays store: is the file present, is the
+    shared connection open, did the background warmup finish, and how long it
+    took. No queries — safe to poll."""
+    return {
+        "path":            PLAYS_DB_PATH,
+        "file_exists":     os.path.exists(PLAYS_DB_PATH),
+        "connection_open": _plays_conn is not None,
+        "warm":            _plays_warm,
+        "warmup_secs":     _plays_warm_secs,
+        "error":           _plays_conn_error,
     }
 
 
