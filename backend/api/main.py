@@ -5274,6 +5274,7 @@ def fetch_plays_db(
     exact row-count gate. Any check failing is flagged via `error`; the file is
     left in place for inspection."""
     import requests
+    global _plays_conn, _plays_conn_error, _plays_warm, _plays_warm_secs, _plays_gen
 
     dest_dir = "/data"
     dest = os.path.join(dest_dir, "plays.duckdb")
@@ -5367,40 +5368,66 @@ def fetch_plays_db(
         os.replace(tmp, dest)               # atomic promote (same filesystem)
         r["free_space_after_gb"] = _free_gb()
 
-        # ---- VERIFY (open + query, not a byte count) --------------------
-        final = os.path.getsize(dest)
-        r["downloaded_bytes"] = final
-        r["downloaded_mb"] = round(final / 1024 / 1024, 2)
-
         def _flag(msg):
             r["error"] = ((r["error"] + "; ") if r["error"] else "") + msg
 
-        try:
-            import duckdb
-            con = duckdb.connect(dest, read_only=True)
+        # ---- HOT-SWAP: drop the persistent connection, then VERIFY ------
+        # DuckDB caches the DB instance per path within a process, so the
+        # startup connection pins the OLD file — a fresh connect would return
+        # that stale instance. Take the warmup lock first (so no in-flight
+        # warmup keeps a connection open), close the persistent connection, bump
+        # the generation, and only THEN verify with a genuinely fresh connect.
+        with _plays_warmup_lock:
+            with _plays_conn_lock:
+                if _plays_conn is not None:
+                    try:
+                        _plays_conn.close()
+                    except Exception:  # noqa: BLE001
+                        pass
+                _plays_conn = None
+                _plays_conn_error = None
+                _plays_gen += 1        # invalidate any warmup that raced this swap
+                _plays_warm = False
+                _plays_warm_secs = None
+
+            final = os.path.getsize(dest)
+            r["downloaded_bytes"] = final
+            r["downloaded_mb"] = round(final / 1024 / 1024, 2)
             try:
-                r["plays_row_count"] = con.execute(
-                    "SELECT count(*) FROM plays").fetchone()[0]
-                r["plays_min_season"], r["plays_max_season"] = con.execute(
-                    "SELECT min(SEASON), max(SEASON) FROM plays").fetchone()
+                import duckdb
+                con = duckdb.connect(dest, read_only=True)  # fresh -> reads new file
                 try:
-                    r["coverage_row_count"] = con.execute(
-                        "SELECT count(*) FROM coverage").fetchone()[0]
-                except Exception:  # noqa: BLE001 - old store has no coverage table
-                    _flag("no `coverage` table — this looks like the OLD store, "
-                          "not the new 1910-2025 build")
-                r["duckdb_open_ok"] = True
-            finally:
-                con.close()
-        except Exception as exc:  # noqa: BLE001
-            r["duckdb_open_ok"] = False
-            _flag(f"duckdb verify: {exc} (download may be corrupt; file left)")
-            return r
+                    r["plays_row_count"] = con.execute(
+                        "SELECT count(*) FROM plays").fetchone()[0]
+                    r["plays_min_season"], r["plays_max_season"] = con.execute(
+                        "SELECT min(SEASON), max(SEASON) FROM plays").fetchone()
+                    try:
+                        r["coverage_row_count"] = con.execute(
+                            "SELECT count(*) FROM coverage").fetchone()[0]
+                    except Exception:  # noqa: BLE001 - old store has no coverage table
+                        _flag("no `coverage` table — this looks like the OLD store, "
+                              "not the new 1910-2025 build")
+                    r["duckdb_open_ok"] = True
+                finally:
+                    con.close()
+            except Exception as exc:  # noqa: BLE001
+                # Verify failed. The connection is already dropped, so the next
+                # query re-opens via _ensure_plays_conn against whatever is on
+                # disk (degrades to the normal path — no broken state, no 500s).
+                r["duckdb_open_ok"] = False
+                _flag(f"duckdb verify: {exc} (download may be corrupt; file left)")
+                return r
 
         # optional exact row-count gate
         if expect_rows is not None and r["plays_row_count"] != expect_rows:
             _flag(f"row-count mismatch: got {r['plays_row_count']}, "
                   f"expected {expect_rows}")
+
+        # Re-warm the NEW store in the background (only on a clean verify).
+        if r["duckdb_open_ok"] and not r["error"]:
+            threading.Thread(target=_plays_warmup_worker, name="plays-rewarm",
+                             daemon=True).start()
+            r["rewarm_triggered"] = True
         return r
     finally:
         try:
@@ -5442,6 +5469,13 @@ _plays_conn_lock = threading.Lock()    # guards the lazy/idempotent open
 _plays_conn_error = None               # last open error / "not loaded" reason
 _plays_warm = False                    # background warmup completed?
 _plays_warm_secs = None                # how long the warmup took
+# A warmup holds _plays_warmup_lock for its WHOLE run, so a store swap can wait
+# for it — DuckDB caches the DB instance per path within a process, so any live
+# connection (the persistent one OR an in-flight warmup) would pin the OLD file
+# and defeat the post-swap verify. _plays_gen is bumped on every swap; a warmup
+# that finishes after a swap sees the gen changed and discards its result.
+_plays_warmup_lock = threading.Lock()
+_plays_gen = 0
 
 
 def _ensure_plays_conn():
@@ -5518,24 +5552,36 @@ def _plays_warmup_worker():
     first request, not just the OUTS_CT column. Runs in a daemon thread from
     startup so the app serves every other endpoint immediately while it warms."""
     global _plays_warm, _plays_warm_secs
-    conn = _ensure_plays_conn()
-    if conn is None:
-        log.warning("plays warmup skipped: %s", _plays_conn_error)
-        return
-    t = time.perf_counter()
-    try:
-        cur = conn.cursor()
-        for sql, prm in _PLAYS_WARMUP:
-            try:
-                cur.execute(sql, prm).fetchall()
-            except Exception as exc:  # noqa: BLE001 - e.g. no coverage table on old store
-                log.warning("plays warmup query skipped: %s", exc)
-        cur.close()
-        _plays_warm_secs = round(time.perf_counter() - t, 2)
-        _plays_warm = True
-        log.info("plays store warmed in %ss", _plays_warm_secs)
-    except Exception as exc:  # noqa: BLE001
-        log.warning("plays warmup failed: %s", exc)
+    # Hold the warmup lock for the whole run so a concurrent store swap waits for
+    # us to release our connection before it drops the persistent one and
+    # verifies — otherwise our live cursor would keep the OLD DuckDB instance
+    # pinned and the swap's verify would read stale data.
+    with _plays_warmup_lock:
+        with _plays_conn_lock:
+            gen = _plays_gen
+        conn = _ensure_plays_conn()
+        if conn is None:
+            log.warning("plays warmup skipped: %s", _plays_conn_error)
+            return
+        t = time.perf_counter()
+        try:
+            cur = conn.cursor()
+            for sql, prm in _PLAYS_WARMUP:
+                try:
+                    cur.execute(sql, prm).fetchall()
+                except Exception as exc:  # noqa: BLE001 - e.g. no coverage table on old store
+                    log.warning("plays warmup query skipped: %s", exc)
+            cur.close()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("plays warmup failed: %s", exc)
+            return
+        with _plays_conn_lock:
+            if gen != _plays_gen:   # a swap happened while we warmed -> discard
+                log.info("plays warmup superseded by a store swap; not marking warm")
+                return
+            _plays_warm_secs = round(time.perf_counter() - t, 2)
+            _plays_warm = True
+            log.info("plays store warmed in %ss", _plays_warm_secs)
 
 
 def _resolve_retro_id(player: str, role: str):
