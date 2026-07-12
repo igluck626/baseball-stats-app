@@ -5927,6 +5927,36 @@ def _run_situational(
     return result
 
 
+# Retrosheet biofile retro_id -> display name, slimmed to (key_retro, name).
+# Shipped in backend/data/retrosheet/. Covers 100% of the plays store's ids, so
+# it's the last-resort name for leaderboard players absent from players/pitchers
+# (e.g. CC Sabathia, whose bio row we don't carry) — never show a raw retro id.
+_RETRO_NAMES_CSV = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "data", "retrosheet", "retro_names.csv")
+_retro_names_map: dict | None = None
+_retro_names_lock = threading.Lock()
+
+
+def _retro_names():
+    """Cached retro_id -> name map from the shipped biofile slim (loaded once)."""
+    global _retro_names_map
+    if _retro_names_map is None:
+        with _retro_names_lock:
+            if _retro_names_map is None:
+                m: dict = {}
+                try:
+                    with open(_RETRO_NAMES_CSV, newline="") as f:
+                        for row in csv.DictReader(f):
+                            rid = (row.get("key_retro") or "").strip()
+                            if rid:
+                                m[rid] = (row.get("name") or "").strip() or rid
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("retro_names load failed: %s", exc)
+                _retro_names_map = m
+    return _retro_names_map
+
+
 def _leaderboard_gates(cur, lo, hi, uses_count, scoped):
     """Coverage gates for a LEADERBOARD over span [lo, hi] — stricter than the
     single-player gates, because incomplete coverage distorts the RANKING itself
@@ -6110,11 +6140,14 @@ def _run_leaderboard(event=None, role="bat", balls=None, strikes=None, outs=None
         except Exception as exc:  # noqa: BLE001
             log.warning("leaderboard name resolution failed: %s", exc)
 
+    biofile = _retro_names()   # last-resort names (players/pitchers gap) — 100% coverage
     leaders = []
     for i, (rid, n) in enumerate(rows, 1):
         info = name_map.get(rid) or {}
-        leaders.append({"rank": i, "player_name": info.get("name") or rid,
-                        "mlbam_id": info.get("mlbam_id"), "retro_id": rid, "count": n})
+        leaders.append({
+            "rank": i,
+            "player_name": info.get("name") or biofile.get(rid) or rid,
+            "mlbam_id": info.get("mlbam_id"), "retro_id": rid, "count": n})
     return _base(leaders=leaders, game_coverage=game_coverage,
                  count_data=count_data, query_ms=query_ms)
 
