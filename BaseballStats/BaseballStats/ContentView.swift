@@ -27,6 +27,10 @@ struct ContentView: View {
     /// so every live-polling loop can gate on it via `navigation.shouldPoll(on:)`.
     @Environment(\.scenePhase) private var scenePhase
 
+    /// Drives the full-screen Ask experience, launched from the floating
+    /// button overlaid above the tab bar.
+    @State private var showingAsk = false
+
     var body: some View {
         TabView(selection: $navigation.selectedTab) {
             // Tabs are data-driven: render each tab in the user's saved order.
@@ -51,6 +55,17 @@ struct ContentView: View {
         }
         .environmentObject(navigation)
         .environmentObject(liveStore)
+        // Floating Ask entry point, overlaid above the tab bar. The bottom
+        // padding lifts it clear of the ~49pt tab bar; trailing inset matches
+        // the standard system margin.
+        .overlay(alignment: .bottomTrailing) {
+            AskFloatingButton { showingAsk = true }
+                .padding(.trailing, 18)
+                .padding(.bottom, 66)
+        }
+        .fullScreenCover(isPresented: $showingAsk) {
+            AskView()
+        }
         // User's System/Light/Dark choice, applied over the device appearance.
         // Cascades to every tab and the tab bar.
         .appearanceOverride()

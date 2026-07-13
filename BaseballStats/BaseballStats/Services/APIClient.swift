@@ -17,6 +17,10 @@ enum APIError: Error, LocalizedError {
     case invalidURL
     case invalidResponse
     case notFound(String)
+    /// HTTP 429 — the per-device or global daily question quota on /ask was
+    /// hit. Carries a friendly, already-user-ready message so callers can
+    /// surface it verbatim instead of an alarming "error".
+    case rateLimited(String)
     case http(status: Int, message: String?)
     case decoding(underlying: Error)
     case transport(underlying: Error)
@@ -29,6 +33,8 @@ enum APIError: Error, LocalizedError {
             return "Server returned an unexpected response."
         case .notFound(let detail):
             return detail
+        case .rateLimited(let message):
+            return message
         case .http(let status, let message):
             return message ?? "Server error (\(status))."
         case .decoding(let err):
@@ -380,6 +386,29 @@ final class APIClient {
         return try await getOptional(url)
     }
 
+    /// `POST /ask` — natural-language stats question. The question travels in
+    /// the JSON body (`{"question": ...}`); every device sends a stable
+    /// `X-Device-Id` header the backend uses for its per-device daily quota.
+    ///
+    /// The response is a single variable-shape object (`AskResponse`) with
+    /// all-optional fields — declines, ambiguous names, and out-of-scope are
+    /// returned as 200 with the relevant flag set, NOT as errors. Only
+    /// transport failures, a 429 quota hit (`.rateLimited`), or a malformed
+    /// body throw.
+    ///
+    /// `playerId` pins the question to a specific MLBAM id when the user taps
+    /// a candidate from an ambiguous-name prompt. It's sent as a query param
+    /// so the backend can honor it without changing the body contract; until
+    /// the backend reads it, a re-ask simply resolves the name again.
+    func ask(question: String, playerId: Int? = nil) async throws -> AskResponse {
+        var query: [URLQueryItem] = []
+        if let playerId {
+            query.append(URLQueryItem(name: "player_id", value: String(playerId)))
+        }
+        let url = try buildURL(path: "/ask", query: query)
+        return try await post(url, body: ["question": question])
+    }
+
     // MARK: - Internals
 
     private func buildURL(path: String, query: [URLQueryItem] = []) throws -> URL {
@@ -433,6 +462,53 @@ final class APIClient {
             return value
         } catch APIError.notFound {
             return nil
+        }
+    }
+
+    /// Generic POST that JSON-encodes `body`, attaches the device id header,
+    /// and decodes the response into `T`. Uses a 30s timeout because /ask can
+    /// run two LLM round-trips plus a DuckDB scan. Maps 429 to
+    /// `.rateLimited` so the quota message can be shown verbatim.
+    private func post<T: Decodable>(_ url: URL, body: [String: Any]) async throws -> T {
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(DeviceID.current, forHTTPHeaderField: "X-Device-Id")
+        request.timeoutInterval = 30
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        } catch {
+            throw APIError.decoding(underlying: error)
+        }
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            throw APIError.transport(underlying: error)
+        }
+
+        guard let http = response as? HTTPURLResponse else {
+            throw APIError.invalidResponse
+        }
+
+        switch http.statusCode {
+        case 200..<300:
+            do {
+                return try decoder.decode(T.self, from: data)
+            } catch {
+                throw APIError.decoding(underlying: error)
+            }
+        case 429:
+            throw APIError.rateLimited(
+                decodeDetail(from: data)
+                    ?? "You've reached today's question limit. Try again tomorrow."
+            )
+        case 404:
+            throw APIError.notFound(decodeDetail(from: data) ?? "Not found.")
+        default:
+            throw APIError.http(status: http.statusCode, message: decodeDetail(from: data))
         }
     }
 

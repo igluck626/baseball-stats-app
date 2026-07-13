@@ -6696,6 +6696,14 @@ def plays_rate_leaderboard(
 # extraction task, so Haiku is plenty.
 _ASK_MODEL = "claude-haiku-4-5-20251001"
 
+# Appended to every /ask phrasing prompt so the model returns clean prose the
+# app can show verbatim. The iOS client also renders markdown defensively, but
+# the model should not emit any — literal ** / # leaking into the UI is exactly
+# the failure this prevents.
+_PLAIN_TEXT_RULE = (
+    " Respond in PLAIN TEXT only. Do NOT use markdown: no asterisks, no hash "
+    "headers, no bold, no bullet-point syntax. Write natural prose sentences.")
+
 # Tool the model calls to run a situational count. Its input schema mirrors
 # _run_situational's params EXACTLY, so whatever the model fills in maps 1:1.
 _ASK_QUERY_TOOL = {
@@ -7242,13 +7250,14 @@ def ask(request: Request,
                 model=_ASK_MODEL, max_tokens=400,
                 system=(
                     "You present a baseball LEADERBOARD from the given ranked data. "
-                    "Lead with the leader and their count, then list the players "
-                    "behind them — e.g. 'Barry Bonds leads with 762 career home "
-                    "runs. Behind him: Hank Aaron (755), Babe Ruth (714), ...'. "
-                    "Include ALL the given rows, in order. Use ONLY the given rows; "
-                    "invent nothing. If game_coverage.complete is false, state its "
-                    "note (coverage may distort the ranking). If count_data has a "
-                    "note, include it. No editorializing."),
+                    "Lead with the leader and their count, then name just the next "
+                    "few behind them — e.g. 'Barry Bonds leads with 762 career home "
+                    "runs, ahead of Hank Aaron (755) and Babe Ruth (714).' Do NOT "
+                    "enumerate every row; the full ranked list is shown separately. "
+                    "Use ONLY the given rows; invent nothing. If "
+                    "game_coverage.complete is false, state its note (coverage may "
+                    "distort the ranking). If count_data has a note, include it. "
+                    "No editorializing." + _PLAIN_TEXT_RULE),
                 messages=[{"role": "user",
                            "content": "Question: " + q + "\nData: " + json.dumps(facts)}],
             )
@@ -7324,7 +7333,7 @@ def ask(request: Request,
             "pitch-count data wasn't recorded for that situation — do NOT invent. "
             "If game_coverage.complete is false, include its note (a rate from "
             "partial coverage is a fair estimate, so present it but note the "
-            "coverage). No editorializing.")
+            "coverage). No editorializing." + _PLAIN_TEXT_RULE)
 
         if tool_name == "query_rates":
             base["rates"] = result.get("rates")
@@ -7347,7 +7356,13 @@ def ask(request: Request,
                                 for s in (result.get("splits") or [])],
                      "game_coverage": result.get("game_coverage"),
                      "count_data": result.get("count_data")}
-            ans = _phrase(rate_rules + " Present each split as a short line.", facts, 400)
+            ans = _phrase(
+                rate_rules + " The split numbers are shown in a table, so do NOT "
+                "list them line by line. Instead give ONE or TWO sentences of "
+                "insight comparing the splits — how the player fares across the "
+                "dimension and any notable gap (e.g. 'Aaron Judge hits lefties and "
+                "righties almost identically, with a bit more power against "
+                "left-handers.').", facts, 400)
             sp = result.get("splits") or []
             base["answer"] = ans or (
                 "; ".join(f'{s["split_value"]}: {s.get("AVG")}/{s.get("OBP")}/{s.get("SLG")}'
@@ -7369,10 +7384,12 @@ def ask(request: Request,
                      "count_data": result.get("count_data")}
             ans = _phrase(
                 "You present a baseball RATE leaderboard. Lead with the leader and "
-                f"their {stat} (three decimals), then the rest in order. ALWAYS "
-                f"state the qualifier: 'minimum {mp} plate appearances in the "
-                "situation'. Use ONLY the given rows. If game_coverage.complete is "
-                "false, include its note. No editorializing.", facts, 400)
+                f"their {stat} (three decimals), then name just a few behind them; "
+                "the full ranked list is shown separately, so do NOT enumerate "
+                f"every row. ALWAYS state the qualifier: 'minimum {mp} plate "
+                "appearances in the situation'. Use ONLY the given rows. If "
+                "game_coverage.complete is false, include its note. No "
+                "editorializing." + _PLAIN_TEXT_RULE, facts, 400)
             base["answer"] = ans or (
                 f"(min. {mp} PA) " + "; ".join(
                     f'{t["rank"]}. {t["player"]} {t["value"]}' for t in top)
@@ -7475,7 +7492,7 @@ def ask(request: Request,
                 "94% of 1927 games with play-by-play data, ...'). (3) If "
                 "count_data has a note and a number is given, include the note. "
                 "Never present a partial or no-data count as a definitive total. "
-                "No editorializing."),
+                "No editorializing." + _PLAIN_TEXT_RULE),
             messages=[{"role": "user",
                        "content": "Question: " + q + "\nData: " + json.dumps(facts)}],
         )
