@@ -5787,7 +5787,9 @@ def _run_situational(
     outs: int | None = None, inning: int | None = None,
     base_state: str | None = None, season: int | None = None,
     season_start: int | None = None, season_end: int | None = None,
-    game_type: str | None = None, sample_limit: int = 10,
+    game_type: str | None = None,
+    pitcher_hand: str | None = None, batter_side: str | None = None,
+    home_away: str | None = None, sample_limit: int = 10,
 ):
     """Core situational query, shared by GET /plays/situational and POST /ask.
     Raises HTTPException on bad input / missing store (400/404/503); returns the
@@ -5866,6 +5868,8 @@ def _run_situational(
     elif bs == "loaded":
         where.append("(BASE1_RUN_ID IS NOT NULL AND BASE2_RUN_ID IS NOT NULL "
                       "AND BASE3_RUN_ID IS NOT NULL)")
+    hw, hp, hand_meta = _hand_venue_clauses(pitcher_hand, batter_side, home_away)
+    where += hw; params += hp
     clause = " AND ".join(where)
 
     # ---- run (count + sample), timed ------------------------------------
@@ -5940,7 +5944,7 @@ def _run_situational(
             "event": event, "event_cd": event_cd, "balls": balls,
             "strikes": strikes, "outs": outs, "inning": inning,
             "base_state": bs, "season": season, "season_start": season_start,
-            "season_end": season_end, "game_type": gt,
+            "season_end": season_end, "game_type": gt, **hand_meta,
         },
         "count":         count,
         "sample":        sample,
@@ -6084,7 +6088,8 @@ def _leaderboard_gates(cur, lo, hi, uses_count, scoped):
 
 def _run_leaderboard(event=None, role="bat", balls=None, strikes=None, outs=None,
                      inning=None, base_state=None, season=None, season_start=None,
-                     season_end=None, game_type=None, limit=10):
+                     season_end=None, game_type=None,
+                     pitcher_hand=None, batter_side=None, home_away=None, limit=10):
     """'Who has the most <event> in situation Y' — the plays store keyed the same
     way, but GROUP BY the batter/pitcher id instead of filtering to one player,
     ranked DESC. Coverage gates (see _leaderboard_gates) can DECLINE a badly
@@ -6142,10 +6147,13 @@ def _run_leaderboard(event=None, role="bat", balls=None, strikes=None, outs=None
     elif bs == "loaded":
         where.append("(BASE1_RUN_ID IS NOT NULL AND BASE2_RUN_ID IS NOT NULL "
                      "AND BASE3_RUN_ID IS NOT NULL)")
+    hw, hp, hand_meta = _hand_venue_clauses(pitcher_hand, batter_side, home_away)
+    where += hw; params += hp
     clause = " AND ".join(where)
     filters = {"event": canon, "role": role, "balls": balls, "strikes": strikes,
                "outs": outs, "inning": inning, "base_state": bs, "season": season,
-               "season_start": season_start, "season_end": season_end, "game_type": gt}
+               "season_start": season_start, "season_end": season_end,
+               "game_type": gt, **hand_meta}
 
     def _base(**extra):
         out = {"resolved": True, "source": "plays_leaderboard", "filters": filters,
@@ -6311,6 +6319,32 @@ def _derive_rates(c):
             "AVG": avg, "OBP": obp, "SLG": slg, "OPS": ops}
 
 
+def _hand_venue_clauses(pitcher_hand=None, batter_side=None, home_away=None):
+    """Handedness / venue FILTERS -> (where_fragments, params, echo_meta).
+    Shared by _situ_clauses (rates/splits/rate-lb), _run_situational (counts),
+    and _run_leaderboard so every path filters identically — and so the
+    constraint validator can inject the same param into whichever tool the model
+    chose."""
+    where = []; params = []
+    ph = bat_hand = ha = None
+    if pitcher_hand is not None:
+        ph = str(pitcher_hand).strip().upper()
+        if ph not in ("L", "R"):
+            raise HTTPException(status_code=400, detail="pitcher_hand must be 'L' or 'R'")
+        where.append("PIT_HAND_CD = ?"); params.append(ph)
+    if batter_side is not None:
+        bat_hand = str(batter_side).strip().upper()
+        if bat_hand not in ("L", "R"):
+            raise HTTPException(status_code=400, detail="batter_side must be 'L' or 'R'")
+        where.append("BAT_HAND_CD = ?"); params.append(bat_hand)
+    if home_away is not None:
+        ha = str(home_away).strip().lower()
+        if ha not in ("home", "away"):
+            raise HTTPException(status_code=400, detail="home_away must be 'home' or 'away'")
+        where.append("BAT_HOME_ID = ?"); params.append(1 if ha == "home" else 0)
+    return where, params, {"pitcher_hand": ph, "batter_side": bat_hand, "home_away": ha}
+
+
 def _situ_clauses(balls, strikes, outs, inning, base_state,
                   season, season_start, season_end, game_type,
                   pitcher_hand=None, batter_side=None, home_away=None):
@@ -6339,27 +6373,12 @@ def _situ_clauses(balls, strikes, outs, inning, base_state,
         else:
             where.append("(BASE1_RUN_ID IS NOT NULL AND BASE2_RUN_ID IS NOT NULL "
                          "AND BASE3_RUN_ID IS NOT NULL)")
-    # ---- handedness / venue FILTERS (single rate line, not a split) --------
-    ph = bat_hand = ha = None
-    if pitcher_hand is not None:
-        ph = str(pitcher_hand).strip().upper()
-        if ph not in ("L", "R"):
-            raise HTTPException(status_code=400, detail="pitcher_hand must be 'L' or 'R'")
-        where.append("PIT_HAND_CD = ?"); params.append(ph)
-    if batter_side is not None:
-        bat_hand = str(batter_side).strip().upper()
-        if bat_hand not in ("L", "R"):
-            raise HTTPException(status_code=400, detail="batter_side must be 'L' or 'R'")
-        where.append("BAT_HAND_CD = ?"); params.append(bat_hand)
-    if home_away is not None:
-        ha = str(home_away).strip().lower()
-        if ha not in ("home", "away"):
-            raise HTTPException(status_code=400, detail="home_away must be 'home' or 'away'")
-        where.append("BAT_HOME_ID = ?"); params.append(1 if ha == "home" else 0)
+    # handedness / venue FILTERS — shared with the count paths
+    hw, hp, hmeta = _hand_venue_clauses(pitcher_hand, batter_side, home_away)
+    where += hw; params += hp
     meta = {"balls": balls, "strikes": strikes, "outs": outs, "inning": inning,
             "base_state": bs, "season": season, "season_start": season_start,
-            "season_end": season_end, "game_type": gt,
-            "pitcher_hand": ph, "batter_side": bat_hand, "home_away": ha}
+            "season_end": season_end, "game_type": gt, **hmeta}
     return where, params, meta
 
 
@@ -6758,6 +6777,19 @@ _PLAIN_TEXT_RULE = (
     " Respond in PLAIN TEXT only. Do NOT use markdown: no asterisks, no hash "
     "headers, no bold, no bullet-point syntax. Write natural prose sentences.")
 
+# Handedness / venue FILTERS, shared by every tool that can apply them — the
+# count tools (query_situational, query_leaderboard) and, via _ASK_SITU_PROPS,
+# the rate tools. One definition so every tool advertises them identically and
+# the constraint validator can inject into whichever tool the model picked.
+_ASK_FILTER_PROPS = {
+    "pitcher_hand": {"type": "string", "enum": ["L", "R"], "description":
+                     "filter to PAs vs a Left- or Right-handed PITCHER ('against lefties'/'vs RHP')"},
+    "batter_side": {"type": "string", "enum": ["L", "R"], "description":
+                    "filter to PAs where the BATTER hit from the Left or Right side"},
+    "home_away": {"type": "string", "enum": ["home", "away"], "description":
+                  "filter to HOME or AWAY games"},
+}
+
 # Tool the model calls to run a situational count. Its input schema mirrors
 # _run_situational's params EXACTLY, so whatever the model fills in maps 1:1.
 _ASK_QUERY_TOOL = {
@@ -6791,6 +6823,7 @@ _ASK_QUERY_TOOL = {
                           "R=regular season (DEFAULT — omit for normal questions), "
                           "P=postseason/playoffs/World Series, ALL=regular season + "
                           "postseason combined. Only set this when the user explicitly asks."},
+            **_ASK_FILTER_PROPS,
         },
         "required": ["player"],
     },
@@ -6831,6 +6864,7 @@ _ASK_LEADERBOARD_TOOL = {
                       "description": "How many players to return; default 10. Do NOT "
                                      "set this to 1 just because the question says "
                                      "'the most' — a leaderboard wants the ranked list."},
+            **_ASK_FILTER_PROPS,
         },
         "required": ["event"],
     },
@@ -6851,12 +6885,7 @@ _ASK_SITU_PROPS = {   # the shared situational params (reused by the rate tools)
     # Single-line FILTERS — narrow to the matching plate appearances. Distinct
     # from split_by, which GROUPS BY a dimension: "vs lefties" is a FILTER (one
     # rate line), "by pitcher hand" is a SPLIT (a two-row table).
-    "pitcher_hand": {"type": "string", "enum": ["L", "R"], "description":
-                     "filter to PAs vs a Left- or Right-handed PITCHER ('against lefties'/'vs RHP')"},
-    "batter_side": {"type": "string", "enum": ["L", "R"], "description":
-                    "filter to PAs where the BATTER hit from the Left or Right side"},
-    "home_away": {"type": "string", "enum": ["home", "away"], "description":
-                  "filter to HOME or AWAY games"},
+    **_ASK_FILTER_PROPS,
 }
 
 _ASK_RATES_TOOL = {
@@ -7148,6 +7177,94 @@ def _ask_log_write(q, norm, tool_name, tool_input, base, cached, id_hash,
                         exc_info=True)
 
 
+# --- Deterministic constraint validation (LLM proposes, CODE disposes) -------
+# The model is non-deterministic: it will sometimes DROP a constraint it can
+# express (silently answering a broader question) or ANSWER one it can't. A
+# prompt rule can't fix this reliably, so after the translation we scan the raw
+# question ourselves — the same "facts enforced in code, not left to the model"
+# discipline as the coverage gates — and either inject a dropped filter or
+# decline an unsupported one.
+
+# Conditions named in a question that NO tool can express. (regex, reason). Any
+# match -> decline, whatever the model returned.
+_UNSUPPORTED_CONSTRAINTS = [
+    (r"\bday games?\b|\bnight games?\b|\bat night\b|\bin the day\b|\bday or night\b"
+     r"|\bday[- ]night\b|\bunder the lights\b|\bafternoon games?\b", "day vs night"),
+    (r"\bone[- ]run\b|\b1[- ]run\b|\bclose games?\b|\bblowouts?\b|\btie games?\b"
+     r"|\btied games?\b|\bextra innings?\b|\bhigh[- ]leverage\b|\bin the clutch\b"
+     r"|\bclutch\b|\bwalk[- ]?offs?\b|\blate and close\b", "game score or leverage"),
+    (r"\bsinker\w*|\bfastball\w*|\bcurveball\w*|\bsliders?\b|\bchange[- ]?ups?\b"
+     r"|\bcutters?\b|\bsplitters?\b|\bknuckle\w*|\bbreaking balls?\b|\boff[- ]?speed\b"
+     r"|\bpitch type\b|\b4[- ]?seam\w*|\btwo[- ]?seam\w*", "pitch type"),
+    (r"\bgrass\b|\bturf\b|\bastroturf\b|\bartificial surface\b|\bplaying surface\b"
+     r"|\bnatural grass\b", "grass vs turf"),
+    (r"\bclean[- ]?up\b|\blead[- ]?off\b|\bbatting (?:first|second|third|fourth|fifth"
+     r"|sixth|seventh|eighth|ninth|\d(?:st|nd|rd|th)?)\b|\bbatting order\b"
+     r"|\blineup (?:spot|slot|position)\b|\bin the \d(?:st|nd|rd|th) (?:spot|hole)\b",
+     "batting-order slot"),
+    (r"\brain\w*|\bweather\b|\bwindy\b|\bwind\b|\bhumid\w*|\bdome\b|\btemperature\b"
+     r"|\bdegrees\b|\bsnow\w*|\bindoors?\b|\boutdoors?\b", "weather or ballpark conditions"),
+]
+
+
+def _detect_constraints(question):
+    """Scan the RAW question. Returns (inject, unsupported):
+      inject      = {param: value} the question names AND we can express — used
+                    to repair a filter the model dropped.
+      unsupported = [reason, ...] the question names but no tool can express —
+                    used to decline rather than answer a broader question."""
+    import re
+    ql = " " + (question or "").lower() + " "
+
+    inject = {}
+    # handedness: PITCHER by default; BATTER only when the hitter is clearly meant
+    # (an explicit batter word and none of pitch/vs/against/off, which read as
+    # "vs a lefty pitcher").
+    lh = re.search(r"\b(left[- ]?hand\w*|lefties|lefty|southpaw\w*|lhp)\b", ql)
+    rh = re.search(r"\b(right[- ]?hand\w*|righties|righty|rhp)\b", ql)
+    if lh or rh:
+        val = "L" if lh else "R"
+        m = lh or rh
+        win = ql[max(0, m.start() - 30):m.end() + 30]
+        pitcherish = re.search(r"pitch|throw|southpaw|\blhp\b|\brhp\b|hurler"
+                               r"|\bvs\b|\bagainst\b|\boff\b", win)
+        batterish = re.search(r"\bbats?\b|\bbatter\b|\bbatting\b|\bhitter\b|\bas a\b", win)
+        inject["batter_side" if (batterish and not pitcherish) else "pitcher_hand"] = val
+    # home / away
+    if re.search(r"\bat home\b|\bhome games?\b|\bin home games?\b", ql):
+        inject["home_away"] = "home"
+    elif re.search(r"\bon the road\b|\broad games?\b|\baway games?\b"
+                   r"|\bas the (?:road|visiting) team\b", ql):
+        inject["home_away"] = "away"
+    # base state
+    if re.search(r"\bbases loaded\b|\bbases full\b|\bgrand slam", ql):
+        inject.setdefault("base_state", "loaded")
+    elif re.search(r"\brisp\b|runners? in scoring position|scoring position"
+                   r"|runner on (?:second|third|2nd|3rd)", ql):
+        inject.setdefault("base_state", "risp")
+    # count (only alongside the word 'count' so a score like "won 3-2" isn't read as one)
+    if re.search(r"\bfull count\b", ql):
+        inject.setdefault("balls", 3); inject.setdefault("strikes", 2)
+    else:
+        mc = re.search(r"\b([0-3])[- ]([0-2])\s+count\b", ql)
+        if mc:
+            inject.setdefault("balls", int(mc.group(1)))
+            inject.setdefault("strikes", int(mc.group(2)))
+
+    unsupported = []
+    for pat, reason in _UNSUPPORTED_CONSTRAINTS:
+        if reason not in unsupported and re.search(pat, ql):
+            unsupported.append(reason)
+    return inject, unsupported
+
+
+def _unsupported_reason(reasons):
+    cond = reasons[0] if len(reasons) == 1 else \
+        ", ".join(reasons[:-1]) + " or " + reasons[-1]
+    return (f"I can't filter on {cond} — that isn't in the play-by-play data I "
+            "have, so I won't guess. Try the question without that condition.")
+
+
 @app.post("/ask")
 def ask(request: Request,
         question: str = Body(..., embed=True,
@@ -7243,6 +7360,25 @@ def ask(request: Request,
                        in_tok, out_tok, timing)
         return base
 
+    # ---- deterministic constraint validation (LLM proposes, CODE disposes) --
+    # Runs for any answerable tool, on BOTH the fresh and cached translation, so
+    # a dropped/unsupported constraint can never slip through non-deterministically.
+    if tool_name in _ANSWERABLE and tool_input is not None:
+        _inject, _unsupported = _detect_constraints(q)
+        if _unsupported:
+            base["out_of_scope"] = True
+            base["reason"] = _unsupported_reason(_unsupported)
+            base["answer"] = base["reason"]
+            base["understood_as"] = None
+            log.warning("ask: CODE-DECLINED unsupported %s (model chose %s %s) for %r",
+                        _unsupported, tool_name, tool_input, q)
+            return _finish()
+        for _param, _value in _inject.items():
+            if tool_input.get(_param) is None:
+                tool_input[_param] = _value   # base['understood_as'] is this dict — stays in sync
+                log.warning("ask: model DROPPED %s=%r (tool %s) for %r; injected in code",
+                            _param, _value, tool_name, q)
+
     # ---- out of scope / no usable tool call -----------------------------
     if tool_name not in _ANSWERABLE:
         reason = ((tool_input or {}).get("reason") if tool_name == "cannot_answer"
@@ -7256,7 +7392,8 @@ def ask(request: Request,
     if tool_name == "query_leaderboard":
         lb_params = {k: tool_input.get(k) for k in (
             "event", "role", "balls", "strikes", "outs", "inning", "base_state",
-            "season", "season_start", "season_end", "game_type", "limit")
+            "season", "season_start", "season_end", "game_type", "limit",
+            "pitcher_hand", "batter_side", "home_away")
             if tool_input.get(k) is not None}
         asked = [lb_params[k] for k in ("season", "season_start", "season_end")
                  if lb_params.get(k) is not None]
@@ -7269,8 +7406,13 @@ def ask(request: Request,
         t0 = time.perf_counter()
         try:
             # plain (no situation) -> complete season-stats leaderboard; else plays
+            # handedness/venue are play-by-play only — like the count filters,
+            # they must force the plays route (the complete-season leaderboard
+            # can't express them, so treating them as "situational" is what keeps
+            # a "most HR off lefties" board from silently ranking overall HRs).
             lb_situ = any(lb_params.get(k) is not None
-                          for k in ("balls", "strikes", "outs", "inning", "base_state"))
+                          for k in ("balls", "strikes", "outs", "inning", "base_state",
+                                    "pitcher_hand", "batter_side", "home_away"))
             result = None
             if not lb_situ:
                 result = _run_season_leaderboard(
@@ -7406,7 +7548,8 @@ def ask(request: Request,
     # ---- 2. execute the situational query -------------------------------
     params = {k: tool_input.get(k) for k in (
         "player", "role", "event", "balls", "strikes", "outs", "inning",
-        "base_state", "season", "season_start", "season_end", "game_type")
+        "base_state", "season", "season_start", "season_end", "game_type",
+        "pitcher_hand", "batter_side", "home_away")
         if tool_input.get(k) is not None}
     if not params.get("player"):
         base["out_of_scope"] = True
