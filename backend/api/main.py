@@ -7217,19 +7217,14 @@ def _detect_constraints(question):
     ql = " " + (question or "").lower() + " "
 
     inject = {}
-    # handedness: PITCHER by default; BATTER only when the hitter is clearly meant
-    # (an explicit batter word and none of pitch/vs/against/off, which read as
-    # "vs a lefty pitcher").
+    # Handedness is ONE logical constraint; whether "vs lefties" means the
+    # PITCHER (for a hitter's line) or the BATTER (for a pitcher's line) depends
+    # on the subject's role, which only the model knows. So emit a generic
+    # marker and let the validator map it by role.
     lh = re.search(r"\b(left[- ]?hand\w*|lefties|lefty|southpaw\w*|lhp)\b", ql)
     rh = re.search(r"\b(right[- ]?hand\w*|righties|righty|rhp)\b", ql)
     if lh or rh:
-        val = "L" if lh else "R"
-        m = lh or rh
-        win = ql[max(0, m.start() - 30):m.end() + 30]
-        pitcherish = re.search(r"pitch|throw|southpaw|\blhp\b|\brhp\b|hurler"
-                               r"|\bvs\b|\bagainst\b|\boff\b", win)
-        batterish = re.search(r"\bbats?\b|\bbatter\b|\bbatting\b|\bhitter\b|\bas a\b", win)
-        inject["batter_side" if (batterish and not pitcherish) else "pitcher_hand"] = val
+        inject["handedness"] = "L" if lh else "R"
     # home / away
     if re.search(r"\bat home\b|\bhome games?\b|\bin home games?\b", ql):
         inject["home_away"] = "home"
@@ -7373,6 +7368,17 @@ def ask(request: Request,
             log.warning("ask: CODE-DECLINED unsupported %s (model chose %s %s) for %r",
                         _unsupported, tool_name, tool_input, q)
             return _finish()
+        # Handedness -> pitcher_hand OR batter_side, chosen by role. Inject only
+        # if the model set NEITHER (a true drop): a pitcher "against lefties"
+        # faces left-handed BATTERS; a hitter "against lefties" faces left-handed
+        # PITCHERS. If the model already picked a side, trust it (don't double up).
+        _hand = _inject.pop("handedness", None)
+        if _hand and tool_input.get("pitcher_hand") is None \
+                and tool_input.get("batter_side") is None:
+            _side = "batter_side" if tool_input.get("role") == "pit" else "pitcher_hand"
+            tool_input[_side] = _hand
+            log.warning("ask: model dropped handedness; injected %s=%r (tool %s) for %r",
+                        _side, _hand, tool_name, q)
         for _param, _value in _inject.items():
             if tool_input.get(_param) is None:
                 tool_input[_param] = _value   # base['understood_as'] is this dict — stays in sync
@@ -7559,7 +7565,11 @@ def ask(request: Request,
 
     # ---- GATE 0: routing predicate (deterministic, not LLM judgment) ----
     # A SITUATIONAL SPLIT iff any of these is present; else a PLAIN TOTAL.
-    situ_keys = ("balls", "strikes", "outs", "inning", "base_state")
+    # Handedness/venue are play-by-play only — season-stats totals can't be split
+    # by them, so they MUST count as situational or a "HR off lefties" count
+    # would route to season stats and silently drop the filter (return the total).
+    situ_keys = ("balls", "strikes", "outs", "inning", "base_state",
+                 "pitcher_hand", "batter_side", "home_away")
     is_split = any(params.get(k) is not None for k in situ_keys)
 
     # GATE 3 (floor) for the plays route: whole queried range before 1910.
