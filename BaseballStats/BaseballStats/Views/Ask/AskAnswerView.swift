@@ -36,10 +36,14 @@ struct AskAnswerView: View {
             } else if let leaders = response.leaders, !leaders.isEmpty {
                 // DATA-FIRST: a leaderboard IS the ranked list.
                 leadersSection(leaders)
+            } else if let rates = response.rates {
+                // DATA-FIRST: a stat line IS the answer — shown up front, with
+                // the extra component counts behind a disclosure. No prose
+                // reciting AVG/OBP/SLG/OPS the row already shows.
+                ratesSection(rates)
             } else {
-                // A single count or rate: the phrased sentence leads, the
-                // detail (sample plays / full stat line) sits behind a
-                // disclosure.
+                // A single count: the phrased sentence IS the answer, with any
+                // sample plays behind a disclosure.
                 answerSection
             }
         }
@@ -56,10 +60,10 @@ struct AskAnswerView: View {
     }
 
     private var hasDetails: Bool {
-        response.rates != nil || !(response.sample?.isEmpty ?? true)
+        !(response.sample?.isEmpty ?? true)
     }
 
-    // MARK: - Single answer (count / rate): prose + disclosure
+    // MARK: - Single answer (count): prose + optional sample disclosure
 
     private var answerSection: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -89,21 +93,50 @@ struct AskAnswerView: View {
         }
     }
 
-    /// Detail for a single answer: the full stat line and/or sample plays.
-    /// (Leaders and splits are data-first and never routed through here.)
+    /// Detail for a single count: the sample plays. (Rates, leaders, and
+    /// splits are data-first and never routed through here.)
     @ViewBuilder
     private var detailContent: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            if let rates = response.rates {
-                ratesLine(rates)
-            }
-            if let sample = response.sample, !sample.isEmpty {
-                sampleList(sample)
-            }
+        if let sample = response.sample, !sample.isEmpty {
+            sampleList(sample)
         }
     }
 
     // MARK: - Data-first sections
+
+    /// A rate line: the slash line + core counts up front (the answer), the
+    /// remaining component counts behind a disclosure. No prose.
+    private func ratesSection(_ rates: AskRates) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ratesLine(rates)
+            if let components = rateComponents(rates) {
+                DisclosureGroup {
+                    Text(components)
+                        .font(.caption)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 4)
+                } label: {
+                    Text("More")
+                        .font(.subheadline.weight(.semibold))
+                }
+                .tint(.secondary)
+            }
+            coverageFootnote
+        }
+    }
+
+    /// The component counts not in the headline line: 2B/3B/BB/HBP/SF/SO.
+    private func rateComponents(_ r: AskRates) -> String? {
+        var parts: [String] = []
+        if let x = r.doubles { parts.append("\(x) 2B") }
+        if let x = r.triples { parts.append("\(x) 3B") }
+        if let x = r.BB { parts.append("\(x) BB") }
+        if let x = r.HBP { parts.append("\(x) HBP") }
+        if let x = r.SF { parts.append("\(x) SF") }
+        if let x = r.SO { parts.append("\(x) SO") }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
 
     private func splitsSection(_ splits: [AskSplit]) -> some View {
         VStack(alignment: .leading, spacing: 12) {

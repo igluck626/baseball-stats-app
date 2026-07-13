@@ -94,14 +94,21 @@ struct AskLeader: Decodable, Identifiable {
     var id: String { retro_id ?? "\(rank ?? 0)-\(player_name ?? "?")" }
 }
 
-/// The slash line + volume for a single rate query.
+/// The slash line + volume for a single rate query. The core set (PA/AB/H/HR/
+/// RBI + the slash line) is shown up front; the rest (2B/3B/BB/HBP/SF/SO) is
+/// the "More" detail.
 struct AskRates: Decodable {
     let PA: Int?
     let AB: Int?
     let H: Int?
+    let doubles: Int?
+    let triples: Int?
     let HR: Int?
     let RBI: Int?
     let SO: Int?
+    let BB: Int?
+    let HBP: Int?
+    let SF: Int?
     let AVG: Double?
     let OBP: Double?
     let SLG: Double?

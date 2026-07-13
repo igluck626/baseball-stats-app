@@ -6312,9 +6312,12 @@ def _derive_rates(c):
 
 
 def _situ_clauses(balls, strikes, outs, inning, base_state,
-                  season, season_start, season_end, game_type):
-    """Shared situational filters (no player, no event) — the same set
-    _run_situational uses. Returns (clauses, params, echo_meta); validates enums."""
+                  season, season_start, season_end, game_type,
+                  pitcher_hand=None, batter_side=None, home_away=None):
+    """Shared situational filters (no player, no event). Returns
+    (clauses, params, echo_meta); validates enums. pitcher_hand / batter_side /
+    home_away are single-line FILTERS (narrow the rows) — not split_by, which
+    groups."""
     where = []; params = []
     if balls is not None:        where.append("BALLS_CT = ?");   params.append(balls)
     if strikes is not None:      where.append("STRIKES_CT = ?"); params.append(strikes)
@@ -6336,9 +6339,27 @@ def _situ_clauses(balls, strikes, outs, inning, base_state,
         else:
             where.append("(BASE1_RUN_ID IS NOT NULL AND BASE2_RUN_ID IS NOT NULL "
                          "AND BASE3_RUN_ID IS NOT NULL)")
+    # ---- handedness / venue FILTERS (single rate line, not a split) --------
+    ph = bat_hand = ha = None
+    if pitcher_hand is not None:
+        ph = str(pitcher_hand).strip().upper()
+        if ph not in ("L", "R"):
+            raise HTTPException(status_code=400, detail="pitcher_hand must be 'L' or 'R'")
+        where.append("PIT_HAND_CD = ?"); params.append(ph)
+    if batter_side is not None:
+        bat_hand = str(batter_side).strip().upper()
+        if bat_hand not in ("L", "R"):
+            raise HTTPException(status_code=400, detail="batter_side must be 'L' or 'R'")
+        where.append("BAT_HAND_CD = ?"); params.append(bat_hand)
+    if home_away is not None:
+        ha = str(home_away).strip().lower()
+        if ha not in ("home", "away"):
+            raise HTTPException(status_code=400, detail="home_away must be 'home' or 'away'")
+        where.append("BAT_HOME_ID = ?"); params.append(1 if ha == "home" else 0)
     meta = {"balls": balls, "strikes": strikes, "outs": outs, "inning": inning,
             "base_state": bs, "season": season, "season_start": season_start,
-            "season_end": season_end, "game_type": gt}
+            "season_end": season_end, "game_type": gt,
+            "pitcher_hand": ph, "batter_side": bat_hand, "home_away": ha}
     return where, params, meta
 
 
@@ -6358,7 +6379,7 @@ def _rate_span(cur, clause, params, season, season_start, season_end):
 
 def _run_rates(player, role="bat", balls=None, strikes=None, outs=None, inning=None,
                base_state=None, season=None, season_start=None, season_end=None,
-               game_type=None):
+               game_type=None, pitcher_hand=None, batter_side=None, home_away=None):
     """Situational RATE line (AVG/OBP/SLG/OPS + components) for one player.
     Coverage: game-coverage only CAVEATS (a rate is a ratio — numerator and
     denominator miss the same ~6%, so the rate stays a valid estimate; unlike a
@@ -6384,7 +6405,8 @@ def _run_rates(player, role="bat", balls=None, strikes=None, outs=None, inning=N
     resolved = cands[0]; retro = resolved["retro_id"]
     id_col = "PIT_ID" if role == "pit" else "BAT_ID"
     sclauses, sparams, meta = _situ_clauses(balls, strikes, outs, inning, base_state,
-                                            season, season_start, season_end, game_type)
+                                            season, season_start, season_end, game_type,
+                                            pitcher_hand, batter_side, home_away)
     clause = " AND ".join([f"{id_col} = ?"] + sclauses)
     params = [retro] + sparams
     try:
@@ -6430,7 +6452,8 @@ _SPLIT_DIMS = {
 
 def _run_splits(player, split_by, role="bat", balls=None, strikes=None, outs=None,
                 inning=None, base_state=None, season=None, season_start=None,
-                season_end=None, game_type=None):
+                season_end=None, game_type=None,
+                pitcher_hand=None, batter_side=None, home_away=None):
     """Rate line broken out BY a dimension (pitcher_hand / batter_side / home_away
     / season / game_type) — a table of {split_value, PA, AB, H, AVG, OBP, SLG, OPS}."""
     role = (role or "bat").lower()
@@ -6457,7 +6480,8 @@ def _run_splits(player, split_by, role="bat", balls=None, strikes=None, outs=Non
     resolved = cands[0]; retro = resolved["retro_id"]
     id_col = "PIT_ID" if role == "pit" else "BAT_ID"
     sclauses, sparams, meta = _situ_clauses(balls, strikes, outs, inning, base_state,
-                                            season, season_start, season_end, game_type)
+                                            season, season_start, season_end, game_type,
+                                            pitcher_hand, batter_side, home_away)
     clause = " AND ".join([f"{id_col} = ?"] + sclauses)
     params = [retro] + sparams
     try:
@@ -6501,7 +6525,8 @@ _RATE_LB_DEFAULT_MIN_PA = 50
 
 def _run_rate_leaderboard(stat="OPS", role="bat", balls=None, strikes=None, outs=None,
                           inning=None, base_state=None, season=None, season_start=None,
-                          season_end=None, game_type=None, min_pa=None, limit=10):
+                          season_end=None, game_type=None, min_pa=None, limit=10,
+                          pitcher_hand=None, batter_side=None, home_away=None):
     stat = (stat or "OPS").upper()
     if stat not in _RATE_STATS:
         raise HTTPException(status_code=400, detail=f"stat must be one of {_RATE_STATS}")
@@ -6521,7 +6546,8 @@ def _run_rate_leaderboard(stat="OPS", role="bat", balls=None, strikes=None, outs
 
     id_col = "PIT_ID" if role == "pit" else "BAT_ID"
     sclauses, sparams, meta = _situ_clauses(balls, strikes, outs, inning, base_state,
-                                            season, season_start, season_end, game_type)
+                                            season, season_start, season_end, game_type,
+                                            pitcher_hand, batter_side, home_away)
     clause = " AND ".join([f"{id_col} IS NOT NULL", f"{id_col} <> ''"] + sclauses)
     params = list(sparams)
     order = {"AVG": "avg", "OBP": "obp", "SLG": "slg", "OPS": "ops"}[stat]
@@ -6822,6 +6848,15 @@ _ASK_SITU_PROPS = {   # the shared situational params (reused by the rate tools)
     "season_end": {"type": "integer"},
     "game_type": {"type": "string", "enum": ["R", "P", "ALL"], "description":
                   "R=regular season (DEFAULT), P=postseason, ALL=both; set only if asked"},
+    # Single-line FILTERS — narrow to the matching plate appearances. Distinct
+    # from split_by, which GROUPS BY a dimension: "vs lefties" is a FILTER (one
+    # rate line), "by pitcher hand" is a SPLIT (a two-row table).
+    "pitcher_hand": {"type": "string", "enum": ["L", "R"], "description":
+                     "filter to PAs vs a Left- or Right-handed PITCHER ('against lefties'/'vs RHP')"},
+    "batter_side": {"type": "string", "enum": ["L", "R"], "description":
+                    "filter to PAs where the BATTER hit from the Left or Right side"},
+    "home_away": {"type": "string", "enum": ["home", "away"], "description":
+                  "filter to HOME or AWAY games"},
 }
 
 _ASK_RATES_TOOL = {
@@ -6901,6 +6936,15 @@ _ASK_SYSTEM = (
     "OMITTING season means a CAREER total, which is a perfectly VALID query, NOT "
     "out of scope. Only add filters the question actually states; leave the rest "
     "out. 'How many X has <player> done' with no year = their career count of X.\n\n"
+    "NEVER SILENTLY DROP A CONSTRAINT. If the question names a condition you "
+    "cannot express in the chosen tool's parameters, you MUST call cannot_answer "
+    "with a reason (e.g. \"I can't filter by day vs night games yet\"). Do NOT "
+    "omit the condition and answer a broader question: answering \"his career "
+    "average\" when asked for \"his average against left-handers\" is a SERIOUS "
+    "error — a confident wrong answer with no signal that it's wrong. It is "
+    "ALWAYS better to say you cannot answer than to answer a DIFFERENT question. "
+    "Before you call a tool, check that EVERY condition the user stated maps to a "
+    "parameter; if even one does not, call cannot_answer instead.\n\n"
     "EVENT mapping: home run->HR, strikeout->K, walk->BB, hit by pitch->HBP, "
     "single->1B, double->2B, triple->3B. A 'grand slam' is a home run with the "
     "bases loaded: event=HR, base_state=loaded.\n\n"
@@ -6959,20 +7003,35 @@ _ASK_SYSTEM = (
     "- One player's rate in a situation -> query_rates. "
     "'What's Judge's average with RISP?' -> {player:'Judge', base_state:'risp'}. "
     "'Ohtani's OPS in the postseason' -> {player:'Ohtani', game_type:'P'}.\n"
+    "- A rate FILTERED by handedness or venue is still ONE line -> query_rates "
+    "with pitcher_hand / batter_side / home_away. 'How does Betts hit against "
+    "left-handed pitching?' -> {player:'Betts', pitcher_hand:'L'} (his line vs "
+    "lefties ONLY — NOT his overall career line, NOT a split table). "
+    "'Ohtani vs righties' -> {player:'Ohtani', pitcher_hand:'R'}. 'Judge at "
+    "home' -> {player:'Judge', home_away:'home'}.\n"
+    "- FILTER vs SPLIT — critical distinction: 'against lefties' / 'vs LHP' wants "
+    "ONE filtered line (query_rates, pitcher_hand:'L'); 'BY pitcher hand' / "
+    "'splits by hand' / 'vs lefties AND righties' wants the TABLE (query_splits, "
+    "split_by:'pitcher_hand'). Never answer 'against lefties' with a split, and "
+    "never answer it with his overall line.\n"
     "- A player's rates broken out BY a dimension -> query_splits (split_by = "
     "pitcher_hand / batter_side / home_away / season / game_type). 'Judge's stats "
     "by pitcher hand' -> {player:'Judge', split_by:'pitcher_hand'}. 'Betts home vs "
     "away' -> {player:'Betts', split_by:'home_away'}.\n"
     "- Rank players by a rate -> query_rate_leaderboard. 'Best average with the "
     "bases loaded' -> {stat:'AVG', base_state:'loaded'}. 'Highest OPS with two "
-    "strikes' -> {stat:'OPS', strikes:2}. Set min_pa=0 ONLY if the user says to "
+    "strikes' -> {stat:'OPS', strikes:2}. 'Who hits lefties best?' -> "
+    "{stat:'OPS', pitcher_hand:'L'}. Set min_pa=0 ONLY if the user says to "
     "include everyone regardless of playing time.\n\n"
     "OUT OF SCOPE (call cannot_answer) — only when the QUERY SHAPE can't do it:\n"
     "- ERA / WHIP / pitcher rate stats and other computed rates we don't support "
     "(we do AVG/OBP/SLG/OPS for hitters).\n"
     "- Streaks or spans ('in a row', 'consecutive', 'hitting streak').\n"
     "- Pitch type, velocity, exit velocity, or launch angle (not in Retrosheet).\n"
-    "- Anything requiring data before 1910 (the play-by-play starts at 1910).\n\n"
+    "- Anything requiring data before 1910 (the play-by-play starts at 1910).\n"
+    "- Conditions none of the tools can express: day vs night, weather, "
+    "ballpark, batting-order slot, defensive shift. If the question names one of "
+    "these, cannot_answer — do NOT drop it and answer without it.\n\n"
     "Call exactly one tool."
 )
 
@@ -7184,22 +7243,6 @@ def ask(request: Request,
                        in_tok, out_tok, timing)
         return base
 
-    def _phrase(system, facts, max_tokens=400):
-        """Run the phrasing model; return its text or None on failure."""
-        t0 = time.perf_counter()
-        out = None
-        try:
-            m = client.messages.create(
-                model=_ASK_MODEL, max_tokens=max_tokens, system=system,
-                messages=[{"role": "user",
-                           "content": "Question: " + q + "\nData: " + json.dumps(facts)}])
-            out = "".join(getattr(b, "text", "") for b in m.content
-                          if getattr(b, "type", None) == "text").strip()
-        except Exception as exc:  # noqa: BLE001
-            log.warning("ask phrasing failed: %s", exc)
-        timing["llm_phrase"] = round((time.perf_counter() - t0) * 1000, 1)
-        return out or None
-
     # ---- out of scope / no usable tool call -----------------------------
     if tool_name not in _ANSWERABLE:
         reason = ((tool_input or {}).get("reason") if tool_name == "cannot_answer"
@@ -7274,7 +7317,8 @@ def ask(request: Request,
     # ==== RATE tools (query_rates / query_splits / query_rate_leaderboard) ====
     if tool_name in ("query_rates", "query_splits", "query_rate_leaderboard"):
         situ_keys = ("role", "balls", "strikes", "outs", "inning", "base_state",
-                     "season", "season_start", "season_end", "game_type")
+                     "season", "season_start", "season_end", "game_type",
+                     "pitcher_hand", "batter_side", "home_away")
         t0 = time.perf_counter()
         try:
             if tool_name == "query_rates":
@@ -7323,27 +7367,22 @@ def ask(request: Request,
         base["game_coverage"] = result.get("game_coverage")
         base["count_data"] = result.get("count_data")
         base["player_resolved"] = result.get("player")
-        rate_rules = (
-            "You state baseball rate stats (AVG/OBP/SLG/OPS) factually from the "
-            "given data. Format rates as .311 (three decimals). Use ONLY the given "
-            "numbers. If rates is null or count_data.available is false, say the "
-            "pitch-count data wasn't recorded for that situation — do NOT invent. "
-            "If game_coverage.complete is false, include its note (a rate from "
-            "partial coverage is a fair estimate, so present it but note the "
-            "coverage). No editorializing." + _PLAIN_TEXT_RULE)
-
         if tool_name == "query_rates":
             base["rates"] = result.get("rates")
-            facts = {"question": q, "player": result["player"]["name"],
-                     "filters": result.get("filters"), "rates": result.get("rates"),
-                     "game_coverage": result.get("game_coverage"),
-                     "count_data": result.get("count_data")}
-            ans = _phrase(rate_rules, facts, 256)
-            r = result.get("rates")
-            base["answer"] = ans or (
-                f'{result["player"]["name"]}: {r.get("AVG")}/{r.get("OBP")}/{r.get("SLG")} '
-                f'({r.get("PA")} PA)' if r else
-                (result.get("count_data") or {}).get("note") or "No data for that situation.")
+            if result.get("rates") is None:
+                # The count-data gate declined (a balls/strikes filter with no
+                # recorded pitch counts for that era) — that caveat IS the
+                # answer, so keep it as prose.
+                note = (result.get("count_data") or {}).get("note")
+                base["declined"] = True
+                base["reason"] = note
+                base["answer"] = note or "No pitch-count data was recorded for that situation."
+            else:
+                # DATA-FIRST: the stat line IS the answer — no prose, no LLM
+                # call. This also stops the phrasing model from inventing a
+                # "pitch-count not recorded" caveat for a query that never
+                # filtered on the count (the count_data gate stays null there).
+                base["answer"] = None
 
         elif tool_name == "query_splits":
             base["splits"] = result.get("splits")
