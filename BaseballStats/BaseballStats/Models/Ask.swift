@@ -59,15 +59,18 @@ struct AskResponse: Decodable {
 
 /// One example play backing a situational count (the "show me" evidence).
 struct AskPlay: Decodable, Identifiable {
+    let game_id: String?        // Retrosheet game id, e.g. "NYA202105280"
     let game_date: String?
     let opponent: String?
+    let home_team: String?
+    let away_team: String?
     let inning: Int?
     let count: String?          // pitch count as "3-2"
     let pitcher_id: String?     // present when the subject is the batter
     let batter_id: String?      // present when the subject is the pitcher
-    let description: String?    // the play's event text
+    let description: String?    // raw Retrosheet event text (not shown to users)
 
-    var id: String { (game_date ?? "") + "|" + (description ?? "") + "|" + (opponent ?? "") }
+    var id: String { (game_id ?? "") + "|" + (game_date ?? "") + "|" + (description ?? "") }
 }
 
 /// One ranked row of a leaderboard. Count boards populate `count`; rate
@@ -97,6 +100,8 @@ struct AskRates: Decodable {
     let AB: Int?
     let H: Int?
     let HR: Int?
+    let RBI: Int?
+    let SO: Int?
     let AVG: Double?
     let OBP: Double?
     let SLG: Double?
@@ -109,6 +114,9 @@ struct AskSplit: Decodable, Identifiable {
     let PA: Int?
     let AB: Int?
     let H: Int?
+    let HR: Int?
+    let RBI: Int?
+    let SO: Int?
     let AVG: Double?
     let OBP: Double?
     let SLG: Double?

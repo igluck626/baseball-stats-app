@@ -29,7 +29,17 @@ struct AskAnswerView: View {
                 ambiguousSection(candidates)
             } else if isNeutralInfo {
                 neutralInfoSection
+            } else if let splits = response.splits, !splits.isEmpty {
+                // DATA-FIRST: a split IS the table. No prose above it, no
+                // expander — the numbers are the answer.
+                splitsSection(splits)
+            } else if let leaders = response.leaders, !leaders.isEmpty {
+                // DATA-FIRST: a leaderboard IS the ranked list.
+                leadersSection(leaders)
             } else {
+                // A single count or rate: the phrased sentence leads, the
+                // detail (sample plays / full stat line) sits behind a
+                // disclosure.
                 answerSection
             }
         }
@@ -46,13 +56,10 @@ struct AskAnswerView: View {
     }
 
     private var hasDetails: Bool {
-        !(response.leaders?.isEmpty ?? true)
-            || response.rates != nil
-            || !(response.splits?.isEmpty ?? true)
-            || !(response.sample?.isEmpty ?? true)
+        response.rates != nil || !(response.sample?.isEmpty ?? true)
     }
 
-    // MARK: - Normal answer
+    // MARK: - Single answer (count / rate): prose + disclosure
 
     private var answerSection: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -82,24 +89,50 @@ struct AskAnswerView: View {
         }
     }
 
-    /// Whichever structured payload the answer carries, stacked. In practice
-    /// only one is populated per answer, but this is defensive.
+    /// Detail for a single answer: the full stat line and/or sample plays.
+    /// (Leaders and splits are data-first and never routed through here.)
     @ViewBuilder
     private var detailContent: some View {
         VStack(alignment: .leading, spacing: 14) {
-            if let leaders = response.leaders, !leaders.isEmpty {
-                leadersTable(leaders)
-            }
             if let rates = response.rates {
                 ratesLine(rates)
-            }
-            if let splits = response.splits, !splits.isEmpty {
-                splitsTable(splits)
             }
             if let sample = response.sample, !sample.isEmpty {
                 sampleList(sample)
             }
         }
+    }
+
+    // MARK: - Data-first sections
+
+    private func splitsSection(_ splits: [AskSplit]) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            splitsTable(splits)
+            coverageFootnote
+        }
+    }
+
+    private func leadersSection(_ leaders: [AskLeader]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let qualifier = leaderQualifier {
+                Text(qualifier)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            leadersTable(leaders)
+            coverageFootnote
+        }
+    }
+
+    /// Rate leaderboards carry `stat` + `min_pa` (previously stated in prose);
+    /// surface them as a caption since there's no prose now. Count boards carry
+    /// neither, so this stays nil for them.
+    private var leaderQualifier: String? {
+        guard let stat = response.stat else { return nil }
+        if let minPA = response.min_pa {
+            return "\(stat) · min. \(minPA) PA in the situation"
+        }
+        return stat
     }
 
     // MARK: - Leaders
@@ -186,47 +219,68 @@ struct AskAnswerView: View {
     }
 
     private func rateVolume(_ rates: AskRates) -> String? {
-        guard let pa = rates.PA else { return nil }
-        if let h = rates.H, let ab = rates.AB {
-            return "\(h)-for-\(ab) · \(pa) PA"
-        }
-        return "\(pa) PA"
+        countsLine(pa: rates.PA, ab: rates.AB, h: rates.H, hr: rates.HR, rbi: rates.RBI)
     }
 
     // MARK: - Splits
 
+    /// Two rows per split rather than a 10-column table. The requested columns
+    /// (PA AB H HR RBI AVG OBP SLG OPS) can't fit a phone width without a
+    /// horizontal scroll that hides half of them, and comparing splits across a
+    /// scroll is awkward. So each split is a compact block: the slash line +
+    /// OPS on top (what you compare across splits), the counting volume beneath
+    /// (context). Everything stays on screen and each split reads as a unit —
+    /// the same "rate prominent, volume secondary" idiom used elsewhere.
     private func splitsTable(_ splits: [AskSplit]) -> some View {
         VStack(spacing: 0) {
-            HStack {
-                Text("SPLIT").frame(maxWidth: .infinity, alignment: .leading)
-                Text("AVG").frame(width: 52, alignment: .trailing)
-                Text("OBP").frame(width: 52, alignment: .trailing)
-                Text("SLG").frame(width: 52, alignment: .trailing)
-            }
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(.secondary)
-            .padding(.bottom, 6)
-
             ForEach(splits) { split in
-                HStack {
-                    Text(split.split_value ?? "—")
-                        .font(.subheadline.weight(.medium))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .lineLimit(1)
-                    Text(LeaderboardRow.formatted(split.AVG, as: .threeDecimal))
-                        .frame(width: 52, alignment: .trailing)
-                    Text(LeaderboardRow.formatted(split.OBP, as: .threeDecimal))
-                        .frame(width: 52, alignment: .trailing)
-                    Text(LeaderboardRow.formatted(split.SLG, as: .threeDecimal))
-                        .frame(width: 52, alignment: .trailing)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(split.split_value ?? "—")
+                            .font(.subheadline.weight(.semibold))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                        Spacer(minLength: 8)
+                        Text(slashLine(avg: split.AVG, obp: split.OBP, slg: split.SLG))
+                            .font(.subheadline.weight(.semibold))
+                            .monospacedDigit()
+                        Text("\(LeaderboardRow.formatted(split.OPS, as: .threeDecimal)) OPS")
+                            .font(.caption.weight(.semibold))
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                    }
+                    if let counts = countsLine(pa: split.PA, ab: split.AB,
+                                               h: split.H, hr: split.HR, rbi: split.RBI) {
+                        Text(counts)
+                            .font(.caption)
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                    }
                 }
-                .font(.subheadline)
-                .monospacedDigit()
-                .padding(.vertical, 6)
+                .padding(.vertical, 8)
 
                 if split.id != splits.last?.id { Divider() }
             }
         }
+    }
+
+    /// "AVG/OBP/SLG" as a three-decimal slash line.
+    private func slashLine(avg: Double?, obp: Double?, slg: Double?) -> String {
+        [avg, obp, slg]
+            .map { LeaderboardRow.formatted($0, as: .threeDecimal) }
+            .joined(separator: "/")
+    }
+
+    /// "1,238 PA · 337 AB · 97 H · 24 HR · 60 RBI" — grouped counts, nils
+    /// skipped. Shared by the split blocks and the single-rate volume line.
+    private func countsLine(pa: Int?, ab: Int?, h: Int?, hr: Int?, rbi: Int?) -> String? {
+        var parts: [String] = []
+        if let pa { parts.append("\(pa.formatted(.number)) PA") }
+        if let ab { parts.append("\(ab.formatted(.number)) AB") }
+        if let h { parts.append("\(h.formatted(.number)) H") }
+        if let hr { parts.append("\(hr.formatted(.number)) HR") }
+        if let rbi { parts.append("\(rbi.formatted(.number)) RBI") }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     // MARK: - Sample plays

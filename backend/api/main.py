@@ -5881,16 +5881,22 @@ def _run_situational(
         sample = []
         if sample_limit:
             rows = cur.execute(
-                "SELECT GAME_DATE, HOME_TEAM_ID, AWAY_TEAM_ID, BAT_HOME_ID, "
+                "SELECT GAME_ID, GAME_DATE, HOME_TEAM_ID, AWAY_TEAM_ID, BAT_HOME_ID, "
                 "INN_CT, BALLS_CT, STRIKES_CT, EVENT_TX, PIT_ID, BAT_ID "
                 f"FROM plays WHERE {clause} ORDER BY GAME_DATE LIMIT ?",
                 params + [sample_limit]).fetchall()
-            for gd, home, away, bat_home, inn, b, s, tx, pit, bat in rows:
+            for gid, gd, home, away, bat_home, inn, b, s, tx, pit, bat in rows:
                 # opponent = the team the batter is NOT on
                 opp = away if bat_home == 1 else home
                 sample.append({
+                    # Retrosheet GAME_ID (e.g. "NYA202105280"): home team +
+                    # date + doubleheader number. Carried so a future box-score
+                    # link can map it to a game; see feasibility note in the PR.
+                    "game_id":     str(gid),
                     "game_date":   str(gd),
                     "opponent":    opp,
+                    "home_team":   home,
+                    "away_team":   away,
                     "inning":      inn,
                     "count":       f"{b}-{s}",
                     "pitcher_id":  pit if role == "bat" else None,
@@ -6258,7 +6264,7 @@ def _run_season_leaderboard(event=None, role="bat", season=None, season_start=No
 #   H = EVENT_CD in (20,21,22,23); BB = 14/15 (incl. intentional); HBP = 16.
 # ============================================================================
 _RATE_STATS = ("AVG", "OBP", "SLG", "OPS")
-_RATE_COLS = ["ab", "h", "d1", "d2", "d3", "hr", "bb", "hbp", "sf", "sh"]
+_RATE_COLS = ["ab", "h", "d1", "d2", "d3", "hr", "bb", "hbp", "sf", "sh", "so", "rbi", "ci"]
 
 
 def _rate_components_sql(prefix=""):
@@ -6273,22 +6279,35 @@ def _rate_components_sql(prefix=""):
         f"SUM(CASE WHEN {p}EVENT_CD IN (14,15) THEN 1 ELSE 0 END) AS bb, "
         f"SUM(CASE WHEN {p}EVENT_CD=16 THEN 1 ELSE 0 END) AS hbp, "
         f"SUM(CASE WHEN {p}SF_FL THEN 1 ELSE 0 END) AS sf, "
-        f"SUM(CASE WHEN {p}SH_FL THEN 1 ELSE 0 END) AS sh")
+        f"SUM(CASE WHEN {p}SH_FL THEN 1 ELSE 0 END) AS sh, "
+        # SO = the batter's strikeouts (EVENT_CD 3); the query is already
+        # scoped to one BAT_ID/PIT_ID, so this counts that player's Ks.
+        f"SUM(CASE WHEN {p}EVENT_CD=3 THEN 1 ELSE 0 END) AS so, "
+        # RBI = runs batted in on the play (Retrosheet RBI_CT). COALESCE keeps
+        # the sum an int even if a row carries a NULL.
+        f"COALESCE(SUM({p}RBI_CT), 0) AS rbi, "
+        # CI = reached on interference (EVENT_CD 17). It's a plate appearance
+        # but not an AB/BB/HBP/SF/SH, so PA is short without it — this is the
+        # gap that made Judge 2022 read PA 692 vs Baseball-Reference's 696.
+        f"SUM(CASE WHEN {p}EVENT_CD=17 THEN 1 ELSE 0 END) AS ci")
 
 
 def _derive_rates(c):
-    """Components dict -> {PA,AB,H,doubles,triples,HR,BB,HBP,SF,AVG,OBP,SLG,OPS}."""
+    """Components dict -> {PA,AB,H,doubles,triples,HR,RBI,SO,BB,HBP,SF,AVG,OBP,SLG,OPS}."""
     ab = c["ab"] or 0; h = c["h"] or 0; bb = c["bb"] or 0
-    hbp = c["hbp"] or 0; sf = c["sf"] or 0; sh = c["sh"] or 0
+    hbp = c["hbp"] or 0; sf = c["sf"] or 0; sh = c["sh"] or 0; ci = c.get("ci") or 0
     tb = (c["d1"] or 0) + 2 * (c["d2"] or 0) + 3 * (c["d3"] or 0) + 4 * (c["hr"] or 0)
-    pa = ab + bb + hbp + sf + sh
+    # PA includes reached-on-interference (CI); OBP's denominator does NOT
+    # (per rule, CI is neither an at-bat nor a walk).
+    pa = ab + bb + hbp + sf + sh + ci
     obp_den = ab + bb + hbp + sf
     avg = round(h / ab, 3) if ab else None
     obp = round((h + bb + hbp) / obp_den, 3) if obp_den else None
     slg = round(tb / ab, 3) if ab else None
     ops = round(obp + slg, 3) if (obp is not None and slg is not None) else None
     return {"PA": pa, "AB": ab, "H": h, "doubles": c["d2"] or 0, "triples": c["d3"] or 0,
-            "HR": c["hr"] or 0, "BB": bb, "HBP": hbp, "SF": sf,
+            "HR": c["hr"] or 0, "RBI": c.get("rbi") or 0, "SO": c.get("so") or 0,
+            "BB": bb, "HBP": hbp, "SF": sf,
             "AVG": avg, "OBP": obp, "SLG": slg, "OPS": ops}
 
 
@@ -7244,43 +7263,12 @@ def ask(request: Request,
             base["answer"] = result.get("reason")
             return _finish()
         base["leaders"] = result.get("leaders", [])
-
-        # phrase the ranked answer (factual; honest about coverage)
-        t0 = time.perf_counter()
-        top = [{"rank": l["rank"], "player": l["player_name"], "count": l["count"]}
-               for l in (base["leaders"] or [])]
-        facts = {"question": q, "leaders": top, "filters": result.get("filters"),
-                 "source": result.get("source"),
-                 "game_coverage": result.get("game_coverage"),
-                 "count_data": result.get("count_data")}
-        answer = None
-        try:
-            phrased = client.messages.create(
-                model=_ASK_MODEL, max_tokens=400,
-                system=(
-                    "You present a baseball LEADERBOARD from the given ranked data. "
-                    "Lead with the leader and their count, then name just the next "
-                    "few behind them — e.g. 'Barry Bonds leads with 762 career home "
-                    "runs, ahead of Hank Aaron (755) and Babe Ruth (714).' Do NOT "
-                    "enumerate every row; the full ranked list is shown separately. "
-                    "Use ONLY the given rows; invent nothing. If "
-                    "game_coverage.complete is false, state its note (coverage may "
-                    "distort the ranking). If count_data has a note, include it. "
-                    "No editorializing." + _PLAIN_TEXT_RULE),
-                messages=[{"role": "user",
-                           "content": "Question: " + q + "\nData: " + json.dumps(facts)}],
-            )
-            answer = "".join(getattr(b, "text", "") for b in phrased.content
-                             if getattr(b, "type", None) == "text").strip()
-        except Exception as exc:  # noqa: BLE001
-            log.warning("ask leaderboard phrasing failed: %s", exc)
-        timing["llm_phrase"] = round((time.perf_counter() - t0) * 1000, 1)
-        if answer:
-            base["answer"] = answer
-        elif top:
-            base["answer"] = "; ".join(f'{t["rank"]}. {t["player"]} ({t["count"]})' for t in top)
-        else:
-            base["answer"] = "No players matched that situation."
+        # DATA-FIRST: a leaderboard IS its ranked list — the app renders the
+        # rows directly, so we skip the phrasing LLM call entirely. That's also
+        # a cost win (no second model call) and a latency win (~600-1200ms).
+        # Coverage caveats still travel as structured game_coverage/count_data,
+        # which the UI shows as a footnote.
+        base["answer"] = None
         return _finish()
 
     # ==== RATE tools (query_rates / query_splits / query_rate_leaderboard) ====
@@ -7359,23 +7347,10 @@ def ask(request: Request,
 
         elif tool_name == "query_splits":
             base["splits"] = result.get("splits")
-            facts = {"question": q, "player": result["player"]["name"],
-                     "split_by": result.get("split_by"),
-                     "splits": [{k: s.get(k) for k in ("split_value", "PA", "AVG", "OBP", "SLG", "OPS")}
-                                for s in (result.get("splits") or [])],
-                     "game_coverage": result.get("game_coverage"),
-                     "count_data": result.get("count_data")}
-            ans = _phrase(
-                rate_rules + " The split numbers are shown in a table, so do NOT "
-                "list them line by line. Instead give ONE or TWO sentences of "
-                "insight comparing the splits — how the player fares across the "
-                "dimension and any notable gap (e.g. 'Aaron Judge hits lefties and "
-                "righties almost identically, with a bit more power against "
-                "left-handers.').", facts, 400)
-            sp = result.get("splits") or []
-            base["answer"] = ans or (
-                "; ".join(f'{s["split_value"]}: {s.get("AVG")}/{s.get("OBP")}/{s.get("SLG")}'
-                          for s in sp) if sp else "No data for that split.")
+            # DATA-FIRST: the split table IS the answer. No prose, no LLM call —
+            # the UI renders the rows directly and shows any coverage note as a
+            # footnote from the structured game_coverage/count_data fields.
+            base["answer"] = None
 
         else:  # query_rate_leaderboard
             base["leaders"] = result.get("leaders")
@@ -7383,26 +7358,10 @@ def ask(request: Request,
             if result.get("declined"):
                 base["declined"] = True; base["reason"] = result.get("reason")
                 base["answer"] = result.get("reason"); return _finish()
-            stat = result.get("stat"); mp = result.get("min_pa")
-            top = [{"rank": l["rank"], "player": l["player_name"],
-                    "value": l.get(stat), "PA": l.get("PA")}
-                   for l in (result.get("leaders") or [])]
-            facts = {"question": q, "stat": stat, "min_pa": mp, "leaders": top,
-                     "filters": result.get("filters"),
-                     "game_coverage": result.get("game_coverage"),
-                     "count_data": result.get("count_data")}
-            ans = _phrase(
-                "You present a baseball RATE leaderboard. Lead with the leader and "
-                f"their {stat} (three decimals), then name just a few behind them; "
-                "the full ranked list is shown separately, so do NOT enumerate "
-                f"every row. ALWAYS state the qualifier: 'minimum {mp} plate "
-                "appearances in the situation'. Use ONLY the given rows. If "
-                "game_coverage.complete is false, include its note. No "
-                "editorializing." + _PLAIN_TEXT_RULE, facts, 400)
-            base["answer"] = ans or (
-                f"(min. {mp} PA) " + "; ".join(
-                    f'{t["rank"]}. {t["player"]} {t["value"]}' for t in top)
-                if top else "No qualified players for that situation.")
+            # DATA-FIRST: the ranked rate list IS the answer — no prose, no LLM
+            # call. `stat` and `min_pa` travel structurally so the UI can show
+            # the "min N PA" qualifier as a caption above the list.
+            base["answer"] = None
         return _finish()
 
     # ---- 2. execute the situational query -------------------------------
