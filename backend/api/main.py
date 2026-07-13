@@ -5275,6 +5275,7 @@ def fetch_plays_db(
     left in place for inspection."""
     import requests
     global _plays_conn, _plays_conn_error, _plays_warm, _plays_warm_secs, _plays_gen
+    global _plays_expected_rows
 
     dest_dir = "/data"
     dest = os.path.join(dest_dir, "plays.duckdb")
@@ -5399,6 +5400,9 @@ def fetch_plays_db(
                 try:
                     r["plays_row_count"] = con.execute(
                         "SELECT count(*) FROM plays").fetchone()[0]
+                    # Stamp the verified count so /admin/plays-status can later
+                    # assert the serving connection reads the SAME store.
+                    _plays_expected_rows = r["plays_row_count"]
                     r["plays_min_season"], r["plays_max_season"] = con.execute(
                         "SELECT min(SEASON), max(SEASON) FROM plays").fetchone()
                     try:
@@ -5476,6 +5480,11 @@ _plays_warm_secs = None                # how long the warmup took
 # that finishes after a swap sees the gen changed and discards its result.
 _plays_warmup_lock = threading.Lock()
 _plays_gen = 0
+# Row count the LAST fetch verified against the file on disk. The status probe
+# compares this to what the SERVING connection actually reads; a mismatch means
+# the connection answering /ask is pinned to a store that's no longer on disk —
+# the silent-stale failure mode. None until a fetch has verified a store.
+_plays_expected_rows = None
 
 
 def _ensure_plays_conn():
@@ -7513,16 +7522,37 @@ def ask(request: Request,
 
 @app.get("/admin/plays-status")
 def plays_status():
-    """Cheap readiness probe for the plays store: is the file present, is the
-    shared connection open, did the background warmup finish, and how long it
-    took. No queries — safe to poll."""
+    """Readiness + STALENESS probe. Reports what the LIVE SERVING connection
+    actually reads (a count(*), answered from DuckDB metadata — cheap, not a
+    scan), NOT what a fresh connect would see. A fresh connect always reads the
+    new file; the serving connection can be pinned to a store that's no longer
+    on disk. When `serving_row_count` diverges from the `expected_row_count` the
+    last fetch verified, `stale` is true — the silent-wrong-answer mode made
+    loud instead of showing a green light while /ask serves old data."""
+    serving_rows = None
+    serving_error = None
+    try:
+        conn = _ensure_plays_conn()
+        if conn is not None:
+            serving_rows = conn.execute("SELECT count(*) FROM plays").fetchone()[0]
+    except Exception as exc:  # noqa: BLE001 - a probe must never 500
+        serving_error = str(exc)
+    stale = (
+        _plays_expected_rows is not None
+        and serving_rows is not None
+        and serving_rows != _plays_expected_rows
+    )
     return {
-        "path":            PLAYS_DB_PATH,
-        "file_exists":     os.path.exists(PLAYS_DB_PATH),
-        "connection_open": _plays_conn is not None,
-        "warm":            _plays_warm,
-        "warmup_secs":     _plays_warm_secs,
-        "error":           _plays_conn_error,
+        "path":               PLAYS_DB_PATH,
+        "file_exists":        os.path.exists(PLAYS_DB_PATH),
+        "connection_open":    _plays_conn is not None,
+        "warm":               _plays_warm,
+        "warmup_secs":        _plays_warm_secs,
+        "error":              _plays_conn_error,
+        "serving_row_count":  serving_rows,
+        "expected_row_count": _plays_expected_rows,
+        "serving_error":      serving_error,
+        "stale":              stale,
     }
 
 
