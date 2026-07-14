@@ -8156,6 +8156,177 @@ def backfill_missing_bios(
             "considered": len(to_do)}
 
 
+# marquee awards/HOF worth calling out by name in the backfill report
+_MARQUEE_AWARDS = {"Cy Young Award", "Most Valuable Player", "Rookie of the Year"}
+
+
+@app.post("/admin/backfill-awards-hof")
+def backfill_awards_hof(confirm: bool = Query(False)):
+    """Backfill player_awards + player_hof rows for the divergent-id players
+    (Lahman playerID != bbrefID) that the OLD bbref-only Chadwick bridge silently
+    dropped at load time — e.g. CC Sabathia (playerID sabatcc01 vs bbrefID
+    sabatc.01): 0 awards and is_hof:false despite the 2007 AL Cy Young and 2025
+    induction. Controls with playerID == bbrefID (Kershaw, Jeter, Griffey) loaded
+    fine and stay untouched. The bridge is ALREADY fixed in code
+    (_load_chadwick_bridge keys playerID/bbrefID/retroID all to mlbam); this
+    re-runs the awards + HOF load against that fixed bridge, INSERT-ONLY.
+
+    It inserts only rows ABSENT from the DB (matched on the full primary key:
+    awards = player_id+year+award_name+league, HOF = player_id+year_inducted+
+    voted_by), so it never overwrites, deletes, or duplicates an existing row and
+    is safe to run twice — a second run inserts nothing. Inserting Sabathia's
+    2025 inducted=Y ballot row is what flips is_hof to true (the API derives
+    is_hof/hof_year from any inducted=True row).
+
+    confirm=false = DRY RUN: reports how many award + HOF rows WOULD insert, the
+    per-player breakdown of what each gains, and who becomes a Hall of Famer.
+    No writes."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+
+    # SAME fixed bridge the loaders use — single source of truth for the key
+    # (Lahman id -> mlbam, resolving playerID/bbrefID/retroID all to one mlbam).
+    bridge = lahman_load._load_chadwick_bridge()
+
+    # GUARD: if People.csv is unreadable at runtime the bridge silently degrades
+    # to bbref-only — the exact broken state that caused this gap — and would
+    # re-drop the very players we're here to fix. Refuse to run a half-bridge.
+    _sentinels = {"sabatcc01": 282332, "santajo01": 276371}
+    degraded = {pid: exp for pid, exp in _sentinels.items() if bridge.get(pid) != exp}
+    if degraded:
+        log.error("backfill-awards-hof: bridge degraded, sentinels unresolved: %s", degraded)
+        raise HTTPException(status_code=500, detail=(
+            "chadwick bridge degraded (People.csv missing/unreadable at runtime?); "
+            f"divergent sentinels did not resolve: {degraded} — refusing to run"))
+
+    # ---- read source rows, mapped EXACTLY like _load_awards / _load_hof -----
+    award_cands: list[dict] = []
+    aw_unresolved: list[str] = []
+    with open(lahman_load.AWARDS_CSV, newline="", encoding="utf-8-sig") as fh:
+        for row in csv.DictReader(fh):
+            year = int(row["yearID"])
+            if year >= lahman_load.CUTOFF_YEAR:
+                continue
+            mlbam = bridge.get(row["playerID"])
+            if mlbam is None:
+                aw_unresolved.append(row["playerID"])
+                continue
+            award_cands.append({
+                "player_id":  mlbam,
+                "year":       year,
+                "award_name": row["awardID"],
+                "league":     row.get("lgID") or "",
+                "tie":        (row.get("tie") or "").strip() or None,
+                "notes":      (row.get("notes") or "").strip() or None,
+            })
+
+    hof_cands: list[dict] = []
+    hof_unresolved: list[str] = []
+    with open(lahman_load.HOF_CSV, newline="", encoding="utf-8-sig") as fh:
+        for row in csv.DictReader(fh):
+            mlbam = bridge.get(row["playerID"])
+            if mlbam is None:
+                # Expected for managers/executives/pioneers with no MLBAM id.
+                hof_unresolved.append(row["playerID"])
+                continue
+            raw = (row.get("inducted") or "").strip().upper()
+            inducted = True if raw == "Y" else False if raw == "N" else None
+            hof_cands.append({
+                "player_id":     mlbam,
+                "year_inducted": int(row["yearid"]),
+                "voted_by":      (row.get("votedBy") or "").strip() or "",
+                "category":      (row.get("category") or "").strip() or None,
+                "needed":        lahman_load._i_or_none(row.get("needed")),
+                "votes":         lahman_load._i_or_none(row.get("votes")),
+                "inducted":      inducted,
+            })
+
+    # ---- existing PKs from the DB → keep only rows that are ABSENT ----------
+    with connection.get_session() as db:
+        aw_have = {tuple(r) for r in db.execute(_sa_text(
+            'SELECT player_id, year, award_name, league FROM player_awards')).fetchall()}
+        hof_have = {tuple(r) for r in db.execute(_sa_text(
+            'SELECT player_id, year_inducted, voted_by FROM player_hof')).fetchall()}
+
+    aw_new = [c for c in award_cands
+              if (c["player_id"], c["year"], c["award_name"], c["league"]) not in aw_have]
+    hof_new = [c for c in hof_cands
+               if (c["player_id"], c["year_inducted"], c["voted_by"]) not in hof_have]
+
+    # ---- per-player breakdown for the report -------------------------------
+    affected = sorted({c["player_id"] for c in aw_new} | {c["player_id"] for c in hof_new})
+    names: dict[int, str] = {}
+    if affected:
+        with connection.get_session() as db:
+            for tbl in ("players", "pitchers"):
+                for pid, nm in db.execute(_sa_text(
+                        f"SELECT player_id, name FROM {tbl} "
+                        "WHERE player_id = ANY(:ids)"), {"ids": affected}).fetchall():
+                    names.setdefault(pid, nm)
+    mnames = _mlbam_names()
+
+    def _name(pid):
+        return names.get(pid) or mnames.get(pid) or f"mlbam:{pid}"
+
+    breakdown = []
+    for pid in affected:
+        awards = [c for c in aw_new if c["player_id"] == pid]
+        hofs = [c for c in hof_new if c["player_id"] == pid]
+        marquee = sorted(f'{c["year"]} {c["league"]} {c["award_name"]}'.strip()
+                         for c in awards if c["award_name"] in _MARQUEE_AWARDS)
+        induction = next((c["year_inducted"] for c in hofs if c["inducted"]), None)
+        breakdown.append({
+            "mlbam": pid, "name": _name(pid),
+            "awards_added": len(awards), "hof_rows_added": len(hofs),
+            "marquee": marquee,
+            "becomes_hof": induction,
+        })
+    breakdown.sort(key=lambda b: (b["becomes_hof"] is None, -b["awards_added"]))
+    new_inductees = [b for b in breakdown if b["becomes_hof"]]
+
+    # LOUD: unresolved award playerIDs should be ~none (all divergent players
+    # resolve now); HOF has an expected tail of non-player inductees.
+    if aw_unresolved:
+        log.warning("backfill-awards-hof: %d award playerIDs did not resolve "
+                    "(sample: %s)", len(aw_unresolved), aw_unresolved[:10])
+    log.info("backfill-awards-hof: %d HOF playerIDs unresolved (expected: "
+             "managers/execs without MLBAM)", len(hof_unresolved))
+
+    summary = {
+        "award_rows_to_insert": len(aw_new),
+        "hof_rows_to_insert": len(hof_new),
+        "players_affected": len(affected),
+        "new_hall_of_famers": [{"name": b["name"], "mlbam": b["mlbam"],
+                                "year": b["becomes_hof"]} for b in new_inductees],
+        "award_playerids_unresolved": len(aw_unresolved),
+        "hof_playerids_unresolved_expected": len(hof_unresolved),
+        "breakdown": breakdown,
+    }
+
+    # ---- DRY RUN ------------------------------------------------------------
+    if not confirm:
+        return {"dry_run": True, **summary}
+
+    # ---- INSERT (confirm=true) — INSERT-ONLY, absent rows only -------------
+    with connection.get_session() as db:
+        aw_before = db.execute(_sa_text("SELECT COUNT(*) FROM player_awards")).scalar()
+        hof_before = db.execute(_sa_text("SELECT COUNT(*) FROM player_hof")).scalar()
+        # aw_new / hof_new are already the rows ABSENT from the DB, so merge()
+        # here only ever inserts — no existing row is in these lists.
+        crud.save_player_awards(db, aw_new)
+        crud.save_player_hof(db, hof_new)
+        db.flush()
+        aw_after = db.execute(_sa_text("SELECT COUNT(*) FROM player_awards")).scalar()
+        hof_after = db.execute(_sa_text("SELECT COUNT(*) FROM player_hof")).scalar()
+
+    return {
+        "confirmed": True,
+        "player_awards": {"before": aw_before, "inserted": len(aw_new), "after": aw_after},
+        "player_hof": {"before": hof_before, "inserted": len(hof_new), "after": hof_after},
+        **summary,
+    }
+
+
 @app.get("/admin/duplicate-identities")
 def duplicate_identities(limit: int = Query(1000, ge=1, le=5000)):
     """READ-ONLY. Enumerate the Negro-Leagues id-churn fingerprint: two mlbam
