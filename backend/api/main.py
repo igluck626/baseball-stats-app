@@ -7157,6 +7157,16 @@ _ASK_TOOLS = [_ASK_QUERY_TOOL, _ASK_LEADERBOARD_TOOL, _ASK_RATES_TOOL,
 _ASK_SYSTEM_BLOCKS = [{"type": "text", "text": _ASK_SYSTEM,
                        "cache_control": {"type": "ephemeral"}}]
 
+# Fingerprint of the translation contract (system prompt + tool schemas). Every
+# ask_log row is stamped with this, and the cache only reuses rows matching it,
+# so ANY change to the prompt or tools re-translates old questions instead of
+# serving a translation the current prompt would no longer produce. Cache stays
+# effective within a version; a deploy that changes neither keeps the same hash.
+_ASK_PROMPT_VERSION = __import__("hashlib").sha256(
+    (_ASK_SYSTEM + "\n" + json.dumps(_ASK_TOOLS, sort_keys=True, default=str)).encode()
+).hexdigest()[:12]
+log.info("ask translation cache: prompt_version=%s", _ASK_PROMPT_VERSION)
+
 
 def _hash_identity(identity):
     import hashlib
@@ -7207,8 +7217,8 @@ def _ask_cache_get(norm):
         with connection.get_session() as db:
             row = db.execute(_sa_text(
                 "SELECT tool_name, understood_as FROM ask_log "
-                "WHERE normalized = :n AND tool_name IS NOT NULL "
-                "ORDER BY id DESC LIMIT 1"), {"n": norm}).fetchone()
+                "WHERE normalized = :n AND prompt_version = :v AND tool_name IS NOT NULL "
+                "ORDER BY id DESC LIMIT 1"), {"n": norm, "v": _ASK_PROMPT_VERSION}).fetchone()
         if row and row[0]:
             return row[0], (json.loads(row[1]) if row[1] else {})
     except Exception as exc:  # noqa: BLE001
@@ -7229,6 +7239,7 @@ def _ask_log_write(q, norm, tool_name, tool_input, base, cached, id_hash,
         with connection.get_session() as db:
             db.add(AskLog(
                 created_at=datetime.datetime.utcnow(), question=q, normalized=norm,
+                prompt_version=_ASK_PROMPT_VERSION,
                 tool_name=tool_name,
                 understood_as=json.dumps(tool_input) if tool_input is not None else None,
                 source=base.get("source"), status=status,
@@ -7639,13 +7650,19 @@ def ask(request: Request,
                 # BACKSTOP: the model sometimes routes a COUNT ("how many home
                 # runs...") here instead of query_situational. The rate line
                 # already holds the number, so read it out and set count +
-                # highlighted_stat — but ONLY when coverage is complete, so we
-                # never derive a count from a partial line (an old plain-season
-                # total belongs on the season-stats route, which the prompt now
-                # directs count questions toward).
+                # highlighted_stat — but ONLY for a SITUATIONAL question, where
+                # the play-by-play is the correct and only source. A plain TOTAL
+                # must come from the season records: a career total taken from
+                # the plays would be short by the season in progress (which the
+                # plays store doesn't yet hold), and complete-coverage is no
+                # defence against a season missing entirely. The prompt routes
+                # those to query_situational -> season_stats.
                 hstat = _count_question_stat(q)
+                situational = any(tool_input.get(k) is not None for k in (
+                    "balls", "strikes", "outs", "inning", "base_state",
+                    "pitcher_hand", "batter_side", "home_away"))
                 gc = base.get("game_coverage") or {}
-                if hstat and gc.get("complete") is not False:
+                if hstat and situational and gc.get("complete") is not False:
                     val = (result.get("rates") or {}).get(_STAT_RATE_KEY.get(hstat, hstat))
                     if val is not None:
                         base["count"] = int(val)

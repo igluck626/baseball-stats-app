@@ -138,6 +138,12 @@ _BATTING_GAMELOGS_NEW_COLUMNS: list[tuple[str, str]] = [
     ("SH",   "INTEGER"),
 ]
 
+# prompt_version added to ask_log so the translation cache can be keyed by the
+# prompt that produced each row (a prompt change invalidates older translations).
+_ASK_LOG_NEW_COLUMNS: list[tuple[str, str]] = [
+    ("prompt_version", "VARCHAR"),
+]
+
 # Extended counting stats added to player_seasons / pitcher_seasons in the
 # stat-coverage expansion. Listed here so existing prod tables get them via
 # ALTER TABLE on the next init_db() (lifespan / /admin/migrate / bulk-load).
@@ -364,6 +370,7 @@ def init_db() -> dict:
         ("player_seasons",    _PLAYER_SEASONS_NEW_COLUMNS),
         ("pitcher_seasons",   _PITCHER_SEASONS_NEW_COLUMNS),
         ("batting_gamelogs",  _BATTING_GAMELOGS_NEW_COLUMNS),
+        ("ask_log",           _ASK_LOG_NEW_COLUMNS),
     ):
         added = _add_missing_columns(tbl_name, cols)
         if added:

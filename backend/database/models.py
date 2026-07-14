@@ -696,6 +696,11 @@ class AskLog(Base):
     created_at     = Column(DateTime)
     question       = Column(Text)          # raw question as asked
     normalized     = Column(String)        # cache key (see _normalize_question)
+    prompt_version = Column(String)        # hash of the system prompt + tool schemas
+                                           # that produced this translation; the cache
+                                           # only reuses rows matching the CURRENT
+                                           # version, so any prompt change re-translates
+                                           # instead of serving a stale routing.
     tool_name      = Column(String)        # which tool the model chose (NULL = no translation)
     understood_as  = Column(Text)          # extracted params, JSON string
     source         = Column(String)        # plays / season_stats / *_leaderboard / ...
