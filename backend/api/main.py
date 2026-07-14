@@ -8327,6 +8327,182 @@ def backfill_awards_hof(confirm: bool = Query(False)):
     }
 
 
+def _ranked_award_shares(bridge: dict[str, int]) -> tuple[list[dict], list[str]]:
+    """Read AwardsSharePlayers.csv through `bridge`, bucket by
+    (year, award_id, league) and rank within each group EXACTLY like
+    lahman_load._load_award_shares (stride ranking, ties share a rank). Returns
+    (rows_with_rank, unresolved_playerids). The rank is a whole-group property,
+    so it must be computed over every resolvable voter in the group — not just
+    the rows we happen to be inserting — or a dropped winner would land at the
+    wrong placement."""
+    bucketed: dict[tuple, list[dict]] = {}
+    unresolved: list[str] = []
+    with open(lahman_load.AWARDS_SHARE_CSV, newline="", encoding="utf-8-sig") as fh:
+        for row in csv.DictReader(fh):
+            year = int(row["yearID"])
+            if year >= lahman_load.CUTOFF_YEAR:
+                continue
+            award_id = lahman_load._LAHMAN_AWARD_SHARE_ID.get(row["awardID"])
+            if award_id is None:
+                continue  # outside MVP/CY/ROY scope
+            mlbam = bridge.get(row["playerID"])
+            if mlbam is None:
+                unresolved.append(row["playerID"])
+                continue
+            league = row.get("lgID") or "ML"
+            bucketed.setdefault((year, award_id, league), []).append({
+                "player_id":   mlbam,
+                "year":        year,
+                "award_id":    award_id,
+                "league":      league,
+                "points_won":  lahman_load._f(row.get("pointsWon")),
+                "points_max":  lahman_load._f(row.get("pointsMax")),
+                "votes_first": lahman_load._i(row.get("votesFirst")),
+            })
+    rows: list[dict] = []
+    for group in bucketed.values():
+        group.sort(key=lambda r: -(r.get("points_won") or 0.0))
+        last_pts = None
+        last_rank = 0
+        for idx, r in enumerate(group, start=1):
+            pts = r.get("points_won")
+            if pts == last_pts:
+                r["rank"] = last_rank
+            else:
+                r["rank"] = idx
+                last_rank = idx
+                last_pts = pts
+            rows.append(r)
+    return rows, unresolved
+
+
+@app.post("/admin/backfill-award-shares")
+def backfill_award_shares(
+    confirm: bool = Query(False),
+    fix_ranks: bool = Query(True, description="also correct the placement of rows "
+                            "that share a group with a re-inserted voter (see note)"),
+):
+    """Backfill player_award_shares (Lahman AwardsSharePlayers.csv — MVP/CY/ROY
+    per-season VOTE PLACEMENT, the table behind the career-stats 'Awards' column
+    e.g. 'CY-1' / 'MVP-10') for the divergent-id players the OLD bbref-only
+    bridge dropped — same key bug as awards/HOF, third table. Sabathia/Santana
+    have 0 share rows; Kershaw has his. Reloaded through the ALREADY-fixed
+    bridge, matched on the full PK (player_id, year, award_id, league).
+
+    RANK IS A WHOLE-GROUP PROPERTY. A dropped voter is almost always the group's
+    WINNER (Sabathia 2007 AL CY, Santana 2006 & 2004 AL CY, R.A. Dickey 2012 NL
+    CY). Re-inserting a winner at rank 1 leaves every existing voter in that
+    group over-ranked by one — including Kershaw, whose 2012 NL CY currently
+    reads rank 1 ONLY because winner R.A. Dickey was dropped (Kershaw actually
+    finished 2nd). So:
+      • fix_ranks=True  (default, CORRECT display): insert the dropped rows AND
+        rewrite the `rank` of existing rows in the SAME groups to the true
+        whole-group placement. Points/votes are re-supplied unchanged; only rank
+        moves, and only in groups that gained a voter. Kershaw's 2012 CY 1→2.
+      • fix_ranks=False (STRICT insert-only, Kershaw byte-identical): insert only
+        the absent rows. Existing rows are untouched, so groups that gained a
+        winner show DUPLICATE rank-1s and stale placements. Kershaw keeps a
+        Cy Young he didn't win. Provided for parity with the awards/HOF endpoint;
+        not recommended.
+
+    Idempotent either way: a second run inserts 0 and (fix_ranks=True) corrects 0.
+    confirm=false = DRY RUN. Sentinel-guarded like /admin/backfill-awards-hof."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+
+    bridge = lahman_load._load_chadwick_bridge()
+    _sentinels = {"sabatcc01": 282332, "santajo01": 276371}
+    degraded = {pid: exp for pid, exp in _sentinels.items() if bridge.get(pid) != exp}
+    if degraded:
+        log.error("backfill-award-shares: bridge degraded, sentinels unresolved: %s", degraded)
+        raise HTTPException(status_code=500, detail=(
+            "chadwick bridge degraded (People.csv missing/unreadable at runtime?); "
+            f"divergent sentinels did not resolve: {degraded} — refusing to run"))
+
+    ranked, unresolved = _ranked_award_shares(bridge)
+
+    # existing rows: PK -> stored rank
+    with connection.get_session() as db:
+        have = {(r[0], r[1], r[2], r[3]): r[4] for r in db.execute(_sa_text(
+            "SELECT player_id, year, award_id, league, rank FROM player_award_shares"
+        )).fetchall()}
+
+    def _pk(r):
+        return (r["player_id"], r["year"], r["award_id"], r["league"])
+
+    inserts = [r for r in ranked if _pk(r) not in have]
+    # existing rows whose true whole-group rank differs from what's stored — the
+    # collateral of a dropped winner. Only populated when fix_ranks is on.
+    rank_fixes = [r for r in ranked
+                  if _pk(r) in have and have[_pk(r)] != r["rank"]] if fix_ranks else []
+
+    # ---- report shaping -----------------------------------------------------
+    affected = sorted({r["player_id"] for r in inserts})
+    names: dict[int, str] = {}
+    if affected:
+        with connection.get_session() as db:
+            for tbl in ("players", "pitchers"):
+                for pid, nm in db.execute(_sa_text(
+                        f"SELECT player_id, name FROM {tbl} WHERE player_id = ANY(:ids)"),
+                        {"ids": affected}).fetchall():
+                    names.setdefault(pid, nm)
+    mnames = _mlbam_names()
+
+    def _name(pid):
+        return names.get(pid) or mnames.get(pid) or f"mlbam:{pid}"
+
+    breakdown = []
+    for pid in affected:
+        mine = [r for r in inserts if r["player_id"] == pid]
+        wins = sorted(f'{r["year"]} {r["league"]} {r["award_id"]}-{r["rank"]}'
+                      for r in mine if r["rank"] == 1)
+        breakdown.append({
+            "mlbam": pid, "name": _name(pid), "shares_added": len(mine),
+            "firsts": wins,
+            "placements": sorted(f'{r["year"]} {r["league"]} {r["award_id"]}-{r["rank"]}'
+                                 for r in mine),
+        })
+    breakdown.sort(key=lambda b: -b["shares_added"])
+
+    # groups touched by a rank correction, for transparency
+    fix_groups = sorted({(r["year"], r["award_id"], r["league"]) for r in rank_fixes})
+
+    if unresolved:
+        log.warning("backfill-award-shares: %d share playerIDs did not resolve "
+                    "(sample: %s)", len(unresolved), unresolved[:10])
+
+    summary = {
+        "share_rows_to_insert": len(inserts),
+        "players_affected": len(affected),
+        "rank_corrections_to_apply": len(rank_fixes),
+        "groups_re_ranked": len(fix_groups),
+        "fix_ranks": fix_ranks,
+        "playerids_unresolved": len(unresolved),
+        "breakdown": breakdown,
+    }
+
+    if not confirm:
+        return {"dry_run": True, **summary}
+
+    # ---- INSERT (+ optional rank correction) --------------------------------
+    with connection.get_session() as db:
+        before = db.execute(_sa_text("SELECT COUNT(*) FROM player_award_shares")).scalar()
+        # inserts are PK-absent → pure inserts. rank_fixes are PK-present → the
+        # ON CONFLICT DO UPDATE in save_player_award_shares rewrites their rank
+        # (points/votes re-supplied identical). Nothing outside affected groups
+        # is written.
+        crud.save_player_award_shares(db, inserts + rank_fixes)
+        db.flush()
+        after = db.execute(_sa_text("SELECT COUNT(*) FROM player_award_shares")).scalar()
+
+    return {
+        "confirmed": True,
+        "player_award_shares": {"before": before, "inserted": len(inserts),
+                                "rank_corrected": len(rank_fixes), "after": after},
+        **summary,
+    }
+
+
 @app.get("/admin/duplicate-identities")
 def duplicate_identities(limit: int = Query(1000, ge=1, le=5000)):
     """READ-ONLY. Enumerate the Negro-Leagues id-churn fingerprint: two mlbam
