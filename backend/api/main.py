@@ -7082,6 +7082,20 @@ _ASK_SYSTEM = (
     "limit only when explicitly asked ('top 3', 'the single leader').\n\n"
     "RATE STATS (batting average / on-base / slugging / OPS — 'how well does X "
     "hit'):\n"
+    "COUNT vs RATE — which tool: 'How many home runs / strikeouts / walks / hits "
+    "does X have...', 'how many times did X...' is a COUNT question (the user "
+    "wants a NUMBER) -> query_situational. 'How does X hit', 'what is X's "
+    "average/OPS', 'what are X's stats' is a RATE question (the user wants a "
+    "LINE) -> query_rates. Both return a full stat line, but a COUNT question "
+    "MUST go to query_situational so the asked-for number is the answer:\n"
+    "- 'How many home runs has Betts hit off lefties?' -> query_situational "
+    "{player:'Betts', event:'HR', pitcher_hand:'L'}\n"
+    "- 'How many career home runs does Judge have?' -> query_situational "
+    "{player:'Judge', event:'HR'}\n"
+    "- 'How many strikeouts did Kershaw get against lefties?' -> "
+    "query_situational {player:'Kershaw', role:'pit', event:'K', batter_side:'L'}\n"
+    "- 'How does Betts hit off lefties?' -> query_rates {player:'Betts', "
+    "pitcher_hand:'L'}\n"
     "- One player's rate in a situation -> query_rates. "
     "'What's Judge's average with RISP?' -> {player:'Judge', base_state:'risp'}. "
     "'Ohtani's OPS in the postseason' -> {player:'Ohtani', game_type:'P'}.\n"
@@ -7311,6 +7325,43 @@ def _unsupported_reason(reasons):
         ", ".join(reasons[:-1]) + " or " + reasons[-1]
     return (f"I can't filter on {cond} — that isn't in the play-by-play data I "
             "have, so I won't guess. Try the question without that condition.")
+
+
+# A COUNT question ("how many home runs...") wants a number, not a line. When
+# the model routes one to query_rates anyway, the rate line already holds the
+# figure — so we read it out and set count + highlighted_stat rather than
+# re-querying. Same code-not-prompt discipline as the constraint detector.
+_COUNT_Q_PAT = r"\bhow many\b|\bhow often\b|\bhow frequently\b|\bnumber of\b|\bcount of\b"
+# (regex, highlighted-stat display name); first match wins, broad "hits" last.
+_STAT_NOUN = [
+    (r"\bgrand slams?\b", "HR"),
+    (r"\bhome ?runs?\b|\bhomers?\b|\blong balls?\b|\bdingers?\b", "HR"),
+    (r"\bstrike ?outs?\b|\bstruck out\b|\bwhiffs?\b|\bpunch ?outs?\b|\bk'?s\b", "SO"),
+    (r"\bwalks?\b|\bbases? on balls?\b|\bfree passes?\b", "BB"),
+    (r"\bdoubles?\b|\btwo[- ]baggers?\b", "2B"),
+    (r"\btriples?\b|\bthree[- ]baggers?\b", "3B"),
+    (r"\brbis?\b|\bruns? batted in\b", "RBI"),
+    (r"\bplate appearances?\b", "PA"),
+    (r"\bat[- ]bats?\b", "AB"),
+    (r"\bhit by pitch\b|\bhbp\b", "HBP"),
+    (r"\bhits?\b", "H"),
+]
+# highlighted-stat display name -> the key it reads from a rates dict.
+_STAT_RATE_KEY = {"HR": "HR", "SO": "SO", "BB": "BB", "H": "H", "RBI": "RBI",
+                  "AB": "AB", "PA": "PA", "HBP": "HBP", "2B": "doubles", "3B": "triples"}
+
+
+def _count_question_stat(question):
+    """If the question asks for a COUNT of a specific stat ('how many home
+    runs...'), return that stat's display name (HR/SO/BB/...); else None."""
+    import re
+    ql = " " + (question or "").lower() + " "
+    if not re.search(_COUNT_Q_PAT, ql):
+        return None
+    for pat, stat in _STAT_NOUN:
+        if re.search(pat, ql):
+            return stat
+    return None
 
 
 @app.post("/ask")
@@ -7585,6 +7636,20 @@ def ask(request: Request,
                 # "pitch-count not recorded" caveat for a query that never
                 # filtered on the count (the count_data gate stays null there).
                 base["answer"] = None
+                # BACKSTOP: the model sometimes routes a COUNT ("how many home
+                # runs...") here instead of query_situational. The rate line
+                # already holds the number, so read it out and set count +
+                # highlighted_stat — but ONLY when coverage is complete, so we
+                # never derive a count from a partial line (an old plain-season
+                # total belongs on the season-stats route, which the prompt now
+                # directs count questions toward).
+                hstat = _count_question_stat(q)
+                gc = base.get("game_coverage") or {}
+                if hstat and gc.get("complete") is not False:
+                    val = (result.get("rates") or {}).get(_STAT_RATE_KEY.get(hstat, hstat))
+                    if val is not None:
+                        base["count"] = int(val)
+                        base["highlighted_stat"] = hstat
 
         elif tool_name == "query_splits":
             base["splits"] = result.get("splits")
