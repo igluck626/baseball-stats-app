@@ -147,6 +147,7 @@ struct AskAnswerView: View {
     /// The component counts not in the headline table: 2B/3B/BB/HBP/SF/SO.
     private func rateComponents(_ r: AskRates) -> String? {
         var parts: [String] = []
+        if let x = r.PA { parts.append("\(x.formatted(.number)) PA") }
         if let x = r.doubles { parts.append("\(x) 2B") }
         if let x = r.triples { parts.append("\(x) 3B") }
         if let x = r.BB { parts.append("\(x) BB") }
@@ -242,12 +243,15 @@ struct AskAnswerView: View {
 
     // MARK: - Stat table (shared by rate lines, split rows, situational counts)
 
+    // The eight columns kept on screen. PA moved to "More" — with 4-digit PAs
+    // the nine-wide table got tight — but it's prepended back (like any "More"
+    // stat) when it's the one the question asked about.
     private static let coreStatKeys: Set<String> =
-        ["PA", "AB", "H", "HR", "RBI", "AVG", "OBP", "SLG", "OPS"]
+        ["AB", "H", "HR", "RBI", "AVG", "OBP", "SLG", "OPS"]
 
-    /// Columns for a rate line: the core nine, with the asked-for stat
-    /// highlighted. If that stat isn't one of the nine (SO/BB/2B/3B/HBP), it's
-    /// prepended so it stays visible and emphasized.
+    /// Columns for a rate line: the core eight, with the asked-for stat
+    /// highlighted. If that stat isn't one of the eight (PA/SO/BB/2B/3B/HBP),
+    /// it's prepended so it stays visible and emphasized.
     private func rateColumns(_ r: AskRates, highlight: String?) -> [StatTable.Column] {
         func col(_ label: String, _ value: String) -> StatTable.Column {
             StatTable.Column(label: label, value: value, highlighted: label == highlight)
@@ -257,17 +261,17 @@ struct AskAnswerView: View {
             cols.append(StatTable.Column(label: h, value: v, highlighted: true))
         }
         cols += [
-            col("PA",  intVal(r.PA)),  col("AB", intVal(r.AB)),  col("H", intVal(r.H)),
-            col("HR",  intVal(r.HR)),  col("RBI", intVal(r.RBI)),
+            col("AB", intVal(r.AB)),  col("H", intVal(r.H)),
+            col("HR", intVal(r.HR)),  col("RBI", intVal(r.RBI)),
             col("AVG", rateVal(r.AVG)), col("OBP", rateVal(r.OBP)),
             col("SLG", rateVal(r.SLG)), col("OPS", rateVal(r.OPS)),
         ]
         return cols
     }
 
-    /// Columns for one split row — the core nine, nothing highlighted.
+    /// Columns for one split row — the core eight (PA sits on the split label).
     private func splitColumns(_ s: AskSplit) -> [StatTable.Column] {
-        [.init(label: "PA", value: intVal(s.PA)), .init(label: "AB", value: intVal(s.AB)),
+        [.init(label: "AB", value: intVal(s.AB)),
          .init(label: "H", value: intVal(s.H)), .init(label: "HR", value: intVal(s.HR)),
          .init(label: "RBI", value: intVal(s.RBI)), .init(label: "AVG", value: rateVal(s.AVG)),
          .init(label: "OBP", value: rateVal(s.OBP)), .init(label: "SLG", value: rateVal(s.SLG)),
@@ -278,6 +282,7 @@ struct AskAnswerView: View {
     private func rateVal(_ d: Double?) -> String { LeaderboardRow.formatted(d, as: .threeDecimal) }
     private func moreValue(_ r: AskRates, _ key: String) -> String? {
         switch key {
+        case "PA":  return r.PA.map { $0.formatted(.number) }
         case "2B":  return r.doubles.map(String.init)
         case "3B":  return r.triples.map(String.init)
         case "BB":  return r.BB.map(String.init)
@@ -298,10 +303,17 @@ struct AskAnswerView: View {
         VStack(spacing: 0) {
             ForEach(splits) { split in
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(split.split_value ?? "—")
-                        .font(.subheadline.weight(.semibold))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(split.split_value ?? "—")
+                            .font(.subheadline.weight(.semibold))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                        if let pa = split.PA {
+                            Text("· \(pa.formatted(.number)) PA")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                     StatTable(columns: splitColumns(split))
                 }
                 .padding(.vertical, 8)
@@ -359,7 +371,10 @@ struct AskAnswerView: View {
     // MARK: - Ambiguous name
 
     private func ambiguousSection(_ candidates: [AskCandidate]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        // If the bio details don't tell the candidates apart, say so instead of
+        // showing rows that look identical.
+        let indistinct = Set(candidates.map { $0.detail ?? "" }).count < candidates.count
+        return VStack(alignment: .leading, spacing: 10) {
             Label {
                 Text(.init(response.answer ?? "There are a few players by that name — which did you mean?"))
                     .font(.body)
@@ -376,9 +391,16 @@ struct AskAnswerView: View {
                         onSelectCandidate(candidate)
                     } label: {
                         HStack {
-                            Text(candidate.name ?? "Unknown player")
-                                .font(.subheadline.weight(.medium))
-                                .foregroundStyle(.primary)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(candidate.name ?? "Unknown player")
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundStyle(.primary)
+                                if let detail = candidate.detail {
+                                    Text(detail)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
                             Spacer()
                             Image(systemName: "chevron.right")
                                 .font(.caption2.weight(.semibold))
@@ -390,6 +412,12 @@ struct AskAnswerView: View {
 
                     if candidate.id != candidates.last?.id { Divider() }
                 }
+            }
+
+            if indistinct {
+                Text("Two players share this name and we don't have enough detail to tell them apart here.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
     }

@@ -147,13 +147,31 @@ struct AskPlayerResolved: Decodable {
 }
 
 /// One same-name candidate. Tapping re-asks the original question pinned to
-/// this player's `mlbam_id`.
+/// this player's `mlbam_id`. The bio fields distinguish same-name players by a
+/// human-readable detail line ("2015–2025 · LAD") instead of opaque ids.
 struct AskCandidate: Decodable, Identifiable {
     let name: String?
     let mlbam_id: Int?
     let retro_id: String?
+    let debut: Int?
+    let last_season: Int?
+    let position: String?
+    let team: String?
 
     var id: String { retro_id ?? "\(mlbam_id ?? 0)" }
+
+    /// "2015–2025 · LAD · 3B" — the parts we have, to tell candidates apart.
+    /// The team arrives as a Lahman storage code (LAN, OAK); `teamAbbreviation`
+    /// is the app's existing map to the fan-friendly form (LAD, ATH).
+    var detail: String? {
+        var parts: [String] = []
+        if let d = debut {
+            parts.append(last_season.map { "\(d)–\($0)" } ?? "\(d)–")
+        }
+        if let t = team, !t.isEmpty { parts.append(teamAbbreviation(for: t)) }
+        if let p = position, !p.isEmpty { parts.append(p) }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
 }
 
 /// Coverage caveat: how complete the play-by-play is for the queried span.

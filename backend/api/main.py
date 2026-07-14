@@ -5606,18 +5606,25 @@ def _resolve_retro_id(player: str, role: str):
     Returns a list of {mlbam_id, name, retro_id} candidates — 1 = resolved,
     0 = not found, >1 (distinct retro_id) = ambiguous, let the caller decide."""
     table = "pitchers" if role == "pit" else "players"
+    seasons = "pitcher_seasons" if role == "pit" else "player_seasons"
     p = player.strip()
+    # Carry debut/last-season/position + most-recent team so same-name
+    # candidates can be told apart by a human ("Max Muncy · 2015-2025 · LAD" vs
+    # "Max Muncy · 2024-2025 · ATH") rather than by opaque MLBAM ids.
+    cols = (f"p.player_id, p.name, p.retro_id, p.mlb_debut, p.mlb_last_season, p.position, "
+            f"(SELECT s.team FROM {seasons} s WHERE s.player_id = p.player_id "
+            f"ORDER BY s.year DESC LIMIT 1)")
     with connection.get_session() as db:
         if p.isdigit():
             rows = db.execute(_sa_text(
-                f"SELECT player_id, name, retro_id FROM {table} "
-                "WHERE player_id = :pid"), {"pid": int(p)}).fetchall()
+                f"SELECT {cols} FROM {table} p WHERE p.player_id = :pid"),
+                {"pid": int(p)}).fetchall()
         else:
             rows = db.execute(_sa_text(
-                f"SELECT player_id, name, retro_id FROM {table} "
-                "WHERE name ILIKE :nm ORDER BY name LIMIT 25"),
-                {"nm": f"%{p}%"}).fetchall()
-    return [{"mlbam_id": r[0], "name": r[1], "retro_id": r[2]} for r in rows]
+                f"SELECT {cols} FROM {table} p WHERE p.name ILIKE :nm "
+                "ORDER BY p.name LIMIT 25"), {"nm": f"%{p}%"}).fetchall()
+    return [{"mlbam_id": r[0], "name": r[1], "retro_id": r[2], "debut": r[3],
+             "last_season": r[4], "position": r[5], "team": r[6]} for r in rows]
 
 
 # --- Phase 4 extension: routing + honesty gates -----------------------------
@@ -7355,7 +7362,7 @@ _STAT_NOUN = [
     (r"\bplate appearances?\b", "PA"),
     (r"\bat[- ]bats?\b", "AB"),
     (r"\bhit by pitch\b|\bhbp\b", "HBP"),
-    (r"\bhits?\b", "H"),
+    (r"\bhits\b", "H"),   # plural only — "hit" is the verb ("how does X hit")
 ]
 # highlighted-stat display name -> the key it reads from a rates dict.
 _STAT_RATE_KEY = {"HR": "HR", "SO": "SO", "BB": "BB", "H": "H", "RBI": "RBI",
@@ -7375,10 +7382,38 @@ def _count_question_stat(question):
     return None
 
 
+# Rate-stat nouns for HIGHLIGHTING (no count value — the highlight is separate).
+_RATE_STAT_NOUN = [
+    (r"\bops\b", "OPS"),
+    (r"\bon[- ]?base( percentage| pct|%)?\b|\bobp\b", "OBP"),
+    (r"\bslugging( percentage| pct|%)?\b|\bslug\b|\bslg\b", "SLG"),
+    (r"\bbatting average\b|\baverage\b|\bavg\b|\bba\b", "AVG"),
+]
+
+
+def _asked_stat(question):
+    """The stat a question is about, for HIGHLIGHTING one table column — a rate
+    noun (AVG/OBP/SLG/OPS) or a counting noun (HR/SO/BB/...). No 'how many'
+    required, so a pure rate question ('what's X's OPS?') bolds OPS too."""
+    import re
+    ql = " " + (question or "").lower() + " "
+    for pat, stat in _RATE_STAT_NOUN:
+        if re.search(pat, ql):
+            return stat
+    for pat, stat in _STAT_NOUN:
+        if re.search(pat, ql):
+            return stat
+    return None
+
+
 @app.post("/ask")
 def ask(request: Request,
         question: str = Body(..., embed=True,
                              description="A plain-English baseball question"),
+        player_id: int | None = Query(default=None,
+                             description="MLBAM id to pin the question to (from tapping an "
+                                         "ambiguity candidate) — resolves by id, skipping the "
+                                         "name lookup that would re-ambiguate."),
         x_device_id: str | None = Header(default=None,
                              description="stable per-install id (iOS identifierForVendor); "
                                          "falls back to client IP for rate limiting")):
@@ -7439,6 +7474,14 @@ def ask(request: Request,
                 tool_name = block.name
                 tool_input = dict(block.input or {})
                 break
+
+    # Re-ask short-circuit: when the client re-runs a question pinned to a
+    # specific player (tapping an ambiguity candidate), resolve by that MLBAM id
+    # instead of the name — _resolve_retro_id treats an all-digits player as an
+    # exact id lookup, so this can't re-ambiguate and the picker can't loop.
+    if player_id is not None and tool_input is not None and tool_name in (
+            "query_situational", "query_rates", "query_splits"):
+        tool_input["player"] = str(player_id)
 
     _ANSWERABLE = ("query_situational", "query_leaderboard", "query_rates",
                    "query_splits", "query_rate_leaderboard")
@@ -7647,15 +7690,17 @@ def ask(request: Request,
                 # "pitch-count not recorded" caveat for a query that never
                 # filtered on the count (the count_data gate stays null there).
                 base["answer"] = None
-                # BACKSTOP: the model sometimes routes a COUNT ("how many home
-                # runs...") here instead of query_situational. The rate line
-                # already holds the number, so read it out and set count +
-                # highlighted_stat — but ONLY for a SITUATIONAL question, where
-                # the play-by-play is the correct and only source. A plain TOTAL
-                # must come from the season records: a career total taken from
-                # the plays would be short by the season in progress (which the
-                # plays store doesn't yet hold), and complete-coverage is no
-                # defence against a season missing entirely. The prompt routes
+                # Bold the stat the question is about, count OR rate — 'what's
+                # X's OPS vs lefties' highlights OPS even though there's no count.
+                base["highlighted_stat"] = _asked_stat(q)
+                # COUNT BACKSTOP: the model sometimes routes a COUNT ("how many
+                # home runs...") here instead of query_situational. The rate line
+                # holds the number, so read it out — but ONLY for a SITUATIONAL
+                # question, where the play-by-play is the correct and only source.
+                # A plain TOTAL must come from the season records: a career total
+                # taken from the plays would be short by the in-progress season
+                # (which the plays store doesn't hold), and complete-coverage is
+                # no defence against a season missing entirely. The prompt routes
                 # those to query_situational -> season_stats.
                 hstat = _count_question_stat(q)
                 situational = any(tool_input.get(k) is not None for k in (
@@ -7666,7 +7711,6 @@ def ask(request: Request,
                     val = (result.get("rates") or {}).get(_STAT_RATE_KEY.get(hstat, hstat))
                     if val is not None:
                         base["count"] = int(val)
-                        base["highlighted_stat"] = hstat
 
         elif tool_name == "query_splits":
             base["splits"] = result.get("splits")
@@ -7777,20 +7821,29 @@ def ask(request: Request,
     # line under a COMPLETE season-stats total mixes ~90%-coverage numbers with a
     # complete one — Williams 1941 would read "37" while the HR column shows 30.
     # So: season-stats total -> season-stats line; plays count -> plays line.
+
+    def _plays_line():
+        rkw = {k: params.get(k) for k in (
+            "player", "role", "balls", "strikes", "outs", "inning", "base_state",
+            "season", "season_start", "season_end", "game_type",
+            "pitcher_hand", "batter_side", "home_away") if params.get(k) is not None}
+        rres = _run_rates(**rkw)
+        return rres.get("rates") if isinstance(rres, dict) else None
+
     try:
         if result.get("source") == "season_stats":
             base["rates"] = _season_rate_line(
                 result["player"]["mlbam_id"], params.get("role", "bat"),
                 params.get("season"), params.get("season_start"),
                 params.get("season_end"), params.get("game_type"))
+            # POSTSEASON has no complete season-stats line (that table lacks
+            # PA/HBP/SF), but the plays store holds every postseason event — so
+            # compute the line there for the same game_type=P filter. Modern
+            # postseason is fully covered, so the plays HR matches the count.
+            if base["rates"] is None and (params.get("game_type") or "").strip().upper() == "P":
+                base["rates"] = _plays_line()
         else:
-            rkw = {k: params.get(k) for k in (
-                "player", "role", "balls", "strikes", "outs", "inning", "base_state",
-                "season", "season_start", "season_end", "game_type",
-                "pitcher_hand", "batter_side", "home_away") if params.get(k) is not None}
-            rres = _run_rates(**rkw)
-            if isinstance(rres, dict) and rres.get("rates"):
-                base["rates"] = rres["rates"]
+            base["rates"] = _plays_line()
     except Exception as exc:  # noqa: BLE001 — the count still stands without the line
         log.warning("ask: rate line failed for %r: %s", q, exc)
 
