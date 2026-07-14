@@ -5973,10 +5973,14 @@ def _run_situational(
         elif season_start is not None or season_end is not None:
             lo = season_start or _PLAYS_FLOOR; hi = season_end or 2025
             single_season = (lo == hi)
-        else:  # career: span the matched rows actually cover
+        else:  # career: span the seasons THE PLAYER played (id alone), NOT the
+               # rows matching this exact event+situation — those can be empty for
+               # a rare combination (a rookie with no 3-2-count HR), and the
+               # whole-store fallback then reports the store-wide ~46% count
+               # coverage as the player's era, wrongly declining a modern player.
             mm = cur.execute(
-                f"SELECT min(SEASON), max(SEASON) FROM plays WHERE {clause}",
-                params).fetchone()
+                f"SELECT min(SEASON), max(SEASON) FROM plays WHERE {id_col} = ?",
+                [retro_id]).fetchone()
             lo, hi = (mm[0], mm[1]) if mm and mm[0] is not None else (_PLAYS_FLOOR, 2025)
             single_season = (lo == hi)
         game_coverage, count_data = _coverage_gates(cur, lo, hi, uses_count, single_season)
@@ -6442,15 +6446,19 @@ def _situ_clauses(balls, strikes, outs, inning, base_state,
     return where, params, meta
 
 
-def _rate_span(cur, clause, params, season, season_start, season_end):
-    """(lo, hi, single_season) for the coverage gate over a rate query's span."""
+def _rate_span(cur, span_clause, span_params, season, season_start, season_end):
+    """(lo, hi, single_season) for the coverage gate. For a career query the span
+    is the seasons THE PLAYER played (span_clause = the player id alone) — NOT the
+    rows matching the full situation, which can be empty for a rare filter and
+    then fall back to the whole store, reporting store-wide coverage as if it were
+    the player's era (a modern player falsely declined)."""
     if season is not None:
         return season, season, True
     if season_start is not None or season_end is not None:
         lo = season_start or _PLAYS_FLOOR; hi = season_end or 2025
         return lo, hi, (lo == hi)
-    mm = cur.execute(f"SELECT min(SEASON), max(SEASON) FROM plays WHERE {clause}",
-                     params).fetchone()
+    mm = cur.execute(f"SELECT min(SEASON), max(SEASON) FROM plays WHERE {span_clause}",
+                     span_params).fetchone()
     if mm and mm[0] is not None:
         return mm[0], mm[1], (mm[0] == mm[1])
     return _PLAYS_FLOOR, 2025, False
@@ -6497,7 +6505,7 @@ def _run_rates(player, role="bat", balls=None, strikes=None, outs=None, inning=N
         row = cur.execute(f"SELECT {_rate_components_sql()} FROM plays WHERE {clause}",
                           params).fetchone()
         rates = _derive_rates(dict(zip(_RATE_COLS, row)))
-        lo, hi, single = _rate_span(cur, clause, params, season, season_start, season_end)
+        lo, hi, single = _rate_span(cur, f"{id_col} = ?", [retro], season, season_start, season_end)
         game_coverage, count_data = _coverage_gates(cur, lo, hi, uses_count, single)
         query_ms = round((time.perf_counter() - t0) * 1000, 1)
     finally:
@@ -6572,7 +6580,7 @@ def _run_splits(player, split_by, role="bat", balls=None, strikes=None, outs=Non
         rows = cur.execute(
             f"SELECT {col} AS sv, {_rate_components_sql()} FROM plays WHERE {clause} "
             f"GROUP BY {col} ORDER BY {col}", params).fetchall()
-        lo, hi, single = _rate_span(cur, clause, params, season, season_start, season_end)
+        lo, hi, single = _rate_span(cur, f"{id_col} = ?", [retro], season, season_start, season_end)
         game_coverage, count_data = _coverage_gates(cur, lo, hi, uses_count, single)
         query_ms = round((time.perf_counter() - t0) * 1000, 1)
     finally:
