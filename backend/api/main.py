@@ -7448,6 +7448,12 @@ def ask(request: Request,
     cached = False
     tool_name, tool_input = None, None
     cached_tr = _ask_cache_get(norm)
+    # A cached translation whose player is a bare numeric id, requested WITHOUT a
+    # player_id, is a leaked disambiguation pick (an earlier re-ask baked the
+    # chosen id into the cache). Ignore it and re-translate, so the question
+    # ambiguates for everyone as it should.
+    if cached_tr and player_id is None and str((cached_tr[1] or {}).get("player") or "").isdigit():
+        cached_tr = None
     if cached_tr:
         tool_name, tool_input = cached_tr           # skip the LLM; query still re-runs (fresh data)
         cached = True
@@ -7475,12 +7481,15 @@ def ask(request: Request,
                 tool_input = dict(block.input or {})
                 break
 
-    # Re-ask short-circuit: when the client re-runs a question pinned to a
-    # specific player (tapping an ambiguity candidate), resolve by that MLBAM id
-    # instead of the name — _resolve_retro_id treats an all-digits player as an
-    # exact id lookup, so this can't re-ambiguate and the picker can't loop.
+    # Re-ask short-circuit: pin the query to the chosen player, but NEVER bake
+    # that choice into the cache — the cache stores how the QUESTION was read
+    # (the name), so the next asker still gets the choice. _finish() restores the
+    # original player before logging. _resolve_retro_id treats an all-digits
+    # player as an exact id lookup, so this can't re-ambiguate or loop.
+    _reask_orig_player = None
     if player_id is not None and tool_input is not None and tool_name in (
             "query_situational", "query_rates", "query_splits"):
+        _reask_orig_player = tool_input.get("player")
         tool_input["player"] = str(player_id)
 
     _ANSWERABLE = ("query_situational", "query_leaderboard", "query_rates",
@@ -7509,8 +7518,14 @@ def ask(request: Request,
     }
 
     def _finish():
+        # Cache the QUESTION's reading, never the player a user picked — restore
+        # the original name so the cached translation ambiguates for the next asker.
+        log_input = tool_input
+        if _reask_orig_player is not None and tool_input is not None:
+            log_input = dict(tool_input)
+            log_input["player"] = _reask_orig_player
         timing["total"] = round((time.perf_counter() - t_all) * 1000, 1)
-        _ask_log_write(q, norm, tool_name, tool_input, base, cached, id_hash,
+        _ask_log_write(q, norm, tool_name, log_input, base, cached, id_hash,
                        in_tok, out_tok, timing)
         return base
 
