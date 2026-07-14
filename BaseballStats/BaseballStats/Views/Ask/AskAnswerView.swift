@@ -76,6 +76,12 @@ struct AskAnswerView: View {
                     .font(.body)
                     .foregroundStyle(.primary)
                     .fixedSize(horizontal: false, vertical: true)
+            } else if let count = response.count {
+                // Fallback: the rate line couldn't be computed — show the bare
+                // count so the number the user asked for is never lost.
+                Text(count.formatted(.number))
+                    .font(.title2.weight(.bold))
+                    .monospacedDigit()
             }
 
             if hasDetails {
@@ -83,7 +89,7 @@ struct AskAnswerView: View {
                     detailContent
                         .padding(.top, 6)
                 } label: {
-                    Text("Show details")
+                    Text("More")
                         .font(.subheadline.weight(.semibold))
                 }
                 .tint(.secondary)
@@ -104,18 +110,26 @@ struct AskAnswerView: View {
 
     // MARK: - Data-first sections
 
-    /// A rate line: the slash line + core counts up front (the answer), the
-    /// remaining component counts behind a disclosure. No prose.
+    /// A rate line as a horizontal stat table with the asked-for stat
+    /// highlighted. Extra components and (for a small situational count) the
+    /// sample plays sit behind "More". No prose.
     private func ratesSection(_ rates: AskRates) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            ratesLine(rates)
-            if let components = rateComponents(rates) {
+            StatTable(columns: rateColumns(rates, highlight: response.highlighted_stat))
+            if ratesHasMore(rates) {
                 DisclosureGroup {
-                    Text(components)
-                        .font(.caption)
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
-                        .padding(.top, 4)
+                    VStack(alignment: .leading, spacing: 12) {
+                        if let components = rateComponents(rates) {
+                            Text(components)
+                                .font(.caption)
+                                .monospacedDigit()
+                                .foregroundStyle(.secondary)
+                        }
+                        if let sample = response.sample, !sample.isEmpty {
+                            sampleList(sample)
+                        }
+                    }
+                    .padding(.top, 4)
                 } label: {
                     Text("More")
                         .font(.subheadline.weight(.semibold))
@@ -126,7 +140,11 @@ struct AskAnswerView: View {
         }
     }
 
-    /// The component counts not in the headline line: 2B/3B/BB/HBP/SF/SO.
+    private func ratesHasMore(_ r: AskRates) -> Bool {
+        rateComponents(r) != nil || !(response.sample?.isEmpty ?? true)
+    }
+
+    /// The component counts not in the headline table: 2B/3B/BB/HBP/SF/SO.
     private func rateComponents(_ r: AskRates) -> String? {
         var parts: [String] = []
         if let x = r.doubles { parts.append("\(x) 2B") }
@@ -222,98 +240,75 @@ struct AskAnswerView: View {
         return LeaderboardRow.formatted(value, as: .threeDecimal)
     }
 
-    // MARK: - Rates
+    // MARK: - Stat table (shared by rate lines, split rows, situational counts)
 
-    private func ratesLine(_ rates: AskRates) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 18) {
-                rateCell("AVG", rates.AVG)
-                rateCell("OBP", rates.OBP)
-                rateCell("SLG", rates.SLG)
-                rateCell("OPS", rates.OPS)
-            }
-            if let volume = rateVolume(rates) {
-                Text(volume)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+    private static let coreStatKeys: Set<String> =
+        ["PA", "AB", "H", "HR", "RBI", "AVG", "OBP", "SLG", "OPS"]
+
+    /// Columns for a rate line: the core nine, with the asked-for stat
+    /// highlighted. If that stat isn't one of the nine (SO/BB/2B/3B/HBP), it's
+    /// prepended so it stays visible and emphasized.
+    private func rateColumns(_ r: AskRates, highlight: String?) -> [StatTable.Column] {
+        func col(_ label: String, _ value: String) -> StatTable.Column {
+            StatTable.Column(label: label, value: value, highlighted: label == highlight)
         }
+        var cols: [StatTable.Column] = []
+        if let h = highlight, !Self.coreStatKeys.contains(h), let v = moreValue(r, h) {
+            cols.append(StatTable.Column(label: h, value: v, highlighted: true))
+        }
+        cols += [
+            col("PA",  intVal(r.PA)),  col("AB", intVal(r.AB)),  col("H", intVal(r.H)),
+            col("HR",  intVal(r.HR)),  col("RBI", intVal(r.RBI)),
+            col("AVG", rateVal(r.AVG)), col("OBP", rateVal(r.OBP)),
+            col("SLG", rateVal(r.SLG)), col("OPS", rateVal(r.OPS)),
+        ]
+        return cols
     }
 
-    private func rateCell(_ label: String, _ value: Double?) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(label)
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
-            Text(LeaderboardRow.formatted(value, as: .threeDecimal))
-                .font(.callout.weight(.semibold))
-                .monospacedDigit()
-        }
+    /// Columns for one split row — the core nine, nothing highlighted.
+    private func splitColumns(_ s: AskSplit) -> [StatTable.Column] {
+        [.init(label: "PA", value: intVal(s.PA)), .init(label: "AB", value: intVal(s.AB)),
+         .init(label: "H", value: intVal(s.H)), .init(label: "HR", value: intVal(s.HR)),
+         .init(label: "RBI", value: intVal(s.RBI)), .init(label: "AVG", value: rateVal(s.AVG)),
+         .init(label: "OBP", value: rateVal(s.OBP)), .init(label: "SLG", value: rateVal(s.SLG)),
+         .init(label: "OPS", value: rateVal(s.OPS))]
     }
 
-    private func rateVolume(_ rates: AskRates) -> String? {
-        countsLine(pa: rates.PA, ab: rates.AB, h: rates.H, hr: rates.HR, rbi: rates.RBI)
+    private func intVal(_ n: Int?) -> String { n.map { $0.formatted(.number) } ?? "—" }
+    private func rateVal(_ d: Double?) -> String { LeaderboardRow.formatted(d, as: .threeDecimal) }
+    private func moreValue(_ r: AskRates, _ key: String) -> String? {
+        switch key {
+        case "2B":  return r.doubles.map(String.init)
+        case "3B":  return r.triples.map(String.init)
+        case "BB":  return r.BB.map(String.init)
+        case "HBP": return r.HBP.map(String.init)
+        case "SF":  return r.SF.map(String.init)
+        case "SO":  return r.SO.map(String.init)
+        default:    return nil
+        }
     }
 
     // MARK: - Splits
 
-    /// Two rows per split rather than a 10-column table. The requested columns
-    /// (PA AB H HR RBI AVG OBP SLG OPS) can't fit a phone width without a
-    /// horizontal scroll that hides half of them, and comparing splits across a
-    /// scroll is awkward. So each split is a compact block: the slash line +
-    /// OPS on top (what you compare across splits), the counting volume beneath
-    /// (context). Everything stays on screen and each split reads as a unit —
-    /// the same "rate prominent, volume secondary" idiom used elsewhere.
+    /// Each split is a labeled block over the SAME stat table used for a single
+    /// rate line, so "vs LHP / vs RHP" reads as two rows of one component. The
+    /// label sits on its own line above the table so nine columns keep the full
+    /// phone width.
     private func splitsTable(_ splits: [AskSplit]) -> some View {
         VStack(spacing: 0) {
             ForEach(splits) { split in
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text(split.split_value ?? "—")
-                            .font(.subheadline.weight(.semibold))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.8)
-                        Spacer(minLength: 8)
-                        Text(slashLine(avg: split.AVG, obp: split.OBP, slg: split.SLG))
-                            .font(.subheadline.weight(.semibold))
-                            .monospacedDigit()
-                        Text("\(LeaderboardRow.formatted(split.OPS, as: .threeDecimal)) OPS")
-                            .font(.caption.weight(.semibold))
-                            .monospacedDigit()
-                            .foregroundStyle(.secondary)
-                    }
-                    if let counts = countsLine(pa: split.PA, ab: split.AB,
-                                               h: split.H, hr: split.HR, rbi: split.RBI) {
-                        Text(counts)
-                            .font(.caption)
-                            .monospacedDigit()
-                            .foregroundStyle(.secondary)
-                    }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(split.split_value ?? "—")
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                    StatTable(columns: splitColumns(split))
                 }
                 .padding(.vertical, 8)
 
                 if split.id != splits.last?.id { Divider() }
             }
         }
-    }
-
-    /// "AVG/OBP/SLG" as a three-decimal slash line.
-    private func slashLine(avg: Double?, obp: Double?, slg: Double?) -> String {
-        [avg, obp, slg]
-            .map { LeaderboardRow.formatted($0, as: .threeDecimal) }
-            .joined(separator: "/")
-    }
-
-    /// "1,238 PA · 337 AB · 97 H · 24 HR · 60 RBI" — grouped counts, nils
-    /// skipped. Shared by the split blocks and the single-rate volume line.
-    private func countsLine(pa: Int?, ab: Int?, h: Int?, hr: Int?, rbi: Int?) -> String? {
-        var parts: [String] = []
-        if let pa { parts.append("\(pa.formatted(.number)) PA") }
-        if let ab { parts.append("\(ab.formatted(.number)) AB") }
-        if let h { parts.append("\(h.formatted(.number)) H") }
-        if let hr { parts.append("\(hr.formatted(.number)) HR") }
-        if let rbi { parts.append("\(rbi.formatted(.number)) RBI") }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     // MARK: - Sample plays
@@ -432,5 +427,41 @@ struct AskAnswerView: View {
             notes.append(note)
         }
         return notes.isEmpty ? nil : notes.joined(separator: " ")
+    }
+}
+
+// MARK: - Stat table
+
+/// One horizontal row of stats — PA AB H HR RBI AVG OBP SLG OPS — with an
+/// optional column emphasized in the accent color. Reused for a single rate
+/// line, each row of a split, and situational counts (where the asked-for stat
+/// pops). Columns flex to fill the width; tabular figures plus a low
+/// `minimumScaleFactor` keep nine short numbers on one line at phone width.
+struct StatTable: View {
+    struct Column: Identifiable {
+        let label: String
+        let value: String
+        var highlighted: Bool = false
+        var id: String { label }
+    }
+    let columns: [Column]
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 3) {
+            ForEach(columns) { c in
+                VStack(spacing: 2) {
+                    Text(c.label)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(c.highlighted ? Color.accentColor : .secondary)
+                    Text(c.value)
+                        .font(.system(size: 13, weight: c.highlighted ? .bold : .regular))
+                        .monospacedDigit()
+                        .foregroundStyle(c.highlighted ? Color.accentColor : .primary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                }
+                .frame(maxWidth: .infinity)
+            }
+        }
     }
 }

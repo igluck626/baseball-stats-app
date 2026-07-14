@@ -5456,6 +5456,12 @@ _PLAYS_EVENT_CD = {
     "3B": 22, "TRIPLE": 22,
 }
 
+# Which rate-line column a situational COUNT highlights. HR/2B/3B map to their
+# own columns; K -> SO (strikeouts); BB/HBP to theirs. A single (1B) has no
+# dedicated rate column, so nothing is highlighted.
+_EVENT_TO_STAT = {"HR": "HR", "K": "SO", "SO": "SO", "BB": "BB",
+                  "HBP": "HBP", "2B": "2B", "3B": "3B"}
+
 
 # Persistent read-only connection to the plays store. The Railway volume is
 # network-attached (~50 MB/s), so a COLD duckdb.connect() costs ~900ms (reading
@@ -5666,6 +5672,53 @@ def _game_type_filter(game_type):
     if gt not in ("R", "P", "A"):
         raise HTTPException(status_code=400, detail="game_type must be R, P, A, or ALL")
     return "GAME_TYPE = ?", gt, gt
+
+
+def _season_rate_line(pid, role, season, season_start, season_end, game_type):
+    """Full rate line for a PLAIN total, drawn from the SAME complete source as
+    the count (player_seasons) — so every number in the answer is consistent and
+    complete, never a plays-derived line (~90% coverage for older seasons)
+    stapled to a complete season-stats total (Williams 1941: a 30-HR line under
+    the true 37). Regular-season HITTERS only: pitcher_seasons has no opponent
+    slash line, and the postseason table lacks PA/HBP/SF — both return None
+    (count-only), so we never show a partial line as if it were complete."""
+    gt = (game_type or "").strip().upper() or None
+    if (role or "bat").lower() != "bat" or gt in ("P", "A"):
+        return None
+    if not connection.db_available():
+        return None
+    where = ["player_id = :pid"]; p: dict = {"pid": int(pid)}
+    if season is not None:
+        where.append("year = :y"); p["y"] = int(season)
+    else:
+        if season_start is not None: where.append("year >= :ys"); p["ys"] = int(season_start)
+        if season_end is not None:   where.append("year <= :ye"); p["ye"] = int(season_end)
+    # Capitalized columns are stored quoted in Postgres (see _SEASON_COL);
+    # doubles/triples are lowercase. TB is derived so we don't depend on it.
+    sql = ('SELECT COALESCE(SUM("PA"),0), COALESCE(SUM("AB"),0), COALESCE(SUM("H"),0), '
+           'COALESCE(SUM(doubles),0), COALESCE(SUM(triples),0), COALESCE(SUM("HR"),0), '
+           'COALESCE(SUM("RBI"),0), COALESCE(SUM("SO"),0), COALESCE(SUM("BB"),0), '
+           'COALESCE(SUM("HBP"),0), COALESCE(SUM("SF"),0), COUNT(*) '
+           f'FROM player_seasons WHERE {" AND ".join(where)}')
+    try:
+        with connection.get_session() as db:
+            row = db.execute(_sa_text(sql), p).fetchone()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("season rate line failed for pid=%s: %s", pid, exc)
+        return None
+    if not row or row[-1] == 0 or not row[1]:   # no rows, or no at-bats
+        return None
+    pa, ab, h, d2, d3, hr, rbi, so, bb, hbp, sf = row[:11]
+    tb = h + d2 + 2 * d3 + 3 * hr                # singles + 2·2B + 3·3B + 4·HR
+    obp_den = ab + bb + hbp + sf
+    obp = (h + bb + hbp) / obp_den if obp_den else None
+    slg = tb / ab
+    return {"PA": pa, "AB": ab, "H": h, "doubles": d2, "triples": d3, "HR": hr,
+            "RBI": rbi, "SO": so, "BB": bb, "HBP": hbp, "SF": sf,
+            "AVG": round(h / ab, 3),
+            "OBP": round(obp, 3) if obp is not None else None,
+            "SLG": round(slg, 3),
+            "OPS": round(obp + slg, 3) if obp is not None else None}
 
 
 def _run_season_total(player, role="bat", event=None, season=None,
@@ -7340,6 +7393,7 @@ def ask(request: Request,
         "source":          None,
         "game_coverage":   None,
         "count_data":      None,
+        "highlighted_stat": None,
         "ambiguous":       False,
         "declined":        False,
         "out_of_scope":    False,
@@ -7625,49 +7679,51 @@ def ask(request: Request,
         return _finish()
 
     base["count"]          = result.get("count")
-    base["sample"]         = result.get("sample", [])
     base["player_resolved"] = result.get("player")
     base["source"]         = result.get("source")
     base["game_coverage"]  = result.get("game_coverage")
     base["count_data"]     = result.get("count_data")
+    cnt = result.get("count")
 
-    # ---- 3. phrase the answer (factual; honest about the two gates) -----
-    t0 = time.perf_counter()
-    facts = {"question": q, "player": result["player"]["name"],
-             "count": result.get("count"), "filters": result.get("filters"),
-             "source": result.get("source"),
-             "game_coverage": result.get("game_coverage"),
-             "count_data": result.get("count_data")}
-    answer = None
+    # A situational count is really a question about a SPLIT — "76 HR off
+    # lefties" also wants .293/.898. So return the FULL rate line for the
+    # IDENTICAL filter set (reuse _run_rates) plus which stat was asked about,
+    # and let the UI show the whole slash line with that stat highlighted. The
+    # count is that stat's value.
+    base["highlighted_stat"] = _EVENT_TO_STAT.get((params.get("event") or "").strip().upper())
+    # The rate line MUST come from the SAME source as the count. A plays-derived
+    # line under a COMPLETE season-stats total mixes ~90%-coverage numbers with a
+    # complete one — Williams 1941 would read "37" while the HR column shows 30.
+    # So: season-stats total -> season-stats line; plays count -> plays line.
     try:
-        phrased = client.messages.create(
-            model=_ASK_MODEL, max_tokens=256,
-            system=(
-                "You state a single baseball statistic as one short, factual "
-                "sentence from the given data. RULES: (1) If count is null OR "
-                "count_data.available is false, DO NOT invent a number — say "
-                "plainly that the pitch-count data wasn't recorded for that era "
-                "(use count_data.note). (2) If game_coverage.complete is false, "
-                "work its note into the sentence naturally (e.g. 'Based on the "
-                "94% of 1927 games with play-by-play data, ...'). (3) If "
-                "count_data has a note and a number is given, include the note. "
-                "Never present a partial or no-data count as a definitive total. "
-                "No editorializing." + _PLAIN_TEXT_RULE),
-            messages=[{"role": "user",
-                       "content": "Question: " + q + "\nData: " + json.dumps(facts)}],
-        )
-        answer = "".join(getattr(b, "text", "") for b in phrased.content
-                         if getattr(b, "type", None) == "text").strip()
-    except Exception as exc:  # noqa: BLE001
-        log.warning("ask phrasing failed: %s", exc)
-    timing["llm_phrase"] = round((time.perf_counter() - t0) * 1000, 1)
-    # deterministic fallback if phrasing failed
-    if answer:
-        base["answer"] = answer
-    elif result.get("count") is None and (result.get("count_data") or {}).get("note"):
+        if result.get("source") == "season_stats":
+            base["rates"] = _season_rate_line(
+                result["player"]["mlbam_id"], params.get("role", "bat"),
+                params.get("season"), params.get("season_start"),
+                params.get("season_end"), params.get("game_type"))
+        else:
+            rkw = {k: params.get(k) for k in (
+                "player", "role", "balls", "strikes", "outs", "inning", "base_state",
+                "season", "season_start", "season_end", "game_type",
+                "pitcher_hand", "batter_side", "home_away") if params.get(k) is not None}
+            rres = _run_rates(**rkw)
+            if isinstance(rres, dict) and rres.get("rates"):
+                base["rates"] = rres["rates"]
+    except Exception as exc:  # noqa: BLE001 — the count still stands without the line
+        log.warning("ask: rate line failed for %r: %s", q, exc)
+
+    # Sample plays are useful evidence for a SMALL count (9 grand slams), noise
+    # above 20 (76 home runs). The UI keeps them behind "More".
+    base["sample"] = result.get("sample", []) if (cnt is not None and cnt <= 20) else []
+
+    # The stat table is the answer — no prose. Keep a line only for the honest
+    # "pitch-count wasn't recorded" decline (count null with a note).
+    if cnt is None and (result.get("count_data") or {}).get("note"):
+        base["declined"] = True
+        base["reason"] = result["count_data"]["note"]
         base["answer"] = result["count_data"]["note"]
     else:
-        base["answer"] = f'{result["player"]["name"]}: {result.get("count")}.'
+        base["answer"] = None
     return _finish()
 
 

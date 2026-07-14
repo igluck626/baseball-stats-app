@@ -40,6 +40,10 @@ struct AskResponse: Decodable {
     let stat: String?
     let min_pa: Int?
 
+    // For a situational COUNT: which stat-table column to emphasize (the one
+    // the question asked about, e.g. "HR" / "SO"). nil = emphasize nothing.
+    let highlighted_stat: String?
+
     // Resolution + provenance.
     let player_resolved: AskPlayerResolved?
     let source: String?
