@@ -6230,6 +6230,186 @@ def _run_milestone(player, event, n, role="bat", season=None, game_type=None):
             "game_coverage": {"complete": not incomplete, "low_seasons": low_seasons}}
 
 
+# ---- Phase 6: STREAKS ("longest run of consecutive games where a per-game
+# condition held") -----------------------------------------------------------
+_STREAK_TYPE_LABEL = {
+    "hitting": "hitting streak", "on_base": "on-base streak",
+    "home_run": "home run streak", "multi_hit": "multi-hit streak",
+}
+
+# A streak needs EVERY game present: a missing game in the middle either JOINS two
+# separate streaks (if it actually broke one) or SPLITS one (if it was part of
+# it) — WRONG, not short. So a streak is computed ONLY within seasons that are
+# essentially 100% covered; the same "complete, modulo 1-dp rounding" bar as
+# milestones. Uncovered seasons are excluded (and said so), or if none qualify we
+# decline outright.
+_STREAK_COVERAGE_MIN = 99.95
+
+
+def _streak_classify(kind, H, HR, AB, reached, PA):
+    """One game -> EXTEND / BREAK / SKIP under one streak definition. SKIP is
+    NEUTRAL (the streak carries, the game isn't counted). THE BASEBALL RULE most
+    implementations get wrong: a game with NO official at-bat (walked/HBP/sac
+    only) does NOT break a hitting/HR/multi-hit streak — it's skipped. On-base
+    counts REACHING, so there a walk EXTENDS instead."""
+    if PA == 0:
+        return "skip"                      # didn't bat (pinch-run/defense) — neutral
+    if kind == "on_base":
+        return "extend" if reached >= 1 else "break"
+    if AB == 0:
+        return "skip"                      # walked/HBP/sac only — no at-bat to hit in
+    if kind == "hitting":
+        return "extend" if H >= 1 else "break"
+    if kind == "home_run":
+        return "extend" if HR >= 1 else "break"
+    if kind == "multi_hit":
+        return "extend" if H >= 2 else "break"
+    return "break"
+
+
+def _longest_streak(games, kind):
+    """games: (date, H, HR, AB, reached, PA) tuples in chronological order, all
+    inside ONE run of consecutive fully-covered seasons. Returns
+    (length, start_date, end_date) — length counts only the EXTEND games; SKIP
+    games sit inside the span without counting."""
+    best_len, best_start, best_end = 0, None, None
+    cur, start = 0, None
+    for gd, H, HR, AB, reached, PA in games:
+        c = _streak_classify(kind, H, HR, AB, reached, PA)
+        if c == "extend":
+            if cur == 0:
+                start = gd
+            cur += 1
+            if cur > best_len:
+                best_len, best_start, best_end = cur, start, gd
+        elif c == "break":
+            cur, start = 0, None
+        # "skip" -> carry the current run untouched
+    return best_len, best_start, best_end
+
+
+def _run_streak(player, streak_type, season=None, game_type=None):
+    """Longest run of consecutive games meeting a per-game condition (hitting /
+    on-base / home-run / multi-hit). Aggregates the player's plays into games,
+    then walks them in order applying the streak rule (incl. the at-bat-less SKIP
+    rule above).
+
+    COVERAGE GATE (harder than milestones): a missing game mid-streak silently
+    JOINS or SPLITS streaks, so a streak is only trustworthy where every game is
+    present. We compute ONLY within maximal runs of consecutive seasons that are
+    ~100% covered, and take the best across runs — a streak can never bridge a
+    coverage gap. If the player has uncovered seasons we say the result is over
+    the fully-covered ones; if NONE qualify (e.g. DiMaggio's 1936-51, all 76-97%
+    covered) we DECLINE rather than report a number that could be split or joined
+    by missing games."""
+    kind = (streak_type or "").strip().lower()
+    if kind not in _STREAK_TYPE_LABEL:
+        raise HTTPException(status_code=400, detail=(
+            f"'{streak_type}' isn't a streak type I track "
+            "(known: hitting, on_base, home_run, multi_hit)."))
+    gt_clause, gt_param, gt = _game_type_filter(game_type)   # default -> regular season
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+
+    cands = [c for c in _resolve_retro_id(player, "bat") if c["retro_id"]]
+    if not cands:
+        raise HTTPException(status_code=404,
+                            detail=f"No player with a retro_id matching '{player}'")
+    if len({c["retro_id"] for c in cands}) > 1:
+        return {"resolved": False, "ambiguous": True, "query": player,
+                "candidates": cands[:25]}
+    resolved = cands[0]
+    retro_id = resolved["retro_id"]
+    player_block = {"query": player, "name": resolved["name"],
+                    "mlbam_id": resolved["mlbam_id"], "retro_id": retro_id, "role": "bat"}
+
+    where = ["BAT_ID = ?"]
+    params: list = [retro_id]
+    if gt_clause:
+        where.append(gt_clause); params.append(gt_param)
+    if season is not None:                       # a season-scoped streak ("his 2023 streak")
+        where.append("SEASON = ?"); params.append(int(season))
+    clause = " AND ".join(where)
+
+    try:
+        cur = _plays_cursor()
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    try:
+        # one row per GAME (doubleheaders stay separate via GAME_ID)
+        rows = cur.execute(
+            "SELECT GAME_DATE, SEASON, "
+            "SUM(CASE WHEN EVENT_CD IN (20,21,22,23) THEN 1 ELSE 0 END), "   # H
+            "SUM(CASE WHEN EVENT_CD = 23 THEN 1 ELSE 0 END), "               # HR
+            "SUM(CASE WHEN AB_FL THEN 1 ELSE 0 END), "                       # AB
+            "SUM(CASE WHEN EVENT_CD IN (14,15) THEN 1 ELSE 0 END), "         # BB (incl. IBB)
+            "SUM(CASE WHEN EVENT_CD = 16 THEN 1 ELSE 0 END), "               # HBP
+            "SUM(CASE WHEN SF_FL THEN 1 ELSE 0 END), "                       # SF
+            "SUM(CASE WHEN SH_FL THEN 1 ELSE 0 END), "                       # SH
+            "SUM(CASE WHEN EVENT_CD = 17 THEN 1 ELSE 0 END) "                # CI
+            f"FROM plays WHERE {clause} GROUP BY GAME_ID, GAME_DATE, SEASON "
+            "ORDER BY GAME_DATE, GAME_ID", params).fetchall()
+        player_seasons = sorted({r[1] for r in rows})
+        cov: dict = {}
+        if player_seasons:
+            for s, p in cur.execute(
+                    "SELECT season, coverage_pct FROM coverage WHERE season BETWEEN ? AND ?",
+                    [player_seasons[0], player_seasons[-1]]).fetchall():
+                cov[s] = p if p is not None else 0.0
+    finally:
+        cur.close()
+
+    covered = [s for s in player_seasons if cov.get(s, 0.0) >= _STREAK_COVERAGE_MIN]
+
+    # ---- DECLINE: no fully-covered season -> no trustworthy streak ---------
+    if not covered:
+        lo, hi = (player_seasons[0], player_seasons[-1]) if player_seasons else (None, None)
+        span = f"{lo}–{hi}" if lo is not None else "that era"
+        note = (f"I can't verify streaks for {resolved['name']} — none of the seasons "
+                f"in {span} are complete in the play-by-play record, so a missing game "
+                "could split or join a streak. I can only compute streaks over seasons "
+                "with essentially 100% game coverage.")
+        return {"resolved": True, "declined": True, "reason": note, "source": "plays",
+                "player": player_block, "streak": None,
+                "game_coverage": {"complete": False}}
+
+    # maximal runs of CONSECUTIVE covered seasons — a streak can't cross a gap
+    runs: list = []
+    for s in covered:
+        if runs and s == runs[-1][1] + 1:
+            runs[-1][1] = s
+        else:
+            runs.append([s, s])
+
+    best = (0, None, None)
+    best_run = None
+    for lo, hi in runs:
+        gs = [(r[0], r[2], r[3], r[4], r[2] + r[5] + r[6],                    # date,H,HR,AB,reached
+               r[4] + r[5] + r[6] + r[7] + r[8] + r[9])                       # PA
+              for r in rows if lo <= r[1] <= hi]
+        length, start, end = _longest_streak(gs, kind)
+        if length > best[0]:
+            best = (length, start, end)
+            best_run = (lo, hi)
+
+    length, start, end = best
+    excluded = [s for s in player_seasons if s not in set(covered)]
+    streak = {
+        "type": kind, "type_label": _STREAK_TYPE_LABEL[kind], "length": length,
+        "start_date": str(start) if start else None,
+        "start_pretty": _pretty_date(start) if start else None,
+        "end_date": str(end) if end else None,
+        "end_pretty": _pretty_date(end) if end else None,
+        "season": best_run[0] if best_run and best_run[0] == best_run[1] else None,
+        "covered_span": [covered[0], covered[-1]],
+        "restricted": bool(excluded),
+        "excluded_seasons": excluded,
+    }
+    return {"resolved": True, "source": "plays", "player": player_block,
+            "streak": streak,
+            "game_coverage": {"complete": not excluded, "low_seasons": excluded}}
+
+
 # Retrosheet biofile retro_id -> display name, slimmed to (key_retro, name).
 # Shipped in backend/data/retrosheet/. Covers 100% of the plays store's ids, so
 # it's the last-resort name for leaderboard players absent from players/pitchers
@@ -7262,6 +7442,35 @@ _ASK_MILESTONE_TOOL = {
     },
 }
 
+_ASK_STREAK_TOOL = {
+    "name": "query_streak",
+    "description": (
+        "The LONGEST run of CONSECUTIVE games meeting a per-game condition — "
+        "'longest hitting streak', 'longest on-base streak', 'most consecutive "
+        "games with a home run', 'longest multi-hit-game streak'. Returns the "
+        "length + the start/end dates. One player + a streak type. DISTINCT from a "
+        "count and from a milestone (which asks for a single date)."),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "player": {"type": "string", "description": "name or MLBAM id"},
+            "streak_type": {"type": "string",
+                            "enum": ["hitting", "on_base", "home_run", "multi_hit"],
+                            "description": "hitting = consecutive games with a hit; "
+                            "on_base = consecutive games reaching base (hit/walk/HBP); "
+                            "home_run = consecutive games with a home run; "
+                            "multi_hit = consecutive games with 2+ hits."},
+            "season": {"type": "integer", "description":
+                       "ONLY for a single-season streak ('his 2023 hitting streak', "
+                       "'longest streak in 2019'); omit for a career-longest streak."},
+            "game_type": {"type": "string", "enum": ["R", "P", "ALL"], "description":
+                          "R=regular season (DEFAULT — omit for normal questions); set "
+                          "only when the user explicitly asks about the postseason."},
+        },
+        "required": ["player", "streak_type"],
+    },
+}
+
 _ASK_SYSTEM = (
     "You translate a baseball fan's English question into a single structured "
     "query over a play-by-play database by calling exactly one tool.\n\n"
@@ -7391,10 +7600,29 @@ _ASK_SYSTEM = (
     "Only HR / hit / single / double / triple / strikeout / walk / HBP are "
     "milestone-able. 'Nth stolen base', 'Nth RBI', 'Nth win/save' are NOT — "
     "cannot_answer those.\n\n"
+    "STREAKS (call query_streak) — the LONGEST run of CONSECUTIVE games meeting a "
+    "condition. Map the phrasing to a streak_type: hitting / on_base / home_run / "
+    "multi_hit. Distinct from a count and from a milestone.\n"
+    "- 'What is Aaron Judge's longest hitting streak?' -> query_streak "
+    "{player:'Aaron Judge', streak_type:'hitting'}\n"
+    "- \"DiMaggio's longest hitting streak\" -> {player:'Joe DiMaggio', streak_type:'hitting'}\n"
+    "- 'Longest on-base streak by Juan Soto' -> {player:'Juan Soto', streak_type:'on_base'}\n"
+    "- 'Most consecutive games with a home run for Ken Griffey Jr' -> "
+    "{player:'Ken Griffey Jr', streak_type:'home_run'}\n"
+    "- 'Freddie Freeman's longest multi-hit streak' -> {player:'Freddie Freeman', "
+    "streak_type:'multi_hit'}\n"
+    "- A SINGLE-SEASON streak -> add season: \"Freeman's 2023 hitting streak\" -> "
+    "{player:'Freddie Freeman', streak_type:'hitting', season:2023}. Omit season "
+    "for a career-longest streak (the default).\n"
+    "Only hitting / on-base / home-run / multi-hit streaks are supported; other "
+    "'in a row' conditions (consecutive wins, games with an RBI, scoreless "
+    "innings) -> cannot_answer.\n\n"
     "OUT OF SCOPE (call cannot_answer) — only when the QUERY SHAPE can't do it:\n"
     "- ERA / WHIP / pitcher rate stats and other computed rates we don't support "
     "(we do AVG/OBP/SLG/OPS for hitters).\n"
-    "- Streaks or spans ('in a row', 'consecutive', 'hitting streak').\n"
+    "- Spans / date ranges ('games missed', 'when did he play from-to') and "
+    "'in a row' conditions OTHER than the hitting/on-base/home-run/multi-hit "
+    "streaks above.\n"
     "- Pitch type, velocity, exit velocity, or launch angle (not in Retrosheet).\n"
     "- Anything requiring data before 1910 (the play-by-play starts at 1910).\n"
     "- Conditions none of the tools can express: day vs night, weather, "
@@ -7425,6 +7653,7 @@ _ask_log_write_failed = False   # so a broken log surfaces LOUDLY once (not per-
 # tool (caches the whole tools array) and the system block.
 _ASK_TOOLS = [_ASK_QUERY_TOOL, _ASK_LEADERBOARD_TOOL, _ASK_RATES_TOOL,
               _ASK_SPLITS_TOOL, _ASK_RATE_LB_TOOL, _ASK_MILESTONE_TOOL,
+              _ASK_STREAK_TOOL,
               {**_ASK_CANNOT_TOOL, "cache_control": {"type": "ephemeral"}}]
 _ASK_SYSTEM_BLOCKS = [{"type": "text", "text": _ASK_SYSTEM,
                        "cache_control": {"type": "ephemeral"}}]
@@ -7769,6 +7998,7 @@ def ask(request: Request,
         "rates":           None,
         "splits":          None,
         "milestone":       None,
+        "streak":          None,
         "player_resolved": None,
         "source":          None,
         "game_coverage":   None,
@@ -7903,6 +8133,72 @@ def ask(request: Request,
             through = m.get("through_season") or 2025
             base["answer"] = (f"{name} hasn't reached {m['n']} {m['event']}s — through "
                               f"{through} he's at {m['current_total']}{floorish}.")
+        return _finish()
+
+    # ==== STREAK branch ('longest hitting/on-base/HR/multi-hit streak') ===
+    # Handled here for the same reason as milestones (out of _ANSWERABLE, so the
+    # situational constraint validator can't inject filters a streak can't use).
+    # Answer is a deterministic code-built sentence + a structured `streak` block.
+    if tool_name == "query_streak":
+        base["understood_as"] = tool_input
+        sk = {k: tool_input.get(k) for k in ("player", "streak_type", "season", "game_type")
+              if tool_input.get(k) is not None}
+        if not sk.get("player") or not sk.get("streak_type"):
+            base["out_of_scope"] = True
+            base["reason"] = "A streak needs a player and a streak type (e.g. 'hitting')."
+            base["answer"] = base["reason"]
+            return _finish()
+        t0 = time.perf_counter()
+        try:
+            result = _run_streak(**sk)
+        except HTTPException as exc:
+            timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
+            base["reason"] = str(exc.detail)
+            base["answer"] = f"Couldn't answer that: {exc.detail}"
+            return _finish()
+        except Exception as exc:  # noqa: BLE001
+            timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
+            log.exception("ask streak failed for %r", q)
+            base["error"] = str(exc); base["reason"] = "query failed"
+            base["answer"] = ("Sorry — something went wrong looking that up. "
+                              "Try rephrasing the question.")
+            return _finish()
+        timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
+
+        if result.get("ambiguous"):
+            cands = result.get("candidates", [])
+            names = ", ".join(f'{c["name"]} (id {c["mlbam_id"]})' for c in cands[:5])
+            base["ambiguous"] = True
+            base["player_resolved"] = {"candidates": cands}
+            base["answer"] = (f'There are multiple players matching "{sk.get("player")}": '
+                              f'{names}. Which did you mean?')
+            return _finish()
+
+        base["source"] = result.get("source")
+        base["game_coverage"] = result.get("game_coverage")
+        base["player_resolved"] = result.get("player")
+        if result.get("declined"):
+            base["declined"] = True
+            base["reason"] = result.get("reason")
+            base["answer"] = result.get("reason")
+            return _finish()
+
+        s = result.get("streak")
+        base["streak"] = s
+        name = result["player"]["name"]
+        if s and s["length"] >= 1:
+            span = (f"from {s['start_pretty']} to {s['end_pretty']}"
+                    if s["start_date"] != s["end_date"] else f"on {s['start_pretty']}")
+            caveat = ("" if not s["restricted"] else
+                      " (over his seasons with complete play-by-play coverage; some "
+                      "seasons aren't fully in the record)")
+            plural = "s" if s["length"] != 1 else ""
+            in_season = f" in {sk['season']}" if sk.get("season") else ""
+            base["answer"] = (f"{name}'s longest {s['type_label']}{in_season} was "
+                              f"{s['length']} game{plural}, {span}.{caveat}")
+        else:
+            base["answer"] = (f"I couldn't find a {(s or {}).get('type_label', 'streak')} "
+                              f"for {name} in the seasons with complete coverage.")
         return _finish()
 
     # ---- out of scope / no usable tool call -----------------------------
