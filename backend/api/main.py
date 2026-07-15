@@ -6406,6 +6406,173 @@ def _run_streak(player, streak_type, season=None, game_type=None):
             "game_coverage": {"complete": not excluded, "low_seasons": excluded}}
 
 
+# ---- Phase 6: SPANS ("the most X in any N-consecutive-game window") ---------
+# event -> (per-game aggregation SQL over the batter's rows, plural label). The
+# SQL is a fixed whitelist value, never user input. RBI uses RBI_CT; TB weights
+# the hit codes 1/2/3/4.
+_SPAN_EVENT = {
+    "HR":  ("SUM(CASE WHEN EVENT_CD = 23 THEN 1 ELSE 0 END)", "home runs"),
+    "H":   ("SUM(CASE WHEN EVENT_CD IN (20,21,22,23) THEN 1 ELSE 0 END)", "hits"),
+    "1B":  ("SUM(CASE WHEN EVENT_CD = 20 THEN 1 ELSE 0 END)", "singles"),
+    "2B":  ("SUM(CASE WHEN EVENT_CD = 21 THEN 1 ELSE 0 END)", "doubles"),
+    "3B":  ("SUM(CASE WHEN EVENT_CD = 22 THEN 1 ELSE 0 END)", "triples"),
+    "RBI": ("SUM(RBI_CT)", "RBIs"),
+    "BB":  ("SUM(CASE WHEN EVENT_CD IN (14,15) THEN 1 ELSE 0 END)", "walks"),
+    "K":   ("SUM(CASE WHEN EVENT_CD = 3 THEN 1 ELSE 0 END)", "strikeouts"),
+    "HBP": ("SUM(CASE WHEN EVENT_CD = 16 THEN 1 ELSE 0 END)", "times hit by a pitch"),
+    "TB":  ("SUM(CASE WHEN EVENT_CD = 20 THEN 1 WHEN EVENT_CD = 21 THEN 2 "
+            "WHEN EVENT_CD = 22 THEN 3 WHEN EVENT_CD = 23 THEN 4 ELSE 0 END)", "total bases"),
+}
+_SPAN_EVENT_ALIAS = {
+    "HOMERUN": "HR", "HOME_RUN": "HR", "HIT": "H", "HITS": "H", "SINGLE": "1B",
+    "DOUBLE": "2B", "TRIPLE": "3B", "RBIS": "RBI", "WALK": "BB", "STRIKEOUT": "K",
+    "SO": "K", "HITBYPITCH": "HBP", "TOTALBASES": "TB", "TOTAL_BASES": "TB",
+}
+_SPAN_COVERAGE_MIN = 99.95
+_SPAN_MAX_WINDOW = 3000   # a full career is < ~3300 games; guards a silly N
+
+
+def _run_span(player, event, window, season=None, game_type=None):
+    """The MOST of an event in ANY window of N consecutive games — a sliding-
+    window MAXIMUM over the player's ordered games (per-game totals + a prefix
+    sum, so O(games)).
+
+    SEASON BOUNDARY — CROSS-SEASON BY DEFAULT (deliberately different from
+    streaks). A streak is a within-season concept (DiMaggio's 56 is a 1941
+    streak). But "the most HR in any 162-game span" is a rolling window of
+    consecutive GAMES, not a calendar year, and the record book lets it cross
+    seasons: Bonds' single-season HR record is 73, yet his best 162-consecutive-
+    game window is 80, reaching from 2001 into 2002. So a window MAY span seasons
+    — but only within a run of consecutive fully-covered seasons. Pass `season`
+    to scope to one year.
+
+    COVERAGE GATE: the N games must ALL be present, or our "N-game window" is
+    really spread over more than N real games and the total is over the wrong
+    set. So we slide the window ONLY within maximal runs of consecutive
+    ~100%-covered seasons, and DECLINE if no such run holds N games (e.g. a
+    pre-coverage-era career)."""
+    ev = (event or "").strip().upper().replace(" ", "_")
+    ev = _SPAN_EVENT_ALIAS.get(ev, ev)
+    spec = _SPAN_EVENT.get(ev)
+    if spec is None:
+        raise HTTPException(status_code=400, detail=(
+            f"'{event}' isn't a span event I track "
+            "(known: HR, H, RBI, TB, 1B, 2B, 3B, BB, K, HBP)."))
+    agg, label = spec
+    try:
+        window = int(window)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="the window size (games) must be an integer")
+    if window < 1:
+        raise HTTPException(status_code=400, detail="the window size must be >= 1 game")
+    if window > _SPAN_MAX_WINDOW:
+        raise HTTPException(status_code=400,
+                            detail=f"window too large (max {_SPAN_MAX_WINDOW} games)")
+    gt_clause, gt_param, gt = _game_type_filter(game_type)   # default -> regular season
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+
+    cands = [c for c in _resolve_retro_id(player, "bat") if c["retro_id"]]
+    if not cands:
+        raise HTTPException(status_code=404,
+                            detail=f"No player with a retro_id matching '{player}'")
+    if len({c["retro_id"] for c in cands}) > 1:
+        return {"resolved": False, "ambiguous": True, "query": player,
+                "candidates": cands[:25]}
+    resolved = cands[0]
+    retro_id = resolved["retro_id"]
+    player_block = {"query": player, "name": resolved["name"],
+                    "mlbam_id": resolved["mlbam_id"], "retro_id": retro_id, "role": "bat"}
+
+    where = ["BAT_ID = ?"]
+    params: list = [retro_id]
+    if gt_clause:
+        where.append(gt_clause); params.append(gt_param)
+    if season is not None:
+        where.append("SEASON = ?"); params.append(int(season))
+    clause = " AND ".join(where)
+
+    try:
+        cur = _plays_cursor()
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    try:
+        # one row per game with the per-game event total, chronological
+        rows = cur.execute(
+            f"SELECT GAME_DATE, SEASON, {agg} FROM plays WHERE {clause} "
+            "GROUP BY GAME_ID, GAME_DATE, SEASON ORDER BY GAME_DATE, GAME_ID", params).fetchall()
+        player_seasons = sorted({r[1] for r in rows})
+        cov: dict = {}
+        if player_seasons:
+            for s, p in cur.execute(
+                    "SELECT season, coverage_pct FROM coverage WHERE season BETWEEN ? AND ?",
+                    [player_seasons[0], player_seasons[-1]]).fetchall():
+                cov[s] = p if p is not None else 0.0
+    finally:
+        cur.close()
+
+    covered = [s for s in player_seasons if cov.get(s, 0.0) >= _SPAN_COVERAGE_MIN]
+
+    # ---- DECLINE: no fully-covered season -> no trustworthy window ---------
+    if not covered:
+        lo, hi = (player_seasons[0], player_seasons[-1]) if player_seasons else (None, None)
+        span_txt = f"{lo}–{hi}" if lo is not None else "that era"
+        note = (f"I can't measure game spans for {resolved['name']} — none of the seasons "
+                f"in {span_txt} are complete in the play-by-play record, so an "
+                f"{window}-game window would be spread across games we don't have. I can "
+                "only measure spans over seasons with essentially 100% game coverage.")
+        return {"resolved": True, "declined": True, "reason": note, "source": "plays",
+                "player": player_block, "span": None,
+                "game_coverage": {"complete": False}}
+
+    # maximal runs of consecutive covered seasons — a window may cross a season
+    # boundary WITHIN a run but never bridge a coverage gap (a missing game there
+    # would make the window span the wrong set of real games).
+    runs: list = []
+    for s in covered:
+        if runs and s == runs[-1][1] + 1:
+            runs[-1][1] = s
+        else:
+            runs.append([s, s])
+
+    best = (-1, None, None, None, None)   # total, start_date, end_date, start_season, end_season
+    longest_run_games = 0
+    for lo, hi in runs:
+        g = [r for r in rows if lo <= r[1] <= hi]     # ordered games in this run
+        longest_run_games = max(longest_run_games, len(g))
+        if len(g) < window:
+            continue
+        prefix = [0]
+        for r in g:
+            prefix.append(prefix[-1] + (r[2] or 0))
+        for i in range(0, len(g) - window + 1):
+            total = prefix[i + window] - prefix[i]
+            if total > best[0]:
+                best = (total, g[i][0], g[i + window - 1][0], g[i][1], g[i + window - 1][1])
+
+    # ---- no covered run is long enough to hold the window ------------------
+    if best[1] is None:
+        note = (f"{resolved['name']} hasn't played {window} consecutive games within "
+                f"seasons we hold completely (the most is {longest_run_games}), so I "
+                f"can't measure a {window}-game span.")
+        return {"resolved": True, "declined": True, "reason": note, "source": "plays",
+                "player": player_block, "span": None,
+                "game_coverage": {"complete": len(covered) == len(player_seasons)}}
+
+    total, start, end, ss, es = best
+    excluded = [s for s in player_seasons if s not in set(covered)]
+    span = {
+        "event": label, "window": window, "total": int(total),
+        "start_date": str(start), "start_pretty": _pretty_date(start),
+        "end_date": str(end), "end_pretty": _pretty_date(end),
+        "start_season": ss, "end_season": es, "cross_season": ss != es,
+        "covered_span": [covered[0], covered[-1]],
+        "restricted": bool(excluded), "excluded_seasons": excluded,
+    }
+    return {"resolved": True, "source": "plays", "player": player_block, "span": span,
+            "game_coverage": {"complete": not excluded, "low_seasons": excluded}}
+
+
 # Retrosheet biofile retro_id -> display name, slimmed to (key_retro, name).
 # Shipped in backend/data/retrosheet/. Covers 100% of the plays store's ids, so
 # it's the last-resort name for leaderboard players absent from players/pitchers
@@ -7467,6 +7634,37 @@ _ASK_STREAK_TOOL = {
     },
 }
 
+_ASK_SPAN_TOOL = {
+    "name": "query_span",
+    "description": (
+        "The MOST of an event in ANY window of N consecutive games — a rolling-"
+        "window maximum. 'most home runs in any 50-game span', 'most hits in any "
+        "30 games', 'most RBIs over any 20-game stretch', 'best 40-game stretch "
+        "of home runs'. One player + an event + the window size (in games). "
+        "DISTINCT from a streak (consecutive games meeting a condition) and from a "
+        "plain total."),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "player": {"type": "string", "description": "name or MLBAM id"},
+            "event": {"type": "string",
+                      "enum": ["HR", "H", "RBI", "TB", "1B", "2B", "3B", "BB", "K", "HBP"],
+                      "description": "HR=home runs, H=hits, RBI=RBIs, TB=total bases, "
+                      "1B/2B/3B, BB=walks, K=strikeouts, HBP=hit by pitch."},
+            "window_size": {"type": "integer", "minimum": 1, "description":
+                            "the window length in GAMES (50 for 'any 50-game span', "
+                            "30 for 'any 30 games', 162 for 'any 162-game span')."},
+            "season": {"type": "integer", "description":
+                       "ONLY to scope to one season ('his best 30-game span in 2019'); "
+                       "omit for the career-best window, which may cross seasons."},
+            "game_type": {"type": "string", "enum": ["R", "P", "ALL"], "description":
+                          "R=regular season (DEFAULT — omit for normal questions); set "
+                          "only when the user explicitly asks about the postseason."},
+        },
+        "required": ["player", "event", "window_size"],
+    },
+}
+
 _ASK_SYSTEM = (
     "You translate a baseball fan's English question into a single structured "
     "query over a play-by-play database by calling exactly one tool.\n\n"
@@ -7613,12 +7811,28 @@ _ASK_SYSTEM = (
     "Only hitting / on-base / home-run / multi-hit streaks are supported; other "
     "'in a row' conditions (consecutive wins, games with an RBI, scoreless "
     "innings) -> cannot_answer.\n\n"
+    "SPANS (call query_span) — the MOST of an event in ANY window of N "
+    "consecutive games (a rolling-window maximum). Detect the WINDOW SIZE (in "
+    "games) and the event. A span is DIFFERENT from a streak (a streak is a run "
+    "of games meeting a condition; a span is the peak total over a fixed-size "
+    "window). Spans may cross seasons by default.\n"
+    "- 'Most home runs in any 50-game span for Barry Bonds' -> query_span "
+    "{player:'Barry Bonds', event:'HR', window_size:50}\n"
+    "- \"Judge's best 30-game stretch of hits\" -> {player:'Aaron Judge', event:'H', "
+    "window_size:30}\n"
+    "- 'Most RBIs Ohtani had over any 20 games' -> {player:'Shohei Ohtani', "
+    "event:'RBI', window_size:20}\n"
+    "- 'Most HR in any 162-game span for Bonds' -> {player:'Barry Bonds', "
+    "event:'HR', window_size:162}\n"
+    "A span REQUIRES a window size in games; if the question gives no number and "
+    "none can be inferred ('his best stretch'), call cannot_answer asking for a "
+    "window length rather than guessing one.\n\n"
     "OUT OF SCOPE (call cannot_answer) — only when the QUERY SHAPE can't do it:\n"
     "- ERA / WHIP / pitcher rate stats and other computed rates we don't support "
     "(we do AVG/OBP/SLG/OPS for hitters).\n"
-    "- Spans / date ranges ('games missed', 'when did he play from-to') and "
-    "'in a row' conditions OTHER than the hitting/on-base/home-run/multi-hit "
-    "streaks above.\n"
+    "- Date ranges ('games missed', 'when did he play from-to') and 'in a row' "
+    "conditions OTHER than the hitting/on-base/home-run/multi-hit streaks above. "
+    "(An N-consecutive-GAME window IS in scope — that's query_span.)\n"
     "- Pitch type, velocity, exit velocity, or launch angle (not in Retrosheet).\n"
     "- Anything requiring data before 1910 (the play-by-play starts at 1910).\n"
     "- Conditions none of the tools can express: day vs night, weather, "
@@ -7649,7 +7863,7 @@ _ask_log_write_failed = False   # so a broken log surfaces LOUDLY once (not per-
 # tool (caches the whole tools array) and the system block.
 _ASK_TOOLS = [_ASK_QUERY_TOOL, _ASK_LEADERBOARD_TOOL, _ASK_RATES_TOOL,
               _ASK_SPLITS_TOOL, _ASK_RATE_LB_TOOL, _ASK_MILESTONE_TOOL,
-              _ASK_STREAK_TOOL,
+              _ASK_STREAK_TOOL, _ASK_SPAN_TOOL,
               {**_ASK_CANNOT_TOOL, "cache_control": {"type": "ephemeral"}}]
 _ASK_SYSTEM_BLOCKS = [{"type": "text", "text": _ASK_SYSTEM,
                        "cache_control": {"type": "ephemeral"}}]
@@ -7995,6 +8209,7 @@ def ask(request: Request,
         "splits":          None,
         "milestone":       None,
         "streak":          None,
+        "span":            None,
         "player_resolved": None,
         "source":          None,
         "game_coverage":   None,
@@ -8195,6 +8410,73 @@ def ask(request: Request,
         else:
             base["answer"] = (f"I couldn't find a {(s or {}).get('type_label', 'streak')} "
                               f"for {name} in the seasons with complete coverage.")
+        return _finish()
+
+    # ==== SPAN branch ('most X in any N-consecutive-game window') =========
+    # Same placement rationale as milestones/streaks (out of _ANSWERABLE, so the
+    # situational constraint validator can't inject filters a span can't use).
+    if tool_name == "query_span":
+        base["understood_as"] = tool_input
+        pk = {k: tool_input.get(k) for k in
+              ("player", "event", "window_size", "season", "game_type")
+              if tool_input.get(k) is not None}
+        if not pk.get("player") or pk.get("event") is None or pk.get("window_size") is None:
+            base["out_of_scope"] = True
+            base["reason"] = ("A span needs a player, an event, and a window size in "
+                              "games (e.g. 'most home runs in any 50-game span').")
+            base["answer"] = base["reason"]
+            return _finish()
+        t0 = time.perf_counter()
+        try:
+            result = _run_span(player=pk["player"], event=pk["event"],
+                               window=pk["window_size"], season=pk.get("season"),
+                               game_type=pk.get("game_type"))
+        except HTTPException as exc:
+            timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
+            base["reason"] = str(exc.detail)
+            base["answer"] = f"Couldn't answer that: {exc.detail}"
+            return _finish()
+        except Exception as exc:  # noqa: BLE001
+            timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
+            log.exception("ask span failed for %r", q)
+            base["error"] = str(exc); base["reason"] = "query failed"
+            base["answer"] = ("Sorry — something went wrong looking that up. "
+                              "Try rephrasing the question.")
+            return _finish()
+        timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
+
+        if result.get("ambiguous"):
+            cands = result.get("candidates", [])
+            names = ", ".join(f'{c["name"]} (id {c["mlbam_id"]})' for c in cands[:5])
+            base["ambiguous"] = True
+            base["player_resolved"] = {"candidates": cands}
+            base["answer"] = (f'There are multiple players matching "{pk.get("player")}": '
+                              f'{names}. Which did you mean?')
+            return _finish()
+
+        base["source"] = result.get("source")
+        base["game_coverage"] = result.get("game_coverage")
+        base["player_resolved"] = result.get("player")
+        if result.get("declined"):
+            base["declined"] = True
+            base["reason"] = result.get("reason")
+            base["answer"] = result.get("reason")
+            return _finish()
+
+        sp = result.get("span")
+        base["span"] = sp
+        name = result["player"]["name"]
+        if sp:
+            when = (f"from {sp['start_pretty']} to {sp['end_pretty']}"
+                    if sp["start_date"] != sp["end_date"] else f"on {sp['start_pretty']}")
+            # a large window can touch more than two season-years (Aaron's best
+            # 300-game HR span runs 1971->1974), so state the real count.
+            nseas = sp["end_season"] - sp["start_season"] + 1
+            cross = f" (spanning {nseas} seasons)" if sp["cross_season"] else ""
+            caveat = ("" if not sp["restricted"] else
+                      " (over his seasons with complete play-by-play coverage)")
+            base["answer"] = (f"{name}'s best {sp['window']}-game span for {sp['event']} "
+                              f"is {sp['total']}, {when}{cross}.{caveat}")
         return _finish()
 
     # ---- out of scope / no usable tool call -----------------------------
