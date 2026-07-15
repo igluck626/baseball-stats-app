@@ -6020,6 +6020,216 @@ def _run_situational(
     return result
 
 
+# ---- Phase 6: MILESTONES ("when did X reach the Nth of something?") ---------
+# Friendly event -> the EVENT_CD set whose running total we walk. A "hit" is any
+# of the four hit codes; BB includes intentional walks (15) to match a career
+# walk total. NOT here (so the tool declines, honestly): stolen bases (a RUNNER
+# event we can't attribute by BAT_ID), RBIs/wins/saves (not batting/pitching
+# EVENT_CDs) — those would need a different data model, so they're out of scope.
+_MILESTONE_EVENT = {
+    "HR": [23], "HOMERUN": [23], "HOME_RUN": [23],
+    "H": [20, 21, 22, 23], "HIT": [20, 21, 22, 23], "HITS": [20, 21, 22, 23],
+    "1B": [20], "SINGLE": [20], "2B": [21], "DOUBLE": [21],
+    "3B": [22], "TRIPLE": [22],
+    "K": [3], "SO": [3], "STRIKEOUT": [3],
+    "BB": [14, 15], "WALK": [14, 15],
+    "HBP": [16], "HITBYPITCH": [16],
+}
+_MILESTONE_LABEL = {"HR": "home run", "H": "hit", "1B": "single", "2B": "double",
+                    "3B": "triple", "K": "strikeout", "BB": "walk", "HBP": "hit-by-pitch"}
+
+# A milestone needs the running total EXACT up to N, so it needs COMPLETE game
+# coverage for every season up to the milestone — STRICTER than the count gate
+# (which tolerates ~99%). Even one missing game before the Nth shifts which game
+# IS the Nth: missing events make our cumulative LAG reality, so "our 715th" is a
+# LATER game than the true 715th — a confidently WRONG date, not a short count.
+# 99.95 = "100%, allowing for the coverage table's 1-decimal rounding".
+_MILESTONE_COVERAGE_MIN = 99.95
+
+_MONTH_NAMES = ["", "January", "February", "March", "April", "May", "June",
+                "July", "August", "September", "October", "November", "December"]
+
+
+def _ordinal(n: int) -> str:
+    n = int(n)
+    suffix = "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
+
+def _pretty_date(d) -> str:
+    try:
+        return f"{_MONTH_NAMES[d.month]} {d.day}, {d.year}"
+    except Exception:  # noqa: BLE001
+        return str(d)
+
+
+def _name_for_retro(retro_id):
+    """retro_id -> display name, checking players then pitchers. Used to name the
+    opposing pitcher (or batter) at a milestone. Degrades to None (caller shows
+    the raw id) rather than failing the whole answer."""
+    if not retro_id or not connection.db_available():
+        return None
+    try:
+        with connection.get_session() as db:
+            row = db.execute(_sa_text(
+                "SELECT name FROM players WHERE retro_id = :r "
+                "UNION SELECT name FROM pitchers WHERE retro_id = :r LIMIT 1"),
+                {"r": retro_id}).fetchone()
+        return row[0] if row else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _run_milestone(player, event, n, role="bat", season=None, game_type=None):
+    """WHEN did a player reach the Nth of an event? A running-total problem:
+    order the player's events chronologically (GAME_DATE, GAME_ID, EVENT_ID),
+    accumulate, and find the row where the cumulative count crosses N — a
+    ROW_NUMBER() window over that order. Return that game's date + context.
+
+    THE HONESTY GATE (the crux): the Nth event in OUR data is the real Nth ONLY
+    if we hold EVERY game up to it. A missing game before the milestone makes our
+    cumulative LAG reality, so we'd name a LATER game than the true Nth — a
+    confidently WRONG date, not a short count. So a milestone requires COMPLETE
+    game coverage (>= 99.95%) for every season from the player's debut through
+    the milestone season; if any is short, or the career predates the 1910
+    play-by-play floor, we DECLINE rather than guess. (Verified: without this,
+    Aaron's 715th HR resolves to 1974-05-28 in our data — the truth is
+    1974-04-08 — precisely because 1954-56 are ~97% covered.)
+
+    Returns the resolved milestone dict, an ambiguous-candidates dict (name maps
+    to >1 player), a declined dict (coverage short), or a not-reached dict
+    (career total < N — 'he's at <total>')."""
+    role = (role or "bat").lower()
+    if role not in ("bat", "pit"):
+        raise HTTPException(status_code=400, detail="role must be 'bat' or 'pit'")
+    ev = (event or "").strip().upper().replace(" ", "_")
+    codes = _MILESTONE_EVENT.get(ev)
+    if codes is None:
+        raise HTTPException(status_code=400, detail=(
+            f"'{event}' isn't a milestone event I track "
+            "(known: HR, H/hit, 1B, 2B, 3B, K, BB, HBP)."))
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="the milestone number must be an integer")
+    if n < 1:
+        raise HTTPException(status_code=400, detail="the milestone number must be >= 1")
+    gt_clause, gt_param, gt = _game_type_filter(game_type)   # default -> regular season
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+
+    cands = [c for c in _resolve_retro_id(player, role) if c["retro_id"]]
+    if not cands:
+        raise HTTPException(status_code=404,
+                            detail=f"No player with a retro_id matching '{player}'")
+    if len({c["retro_id"] for c in cands}) > 1:
+        return {"resolved": False, "ambiguous": True, "query": player,
+                "candidates": cands[:25]}
+    resolved = cands[0]
+    retro_id = resolved["retro_id"]
+    debut = resolved.get("debut")
+    label = _MILESTONE_LABEL.get(ev if ev in _MILESTONE_LABEL else _CANON_EVENT.get(ev, ev),
+                                 (event or "").lower())
+    player_block = {"query": player, "name": resolved["name"],
+                    "mlbam_id": resolved["mlbam_id"], "retro_id": retro_id, "role": role}
+
+    id_col = "PIT_ID" if role == "pit" else "BAT_ID"
+    cds = ",".join(str(int(c)) for c in codes)   # ints from a fixed whitelist -> safe
+    where = [f"{id_col} = ?", f"EVENT_CD IN ({cds})"]
+    params: list = [retro_id]
+    if gt_clause:
+        where.append(gt_clause); params.append(gt_param)
+    if season is not None:
+        where.append("SEASON = ?"); params.append(int(season))
+    clause = " AND ".join(where)
+
+    try:
+        cur = _plays_cursor()
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    try:
+        total = cur.execute(f"SELECT count(*) FROM plays WHERE {clause}", params).fetchone()[0]
+        # the seasons the player actually appears in (fallback debut + the
+        # not-reached caveat span)
+        mm = cur.execute(f"SELECT min(SEASON), max(SEASON) FROM plays WHERE {id_col} = ?",
+                         [retro_id]).fetchone()
+        play_lo, play_hi = (mm[0], mm[1]) if mm and mm[0] is not None else (None, None)
+
+        row = None
+        if total >= n:
+            row = cur.execute(
+                "WITH seq AS (SELECT GAME_DATE, GAME_ID, HOME_TEAM_ID, AWAY_TEAM_ID, "
+                "BAT_HOME_ID, INN_CT, PIT_ID, BAT_ID, SEASON, "
+                "ROW_NUMBER() OVER (ORDER BY GAME_DATE, GAME_ID, EVENT_ID) AS rn "
+                f"FROM plays WHERE {clause}) "
+                "SELECT GAME_DATE, GAME_ID, HOME_TEAM_ID, AWAY_TEAM_ID, BAT_HOME_ID, "
+                "INN_CT, PIT_ID, BAT_ID, SEASON FROM seq WHERE rn = ?",
+                params + [n]).fetchone()
+
+        # ---- coverage over debut..milestone-season (or ..last season) -------
+        lo = debut if debut is not None else (play_lo if play_lo is not None else _PLAYS_FLOOR)
+        hi = (row[8] if row is not None else (season if season is not None else play_hi)) or 2025
+        floor_short = lo is not None and lo < _PLAYS_FLOOR   # pre-1910 events aren't in the store
+        gate_lo = max(lo, _PLAYS_FLOOR) if lo is not None else _PLAYS_FLOOR
+        try:
+            crow = cur.execute(
+                "SELECT min(coverage_pct), list(season) FILTER (WHERE coverage_pct < ?) "
+                "FROM coverage WHERE season BETWEEN ? AND ?",
+                [_MILESTONE_COVERAGE_MIN, gate_lo, hi]).fetchone()
+            min_pct, low_seasons = crow if crow else (None, None)
+        except Exception:  # noqa: BLE001 - no coverage table (old store): can't certify -> block
+            min_pct, low_seasons = 0.0, []
+        low_seasons = sorted(low_seasons) if low_seasons else []
+    finally:
+        cur.close()
+
+    incomplete = (floor_short or bool(low_seasons)
+                  or (min_pct is not None and min_pct < _MILESTONE_COVERAGE_MIN))
+
+    # ---- REACHED: gate must certify complete coverage up to the milestone ---
+    if row is not None:
+        if incomplete:
+            if floor_short:
+                note = (f"I can only pinpoint milestone games from {_PLAYS_FLOOR} on, where "
+                        f"the play-by-play record is complete — and {resolved['name']} "
+                        f"debuted in {lo}, so I can't say exactly which game was the "
+                        f"{_ordinal(n)} {label}.")
+            else:
+                span = (f"{low_seasons[0]}–{low_seasons[-1]}"
+                        if len(low_seasons) > 1 else f"{low_seasons[0]}") if low_seasons \
+                    else f"{gate_lo}–{hi}"
+                note = (f"I can't pinpoint this — some of {resolved['name']}'s games from "
+                        f"{span} aren't in the complete play-by-play record, so the running "
+                        f"total would point at the wrong game. I can't say exactly which "
+                        f"game was the {_ordinal(n)} {label}.")
+            return {"resolved": True, "declined": True, "reason": note, "source": "plays",
+                    "player": player_block, "milestone": None,
+                    "game_coverage": {"complete": False, "low_seasons": low_seasons}}
+
+        gd, gid, home, away, bat_home, inn, pit, bat, syr = row
+        opp = away if bat_home == 1 else home
+        milestone = {
+            "n": n, "event": label, "reached": True,
+            "date": str(gd), "date_pretty": _pretty_date(gd), "season": syr,
+            "opponent": opp, "home_team": home, "away_team": away,
+            "home_away": "home" if bat_home == 1 else "away",
+            "inning": inn, "game_id": str(gid), "running_total": n,
+            "pitcher": _name_for_retro(pit) if role == "bat" else None,
+            "pitcher_id": pit if role == "bat" else None,
+            "batter": _name_for_retro(bat) if role == "pit" else None,
+            "batter_id": bat if role == "pit" else None,
+        }
+        return {"resolved": True, "source": "plays", "player": player_block,
+                "milestone": milestone, "game_coverage": {"complete": True}}
+
+    # ---- NOT REACHED: report the honest current total (a floor if incomplete) --
+    return {"resolved": True, "source": "plays", "player": player_block,
+            "milestone": {"n": n, "event": label, "reached": False,
+                          "current_total": int(total), "through_season": play_hi,
+                          "coverage_complete": not incomplete},
+            "game_coverage": {"complete": not incomplete, "low_seasons": low_seasons}}
+
+
 # Retrosheet biofile retro_id -> display name, slimmed to (key_retro, name).
 # Shipped in backend/data/retrosheet/. Covers 100% of the plays store's ids, so
 # it's the last-resort name for leaderboard players absent from players/pitchers
@@ -7020,6 +7230,38 @@ _ASK_CANNOT_TOOL = {
     },
 }
 
+_ASK_MILESTONE_TOOL = {
+    "name": "query_milestone",
+    "description": (
+        "WHEN did a player reach the Nth of a career event — 'when did X hit his "
+        "756th home run', 'the date of X's 3000th hit', 'when did pitcher X record "
+        "his 3000th strikeout'. A milestone asks for a DATE, not a count. Detect "
+        "the ORDINAL number (756th -> 756, 3000th -> 3000) and the event. Only "
+        "these events are milestone-able: HR, hit, single, double, triple, "
+        "strikeout, walk, hit-by-pitch. Stolen bases, RBIs, wins, and saves are "
+        "NOT — for those, call cannot_answer."),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "player": {"type": "string", "description": "name or MLBAM id"},
+            "event": {"type": "string", "enum": ["HR", "H", "1B", "2B", "3B", "K", "BB", "HBP"],
+                      "description": "HR=home run, H=hit (any of 1B/2B/3B/HR), 1B/2B/3B, "
+                                     "K=strikeout, BB=walk, HBP=hit by pitch."},
+            "n": {"type": "integer", "minimum": 1,
+                  "description": "the ordinal number reached (756th -> 756, 3000th -> 3000)."},
+            "role": {"type": "string", "enum": ["bat", "pit"], "description":
+                     "'pit' for a pitcher's strikeout/walk milestone; otherwise 'bat'."},
+            "season": {"type": "integer", "description":
+                       "ONLY for a single-season milestone ('his 50th HR of 2001'); "
+                       "omit for a career milestone."},
+            "game_type": {"type": "string", "enum": ["R", "P", "ALL"], "description":
+                          "R=regular season (DEFAULT — omit for normal questions); set "
+                          "only when the user explicitly asks about the postseason."},
+        },
+        "required": ["player", "event", "n"],
+    },
+}
+
 _ASK_SYSTEM = (
     "You translate a baseball fan's English question into a single structured "
     "query over a play-by-play database by calling exactly one tool.\n\n"
@@ -7134,6 +7376,21 @@ _ASK_SYSTEM = (
     "strikes' -> {stat:'OPS', strikes:2}. 'Who hits lefties best?' -> "
     "{stat:'OPS', pitcher_hand:'L'}. Set min_pa=0 ONLY if the user says to "
     "include everyone regardless of playing time.\n\n"
+    "MILESTONES (call query_milestone) — WHEN a player reached the Nth of "
+    "something. A milestone asks for a DATE, not a count. Detect the ORDINAL "
+    "(756th -> 756, 3000th -> 3000) and the event. This is DISTINCT from a count "
+    "('how many' -> query_situational): 'when did X hit his 500th HR' wants the "
+    "game/date. Set role='pit' for a pitcher's strikeout/walk milestone.\n"
+    "- 'When did Barry Bonds hit his 756th home run?' -> query_milestone "
+    "{player:'Barry Bonds', event:'HR', n:756}\n"
+    "- 'When did Jeter get his 3000th hit?' -> {player:'Derek Jeter', event:'H', n:3000}\n"
+    "- 'The date of Pujols' 700th home run' -> {player:'Albert Pujols', event:'HR', n:700}\n"
+    "- 'When did Kershaw record his 3000th strikeout?' -> {player:'Kershaw', "
+    "role:'pit', event:'K', n:3000}\n"
+    "- 'When did Aaron hit his 715th homer?' -> {player:'Hank Aaron', event:'HR', n:715}\n"
+    "Only HR / hit / single / double / triple / strikeout / walk / HBP are "
+    "milestone-able. 'Nth stolen base', 'Nth RBI', 'Nth win/save' are NOT — "
+    "cannot_answer those.\n\n"
     "OUT OF SCOPE (call cannot_answer) — only when the QUERY SHAPE can't do it:\n"
     "- ERA / WHIP / pitcher rate stats and other computed rates we don't support "
     "(we do AVG/OBP/SLG/OPS for hitters).\n"
@@ -7167,7 +7424,7 @@ _ask_log_write_failed = False   # so a broken log surfaces LOUDLY once (not per-
 # it at ~10% of input price instead of resending it. Breakpoints on the last
 # tool (caches the whole tools array) and the system block.
 _ASK_TOOLS = [_ASK_QUERY_TOOL, _ASK_LEADERBOARD_TOOL, _ASK_RATES_TOOL,
-              _ASK_SPLITS_TOOL, _ASK_RATE_LB_TOOL,
+              _ASK_SPLITS_TOOL, _ASK_RATE_LB_TOOL, _ASK_MILESTONE_TOOL,
               {**_ASK_CANNOT_TOOL, "cache_control": {"type": "ephemeral"}}]
 _ASK_SYSTEM_BLOCKS = [{"type": "text", "text": _ASK_SYSTEM,
                        "cache_control": {"type": "ephemeral"}}]
@@ -7511,6 +7768,7 @@ def ask(request: Request,
         "leaders":         None,
         "rates":           None,
         "splits":          None,
+        "milestone":       None,
         "player_resolved": None,
         "source":          None,
         "game_coverage":   None,
@@ -7566,6 +7824,86 @@ def ask(request: Request,
                 tool_input[_param] = _value   # base['understood_as'] is this dict — stays in sync
                 log.warning("ask: model DROPPED %s=%r (tool %s) for %r; injected in code",
                             _param, _value, tool_name, q)
+
+    # ==== MILESTONE branch ('when did X reach the Nth ...') ==============
+    # Handled here (not via _ANSWERABLE) so the constraint validator above — which
+    # is about situational filters — never injects a pitcher_hand/venue a
+    # milestone can't use. A milestone asks WHEN, so its answer IS a sentence:
+    # prose is built deterministically in code (no second LLM call), like the
+    # decline notes, plus a structured `milestone` block for the UI to render.
+    if tool_name == "query_milestone":
+        base["understood_as"] = tool_input
+        mk = {k: tool_input.get(k) for k in
+              ("player", "event", "n", "role", "season", "game_type")
+              if tool_input.get(k) is not None}
+        if not mk.get("player") or mk.get("event") is None or mk.get("n") is None:
+            base["out_of_scope"] = True
+            base["reason"] = ("A milestone needs a player, an event, and the number "
+                              "(e.g. 'his 500th home run').")
+            base["answer"] = base["reason"]
+            return _finish()
+        t0 = time.perf_counter()
+        try:
+            result = _run_milestone(**mk)
+        except HTTPException as exc:
+            timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
+            base["reason"] = str(exc.detail)
+            base["answer"] = f"Couldn't answer that: {exc.detail}"
+            return _finish()
+        except Exception as exc:  # noqa: BLE001
+            timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
+            log.exception("ask milestone failed for %r", q)
+            base["error"] = str(exc); base["reason"] = "query failed"
+            base["answer"] = ("Sorry — something went wrong looking that up. "
+                              "Try rephrasing the question.")
+            return _finish()
+        timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
+
+        if result.get("ambiguous"):
+            cands = result.get("candidates", [])
+            names = ", ".join(f'{c["name"]} (id {c["mlbam_id"]})' for c in cands[:5])
+            base["ambiguous"] = True
+            base["player_resolved"] = {"candidates": cands}
+            base["answer"] = (f'There are multiple players matching "{mk.get("player")}": '
+                              f'{names}. Which did you mean?')
+            return _finish()
+
+        base["source"] = result.get("source")
+        base["game_coverage"] = result.get("game_coverage")
+        base["player_resolved"] = result.get("player")
+        if result.get("declined"):
+            base["declined"] = True
+            base["reason"] = result.get("reason")
+            base["answer"] = result.get("reason")
+            return _finish()
+
+        m = result.get("milestone")
+        base["milestone"] = m
+        name = result["player"]["name"]
+        role = result["player"]["role"]
+        if m and m.get("reached"):
+            inn = f"the {_ordinal(m['inning'])} inning" if m.get("inning") else "the game"
+            if role == "pit":
+                whom = m.get("batter") or m.get("batter_id")
+                against = f", fanning {whom} of the {m['opponent']}" if whom else \
+                          f" against the {m['opponent']}"
+                base["answer"] = (f"{name} recorded his {_ordinal(m['n'])} {m['event']} on "
+                                  f"{m['date_pretty']}{against}, in {inn}.")
+            else:
+                verb = "hit" if m["event"] == "home run" else "collected"
+                whom = m.get("pitcher") or m.get("pitcher_id")
+                off = f", off {whom} of the {m['opponent']}" if whom else \
+                      f" against the {m['opponent']}"
+                venue = "at home" if m.get("home_away") == "home" else "on the road"
+                base["answer"] = (f"{name} {verb} his {_ordinal(m['n'])} {m['event']} on "
+                                  f"{m['date_pretty']}{off}, in {inn} ({venue}).")
+        elif m:  # never reached — report the honest current total
+            floorish = "" if m.get("coverage_complete", True) else \
+                (" (at least — some of his early games aren't in the play-by-play record)")
+            through = m.get("through_season") or 2025
+            base["answer"] = (f"{name} hasn't reached {m['n']} {m['event']}s — through "
+                              f"{through} he's at {m['current_total']}{floorish}.")
+        return _finish()
 
     # ---- out of scope / no usable tool call -----------------------------
     if tool_name not in _ANSWERABLE:
