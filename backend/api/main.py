@@ -6294,14 +6294,17 @@ def _run_streak(player, streak_type, season=None, game_type=None):
     then walks them in order applying the streak rule (incl. the at-bat-less SKIP
     rule above).
 
+    STREAKS ARE WITHIN A SEASON: the last game of one year and the first of the
+    next are NOT consecutive — an offseason sits between them — so we find the
+    longest run INSIDE EACH season and take the best, never bridging a season
+    boundary. That is the record-book meaning (DiMaggio's 56 is a 1941 streak); a
+    cross-season "consecutive games" run is a different curiosity we don't report.
+
     COVERAGE GATE (harder than milestones): a missing game mid-streak silently
-    JOINS or SPLITS streaks, so a streak is only trustworthy where every game is
-    present. We compute ONLY within maximal runs of consecutive seasons that are
-    ~100% covered, and take the best across runs — a streak can never bridge a
-    coverage gap. If the player has uncovered seasons we say the result is over
-    the fully-covered ones; if NONE qualify (e.g. DiMaggio's 1936-51, all 76-97%
-    covered) we DECLINE rather than report a number that could be split or joined
-    by missing games."""
+    JOINS or SPLITS a streak, so we only compute within seasons that are ~100%
+    covered. Uncovered seasons are excluded (and said so); if NONE qualify (e.g.
+    DiMaggio's 1936-51, all 76-97% covered) we DECLINE rather than report a number
+    a missing game could have split or joined."""
     kind = (streak_type or "").strip().lower()
     if kind not in _STREAK_TYPE_LABEL:
         raise HTTPException(status_code=400, detail=(
@@ -6373,24 +6376,17 @@ def _run_streak(player, streak_type, season=None, game_type=None):
                 "player": player_block, "streak": None,
                 "game_coverage": {"complete": False}}
 
-    # maximal runs of CONSECUTIVE covered seasons — a streak can't cross a gap
-    runs: list = []
-    for s in covered:
-        if runs and s == runs[-1][1] + 1:
-            runs[-1][1] = s
-        else:
-            runs.append([s, s])
-
+    # Longest run WITHIN each fully-covered season — never across an offseason.
     best = (0, None, None)
-    best_run = None
-    for lo, hi in runs:
+    best_season = None
+    for s in covered:
         gs = [(r[0], r[2], r[3], r[4], r[2] + r[5] + r[6],                    # date,H,HR,AB,reached
                r[4] + r[5] + r[6] + r[7] + r[8] + r[9])                       # PA
-              for r in rows if lo <= r[1] <= hi]
+              for r in rows if r[1] == s]
         length, start, end = _longest_streak(gs, kind)
         if length > best[0]:
             best = (length, start, end)
-            best_run = (lo, hi)
+            best_season = s
 
     length, start, end = best
     excluded = [s for s in player_seasons if s not in set(covered)]
@@ -6400,7 +6396,7 @@ def _run_streak(player, streak_type, season=None, game_type=None):
         "start_pretty": _pretty_date(start) if start else None,
         "end_date": str(end) if end else None,
         "end_pretty": _pretty_date(end) if end else None,
-        "season": best_run[0] if best_run and best_run[0] == best_run[1] else None,
+        "season": best_season,               # streaks are within one season
         "covered_span": [covered[0], covered[-1]],
         "restricted": bool(excluded),
         "excluded_seasons": excluded,
