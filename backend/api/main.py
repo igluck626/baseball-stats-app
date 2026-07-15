@@ -8503,6 +8503,124 @@ def backfill_award_shares(
     }
 
 
+@app.post("/admin/backfill-allstar")
+def backfill_allstar(confirm: bool = Query(False)):
+    """Backfill player_allstar rows (Lahman AllstarFull.csv — All-Star Game
+    selections, behind the profile 'N× AS' count and the per-season 'AS' tag)
+    for the divergent-id players the OLD bbref-only bridge dropped — same key bug
+    as awards/HOF/shares, fourth table. Sabathia/Santana have 0 AS rows; Kershaw
+    has his 11. Reloaded through the ALREADY-fixed bridge, INSERT-ONLY, matched
+    on the full PK (player_id, year, game_num) — All-Star rows carry no
+    cross-row ranking, so this is a straight insert (unlike award-shares): no
+    existing row is ever rewritten.
+
+    Idempotent: a second run inserts 0. confirm=false = DRY RUN (counts +
+    per-player years). Sentinel-guarded like the other backfills.
+
+    NOTE ON THE UNRESOLVED TAIL: the ~43 rows this can't place are all Negro
+    Leagues East-West Game selections whose players Chadwick never assigned an
+    MLBAM id (Cool Papa Bell, Josh Gibson, Turkey Stearnes, Ted Radcliffe, …).
+    Two (Harry Williams, Robert Abernathy) have a retro→mlbam entry in the *bio*
+    bridge, but one resolves to a same-name 1911-13 MLB player (mis-map) and the
+    other has no bio row — so this endpoint stays on the same _load_chadwick_bridge
+    as the others rather than risk attaching an All-Star to the wrong man."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+
+    bridge = lahman_load._load_chadwick_bridge()
+    _sentinels = {"sabatcc01": 282332, "santajo01": 276371}
+    degraded = {pid: exp for pid, exp in _sentinels.items() if bridge.get(pid) != exp}
+    if degraded:
+        log.error("backfill-allstar: bridge degraded, sentinels unresolved: %s", degraded)
+        raise HTTPException(status_code=500, detail=(
+            "chadwick bridge degraded (People.csv missing/unreadable at runtime?); "
+            f"divergent sentinels did not resolve: {degraded} — refusing to run"))
+
+    # ---- read source rows, mapped EXACTLY like _load_allstar ---------------
+    cands: list[dict] = []
+    unresolved: list[str] = []
+    with open(lahman_load.ALLSTAR_CSV, newline="", encoding="utf-8-sig") as fh:
+        for row in csv.DictReader(fh):
+            year = int(row["yearID"])
+            if year >= lahman_load.CUTOFF_YEAR:
+                continue
+            mlbam = bridge.get(row["playerID"])
+            if mlbam is None:
+                unresolved.append(row["playerID"])
+                continue
+            cands.append({
+                "player_id":    mlbam,
+                "year":         year,
+                "game_num":     lahman_load._i_safe(row.get("gameNum")),
+                "team":         row.get("teamID") or None,
+                "league":       row.get("lgID") or None,
+                "GP":           lahman_load._i_or_none_safe(row.get("GP")),
+                "starting_pos": lahman_load._i_or_none_safe(row.get("startingPos")),
+            })
+
+    # ---- keep only rows ABSENT from the DB (full-PK match) -----------------
+    with connection.get_session() as db:
+        have = {tuple(r) for r in db.execute(_sa_text(
+            "SELECT player_id, year, game_num FROM player_allstar")).fetchall()}
+    new_rows = [c for c in cands
+                if (c["player_id"], c["year"], c["game_num"]) not in have]
+
+    # ---- per-player breakdown ----------------------------------------------
+    affected = sorted({c["player_id"] for c in new_rows})
+    names: dict[int, str] = {}
+    if affected:
+        with connection.get_session() as db:
+            for tbl in ("players", "pitchers"):
+                for pid, nm in db.execute(_sa_text(
+                        f"SELECT player_id, name FROM {tbl} WHERE player_id = ANY(:ids)"),
+                        {"ids": affected}).fetchall():
+                    names.setdefault(pid, nm)
+    mnames = _mlbam_names()
+
+    def _name(pid):
+        return names.get(pid) or mnames.get(pid) or f"mlbam:{pid}"
+
+    breakdown = []
+    for pid in affected:
+        yrs = sorted(c["year"] for c in new_rows if c["player_id"] == pid)
+        breakdown.append({"mlbam": pid, "name": _name(pid),
+                          "allstar_added": len(yrs), "years": yrs})
+    breakdown.sort(key=lambda b: -b["allstar_added"])
+
+    if unresolved:
+        # Expected: Negro Leagues East-West selections with no MLBAM id. Loud so
+        # a future data refresh that SHOULD map them doesn't slip by silently.
+        log.warning("backfill-allstar: %d AS playerIDs did not resolve "
+                    "(expected Negro Leagues no-MLBAM tail; sample: %s)",
+                    len(unresolved), sorted(set(unresolved))[:10])
+
+    summary = {
+        "allstar_rows_to_insert": len(new_rows),
+        "players_affected": len(affected),
+        "playerids_unresolved": len(unresolved),
+        "distinct_unresolved": len(set(unresolved)),
+        "breakdown": breakdown,
+    }
+
+    if not confirm:
+        return {"dry_run": True, **summary}
+
+    # ---- INSERT (confirm=true) — INSERT-ONLY, absent rows only -------------
+    with connection.get_session() as db:
+        before = db.execute(_sa_text("SELECT COUNT(*) FROM player_allstar")).scalar()
+        # new_rows are already PK-absent, so merge() only inserts — no existing
+        # row (Kershaw's 11) is in this list.
+        crud.save_player_allstar(db, new_rows)
+        db.flush()
+        after = db.execute(_sa_text("SELECT COUNT(*) FROM player_allstar")).scalar()
+
+    return {
+        "confirmed": True,
+        "player_allstar": {"before": before, "inserted": len(new_rows), "after": after},
+        **summary,
+    }
+
+
 @app.get("/admin/duplicate-identities")
 def duplicate_identities(limit: int = Query(1000, ge=1, le=5000)):
     """READ-ONLY. Enumerate the Negro-Leagues id-churn fingerprint: two mlbam
