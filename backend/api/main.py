@@ -6020,34 +6020,60 @@ def _run_situational(
     return result
 
 
-# ---- Phase 6: MILESTONES ("when did X reach the Nth of something?") ---------
-# Friendly event -> the EVENT_CD set whose running total we walk. A "hit" is any
-# of the four hit codes; BB includes intentional walks (15) to match a career
-# walk total. NOT here (so the tool declines, honestly): stolen bases (a RUNNER
-# event we can't attribute by BAT_ID), RBIs/wins/saves (not batting/pitching
-# EVENT_CDs) — those would need a different data model, so they're out of scope.
-_MILESTONE_EVENT = {
-    "HR": [23], "HOMERUN": [23], "HOME_RUN": [23],
-    "H": [20, 21, 22, 23], "HIT": [20, 21, 22, 23], "HITS": [20, 21, 22, 23],
-    "1B": [20], "SINGLE": [20], "2B": [21], "DOUBLE": [21],
-    "3B": [22], "TRIPLE": [22],
-    "K": [3], "SO": [3], "STRIKEOUT": [3],
-    "BB": [14, 15], "WALK": [14, 15],
-    "HBP": [16], "HITBYPITCH": [16],
-}
-_MILESTONE_LABEL = {"HR": "home run", "H": "hit", "1B": "single", "2B": "double",
-                    "3B": "triple", "K": "strikeout", "BB": "walk", "HBP": "hit-by-pitch"}
-
-# A milestone needs the running total EXACT up to N, so it needs COMPLETE game
-# coverage for every season up to the milestone — STRICTER than the count gate
-# (which tolerates ~99%). Even one missing game before the Nth shifts which game
-# IS the Nth: missing events make our cumulative LAG reality, so "our 715th" is a
-# LATER game than the true 715th — a confidently WRONG date, not a short count.
-# 99.95 = "100%, allowing for the coverage table's 1-decimal rounding".
-_MILESTONE_COVERAGE_MIN = 99.95
+# ---- Phase 6: MILESTONES / STREAKS / SPANS — the GAME-UNIT features ----------
+# Source = batting_gamelogs (per-player-per-game, complete 1901+), NOT the
+# coverage-gated play-by-play store. These ask GAME-unit questions (which game was
+# the Nth; longest run of GAMES; most in any N-GAME window), so they need per-game
+# totals — which the daily game logs hold even where play-by-play is missing.
+#
+# THE GATE: the daily table is trusted per-season against the AUTHORITATIVE season
+# records (player_seasons). A milestone's running total is exact only through the
+# last season where the daily per-season total of the event matches the official
+# one (so a shortfall AFTER N still answers N, a shortfall BEFORE N declines). A
+# streak/span needs each season's game COUNT to match the official G. Batter-only
+# (game logs carry no pitcher), so a milestone is DATE + OPPONENT, no pitcher.
 
 _MONTH_NAMES = ["", "January", "February", "March", "April", "May", "June",
                 "July", "August", "September", "October", "November", "December"]
+
+# event -> (per-game value from a daily row dict, SQL expr valid in BOTH
+# batting_gamelogs and player_seasons (columns match), singular label). Capitalized
+# columns MUST be double-quoted for Postgres; doubles/triples are lowercase.
+_DAILY_EVENT = {
+    "HR":  (lambda g: g["HR"], '"HR"', "home run"),
+    "H":   (lambda g: g["H"],  '"H"',  "hit"),
+    "1B":  (lambda g: g["H"] - g["2B"] - g["3B"] - g["HR"],
+            '("H" - doubles - triples - "HR")', "single"),
+    "2B":  (lambda g: g["2B"], "doubles", "double"),
+    "3B":  (lambda g: g["3B"], "triples", "triple"),
+    "RBI": (lambda g: g["RBI"], '"RBI"', "RBI"),
+    "BB":  (lambda g: g["BB"], '"BB"', "walk"),
+    "K":   (lambda g: g["SO"], '"SO"', "strikeout"),
+    "HBP": (lambda g: g["HBP"], '"HBP"', "hit-by-pitch"),
+    "TB":  (lambda g: g["H"] + g["2B"] + 2 * g["3B"] + 3 * g["HR"],
+            '("H" + doubles + 2 * triples + 3 * "HR")', "total base"),
+}
+_DAILY_EVENT_ALIAS = {
+    "HOMERUN": "HR", "HOME_RUN": "HR", "HIT": "H", "HITS": "H", "SINGLE": "1B",
+    "DOUBLE": "2B", "TRIPLE": "3B", "RBIS": "RBI", "WALK": "BB", "STRIKEOUT": "K",
+    "SO": "K", "HITBYPITCH": "HBP", "TOTALBASES": "TB", "TOTAL_BASES": "TB",
+}
+# plural label for span prose ("best 50-game span for home runs")
+_DAILY_EVENT_PLURAL = {
+    "HR": "home runs", "H": "hits", "1B": "singles", "2B": "doubles",
+    "3B": "triples", "RBI": "RBIs", "BB": "walks", "K": "strikeouts",
+    "HBP": "times hit by a pitch", "TB": "total bases",
+}
+_STREAK_TYPE_LABEL = {
+    "hitting": "hitting streak", "on_base": "on-base streak",
+    "home_run": "home run streak", "multi_hit": "multi-hit streak",
+}
+_SPAN_MAX_WINDOW = 3000   # a full career is < ~3300 games; guards a silly N
+
+
+def _canon_daily_event(event):
+    ev = (event or "").strip().upper().replace(" ", "_")
+    return _DAILY_EVENT_ALIAS.get(ev, ev)
 
 
 def _ordinal(n: int) -> str:
@@ -6063,187 +6089,202 @@ def _pretty_date(d) -> str:
         return str(d)
 
 
-def _name_for_retro(retro_id):
-    """retro_id -> display name, checking players then pitchers. Used to name the
-    opposing pitcher (or batter) at a milestone. Degrades to None (caller shows
-    the raw id) rather than failing the whole answer."""
-    if not retro_id or not connection.db_available():
+def _daily_games(mlbam_id, season=None):
+    """One row per REGULAR-SEASON game the player batted in, from batting_gamelogs,
+    ordered chronologically (game_date, game_id — game_id's trailing digit is the
+    doubleheader number, so this splits doubleheaders correctly). Numerics
+    coalesced to 0. Batter game logs are regular-season only."""
+    where = ["player_id = :pid"]
+    params: dict = {"pid": int(mlbam_id)}
+    if season is not None:
+        where.append("season = :yr"); params["yr"] = int(season)
+    sql = ("SELECT game_date, game_id, season, opponent, home_away, "
+           'COALESCE("AB",0), COALESCE("H",0), COALESCE(doubles,0), COALESCE(triples,0), '
+           'COALESCE("HR",0), COALESCE("RBI",0), COALESCE("BB",0), COALESCE("SO",0), '
+           'COALESCE("HBP",0), COALESCE("SF",0), COALESCE("SH",0), COALESCE("IBB",0) '
+           f"FROM batting_gamelogs WHERE {' AND '.join(where)} "
+           "ORDER BY game_date, game_id")
+    with connection.get_session() as db:
+        rows = db.execute(_sa_text(sql), params).fetchall()
+    return [{
+        "game_date": r[0], "game_id": r[1], "season": r[2],
+        "opponent": r[3], "home_away": r[4],
+        "AB": r[5], "H": r[6], "2B": r[7], "3B": r[8], "HR": r[9],
+        "RBI": r[10], "BB": r[11], "SO": r[12], "HBP": r[13],
+        "SF": r[14], "SH": r[15], "IBB": r[16],
+    } for r in rows]
+
+
+def _season_sums(mlbam_id, expr):
+    """(daily {season: sum(expr)}, auth {year: sum(expr)}) for one event — the
+    daily table vs the authoritative season records (player_seasons, which can
+    have multiple stint rows per year -> GROUP BY year)."""
+    daily: dict = {}
+    auth: dict = {}
+    with connection.get_session() as db:
+        for s, v in db.execute(_sa_text(
+                f"SELECT season, SUM({expr}) FROM batting_gamelogs "
+                "WHERE player_id = :pid GROUP BY season"), {"pid": int(mlbam_id)}).fetchall():
+            daily[s] = int(v or 0)
+        for y, v in db.execute(_sa_text(
+                f"SELECT year, SUM({expr}) FROM player_seasons "
+                "WHERE player_id = :pid GROUP BY year"), {"pid": int(mlbam_id)}).fetchall():
+            auth[y] = int(v or 0)
+    return daily, auth
+
+
+def _safe_through(daily, auth):
+    """Walk seasons in order accumulating daily vs authoritative cumulative of an
+    event; `safe_through` = the authoritative cumulative through the LAST season
+    where the two still agree (before any shortfall). Returns (safe_through,
+    diverge_season|None). A milestone N is pinpointable iff N <= safe_through."""
+    safe = 0
+    diverge = None
+    cd = ca = 0
+    for y in sorted(set(daily) | set(auth)):
+        cd += daily.get(y, 0)
+        ca += auth.get(y, 0)
+        if cd == ca:
+            safe = ca
+        else:
+            diverge = y
+            break
+    return safe, diverge
+
+
+def _complete_seasons(mlbam_id):
+    """(complete set{years}, daily_games {season:count}, auth_G {year:G}) — a season
+    is complete in the daily table iff its game COUNT matches the official G. Used
+    by streaks/spans, which need every game of a season present."""
+    dg: dict = {}
+    ag: dict = {}
+    with connection.get_session() as db:
+        for s, c in db.execute(_sa_text(
+                "SELECT season, COUNT(*) FROM batting_gamelogs "
+                "WHERE player_id = :pid GROUP BY season"), {"pid": int(mlbam_id)}).fetchall():
+            dg[s] = int(c or 0)
+        for y, g in db.execute(_sa_text(
+                'SELECT year, SUM("G") FROM player_seasons '
+                "WHERE player_id = :pid GROUP BY year"), {"pid": int(mlbam_id)}).fetchall():
+            ag[y] = int(g or 0)
+    complete = {y for y in dg if ag.get(y) is not None and dg[y] == ag[y]}
+    return complete, dg, ag
+
+
+def _stat_line(games):
+    """Batting line summed over a list of daily-game dicts, with the slash line.
+    None if empty (so a zero-length streak/span carries no line)."""
+    if not games:
         return None
-    try:
-        with connection.get_session() as db:
-            row = db.execute(_sa_text(
-                "SELECT name FROM players WHERE retro_id = :r "
-                "UNION SELECT name FROM pitchers WHERE retro_id = :r LIMIT 1"),
-                {"r": retro_id}).fetchone()
-        return row[0] if row else None
-    except Exception:  # noqa: BLE001
-        return None
+    AB = sum(g["AB"] for g in games); H = sum(g["H"] for g in games)
+    d2 = sum(g["2B"] for g in games); d3 = sum(g["3B"] for g in games)
+    HR = sum(g["HR"] for g in games); RBI = sum(g["RBI"] for g in games)
+    BB = sum(g["BB"] for g in games); SO = sum(g["SO"] for g in games)
+    HBP = sum(g["HBP"] for g in games); SF = sum(g["SF"] for g in games)
+    TB = H + d2 + 2 * d3 + 3 * HR
+    obp_den = AB + BB + HBP + SF
+    avg = round(H / AB, 3) if AB else None
+    obp = round((H + BB + HBP) / obp_den, 3) if obp_den else None
+    slg = round(TB / AB, 3) if AB else None
+    ops = round(obp + slg, 3) if (obp is not None and slg is not None) else None
+    return {"G": len(games), "AB": AB, "H": H, "2B": d2, "3B": d3, "HR": HR,
+            "RBI": RBI, "BB": BB, "SO": SO, "AVG": avg, "OBP": obp, "SLG": slg, "OPS": ops}
 
 
-def _run_milestone(player, event, n, role="bat", season=None, game_type=None):
-    """WHEN did a player reach the Nth of an event? A running-total problem:
-    order the player's events chronologically (GAME_DATE, GAME_ID, EVENT_ID),
-    accumulate, and find the row where the cumulative count crosses N — a
-    ROW_NUMBER() window over that order. Return that game's date + context.
+def _run_milestone(player, event, n, season=None, game_type=None):
+    """WHEN did a player reach the Nth of an event — from the daily game logs
+    (batting_gamelogs, complete 1901+). Walk the player's games in order,
+    accumulate the per-game event total, find the game where the cumulative
+    crosses N; return DATE + OPPONENT (game logs carry no pitcher).
 
-    THE HONESTY GATE (the crux): the Nth event in OUR data is the real Nth ONLY
-    if we hold EVERY game up to it. A missing game before the milestone makes our
-    cumulative LAG reality, so we'd name a LATER game than the true Nth — a
-    confidently WRONG date, not a short count. So a milestone requires COMPLETE
-    game coverage (>= 99.95%) for every season from the player's debut through
-    the milestone season; if any is short, or the career predates the 1910
-    play-by-play floor, we DECLINE rather than guess. (Verified: without this,
-    Aaron's 715th HR resolves to 1974-05-28 in our data — the truth is
-    1974-04-08 — precisely because 1954-56 are ~97% covered.)
-
-    Returns the resolved milestone dict, an ambiguous-candidates dict (name maps
-    to >1 player), a declined dict (coverage short), or a not-reached dict
-    (career total < N — 'he's at <total>')."""
-    role = (role or "bat").lower()
-    if role not in ("bat", "pit"):
-        raise HTTPException(status_code=400, detail="role must be 'bat' or 'pit'")
-    ev = (event or "").strip().upper().replace(" ", "_")
-    codes = _MILESTONE_EVENT.get(ev)
-    if codes is None:
+    THE GATE: the Nth is trustworthy only if the daily running total is EXACT
+    through it. We compare the daily per-season cumulative of the event to the
+    authoritative season records (player_seasons); the milestone answers iff N <=
+    the cumulative through the last season where they still agree. Correct whether
+    the daily table is perfect or one short: a shortfall AFTER N still answers N,
+    a shortfall BEFORE N declines."""
+    ev = _canon_daily_event(event)
+    spec = _DAILY_EVENT.get(ev)
+    if spec is None:
         raise HTTPException(status_code=400, detail=(
             f"'{event}' isn't a milestone event I track "
-            "(known: HR, H/hit, 1B, 2B, 3B, K, BB, HBP)."))
+            "(known: HR, H/hit, 1B, 2B, 3B, RBI, TB, BB, K, HBP)."))
+    valfn, expr, label = spec
     try:
         n = int(n)
     except (TypeError, ValueError):
         raise HTTPException(status_code=400, detail="the milestone number must be an integer")
     if n < 1:
         raise HTTPException(status_code=400, detail="the milestone number must be >= 1")
-    gt_clause, gt_param, gt = _game_type_filter(game_type)   # default -> regular season
     if not connection.db_available():
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
 
-    cands = [c for c in _resolve_retro_id(player, role) if c["retro_id"]]
+    cands = [c for c in _resolve_retro_id(player, "bat") if c.get("mlbam_id") is not None]
     if not cands:
-        raise HTTPException(status_code=404,
-                            detail=f"No player with a retro_id matching '{player}'")
-    if len({c["retro_id"] for c in cands}) > 1:
-        return {"resolved": False, "ambiguous": True, "query": player,
-                "candidates": cands[:25]}
+        raise HTTPException(status_code=404, detail=f"No player matching '{player}'")
+    if len({c["mlbam_id"] for c in cands}) > 1:
+        return {"resolved": False, "ambiguous": True, "query": player, "candidates": cands[:25]}
     resolved = cands[0]
-    retro_id = resolved["retro_id"]
-    debut = resolved.get("debut")
-    label = _MILESTONE_LABEL.get(ev if ev in _MILESTONE_LABEL else _CANON_EVENT.get(ev, ev),
-                                 (event or "").lower())
-    player_block = {"query": player, "name": resolved["name"],
-                    "mlbam_id": resolved["mlbam_id"], "retro_id": retro_id, "role": role}
+    mlbam = resolved["mlbam_id"]
+    player_block = {"query": player, "name": resolved["name"], "mlbam_id": mlbam, "role": "bat"}
 
-    id_col = "PIT_ID" if role == "pit" else "BAT_ID"
-    cds = ",".join(str(int(c)) for c in codes)   # ints from a fixed whitelist -> safe
-    where = [f"{id_col} = ?", f"EVENT_CD IN ({cds})"]
-    params: list = [retro_id]
-    if gt_clause:
-        where.append(gt_clause); params.append(gt_param)
+    gt = (game_type or "R").strip().upper()
+    if gt in ("P", "ALL"):
+        return {"resolved": True, "declined": True, "source": "daily", "player": player_block,
+                "milestone": None, "game_coverage": {"complete": False},
+                "reason": ("These milestone dates come from regular-season game logs; "
+                           "postseason isn't available.")}
+
+    games = _daily_games(mlbam, season)
+    if not games:
+        raise HTTPException(status_code=404, detail=(
+            f"No game logs for '{resolved['name']}'"
+            + (f" in {season}" if season is not None else "")))
+
+    total = sum(valfn(g) for g in games)
+    play_hi = max(g["season"] for g in games)
+
+    # the game where the cumulative crosses N (games already chronologically ordered)
+    row = None
+    cum = 0
+    for g in games:
+        prev = cum
+        cum += valfn(g)
+        if prev < n <= cum:
+            row = g
+            break
+
+    # ---- GATE: per-season cumulative, daily vs authoritative ------------
+    daily_sums, auth_sums = _season_sums(mlbam, expr)
     if season is not None:
-        where.append("SEASON = ?"); params.append(int(season))
-    clause = " AND ".join(where)
+        ok = daily_sums.get(season, 0) == auth_sums.get(season, 0)
+        safe = daily_sums.get(season, 0) if ok else 0
+        diverge = None if ok else season
+    else:
+        safe, diverge = _safe_through(daily_sums, auth_sums)
 
-    try:
-        cur = _plays_cursor()
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
-    try:
-        total = cur.execute(f"SELECT count(*) FROM plays WHERE {clause}", params).fetchone()[0]
-        # the seasons the player actually appears in (fallback debut + the
-        # not-reached caveat span)
-        mm = cur.execute(f"SELECT min(SEASON), max(SEASON) FROM plays WHERE {id_col} = ?",
-                         [retro_id]).fetchone()
-        play_lo, play_hi = (mm[0], mm[1]) if mm and mm[0] is not None else (None, None)
-
-        row = None
-        if total >= n:
-            row = cur.execute(
-                "WITH seq AS (SELECT GAME_DATE, GAME_ID, HOME_TEAM_ID, AWAY_TEAM_ID, "
-                "BAT_HOME_ID, INN_CT, PIT_ID, BAT_ID, SEASON, "
-                "ROW_NUMBER() OVER (ORDER BY GAME_DATE, GAME_ID, EVENT_ID) AS rn "
-                f"FROM plays WHERE {clause}) "
-                "SELECT GAME_DATE, GAME_ID, HOME_TEAM_ID, AWAY_TEAM_ID, BAT_HOME_ID, "
-                "INN_CT, PIT_ID, BAT_ID, SEASON FROM seq WHERE rn = ?",
-                params + [n]).fetchone()
-
-        # ---- coverage over debut..milestone-season (or ..last season) -------
-        lo = debut if debut is not None else (play_lo if play_lo is not None else _PLAYS_FLOOR)
-        hi = (row[8] if row is not None else (season if season is not None else play_hi)) or 2025
-        floor_short = lo is not None and lo < _PLAYS_FLOOR   # pre-1910 events aren't in the store
-        gate_lo = max(lo, _PLAYS_FLOOR) if lo is not None else _PLAYS_FLOOR
-        try:
-            crow = cur.execute(
-                "SELECT min(coverage_pct), list(season) FILTER (WHERE coverage_pct < ?) "
-                "FROM coverage WHERE season BETWEEN ? AND ?",
-                [_MILESTONE_COVERAGE_MIN, gate_lo, hi]).fetchone()
-            min_pct, low_seasons = crow if crow else (None, None)
-        except Exception:  # noqa: BLE001 - no coverage table (old store): can't certify -> block
-            min_pct, low_seasons = 0.0, []
-        low_seasons = sorted(low_seasons) if low_seasons else []
-    finally:
-        cur.close()
-
-    incomplete = (floor_short or bool(low_seasons)
-                  or (min_pct is not None and min_pct < _MILESTONE_COVERAGE_MIN))
-
-    # ---- REACHED: gate must certify complete coverage up to the milestone ---
     if row is not None:
-        if incomplete:
-            if floor_short:
-                note = (f"I can only pinpoint milestone games from {_PLAYS_FLOOR} on, where "
-                        f"the play-by-play record is complete — and {resolved['name']} "
-                        f"debuted in {lo}, so I can't say exactly which game was the "
-                        f"{_ordinal(n)} {label}.")
-            else:
-                span = (f"{low_seasons[0]}–{low_seasons[-1]}"
-                        if len(low_seasons) > 1 else f"{low_seasons[0]}") if low_seasons \
-                    else f"{gate_lo}–{hi}"
-                note = (f"I can't pinpoint this — some of {resolved['name']}'s games from "
-                        f"{span} aren't in the complete play-by-play record, so the running "
-                        f"total would point at the wrong game. I can't say exactly which "
-                        f"game was the {_ordinal(n)} {label}.")
-            return {"resolved": True, "declined": True, "reason": note, "source": "plays",
+        if n > safe:
+            note = (f"I can't pinpoint this — some of {resolved['name']}'s {diverge} games "
+                    "aren't fully in the daily record, so the running total isn't exact "
+                    f"through the {_ordinal(n)} {label}.")
+            return {"resolved": True, "declined": True, "reason": note, "source": "daily",
                     "player": player_block, "milestone": None,
-                    "game_coverage": {"complete": False, "low_seasons": low_seasons}}
+                    "game_coverage": {"complete": False}}
+        return {"resolved": True, "source": "daily", "player": player_block,
+                "milestone": {"n": n, "event": label, "reached": True,
+                              "date": str(row["game_date"]),
+                              "date_pretty": _pretty_date(row["game_date"]),
+                              "season": row["season"], "opponent": row["opponent"],
+                              "home_away": row["home_away"], "running_total": n},
+                "game_coverage": {"complete": True}}
 
-        gd, gid, home, away, bat_home, inn, pit, bat, syr = row
-        opp = away if bat_home == 1 else home
-        milestone = {
-            "n": n, "event": label, "reached": True,
-            "date": str(gd), "date_pretty": _pretty_date(gd), "season": syr,
-            "opponent": opp, "home_team": home, "away_team": away,
-            "home_away": "home" if bat_home == 1 else "away",
-            "inning": inn, "game_id": str(gid), "running_total": n,
-            "pitcher": _name_for_retro(pit) if role == "bat" else None,
-            "pitcher_id": pit if role == "bat" else None,
-            "batter": _name_for_retro(bat) if role == "pit" else None,
-            "batter_id": bat if role == "pit" else None,
-        }
-        return {"resolved": True, "source": "plays", "player": player_block,
-                "milestone": milestone, "game_coverage": {"complete": True}}
-
-    # ---- NOT REACHED: report the honest current total (a floor if incomplete) --
-    return {"resolved": True, "source": "plays", "player": player_block,
+    # not reached: honest current total (a floor if the daily table is short)
+    return {"resolved": True, "source": "daily", "player": player_block,
             "milestone": {"n": n, "event": label, "reached": False,
                           "current_total": int(total), "through_season": play_hi,
-                          "coverage_complete": not incomplete},
-            "game_coverage": {"complete": not incomplete, "low_seasons": low_seasons}}
-
-
-# ---- Phase 6: STREAKS ("longest run of consecutive games where a per-game
-# condition held") -----------------------------------------------------------
-_STREAK_TYPE_LABEL = {
-    "hitting": "hitting streak", "on_base": "on-base streak",
-    "home_run": "home run streak", "multi_hit": "multi-hit streak",
-}
-
-# A streak needs EVERY game present: a missing game in the middle either JOINS two
-# separate streaks (if it actually broke one) or SPLITS one (if it was part of
-# it) — WRONG, not short. So a streak is computed ONLY within seasons that are
-# essentially 100% covered; the same "complete, modulo 1-dp rounding" bar as
-# milestones. Uncovered seasons are excluded (and said so), or if none qualify we
-# decline outright.
-_STREAK_COVERAGE_MIN = 99.95
+                          "coverage_complete": diverge is None},
+            "game_coverage": {"complete": diverge is None}}
 
 
 def _streak_classify(kind, H, HR, AB, reached, PA):
@@ -6268,197 +6309,130 @@ def _streak_classify(kind, H, HR, AB, reached, PA):
 
 
 def _longest_streak(games, kind):
-    """games: (date, H, HR, AB, reached, PA) tuples in chronological order, all
-    inside ONE run of consecutive fully-covered seasons. Returns
-    (length, start_date, end_date) — length counts only the EXTEND games; SKIP
-    games sit inside the span without counting."""
-    best_len, best_start, best_end = 0, None, None
-    cur, start = 0, None
-    for gd, H, HR, AB, reached, PA in games:
+    """games: daily-game dicts in chronological order, all inside ONE season.
+    Returns (length, start_date, end_date, run_games) — length counts only the
+    EXTEND games; SKIP games sit inside the span without counting; run_games is the
+    EXTEND games of the best run (for the stat line, so len == length)."""
+    best_len, best_start, best_end, best_games = 0, None, None, []
+    cur, start, run = 0, None, []
+    for g in games:
+        H = g["H"]; HR = g["HR"]; AB = g["AB"]
+        PA = AB + g["BB"] + g["HBP"] + g["SF"] + g["SH"]
+        reached = H + g["BB"] + g["HBP"]
         c = _streak_classify(kind, H, HR, AB, reached, PA)
         if c == "extend":
             if cur == 0:
-                start = gd
+                start, run = g["game_date"], []
             cur += 1
+            run.append(g)
             if cur > best_len:
-                best_len, best_start, best_end = cur, start, gd
+                best_len, best_start, best_end = cur, start, g["game_date"]
+                best_games = list(run)
         elif c == "break":
-            cur, start = 0, None
-        # "skip" -> carry the current run untouched
-    return best_len, best_start, best_end
+            cur, start, run = 0, None, []
+        # "skip" -> carry the current run untouched (walk-only game not counted)
+    return best_len, best_start, best_end, best_games
 
 
 def _run_streak(player, streak_type, season=None, game_type=None):
     """Longest run of consecutive games meeting a per-game condition (hitting /
-    on-base / home-run / multi-hit). Aggregates the player's plays into games,
-    then walks them in order applying the streak rule (incl. the at-bat-less SKIP
-    rule above).
-
-    STREAKS ARE WITHIN A SEASON: the last game of one year and the first of the
-    next are NOT consecutive — an offseason sits between them — so we find the
-    longest run INSIDE EACH season and take the best, never bridging a season
-    boundary. That is the record-book meaning (DiMaggio's 56 is a 1941 streak); a
-    cross-season "consecutive games" run is a different curiosity we don't report.
-
-    COVERAGE GATE (harder than milestones): a missing game mid-streak silently
-    JOINS or SPLITS a streak, so we only compute within seasons that are ~100%
-    covered. Uncovered seasons are excluded (and said so); if NONE qualify (e.g.
-    DiMaggio's 1936-51, all 76-97% covered) we DECLINE rather than report a number
-    a missing game could have split or joined."""
+    on-base / home-run / multi-hit), from the daily game logs. WITHIN A SEASON
+    (the record-book meaning — DiMaggio's 56 is a 1941 streak). Gate: each season
+    must be COMPLETE in the daily table (its game count == the official G);
+    incomplete seasons are excluded, and if none qualify we decline. Carries the
+    player's STAT LINE over the streak's games."""
     kind = (streak_type or "").strip().lower()
     if kind not in _STREAK_TYPE_LABEL:
         raise HTTPException(status_code=400, detail=(
             f"'{streak_type}' isn't a streak type I track "
             "(known: hitting, on_base, home_run, multi_hit)."))
-    gt_clause, gt_param, gt = _game_type_filter(game_type)   # default -> regular season
     if not connection.db_available():
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
 
-    cands = [c for c in _resolve_retro_id(player, "bat") if c["retro_id"]]
+    cands = [c for c in _resolve_retro_id(player, "bat") if c.get("mlbam_id") is not None]
     if not cands:
-        raise HTTPException(status_code=404,
-                            detail=f"No player with a retro_id matching '{player}'")
-    if len({c["retro_id"] for c in cands}) > 1:
-        return {"resolved": False, "ambiguous": True, "query": player,
-                "candidates": cands[:25]}
+        raise HTTPException(status_code=404, detail=f"No player matching '{player}'")
+    if len({c["mlbam_id"] for c in cands}) > 1:
+        return {"resolved": False, "ambiguous": True, "query": player, "candidates": cands[:25]}
     resolved = cands[0]
-    retro_id = resolved["retro_id"]
-    player_block = {"query": player, "name": resolved["name"],
-                    "mlbam_id": resolved["mlbam_id"], "retro_id": retro_id, "role": "bat"}
+    mlbam = resolved["mlbam_id"]
+    player_block = {"query": player, "name": resolved["name"], "mlbam_id": mlbam, "role": "bat"}
 
-    where = ["BAT_ID = ?"]
-    params: list = [retro_id]
-    if gt_clause:
-        where.append(gt_clause); params.append(gt_param)
-    if season is not None:                       # a season-scoped streak ("his 2023 streak")
-        where.append("SEASON = ?"); params.append(int(season))
-    clause = " AND ".join(where)
+    gt = (game_type or "R").strip().upper()
+    if gt in ("P", "ALL"):
+        return {"resolved": True, "declined": True, "source": "daily", "player": player_block,
+                "streak": None, "game_coverage": {"complete": False},
+                "reason": ("These streaks come from regular-season game logs; "
+                           "postseason isn't available.")}
 
-    try:
-        cur = _plays_cursor()
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
-    try:
-        # one row per GAME (doubleheaders stay separate via GAME_ID)
-        rows = cur.execute(
-            "SELECT GAME_DATE, SEASON, "
-            "SUM(CASE WHEN EVENT_CD IN (20,21,22,23) THEN 1 ELSE 0 END), "   # H
-            "SUM(CASE WHEN EVENT_CD = 23 THEN 1 ELSE 0 END), "               # HR
-            "SUM(CASE WHEN AB_FL THEN 1 ELSE 0 END), "                       # AB
-            "SUM(CASE WHEN EVENT_CD IN (14,15) THEN 1 ELSE 0 END), "         # BB (incl. IBB)
-            "SUM(CASE WHEN EVENT_CD = 16 THEN 1 ELSE 0 END), "               # HBP
-            "SUM(CASE WHEN SF_FL THEN 1 ELSE 0 END), "                       # SF
-            "SUM(CASE WHEN SH_FL THEN 1 ELSE 0 END), "                       # SH
-            "SUM(CASE WHEN EVENT_CD = 17 THEN 1 ELSE 0 END) "                # CI
-            f"FROM plays WHERE {clause} GROUP BY GAME_ID, GAME_DATE, SEASON "
-            "ORDER BY GAME_DATE, GAME_ID", params).fetchall()
-        player_seasons = sorted({r[1] for r in rows})
-        cov: dict = {}
-        if player_seasons:
-            for s, p in cur.execute(
-                    "SELECT season, coverage_pct FROM coverage WHERE season BETWEEN ? AND ?",
-                    [player_seasons[0], player_seasons[-1]]).fetchall():
-                cov[s] = p if p is not None else 0.0
-    finally:
-        cur.close()
+    games = _daily_games(mlbam, season)
+    if not games:
+        raise HTTPException(status_code=404, detail=(
+            f"No game logs for '{resolved['name']}'"
+            + (f" in {season}" if season is not None else "")))
+    complete, _dg, _ag = _complete_seasons(mlbam)
+    player_seasons = sorted({g["season"] for g in games})
+    if season is not None:
+        usable = [s for s in player_seasons if s == season and s in complete]
+    else:
+        usable = [s for s in player_seasons if s in complete]
 
-    covered = [s for s in player_seasons if cov.get(s, 0.0) >= _STREAK_COVERAGE_MIN]
-
-    # ---- DECLINE: no fully-covered season -> no trustworthy streak ---------
-    if not covered:
-        lo, hi = (player_seasons[0], player_seasons[-1]) if player_seasons else (None, None)
-        span = f"{lo}–{hi}" if lo is not None else "that era"
-        note = (f"I can't verify streaks for {resolved['name']} — none of the seasons "
-                f"in {span} are complete in the play-by-play record, so a missing game "
-                "could split or join a streak. I can only compute streaks over seasons "
-                "with essentially 100% game coverage.")
-        return {"resolved": True, "declined": True, "reason": note, "source": "plays",
+    if not usable:
+        lo, hi = player_seasons[0], player_seasons[-1]
+        span_txt = f"{lo}–{hi}" if lo != hi else f"{lo}"
+        note = (f"I can't verify streaks for {resolved['name']} — "
+                + (f"{season} isn't" if season is not None
+                   else f"none of the seasons in {span_txt} are")
+                + " complete in the daily game-log record, so a missing game could "
+                "split or join a streak.")
+        return {"resolved": True, "declined": True, "reason": note, "source": "daily",
                 "player": player_block, "streak": None,
                 "game_coverage": {"complete": False}}
 
-    # Longest run WITHIN each fully-covered season — never across an offseason.
-    best = (0, None, None)
+    # longest run WITHIN each complete season — never across an offseason
+    best = (0, None, None, [])
     best_season = None
-    for s in covered:
-        gs = [(r[0], r[2], r[3], r[4], r[2] + r[5] + r[6],                    # date,H,HR,AB,reached
-               r[4] + r[5] + r[6] + r[7] + r[8] + r[9])                       # PA
-              for r in rows if r[1] == s]
-        length, start, end = _longest_streak(gs, kind)
+    for s in usable:
+        gs = [g for g in games if g["season"] == s]
+        length, start, end, run_games = _longest_streak(gs, kind)
         if length > best[0]:
-            best = (length, start, end)
+            best = (length, start, end, run_games)
             best_season = s
 
-    length, start, end = best
-    excluded = [s for s in player_seasons if s not in set(covered)]
+    length, start, end, run_games = best
+    excluded = [] if season is not None else [s for s in player_seasons if s not in complete]
     streak = {
         "type": kind, "type_label": _STREAK_TYPE_LABEL[kind], "length": length,
         "start_date": str(start) if start else None,
         "start_pretty": _pretty_date(start) if start else None,
         "end_date": str(end) if end else None,
         "end_pretty": _pretty_date(end) if end else None,
-        "season": best_season,               # streaks are within one season
-        "covered_span": [covered[0], covered[-1]],
+        "season": best_season,
+        "covered_span": [min(usable), max(usable)],
         "restricted": bool(excluded),
         "excluded_seasons": excluded,
+        "line": _stat_line(run_games),
     }
-    return {"resolved": True, "source": "plays", "player": player_block,
+    return {"resolved": True, "source": "daily", "player": player_block,
             "streak": streak,
             "game_coverage": {"complete": not excluded, "low_seasons": excluded}}
 
 
-# ---- Phase 6: SPANS ("the most X in any N-consecutive-game window") ---------
-# event -> (per-game aggregation SQL over the batter's rows, plural label). The
-# SQL is a fixed whitelist value, never user input. RBI uses RBI_CT; TB weights
-# the hit codes 1/2/3/4.
-_SPAN_EVENT = {
-    "HR":  ("SUM(CASE WHEN EVENT_CD = 23 THEN 1 ELSE 0 END)", "home runs"),
-    "H":   ("SUM(CASE WHEN EVENT_CD IN (20,21,22,23) THEN 1 ELSE 0 END)", "hits"),
-    "1B":  ("SUM(CASE WHEN EVENT_CD = 20 THEN 1 ELSE 0 END)", "singles"),
-    "2B":  ("SUM(CASE WHEN EVENT_CD = 21 THEN 1 ELSE 0 END)", "doubles"),
-    "3B":  ("SUM(CASE WHEN EVENT_CD = 22 THEN 1 ELSE 0 END)", "triples"),
-    "RBI": ("SUM(RBI_CT)", "RBIs"),
-    "BB":  ("SUM(CASE WHEN EVENT_CD IN (14,15) THEN 1 ELSE 0 END)", "walks"),
-    "K":   ("SUM(CASE WHEN EVENT_CD = 3 THEN 1 ELSE 0 END)", "strikeouts"),
-    "HBP": ("SUM(CASE WHEN EVENT_CD = 16 THEN 1 ELSE 0 END)", "times hit by a pitch"),
-    "TB":  ("SUM(CASE WHEN EVENT_CD = 20 THEN 1 WHEN EVENT_CD = 21 THEN 2 "
-            "WHEN EVENT_CD = 22 THEN 3 WHEN EVENT_CD = 23 THEN 4 ELSE 0 END)", "total bases"),
-}
-_SPAN_EVENT_ALIAS = {
-    "HOMERUN": "HR", "HOME_RUN": "HR", "HIT": "H", "HITS": "H", "SINGLE": "1B",
-    "DOUBLE": "2B", "TRIPLE": "3B", "RBIS": "RBI", "WALK": "BB", "STRIKEOUT": "K",
-    "SO": "K", "HITBYPITCH": "HBP", "TOTALBASES": "TB", "TOTAL_BASES": "TB",
-}
-_SPAN_COVERAGE_MIN = 99.95
-_SPAN_MAX_WINDOW = 3000   # a full career is < ~3300 games; guards a silly N
-
-
 def _run_span(player, event, window, season=None, game_type=None):
-    """The MOST of an event in ANY window of N consecutive games — a sliding-
-    window MAXIMUM over the player's ordered games (per-game totals + a prefix
-    sum, so O(games)).
-
-    SEASON BOUNDARY — CROSS-SEASON BY DEFAULT (deliberately different from
-    streaks). A streak is a within-season concept (DiMaggio's 56 is a 1941
-    streak). But "the most HR in any 162-game span" is a rolling window of
-    consecutive GAMES, not a calendar year, and the record book lets it cross
-    seasons: Bonds' single-season HR record is 73, yet his best 162-consecutive-
-    game window is 80, reaching from 2001 into 2002. So a window MAY span seasons
-    — but only within a run of consecutive fully-covered seasons. Pass `season`
-    to scope to one year.
-
-    COVERAGE GATE: the N games must ALL be present, or our "N-game window" is
-    really spread over more than N real games and the total is over the wrong
-    set. So we slide the window ONLY within maximal runs of consecutive
-    ~100%-covered seasons, and DECLINE if no such run holds N games (e.g. a
-    pre-coverage-era career)."""
-    ev = (event or "").strip().upper().replace(" ", "_")
-    ev = _SPAN_EVENT_ALIAS.get(ev, ev)
-    spec = _SPAN_EVENT.get(ev)
+    """The MOST of an event in ANY window of N consecutive games — from the daily
+    game logs. CROSS-SEASON by default (a rolling game window, not a calendar
+    year; Bonds' best 162-game HR window is 80, crossing 2001->2002), but only
+    within a run of consecutive COMPLETE seasons (each season's game count == the
+    official G), so the window never spans games we don't have. Pass season to
+    scope to one year. Carries the stat line over the window's games."""
+    ev = _canon_daily_event(event)
+    spec = _DAILY_EVENT.get(ev)
     if spec is None:
         raise HTTPException(status_code=400, detail=(
             f"'{event}' isn't a span event I track "
             "(known: HR, H, RBI, TB, 1B, 2B, 3B, BB, K, HBP)."))
-    agg, label = spec
+    valfn, _expr, _sing = spec
+    label = _DAILY_EVENT_PLURAL.get(ev, _sing + "s")
     try:
         window = int(window)
     except (TypeError, ValueError):
@@ -6468,108 +6442,98 @@ def _run_span(player, event, window, season=None, game_type=None):
     if window > _SPAN_MAX_WINDOW:
         raise HTTPException(status_code=400,
                             detail=f"window too large (max {_SPAN_MAX_WINDOW} games)")
-    gt_clause, gt_param, gt = _game_type_filter(game_type)   # default -> regular season
     if not connection.db_available():
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
 
-    cands = [c for c in _resolve_retro_id(player, "bat") if c["retro_id"]]
+    cands = [c for c in _resolve_retro_id(player, "bat") if c.get("mlbam_id") is not None]
     if not cands:
-        raise HTTPException(status_code=404,
-                            detail=f"No player with a retro_id matching '{player}'")
-    if len({c["retro_id"] for c in cands}) > 1:
-        return {"resolved": False, "ambiguous": True, "query": player,
-                "candidates": cands[:25]}
+        raise HTTPException(status_code=404, detail=f"No player matching '{player}'")
+    if len({c["mlbam_id"] for c in cands}) > 1:
+        return {"resolved": False, "ambiguous": True, "query": player, "candidates": cands[:25]}
     resolved = cands[0]
-    retro_id = resolved["retro_id"]
-    player_block = {"query": player, "name": resolved["name"],
-                    "mlbam_id": resolved["mlbam_id"], "retro_id": retro_id, "role": "bat"}
+    mlbam = resolved["mlbam_id"]
+    player_block = {"query": player, "name": resolved["name"], "mlbam_id": mlbam, "role": "bat"}
 
-    where = ["BAT_ID = ?"]
-    params: list = [retro_id]
-    if gt_clause:
-        where.append(gt_clause); params.append(gt_param)
+    gt = (game_type or "R").strip().upper()
+    if gt in ("P", "ALL"):
+        return {"resolved": True, "declined": True, "source": "daily", "player": player_block,
+                "span": None, "game_coverage": {"complete": False},
+                "reason": ("These spans come from regular-season game logs; "
+                           "postseason isn't available.")}
+
+    games = _daily_games(mlbam, season)
+    if not games:
+        raise HTTPException(status_code=404, detail=(
+            f"No game logs for '{resolved['name']}'"
+            + (f" in {season}" if season is not None else "")))
+    complete, _dg, _ag = _complete_seasons(mlbam)
+    player_seasons = sorted({g["season"] for g in games})
     if season is not None:
-        where.append("SEASON = ?"); params.append(int(season))
-    clause = " AND ".join(where)
+        usable = [s for s in player_seasons if s == season and s in complete]
+    else:
+        usable = [s for s in player_seasons if s in complete]
 
-    try:
-        cur = _plays_cursor()
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
-    try:
-        # one row per game with the per-game event total, chronological
-        rows = cur.execute(
-            f"SELECT GAME_DATE, SEASON, {agg} FROM plays WHERE {clause} "
-            "GROUP BY GAME_ID, GAME_DATE, SEASON ORDER BY GAME_DATE, GAME_ID", params).fetchall()
-        player_seasons = sorted({r[1] for r in rows})
-        cov: dict = {}
-        if player_seasons:
-            for s, p in cur.execute(
-                    "SELECT season, coverage_pct FROM coverage WHERE season BETWEEN ? AND ?",
-                    [player_seasons[0], player_seasons[-1]]).fetchall():
-                cov[s] = p if p is not None else 0.0
-    finally:
-        cur.close()
-
-    covered = [s for s in player_seasons if cov.get(s, 0.0) >= _SPAN_COVERAGE_MIN]
-
-    # ---- DECLINE: no fully-covered season -> no trustworthy window ---------
-    if not covered:
-        lo, hi = (player_seasons[0], player_seasons[-1]) if player_seasons else (None, None)
-        span_txt = f"{lo}–{hi}" if lo is not None else "that era"
-        note = (f"I can't measure game spans for {resolved['name']} — none of the seasons "
-                f"in {span_txt} are complete in the play-by-play record, so an "
-                f"{window}-game window would be spread across games we don't have. I can "
-                "only measure spans over seasons with essentially 100% game coverage.")
-        return {"resolved": True, "declined": True, "reason": note, "source": "plays",
+    if not usable:
+        lo, hi = player_seasons[0], player_seasons[-1]
+        span_txt = f"{lo}–{hi}" if lo != hi else f"{lo}"
+        note = (f"I can't measure game spans for {resolved['name']} — "
+                + (f"{season} isn't" if season is not None
+                   else f"none of the seasons in {span_txt} are")
+                + " complete in the daily game-log record, so an "
+                f"{window}-game window would be spread across games we don't have.")
+        return {"resolved": True, "declined": True, "reason": note, "source": "daily",
                 "player": player_block, "span": None,
                 "game_coverage": {"complete": False}}
 
-    # maximal runs of consecutive covered seasons — a window may cross a season
-    # boundary WITHIN a run but never bridge a coverage gap (a missing game there
-    # would make the window span the wrong set of real games).
+    # maximal runs of consecutive COMPLETE seasons — a window may cross a season
+    # boundary within a run, never bridge an incomplete season.
     runs: list = []
-    for s in covered:
+    for s in usable:
         if runs and s == runs[-1][1] + 1:
             runs[-1][1] = s
         else:
             runs.append([s, s])
 
-    best = (-1, None, None, None, None)   # total, start_date, end_date, start_season, end_season
+    best = None            # (total, window_games)
+    best_total = -1
     longest_run_games = 0
     for lo, hi in runs:
-        g = [r for r in rows if lo <= r[1] <= hi]     # ordered games in this run
+        g = [gm for gm in games if lo <= gm["season"] <= hi]
         longest_run_games = max(longest_run_games, len(g))
         if len(g) < window:
             continue
         prefix = [0]
-        for r in g:
-            prefix.append(prefix[-1] + (r[2] or 0))
+        for gm in g:
+            prefix.append(prefix[-1] + valfn(gm))
         for i in range(0, len(g) - window + 1):
-            total = prefix[i + window] - prefix[i]
-            if total > best[0]:
-                best = (total, g[i][0], g[i + window - 1][0], g[i][1], g[i + window - 1][1])
+            tot = prefix[i + window] - prefix[i]
+            if tot > best_total:
+                best_total = tot
+                best = (tot, g[i:i + window])
 
-    # ---- no covered run is long enough to hold the window ------------------
-    if best[1] is None:
+    if best is None:
         note = (f"{resolved['name']} hasn't played {window} consecutive games within "
-                f"seasons we hold completely (the most is {longest_run_games}), so I "
-                f"can't measure a {window}-game span.")
-        return {"resolved": True, "declined": True, "reason": note, "source": "plays",
+                f"seasons complete in the daily record (the most is {longest_run_games}), "
+                f"so I can't measure a {window}-game span.")
+        return {"resolved": True, "declined": True, "reason": note, "source": "daily",
                 "player": player_block, "span": None,
-                "game_coverage": {"complete": len(covered) == len(player_seasons)}}
+                "game_coverage": {"complete": len(usable) == len(player_seasons)}}
 
-    total, start, end, ss, es = best
-    excluded = [s for s in player_seasons if s not in set(covered)]
+    total, wgames = best
+    ss = wgames[0]["season"]; es = wgames[-1]["season"]
+    excluded = [] if season is not None else [s for s in player_seasons if s not in complete]
     span = {
         "event": label, "window": window, "total": int(total),
-        "start_date": str(start), "start_pretty": _pretty_date(start),
-        "end_date": str(end), "end_pretty": _pretty_date(end),
+        "start_date": str(wgames[0]["game_date"]),
+        "start_pretty": _pretty_date(wgames[0]["game_date"]),
+        "end_date": str(wgames[-1]["game_date"]),
+        "end_pretty": _pretty_date(wgames[-1]["game_date"]),
         "start_season": ss, "end_season": es, "cross_season": ss != es,
-        "covered_span": [covered[0], covered[-1]],
+        "covered_span": [min(usable), max(usable)],
         "restricted": bool(excluded), "excluded_seasons": excluded,
+        "line": _stat_line(wgames),
     }
-    return {"resolved": True, "source": "plays", "player": player_block, "span": span,
+    return {"resolved": True, "source": "daily", "player": player_block, "span": span,
             "game_coverage": {"complete": not excluded, "low_seasons": excluded}}
 
 
@@ -7576,24 +7540,23 @@ _ASK_CANNOT_TOOL = {
 _ASK_MILESTONE_TOOL = {
     "name": "query_milestone",
     "description": (
-        "WHEN did a player reach the Nth of a career event — 'when did X hit his "
-        "756th home run', 'the date of X's 3000th hit', 'when did pitcher X record "
-        "his 3000th strikeout'. A milestone asks for a DATE, not a count. Detect "
-        "the ORDINAL number (756th -> 756, 3000th -> 3000) and the event. Only "
-        "these events are milestone-able: HR, hit, single, double, triple, "
-        "strikeout, walk, hit-by-pitch. Stolen bases, RBIs, wins, and saves are "
-        "NOT — for those, call cannot_answer."),
+        "WHEN did a BATTER reach the Nth of a career event — 'when did X hit his "
+        "756th home run', 'the date of X's 3000th hit'. A milestone asks for a "
+        "DATE, not a count. Detect the ORDINAL number (756th -> 756, 3000th -> "
+        "3000) and the event. Milestone-able (batting only): HR, hit, single, "
+        "double, triple, RBI, total bases, walk, strikeout, hit-by-pitch. Stolen "
+        "bases, wins, saves, and PITCHER strikeout milestones are NOT — for those, "
+        "call cannot_answer."),
     "input_schema": {
         "type": "object",
         "properties": {
             "player": {"type": "string", "description": "name or MLBAM id"},
-            "event": {"type": "string", "enum": ["HR", "H", "1B", "2B", "3B", "K", "BB", "HBP"],
+            "event": {"type": "string",
+                      "enum": ["HR", "H", "1B", "2B", "3B", "RBI", "TB", "BB", "K", "HBP"],
                       "description": "HR=home run, H=hit (any of 1B/2B/3B/HR), 1B/2B/3B, "
-                                     "K=strikeout, BB=walk, HBP=hit by pitch."},
+                                     "RBI, TB=total bases, BB=walk, K=strikeout, HBP=hit by pitch."},
             "n": {"type": "integer", "minimum": 1,
                   "description": "the ordinal number reached (756th -> 756, 3000th -> 3000)."},
-            "role": {"type": "string", "enum": ["bat", "pit"], "description":
-                     "'pit' for a pitcher's strikeout/walk milestone; otherwise 'bat'."},
             "season": {"type": "integer", "description":
                        "ONLY for a single-season milestone ('his 50th HR of 2001'); "
                        "omit for a career milestone."},
@@ -7783,17 +7746,15 @@ _ASK_SYSTEM = (
     "something. A milestone asks for a DATE, not a count. Detect the ORDINAL "
     "(756th -> 756, 3000th -> 3000) and the event. This is DISTINCT from a count "
     "('how many' -> query_situational): 'when did X hit his 500th HR' wants the "
-    "game/date. Set role='pit' for a pitcher's strikeout/walk milestone.\n"
+    "game/date.\n"
     "- 'When did Barry Bonds hit his 756th home run?' -> query_milestone "
     "{player:'Barry Bonds', event:'HR', n:756}\n"
     "- 'When did Jeter get his 3000th hit?' -> {player:'Derek Jeter', event:'H', n:3000}\n"
     "- 'The date of Pujols' 700th home run' -> {player:'Albert Pujols', event:'HR', n:700}\n"
-    "- 'When did Kershaw record his 3000th strikeout?' -> {player:'Kershaw', "
-    "role:'pit', event:'K', n:3000}\n"
     "- 'When did Aaron hit his 715th homer?' -> {player:'Hank Aaron', event:'HR', n:715}\n"
-    "Only HR / hit / single / double / triple / strikeout / walk / HBP are "
-    "milestone-able. 'Nth stolen base', 'Nth RBI', 'Nth win/save' are NOT — "
-    "cannot_answer those.\n\n"
+    "Milestone-able events (BATTING only): HR / hit / single / double / triple / "
+    "RBI / total bases / walk / strikeout / HBP. 'Nth stolen base', 'Nth win/save', "
+    "and PITCHER strikeout milestones are NOT — cannot_answer those.\n\n"
     "STREAKS (call query_streak) — the LONGEST run of CONSECUTIVE games meeting a "
     "condition. Map the phrasing to a streak_type: hitting / on_base / home_run / "
     "multi_hit. Distinct from a count and from a milestone.\n"
@@ -8275,7 +8236,7 @@ def ask(request: Request,
     if tool_name == "query_milestone":
         base["understood_as"] = tool_input
         mk = {k: tool_input.get(k) for k in
-              ("player", "event", "n", "role", "season", "game_type")
+              ("player", "event", "n", "season", "game_type")
               if tool_input.get(k) is not None}
         if not mk.get("player") or mk.get("event") is None or mk.get("n") is None:
             base["out_of_scope"] = True
@@ -8321,28 +8282,15 @@ def ask(request: Request,
         m = result.get("milestone")
         base["milestone"] = m
         name = result["player"]["name"]
-        role = result["player"]["role"]
         if m and m.get("reached"):
-            inn = f"the {_ordinal(m['inning'])} inning" if m.get("inning") else "the game"
-            if role == "pit":
-                whom = m.get("batter") or m.get("batter_id")
-                against = f", fanning {whom} of the {m['opponent']}" if whom else \
-                          f" against the {m['opponent']}"
-                base["answer"] = (f"{name} recorded his {_ordinal(m['n'])} {m['event']} on "
-                                  f"{m['date_pretty']}{against}, in {inn}.")
-            else:
-                verb = "hit" if m["event"] == "home run" else "collected"
-                whom = m.get("pitcher") or m.get("pitcher_id")
-                off = f", off {whom} of the {m['opponent']}" if whom else \
-                      f" against the {m['opponent']}"
-                venue = "at home" if m.get("home_away") == "home" else "on the road"
-                base["answer"] = (f"{name} {verb} his {_ordinal(m['n'])} {m['event']} on "
-                                  f"{m['date_pretty']}{off}, in {inn} ({venue}).")
-        elif m:  # never reached — report the honest current total
+            base["answer"] = None    # STRUCTURED — the milestone card IS the answer
+        elif m:  # never reached — the honest total (prose IS the answer)
             floorish = "" if m.get("coverage_complete", True) else \
-                (" (at least — some of his early games aren't in the play-by-play record)")
+                (" (at least — some of his games aren't fully in the record)")
             through = m.get("through_season") or 2025
-            base["answer"] = (f"{name} hasn't reached {m['n']} {m['event']}s — through "
+            evp = ("hit-by-pitches" if m["event"] == "hit-by-pitch"
+                   else "total bases" if m["event"] == "total base" else m["event"] + "s")
+            base["answer"] = (f"{name} hasn't reached {m['n']} {evp} — through "
                               f"{through} he's at {m['current_total']}{floorish}.")
         return _finish()
 
@@ -8398,18 +8346,10 @@ def ask(request: Request,
         base["streak"] = s
         name = result["player"]["name"]
         if s and s["length"] >= 1:
-            span = (f"from {s['start_pretty']} to {s['end_pretty']}"
-                    if s["start_date"] != s["end_date"] else f"on {s['start_pretty']}")
-            caveat = ("" if not s["restricted"] else
-                      " (over his seasons with complete play-by-play coverage; some "
-                      "seasons aren't fully in the record)")
-            plural = "s" if s["length"] != 1 else ""
-            in_season = f" in {sk['season']}" if sk.get("season") else ""
-            base["answer"] = (f"{name}'s longest {s['type_label']}{in_season} was "
-                              f"{s['length']} game{plural}, {span}.{caveat}")
+            base["answer"] = None    # STRUCTURED — the streak table IS the answer
         else:
             base["answer"] = (f"I couldn't find a {(s or {}).get('type_label', 'streak')} "
-                              f"for {name} in the seasons with complete coverage.")
+                              f"for {name} in the seasons complete in the daily record.")
         return _finish()
 
     # ==== SPAN branch ('most X in any N-consecutive-game window') =========
@@ -8465,18 +8405,8 @@ def ask(request: Request,
 
         sp = result.get("span")
         base["span"] = sp
-        name = result["player"]["name"]
         if sp:
-            when = (f"from {sp['start_pretty']} to {sp['end_pretty']}"
-                    if sp["start_date"] != sp["end_date"] else f"on {sp['start_pretty']}")
-            # a large window can touch more than two season-years (Aaron's best
-            # 300-game HR span runs 1971->1974), so state the real count.
-            nseas = sp["end_season"] - sp["start_season"] + 1
-            cross = f" (spanning {nseas} seasons)" if sp["cross_season"] else ""
-            caveat = ("" if not sp["restricted"] else
-                      " (over his seasons with complete play-by-play coverage)")
-            base["answer"] = (f"{name}'s best {sp['window']}-game span for {sp['event']} "
-                              f"is {sp['total']}, {when}{cross}.{caveat}")
+            base["answer"] = None    # STRUCTURED — the span table IS the answer
         return _finish()
 
     # ---- out of scope / no usable tool call -----------------------------
@@ -8795,6 +8725,43 @@ def ask(request: Request,
     else:
         base["answer"] = None
     return _finish()
+
+
+@app.get("/admin/daily-coverage")
+def daily_coverage(player: str = Query(..., description="player name or MLBAM id")):
+    """DIAGNOSTIC for the daily game-log gate: per-season, compare batting_gamelogs
+    (games + HR) to the authoritative season records (player_seasons, GROUP BY
+    year). A season is `complete` iff its daily game count == official G. Locates
+    any dropped game/HR that would trip the milestone/streak/span gate. Read-only."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    cands = [c for c in _resolve_retro_id(player, "bat") if c.get("mlbam_id") is not None]
+    if not cands:
+        raise HTTPException(status_code=404, detail=f"No player matching '{player}'")
+    if len({c["mlbam_id"] for c in cands}) > 1:
+        return {"ambiguous": True, "candidates": cands[:25]}
+    resolved = cands[0]
+    mlbam = resolved["mlbam_id"]
+
+    dhr, ahr = _season_sums(mlbam, '"HR"')
+    complete, dg, ag = _complete_seasons(mlbam)
+    safe_hr, diverge = _safe_through(dhr, ahr)
+    years = sorted(set(dg) | set(ag))
+    per_season = [{
+        "season": y,
+        "daily_games": dg.get(y, 0), "official_G": ag.get(y),
+        "daily_HR": dhr.get(y, 0), "official_HR": ahr.get(y),
+        "complete": y in complete,
+    } for y in years]
+    return {
+        "player": {"name": resolved["name"], "mlbam_id": mlbam},
+        "daily_total_HR": sum(dhr.values()),
+        "official_total_HR": sum(ahr.values()),
+        "safe_through_HR": safe_hr,
+        "first_divergent_season": diverge,
+        "incomplete_seasons": [y for y in years if y not in complete],
+        "per_season": per_season,
+    }
 
 
 @app.get("/admin/plays-status")
