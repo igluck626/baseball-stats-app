@@ -6265,17 +6265,24 @@ def _run_milestone(player, event, n, season=None, game_type=None):
         ok = daily_sums.get(season, 0) == auth_sums.get(season, 0)
         safe = daily_sums.get(season, 0) if ok else 0
         diverge = None if ok else season
+        auth_total = int(auth_sums.get(season, 0))
     else:
         safe, diverge = _safe_through(daily_sums, auth_sums)
+        auth_total = int(sum(auth_sums.values()))
+    plural = _DAILY_EVENT_PLURAL.get(ev, label + "s")
 
-    if row is not None:
-        if n > safe:
-            note = (f"I can't pinpoint this — some of {resolved['name']}'s {diverge} games "
-                    "aren't fully in the daily record, so the running total isn't exact "
-                    f"through the {_ordinal(n)} {label}.")
-            return {"resolved": True, "declined": True, "reason": note, "source": "daily",
-                    "player": player_block, "milestone": None,
-                    "game_coverage": {"complete": False}}
+    # THREE cases, keyed on the AUTHORITATIVE career total (player_seasons), so we
+    # never confuse "he didn't reach it" with "our per-game record can't pinpoint it":
+    #  (a) N beyond his real total       -> genuinely not reached (he's at auth_total)
+    #  (b) N within the exact prefix     -> pinpoint the game
+    #  (c) N reached but past a gap       -> he DID reach it; we can't name the game
+    if n > auth_total:                                   # (a)
+        return {"resolved": True, "source": "daily", "player": player_block,
+                "milestone": {"n": n, "event": label, "reached": False,
+                              "current_total": auth_total, "through_season": play_hi,
+                              "coverage_complete": True},   # auth_total is the exact real total
+                "game_coverage": {"complete": True}}
+    if n <= safe and row is not None:                    # (b)
         return {"resolved": True, "source": "daily", "player": player_block,
                 "milestone": {"n": n, "event": label, "reached": True,
                               "date": str(row["game_date"]),
@@ -6283,13 +6290,14 @@ def _run_milestone(player, event, n, season=None, game_type=None):
                               "season": row["season"], "opponent": row["opponent"],
                               "home_away": row["home_away"], "running_total": n},
                 "game_coverage": {"complete": True}}
-
-    # not reached: honest current total (a floor if the daily table is short)
-    return {"resolved": True, "source": "daily", "player": player_block,
-            "milestone": {"n": n, "event": label, "reached": False,
-                          "current_total": int(total), "through_season": play_hi,
-                          "coverage_complete": diverge is None},
-            "game_coverage": {"complete": diverge is None}}
+    # (c) he reached it (N <= real total) but a game is missing before N, so the
+    #     running total isn't exact through it — say so, don't name the wrong game.
+    note = (f"{resolved['name']} reached {auth_total} {plural}, but some of his "
+            f"{diverge} games aren't fully in the game-by-game record, so I can't "
+            f"pinpoint which game was his {_ordinal(n)}.")
+    return {"resolved": True, "declined": True, "reason": note, "source": "daily",
+            "player": player_block, "milestone": None,
+            "game_coverage": {"complete": False}}
 
 
 def _streak_classify(kind, H, HR, AB, reached, PA):
