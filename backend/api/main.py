@@ -6167,7 +6167,12 @@ def _complete_seasons(mlbam_id):
                 'SELECT year, SUM("G") FROM player_seasons '
                 "WHERE player_id = :pid GROUP BY year"), {"pid": int(mlbam_id)}).fetchall():
             ag[y] = int(g or 0)
-    complete = {y for y in dg if ag.get(y) is not None and dg[y] == ag[y]}
+    # Complete = the daily table has AT LEAST every official game (no MISSING
+    # games). Not strict equality: the daily count can legitimately EXCEED
+    # Lahman's G (Retrosheet is game-level authoritative — e.g. Bonds 2002 has 143
+    # distinct games vs Lahman G=142), and an extra real game doesn't corrupt a
+    # streak/span. Only a SHORTFALL (daily < G) means games are absent.
+    complete = {y for y in dg if ag.get(y) is not None and dg[y] >= ag[y]}
     return complete, dg, ag
 
 
