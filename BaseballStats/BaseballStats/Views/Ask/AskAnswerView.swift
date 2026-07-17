@@ -41,6 +41,14 @@ struct AskAnswerView: View {
                 // the extra component counts behind a disclosure. No prose
                 // reciting AVG/OBP/SLG/OPS the row already shows.
                 ratesSection(rates)
+            } else if let m = response.milestone, m.reached == true {
+                // DATA-FIRST: the milestone game IS the answer (a not-reached or
+                // unpinpointable milestone arrives as prose in `answer`).
+                milestoneSection(m)
+            } else if let streak = response.streak, (streak.length ?? 0) >= 1 {
+                streakSection(streak)
+            } else if let span = response.span, span.total != nil {
+                spanSection(span)
             } else {
                 // A single count: the phrased sentence IS the answer, with any
                 // sample plays behind a disclosure.
@@ -291,6 +299,94 @@ struct AskAnswerView: View {
         case "SO":  return r.SO.map(String.init)
         default:    return nil
         }
+    }
+
+    // MARK: - Milestone / Streak / Span (game-unit, from the daily record)
+
+    /// A milestone game: "715th home run" + the date and opponent (no pitcher —
+    /// game logs carry none).
+    @ViewBuilder
+    private func milestoneSection(_ m: AskMilestone) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let n = m.n, let ev = m.event {
+                Text("\(Self.ordinal(n)) \(ev)")
+                    .font(.title3.weight(.bold))
+            }
+            HStack(spacing: 6) {
+                if let d = m.date_pretty {
+                    Text(d).font(.body.weight(.semibold))
+                }
+                if let opp = m.opponent, !opp.isEmpty {
+                    let verb = (m.home_away == "H") ? "vs" : "@"
+                    Text("\(verb) \(teamAbbreviation(for: opp))")
+                        .font(.body).foregroundStyle(.secondary)
+                }
+            }
+            coverageFootnote
+        }
+    }
+
+    /// A streak: "30-game hitting streak" + the date range + the batting line
+    /// over the streak's games.
+    @ViewBuilder
+    private func streakSection(_ s: AskStreak) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let len = s.length, let label = s.type_label {
+                Text("\(len)-game \(label)").font(.title3.weight(.bold))
+            }
+            if let a = s.start_pretty, let b = s.end_pretty {
+                Text("\(a) – \(b)").font(.subheadline).foregroundStyle(.secondary)
+            }
+            if let line = s.line { StatTable(columns: statLineColumns(line)) }
+            if s.restricted == true {
+                Text("Over this player's seasons with complete game-by-game coverage.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            coverageFootnote
+        }
+    }
+
+    /// A span: "80 home runs in any 162 games" + the window dates (with the
+    /// season-count label when it crosses years) + the line over the window.
+    @ViewBuilder
+    private func spanSection(_ sp: AskSpan) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let total = sp.total, let ev = sp.event, let w = sp.window {
+                Text("\(total) \(ev) in any \(w) games").font(.title3.weight(.bold))
+            }
+            HStack(spacing: 6) {
+                if let a = sp.start_pretty, let b = sp.end_pretty {
+                    Text("\(a) – \(b)").font(.subheadline).foregroundStyle(.secondary)
+                }
+                if sp.cross_season == true, let ss = sp.start_season, let es = sp.end_season {
+                    Text("· spanning \(es - ss + 1) seasons")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            if let line = sp.line { StatTable(columns: statLineColumns(line)) }
+            coverageFootnote
+        }
+    }
+
+    /// The summed batting line rendered as the shared stat table.
+    private func statLineColumns(_ l: AskStatLine) -> [StatTable.Column] {
+        [.init(label: "G", value: intVal(l.G)),
+         .init(label: "AB", value: intVal(l.AB)),
+         .init(label: "H", value: intVal(l.H)),
+         .init(label: "HR", value: intVal(l.HR)),
+         .init(label: "RBI", value: intVal(l.RBI)),
+         .init(label: "AVG", value: rateVal(l.AVG)),
+         .init(label: "OBP", value: rateVal(l.OBP)),
+         .init(label: "SLG", value: rateVal(l.SLG)),
+         .init(label: "OPS", value: rateVal(l.OPS))]
+    }
+
+    /// "715" -> "715th" (11/12/13 take "th").
+    static func ordinal(_ n: Int) -> String {
+        let ones = n % 10, tens = (n / 10) % 10
+        let suffix = tens == 1 ? "th"
+            : ones == 1 ? "st" : ones == 2 ? "nd" : ones == 3 ? "rd" : "th"
+        return "\(n)\(suffix)"
     }
 
     // MARK: - Splits

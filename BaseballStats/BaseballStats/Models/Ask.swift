@@ -36,6 +36,14 @@ struct AskResponse: Decodable {
     let rates: AskRates?
     let splits: [AskSplit]?
 
+    // Game-unit answers from the daily record (answer is nil — the card IS the
+    // answer). Milestone: the Nth of an event (date + opponent). Streak: longest
+    // run of games meeting a condition, with the line over those games. Span:
+    // the most of an event in any N-game window, with the line over the window.
+    let milestone: AskMilestone?
+    let streak: AskStreak?
+    let span: AskSpan?
+
     // Rate-leaderboard qualifier metadata.
     let stat: String?
     let min_pa: Int?
@@ -134,6 +142,74 @@ struct AskSplit: Decodable, Identifiable {
     let OPS: Double?
 
     var id: String { split_value ?? "?" }
+}
+
+/// A career milestone — the Nth of an event. On success `reached` is true and
+/// the game is named (date + opponent, no pitcher — game logs carry none). When
+/// not reached or unpinpointable the backend sends prose in `answer` instead.
+struct AskMilestone: Decodable {
+    let n: Int?
+    let event: String?            // singular, e.g. "home run"
+    let reached: Bool?
+    let date_pretty: String?      // "April 8, 1974"
+    let season: Int?
+    let opponent: String?         // Lahman/Retrosheet team code (e.g. "LAN")
+    let home_away: String?        // "H" / "A"
+    let running_total: Int?       // == n on success
+    // not-reached shape
+    let current_total: Int?
+    let through_season: Int?
+}
+
+/// A game-unit streak (hitting / on-base / home-run / multi-hit), within one
+/// season, plus the player's batting line summed over the streak's games.
+struct AskStreak: Decodable {
+    let type_label: String?       // "hitting streak"
+    let length: Int?
+    let start_pretty: String?
+    let end_pretty: String?
+    let season: Int?
+    let restricted: Bool?         // over fully-covered seasons only
+    let line: AskStatLine?
+}
+
+/// The most of an event in any N-consecutive-game window (may cross seasons),
+/// plus the batting line over the window's games.
+struct AskSpan: Decodable {
+    let event: String?            // plural, e.g. "home runs"
+    let window: Int?
+    let total: Int?
+    let start_pretty: String?
+    let end_pretty: String?
+    let start_season: Int?
+    let end_season: Int?
+    let cross_season: Bool?
+    let restricted: Bool?
+    let line: AskStatLine?
+}
+
+/// The batting line summed over a streak's or span's games. `2B`/`3B` map to
+/// `doubles`/`triples` (a Swift property can't be named with a leading digit).
+struct AskStatLine: Decodable {
+    let G: Int?
+    let AB: Int?
+    let H: Int?
+    let doubles: Int?
+    let triples: Int?
+    let HR: Int?
+    let RBI: Int?
+    let BB: Int?
+    let SO: Int?
+    let AVG: Double?
+    let OBP: Double?
+    let SLG: Double?
+    let OPS: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case G, AB, H, HR, RBI, BB, SO, AVG, OBP, SLG, OPS
+        case doubles = "2B"
+        case triples = "3B"
+    }
 }
 
 /// Who the question resolved to — or, when `candidates` is set, the set of
