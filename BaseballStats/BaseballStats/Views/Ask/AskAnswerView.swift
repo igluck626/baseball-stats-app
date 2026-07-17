@@ -337,7 +337,9 @@ struct AskAnswerView: View {
             if let a = s.start_pretty, let b = s.end_pretty {
                 Text("\(a) – \(b)").font(.subheadline).foregroundStyle(.secondary)
             }
-            if let line = s.line { StatTable(columns: statLineColumns(line)) }
+            // The streak LENGTH is the answer and lives in the header; the line
+            // below is context (no G — that would recite the length).
+            if let line = s.line { StatTable(columns: lineColumns(line)) }
             if s.restricted == true {
                 Text("Over this player's seasons with complete game-by-game coverage.")
                     .font(.caption).foregroundStyle(.secondary)
@@ -346,13 +348,17 @@ struct AskAnswerView: View {
         }
     }
 
-    /// A span: "80 home runs in any 162 games" + the window dates (with the
-    /// season-count label when it crosses years) + the line over the window.
+    /// A span: a context line naming the window + stat (NOT the value — same rule
+    /// as the count/rate cards, which never recite the number above a table that
+    /// already shows it), then the window dates + season-count, then the line
+    /// with the span's stat HIGHLIGHTED (the value shown once, in accent).
     @ViewBuilder
     private func spanSection(_ sp: AskSpan) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let total = sp.total, let ev = sp.event, let w = sp.window {
-                Text("\(total) \(ev) in any \(w) games").font(.title3.weight(.bold))
+            if let ev = sp.event, let w = sp.window {
+                Text("Most \(ev) in any \(w) games")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
             }
             HStack(spacing: 6) {
                 if let a = sp.start_pretty, let b = sp.end_pretty {
@@ -363,22 +369,67 @@ struct AskAnswerView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
-            if let line = sp.line { StatTable(columns: statLineColumns(line)) }
+            if sp.line != nil { StatTable(columns: spanColumns(sp)) }
             coverageFootnote
         }
     }
 
-    /// The summed batting line rendered as the shared stat table.
-    private func statLineColumns(_ l: AskStatLine) -> [StatTable.Column] {
-        [.init(label: "G", value: intVal(l.G)),
-         .init(label: "AB", value: intVal(l.AB)),
-         .init(label: "H", value: intVal(l.H)),
-         .init(label: "HR", value: intVal(l.HR)),
-         .init(label: "RBI", value: intVal(l.RBI)),
-         .init(label: "AVG", value: rateVal(l.AVG)),
-         .init(label: "OBP", value: rateVal(l.OBP)),
-         .init(label: "SLG", value: rateVal(l.SLG)),
-         .init(label: "OPS", value: rateVal(l.OPS))]
+    /// The batting line over a streak's or span's games. No G column — the game
+    /// count (streak length / span window) is in the header, so showing it here
+    /// would recite it. `highlight` (a span's stat, e.g. "HR") emphasizes that
+    /// column — the asked-for value, shown once, in accent — like the rate cards.
+    private func lineColumns(_ l: AskStatLine, highlight: String? = nil,
+                             extraValue: String? = nil) -> [StatTable.Column] {
+        func col(_ label: String, _ value: String) -> StatTable.Column {
+            .init(label: label, value: value, highlighted: label == highlight)
+        }
+        let core = ["AB", "H", "HR", "RBI", "AVG", "OBP", "SLG", "OPS"]
+        var cols: [StatTable.Column] = []
+        // a highlighted stat that isn't a core column gets its own leading column
+        if let h = highlight, !core.contains(h) {
+            cols.append(.init(label: h, value: extraValue ?? "—", highlighted: true))
+        }
+        cols += [col("AB", intVal(l.AB)), col("H", intVal(l.H)), col("HR", intVal(l.HR)),
+                 col("RBI", intVal(l.RBI)), col("AVG", rateVal(l.AVG)),
+                 col("OBP", rateVal(l.OBP)), col("SLG", rateVal(l.SLG)),
+                 col("OPS", rateVal(l.OPS))]
+        return cols
+    }
+
+    /// Span columns with the event's stat highlighted. Core stats (HR/H/RBI)
+    /// highlight in place; others (2B/3B/BB/SO from the line, or 1B/TB/HBP from
+    /// the span total) get a leading highlighted column so the value still shows.
+    private func spanColumns(_ sp: AskSpan) -> [StatTable.Column] {
+        guard let l = sp.line else { return [] }
+        let hi = spanStatLabel(sp.event)
+        let extra: String? = {
+            switch hi {
+            case "2B": return intVal(l.doubles)
+            case "3B": return intVal(l.triples)
+            case "BB": return intVal(l.BB)
+            case "SO": return intVal(l.SO)
+            case "1B", "TB", "HBP": return sp.total.map { $0.formatted(.number) }
+            default:   return nil
+            }
+        }()
+        return lineColumns(l, highlight: hi, extraValue: extra)
+    }
+
+    /// A span's event label ("home runs") -> the stat-table column to highlight.
+    private func spanStatLabel(_ event: String?) -> String? {
+        switch event {
+        case "home runs": return "HR"
+        case "hits": return "H"
+        case "RBIs": return "RBI"
+        case "doubles": return "2B"
+        case "triples": return "3B"
+        case "walks": return "BB"
+        case "strikeouts": return "SO"
+        case "singles": return "1B"
+        case "total bases": return "TB"
+        case "times hit by a pitch": return "HBP"
+        default: return nil
+        }
     }
 
     /// "715" -> "715th" (11/12/13 take "th").
