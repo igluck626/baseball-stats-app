@@ -6240,6 +6240,18 @@ def _run_milestone(player, event, n, season=None, game_type=None):
                 "reason": ("These milestone dates come from regular-season game logs; "
                            "postseason isn't available.")}
 
+    # STOPGAP (until the pitching slice lands): the daily source is
+    # batting_gamelogs, so a pitcher's strikeouts/walks would be counted at the
+    # PLATE (Kershaw: his ~200 batting Ks, not his ~3000 on the mound). Decline
+    # rather than return a confident wrong number for the wrong stat.
+    if resolved.get("position") == "P" and ev in ("K", "BB"):
+        noun = _DAILY_EVENT_PLURAL.get(ev, ev)
+        return {"resolved": True, "declined": True, "source": "daily", "player": player_block,
+                "milestone": None, "game_coverage": {"complete": False},
+                "reason": (f"I can only do batting milestones right now, so I can't pinpoint "
+                           f"{resolved['name']}'s pitching {noun} yet — a pitching version is "
+                           f"coming. (His {noun} at the plate aren't what you're asking about.)")}
+
     games = _daily_games(mlbam, season)
     if not games:
         raise HTTPException(status_code=404, detail=(
@@ -6473,6 +6485,19 @@ def _run_span(player, event, window, season=None, game_type=None):
                 "span": None, "game_coverage": {"complete": False},
                 "reason": ("These spans come from regular-season game logs; "
                            "postseason isn't available.")}
+
+    # STOPGAP (until the pitching slice lands): batting_gamelogs is the source, so
+    # a pitcher's strikeouts/walks would be his AT-BAT totals (Kershaw's best
+    # 10-game strikeout span reads 13 — his batting Ks — not the ~104 he threw).
+    # Decline rather than answer the wrong stat from the wrong table.
+    if resolved.get("position") == "P" and ev in ("K", "BB"):
+        noun = _DAILY_EVENT_PLURAL.get(ev, ev)
+        return {"resolved": True, "declined": True, "source": "daily", "player": player_block,
+                "span": None, "game_coverage": {"complete": False},
+                "reason": (f"I can only do batting spans right now, so I can't give "
+                           f"{resolved['name']}'s pitching {noun} over a span yet — a pitching "
+                           f"version is coming. (His {noun} at the plate aren't what you're "
+                           "asking about.)")}
 
     games = _daily_games(mlbam, season)
     if not games:
@@ -8166,7 +8191,8 @@ def ask(request: Request,
     # player as an exact id lookup, so this can't re-ambiguate or loop.
     _reask_orig_player = None
     if player_id is not None and tool_input is not None and tool_name in (
-            "query_situational", "query_rates", "query_splits"):
+            "query_situational", "query_rates", "query_splits",
+            "query_milestone", "query_streak", "query_span"):
         _reask_orig_player = tool_input.get("player")
         tool_input["player"] = str(player_id)
 
