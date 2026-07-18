@@ -711,3 +711,26 @@ class AskLog(Base):
     input_tokens   = Column(Integer)
     output_tokens  = Column(Integer)
     timing_ms      = Column(Text)          # timings, JSON string
+
+
+class GameUnitLeaderboard(Base):
+    """Precomputed game-unit leaderboard: each player's best streak (per season)
+    and best span (per window+event), computed by REUSING the verified
+    single-player _run_streak / _run_span logic (never a second SQL
+    implementation), so a leaderboard value always equals the single-player card.
+    Refreshed nightly for active players; historical rows are immutable.
+
+    Streaks: one row per (player, season, metric), window=0, event="".
+    Spans:   one row per (player, window, event), season=0, metric="span".
+    """
+    __tablename__ = "game_unit_leaderboard"
+
+    player_id  = Column(Integer, primary_key=True)
+    metric     = Column(String,  primary_key=True)   # hitting_streak / on_base_streak /
+                                                     # hr_game_streak / multi_hit_streak / span
+    window     = Column(Integer, primary_key=True, default=0)   # 0 for streaks; N for spans
+    season     = Column(Integer, primary_key=True, default=0)   # season for streaks; 0 for spans
+    event      = Column(String,  primary_key=True, default="")  # "" for streaks; HR/H/RBI/TB for spans
+    value      = Column(Integer)
+    start_date = Column(Date)
+    end_date   = Column(Date)

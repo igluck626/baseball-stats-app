@@ -924,6 +924,38 @@ def _run_nightly_update() -> None:
                     f"[nightly] new-player gamelog backfill FAILED (non-fatal): {exc}"
                 )
 
+        # Phase 5c — game-unit leaderboard. Recompute streak/span leaderboard
+        # rows for ACTIVE players only (a batting_gamelogs row this season);
+        # historical players' streaks are immutable. Reuses the verified
+        # _compute_player_leaderboard (same code as the single-player cards), so
+        # the leaderboard never diverges. Runs after the counting/rates phases so
+        # player_seasons.G (the completeness gate) is fresh. Non-fatal.
+        log.info("[nightly] starting game-unit-leaderboard phase")
+        try:
+            with connection.get_session() as db:
+                active = [r[0] for r in db.execute(_sa_text(
+                    "SELECT DISTINCT player_id FROM batting_gamelogs WHERE season = :yr"),
+                    {"yr": current_year}).fetchall()]
+            lb_players = lb_rows = 0
+            with connection.get_session() as db:
+                for pid in active:
+                    rows = _compute_player_leaderboard(pid)
+                    db.execute(_sa_text(
+                        "DELETE FROM game_unit_leaderboard WHERE player_id = :pid"), {"pid": pid})
+                    for r in rows:
+                        db.execute(_sa_text(
+                            "INSERT INTO game_unit_leaderboard "
+                            '(player_id, metric, "window", season, event, value, start_date, end_date) '
+                            "VALUES (:player_id, :metric, :window, :season, :event, :value, "
+                            ":start_date, :end_date)"), r)
+                        lb_rows += 1
+                    lb_players += 1
+                db.commit()
+            log.info("[nightly] game-unit-leaderboard done: %d active players, %d rows",
+                     lb_players, lb_rows)
+        except Exception as exc:  # noqa: BLE001
+            log.error(f"[nightly] game-unit-leaderboard phase FAILED (non-fatal): {exc}")
+
         # Phase 6 — hot/cold heat. Reads fully-ingested, deduped gamelogs
         # vs season baselines and stamps heat_score / heat_tier. Non-fatal.
         log.info("[nightly] starting heat phase")
@@ -6443,6 +6475,40 @@ def _run_streak(player, streak_type, season=None, game_type=None):
             "game_coverage": {"complete": not excluded, "low_seasons": excluded}}
 
 
+def _best_span(games, seasons, window, valfn):
+    """Best `window`-game rolling sum of valfn(game) over `games`, sliding ONLY
+    within maximal runs of consecutive seasons in `seasons` — a window may cross a
+    season boundary within a run, never bridge a season not in `seasons`. The one
+    implementation shared by _run_span and the leaderboard precompute. Returns
+    (best, longest_run_games) where best = (total, window_games) or None if no run
+    holds `window` games."""
+    usable = sorted(seasons)
+    runs: list = []
+    for s in usable:
+        if runs and s == runs[-1][1] + 1:
+            runs[-1][1] = s
+        else:
+            runs.append([s, s])
+
+    best = None
+    best_total = -1
+    longest_run_games = 0
+    for lo, hi in runs:
+        g = [gm for gm in games if lo <= gm["season"] <= hi]
+        longest_run_games = max(longest_run_games, len(g))
+        if len(g) < window:
+            continue
+        prefix = [0]
+        for gm in g:
+            prefix.append(prefix[-1] + valfn(gm))
+        for i in range(0, len(g) - window + 1):
+            tot = prefix[i + window] - prefix[i]
+            if tot > best_total:
+                best_total = tot
+                best = (tot, g[i:i + window])
+    return best, longest_run_games
+
+
 def _run_span(player, event, window, season=None, game_type=None):
     """The MOST of an event in ANY window of N consecutive games — from the daily
     game logs. CROSS-SEASON by default (a rolling game window, not a calendar
@@ -6524,30 +6590,9 @@ def _run_span(player, event, window, season=None, game_type=None):
                 "game_coverage": {"complete": False}}
 
     # maximal runs of consecutive COMPLETE seasons — a window may cross a season
-    # boundary within a run, never bridge an incomplete season.
-    runs: list = []
-    for s in usable:
-        if runs and s == runs[-1][1] + 1:
-            runs[-1][1] = s
-        else:
-            runs.append([s, s])
-
-    best = None            # (total, window_games)
-    best_total = -1
-    longest_run_games = 0
-    for lo, hi in runs:
-        g = [gm for gm in games if lo <= gm["season"] <= hi]
-        longest_run_games = max(longest_run_games, len(g))
-        if len(g) < window:
-            continue
-        prefix = [0]
-        for gm in g:
-            prefix.append(prefix[-1] + valfn(gm))
-        for i in range(0, len(g) - window + 1):
-            tot = prefix[i + window] - prefix[i]
-            if tot > best_total:
-                best_total = tot
-                best = (tot, g[i:i + window])
+    # boundary within a run, never bridge an incomplete season. (Shared with the
+    # leaderboard precompute so the two never diverge.)
+    best, longest_run_games = _best_span(games, usable, window, valfn)
 
     if best is None:
         note = (f"{resolved['name']} hasn't played {window} consecutive games within "
@@ -6573,6 +6618,53 @@ def _run_span(player, event, window, season=None, game_type=None):
     }
     return {"resolved": True, "source": "daily", "player": player_block, "span": span,
             "game_coverage": {"complete": not excluded, "low_seasons": excluded}}
+
+
+# ---- Game-unit leaderboard PRECOMPUTE ---------------------------------------
+# One player's leaderboard rows, computed by REUSING the exact verified helpers
+# (_daily_games / _complete_seasons / _longest_streak / _best_span / _DAILY_EVENT)
+# — never a second implementation, so a stored value always equals the
+# single-player card's value. Streaks per (player, season); spans per
+# (player, window, event). Gated: only COMPLETE seasons contribute.
+_LB_STREAK_METRIC = {"hitting": "hitting_streak", "on_base": "on_base_streak",
+                     "home_run": "hr_game_streak", "multi_hit": "multi_hit_streak"}
+_LB_SPAN_WINDOWS = (10, 20, 30, 50, 162)
+_LB_SPAN_EVENTS = ("HR", "H", "RBI", "TB")
+
+
+def _compute_player_leaderboard(mlbam):
+    """The game_unit_leaderboard rows for one player. Empty if no game logs."""
+    games = _daily_games(mlbam)
+    if not games:
+        return []
+    complete, _dg, _ag = _complete_seasons(mlbam)
+    rows: list = []
+
+    # STREAKS — best run per complete season, per kind (skip rule, gate all shared
+    # with _run_streak via _longest_streak).
+    for s in sorted(complete):
+        gs = [g for g in games if g["season"] == s]
+        if not gs:
+            continue
+        for kind, metric in _LB_STREAK_METRIC.items():
+            length, start, end, _run = _longest_streak(gs, kind)
+            if length >= 1:
+                rows.append({"player_id": mlbam, "metric": metric, "window": 0,
+                             "season": s, "event": "", "value": int(length),
+                             "start_date": start, "end_date": end})
+
+    # SPANS — best window per (window, event), cross-season within complete runs
+    # (shared with _run_span via _best_span).
+    for window in _LB_SPAN_WINDOWS:
+        for ev in _LB_SPAN_EVENTS:
+            valfn = _DAILY_EVENT[ev][0]
+            best, _longest = _best_span(games, complete, window, valfn)
+            if best is not None:
+                total, wg = best
+                rows.append({"player_id": mlbam, "metric": "span", "window": window,
+                             "season": 0, "event": ev, "value": int(total),
+                             "start_date": wg[0]["game_date"], "end_date": wg[-1]["game_date"]})
+    return rows
 
 
 # Retrosheet biofile retro_id -> display name, slimmed to (key_retro, name).
@@ -9537,6 +9629,114 @@ def backfill_allstar(confirm: bool = Query(False)):
         "player_allstar": {"before": before, "inserted": len(new_rows), "after": after},
         **summary,
     }
+
+
+@app.post("/admin/backfill-game-unit-leaderboard")
+def backfill_game_unit_leaderboard(
+    confirm: bool = Query(False),
+    limit: int | None = Query(None, description="cap players (partial/test run); omit = all"),
+):
+    """Precompute the game_unit_leaderboard by REUSING the verified single-player
+    _run_streak/_run_span logic (via _compute_player_leaderboard) for every player
+    in batting_gamelogs — so a leaderboard value always equals the single-player
+    card. Streaks per (player, season); spans per (player, window, event); only
+    COMPLETE seasons contribute. Idempotent: each player's rows are replaced, so a
+    re-run yields the same table. confirm=false = DRY RUN (counts + the top-15
+    hitting-streak players and top-5 HR/162-span, no writes)."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+
+    with connection.get_session() as db:
+        pids = [r[0] for r in db.execute(_sa_text(
+            "SELECT DISTINCT player_id FROM batting_gamelogs ORDER BY player_id")).fetchall()]
+    if limit:
+        pids = pids[:limit]
+
+    total_rows = streak_rows = span_rows = 0
+    players_done = 0
+    rows_written = 0
+    # running samples (per-player best), for the record-book verification
+    best_hit: dict = {}     # player_id -> (value, season, start, end)
+    span162: dict = {}      # player_id -> (value, start, end)
+
+    BATCH = 200
+    pending: list = []
+
+    def _flush(batch):
+        nonlocal rows_written
+        with connection.get_session() as db:
+            for pid_, rows_ in batch:
+                db.execute(_sa_text("DELETE FROM game_unit_leaderboard WHERE player_id = :pid"),
+                           {"pid": pid_})
+                for r in rows_:
+                    db.execute(_sa_text(
+                        "INSERT INTO game_unit_leaderboard "
+                        '(player_id, metric, "window", season, event, value, start_date, end_date) '
+                        "VALUES (:player_id, :metric, :window, :season, :event, :value, "
+                        ":start_date, :end_date)"), r)
+                    rows_written += 1
+            db.commit()
+
+    for pid in pids:
+        rows = _compute_player_leaderboard(pid)
+        players_done += 1
+        for r in rows:
+            total_rows += 1
+            if r["metric"] == "span":
+                span_rows += 1
+                if r["window"] == 162 and r["event"] == "HR":
+                    cur = span162.get(pid)
+                    if cur is None or r["value"] > cur[0]:
+                        span162[pid] = (r["value"], r["start_date"], r["end_date"])
+            else:
+                streak_rows += 1
+                if r["metric"] == "hitting_streak":
+                    cur = best_hit.get(pid)
+                    if cur is None or r["value"] > cur[0]:
+                        best_hit[pid] = (r["value"], r["season"], r["start_date"], r["end_date"])
+        if confirm:
+            pending.append((pid, rows))
+            if len(pending) >= BATCH:
+                _flush(pending); pending = []
+        if players_done % 2000 == 0:
+            log.info("game-unit-leaderboard: %d/%d players (%d rows so far)",
+                     players_done, len(pids), total_rows)
+    if confirm and pending:
+        _flush(pending)
+
+    # ---- resolve names for the sample + build the record-book top lists ----
+    top_hit = sorted(best_hit.items(), key=lambda kv: -kv[1][0])[:15]
+    top_162 = sorted(span162.items(), key=lambda kv: -kv[1][0])[:5]
+    sample_ids = [pid for pid, _ in top_hit] + [pid for pid, _ in top_162]
+    names: dict = {}
+    if sample_ids:
+        with connection.get_session() as db:
+            for tbl in ("players", "pitchers"):
+                for pid, nm in db.execute(_sa_text(
+                        f"SELECT player_id, name FROM {tbl} WHERE player_id = ANY(:ids)"),
+                        {"ids": sample_ids}).fetchall():
+                    names.setdefault(pid, nm)
+
+    def _nm(pid):
+        return names.get(pid) or f"mlbam:{pid}"
+
+    summary = {
+        "players": players_done,
+        "total_rows": total_rows,
+        "streak_rows": streak_rows,
+        "span_rows": span_rows,
+        "top_hitting_streaks": [
+            {"rank": i + 1, "name": _nm(pid), "mlbam_id": pid, "value": v[0],
+             "season": v[1], "start_date": str(v[2]), "end_date": str(v[3])}
+            for i, (pid, v) in enumerate(top_hit)],
+        "top_hr_span_162": [
+            {"rank": i + 1, "name": _nm(pid), "mlbam_id": pid, "value": v[0],
+             "start_date": str(v[1]), "end_date": str(v[2])}
+            for i, (pid, v) in enumerate(top_162)],
+    }
+    if not confirm:
+        return {"dry_run": True, **summary}
+    return {"confirmed": True, "rows_written": rows_written, **summary}
 
 
 @app.get("/admin/duplicate-identities")
