@@ -5497,7 +5497,7 @@ _PLAYS_EVENT_CD = {
 # own columns; K -> SO (strikeouts); BB/HBP to theirs. A single (1B) has no
 # dedicated rate column, so nothing is highlighted.
 _EVENT_TO_STAT = {"HR": "HR", "K": "SO", "SO": "SO", "BB": "BB",
-                  "HBP": "HBP", "2B": "2B", "3B": "3B"}
+                  "HBP": "HBP", "2B": "2B", "3B": "3B", "RBI": "RBI"}
 
 
 # Persistent read-only connection to the plays store. The Railway volume is
@@ -5682,6 +5682,12 @@ _CANON_EVENT = {
     "K": "K", "SO": "K", "STRIKEOUT": "K",
     "BB": "BB", "WALK": "BB", "HBP": "HBP", "HITBYPITCH": "HBP",
     "1B": "1B", "SINGLE": "1B", "2B": "2B", "DOUBLE": "2B", "3B": "3B", "TRIPLE": "3B",
+    # Season/career TOTAL-only counting stats — real in player_seasons but NOT
+    # plays-store events, so a SITUATIONAL version declines (see _TOTAL_ONLY_EVENTS).
+    "RBI": "RBI", "RBIS": "RBI", "RUNS_BATTED_IN": "RBI",
+    "R": "R", "RUN": "R", "RUNS": "R", "RUNS_SCORED": "R",
+    "SB": "SB", "STEAL": "SB", "STEALS": "SB", "STOLEN_BASE": "SB",
+    "STOLEN_BASES": "SB", "STOLENBASE": "SB", "STOLENBASES": "SB",
 }
 
 # (role, canonical event) -> season-stats column expression. Combos NOT here
@@ -5694,8 +5700,17 @@ _SEASON_COL = {
     ("bat", "HR"): '"HR"', ("bat", "K"): '"SO"', ("bat", "BB"): '"BB"',
     ("bat", "2B"): "doubles", ("bat", "3B"): "triples",
     ("bat", "1B"): '("H" - doubles - triples - "HR")',
+    # TOTAL-only batting counting stats (columns are capitalized -> double-quoted).
+    ("bat", "RBI"): '"RBI"', ("bat", "R"): '"R"', ("bat", "SB"): '"SB"',
     ("pit", "HR"): '"HR"', ("pit", "K"): '"SO"', ("pit", "BB"): '"BB"',
 }
+
+# Canonical counting stats that exist ONLY as complete season/career totals
+# (player_seasons), NOT as plays-store events. A bare total answers from
+# season-stats; a SITUATIONAL filter on them can't be computed and declines
+# cleanly (the plays store has no RBI/R/SB event). All are unambiguous BATTING.
+_TOTAL_ONLY_EVENTS = {"RBI", "R", "SB"}
+_TOTAL_ONLY_LABEL = {"RBI": "RBIs", "R": "runs", "SB": "stolen bases"}
 
 
 def _canon_event(event):
@@ -6740,7 +6755,7 @@ def _is_two_way(mlbam_id):
 
 
 # Stat -> which table. AMBIGUOUS routes by the player's role (two-way -> BOTH).
-_BATTING_ONLY_EVENTS = {"H", "1B", "2B", "3B", "RBI", "TB", "HBP"}
+_BATTING_ONLY_EVENTS = {"H", "1B", "2B", "3B", "RBI", "TB", "HBP", "R", "SB"}
 _PITCHING_ONLY_EVENTS = {"W", "L", "SV", "ER"}
 _AMBIGUOUS_EVENTS = {"K", "BB", "HR"}
 
@@ -8139,9 +8154,12 @@ _ASK_QUERY_TOOL = {
                        "Player full name (e.g. 'Max Muncy') or numeric MLBAM id. Required."},
             "role": {"type": "string", "enum": ["bat", "pit"], "description":
                      "'bat' if the player is the hitter, 'pit' if the pitcher. Default 'bat'."},
-            "event": {"type": "string", "enum": ["HR", "K", "BB", "HBP", "1B", "2B", "3B"],
+            "event": {"type": "string",
+                      "enum": ["HR", "K", "BB", "HBP", "1B", "2B", "3B", "RBI", "R", "SB"],
                       "description": "Outcome: HR=home run, K=strikeout, BB=walk, "
-                                     "HBP=hit by pitch, 1B=single, 2B=double, 3B=triple."},
+                                     "HBP=hit by pitch, 1B=single, 2B=double, 3B=triple. "
+                                     "SEASON/CAREER TOTALS ONLY (no situational split): "
+                                     "RBI=runs batted in, R=runs scored, SB=stolen bases."},
             "balls": {"type": "integer", "minimum": 0, "maximum": 3, "description":
                       "Ball count if specified (a '3-2'/'full count' -> balls 3)."},
             "strikes": {"type": "integer", "minimum": 0, "maximum": 2, "description":
@@ -8547,6 +8565,13 @@ _ASK_SYSTEM = (
     "{player:'Betts', event:'HR', pitcher_hand:'L'}\n"
     "- 'How many career home runs does Judge have?' -> query_situational "
     "{player:'Judge', event:'HR'}\n"
+    "- RBI, runs, and stolen bases ARE countable as SEASON/CAREER TOTALS: "
+    "'How many career RBIs does Judge have?' -> {player:'Judge', event:'RBI'}. "
+    "'How many runs has Rickey Henderson scored?' -> {event:'R'}. 'How many "
+    "stolen bases does Henderson have?' -> {event:'SB'}. These are TOTAL-only — "
+    "route even a situational RBI/R/SB question ('RBIs with RISP') to "
+    "query_situational (event:'RBI', base_state:'risp') and the code will decline "
+    "the situational part honestly. Do NOT cannot_answer a plain RBI/R/SB total.\n"
     "- 'How many strikeouts did Kershaw get against lefties?' -> "
     "query_situational {player:'Kershaw', role:'pit', event:'K', batter_side:'L'}\n"
     "- 'How does Betts hit off lefties?' -> query_rates {player:'Betts', "
@@ -9593,6 +9618,20 @@ def ask(request: Request,
     situ_keys = ("balls", "strikes", "outs", "inning", "base_state",
                  "pitcher_hand", "batter_side", "home_away")
     is_split = any(params.get(k) is not None for k in situ_keys)
+
+    # TOTAL-ONLY guard: RBI/R/SB live only in season-stats, never the plays store,
+    # so a SITUATIONAL split on them can't be computed. Decline honestly rather
+    # than route to plays (which would 400 on the unknown event) or silently drop
+    # the filter and return the plain total.
+    _canon_e = _canon_event(params.get("event"))
+    if is_split and _canon_e in _TOTAL_ONLY_EVENTS:
+        base["out_of_scope"] = True
+        base["reason"] = (
+            f"I can give {_TOTAL_ONLY_LABEL.get(_canon_e, _canon_e)} as a season or "
+            "career total, but not broken down by situation — that needs "
+            "play-by-play data I don't have for it.")
+        base["answer"] = base["reason"]
+        return _finish()
 
     # GATE 3 (floor) for the plays route: whole queried range before 1910.
     asked = [params[k] for k in ("season", "season_start", "season_end")
