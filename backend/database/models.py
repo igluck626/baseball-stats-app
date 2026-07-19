@@ -722,15 +722,21 @@ class GameUnitLeaderboard(Base):
 
     Streaks: one row per (player, season, metric), window=0, event="".
     Spans:   one row per (player, window, event), season=0, metric="span".
+
+    `role` ('bat'/'pit') tags whether the row is a batting or pitching metric — a
+    two-way player (Ohtani) has both. It is NOT part of the PK: the metric/event
+    vocabularies don't overlap (batting streaks hitting_streak/…, pitching
+    win_streak/…; batting spans HR/H/RBI/TB, pitching K/W/SV), so (player_id,
+    metric, window, season, event) stays unique across roles; `role` is a filter.
     """
     __tablename__ = "game_unit_leaderboard"
 
     player_id  = Column(Integer, primary_key=True)
-    metric     = Column(String,  primary_key=True)   # hitting_streak / on_base_streak /
-                                                     # hr_game_streak / multi_hit_streak / span
+    metric     = Column(String,  primary_key=True)   # hitting_streak / … / win_streak / span
     window     = Column(Integer, primary_key=True, default=0)   # 0 for streaks; N for spans
     season     = Column(Integer, primary_key=True, default=0)   # season for streaks; 0 for spans
-    event      = Column(String,  primary_key=True, default="")  # "" for streaks; HR/H/RBI/TB for spans
+    event      = Column(String,  primary_key=True, default="")  # "" for streaks; HR/H/RBI/TB/K/W/SV for spans
+    role       = Column(String,  default="bat")   # 'bat' | 'pit' (not in PK — see class doc)
     value      = Column(Integer)
     start_date = Column(Date)
     end_date   = Column(Date)

@@ -371,6 +371,9 @@ def init_db() -> dict:
         ("pitcher_seasons",   _PITCHER_SEASONS_NEW_COLUMNS),
         ("batting_gamelogs",  _BATTING_GAMELOGS_NEW_COLUMNS),
         ("ask_log",           _ASK_LOG_NEW_COLUMNS),
+        # game_unit_leaderboard.role tags bat vs pit rows; ADD COLUMN … DEFAULT
+        # 'bat' backfills existing (batting-only) rows to 'bat'.
+        ("game_unit_leaderboard", [("role", "VARCHAR DEFAULT 'bat'")]),
     ):
         added = _add_missing_columns(tbl_name, cols)
         if added:

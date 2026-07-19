@@ -44,6 +44,10 @@ struct AskResponse: Decodable {
     let streak: AskStreak?
     let span: AskSpan?
 
+    // A two-way player (Ohtani) asked an ambiguous stat (strikeouts/walks) — the
+    // same milestone/streak/span computed BOTH as a pitcher and as a hitter.
+    let two_way: AskTwoWay?
+
     // Rate-leaderboard qualifier metadata.
     let stat: String?
     let min_pa: Int?
@@ -196,6 +200,24 @@ struct AskSpan: Decodable {
     let cross_season: Bool?
     let restricted: Bool?
     let line: AskStatLine?
+}
+
+/// A two-way answer: the same question resolved BOTH as a pitcher and as a
+/// hitter (Ohtani's strikeouts). `stat` names the ambiguous stat ("strikeouts").
+struct AskTwoWay: Decodable {
+    let stat: String?
+    let pitching: AskTwoWaySide?
+    let batting: AskTwoWaySide?
+}
+
+/// One role's side of a two-way answer — whichever of milestone/streak/span the
+/// question was, or a decline (`reason`) if that role couldn't answer.
+struct AskTwoWaySide: Decodable {
+    let milestone: AskMilestone?
+    let streak: AskStreak?
+    let span: AskSpan?
+    let declined: Bool?
+    let reason: String?
 }
 
 /// The batting line summed over a streak's or span's games. `2B`/`3B` map to

@@ -36,6 +36,9 @@ struct AskAnswerView: View {
             } else if let leaders = response.leaders, !leaders.isEmpty {
                 // DATA-FIRST: a leaderboard IS the ranked list.
                 leadersSection(leaders)
+            } else if let tw = response.two_way {
+                // A two-way player's ambiguous stat: both roles, side by side.
+                twoWaySection(tw)
             } else if let rates = response.rates {
                 // DATA-FIRST: a stat line IS the answer — shown up front, with
                 // the extra component counts behind a disclosure. No prose
@@ -384,8 +387,53 @@ struct AskAnswerView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
-            if sp.line != nil { StatTable(columns: spanColumns(sp)) }
+            if sp.line != nil {
+                StatTable(columns: spanColumns(sp))
+            } else if let total = sp.total, let ev = sp.event {
+                // Pitcher spans carry no batting line — the total IS the answer.
+                Text("\(total) \(ev)").font(.title3.weight(.bold))
+            }
             coverageFootnote
+        }
+    }
+
+    /// A two-way player's ambiguous stat, answered for BOTH roles: "On the mound"
+    /// then "At the plate", each reusing the matching single-role card.
+    @ViewBuilder
+    private func twoWaySection(_ tw: AskTwoWay) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            twoWayRole("On the mound", tw.pitching)
+            if tw.pitching != nil && tw.batting != nil { Divider() }
+            twoWayRole("At the plate", tw.batting)
+        }
+    }
+
+    @ViewBuilder
+    private func twoWayRole(_ label: String, _ side: AskTwoWaySide?) -> some View {
+        if let side = side {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(label.uppercased())
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                if side.declined == true {
+                    Text(side.reason ?? "Not available for this role.")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                } else if let m = side.milestone {
+                    if m.reached == true {
+                        milestoneSection(m)
+                    } else if let n = m.n, let ev = m.event {
+                        Text("Hasn't reached \(n) \(ev)\(m.current_total.map { "s — at \($0)" } ?? "s").")
+                            .font(.subheadline).foregroundStyle(.secondary)
+                    }
+                } else if let s = side.streak, (s.length ?? 0) >= 1 {
+                    streakSection(s)
+                } else if let sp = side.span, sp.total != nil {
+                    spanSection(sp)
+                } else {
+                    Text("No result for this role.")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                }
+            }
         }
     }
 

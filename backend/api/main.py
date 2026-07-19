@@ -925,16 +925,20 @@ def _run_nightly_update() -> None:
                 )
 
         # Phase 5c — game-unit leaderboard. Recompute streak/span leaderboard
-        # rows for ACTIVE players only (a batting_gamelogs row this season);
-        # historical players' streaks are immutable. Reuses the verified
-        # _compute_player_leaderboard (same code as the single-player cards), so
-        # the leaderboard never diverges. Runs after the counting/rates phases so
-        # player_seasons.G (the completeness gate) is fresh. Non-fatal.
+        # rows for ACTIVE players only (a batting_gamelogs OR pitching_gamelogs row
+        # this season); historical players' streaks are immutable. BOTH tables: a
+        # modern pitcher never bats (universal DH), so a batting-only enumeration
+        # would never refresh his pitching leaderboard rows in-season. Reuses the
+        # verified _compute_player_leaderboard (bat+pit, same code as the
+        # single-player cards), so the leaderboard never diverges. Runs after the
+        # counting/rates phases so the completeness gate (G) is fresh. Non-fatal.
         log.info("[nightly] starting game-unit-leaderboard phase")
         try:
             with connection.get_session() as db:
                 active = [r[0] for r in db.execute(_sa_text(
-                    "SELECT DISTINCT player_id FROM batting_gamelogs WHERE season = :yr"),
+                    "SELECT DISTINCT player_id FROM ("
+                    "  SELECT player_id FROM batting_gamelogs WHERE season = :yr "
+                    "  UNION SELECT player_id FROM pitching_gamelogs WHERE season = :yr) t"),
                     {"yr": current_year}).fetchall()]
             lb_players = lb_rows = 0
             with connection.get_session() as db:
@@ -945,8 +949,8 @@ def _run_nightly_update() -> None:
                     for r in rows:
                         db.execute(_sa_text(
                             "INSERT INTO game_unit_leaderboard "
-                            '(player_id, metric, "window", season, event, value, start_date, end_date) '
-                            "VALUES (:player_id, :metric, :window, :season, :event, :value, "
+                            '(player_id, role, metric, "window", season, event, value, start_date, end_date) '
+                            "VALUES (:player_id, :role, :metric, :window, :season, :event, :value, "
                             ":start_date, :end_date)"), r)
                         lb_rows += 1
                     lb_players += 1
@@ -6272,18 +6276,6 @@ def _run_milestone(player, event, n, season=None, game_type=None):
                 "reason": ("These milestone dates come from regular-season game logs; "
                            "postseason isn't available.")}
 
-    # STOPGAP (until the pitching slice lands): the daily source is
-    # batting_gamelogs, so a pitcher's strikeouts/walks would be counted at the
-    # PLATE (Kershaw: his ~200 batting Ks, not his ~3000 on the mound). Decline
-    # rather than return a confident wrong number for the wrong stat.
-    if resolved.get("position") == "P" and ev in ("K", "BB"):
-        noun = _DAILY_EVENT_PLURAL.get(ev, ev)
-        return {"resolved": True, "declined": True, "source": "daily", "player": player_block,
-                "milestone": None, "game_coverage": {"complete": False},
-                "reason": (f"I can only do batting milestones right now, so I can't pinpoint "
-                           f"{resolved['name']}'s pitching {noun} yet — a pitching version is "
-                           f"coming. (His {noun} at the plate aren't what you're asking about.)")}
-
     games = _daily_games(mlbam, season)
     if not games:
         raise HTTPException(status_code=404, detail=(
@@ -6552,19 +6544,6 @@ def _run_span(player, event, window, season=None, game_type=None):
                 "reason": ("These spans come from regular-season game logs; "
                            "postseason isn't available.")}
 
-    # STOPGAP (until the pitching slice lands): batting_gamelogs is the source, so
-    # a pitcher's strikeouts/walks would be his AT-BAT totals (Kershaw's best
-    # 10-game strikeout span reads 13 — his batting Ks — not the ~104 he threw).
-    # Decline rather than answer the wrong stat from the wrong table.
-    if resolved.get("position") == "P" and ev in ("K", "BB"):
-        noun = _DAILY_EVENT_PLURAL.get(ev, ev)
-        return {"resolved": True, "declined": True, "source": "daily", "player": player_block,
-                "span": None, "game_coverage": {"complete": False},
-                "reason": (f"I can only do batting spans right now, so I can't give "
-                           f"{resolved['name']}'s pitching {noun} over a span yet — a pitching "
-                           f"version is coming. (His {noun} at the plate aren't what you're "
-                           "asking about.)")}
-
     games = _daily_games(mlbam, season)
     if not games:
         raise HTTPException(status_code=404, detail=(
@@ -6620,6 +6599,545 @@ def _run_span(player, event, window, season=None, game_type=None):
             "game_coverage": {"complete": not excluded, "low_seasons": excluded}}
 
 
+# =============================================================================
+# PITCHING SLICE — the game-unit mirror of the batting runners, pointed at
+# pitching_gamelogs / pitcher_seasons. Clones (not parameterizations) of the
+# batting runners so batting behavior stays byte-identical; the only shared
+# code is the truly generic helpers (_safe_through, _best_span, _ordinal,
+# _pretty_date). See _route_stat_role for how a stat picks bat vs pit.
+# =============================================================================
+
+# Per-game pitching event -> (valfn over the game dict, daily SQL expr on
+# pitching_gamelogs, auth SQL expr on pitcher_seasons, singular label). W/L/SV
+# are DERIVED from the `result` column in the daily table but are stored columns
+# in pitcher_seasons, so the daily and auth exprs differ for them.
+_PITCHER_EVENT = {
+    "K":  (lambda g: g["SO"], '"SO"', '"SO"', "strikeout"),
+    "W":  (lambda g: 1 if g["result"] == "W" else 0,
+           "CASE WHEN result = 'W' THEN 1 ELSE 0 END", '"W"', "win"),
+    "L":  (lambda g: 1 if g["result"] == "L" else 0,
+           "CASE WHEN result = 'L' THEN 1 ELSE 0 END", '"L"', "loss"),
+    "SV": (lambda g: 1 if g["result"] == "S" else 0,
+           "CASE WHEN result = 'S' THEN 1 ELSE 0 END", '"SV"', "save"),
+    "BB": (lambda g: g["BB"], '"BB"', '"BB"', "walk"),
+    "HR": (lambda g: g["HR"], '"HR"', '"HR"', "home run allowed"),
+    "ER": (lambda g: g["ER"], '"ER"', '"ER"', "earned run"),
+    "H":  (lambda g: g["H"], '"H"', '"H"', "hit allowed"),
+}
+_PITCHER_EVENT_PLURAL = {
+    "K": "strikeouts", "W": "wins", "L": "losses", "SV": "saves", "BB": "walks",
+    "HR": "home runs allowed", "ER": "earned runs", "H": "hits allowed",
+}
+_PITCHER_STREAK_TYPE_LABEL = {
+    "win": "win streak", "quality_start": "quality-start streak",
+    "high_k": "10-strikeout-game streak",
+}
+# streak types that are INNING/PA-unit, not game-unit — declined here, deferred
+# to the play-by-play slice.
+_PITCHER_STREAK_DEFERRED = {"scoreless_innings", "scoreless", "consecutive_batters",
+                            "perfect", "no_hit"}
+_HIGH_K_THRESHOLD = 10   # "high_k" = games with >= this many strikeouts
+
+
+def _daily_pitching_games(mlbam_id, season=None):
+    """One row per REGULAR-SEASON game the player PITCHED in, from
+    pitching_gamelogs, ordered chronologically (game_date, game_id — trailing digit
+    is the doubleheader number). The pitching-line clone of _daily_games."""
+    where = ["player_id = :pid"]
+    params: dict = {"pid": int(mlbam_id)}
+    if season is not None:
+        where.append("season = :yr"); params["yr"] = int(season)
+    sql = ("SELECT game_date, game_id, season, opponent, home_away, result, "
+           'COALESCE("IP",0), COALESCE("H",0), COALESCE("R",0), COALESCE("ER",0), '
+           'COALESCE("BB",0), COALESCE("SO",0), COALESCE("HR",0), COALESCE("HBP",0) '
+           f"FROM pitching_gamelogs WHERE {' AND '.join(where)} "
+           "ORDER BY game_date, game_id")
+    with connection.get_session() as db:
+        rows = db.execute(_sa_text(sql), params).fetchall()
+    return [{
+        "game_date": r[0], "game_id": r[1], "season": r[2], "opponent": r[3],
+        "home_away": r[4], "result": r[5] or "",
+        "IP": float(r[6] or 0), "H": r[7], "R": r[8], "ER": r[9], "BB": r[10],
+        "SO": r[11], "HR": r[12], "HBP": r[13],
+    } for r in rows]
+
+
+def _pitcher_season_sums(mlbam_id, daily_expr, auth_expr):
+    """(daily {season: sum}, auth {year: sum}) for one pitching event — daily from
+    pitching_gamelogs, auth from pitcher_seasons. Separate exprs because W/L/SV are
+    derived from `result` in the daily table but are columns in pitcher_seasons."""
+    daily: dict = {}
+    auth: dict = {}
+    with connection.get_session() as db:
+        for s, v in db.execute(_sa_text(
+                f"SELECT season, SUM({daily_expr}) FROM pitching_gamelogs "
+                "WHERE player_id = :pid GROUP BY season"), {"pid": int(mlbam_id)}).fetchall():
+            daily[s] = int(v or 0)
+        for y, v in db.execute(_sa_text(
+                f"SELECT year, SUM({auth_expr}) FROM pitcher_seasons "
+                "WHERE player_id = :pid GROUP BY year"), {"pid": int(mlbam_id)}).fetchall():
+            auth[y] = int(v or 0)
+    return daily, auth
+
+
+def _complete_pitcher_seasons(mlbam_id):
+    """(complete set{years}, daily_games {season:count}, auth_G {year:G}) for a
+    PITCHER — daily = pitching_gamelogs appearance count, auth = pitcher_seasons G.
+    Same `daily >= G` gate as _complete_seasons."""
+    dg: dict = {}
+    ag: dict = {}
+    with connection.get_session() as db:
+        for s, c in db.execute(_sa_text(
+                "SELECT season, COUNT(*) FROM pitching_gamelogs "
+                "WHERE player_id = :pid GROUP BY season"), {"pid": int(mlbam_id)}).fetchall():
+            dg[s] = int(c or 0)
+        for y, g in db.execute(_sa_text(
+                'SELECT year, SUM("G") FROM pitcher_seasons '
+                "WHERE player_id = :pid GROUP BY year"), {"pid": int(mlbam_id)}).fetchall():
+            ag[y] = int(g or 0)
+    complete = {y for y in dg if ag.get(y) is not None and dg[y] >= ag[y]}
+    return complete, dg, ag
+
+
+def _pitcher_stat_line(games):
+    """Pitching line summed over a list of daily pitching-game dicts (IP/W/L/SV/
+    ERA/WHIP/SO...). None if empty. Distinct shape from the batting _stat_line."""
+    if not games:
+        return None
+    IP = sum(g["IP"] for g in games); H = sum(g["H"] for g in games)
+    ER = sum(g["ER"] for g in games); BB = sum(g["BB"] for g in games)
+    SO = sum(g["SO"] for g in games); HR = sum(g["HR"] for g in games)
+    W = sum(1 for g in games if g["result"] == "W")
+    L = sum(1 for g in games if g["result"] == "L")
+    SV = sum(1 for g in games if g["result"] == "S")
+    era = round(ER * 9 / IP, 2) if IP else None
+    whip = round((H + BB) / IP, 3) if IP else None
+    return {"G": len(games), "IP": round(IP, 1), "W": W, "L": L, "SV": SV,
+            "H": H, "ER": ER, "BB": BB, "SO": SO, "HR": HR, "ERA": era, "WHIP": whip}
+
+
+def _is_two_way(mlbam_id):
+    """A genuine two-way player (Ohtani, Ruth) — NOT a pitcher who merely batted
+    (Kershaw). Signal: many games PITCHED and many games BATTED AS A NON-PITCHER
+    (a batting_gamelogs game with NO pitching_gamelogs row for the same game). A
+    pitcher's plate appearances all come in games he pitched, so his non-pitching
+    batting-game count is ~0; a two-way player has hundreds of DH/field games."""
+    if not connection.db_available():
+        return False
+    with connection.get_session() as db:
+        pit_games = db.execute(_sa_text(
+            "SELECT COUNT(*) FROM pitching_gamelogs WHERE player_id = :pid"),
+            {"pid": int(mlbam_id)}).scalar() or 0
+        if int(pit_games) < 20:
+            return False
+        bat_only = db.execute(_sa_text(
+            "SELECT COUNT(*) FROM batting_gamelogs b WHERE b.player_id = :pid "
+            "AND NOT EXISTS (SELECT 1 FROM pitching_gamelogs p "
+            "WHERE p.player_id = b.player_id AND p.game_id = b.game_id)"),
+            {"pid": int(mlbam_id)}).scalar() or 0
+    return int(pit_games) >= 20 and int(bat_only) >= 50
+
+
+# Stat -> which table. AMBIGUOUS routes by the player's role (two-way -> BOTH).
+_BATTING_ONLY_EVENTS = {"H", "1B", "2B", "3B", "RBI", "TB", "HBP"}
+_PITCHING_ONLY_EVENTS = {"W", "L", "SV", "ER"}
+_AMBIGUOUS_EVENTS = {"K", "BB", "HR"}
+
+
+def _route_stat_role(event, resolved_bat, mlbam):
+    """('bat'|'pit'|'two_way') for a (stat, player). Unambiguous stats are fixed by
+    the stat; ambiguous K/BB/HR route by the player's role — a two-way player gets
+    BOTH, a primary pitcher (position 'P') gets pitching, everyone else batting."""
+    ev = (event or "").strip().upper()
+    if ev in _PITCHING_ONLY_EVENTS:
+        return "pit"
+    if ev in _AMBIGUOUS_EVENTS:
+        if mlbam is not None and _is_two_way(mlbam):
+            return "two_way"
+        if resolved_bat and resolved_bat.get("position") == "P":
+            return "pit"
+        return "bat"
+    return "bat"
+
+
+def _run_pitcher_milestone(player, event, n, season=None, game_type=None):
+    """WHEN a PITCHER reached the Nth of an event (K/W/SV/...), from
+    pitching_gamelogs. Clone of _run_milestone with pitcher helpers + the same
+    three-case gate against pitcher_seasons. Date + opponent (no batter-faced)."""
+    ev = (event or "").strip().upper()
+    if ev == "SO":
+        ev = "K"
+    spec = _PITCHER_EVENT.get(ev)
+    if spec is None:
+        raise HTTPException(status_code=400, detail=(
+            f"'{event}' isn't a pitching milestone event I track "
+            "(known: K, W, L, SV, BB, HR, ER, H)."))
+    valfn, daily_expr, auth_expr, label = spec
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="the milestone number must be an integer")
+    if n < 1:
+        raise HTTPException(status_code=400, detail="the milestone number must be >= 1")
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+
+    cands = [c for c in _resolve_retro_id(player, "pit") if c.get("mlbam_id") is not None]
+    if not cands:
+        raise HTTPException(status_code=404, detail=f"No pitcher matching '{player}'")
+    if len({c["mlbam_id"] for c in cands}) > 1:
+        return {"resolved": False, "ambiguous": True, "query": player, "candidates": cands[:25]}
+    resolved = cands[0]
+    mlbam = resolved["mlbam_id"]
+    player_block = {"query": player, "name": resolved["name"], "mlbam_id": mlbam, "role": "pit"}
+
+    gt = (game_type or "R").strip().upper()
+    if gt in ("P", "ALL"):
+        return {"resolved": True, "declined": True, "source": "daily", "player": player_block,
+                "milestone": None, "game_coverage": {"complete": False},
+                "reason": ("These milestone dates come from regular-season game logs; "
+                           "postseason isn't available.")}
+
+    games = _daily_pitching_games(mlbam, season)
+    if not games:
+        raise HTTPException(status_code=404, detail=(
+            f"No pitching game logs for '{resolved['name']}'"
+            + (f" in {season}" if season is not None else "")))
+
+    play_hi = max(g["season"] for g in games)
+    row = None
+    cum = 0
+    for g in games:
+        prev = cum
+        cum += valfn(g)
+        if prev < n <= cum:
+            row = g
+            break
+
+    daily_sums, auth_sums = _pitcher_season_sums(mlbam, daily_expr, auth_expr)
+    if season is not None:
+        ok = daily_sums.get(season, 0) == auth_sums.get(season, 0)
+        safe = daily_sums.get(season, 0) if ok else 0
+        diverge = None if ok else season
+        auth_total = int(auth_sums.get(season, 0))
+    else:
+        safe, diverge = _safe_through(daily_sums, auth_sums)
+        auth_total = int(sum(auth_sums.values()))
+    plural = _PITCHER_EVENT_PLURAL.get(ev, label + "s")
+
+    if n > auth_total:
+        return {"resolved": True, "source": "daily", "player": player_block,
+                "milestone": {"n": n, "event": label, "reached": False,
+                              "current_total": auth_total, "through_season": play_hi,
+                              "coverage_complete": True},
+                "game_coverage": {"complete": True}}
+    if n <= safe and row is not None:
+        return {"resolved": True, "source": "daily", "player": player_block,
+                "milestone": {"n": n, "event": label, "reached": True,
+                              "date": str(row["game_date"]),
+                              "date_pretty": _pretty_date(row["game_date"]),
+                              "season": row["season"], "opponent": row["opponent"],
+                              "home_away": row["home_away"], "running_total": n},
+                "game_coverage": {"complete": True}}
+    note = (f"{resolved['name']} reached {auth_total} {plural}, but some of his "
+            f"{diverge} games aren't fully in the game-by-game record, so I can't "
+            f"pinpoint which game was his {_ordinal(n)}.")
+    return {"resolved": True, "declined": True, "reason": note, "source": "daily",
+            "player": player_block, "milestone": None,
+            "game_coverage": {"complete": False}}
+
+
+def _run_pitcher_span(player, event, window, season=None, game_type=None):
+    """The MOST of a pitching event in ANY N-consecutive-game window, from
+    pitching_gamelogs. Clone of _run_span with pitcher helpers; cross-season within
+    runs of complete seasons, gap-gated (shares _best_span)."""
+    ev = (event or "").strip().upper()
+    if ev == "SO":
+        ev = "K"
+    spec = _PITCHER_EVENT.get(ev)
+    if spec is None:
+        raise HTTPException(status_code=400, detail=(
+            f"'{event}' isn't a pitching span event I track "
+            "(known: K, W, L, SV, BB, HR, ER, H)."))
+    valfn, _de, _ae, _sing = spec
+    label = _PITCHER_EVENT_PLURAL.get(ev, _sing + "s")
+    try:
+        window = int(window)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="the window size (games) must be an integer")
+    if window < 1:
+        raise HTTPException(status_code=400, detail="the window size must be >= 1 game")
+    if window > _SPAN_MAX_WINDOW:
+        raise HTTPException(status_code=400,
+                            detail=f"window too large (max {_SPAN_MAX_WINDOW} games)")
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+
+    cands = [c for c in _resolve_retro_id(player, "pit") if c.get("mlbam_id") is not None]
+    if not cands:
+        raise HTTPException(status_code=404, detail=f"No pitcher matching '{player}'")
+    if len({c["mlbam_id"] for c in cands}) > 1:
+        return {"resolved": False, "ambiguous": True, "query": player, "candidates": cands[:25]}
+    resolved = cands[0]
+    mlbam = resolved["mlbam_id"]
+    player_block = {"query": player, "name": resolved["name"], "mlbam_id": mlbam, "role": "pit"}
+
+    gt = (game_type or "R").strip().upper()
+    if gt in ("P", "ALL"):
+        return {"resolved": True, "declined": True, "source": "daily", "player": player_block,
+                "span": None, "game_coverage": {"complete": False},
+                "reason": ("These spans come from regular-season game logs; "
+                           "postseason isn't available.")}
+
+    games = _daily_pitching_games(mlbam, season)
+    if not games:
+        raise HTTPException(status_code=404, detail=(
+            f"No pitching game logs for '{resolved['name']}'"
+            + (f" in {season}" if season is not None else "")))
+    complete, _dg, _ag = _complete_pitcher_seasons(mlbam)
+    player_seasons = sorted({g["season"] for g in games})
+    if season is not None:
+        usable = [s for s in player_seasons if s == season and s in complete]
+    else:
+        usable = [s for s in player_seasons if s in complete]
+
+    if not usable:
+        lo, hi = player_seasons[0], player_seasons[-1]
+        span_txt = f"{lo}–{hi}" if lo != hi else f"{lo}"
+        note = (f"I can't measure game spans for {resolved['name']} — "
+                + (f"{season} isn't" if season is not None
+                   else f"none of the seasons in {span_txt} are")
+                + " complete in the daily pitching-log record, so an "
+                f"{window}-game window would be spread across games we don't have.")
+        return {"resolved": True, "declined": True, "reason": note, "source": "daily",
+                "player": player_block, "span": None,
+                "game_coverage": {"complete": False}}
+
+    best, longest_run_games = _best_span(games, usable, window, valfn)
+    if best is None:
+        note = (f"{resolved['name']} hasn't pitched {window} consecutive games within "
+                f"seasons complete in the daily record (the most is {longest_run_games}), "
+                f"so I can't measure a {window}-game span.")
+        return {"resolved": True, "declined": True, "reason": note, "source": "daily",
+                "player": player_block, "span": None,
+                "game_coverage": {"complete": len(usable) == len(player_seasons)}}
+
+    total, wgames = best
+    ss = wgames[0]["season"]; es = wgames[-1]["season"]
+    excluded = [] if season is not None else [s for s in player_seasons if s not in complete]
+    span = {
+        "event": label, "window": window, "total": int(total),
+        "start_date": str(wgames[0]["game_date"]),
+        "start_pretty": _pretty_date(wgames[0]["game_date"]),
+        "end_date": str(wgames[-1]["game_date"]),
+        "end_pretty": _pretty_date(wgames[-1]["game_date"]),
+        "start_season": ss, "end_season": es, "cross_season": ss != es,
+        "covered_span": [min(usable), max(usable)],
+        "restricted": bool(excluded), "excluded_seasons": excluded,
+        "line": None,   # pitching line shape differs from batting; the total is the answer
+        "pitching_line": _pitcher_stat_line(wgames),
+    }
+    return {"resolved": True, "source": "daily", "player": player_block, "span": span,
+            "game_coverage": {"complete": not excluded, "low_seasons": excluded}}
+
+
+def _pitcher_streak_classify(kind, g):
+    """One pitching game -> EXTEND / BREAK / SKIP under one pitcher streak type.
+      win           : W extends, L breaks, everything else (ND/S/H/BS) is neutral.
+      quality_start : a relief outing (S/H/BS) is skipped; a START extends on
+                      IP>=6 & ER<=3 and breaks otherwise. 'Start' is inferred as a
+                      non-relief-decision appearance (the daily table carries no GS
+                      flag) — exact for pure starters, approximate for swingmen.
+      high_k        : >= _HIGH_K_THRESHOLD strikeouts extends, otherwise breaks."""
+    res = g.get("result") or ""
+    if kind == "win":
+        if res == "W":
+            return "extend"
+        if res == "L":
+            return "break"
+        return "skip"
+    if kind == "quality_start":
+        if res in ("S", "H", "BS"):
+            return "skip"   # relief appearance — not a start
+        return "extend" if (g["IP"] >= 6 and g["ER"] <= 3) else "break"
+    if kind == "high_k":
+        return "extend" if g["SO"] >= _HIGH_K_THRESHOLD else "break"
+    return "break"
+
+
+def _longest_pitcher_streak(games, kind):
+    """Longest run of EXTEND games under a pitcher streak type (SKIP is neutral).
+    Clone of _longest_streak with _pitcher_streak_classify."""
+    best_len, best_start, best_end, best_games = 0, None, None, []
+    cur, start, run = 0, None, []
+    for g in games:
+        c = _pitcher_streak_classify(kind, g)
+        if c == "extend":
+            if cur == 0:
+                start, run = g["game_date"], []
+            cur += 1
+            run.append(g)
+            if cur > best_len:
+                best_len, best_start, best_end = cur, start, g["game_date"]
+                best_games = list(run)
+        elif c == "break":
+            cur, start, run = 0, None, []
+    return best_len, best_start, best_end, best_games
+
+
+def _run_pitcher_streak(player, streak_type, season=None, game_type=None):
+    """Longest game-unit pitcher streak (win / quality_start / high_k), within a
+    season, over complete seasons only. Inning-unit streaks (scoreless innings) are
+    DECLINED here — they belong to the play-by-play slice."""
+    kind = (streak_type or "").strip().lower()
+    if kind in _PITCHER_STREAK_DEFERRED:
+        return {"resolved": True, "declined": True, "source": "daily",
+                "player": {"query": player}, "streak": None,
+                "game_coverage": {"complete": False},
+                "reason": ("A scoreless-innings streak needs inning-by-inning data — "
+                           "coming with the play-by-play features. I can do game-unit "
+                           "pitcher streaks now: consecutive wins, quality starts, or "
+                           "10-strikeout games.")}
+    if kind not in _PITCHER_STREAK_TYPE_LABEL:
+        raise HTTPException(status_code=400, detail=(
+            f"'{streak_type}' isn't a pitcher streak type I track "
+            "(known: win, quality_start, high_k)."))
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+
+    cands = [c for c in _resolve_retro_id(player, "pit") if c.get("mlbam_id") is not None]
+    if not cands:
+        raise HTTPException(status_code=404, detail=f"No pitcher matching '{player}'")
+    if len({c["mlbam_id"] for c in cands}) > 1:
+        return {"resolved": False, "ambiguous": True, "query": player, "candidates": cands[:25]}
+    resolved = cands[0]
+    mlbam = resolved["mlbam_id"]
+    player_block = {"query": player, "name": resolved["name"], "mlbam_id": mlbam, "role": "pit"}
+
+    gt = (game_type or "R").strip().upper()
+    if gt in ("P", "ALL"):
+        return {"resolved": True, "declined": True, "source": "daily", "player": player_block,
+                "streak": None, "game_coverage": {"complete": False},
+                "reason": ("These streaks come from regular-season game logs; "
+                           "postseason isn't available.")}
+
+    games = _daily_pitching_games(mlbam, season)
+    if not games:
+        raise HTTPException(status_code=404, detail=(
+            f"No pitching game logs for '{resolved['name']}'"
+            + (f" in {season}" if season is not None else "")))
+    complete, _dg, _ag = _complete_pitcher_seasons(mlbam)
+    player_seasons = sorted({g["season"] for g in games})
+    if season is not None:
+        usable = [s for s in player_seasons if s == season and s in complete]
+    else:
+        usable = [s for s in player_seasons if s in complete]
+
+    if not usable:
+        lo, hi = player_seasons[0], player_seasons[-1]
+        span_txt = f"{lo}–{hi}" if lo != hi else f"{lo}"
+        note = (f"I can't verify streaks for {resolved['name']} — "
+                + (f"{season} isn't" if season is not None
+                   else f"none of the seasons in {span_txt} are")
+                + " complete in the daily pitching-log record.")
+        return {"resolved": True, "declined": True, "reason": note, "source": "daily",
+                "player": player_block, "streak": None,
+                "game_coverage": {"complete": False}}
+
+    best = (0, None, None, [])
+    best_season = None
+    for s in usable:
+        gs = [g for g in games if g["season"] == s]
+        length, start, end, run_games = _longest_pitcher_streak(gs, kind)
+        if length > best[0]:
+            best = (length, start, end, run_games)
+            best_season = s
+
+    length, start, end, run_games = best
+    excluded = [] if season is not None else [s for s in player_seasons if s not in complete]
+    streak = {
+        "type": kind, "type_label": _PITCHER_STREAK_TYPE_LABEL[kind], "length": length,
+        "start_date": str(start) if start else None,
+        "start_pretty": _pretty_date(start) if start else None,
+        "end_date": str(end) if end else None,
+        "end_pretty": _pretty_date(end) if end else None,
+        "season": best_season,
+        "covered_span": [min(usable), max(usable)],
+        "restricted": bool(excluded),
+        "excluded_seasons": excluded,
+        "line": None,
+        "pitching_line": _pitcher_stat_line(run_games),
+    }
+    return {"resolved": True, "source": "daily", "player": player_block, "streak": streak,
+            "game_coverage": {"complete": not excluded, "low_seasons": excluded}}
+
+
+_TWO_WAY_STAT_LABEL = {"K": "strikeouts", "BB": "walks", "HR": "home runs"}
+
+
+def _decide_role(event, player, role_hint=None):
+    """Route a (stat, player) milestone/span to 'bat' | 'pit' | 'two_way'. Resolves
+    the player ONLY for ambiguous stats (K/BB/HR); an ambiguous NAME falls back to
+    'bat' so the batting runner surfaces the candidate list as before. `role_hint`
+    (the model's read of 'as a pitcher'/'at the plate') disambiguates a TWO-WAY
+    player to a single side instead of showing both."""
+    ev = (event or "").strip().upper()
+    if ev == "SO":
+        ev = "K"
+    if ev in _PITCHING_ONLY_EVENTS:
+        return "pit"
+    if ev not in _AMBIGUOUS_EVENTS:
+        return "bat"
+    hint = (role_hint or "").strip().lower()
+    cands = [c for c in _resolve_retro_id(player, "bat") if c.get("mlbam_id") is not None]
+    if not cands:
+        pcands = [c for c in _resolve_retro_id(player, "pit") if c.get("mlbam_id") is not None]
+        return "pit" if pcands else "bat"
+    if len({c["mlbam_id"] for c in cands}) > 1:
+        return "bat"
+    resolved = cands[0]
+    base_role = _route_stat_role(ev, resolved, resolved["mlbam_id"])
+    # A role hint only DISAMBIGUATES a two-way player to one side; it never
+    # overrides a clear bat/pit (which would risk routing Judge's Ks to an empty
+    # pitching table).
+    if base_role == "two_way" and hint in ("bat", "pit"):
+        return hint
+    return base_role
+
+
+def _compute_two_way(feature, params):
+    """Compute a milestone/span for BOTH roles of a two-way player. Returns
+    {stat, batting:<side>, pitching:<side>} where a side is {<feature>, declined?,
+    reason?} or None (that role errored/ambiguous). feature ∈ 'milestone' | 'span'."""
+    ev = (params.get("event") or "").strip().upper()
+    stat = _TWO_WAY_STAT_LABEL.get(ev, ev)
+
+    def run(fn):
+        try:
+            r = fn()
+        except HTTPException:
+            return None
+        if not isinstance(r, dict) or r.get("ambiguous"):
+            return None
+        side: dict = {}
+        if r.get("declined"):
+            side["declined"] = True
+            side["reason"] = r.get("reason")
+        side[feature] = r.get(feature)
+        return side
+
+    if feature == "milestone":
+        bat = run(lambda: _run_milestone(**params))
+        pit = run(lambda: _run_pitcher_milestone(**params))
+    else:  # span
+        sp = {"player": params.get("player"), "event": params.get("event"),
+              "window": params.get("window_size"), "season": params.get("season"),
+              "game_type": params.get("game_type")}
+        bat = run(lambda: _run_span(**sp))
+        pit = run(lambda: _run_pitcher_span(**sp))
+    return {"stat": stat, "batting": bat, "pitching": pit}
+
+
 # ---- Game-unit leaderboard PRECOMPUTE ---------------------------------------
 # One player's leaderboard rows, computed by REUSING the exact verified helpers
 # (_daily_games / _complete_seasons / _longest_streak / _best_span / _DAILY_EVENT)
@@ -6630,14 +7148,19 @@ _LB_STREAK_METRIC = {"hitting": "hitting_streak", "on_base": "on_base_streak",
                      "home_run": "hr_game_streak", "multi_hit": "multi_hit_streak"}
 _LB_SPAN_WINDOWS = (10, 20, 30, 50, 162)
 _LB_SPAN_EVENTS = ("HR", "H", "RBI", "TB")
+# Pitching leaderboard metrics/events (role='pit' rows, same table).
+_LB_PITCHER_STREAK_METRIC = {"win": "win_streak", "quality_start": "qs_streak",
+                             "high_k": "high_k_streak"}
+_LB_PITCHER_SPAN_EVENTS = ("K", "W", "SV")
 
 
 def _leaderboard_rows(mlbam, games, complete):
-    """The game_unit_leaderboard rows for one player, from ALREADY-LOADED games +
+    """The game_unit_leaderboard rows for one BATTER, from ALREADY-LOADED games +
     complete-season set. Pure (no SQL), so the per-player refresh and the bulk
     backfill share byte-identical streak/span math. `games` must be one dict per
     game in (game_date, game_id) order, same shape as _daily_games; `complete` is
-    the set of fully-covered seasons (the _complete_seasons gate)."""
+    the set of fully-covered seasons (the _complete_seasons gate). Rows tagged
+    role='bat'."""
     if not games:
         return []
     rows: list = []
@@ -6651,7 +7174,7 @@ def _leaderboard_rows(mlbam, games, complete):
         for kind, metric in _LB_STREAK_METRIC.items():
             length, start, end, _run = _longest_streak(gs, kind)
             if length >= 1:
-                rows.append({"player_id": mlbam, "metric": metric, "window": 0,
+                rows.append({"player_id": mlbam, "role": "bat", "metric": metric, "window": 0,
                              "season": s, "event": "", "value": int(length),
                              "start_date": start, "end_date": end})
 
@@ -6663,22 +7186,55 @@ def _leaderboard_rows(mlbam, games, complete):
             best, _longest = _best_span(games, complete, window, valfn)
             if best is not None:
                 total, wg = best
-                rows.append({"player_id": mlbam, "metric": "span", "window": window,
+                rows.append({"player_id": mlbam, "role": "bat", "metric": "span", "window": window,
+                             "season": 0, "event": ev, "value": int(total),
+                             "start_date": wg[0]["game_date"], "end_date": wg[-1]["game_date"]})
+    return rows
+
+
+def _pitcher_leaderboard_rows(mlbam, games, complete):
+    """The game_unit_leaderboard rows for one PITCHER (role='pit'), from ALREADY-
+    LOADED pitching games + complete-season set. Mirror of _leaderboard_rows using
+    the pitcher streak/span math, so a stored value equals the single-player card."""
+    if not games:
+        return []
+    rows: list = []
+    for s in sorted(complete):
+        gs = [g for g in games if g["season"] == s]
+        if not gs:
+            continue
+        for kind, metric in _LB_PITCHER_STREAK_METRIC.items():
+            length, start, end, _run = _longest_pitcher_streak(gs, kind)
+            if length >= 1:
+                rows.append({"player_id": mlbam, "role": "pit", "metric": metric, "window": 0,
+                             "season": s, "event": "", "value": int(length),
+                             "start_date": start, "end_date": end})
+    for window in _LB_SPAN_WINDOWS:
+        for ev in _LB_PITCHER_SPAN_EVENTS:
+            valfn = _PITCHER_EVENT[ev][0]
+            best, _longest = _best_span(games, complete, window, valfn)
+            if best is not None:
+                total, wg = best
+                rows.append({"player_id": mlbam, "role": "pit", "metric": "span", "window": window,
                              "season": 0, "event": ev, "value": int(total),
                              "start_date": wg[0]["game_date"], "end_date": wg[-1]["game_date"]})
     return rows
 
 
 def _compute_player_leaderboard(mlbam):
-    """game_unit_leaderboard rows for one player, loading its own data (1 query for
-    games + 2 for the completeness gate). Used by the nightly per-player refresh;
-    the bulk backfill instead loads in player batches and calls _leaderboard_rows
-    directly, so it never runs 3 queries × 20k players in one shot."""
+    """game_unit_leaderboard rows for one player — BOTH batting (role='bat') and,
+    if they pitched, pitching (role='pit'). Used by the nightly per-player refresh;
+    the bulk backfill loads in player batches and calls the *_rows helpers."""
+    rows: list = []
     games = _daily_games(mlbam)
-    if not games:
-        return []
-    complete, _dg, _ag = _complete_seasons(mlbam)
-    return _leaderboard_rows(mlbam, games, complete)
+    if games:
+        complete, _dg, _ag = _complete_seasons(mlbam)
+        rows += _leaderboard_rows(mlbam, games, complete)
+    pgames = _daily_pitching_games(mlbam)
+    if pgames:
+        pcomplete, _pdg, _pag = _complete_pitcher_seasons(mlbam)
+        rows += _pitcher_leaderboard_rows(mlbam, pgames, pcomplete)
+    return rows
 
 
 # Retrosheet biofile retro_id -> display name, slimmed to (key_retro, name).
@@ -7684,23 +8240,32 @@ _ASK_CANNOT_TOOL = {
 _ASK_MILESTONE_TOOL = {
     "name": "query_milestone",
     "description": (
-        "WHEN did a BATTER reach the Nth of a career event — 'when did X hit his "
-        "756th home run', 'the date of X's 3000th hit'. A milestone asks for a "
-        "DATE, not a count. Detect the ORDINAL number (756th -> 756, 3000th -> "
-        "3000) and the event. Milestone-able (batting only): HR, hit, single, "
-        "double, triple, RBI, total bases, walk, strikeout, hit-by-pitch. Stolen "
-        "bases, wins, saves, and PITCHER strikeout milestones are NOT — for those, "
-        "call cannot_answer."),
+        "WHEN did a player reach the Nth of a career event — 'when did X hit his "
+        "756th home run', 'X's 3000th hit', 'Kershaw's 3000th strikeout', 'Nolan "
+        "Ryan's 5000th K', 'X's 300th win', 'X's 500th save'. A milestone asks for "
+        "a DATE, not a count. Detect the ORDINAL (756th -> 756) and the event. "
+        "BATTING events: HR, hit, single, double, triple, RBI, total bases, walk, "
+        "strikeout, HBP. PITCHING events: strikeout (K), win (W), loss (L), save "
+        "(SV), earned run (ER), walk (BB), home run allowed (HR). Stolen-base "
+        "milestones are NOT supported — cannot_answer. For an AMBIGUOUS event "
+        "(K/BB/HR) set `role` from the player: a pitcher's strikeouts -> role='pit', "
+        "a hitter's -> role='bat'; wins/saves are always role='pit'."),
     "input_schema": {
         "type": "object",
         "properties": {
             "player": {"type": "string", "description": "name or MLBAM id"},
             "event": {"type": "string",
-                      "enum": ["HR", "H", "1B", "2B", "3B", "RBI", "TB", "BB", "K", "HBP"],
-                      "description": "HR=home run, H=hit (any of 1B/2B/3B/HR), 1B/2B/3B, "
-                                     "RBI, TB=total bases, BB=walk, K=strikeout, HBP=hit by pitch."},
+                      "enum": ["HR", "H", "1B", "2B", "3B", "RBI", "TB", "BB", "K", "HBP",
+                               "W", "L", "SV", "ER"],
+                      "description": "HR=home run, H=hit, 1B/2B/3B, RBI, TB=total bases, "
+                                     "BB=walk, K=strikeout, HBP=hit by pitch, W=win, L=loss, "
+                                     "SV=save, ER=earned run (W/L/SV/ER are pitching)."},
             "n": {"type": "integer", "minimum": 1,
                   "description": "the ordinal number reached (756th -> 756, 3000th -> 3000)."},
+            "role": {"type": "string", "enum": ["bat", "pit"], "description":
+                     "for an AMBIGUOUS event (K/BB/HR): 'pit' if the question is about "
+                     "the player ON THE MOUND (a pitcher's strikeouts/walks), 'bat' if "
+                     "AT THE PLATE. Omit for unambiguous events."},
             "season": {"type": "integer", "description":
                        "ONLY for a single-season milestone ('his 50th HR of 2001'); "
                        "omit for a career milestone."},
@@ -7715,21 +8280,27 @@ _ASK_MILESTONE_TOOL = {
 _ASK_STREAK_TOOL = {
     "name": "query_streak",
     "description": (
-        "The LONGEST run of CONSECUTIVE games meeting a per-game condition — "
-        "'longest hitting streak', 'longest on-base streak', 'most consecutive "
-        "games with a home run', 'longest multi-hit-game streak'. Returns the "
-        "length + the start/end dates. One player + a streak type. DISTINCT from a "
-        "count and from a milestone (which asks for a single date)."),
+        "The LONGEST run of CONSECUTIVE games meeting a per-game condition. BATTER "
+        "streaks: 'longest hitting streak', 'longest on-base streak', 'most "
+        "consecutive games with a home run', 'longest multi-hit-game streak'. "
+        "PITCHER streaks (game-unit): 'longest win streak', 'most consecutive "
+        "quality starts', 'consecutive 10-strikeout games'. Returns the length + "
+        "start/end dates. One player + a streak type. A scoreless-INNINGS streak is "
+        "NOT game-unit — use streak_type='scoreless_innings' and it will explain "
+        "that it needs play-by-play data."),
     "input_schema": {
         "type": "object",
         "properties": {
             "player": {"type": "string", "description": "name or MLBAM id"},
             "streak_type": {"type": "string",
-                            "enum": ["hitting", "on_base", "home_run", "multi_hit"],
-                            "description": "hitting = consecutive games with a hit; "
-                            "on_base = consecutive games reaching base (hit/walk/HBP); "
-                            "home_run = consecutive games with a home run; "
-                            "multi_hit = consecutive games with 2+ hits."},
+                            "enum": ["hitting", "on_base", "home_run", "multi_hit",
+                                     "win", "quality_start", "high_k", "scoreless_innings"],
+                            "description": "BATTER: hitting = games with a hit; on_base = "
+                            "games reaching base; home_run = games with a HR; multi_hit = "
+                            "games with 2+ hits. PITCHER: win = consecutive wins; "
+                            "quality_start = consecutive quality starts (6+ IP, <=3 ER); "
+                            "high_k = consecutive 10+ strikeout games; scoreless_innings = "
+                            "a scoreless-innings streak (inning-unit; will decline)."},
             "season": {"type": "integer", "description":
                        "ONLY for a single-season streak ('his 2023 hitting streak', "
                        "'longest streak in 2019'); omit for a career-longest streak."},
@@ -7749,18 +8320,24 @@ _ASK_SPAN_TOOL = {
         "30 games', 'most RBIs over any 20-game stretch', 'best 40-game stretch "
         "of home runs'. One player + an event + the window size (in games). "
         "DISTINCT from a streak (consecutive games meeting a condition) and from a "
-        "plain total."),
+        "plain total. Works for a PITCHER too — 'most strikeouts in any 10 games', "
+        "'most wins in any 30 starts' — via the pitching events below."),
     "input_schema": {
         "type": "object",
         "properties": {
             "player": {"type": "string", "description": "name or MLBAM id"},
             "event": {"type": "string",
-                      "enum": ["HR", "H", "RBI", "TB", "1B", "2B", "3B", "BB", "K", "HBP"],
-                      "description": "HR=home runs, H=hits, RBI=RBIs, TB=total bases, "
-                      "1B/2B/3B, BB=walks, K=strikeouts, HBP=hit by pitch."},
+                      "enum": ["HR", "H", "RBI", "TB", "1B", "2B", "3B", "BB", "K", "HBP",
+                               "W", "L", "SV", "ER"],
+                      "description": "HR=home runs, H=hits, RBI, TB=total bases, 1B/2B/3B, "
+                      "BB=walks, K=strikeouts, HBP, W=wins, L=losses, SV=saves, ER=earned "
+                      "runs (W/L/SV/ER are pitching)."},
             "window_size": {"type": "integer", "minimum": 1, "description":
                             "the window length in GAMES (50 for 'any 50-game span', "
                             "30 for 'any 30 games', 162 for 'any 162-game span')."},
+            "role": {"type": "string", "enum": ["bat", "pit"], "description":
+                     "for an AMBIGUOUS event (K/BB/HR): 'pit' for a pitcher's strikeouts/"
+                     "walks (on the mound), 'bat' for at the plate. Omit otherwise."},
             "season": {"type": "integer", "description":
                        "ONLY to scope to one season ('his best 30-game span in 2019'); "
                        "omit for the career-best window, which may cross seasons."},
@@ -7785,11 +8362,15 @@ _ASK_STREAK_LB_TOOL = {
         "type": "object",
         "properties": {
             "streak_type": {"type": "string",
-                            "enum": ["hitting", "on_base", "home_run", "multi_hit"],
-                            "description": "hitting = consecutive games with a hit; "
-                            "on_base = consecutive games reaching base (hit/walk/HBP); "
-                            "home_run = consecutive games with a home run; multi_hit = "
-                            "consecutive games with 2+ hits."},
+                            "enum": ["hitting", "on_base", "home_run", "multi_hit",
+                                     "win", "quality_start", "high_k"],
+                            "description": "BATTER: hitting / on_base / home_run / "
+                            "multi_hit. PITCHER (set role='pit'): win = consecutive "
+                            "wins; quality_start = consecutive quality starts; high_k = "
+                            "consecutive 10-strikeout games."},
+            "role": {"type": "string", "enum": ["bat", "pit"], "description":
+                     "'pit' for a pitcher-streak leaderboard (win/quality_start/high_k); "
+                     "omit or 'bat' for batter streaks."},
             "season": {"type": "integer", "description":
                        "ONLY to rank streaks that happened IN this exact season "
                        "('longest hitting streak in 2023')."},
@@ -7810,15 +8391,20 @@ _ASK_SPAN_LB_TOOL = {
         "span', 'most hits in any 30 games', 'most RBIs over any 50-game stretch', "
         "'most home runs in any 162 games all-time'. Returns a ranked list of "
         "players. If the question NAMES a player (\"Bonds' most HR in 162 games\"), "
-        "use query_span instead. Available events: HR, H, RBI, TB. Available "
-        "windows (games): 10, 20, 30, 50, 162."),
+        "use query_span instead. BATTER events: HR, H, RBI, TB. PITCHER events "
+        "(set role='pit'): K (strikeouts), W (wins), SV (saves) — 'who has the most "
+        "strikeouts in any 10 games'. Windows (games): 10, 20, 30, 50, 162."),
     "input_schema": {
         "type": "object",
         "properties": {
-            "event": {"type": "string", "enum": ["HR", "H", "RBI", "TB"],
-                      "description": "HR=home runs, H=hits, RBI=RBIs, TB=total bases."},
+            "event": {"type": "string", "enum": ["HR", "H", "RBI", "TB", "K", "W", "SV"],
+                      "description": "BATTER: HR/H/RBI/TB. PITCHER (role='pit'): "
+                      "K=strikeouts, W=wins, SV=saves."},
             "window_size": {"type": "integer", "enum": [10, 20, 30, 50, 162],
                             "description": "window length in GAMES (10/20/30/50/162)."},
+            "role": {"type": "string", "enum": ["bat", "pit"], "description":
+                     "'pit' for a pitcher-span leaderboard (K/W/SV); omit or 'bat' "
+                     "for batter spans."},
             "limit": {"type": "integer", "minimum": 1, "maximum": 25, "default": 15},
         },
         "required": ["event", "window_size"],
@@ -7949,9 +8535,17 @@ _ASK_SYSTEM = (
     "- 'When did Jeter get his 3000th hit?' -> {player:'Derek Jeter', event:'H', n:3000}\n"
     "- 'The date of Pujols' 700th home run' -> {player:'Albert Pujols', event:'HR', n:700}\n"
     "- 'When did Aaron hit his 715th homer?' -> {player:'Hank Aaron', event:'HR', n:715}\n"
-    "Milestone-able events (BATTING only): HR / hit / single / double / triple / "
-    "RBI / total bases / walk / strikeout / HBP. 'Nth stolen base', 'Nth win/save', "
-    "and PITCHER strikeout milestones are NOT — cannot_answer those.\n\n"
+    "PITCHER milestones ARE supported now (from the pitching game logs): K / win / "
+    "save / earned run, plus a pitcher's walks/HR-allowed. Set role for the "
+    "ambiguous ones:\n"
+    "- 'When did Kershaw record his 3000th strikeout?' -> {player:'Clayton Kershaw', "
+    "event:'K', n:3000, role:'pit'}\n"
+    "- 'Nolan Ryan's 5000th strikeout' -> {player:'Nolan Ryan', event:'K', n:5000, role:'pit'}\n"
+    "- 'When did X get his 300th win?' -> {player:'X', event:'W', n:300} (wins are "
+    "always pitching — no role needed)\n"
+    "- 'X's 500th save' -> {player:'X', event:'SV', n:500}\n"
+    "Batter strikeout milestone (rare): 'Reggie Jackson's 2500th strikeout' -> "
+    "{event:'K', n:2500, role:'bat'}. 'Nth stolen base' is NOT supported -> cannot_answer.\n\n"
     "STREAKS (call query_streak) — the LONGEST run of CONSECUTIVE games meeting a "
     "condition. Map the phrasing to a streak_type: hitting / on_base / home_run / "
     "multi_hit. Distinct from a count and from a milestone.\n"
@@ -7966,7 +8560,15 @@ _ASK_SYSTEM = (
     "- A SINGLE-SEASON streak -> add season: \"Freeman's 2023 hitting streak\" -> "
     "{player:'Freddie Freeman', streak_type:'hitting', season:2023}. Omit season "
     "for a career-longest streak (the default).\n"
-    "Only hitting / on-base / home-run / multi-hit streaks are supported; other "
+    "- PITCHER streaks (game-unit): 'longest win streak' -> {player:'X', "
+    "streak_type:'win'}; 'most consecutive quality starts' -> "
+    "{streak_type:'quality_start'}; 'consecutive 10-strikeout games' -> "
+    "{streak_type:'high_k'}. A SCORELESS-INNINGS streak (Hershiser's 59) is "
+    "inning-unit -> {streak_type:'scoreless_innings'} (it will explain it needs "
+    "play-by-play data). Also for a two-way stat with 'as a pitcher'/'on the mound' "
+    "phrasing, the CODE routes by the player — you still pick the tool.\n"
+    "Only hitting / on-base / home-run / multi-hit (batter) and win / quality_start "
+    "/ high_k (pitcher) streaks are supported; other "
     "'in a row' conditions (consecutive wins, games with an RBI, scoreless "
     "innings) -> cannot_answer.\n"
     "- NO player named -> query_streak_leaderboard (a ranked LIST, not one "
@@ -8383,6 +8985,7 @@ def ask(request: Request,
         "milestone":       None,
         "streak":          None,
         "span":            None,
+        "two_way":         None,
         "player_resolved": None,
         "source":          None,
         "game_coverage":   None,
@@ -8456,9 +9059,15 @@ def ask(request: Request,
                               "(e.g. 'his 500th home run').")
             base["answer"] = base["reason"]
             return _finish()
+        _role = _decide_role(mk.get("event"), mk.get("player"), tool_input.get("role"))
         t0 = time.perf_counter()
+        if _role == "two_way":
+            base["two_way"] = _compute_two_way("milestone", mk)
+            timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
+            base["answer"] = None
+            return _finish()
         try:
-            result = _run_milestone(**mk)
+            result = _run_pitcher_milestone(**mk) if _role == "pit" else _run_milestone(**mk)
         except HTTPException as exc:
             timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
             base["reason"] = str(exc.detail)
@@ -8519,9 +9128,11 @@ def ask(request: Request,
             base["reason"] = "A streak needs a player and a streak type (e.g. 'hitting')."
             base["answer"] = base["reason"]
             return _finish()
+        _pit_streak = (sk.get("streak_type") in _PITCHER_STREAK_TYPE_LABEL
+                       or sk.get("streak_type") in _PITCHER_STREAK_DEFERRED)
         t0 = time.perf_counter()
         try:
-            result = _run_streak(**sk)
+            result = _run_pitcher_streak(**sk) if _pit_streak else _run_streak(**sk)
         except HTTPException as exc:
             timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
             base["reason"] = str(exc.detail)
@@ -8578,11 +9189,18 @@ def ask(request: Request,
                               "games (e.g. 'most home runs in any 50-game span').")
             base["answer"] = base["reason"]
             return _finish()
+        _role = _decide_role(pk.get("event"), pk.get("player"), tool_input.get("role"))
         t0 = time.perf_counter()
+        if _role == "two_way":
+            base["two_way"] = _compute_two_way("span", pk)
+            timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
+            base["answer"] = None
+            return _finish()
         try:
-            result = _run_span(player=pk["player"], event=pk["event"],
-                               window=pk["window_size"], season=pk.get("season"),
-                               game_type=pk.get("game_type"))
+            _spanfn = _run_pitcher_span if _role == "pit" else _run_span
+            result = _spanfn(player=pk["player"], event=pk["event"],
+                             window=pk["window_size"], season=pk.get("season"),
+                             game_type=pk.get("game_type"))
         except HTTPException as exc:
             timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
             base["reason"] = str(exc.detail)
@@ -8628,18 +9246,20 @@ def ask(request: Request,
     if tool_name == "query_streak_leaderboard":
         base["understood_as"] = tool_input
         st = (tool_input or {}).get("streak_type")
-        if st not in _LB_STREAK_METRIC:
+        if st not in _LB_STREAK_METRIC and st not in _LB_PITCHER_STREAK_METRIC:
             base["out_of_scope"] = True
-            base["reason"] = ("A streak leaderboard needs a streak type "
-                              "(hitting, on_base, home_run, or multi_hit).")
+            base["reason"] = ("A streak leaderboard needs a streak type (batter: "
+                              "hitting/on_base/home_run/multi_hit; pitcher: "
+                              "win/quality_start/high_k).")
             base["answer"] = base["reason"]
             return _finish()
+        _lb_role = "pit" if st in _LB_PITCHER_STREAK_METRIC else (tool_input.get("role") or "bat")
         t0 = time.perf_counter()
         try:
             result = _run_streak_leaderboard(
                 streak_type=st, season=tool_input.get("season"),
                 season_start=tool_input.get("season_start"),
-                limit=tool_input.get("limit", 15))
+                limit=tool_input.get("limit", 15), role=_lb_role)
         except HTTPException as exc:
             timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
             base["reason"] = str(exc.detail)
@@ -8670,10 +9290,12 @@ def ask(request: Request,
                               "window size in games (10/20/30/50/162).")
             base["answer"] = base["reason"]
             return _finish()
+        _lb_role = "pit" if str(ev).upper() in _LB_PITCHER_SPAN_EVENTS \
+            else (tool_input.get("role") or "bat")
         t0 = time.perf_counter()
         try:
             result = _run_span_leaderboard(event=ev, window=w,
-                                           limit=tool_input.get("limit", 15))
+                                           limit=tool_input.get("limit", 15), role=_lb_role)
         except HTTPException as exc:
             timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
             base["reason"] = str(exc.detail)
@@ -9818,37 +10440,47 @@ _STREAK_LB_LABEL = {
     "multi_hit": "Longest multi-hit-game streak",
 }
 _SPAN_LB_EVENT_LABEL = {"HR": "home runs", "H": "hits", "RBI": "RBI", "TB": "total bases"}
+_PITCHER_STREAK_LB_LABEL = {
+    "win":           "Longest win streak",
+    "quality_start": "Most consecutive quality starts",
+    "high_k":        "Longest 10-strikeout-game streak",
+}
+_PITCHER_SPAN_LB_EVENT_LABEL = {"K": "strikeouts", "W": "wins", "SV": "saves"}
 
 
-def _run_streak_leaderboard(streak_type, season=None, season_start=None, limit=15):
+def _run_streak_leaderboard(streak_type, season=None, season_start=None, limit=15, role="bat"):
     """Top players by longest game-unit streak — a fast READ of the precomputed
     game_unit_leaderboard (no recompute), so a value equals the single-player card.
-    season set -> streaks that occurred IN that exact season; season_start set ->
-    each player's best streak SINCE that season; neither -> each player's best
-    streak all-time. Returns leaders[] {rank, player_name, mlbam_id, value, season,
-    start/end_date, subtitle} + a title + the 1901 coverage note."""
+    role='pit' ranks pitcher streaks (win/quality_start/high_k). season set ->
+    streaks IN that exact season; season_start -> each player's best SINCE that
+    season; neither -> each player's best all-time."""
     kind = (streak_type or "").strip().lower()
-    metric = _LB_STREAK_METRIC.get(kind)
+    role = "pit" if str(role).lower() == "pit" else "bat"
+    if role == "pit":
+        metric = _LB_PITCHER_STREAK_METRIC.get(kind)
+        label = _PITCHER_STREAK_LB_LABEL.get(kind, "Longest pitcher streak")
+    else:
+        metric = _LB_STREAK_METRIC.get(kind)
+        label = _STREAK_LB_LABEL.get(kind, "Longest streak")
     if metric is None:
         raise HTTPException(status_code=400,
                             detail=f"'{streak_type}' isn't a streak type I track.")
     if not connection.db_available():
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
     n = max(1, min(int(limit or 15), 25))
-    params: dict = {"m": metric, "n": n}
-    label = _STREAK_LB_LABEL.get(kind, "Longest streak")
+    params: dict = {"m": metric, "n": n, "role": role}
     if season is not None:
         # streaks that happened IN this exact season (one row per player already)
         params["yr"] = int(season)
         sql = ("SELECT player_id, value, season, start_date, end_date "
                "FROM game_unit_leaderboard "
-               "WHERE metric = :m AND season = :yr "
+               "WHERE metric = :m AND role = :role AND season = :yr "
                "ORDER BY value DESC, player_id LIMIT :n")
         title = f"{label} in {int(season)}"
     else:
         # each player's BEST streak (optionally only since a season): DISTINCT ON
         # picks each player's top row, then rank those.
-        inner = "metric = :m"
+        inner = "metric = :m AND role = :role"
         title = label
         if season_start is not None:
             inner += " AND season >= :since"
@@ -9878,16 +10510,22 @@ def _run_streak_leaderboard(streak_type, season=None, season_start=None, limit=1
             "game_coverage": {"complete": False, "note": _LB_COVERAGE_NOTE}}
 
 
-def _run_span_leaderboard(event, window, limit=15):
+def _run_span_leaderboard(event, window, limit=15, role="bat"):
     """Top players by the most of an event in any N-game window — a fast READ of the
-    precomputed game_unit_leaderboard (no recompute). Only the precomputed
-    events/windows are available; anything else declines (honest, not a guess)."""
+    precomputed game_unit_leaderboard (no recompute). role='pit' ranks pitcher span
+    events (K/W/SV). Only the precomputed events/windows are available; anything
+    else declines (honest, not a guess)."""
     ev = (event or "").strip().upper()
-    if ev not in _LB_SPAN_EVENTS:
+    if ev == "SO":
+        ev = "K"
+    role = "pit" if str(role).lower() == "pit" else "bat"
+    valid_events = _LB_PITCHER_SPAN_EVENTS if role == "pit" else _LB_SPAN_EVENTS
+    label_map = _PITCHER_SPAN_LB_EVENT_LABEL if role == "pit" else _SPAN_LB_EVENT_LABEL
+    if ev not in valid_events:
         return {"resolved": True, "declined": True, "leaders": [],
                 "game_coverage": {"complete": False},
                 "reason": ("I rank span leaders for "
-                           f"{', '.join(_LB_SPAN_EVENTS)} only — not {event}.")}
+                           f"{', '.join(valid_events)} only — not {event}.")}
     try:
         w = int(window)
     except (TypeError, ValueError):
@@ -9902,10 +10540,10 @@ def _run_span_leaderboard(event, window, limit=15):
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
     n = max(1, min(int(limit or 15), 25))
     sql = ("SELECT player_id, value, start_date, end_date FROM game_unit_leaderboard "
-           "WHERE metric = 'span' AND \"window\" = :w AND event = :ev "
+           "WHERE metric = 'span' AND role = :role AND \"window\" = :w AND event = :ev "
            "ORDER BY value DESC, player_id LIMIT :n")
     with connection.get_session() as db:
-        rows = db.execute(_sa_text(sql), {"w": w, "ev": ev, "n": n}).fetchall()
+        rows = db.execute(_sa_text(sql), {"w": w, "ev": ev, "n": n, "role": role}).fetchall()
     names = _lb_resolve_names([r[0] for r in rows])
 
     def _sub(sd, ed):
@@ -9924,7 +10562,7 @@ def _run_span_leaderboard(event, window, limit=15):
         "subtitle": _sub(r[2], r[3]),
     } for i, r in enumerate(rows)]
     return {"resolved": True, "source": "game_unit_leaderboard",
-            "leaderboard_title": f"Most {_SPAN_LB_EVENT_LABEL.get(ev, ev)} in any {w} games",
+            "leaderboard_title": f"Most {label_map.get(ev, ev)} in any {w} games",
             "leaders": leaders,
             "game_coverage": {"complete": False, "note": _LB_COVERAGE_NOTE}}
 
@@ -9992,8 +10630,12 @@ def _backfill_leaderboard_core(confirm, limit, job_id=None):
     confirm=false run is a full dry-run review artifact with NO writes). Updates the
     leaderboard_job row (job_id) per batch. Runs in a background thread, not a request."""
     with connection.get_session() as db:
+        # BOTH tables: a pure pitcher who never batted (modern AL relievers) has no
+        # batting_gamelogs row but still gets pitching leaderboard rows.
         pids = [r[0] for r in db.execute(_sa_text(
-            "SELECT DISTINCT player_id FROM batting_gamelogs ORDER BY player_id")).fetchall()]
+            "SELECT DISTINCT player_id FROM ("
+            "  SELECT player_id FROM batting_gamelogs "
+            "  UNION SELECT player_id FROM pitching_gamelogs) t ORDER BY player_id")).fetchall()]
     if limit:
         pids = pids[:limit]
     if job_id is not None:
@@ -10031,6 +10673,32 @@ def _backfill_leaderboard_core(confirm, limit, job_id=None):
                     "WHERE player_id = ANY(:ids) GROUP BY player_id, year"), {"ids": chunk}).fetchall():
                 ag_by[pid_][y_] = int(g_ or 0)
 
+        # PITCHING bulk-load for the same batch (mirror of the batting load).
+        pgames_by: dict = {p: [] for p in chunk}
+        pdg_by: dict = {p: {} for p in chunk}
+        pag_by: dict = {p: {} for p in chunk}
+        with connection.get_session() as db:
+            for r in db.execute(_sa_text(
+                    "SELECT player_id, game_date, game_id, season, opponent, home_away, result, "
+                    'COALESCE("IP",0), COALESCE("H",0), COALESCE("R",0), COALESCE("ER",0), '
+                    'COALESCE("BB",0), COALESCE("SO",0), COALESCE("HR",0), COALESCE("HBP",0) '
+                    "FROM pitching_gamelogs WHERE player_id = ANY(:ids) "
+                    "ORDER BY player_id, game_date, game_id"), {"ids": chunk}).fetchall():
+                pgames_by[r[0]].append({
+                    "game_date": r[1], "game_id": r[2], "season": r[3], "opponent": r[4],
+                    "home_away": r[5], "result": r[6] or "", "IP": float(r[7] or 0),
+                    "H": r[8], "R": r[9], "ER": r[10], "BB": r[11], "SO": r[12],
+                    "HR": r[13], "HBP": r[14],
+                })
+            for pid_, s_, c_ in db.execute(_sa_text(
+                    "SELECT player_id, season, COUNT(*) FROM pitching_gamelogs "
+                    "WHERE player_id = ANY(:ids) GROUP BY player_id, season"), {"ids": chunk}).fetchall():
+                pdg_by[pid_][s_] = int(c_ or 0)
+            for pid_, y_, g_ in db.execute(_sa_text(
+                    'SELECT player_id, year, SUM("G") FROM pitcher_seasons '
+                    "WHERE player_id = ANY(:ids) GROUP BY player_id, year"), {"ids": chunk}).fetchall():
+                pag_by[pid_][y_] = int(g_ or 0)
+
         pending: list = []
         for pid in chunk:
             games = games_by[pid]
@@ -10039,6 +10707,11 @@ def _backfill_leaderboard_core(confirm, limit, job_id=None):
             # count >= official G (a legit surplus is fine; only a shortfall drops).
             complete = {y for y in dg if ag.get(y) is not None and dg[y] >= ag[y]}
             rows = _leaderboard_rows(pid, games, complete)
+            pgames = pgames_by[pid]
+            if pgames:
+                pcomplete = {y for y in pdg_by[pid]
+                             if pag_by[pid].get(y) is not None and pdg_by[pid][y] >= pag_by[pid][y]}
+                rows += _pitcher_leaderboard_rows(pid, pgames, pcomplete)
             players_done += 1
             for r in rows:
                 total_rows += 1
@@ -10064,8 +10737,8 @@ def _backfill_leaderboard_core(confirm, limit, job_id=None):
                     for r in rows_:
                         db.execute(_sa_text(
                             "INSERT INTO game_unit_leaderboard "
-                            '(player_id, metric, "window", season, event, value, start_date, end_date) '
-                            "VALUES (:player_id, :metric, :window, :season, :event, :value, "
+                            '(player_id, role, metric, "window", season, event, value, start_date, end_date) '
+                            "VALUES (:player_id, :role, :metric, :window, :season, :event, :value, "
                             ":start_date, :end_date)"), r)
                         rows_written += 1
                 db.commit()
