@@ -6632,12 +6632,14 @@ _LB_SPAN_WINDOWS = (10, 20, 30, 50, 162)
 _LB_SPAN_EVENTS = ("HR", "H", "RBI", "TB")
 
 
-def _compute_player_leaderboard(mlbam):
-    """The game_unit_leaderboard rows for one player. Empty if no game logs."""
-    games = _daily_games(mlbam)
+def _leaderboard_rows(mlbam, games, complete):
+    """The game_unit_leaderboard rows for one player, from ALREADY-LOADED games +
+    complete-season set. Pure (no SQL), so the per-player refresh and the bulk
+    backfill share byte-identical streak/span math. `games` must be one dict per
+    game in (game_date, game_id) order, same shape as _daily_games; `complete` is
+    the set of fully-covered seasons (the _complete_seasons gate)."""
     if not games:
         return []
-    complete, _dg, _ag = _complete_seasons(mlbam)
     rows: list = []
 
     # STREAKS — best run per complete season, per kind (skip rule, gate all shared
@@ -6665,6 +6667,18 @@ def _compute_player_leaderboard(mlbam):
                              "season": 0, "event": ev, "value": int(total),
                              "start_date": wg[0]["game_date"], "end_date": wg[-1]["game_date"]})
     return rows
+
+
+def _compute_player_leaderboard(mlbam):
+    """game_unit_leaderboard rows for one player, loading its own data (1 query for
+    games + 2 for the completeness gate). Used by the nightly per-player refresh;
+    the bulk backfill instead loads in player batches and calls _leaderboard_rows
+    directly, so it never runs 3 queries × 20k players in one shot."""
+    games = _daily_games(mlbam)
+    if not games:
+        return []
+    complete, _dg, _ag = _complete_seasons(mlbam)
+    return _leaderboard_rows(mlbam, games, complete)
 
 
 # Retrosheet biofile retro_id -> display name, slimmed to (key_retro, name).
@@ -9631,100 +9645,144 @@ def backfill_allstar(confirm: bool = Query(False)):
     }
 
 
-@app.post("/admin/backfill-game-unit-leaderboard")
-def backfill_game_unit_leaderboard(
-    confirm: bool = Query(False),
-    limit: int | None = Query(None, description="cap players (partial/test run); omit = all"),
-):
-    """Precompute the game_unit_leaderboard by REUSING the verified single-player
-    _run_streak/_run_span logic (via _compute_player_leaderboard) for every player
-    in batting_gamelogs — so a leaderboard value always equals the single-player
-    card. Streaks per (player, season); spans per (player, window, event); only
-    COMPLETE seasons contribute. Idempotent: each player's rows are replaced, so a
-    re-run yields the same table. confirm=false = DRY RUN (counts + the top-15
-    hitting-streak players and top-5 HR/162-span, no writes)."""
-    if not connection.db_available():
-        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+def _lb_resolve_names(pids):
+    """{player_id: display name} for a small id list (players, then pitchers)."""
+    names: dict = {}
+    if not pids:
+        return names
+    with connection.get_session() as db:
+        for tbl in ("players", "pitchers"):
+            for pid, nm in db.execute(_sa_text(
+                    f"SELECT player_id, name FROM {tbl} WHERE player_id = ANY(:ids)"),
+                    {"ids": list(pids)}).fetchall():
+                names.setdefault(pid, nm)
+    return names
 
+
+# Player-id batch size for the bulk backfill: each batch bulk-loads its players'
+# games + game-counts + official G in 3 queries (WHERE player_id = ANY(...)), so
+# the whole run is ~3 queries per 500 players instead of 3 per player (~20k). Also
+# bounds peak memory to one batch's games rather than the whole 1901+ table.
+_LB_BATCH_PLAYERS = 500
+
+# Background-job state for the backfill (it is minutes of work — never a blocking
+# request). One job at a time; poll GET /admin/leaderboard-preview for progress +
+# the reviewable top lists.
+_LB_JOB_LOCK = threading.Lock()
+_LB_JOB: dict = {"running": False, "phase": "idle", "confirm": None, "limit": None,
+                 "players_done": 0, "players_total": 0, "total_rows": 0,
+                 "rows_written": 0, "started_at": None, "finished_at": None,
+                 "error": None, "summary": None}
+
+
+def _backfill_leaderboard_core(confirm, limit, progress=None):
+    """Compute game_unit_leaderboard for every batting_gamelogs player in player-id
+    BATCHES: bulk-load each batch's games / game-counts / official G (3 queries),
+    compute in memory via _leaderboard_rows (same math as the single-player card),
+    then — if confirm — idempotent per-player DELETE+INSERT. Returns a summary with
+    the top-15 hitting streaks + top-5 HR/162 spans (built from the compute, so a
+    confirm=false run is a full dry-run review artifact with NO writes). Updates
+    `progress` in place as it goes. Runs in a background thread, not a request."""
     with connection.get_session() as db:
         pids = [r[0] for r in db.execute(_sa_text(
             "SELECT DISTINCT player_id FROM batting_gamelogs ORDER BY player_id")).fetchall()]
     if limit:
         pids = pids[:limit]
+    if progress is not None:
+        progress["players_total"] = len(pids)
 
-    total_rows = streak_rows = span_rows = 0
-    players_done = 0
-    rows_written = 0
-    # running samples (per-player best), for the record-book verification
+    total_rows = streak_rows = span_rows = players_done = rows_written = 0
     best_hit: dict = {}     # player_id -> (value, season, start, end)
     span162: dict = {}      # player_id -> (value, start, end)
 
-    BATCH = 200
-    pending: list = []
-
-    def _flush(batch):
-        nonlocal rows_written
+    for start in range(0, len(pids), _LB_BATCH_PLAYERS):
+        chunk = pids[start:start + _LB_BATCH_PLAYERS]
+        games_by: dict = {p: [] for p in chunk}
+        dg_by: dict = {p: {} for p in chunk}
+        ag_by: dict = {p: {} for p in chunk}
         with connection.get_session() as db:
-            for pid_, rows_ in batch:
-                db.execute(_sa_text("DELETE FROM game_unit_leaderboard WHERE player_id = :pid"),
-                           {"pid": pid_})
-                for r in rows_:
-                    db.execute(_sa_text(
-                        "INSERT INTO game_unit_leaderboard "
-                        '(player_id, metric, "window", season, event, value, start_date, end_date) '
-                        "VALUES (:player_id, :metric, :window, :season, :event, :value, "
-                        ":start_date, :end_date)"), r)
-                    rows_written += 1
-            db.commit()
+            for r in db.execute(_sa_text(
+                    "SELECT player_id, game_date, game_id, season, "
+                    'COALESCE("AB",0), COALESCE("H",0), COALESCE(doubles,0), COALESCE(triples,0), '
+                    'COALESCE("HR",0), COALESCE("RBI",0), COALESCE("BB",0), COALESCE("SO",0), '
+                    'COALESCE("HBP",0), COALESCE("SF",0), COALESCE("SH",0), COALESCE("IBB",0) '
+                    "FROM batting_gamelogs WHERE player_id = ANY(:ids) "
+                    "ORDER BY player_id, game_date, game_id"), {"ids": chunk}).fetchall():
+                games_by[r[0]].append({
+                    "game_date": r[1], "game_id": r[2], "season": r[3],
+                    "AB": r[4], "H": r[5], "2B": r[6], "3B": r[7], "HR": r[8],
+                    "RBI": r[9], "BB": r[10], "SO": r[11], "HBP": r[12],
+                    "SF": r[13], "SH": r[14], "IBB": r[15],
+                })
+            for pid_, s_, c_ in db.execute(_sa_text(
+                    "SELECT player_id, season, COUNT(*) FROM batting_gamelogs "
+                    "WHERE player_id = ANY(:ids) GROUP BY player_id, season"), {"ids": chunk}).fetchall():
+                dg_by[pid_][s_] = int(c_ or 0)
+            for pid_, y_, g_ in db.execute(_sa_text(
+                    'SELECT player_id, year, SUM("G") FROM player_seasons '
+                    "WHERE player_id = ANY(:ids) GROUP BY player_id, year"), {"ids": chunk}).fetchall():
+                ag_by[pid_][y_] = int(g_ or 0)
 
-    for pid in pids:
-        rows = _compute_player_leaderboard(pid)
-        players_done += 1
-        for r in rows:
-            total_rows += 1
-            if r["metric"] == "span":
-                span_rows += 1
-                if r["window"] == 162 and r["event"] == "HR":
-                    cur = span162.get(pid)
-                    if cur is None or r["value"] > cur[0]:
-                        span162[pid] = (r["value"], r["start_date"], r["end_date"])
-            else:
-                streak_rows += 1
-                if r["metric"] == "hitting_streak":
-                    cur = best_hit.get(pid)
-                    if cur is None or r["value"] > cur[0]:
-                        best_hit[pid] = (r["value"], r["season"], r["start_date"], r["end_date"])
-        if confirm:
-            pending.append((pid, rows))
-            if len(pending) >= BATCH:
-                _flush(pending); pending = []
-        if players_done % 2000 == 0:
-            log.info("game-unit-leaderboard: %d/%d players (%d rows so far)",
-                     players_done, len(pids), total_rows)
-    if confirm and pending:
-        _flush(pending)
+        pending: list = []
+        for pid in chunk:
+            games = games_by[pid]
+            dg = dg_by[pid]; ag = ag_by[pid]
+            # Same completeness gate as _complete_seasons: covered iff daily game
+            # count >= official G (a legit surplus is fine; only a shortfall drops).
+            complete = {y for y in dg if ag.get(y) is not None and dg[y] >= ag[y]}
+            rows = _leaderboard_rows(pid, games, complete)
+            players_done += 1
+            for r in rows:
+                total_rows += 1
+                if r["metric"] == "span":
+                    span_rows += 1
+                    if r["window"] == 162 and r["event"] == "HR":
+                        cur = span162.get(pid)
+                        if cur is None or r["value"] > cur[0]:
+                            span162[pid] = (r["value"], r["start_date"], r["end_date"])
+                else:
+                    streak_rows += 1
+                    if r["metric"] == "hitting_streak":
+                        cur = best_hit.get(pid)
+                        if cur is None or r["value"] > cur[0]:
+                            best_hit[pid] = (r["value"], r["season"], r["start_date"], r["end_date"])
+            if confirm:
+                pending.append((pid, rows))
+        if confirm and pending:
+            with connection.get_session() as db:
+                for pid_, rows_ in pending:
+                    db.execute(_sa_text("DELETE FROM game_unit_leaderboard WHERE player_id = :pid"),
+                               {"pid": pid_})
+                    for r in rows_:
+                        db.execute(_sa_text(
+                            "INSERT INTO game_unit_leaderboard "
+                            '(player_id, metric, "window", season, event, value, start_date, end_date) '
+                            "VALUES (:player_id, :metric, :window, :season, :event, :value, "
+                            ":start_date, :end_date)"), r)
+                        rows_written += 1
+                db.commit()
+        if progress is not None:
+            progress["players_done"] = players_done
+            progress["total_rows"] = total_rows
+            progress["rows_written"] = rows_written
+        log.info("game-unit-leaderboard: %d/%d players (%d rows%s)",
+                 players_done, len(pids), total_rows,
+                 f", {rows_written} written" if confirm else "")
 
-    # ---- resolve names for the sample + build the record-book top lists ----
     top_hit = sorted(best_hit.items(), key=lambda kv: -kv[1][0])[:15]
     top_162 = sorted(span162.items(), key=lambda kv: -kv[1][0])[:5]
-    sample_ids = [pid for pid, _ in top_hit] + [pid for pid, _ in top_162]
-    names: dict = {}
-    if sample_ids:
-        with connection.get_session() as db:
-            for tbl in ("players", "pitchers"):
-                for pid, nm in db.execute(_sa_text(
-                        f"SELECT player_id, name FROM {tbl} WHERE player_id = ANY(:ids)"),
-                        {"ids": sample_ids}).fetchall():
-                    names.setdefault(pid, nm)
+    names = _lb_resolve_names([pid for pid, _ in top_hit] + [pid for pid, _ in top_162])
 
     def _nm(pid):
         return names.get(pid) or f"mlbam:{pid}"
 
-    summary = {
+    return {
+        "confirm": confirm,
         "players": players_done,
         "total_rows": total_rows,
         "streak_rows": streak_rows,
         "span_rows": span_rows,
+        "rows_written": rows_written,
         "top_hitting_streaks": [
             {"rank": i + 1, "name": _nm(pid), "mlbam_id": pid, "value": v[0],
              "season": v[1], "start_date": str(v[2]), "end_date": str(v[3])}
@@ -9734,9 +9792,107 @@ def backfill_game_unit_leaderboard(
              "start_date": str(v[1]), "end_date": str(v[2])}
             for i, (pid, v) in enumerate(top_162)],
     }
-    if not confirm:
-        return {"dry_run": True, **summary}
-    return {"confirmed": True, "rows_written": rows_written, **summary}
+
+
+def _lb_worker(confirm, limit):
+    """Background thread body: run the core, stash the summary/phase on _LB_JOB."""
+    try:
+        summary = _backfill_leaderboard_core(confirm, limit, progress=_LB_JOB)
+        with _LB_JOB_LOCK:
+            _LB_JOB["summary"] = summary
+            _LB_JOB["phase"] = "done"
+    except Exception as e:  # noqa: BLE001 — surface any failure via the status
+        log.exception("game-unit-leaderboard backfill failed")
+        with _LB_JOB_LOCK:
+            _LB_JOB["phase"] = "error"
+            _LB_JOB["error"] = str(e)
+    finally:
+        with _LB_JOB_LOCK:
+            _LB_JOB["running"] = False
+            _LB_JOB["finished_at"] = time.time()
+
+
+def _lb_job_public():
+    """JSON-clean snapshot of _LB_JOB (epochs -> elapsed_seconds)."""
+    with _LB_JOB_LOCK:
+        j = dict(_LB_JOB)
+    started, finished = j.pop("started_at"), j.pop("finished_at")
+    if started is not None:
+        end = finished if finished is not None else time.time()
+        j["elapsed_seconds"] = round(end - started, 1)
+    return j
+
+
+@app.post("/admin/backfill-game-unit-leaderboard")
+def backfill_game_unit_leaderboard(
+    confirm: bool = Query(False, description="true = write the table; false = dry run (compute only, no writes)"),
+    limit: int | None = Query(None, description="cap players (partial/test run); omit = all"),
+):
+    """START the game_unit_leaderboard precompute as a BACKGROUND job and return
+    immediately — it is minutes of work over ~20k players (bulk-loaded in batches)
+    and must never block an HTTP request (a multi-minute request just times out on
+    the proxy). Reuses the verified single-player streak/span math via
+    _leaderboard_rows, so a leaderboard value always equals the single-player card.
+    Idempotent (per-player replace). confirm=false = dry run (no writes; the
+    reviewable top-15 lands in the job summary). Poll GET /admin/leaderboard-preview
+    for progress + the top lists; when clean, re-run with confirm=true to write."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    with _LB_JOB_LOCK:
+        if _LB_JOB["running"]:
+            raise HTTPException(status_code=409,
+                                detail="a backfill is already running; poll /admin/leaderboard-preview")
+        _LB_JOB.update({"running": True, "phase": "starting", "confirm": confirm,
+                        "limit": limit, "players_done": 0, "players_total": 0,
+                        "total_rows": 0, "rows_written": 0, "started_at": time.time(),
+                        "finished_at": None, "error": None, "summary": None})
+    threading.Thread(target=_lb_worker, args=(confirm, limit), daemon=True).start()
+    return {"started": True, "confirm": confirm, "limit": limit,
+            "note": "running in background — poll GET /admin/leaderboard-preview"}
+
+
+@app.get("/admin/leaderboard-preview")
+def leaderboard_preview():
+    """FAST review artifact for the backfill: the current background-job status,
+    plus the top hitting streaks / HR-162 spans. Streaks + spans are read straight
+    from game_unit_leaderboard (what's actually written); if the last job was a
+    dry-run (confirm=false, no writes), its computed top lists are in job.summary
+    instead. Use this to audit the top-15 before/after promoting a confirm=true run."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    job = _lb_job_public()
+
+    with connection.get_session() as db:
+        table_rows, table_players = db.execute(_sa_text(
+            "SELECT COUNT(*), COUNT(DISTINCT player_id) FROM game_unit_leaderboard")).fetchone()
+        hit = db.execute(_sa_text(
+            "SELECT player_id, value, season, start_date, end_date "
+            "FROM game_unit_leaderboard WHERE metric = 'hitting_streak' "
+            "ORDER BY value DESC, player_id LIMIT 20")).fetchall()
+        spans = db.execute(_sa_text(
+            "SELECT player_id, value, start_date, end_date "
+            "FROM game_unit_leaderboard WHERE metric = 'span' AND \"window\" = 162 "
+            "AND event = 'HR' ORDER BY value DESC, player_id LIMIT 10")).fetchall()
+    names = _lb_resolve_names({r[0] for r in hit} | {r[0] for r in spans})
+
+    def _nm(pid):
+        return names.get(pid) or f"mlbam:{pid}"
+
+    return {
+        "job": job,
+        "table_rows": int(table_rows or 0),
+        "table_players": int(table_players or 0),
+        # top STREAKS (a player may appear twice, e.g. Cobb 40 + 35 — matches the
+        # all-time list format; dedupe by player when auditing "top players").
+        "top_hitting_streaks": [
+            {"rank": i + 1, "name": _nm(r[0]), "mlbam_id": r[0], "value": r[1],
+             "season": r[2], "start_date": str(r[3]), "end_date": str(r[4])}
+            for i, r in enumerate(hit)],
+        "top_hr_span_162": [
+            {"rank": i + 1, "name": _nm(r[0]), "mlbam_id": r[0], "value": r[1],
+             "start_date": str(r[2]), "end_date": str(r[3])}
+            for i, r in enumerate(spans)],
+    }
 
 
 @app.get("/admin/duplicate-identities")
