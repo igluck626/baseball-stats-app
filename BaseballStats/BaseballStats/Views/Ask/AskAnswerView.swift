@@ -188,6 +188,9 @@ struct AskAnswerView: View {
     /// surface them as a caption since there's no prose now. Count boards carry
     /// neither, so this stays nil for them.
     private var leaderQualifier: String? {
+        // Streak/span leaderboards carry an explicit title ("Longest hitting
+        // streak"); rate boards fall back to stat + min-PA.
+        if let title = response.leaderboard_title, !title.isEmpty { return title }
         guard let stat = response.stat else { return nil }
         if let minPA = response.min_pa {
             return "\(stat) · min. \(minPA) PA in the situation"
@@ -209,11 +212,19 @@ struct AskAnswerView: View {
                             .monospacedDigit()
                             .foregroundStyle(.secondary)
                             .frame(width: 22, alignment: .trailing)
-                        Text(leader.player_name ?? "—")
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(.primary)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.8)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(leader.player_name ?? "—")
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
+                            if let sub = leader.subtitle, !sub.isEmpty {
+                                Text(sub)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
                         Spacer(minLength: 8)
                         Text(leaderValue(leader))
                             .font(.subheadline.weight(.semibold))
@@ -234,8 +245,12 @@ struct AskAnswerView: View {
         }
     }
 
-    /// A count board shows the count; a rate board shows the qualifying stat.
+    /// A streak/span board shows the length/total (`value`); a count board shows
+    /// the count; a rate board shows the qualifying stat.
     private func leaderValue(_ leader: AskLeader) -> String {
+        if let v = leader.value {
+            return v.formatted(.number)
+        }
         if let count = leader.count {
             return count.formatted(.number)
         }

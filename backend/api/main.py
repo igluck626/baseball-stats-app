@@ -7772,6 +7772,59 @@ _ASK_SPAN_TOOL = {
     },
 }
 
+_ASK_STREAK_LB_TOOL = {
+    "name": "query_streak_leaderboard",
+    "description": (
+        "RANK the players with the LONGEST streak — NO specific player named. "
+        "'who has the longest hitting streak', 'which player has the most "
+        "consecutive games with a hit', 'longest on-base streak of all time', "
+        "'longest hitting streak since 2000', 'longest multi-hit streak in 2019'. "
+        "Returns a ranked list of players. If the question NAMES a player "
+        "(\"Freeman's longest hitting streak\"), use query_streak instead."),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "streak_type": {"type": "string",
+                            "enum": ["hitting", "on_base", "home_run", "multi_hit"],
+                            "description": "hitting = consecutive games with a hit; "
+                            "on_base = consecutive games reaching base (hit/walk/HBP); "
+                            "home_run = consecutive games with a home run; multi_hit = "
+                            "consecutive games with 2+ hits."},
+            "season": {"type": "integer", "description":
+                       "ONLY to rank streaks that happened IN this exact season "
+                       "('longest hitting streak in 2023')."},
+            "season_start": {"type": "integer", "description":
+                             "rank each player's best streak SINCE this season "
+                             "('longest hitting streak since 2000')."},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 25, "default": 15},
+        },
+        "required": ["streak_type"],
+    },
+}
+
+_ASK_SPAN_LB_TOOL = {
+    "name": "query_span_leaderboard",
+    "description": (
+        "RANK the players with the MOST of an event in ANY window of N consecutive "
+        "games — NO specific player named. 'who has the most home runs in a 20-game "
+        "span', 'most hits in any 30 games', 'most RBIs over any 50-game stretch', "
+        "'most home runs in any 162 games all-time'. Returns a ranked list of "
+        "players. If the question NAMES a player (\"Bonds' most HR in 162 games\"), "
+        "use query_span instead. Available events: HR, H, RBI, TB. Available "
+        "windows (games): 10, 20, 30, 50, 162."),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "event": {"type": "string", "enum": ["HR", "H", "RBI", "TB"],
+                      "description": "HR=home runs, H=hits, RBI=RBIs, TB=total bases."},
+            "window_size": {"type": "integer", "enum": [10, 20, 30, 50, 162],
+                            "description": "window length in GAMES (10/20/30/50/162)."},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 25, "default": 15},
+        },
+        "required": ["event", "window_size"],
+    },
+}
+
 _ASK_SYSTEM = (
     "You translate a baseball fan's English question into a single structured "
     "query over a play-by-play database by calling exactly one tool.\n\n"
@@ -7915,7 +7968,13 @@ _ASK_SYSTEM = (
     "for a career-longest streak (the default).\n"
     "Only hitting / on-base / home-run / multi-hit streaks are supported; other "
     "'in a row' conditions (consecutive wins, games with an RBI, scoreless "
-    "innings) -> cannot_answer.\n\n"
+    "innings) -> cannot_answer.\n"
+    "- NO player named -> query_streak_leaderboard (a ranked LIST, not one "
+    "player). 'Who has the longest hitting streak?' -> {streak_type:'hitting'}. "
+    "'Most consecutive games with a hit' -> {streak_type:'hitting'}. 'Longest "
+    "hitting streak since 2000' -> {streak_type:'hitting', season_start:2000}. "
+    "'Longest hitting streak in 2023' -> {streak_type:'hitting', season:2023}. A "
+    "NAMED player -> query_streak; no player -> query_streak_leaderboard.\n\n"
     "SPANS (call query_span) — the MOST of an event in ANY window of N "
     "consecutive games (a rolling-window maximum). Detect the WINDOW SIZE (in "
     "games) and the event. A span is DIFFERENT from a streak (a streak is a run "
@@ -7931,7 +7990,13 @@ _ASK_SYSTEM = (
     "event:'HR', window_size:162}\n"
     "A span REQUIRES a window size in games; if the question gives no number and "
     "none can be inferred ('his best stretch'), call cannot_answer asking for a "
-    "window length rather than guessing one.\n\n"
+    "window length rather than guessing one.\n"
+    "- NO player named -> query_span_leaderboard (a ranked LIST, not one player). "
+    "'Who has the most home runs in a 20-game span?' -> {event:'HR', "
+    "window_size:20}. 'Most hits in any 30 games' -> {event:'H', window_size:30}. "
+    "'Most home runs in any 162 games all-time' -> {event:'HR', window_size:162}. "
+    "A NAMED player -> query_span; no player -> query_span_leaderboard. Leaderboard "
+    "spans cover HR/H/RBI/TB over 10/20/30/50/162-game windows only.\n\n"
     "OUT OF SCOPE (call cannot_answer) — only when the QUERY SHAPE can't do it:\n"
     "- ERA / WHIP / pitcher rate stats and other computed rates we don't support "
     "(we do AVG/OBP/SLG/OPS for hitters).\n"
@@ -7969,6 +8034,7 @@ _ask_log_write_failed = False   # so a broken log surfaces LOUDLY once (not per-
 _ASK_TOOLS = [_ASK_QUERY_TOOL, _ASK_LEADERBOARD_TOOL, _ASK_RATES_TOOL,
               _ASK_SPLITS_TOOL, _ASK_RATE_LB_TOOL, _ASK_MILESTONE_TOOL,
               _ASK_STREAK_TOOL, _ASK_SPAN_TOOL,
+              _ASK_STREAK_LB_TOOL, _ASK_SPAN_LB_TOOL,
               {**_ASK_CANNOT_TOOL, "cache_control": {"type": "ephemeral"}}]
 _ASK_SYSTEM_BLOCKS = [{"type": "text", "text": _ASK_SYSTEM,
                        "cache_control": {"type": "ephemeral"}}]
@@ -8311,6 +8377,7 @@ def ask(request: Request,
         "count":           None,
         "sample":          [],
         "leaders":         None,
+        "leaderboard_title": None,
         "rates":           None,
         "splits":          None,
         "milestone":       None,
@@ -8552,6 +8619,84 @@ def ask(request: Request,
         base["span"] = sp
         if sp:
             base["answer"] = None    # STRUCTURED — the span table IS the answer
+        return _finish()
+
+    # ==== STREAK / SPAN LEADERBOARDS (fast reads from game_unit_leaderboard) ====
+    # Handled here (out of _ANSWERABLE, like the single-player streak/span/milestone
+    # branches) so the situational constraint validator doesn't run on them. The
+    # value equals the single-player card — same precompute source.
+    if tool_name == "query_streak_leaderboard":
+        base["understood_as"] = tool_input
+        st = (tool_input or {}).get("streak_type")
+        if st not in _LB_STREAK_METRIC:
+            base["out_of_scope"] = True
+            base["reason"] = ("A streak leaderboard needs a streak type "
+                              "(hitting, on_base, home_run, or multi_hit).")
+            base["answer"] = base["reason"]
+            return _finish()
+        t0 = time.perf_counter()
+        try:
+            result = _run_streak_leaderboard(
+                streak_type=st, season=tool_input.get("season"),
+                season_start=tool_input.get("season_start"),
+                limit=tool_input.get("limit", 15))
+        except HTTPException as exc:
+            timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
+            base["reason"] = str(exc.detail)
+            base["answer"] = f"Couldn't answer that: {exc.detail}"
+            return _finish()
+        except Exception as exc:  # noqa: BLE001
+            timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
+            log.exception("ask streak-leaderboard failed for %r", q)
+            base["error"] = str(exc); base["reason"] = "query failed"
+            base["answer"] = ("Sorry — something went wrong looking that up. "
+                              "Try rephrasing the question.")
+            return _finish()
+        timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
+        base["source"] = result.get("source")
+        base["game_coverage"] = result.get("game_coverage")
+        base["leaderboard_title"] = result.get("leaderboard_title")
+        base["leaders"] = result.get("leaders", [])
+        base["answer"] = None
+        return _finish()
+
+    if tool_name == "query_span_leaderboard":
+        base["understood_as"] = tool_input
+        ev = (tool_input or {}).get("event")
+        w = (tool_input or {}).get("window_size")
+        if ev is None or w is None:
+            base["out_of_scope"] = True
+            base["reason"] = ("A span leaderboard needs an event (HR/H/RBI/TB) and a "
+                              "window size in games (10/20/30/50/162).")
+            base["answer"] = base["reason"]
+            return _finish()
+        t0 = time.perf_counter()
+        try:
+            result = _run_span_leaderboard(event=ev, window=w,
+                                           limit=tool_input.get("limit", 15))
+        except HTTPException as exc:
+            timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
+            base["reason"] = str(exc.detail)
+            base["answer"] = f"Couldn't answer that: {exc.detail}"
+            return _finish()
+        except Exception as exc:  # noqa: BLE001
+            timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
+            log.exception("ask span-leaderboard failed for %r", q)
+            base["error"] = str(exc); base["reason"] = "query failed"
+            base["answer"] = ("Sorry — something went wrong looking that up. "
+                              "Try rephrasing the question.")
+            return _finish()
+        timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
+        if result.get("declined"):
+            base["declined"] = True
+            base["reason"] = result.get("reason")
+            base["answer"] = result.get("reason")
+            return _finish()
+        base["source"] = result.get("source")
+        base["game_coverage"] = result.get("game_coverage")
+        base["leaderboard_title"] = result.get("leaderboard_title")
+        base["leaders"] = result.get("leaders", [])
+        base["answer"] = None
         return _finish()
 
     # ---- out of scope / no usable tool call -----------------------------
@@ -9657,6 +9802,131 @@ def _lb_resolve_names(pids):
                     {"ids": list(pids)}).fetchall():
                 names.setdefault(pid, nm)
     return names
+
+
+# The honest boundary for every game-unit leaderboard: the precompute ranks only
+# players/seasons that passed the completeness gate (daily game count >= official
+# G) from 1901 on — so pre-1901 streaks (Keeler's 45) and seasons missing games
+# are excluded. Shown as the coverage footnote, like the play-by-play caveats.
+_LB_COVERAGE_NOTE = ("Ranked among players with complete game-by-game records "
+                     "since 1901; pre-1901 streaks and seasons missing games are "
+                     "excluded.")
+_STREAK_LB_LABEL = {
+    "hitting":   "Longest hitting streak",
+    "on_base":   "Longest on-base streak",
+    "home_run":  "Most consecutive games with a home run",
+    "multi_hit": "Longest multi-hit-game streak",
+}
+_SPAN_LB_EVENT_LABEL = {"HR": "home runs", "H": "hits", "RBI": "RBI", "TB": "total bases"}
+
+
+def _run_streak_leaderboard(streak_type, season=None, season_start=None, limit=15):
+    """Top players by longest game-unit streak — a fast READ of the precomputed
+    game_unit_leaderboard (no recompute), so a value equals the single-player card.
+    season set -> streaks that occurred IN that exact season; season_start set ->
+    each player's best streak SINCE that season; neither -> each player's best
+    streak all-time. Returns leaders[] {rank, player_name, mlbam_id, value, season,
+    start/end_date, subtitle} + a title + the 1901 coverage note."""
+    kind = (streak_type or "").strip().lower()
+    metric = _LB_STREAK_METRIC.get(kind)
+    if metric is None:
+        raise HTTPException(status_code=400,
+                            detail=f"'{streak_type}' isn't a streak type I track.")
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    n = max(1, min(int(limit or 15), 25))
+    params: dict = {"m": metric, "n": n}
+    label = _STREAK_LB_LABEL.get(kind, "Longest streak")
+    if season is not None:
+        # streaks that happened IN this exact season (one row per player already)
+        params["yr"] = int(season)
+        sql = ("SELECT player_id, value, season, start_date, end_date "
+               "FROM game_unit_leaderboard "
+               "WHERE metric = :m AND season = :yr "
+               "ORDER BY value DESC, player_id LIMIT :n")
+        title = f"{label} in {int(season)}"
+    else:
+        # each player's BEST streak (optionally only since a season): DISTINCT ON
+        # picks each player's top row, then rank those.
+        inner = "metric = :m"
+        title = label
+        if season_start is not None:
+            inner += " AND season >= :since"
+            params["since"] = int(season_start)
+            title = f"{label} since {int(season_start)}"
+        sql = ("SELECT player_id, value, season, start_date, end_date FROM ("
+               "  SELECT DISTINCT ON (player_id) player_id, value, season, "
+               "         start_date, end_date "
+               "  FROM game_unit_leaderboard WHERE " + inner +
+               "  ORDER BY player_id, value DESC, season DESC"
+               ") t ORDER BY value DESC, player_id LIMIT :n")
+    with connection.get_session() as db:
+        rows = db.execute(_sa_text(sql), params).fetchall()
+    names = _lb_resolve_names([r[0] for r in rows])
+    leaders = [{
+        "rank": i + 1,
+        "player_name": names.get(r[0]) or f"mlbam:{r[0]}",
+        "mlbam_id": r[0],
+        "value": int(r[1]),
+        "season": r[2],
+        "start_date": str(r[3]) if r[3] else None,
+        "end_date": str(r[4]) if r[4] else None,
+        "subtitle": str(r[2]) if r[2] else None,
+    } for i, r in enumerate(rows)]
+    return {"resolved": True, "source": "game_unit_leaderboard",
+            "leaderboard_title": title, "leaders": leaders,
+            "game_coverage": {"complete": False, "note": _LB_COVERAGE_NOTE}}
+
+
+def _run_span_leaderboard(event, window, limit=15):
+    """Top players by the most of an event in any N-game window — a fast READ of the
+    precomputed game_unit_leaderboard (no recompute). Only the precomputed
+    events/windows are available; anything else declines (honest, not a guess)."""
+    ev = (event or "").strip().upper()
+    if ev not in _LB_SPAN_EVENTS:
+        return {"resolved": True, "declined": True, "leaders": [],
+                "game_coverage": {"complete": False},
+                "reason": ("I rank span leaders for "
+                           f"{', '.join(_LB_SPAN_EVENTS)} only — not {event}.")}
+    try:
+        w = int(window)
+    except (TypeError, ValueError):
+        w = None
+    if w not in _LB_SPAN_WINDOWS:
+        return {"resolved": True, "declined": True, "leaders": [],
+                "game_coverage": {"complete": False},
+                "reason": ("I have span leaders for "
+                           f"{', '.join(str(x) for x in _LB_SPAN_WINDOWS)}-game "
+                           "windows only.")}
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    n = max(1, min(int(limit or 15), 25))
+    sql = ("SELECT player_id, value, start_date, end_date FROM game_unit_leaderboard "
+           "WHERE metric = 'span' AND \"window\" = :w AND event = :ev "
+           "ORDER BY value DESC, player_id LIMIT :n")
+    with connection.get_session() as db:
+        rows = db.execute(_sa_text(sql), {"w": w, "ev": ev, "n": n}).fetchall()
+    names = _lb_resolve_names([r[0] for r in rows])
+
+    def _sub(sd, ed):
+        if not sd or not ed:
+            return None
+        sy, ey = str(sd)[:4], str(ed)[:4]
+        return sy if sy == ey else f"{sy}–{ey}"
+
+    leaders = [{
+        "rank": i + 1,
+        "player_name": names.get(r[0]) or f"mlbam:{r[0]}",
+        "mlbam_id": r[0],
+        "value": int(r[1]),
+        "start_date": str(r[2]) if r[2] else None,
+        "end_date": str(r[3]) if r[3] else None,
+        "subtitle": _sub(r[2], r[3]),
+    } for i, r in enumerate(rows)]
+    return {"resolved": True, "source": "game_unit_leaderboard",
+            "leaderboard_title": f"Most {_SPAN_LB_EVENT_LABEL.get(ev, ev)} in any {w} games",
+            "leaders": leaders,
+            "game_coverage": {"complete": False, "note": _LB_COVERAGE_NOTE}}
 
 
 # Player-id batch size for the bulk backfill: each batch bulk-loads its players'

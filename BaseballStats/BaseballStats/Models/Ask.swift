@@ -48,6 +48,10 @@ struct AskResponse: Decodable {
     let stat: String?
     let min_pa: Int?
 
+    // Header for a streak/span leaderboard, e.g. "Longest hitting streak" or
+    // "Most home runs in any 20 games" (the ranked list IS the answer).
+    let leaderboard_title: String?
+
     // For a situational COUNT: which stat-table column to emphasize (the one
     // the question asked about, e.g. "HR" / "SO"). nil = emphasize nothing.
     let highlighted_stat: String?
@@ -94,6 +98,12 @@ struct AskLeader: Decodable, Identifiable {
     let mlbam_id: Int?
     let retro_id: String?
     let count: Int?
+    /// Streak length ("56") or span total ("80") for the game-unit leaderboards.
+    /// nil on count/rate boards, which use `count` / the rate columns instead.
+    let value: Int?
+    /// Per-row detail under the name — a streak's season ("1941") or a span's
+    /// year range ("2001–2002"). nil when there's nothing useful to add.
+    let subtitle: String?
     let PA: Int?
     let AB: Int?
     let H: Int?
