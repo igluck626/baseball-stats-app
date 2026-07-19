@@ -402,14 +402,14 @@ struct AskAnswerView: View {
     @ViewBuilder
     private func twoWaySection(_ tw: AskTwoWay) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            twoWayRole("On the mound", tw.pitching)
+            twoWayRole("On the mound", tw.pitching, stat: tw.stat)
             if tw.pitching != nil && tw.batting != nil { Divider() }
-            twoWayRole("At the plate", tw.batting)
+            twoWayRole("At the plate", tw.batting, stat: tw.stat)
         }
     }
 
     @ViewBuilder
-    private func twoWayRole(_ label: String, _ side: AskTwoWaySide?) -> some View {
+    private func twoWayRole(_ label: String, _ side: AskTwoWaySide?, stat: String?) -> some View {
         if let side = side {
             VStack(alignment: .leading, spacing: 6) {
                 Text(label.uppercased())
@@ -418,6 +418,9 @@ struct AskAnswerView: View {
                 if side.declined == true {
                     Text(side.reason ?? "Not available for this role.")
                         .font(.subheadline).foregroundStyle(.secondary)
+                } else if let c = side.count {
+                    Text("\(c.formatted(.number))\(stat.map { " " + $0 } ?? "")")
+                        .font(.title3.weight(.bold))
                 } else if let m = side.milestone {
                     if m.reached == true {
                         milestoneSection(m)

@@ -7075,12 +7075,38 @@ def _run_pitcher_streak(player, streak_type, season=None, game_type=None):
 _TWO_WAY_STAT_LABEL = {"K": "strikeouts", "BB": "walks", "HR": "home runs"}
 
 
-def _decide_role(event, player, role_hint=None):
-    """Route a (stat, player) milestone/span to 'bat' | 'pit' | 'two_way'. Resolves
-    the player ONLY for ambiguous stats (K/BB/HR); an ambiguous NAME falls back to
-    'bat' so the batting runner surfaces the candidate list as before. `role_hint`
-    (the model's read of 'as a pitcher'/'at the plate') disambiguates a TWO-WAY
-    player to a single side instead of showing both."""
+# Explicit role side named IN THE QUESTION TEXT — distinct from the role the model
+# volunteers on its own. Only a phrase the USER wrote ('as a pitcher', 'at the
+# plate') collapses a two-way player to one side; the model guessing role:'bat'
+# because a position is 'DH' is NOT the user asking for batting, so it must NOT
+# suppress the two-way "both". Same principle as _detect_constraints: verify the
+# question text in code, never trust the model's unsolicited param.
+_ROLE_SIDE_PIT_RE = re.compile(
+    r"\b(as a pitcher|on the mound|from the mound|pitching|as a starter|"
+    r"as a reliever)\b", re.I)
+_ROLE_SIDE_BAT_RE = re.compile(
+    r"\b(as a (?:hitter|batter)|at the plate|with the bat|batting|as a dh)\b", re.I)
+
+
+def _explicit_role_side(question):
+    """'bat' | 'pit' ONLY when the QUESTION explicitly names a side; else None
+    (neither named, or both named -> ambiguous -> None -> show both)."""
+    q = question or ""
+    pit = bool(_ROLE_SIDE_PIT_RE.search(q))
+    bat = bool(_ROLE_SIDE_BAT_RE.search(q))
+    if pit and not bat:
+        return "pit"
+    if bat and not pit:
+        return "bat"
+    return None
+
+
+def _decide_role(event, player, explicit_side=None):
+    """Route a (stat, player) count/milestone/span to 'bat' | 'pit' | 'two_way'.
+    Resolves the player ONLY for ambiguous stats (K/BB/HR); an ambiguous NAME falls
+    back to 'bat' so the batting runner surfaces the candidate list as before.
+    `explicit_side` (from _explicit_role_side — a phrase the USER wrote, never the
+    model's guess) collapses a TWO-WAY player to that one side instead of both."""
     ev = (event or "").strip().upper()
     if ev == "SO":
         ev = "K"
@@ -7088,7 +7114,7 @@ def _decide_role(event, player, role_hint=None):
         return "pit"
     if ev not in _AMBIGUOUS_EVENTS:
         return "bat"
-    hint = (role_hint or "").strip().lower()
+    side = (explicit_side or "").strip().lower()
     cands = [c for c in _resolve_retro_id(player, "bat") if c.get("mlbam_id") is not None]
     if not cands:
         pcands = [c for c in _resolve_retro_id(player, "pit") if c.get("mlbam_id") is not None]
@@ -7097,22 +7123,41 @@ def _decide_role(event, player, role_hint=None):
         return "bat"
     resolved = cands[0]
     base_role = _route_stat_role(ev, resolved, resolved["mlbam_id"])
-    # A role hint only DISAMBIGUATES a two-way player to one side; it never
-    # overrides a clear bat/pit (which would risk routing Judge's Ks to an empty
-    # pitching table).
-    if base_role == "two_way" and hint in ("bat", "pit"):
-        return hint
+    # An EXPLICIT user-named side only DISAMBIGUATES a two-way player to one side;
+    # it never overrides a clear bat/pit (which would risk routing Judge's Ks to an
+    # empty pitching table).
+    if base_role == "two_way" and side in ("bat", "pit"):
+        return side
     return base_role
 
 
+# Situational filters that route a count to the plays store instead of season
+# stats (mirrors GATE 0 in the count dispatch). Used by the two-way count path.
+_SITU_KEYS = ("balls", "strikes", "outs", "inning", "base_state",
+              "pitcher_hand", "batter_side", "home_away")
+
+
+def _count_for_role(params, role):
+    """The count for ONE role — mirrors the query_situational routing (a
+    situational split -> plays store; a plain total -> complete season stats)."""
+    p = dict(params); p["role"] = role
+    if any(p.get(k) is not None for k in _SITU_KEYS):
+        return _run_situational(**p)
+    r = _run_season_total(player=p.get("player"), role=role, event=p.get("event"),
+                          season=p.get("season"), season_start=p.get("season_start"),
+                          season_end=p.get("season_end"), game_type=p.get("game_type"))
+    return r if r is not None else _run_situational(**p)
+
+
 def _compute_two_way(feature, params):
-    """Compute a milestone/span for BOTH roles of a two-way player. Returns
-    {stat, batting:<side>, pitching:<side>} where a side is {<feature>, declined?,
-    reason?} or None (that role errored/ambiguous). feature ∈ 'milestone' | 'span'."""
+    """Compute a count/milestone/span for BOTH roles of a two-way player. Returns
+    {stat, batting:<side>, pitching:<side>} where a side is {<feature or count>,
+    declined?, reason?} or None (that role errored/ambiguous). feature ∈ 'count' |
+    'milestone' | 'span'."""
     ev = (params.get("event") or "").strip().upper()
     stat = _TWO_WAY_STAT_LABEL.get(ev, ev)
 
-    def run(fn):
+    def run(fn, key):
         try:
             r = fn()
         except HTTPException:
@@ -7123,18 +7168,21 @@ def _compute_two_way(feature, params):
         if r.get("declined"):
             side["declined"] = True
             side["reason"] = r.get("reason")
-        side[feature] = r.get(feature)
+        side[key] = r.get(key)
         return side
 
-    if feature == "milestone":
-        bat = run(lambda: _run_milestone(**params))
-        pit = run(lambda: _run_pitcher_milestone(**params))
+    if feature == "count":
+        bat = run(lambda: _count_for_role(params, "bat"), "count")
+        pit = run(lambda: _count_for_role(params, "pit"), "count")
+    elif feature == "milestone":
+        bat = run(lambda: _run_milestone(**params), "milestone")
+        pit = run(lambda: _run_pitcher_milestone(**params), "milestone")
     else:  # span
         sp = {"player": params.get("player"), "event": params.get("event"),
               "window": params.get("window_size"), "season": params.get("season"),
               "game_type": params.get("game_type")}
-        bat = run(lambda: _run_span(**sp))
-        pit = run(lambda: _run_pitcher_span(**sp))
+        bat = run(lambda: _run_span(**sp), "span")
+        pit = run(lambda: _run_pitcher_span(**sp), "span")
     return {"stat": stat, "batting": bat, "pitching": pit}
 
 
@@ -9059,7 +9107,7 @@ def ask(request: Request,
                               "(e.g. 'his 500th home run').")
             base["answer"] = base["reason"]
             return _finish()
-        _role = _decide_role(mk.get("event"), mk.get("player"), tool_input.get("role"))
+        _role = _decide_role(mk.get("event"), mk.get("player"), _explicit_role_side(q))
         t0 = time.perf_counter()
         if _role == "two_way":
             base["two_way"] = _compute_two_way("milestone", mk)
@@ -9189,7 +9237,7 @@ def ask(request: Request,
                               "games (e.g. 'most home runs in any 50-game span').")
             base["answer"] = base["reason"]
             return _finish()
-        _role = _decide_role(pk.get("event"), pk.get("player"), tool_input.get("role"))
+        _role = _decide_role(pk.get("event"), pk.get("player"), _explicit_role_side(q))
         t0 = time.perf_counter()
         if _role == "two_way":
             base["two_way"] = _compute_two_way("span", pk)
@@ -9519,6 +9567,22 @@ def ask(request: Request,
         base["reason"] = "No player identified in the question."
         base["answer"] = base["reason"]
         return _finish()
+
+    # ---- TWO-WAY count: a genuinely two-way player (Ohtani) asked an AMBIGUOUS
+    # stat (K/BB/HR) with NO explicit side in the question returns BOTH counts.
+    # We decide from the question text + the player — NOT the model's volunteered
+    # `role` (which is 'bat' for a DH and would silently answer batting-only). An
+    # explicit side ('as a hitter') collapses to that side; for a non-two-way
+    # player the model's role is left untouched (no change to existing behavior).
+    _side = _explicit_role_side(q)
+    _route = _decide_role(params.get("event"), params.get("player"), _side)
+    if _route == "two_way":
+        base["understood_as"] = params
+        base["source"] = "season_stats"
+        base["two_way"] = _compute_two_way("count", params)
+        return _finish()
+    if _side in ("bat", "pit"):
+        params["role"] = _side   # honor a user-named side over the model's guess
 
     # ---- GATE 0: routing predicate (deterministic, not LLM judgment) ----
     # A SITUATIONAL SPLIT iff any of these is present; else a PLAIN TOTAL.

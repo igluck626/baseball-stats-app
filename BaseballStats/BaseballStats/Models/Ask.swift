@@ -216,6 +216,9 @@ struct AskTwoWaySide: Decodable {
     let milestone: AskMilestone?
     let streak: AskStreak?
     let span: AskSpan?
+    /// A plain count for this role (e.g. Ohtani's 1,197 batting Ks vs his pitching
+    /// Ks) — the two-way COUNT case. nil for milestone/span two-ways.
+    let count: Int?
     let declined: Bool?
     let reason: String?
 }
