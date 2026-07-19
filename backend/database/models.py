@@ -734,3 +734,31 @@ class GameUnitLeaderboard(Base):
     value      = Column(Integer)
     start_date = Column(Date)
     end_date   = Column(Date)
+
+
+class LeaderboardJob(Base):
+    """Durable state for a game_unit_leaderboard backfill run — one row per run.
+
+    Written synchronously at enqueue (status='running') BEFORE the worker thread
+    starts, so /admin/leaderboard-preview shows real state from the very first
+    poll instead of a phase:None startup-window gap while the in-memory global was
+    still unpopulated. The in-process worker updates the row per batch (single
+    worker — the row is the one shared source of truth). It also survives a
+    process restart: a 'running' row whose updated_at has gone stale reveals a
+    crashed run rather than silently vanishing. The compute/math is unchanged;
+    only the state STORAGE moved from an in-memory dict to this row.
+    """
+    __tablename__ = "leaderboard_job"
+
+    id            = Column(Integer, primary_key=True, autoincrement=True)
+    status        = Column(String, nullable=False, default="running")  # running/done/error
+    phase         = Column(String)          # starting/computing/done/error
+    confirm       = Column(Boolean, default=False)  # False = dry run (no table writes)
+    players_done  = Column(Integer, default=0)
+    players_total = Column(Integer, default=0)
+    total_rows    = Column(Integer, default=0)
+    rows_written  = Column(Integer, default=0)  # >0 only for confirm=true
+    summary_json  = Column(Text)            # JSON: top-15 hitting streaks + top-5 HR/162 spans
+    error         = Column(Text)
+    started_at    = Column(DateTime)
+    updated_at    = Column(DateTime)

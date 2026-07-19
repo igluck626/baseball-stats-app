@@ -9665,31 +9665,69 @@ def _lb_resolve_names(pids):
 # bounds peak memory to one batch's games rather than the whole 1901+ table.
 _LB_BATCH_PLAYERS = 500
 
-# Background-job state for the backfill (it is minutes of work — never a blocking
-# request). One job at a time; poll GET /admin/leaderboard-preview for progress +
-# the reviewable top lists.
-_LB_JOB_LOCK = threading.Lock()
-_LB_JOB: dict = {"running": False, "phase": "idle", "confirm": None, "limit": None,
-                 "players_done": 0, "players_total": 0, "total_rows": 0,
-                 "rows_written": 0, "started_at": None, "finished_at": None,
-                 "error": None, "summary": None}
+# Backfill job state lives in a DB row (leaderboard_job), NOT an in-memory global:
+# it's written synchronously at enqueue so the preview shows real state from the
+# very first poll (no phase:None startup-window gap while an in-memory dict was
+# still unpopulated), it's the one source of truth for the single worker, and it
+# survives a process restart (a stale 'running' row reveals a crashed run instead
+# of silently vanishing). A run is treated as dead if its row hasn't been touched
+# in this long — the full run takes ~40s, so 5 min is safe headroom.
+_LB_JOB_STALE = datetime.timedelta(minutes=5)
 
 
-def _backfill_leaderboard_core(confirm, limit, progress=None):
+def _lb_job_start(confirm, limit):
+    """Insert a fresh leaderboard_job row (status=running) and return (job_id, None),
+    or (None, running_id) if a non-stale run is already in flight. Committed BEFORE
+    the worker thread starts, so the very first preview poll sees real state."""
+    now = datetime.datetime.utcnow()
+    with connection.get_session() as db:
+        row = db.execute(_sa_text(
+            "SELECT id, updated_at FROM leaderboard_job WHERE status = 'running' "
+            "ORDER BY id DESC LIMIT 1")).fetchone()
+        if row is not None:
+            updated = row[1]
+            if updated is not None and (now - updated) < _LB_JOB_STALE:
+                return None, row[0]                  # a live run is still going
+            # stale 'running' row (crashed mid-run) -> retire it, then start fresh
+            db.execute(_sa_text(
+                "UPDATE leaderboard_job SET status = 'error', "
+                "error = 'superseded: stale (process likely restarted mid-run)', "
+                "updated_at = :now WHERE id = :id"), {"now": now, "id": row[0]})
+        job_id = db.execute(_sa_text(
+            "INSERT INTO leaderboard_job "
+            "(status, phase, confirm, players_done, players_total, total_rows, "
+            " rows_written, started_at, updated_at) "
+            "VALUES ('running', 'starting', :confirm, 0, 0, 0, 0, :now, :now) "
+            "RETURNING id"), {"confirm": bool(confirm), "now": now}).scalar()
+    return job_id, None
+
+
+def _lb_job_set(job_id, **fields):
+    """UPDATE the job row (always bumps updated_at). Small and infrequent (~once per
+    500-player batch) — the only state write. Column names are code literals, not
+    input, so the dynamic SET is safe."""
+    fields["updated_at"] = datetime.datetime.utcnow()
+    assigns = ", ".join(f"{k} = :{k}" for k in fields)
+    with connection.get_session() as db:
+        db.execute(_sa_text(f"UPDATE leaderboard_job SET {assigns} WHERE id = :id"),
+                   dict(fields, id=job_id))
+
+
+def _backfill_leaderboard_core(confirm, limit, job_id=None):
     """Compute game_unit_leaderboard for every batting_gamelogs player in player-id
     BATCHES: bulk-load each batch's games / game-counts / official G (3 queries),
     compute in memory via _leaderboard_rows (same math as the single-player card),
     then — if confirm — idempotent per-player DELETE+INSERT. Returns a summary with
     the top-15 hitting streaks + top-5 HR/162 spans (built from the compute, so a
-    confirm=false run is a full dry-run review artifact with NO writes). Updates
-    `progress` in place as it goes. Runs in a background thread, not a request."""
+    confirm=false run is a full dry-run review artifact with NO writes). Updates the
+    leaderboard_job row (job_id) per batch. Runs in a background thread, not a request."""
     with connection.get_session() as db:
         pids = [r[0] for r in db.execute(_sa_text(
             "SELECT DISTINCT player_id FROM batting_gamelogs ORDER BY player_id")).fetchall()]
     if limit:
         pids = pids[:limit]
-    if progress is not None:
-        progress["players_total"] = len(pids)
+    if job_id is not None:
+        _lb_job_set(job_id, phase="computing", players_total=len(pids))
 
     total_rows = streak_rows = span_rows = players_done = rows_written = 0
     best_hit: dict = {}     # player_id -> (value, season, start, end)
@@ -9761,10 +9799,9 @@ def _backfill_leaderboard_core(confirm, limit, progress=None):
                             ":start_date, :end_date)"), r)
                         rows_written += 1
                 db.commit()
-        if progress is not None:
-            progress["players_done"] = players_done
-            progress["total_rows"] = total_rows
-            progress["rows_written"] = rows_written
+        if job_id is not None:
+            _lb_job_set(job_id, players_done=players_done, total_rows=total_rows,
+                        rows_written=rows_written)
         log.info("game-unit-leaderboard: %d/%d players (%d rows%s)",
                  players_done, len(pids), total_rows,
                  f", {rows_written} written" if confirm else "")
@@ -9794,33 +9831,15 @@ def _backfill_leaderboard_core(confirm, limit, progress=None):
     }
 
 
-def _lb_worker(confirm, limit):
-    """Background thread body: run the core, stash the summary/phase on _LB_JOB."""
+def _lb_worker(job_id, confirm, limit):
+    """Background thread body: run the core (which updates the row per batch), then
+    write the terminal status + summary to the same row."""
     try:
-        summary = _backfill_leaderboard_core(confirm, limit, progress=_LB_JOB)
-        with _LB_JOB_LOCK:
-            _LB_JOB["summary"] = summary
-            _LB_JOB["phase"] = "done"
-    except Exception as e:  # noqa: BLE001 — surface any failure via the status
+        summary = _backfill_leaderboard_core(confirm, limit, job_id=job_id)
+        _lb_job_set(job_id, status="done", phase="done", summary_json=json.dumps(summary))
+    except Exception as e:  # noqa: BLE001 — surface any failure on the row
         log.exception("game-unit-leaderboard backfill failed")
-        with _LB_JOB_LOCK:
-            _LB_JOB["phase"] = "error"
-            _LB_JOB["error"] = str(e)
-    finally:
-        with _LB_JOB_LOCK:
-            _LB_JOB["running"] = False
-            _LB_JOB["finished_at"] = time.time()
-
-
-def _lb_job_public():
-    """JSON-clean snapshot of _LB_JOB (epochs -> elapsed_seconds)."""
-    with _LB_JOB_LOCK:
-        j = dict(_LB_JOB)
-    started, finished = j.pop("started_at"), j.pop("finished_at")
-    if started is not None:
-        end = finished if finished is not None else time.time()
-        j["elapsed_seconds"] = round(end - started, 1)
-    return j
+        _lb_job_set(job_id, status="error", phase="error", error=str(e))
 
 
 @app.post("/admin/backfill-game-unit-leaderboard")
@@ -9834,35 +9853,38 @@ def backfill_game_unit_leaderboard(
     the proxy). Reuses the verified single-player streak/span math via
     _leaderboard_rows, so a leaderboard value always equals the single-player card.
     Idempotent (per-player replace). confirm=false = dry run (no writes; the
-    reviewable top-15 lands in the job summary). Poll GET /admin/leaderboard-preview
-    for progress + the top lists; when clean, re-run with confirm=true to write."""
+    reviewable top-15 lands in the job summary). The job row is written BEFORE this
+    returns, so the very first preview poll shows status=running (never a
+    phase:None gap). Poll GET /admin/leaderboard-preview for progress + the top
+    lists; when clean, re-run with confirm=true to write."""
     if not connection.db_available():
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
-    with _LB_JOB_LOCK:
-        if _LB_JOB["running"]:
-            raise HTTPException(status_code=409,
-                                detail="a backfill is already running; poll /admin/leaderboard-preview")
-        _LB_JOB.update({"running": True, "phase": "starting", "confirm": confirm,
-                        "limit": limit, "players_done": 0, "players_total": 0,
-                        "total_rows": 0, "rows_written": 0, "started_at": time.time(),
-                        "finished_at": None, "error": None, "summary": None})
-    threading.Thread(target=_lb_worker, args=(confirm, limit), daemon=True).start()
-    return {"started": True, "confirm": confirm, "limit": limit,
-            "note": "running in background — poll GET /admin/leaderboard-preview"}
+    job_id, running_id = _lb_job_start(confirm, limit)
+    if job_id is None:
+        raise HTTPException(status_code=409, detail=(
+            f"a backfill is already running (job {running_id}); "
+            "poll /admin/leaderboard-preview"))
+    threading.Thread(target=_lb_worker, args=(job_id, confirm, limit), daemon=True).start()
+    return {"started": True, "job_id": job_id, "status": "running", "confirm": confirm,
+            "limit": limit, "note": "poll GET /admin/leaderboard-preview"}
 
 
 @app.get("/admin/leaderboard-preview")
 def leaderboard_preview():
-    """FAST review artifact for the backfill: the current background-job status,
-    plus the top hitting streaks / HR-162 spans. Streaks + spans are read straight
-    from game_unit_leaderboard (what's actually written); if the last job was a
-    dry-run (confirm=false, no writes), its computed top lists are in job.summary
-    instead. Use this to audit the top-15 before/after promoting a confirm=true run."""
+    """FAST review artifact for the backfill: the latest job row (status/phase/
+    progress, and — for a completed dry run — the reviewable top-15 in job.summary),
+    plus the top hitting streaks / HR-162 spans read straight from
+    game_unit_leaderboard (what's actually written by a confirm=true run). The job
+    row is DB-backed, so this shows real state from the first poll and survives a
+    restart. Use this to audit the top-15 before/after promoting a confirm=true run."""
     if not connection.db_available():
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
-    job = _lb_job_public()
-
+    now = datetime.datetime.utcnow()
     with connection.get_session() as db:
+        jr = db.execute(_sa_text(
+            "SELECT id, status, phase, confirm, players_done, players_total, "
+            "total_rows, rows_written, summary_json, error, started_at, updated_at "
+            "FROM leaderboard_job ORDER BY id DESC LIMIT 1")).fetchone()
         table_rows, table_players = db.execute(_sa_text(
             "SELECT COUNT(*), COUNT(DISTINCT player_id) FROM game_unit_leaderboard")).fetchone()
         hit = db.execute(_sa_text(
@@ -9877,6 +9899,27 @@ def leaderboard_preview():
 
     def _nm(pid):
         return names.get(pid) or f"mlbam:{pid}"
+
+    job = None
+    if jr is not None:
+        started, updated = jr[10], jr[11]
+        job = {
+            "id": jr[0], "status": jr[1], "phase": jr[2], "confirm": jr[3],
+            "players_done": jr[4], "players_total": jr[5],
+            "total_rows": jr[6], "rows_written": jr[7],
+            "summary": json.loads(jr[8]) if jr[8] else None,
+            "error": jr[9],
+            "started_at": started.isoformat() if started else None,
+            "updated_at": updated.isoformat() if updated else None,
+        }
+        if started is not None:
+            # done/error: elapsed to last update; running: elapsed to now
+            end = updated if (jr[1] != "running" and updated is not None) else now
+            job["elapsed_seconds"] = round((end - started).total_seconds(), 1)
+        if jr[1] == "running" and updated is not None:
+            age = (now - updated).total_seconds()
+            job["seconds_since_update"] = round(age, 1)
+            job["stale"] = age > _LB_JOB_STALE.total_seconds()
 
     return {
         "job": job,
