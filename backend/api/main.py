@@ -5285,7 +5285,7 @@ _fetch_lock = threading.Lock()
 def fetch_plays_db(
     url: str = Query(
         default="https://github.com/igluck626/baseball-stats-app/releases/"
-                "download/plays-data-v2/plays.duckdb"),
+                "download/plays-data-v3/plays.duckdb"),
     confirm: bool = Query(default=False),
     expect_rows: int | None = Query(
         default=None, description="if set, fail unless plays row count matches exactly"),
