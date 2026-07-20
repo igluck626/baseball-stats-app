@@ -9160,11 +9160,10 @@ def ask(request: Request,
 
         if result.get("ambiguous"):
             cands = result.get("candidates", [])
-            names = ", ".join(f'{c["name"]} (id {c["mlbam_id"]})' for c in cands[:5])
             base["ambiguous"] = True
             base["player_resolved"] = {"candidates": cands}
-            base["answer"] = (f'There are multiple players matching "{mk.get("player")}": '
-                              f'{names}. Which did you mean?')
+            base["answer"] = (f'There are multiple players matching "{mk.get("player")}" — '
+                              "tap the one you mean.")
             return _finish()
 
         base["source"] = result.get("source")
@@ -9225,11 +9224,10 @@ def ask(request: Request,
 
         if result.get("ambiguous"):
             cands = result.get("candidates", [])
-            names = ", ".join(f'{c["name"]} (id {c["mlbam_id"]})' for c in cands[:5])
             base["ambiguous"] = True
             base["player_resolved"] = {"candidates": cands}
-            base["answer"] = (f'There are multiple players matching "{sk.get("player")}": '
-                              f'{names}. Which did you mean?')
+            base["answer"] = (f'There are multiple players matching "{sk.get("player")}" — '
+                              "tap the one you mean.")
             return _finish()
 
         base["source"] = result.get("source")
@@ -9293,11 +9291,10 @@ def ask(request: Request,
 
         if result.get("ambiguous"):
             cands = result.get("candidates", [])
-            names = ", ".join(f'{c["name"]} (id {c["mlbam_id"]})' for c in cands[:5])
             base["ambiguous"] = True
             base["player_resolved"] = {"candidates": cands}
-            base["answer"] = (f'There are multiple players matching "{pk.get("player")}": '
-                              f'{names}. Which did you mean?')
+            base["answer"] = (f'There are multiple players matching "{pk.get("player")}" — '
+                              "tap the one you mean.")
             return _finish()
 
         base["source"] = result.get("source")
@@ -9516,11 +9513,10 @@ def ask(request: Request,
 
         if result.get("ambiguous"):
             cands = result.get("candidates", [])
-            names = ", ".join(f'{c["name"]} (id {c["mlbam_id"]})' for c in cands[:5])
             base["ambiguous"] = True
             base["player_resolved"] = {"candidates": cands}
             base["answer"] = (f'There are multiple players matching '
-                              f'"{kw.get("player")}": {names}. Which did you mean?')
+                              f'"{kw.get("player")}" — tap the one you mean.')
             return _finish()
 
         base["source"] = result.get("source")
@@ -9680,11 +9676,10 @@ def ask(request: Request,
     # ambiguous name -> surface candidates instead of guessing
     if result.get("ambiguous"):
         cands = result.get("candidates", [])
-        names = ", ".join(f'{c["name"]} (id {c["mlbam_id"]})' for c in cands[:5])
         base["ambiguous"] = True
         base["player_resolved"] = {"candidates": cands}
         base["answer"] = (f'There are multiple players matching '
-                          f'"{params["player"]}": {names}. Which did you mean?')
+                          f'"{params["player"]}" — tap the one you mean.')
         return _finish()
 
     base["count"]          = result.get("count")
