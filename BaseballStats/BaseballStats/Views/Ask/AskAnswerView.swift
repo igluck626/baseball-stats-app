@@ -371,6 +371,11 @@ struct AskAnswerView: View {
             if let a = s.start_pretty, let b = s.end_pretty {
                 Text("\(a) – \(b)").font(.subheadline).foregroundStyle(.secondary)
             }
+            // Scoreless streak: where it ENDED (the run that broke it), when that's
+            // a different day than the last scoreless inning (Hershiser: 1989).
+            if s.unit == "innings", let ended = s.end_broke_pretty {
+                Text("Streak ended \(ended)").font(.caption).foregroundStyle(.secondary)
+            }
             // The streak LENGTH is the answer and lives in the header; the line
             // below is context (no G — that would recite the length).
             if let pl = s.pitching_line {

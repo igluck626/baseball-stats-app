@@ -203,6 +203,13 @@ struct AskStreak: Decodable {
     let unit: String?
     let outs: Int?
     let ip_notation: String?
+    // For a scoreless-innings streak, the date the run that BROKE it was charged
+    // (Hershiser: April 5, 1989) — the streak's scoreless innings ran through
+    // `end_pretty` (Sept 28, 1988), then the streak ended here. Non-nil only when
+    // it's a different day than the last scoreless inning (so it adds a date);
+    // nil for a same-day ending or an active/unbroken streak (`active == true`).
+    let end_broke_pretty: String?
+    let active: Bool?
 }
 
 /// The most of an event in any N-consecutive-game window (may cross seasons),

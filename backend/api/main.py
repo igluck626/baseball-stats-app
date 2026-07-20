@@ -7064,15 +7064,22 @@ def _longest_pitcher_streak(games, kind):
 
 def _scoreless_walk(rows):
     """Walk half-inning rows (each: GAME_DATE, GAME_ID, INN_CT, BAT_HOME_ID, outs,
-    charged) in chronological order and return the longest run of consecutive
-    SCORELESS outs (best_outs, start_date, end_date). A half-inning in which the
-    pitcher is charged a run resets the run to zero; a run-free half-inning adds
-    all its outs. NO season partitioning — a streak spans seasons (Hershiser's 59
-    ran to the end of 1988 and broke in April 1989). The whole-inning record is
-    best_outs // 3; the exact IP is kept as a secondary detail."""
+    charged) in chronological order and return
+    (best_outs, start_date, end_date, broke_date) for the longest run of
+    consecutive SCORELESS outs. A half-inning in which the pitcher is charged a
+    run resets the run to zero; a run-free half-inning adds all its outs. NO
+    season partitioning — a streak spans seasons (Hershiser's 59 ran to the end
+    of 1988 and broke in April 1989). The whole-inning record is best_outs // 3.
+    `broke_date` is the date of the first run-charged half-inning AFTER the best
+    streak's last scoreless inning — the run that broke it — or None if the
+    streak was never broken (the data ends while it's still alive: an active
+    streak). For the GLOBAL-max run the row right after `end_date` is necessarily
+    that breaking run (a scoreless one would have extended `end_date`), so a
+    forward scan for the first charged half-inning is exact."""
     best = cur = 0
     bstart = bend = cstart = None
-    for gd, _gid, _inn, _bh, outs, charged in rows:
+    bend_idx = -1
+    for i, (gd, _gid, _inn, _bh, outs, charged) in enumerate(rows):
         if charged and charged > 0:
             cur = 0
             cstart = None
@@ -7081,8 +7088,13 @@ def _scoreless_walk(rows):
                 cstart = gd
             cur += int(outs or 0)
             if cur > best:
-                best, bstart, bend = cur, cstart, gd
-    return best, bstart, bend
+                best, bstart, bend, bend_idx = cur, cstart, gd, i
+    broke_date = None
+    for gd, _gid, _inn, _bh, _outs, charged in rows[bend_idx + 1:]:
+        if charged and charged > 0:
+            broke_date = gd
+            break
+    return best, bstart, bend, broke_date
 
 
 # The half-inning reconstruction, shared by the single-pitcher runner and the
@@ -7167,7 +7179,7 @@ def _run_scoreless_streak(player, season=None, game_type=None):
             " GROUP BY GAME_DATE, GAME_ID, INN_CT, BAT_HOME_ID "
             "HAVING outs>0 OR charged>0 "
             "ORDER BY GAME_DATE, GAME_ID, INN_CT, BAT_HOME_ID", params).fetchall()
-        outs, bstart, bend = _scoreless_walk(rows)
+        outs, bstart, bend, broke = _scoreless_walk(rows)
         if outs < 3 or bstart is None:
             return {"resolved": True, "declined": True, "source": "plays",
                     "player": player_block, "streak": None,
@@ -7183,6 +7195,14 @@ def _run_scoreless_streak(player, season=None, game_type=None):
     whole = outs // 3
     ip = _ip_notation(outs)
     span_txt = f"{lo_yr}" if lo_yr == hi_yr else f"{lo_yr}–{hi_yr}"
+
+    # The run that broke the streak — shown as a secondary "ended …" line ONLY
+    # when it lands on a different day than the last scoreless inning (so it adds
+    # a date; Hershiser broke it 6+ months later in 1989). Same-day endings add
+    # nothing; an unbroken/active streak has no breaking run at all.
+    active = broke is None
+    end_broke_pretty = (_pretty_date(broke)
+                        if broke is not None and str(broke) != str(bend) else None)
 
     if tier == "decline":
         return {"resolved": True, "declined": True, "source": "plays",
@@ -7208,6 +7228,9 @@ def _run_scoreless_streak(player, season=None, game_type=None):
         "unit": "innings", "length": whole, "outs": outs, "ip_notation": ip,
         "start_date": str(bstart), "start_pretty": _pretty_date(bstart),
         "end_date": str(bend), "end_pretty": _pretty_date(bend),
+        # where the streak ENDED (the breaking run) vs. the last scoreless inning
+        "end_broke_date": str(broke) if broke is not None else None,
+        "end_broke_pretty": end_broke_pretty, "active": active,
         "season": lo_yr, "covered_span": [lo_yr, hi_yr],
         "restricted": False, "excluded_seasons": [],
         "line": None, "pitching_line": None,
@@ -9595,6 +9618,14 @@ def ask(request: Request,
         timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
         base["source"] = result.get("source")
         base["game_coverage"] = result.get("game_coverage")
+        if result.get("declined"):
+            # e.g. a scoreless leaderboard scoped to a too-thin era — surface the
+            # coverage reason instead of an empty ranked list.
+            base["declined"] = True
+            base["leaderboard_title"] = result.get("leaderboard_title")
+            base["reason"] = result.get("reason")
+            base["answer"] = result.get("reason")
+            return _finish()
         base["leaderboard_title"] = result.get("leaderboard_title")
         base["leaders"] = result.get("leaders", [])
         base["answer"] = None
@@ -10828,6 +10859,35 @@ def _run_streak_leaderboard(streak_type, season=None, season_start=None, limit=1
                             detail=f"'{streak_type}' isn't a streak type I track.")
     if not connection.db_available():
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+
+    # A scoreless leaderboard scoped to a season below the coverage floor has
+    # NOTHING to rank — the backfill's gate excludes every sub-95% streak — so an
+    # empty list would read as broken. DECLINE with the same coverage reason as
+    # the single-pitcher card, distinguishing "the era is too thin to rank" from
+    # "this era is fine but nobody qualified." (Coverage lives in the plays store,
+    # not Postgres; if the store is down we fall through to the normal read.)
+    if metric == "scoreless_streak" and season is not None:
+        cov_tier, cov_pct, cov_low = "exact", None, []
+        try:
+            _cur = _plays_cursor()
+            try:
+                cov_tier, cov_pct, cov_low = _scoreless_coverage(_cur, int(season), int(season))
+            finally:
+                _cur.close()
+        except Exception:  # noqa: BLE001 - store unavailable; don't block the read
+            cov_tier = "exact"
+        if cov_tier == "decline":
+            return {"resolved": True, "declined": True,
+                    "source": "game_unit_leaderboard", "leaders": [],
+                    "leaderboard_title": f"{label} in {int(season)}",
+                    "game_coverage": {"complete": False, "min_pct": cov_pct,
+                                      "low_seasons": cov_low},
+                    "reason": (f"Play-by-play for {int(season)} is only "
+                               f"{round(cov_pct)}% complete — too many missing games "
+                               "to rank scoreless-innings streaks, since one "
+                               "unrecorded game could hide a run. I can't give a "
+                               "reliable ranking for this era.")}
+
     n = max(1, min(int(limit or 15), 25))
     params: dict = {"m": metric, "n": n, "role": role}
     if season is not None:
