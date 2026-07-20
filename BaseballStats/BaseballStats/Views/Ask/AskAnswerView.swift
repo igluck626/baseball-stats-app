@@ -355,7 +355,17 @@ struct AskAnswerView: View {
     @ViewBuilder
     private func streakSection(_ s: AskStreak) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let len = s.length, let label = s.type_label {
+            if s.unit == "innings", let len = s.length {
+                // Inning-unit streak (Hershiser's 59): the WHOLE-inning count is
+                // the headline, never the IP-notation decimal.
+                Text("\(len) consecutive scoreless innings")
+                    .font(.title3.weight(.bold))
+                // Show the exact figure only when it isn't a whole number of
+                // innings (a streak that ended mid-inning, e.g. "58.2").
+                if let ip = s.ip_notation, ip != "\(len).0" {
+                    Text("\(ip) IP exactly").font(.caption).foregroundStyle(.secondary)
+                }
+            } else if let len = s.length, let label = s.type_label {
                 Text("\(len)-game \(label)").font(.title3.weight(.bold))
             }
             if let a = s.start_pretty, let b = s.end_pretty {

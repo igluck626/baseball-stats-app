@@ -17,6 +17,7 @@ import uvicorn
 from dotenv import load_dotenv
 from fastapi import Body, FastAPI, Header, HTTPException, Query, Request
 from sqlalchemy import (
+    bindparam as _sa_bindparam,
     func as _sa_func,
     inspect as _sa_inspect,
     or_ as _sa_or,
@@ -5670,6 +5671,14 @@ _PLAYS_FLOOR       = 1910    # play-by-play data floor (nothing before this)
 _COVERAGE_MIN_PCT  = 99.0    # game-coverage: caveat when a queried season is below this
 _COUNT_DECLINE_PCT = 90.0    # count-data: DECLINE (count=null) below this
 _COUNT_CLEAN_PCT   = 99.0    # count-data: clean >= this; caveat in the band between
+# Scoreless-innings streak gate. A scoreless streak is a run-SENSITIVE
+# reconstruction — one missing game in the streak's window could hide a run and
+# inflate the claim — so it's gated harder than an aggregate count. Tiers on the
+# MINIMUM season coverage across the reported streak's own span:
+#   >= _COVERAGE_MIN_PCT (99%)         -> exact, no caveat   (Kershaw '14=100, Drysdale '68=99.1)
+#   [95%, 99%)                          -> answer WITH caveat (Johnson '13=98.9, Coombs '10=98.3)
+#   <  _SCORELESS_DECLINE_PCT (95%)     -> DECLINE            (WWII years, e.g. 1944=75.8, 1945=84.2)
+_SCORELESS_DECLINE_PCT = 95.0
 # Leaderboards: incomplete coverage distorts the RANKING (not just one count),
 # and the gaps are era-correlated. If a queried span is less than this fraction
 # of games covered (events-weighted), the ranking is too unreliable to present
@@ -6649,11 +6658,13 @@ _PITCHER_EVENT_PLURAL = {
 _PITCHER_STREAK_TYPE_LABEL = {
     "win": "win streak", "quality_start": "quality-start streak",
     "high_k": "10-strikeout-game streak",
+    # inning-unit, play-by-play-derived; runner is _run_scoreless_streak. Listed
+    # here so the /ask dispatch recognizes it as a PITCHER streak (not a batter's).
+    "scoreless_innings": "scoreless-innings streak",
 }
-# streak types that are INNING/PA-unit, not game-unit — declined here, deferred
-# to the play-by-play slice.
-_PITCHER_STREAK_DEFERRED = {"scoreless_innings", "scoreless", "consecutive_batters",
-                            "perfect", "no_hit"}
+# streak types that are PA/game-unit and NOT yet supported — declined in
+# _run_pitcher_streak. (scoreless_innings graduated to the play-by-play runner.)
+_PITCHER_STREAK_DEFERRED = {"consecutive_batters", "perfect", "no_hit"}
 _HIGH_K_THRESHOLD = 10   # "high_k" = games with >= this many strikeouts
 
 
@@ -7051,11 +7062,167 @@ def _longest_pitcher_streak(games, kind):
     return best_len, best_start, best_end, best_games
 
 
+def _scoreless_walk(rows):
+    """Walk half-inning rows (each: GAME_DATE, GAME_ID, INN_CT, BAT_HOME_ID, outs,
+    charged) in chronological order and return the longest run of consecutive
+    SCORELESS outs (best_outs, start_date, end_date). A half-inning in which the
+    pitcher is charged a run resets the run to zero; a run-free half-inning adds
+    all its outs. NO season partitioning — a streak spans seasons (Hershiser's 59
+    ran to the end of 1988 and broke in April 1989). The whole-inning record is
+    best_outs // 3; the exact IP is kept as a secondary detail."""
+    best = cur = 0
+    bstart = bend = cstart = None
+    for gd, _gid, _inn, _bh, outs, charged in rows:
+        if charged and charged > 0:
+            cur = 0
+            cstart = None
+        else:
+            if cur == 0:
+                cstart = gd
+            cur += int(outs or 0)
+            if cur > best:
+                best, bstart, bend = cur, cstart, gd
+    return best, bstart, bend
+
+
+# The half-inning reconstruction, shared by the single-pitcher runner and the
+# leaderboard batch. Runs are charged to the RESPONSIBLE pitcher (inherited
+# runners via RUN{n}_RESP_PIT_ID; the batter's own play — a HR — via PIT_ID), so
+# a reliever who lets an inherited runner score breaks the STARTER's streak, and
+# the reliever inherits a clean slate. DEST_ID >= 4 means the runner scored.
+_SCORELESS_SELECT = (
+    "SUM(CASE WHEN PIT_ID=? THEN COALESCE(EVENT_OUTS_CT,0) ELSE 0 END) AS outs, "
+    "SUM( (CASE WHEN BAT_DEST_ID>=4  AND PIT_ID=? THEN 1 ELSE 0 END) "
+    "   + (CASE WHEN RUN1_DEST_ID>=4 AND RUN1_RESP_PIT_ID=? THEN 1 ELSE 0 END) "
+    "   + (CASE WHEN RUN2_DEST_ID>=4 AND RUN2_RESP_PIT_ID=? THEN 1 ELSE 0 END) "
+    "   + (CASE WHEN RUN3_DEST_ID>=4 AND RUN3_RESP_PIT_ID=? THEN 1 ELSE 0 END) ) AS charged")
+_SCORELESS_WHERE_PID = (
+    "( PIT_ID=? OR (RUN1_DEST_ID>=4 AND RUN1_RESP_PIT_ID=?) "
+    "OR (RUN2_DEST_ID>=4 AND RUN2_RESP_PIT_ID=?) OR (RUN3_DEST_ID>=4 AND RUN3_RESP_PIT_ID=?) )")
+
+
+def _scoreless_coverage(cur, lo_yr, hi_yr):
+    """Coverage tier for a scoreless streak spanning [lo_yr, hi_yr]:
+      ('decline', min_pct, low_seasons) below _SCORELESS_DECLINE_PCT,
+      ('caveat',  min_pct, low_seasons) in [95%, 99%),
+      ('exact',   min_pct, [])          at/above 99%.
+    Degrades to ('exact', None, []) if the coverage table is absent."""
+    try:
+        row = cur.execute(
+            "SELECT min(coverage_pct), "
+            "list(season) FILTER (WHERE coverage_pct < ?) "
+            "FROM coverage WHERE season BETWEEN ? AND ?",
+            [_COVERAGE_MIN_PCT, lo_yr, hi_yr]).fetchone()
+    except Exception:  # noqa: BLE001 - coverage table absent on the old store
+        return "exact", None, []
+    min_pct, low_seasons = row
+    low_seasons = sorted(low_seasons) if low_seasons else []
+    if min_pct is None:
+        return "exact", None, []
+    if min_pct < _SCORELESS_DECLINE_PCT:
+        return "decline", min_pct, low_seasons
+    if low_seasons:
+        return "caveat", min_pct, low_seasons
+    return "exact", min_pct, []
+
+
+def _run_scoreless_streak(player, season=None, game_type=None):
+    """Longest run of CONSECUTIVE SCORELESS INNINGS a pitcher threw — Hershiser's
+    59 — reconstructed from the v3 play-by-play store. Regular-season only, and
+    the streak SPANS seasons (no per-season partitioning). Runs are charged to the
+    responsible pitcher via RUN{n}_RESP_PIT_ID, so inherited runners break the
+    right pitcher's streak. The headline is WHOLE innings (Elias convention, outs
+    // 3); the exact IP is a secondary detail. Coverage-gated: exact at 100%,
+    caveat in the 95–99% band, DECLINE below 95% (see _scoreless_coverage)."""
+    gt = (game_type or "R").strip().upper()
+    if gt in ("P", "ALL"):
+        return {"resolved": True, "declined": True, "source": "plays",
+                "player": {"query": player}, "streak": None,
+                "game_coverage": {"complete": False},
+                "reason": ("Scoreless-innings streaks are reconstructed from "
+                           "regular-season play-by-play; postseason isn't included.")}
+
+    cands = [c for c in _resolve_retro_id(player, "pit")
+             if c.get("mlbam_id") is not None and c.get("retro_id")]
+    if not cands:
+        raise HTTPException(status_code=404, detail=f"No pitcher matching '{player}'")
+    if len({c["retro_id"] for c in cands}) > 1:
+        return {"resolved": False, "ambiguous": True, "query": player, "candidates": cands[:25]}
+    resolved = cands[0]
+    pid = resolved["retro_id"]
+    player_block = {"query": player, "name": resolved["name"],
+                    "mlbam_id": resolved["mlbam_id"], "role": "pit"}
+
+    cur = _plays_cursor()
+    try:
+        where = "GAME_TYPE='R'"
+        params = [pid, pid, pid, pid, pid]          # the 5 SELECT placeholders
+        if season is not None:
+            where += " AND SEASON=?"
+            params.append(int(season))
+        params += [pid, pid, pid, pid]              # the 4 WHERE placeholders
+        rows = cur.execute(
+            "SELECT GAME_DATE, GAME_ID, INN_CT, BAT_HOME_ID, " + _SCORELESS_SELECT +
+            f" FROM plays WHERE {where} AND " + _SCORELESS_WHERE_PID +
+            " GROUP BY GAME_DATE, GAME_ID, INN_CT, BAT_HOME_ID "
+            "HAVING outs>0 OR charged>0 "
+            "ORDER BY GAME_DATE, GAME_ID, INN_CT, BAT_HOME_ID", params).fetchall()
+        outs, bstart, bend = _scoreless_walk(rows)
+        if outs < 3 or bstart is None:
+            return {"resolved": True, "declined": True, "source": "plays",
+                    "player": player_block, "streak": None,
+                    "game_coverage": {"complete": False},
+                    "reason": (f"I don't have a play-by-play pitching record for "
+                               f"{resolved['name']}" + (f" in {season}" if season else "")
+                               + " to reconstruct a scoreless-innings streak from.")}
+        lo_yr, hi_yr = int(str(bstart)[:4]), int(str(bend)[:4])
+        tier, min_pct, low_seasons = _scoreless_coverage(cur, lo_yr, hi_yr)
+    finally:
+        cur.close()
+
+    whole = outs // 3
+    ip = _ip_notation(outs)
+    span_txt = f"{lo_yr}" if lo_yr == hi_yr else f"{lo_yr}–{hi_yr}"
+
+    if tier == "decline":
+        return {"resolved": True, "declined": True, "source": "plays",
+                "player": player_block, "streak": None,
+                "game_coverage": {"complete": False, "min_pct": min_pct,
+                                  "low_seasons": low_seasons},
+                "reason": (f"Play-by-play for {span_txt} is only {round(min_pct)}% "
+                           "complete — too many missing games to trust a scoreless-"
+                           "innings streak, since one unrecorded game could hide a "
+                           "run. I can't give a reliable number for this era.")}
+
+    if tier == "caveat":
+        note = (f"Play-by-play is {round(min_pct, 1)}% complete for {span_txt}; a "
+                "handful of games from this era are missing, so treat this as very "
+                "likely but not certain.")
+        game_coverage = {"complete": False, "min_pct": min_pct,
+                         "low_seasons": low_seasons, "note": note}
+    else:
+        game_coverage = {"complete": True}
+
+    streak = {
+        "type": "scoreless_innings", "type_label": "scoreless-innings streak",
+        "unit": "innings", "length": whole, "outs": outs, "ip_notation": ip,
+        "start_date": str(bstart), "start_pretty": _pretty_date(bstart),
+        "end_date": str(bend), "end_pretty": _pretty_date(bend),
+        "season": lo_yr, "covered_span": [lo_yr, hi_yr],
+        "restricted": False, "excluded_seasons": [],
+        "line": None, "pitching_line": None,
+    }
+    return {"resolved": True, "source": "plays", "player": player_block,
+            "streak": streak, "game_coverage": game_coverage}
+
+
 def _run_pitcher_streak(player, streak_type, season=None, game_type=None):
     """Longest game-unit pitcher streak (win / quality_start / high_k), within a
-    season, over complete seasons only. Inning-unit streaks (scoreless innings) are
-    DECLINED here — they belong to the play-by-play slice."""
+    season, over complete seasons only. Scoreless-INNINGS streaks are inning-unit
+    and season-spanning — routed to _run_scoreless_streak (play-by-play store)."""
     kind = (streak_type or "").strip().lower()
+    if kind in ("scoreless_innings", "scoreless"):
+        return _run_scoreless_streak(player, season=season, game_type=game_type)
     if kind in _PITCHER_STREAK_DEFERRED:
         return {"resolved": True, "declined": True, "source": "daily",
                 "player": {"query": player}, "streak": None,
@@ -7289,7 +7456,10 @@ _LB_SPAN_WINDOWS = (10, 20, 30, 50, 162)
 _LB_SPAN_EVENTS = ("HR", "H", "RBI", "TB")
 # Pitching leaderboard metrics/events (role='pit' rows, same table).
 _LB_PITCHER_STREAK_METRIC = {"win": "win_streak", "quality_start": "qs_streak",
-                             "high_k": "high_k_streak"}
+                             "high_k": "high_k_streak",
+                             # plays-derived, precomputed by the scoreless backfill
+                             # (NOT by _pitcher_leaderboard_rows, which is gamelog-based)
+                             "scoreless_innings": "scoreless_streak"}
 _LB_PITCHER_SPAN_EVENTS = ("K", "W", "SV")
 
 
@@ -7343,6 +7513,8 @@ def _pitcher_leaderboard_rows(mlbam, games, complete):
         if not gs:
             continue
         for kind, metric in _LB_PITCHER_STREAK_METRIC.items():
+            if metric == "scoreless_streak":
+                continue   # plays-derived + season-spanning; own backfill, not here
             length, start, end, _run = _longest_pitcher_streak(gs, kind)
             if length >= 1:
                 rows.append({"player_id": mlbam, "role": "pit", "metric": metric, "window": 0,
@@ -8426,10 +8598,10 @@ _ASK_STREAK_TOOL = {
         "streaks: 'longest hitting streak', 'longest on-base streak', 'most "
         "consecutive games with a home run', 'longest multi-hit-game streak'. "
         "PITCHER streaks (game-unit): 'longest win streak', 'most consecutive "
-        "quality starts', 'consecutive 10-strikeout games'. Returns the length + "
-        "start/end dates. One player + a streak type. A scoreless-INNINGS streak is "
-        "NOT game-unit — use streak_type='scoreless_innings' and it will explain "
-        "that it needs play-by-play data."),
+        "quality starts', 'consecutive 10-strikeout games', 'longest scoreless-"
+        "innings streak' (Hershiser's 59). Returns the length + start/end dates. "
+        "One player + a streak type. A scoreless-INNINGS streak is inning-unit "
+        "(streak_type='scoreless_innings'), reconstructed from play-by-play."),
     "input_schema": {
         "type": "object",
         "properties": {
@@ -8442,7 +8614,8 @@ _ASK_STREAK_TOOL = {
                             "games with 2+ hits. PITCHER: win = consecutive wins; "
                             "quality_start = consecutive quality starts (6+ IP, <=3 ER); "
                             "high_k = consecutive 10+ strikeout games; scoreless_innings = "
-                            "a scoreless-innings streak (inning-unit; will decline)."},
+                            "longest run of consecutive scoreless innings (inning-unit, "
+                            "from play-by-play; Hershiser's 59)."},
             "season": {"type": "integer", "description":
                        "ONLY for a single-season streak ('his 2023 hitting streak', "
                        "'longest streak in 2019'); omit for a career-longest streak."},
@@ -8712,14 +8885,14 @@ _ASK_SYSTEM = (
     "- PITCHER streaks (game-unit): 'longest win streak' -> {player:'X', "
     "streak_type:'win'}; 'most consecutive quality starts' -> "
     "{streak_type:'quality_start'}; 'consecutive 10-strikeout games' -> "
-    "{streak_type:'high_k'}. A SCORELESS-INNINGS streak (Hershiser's 59) is "
-    "inning-unit -> {streak_type:'scoreless_innings'} (it will explain it needs "
-    "play-by-play data). Also for a two-way stat with 'as a pitcher'/'on the mound' "
+    "{streak_type:'high_k'}. A SCORELESS-INNINGS streak (Hershiser's 59, "
+    "Kershaw's 41) is inning-unit -> {streak_type:'scoreless_innings'} (from "
+    "play-by-play). Also for a two-way stat with 'as a pitcher'/'on the mound' "
     "phrasing, the CODE routes by the player — you still pick the tool.\n"
     "Only hitting / on-base / home-run / multi-hit (batter) and win / quality_start "
-    "/ high_k (pitcher) streaks are supported; other "
-    "'in a row' conditions (consecutive wins, games with an RBI, scoreless "
-    "innings) -> cannot_answer.\n"
+    "/ high_k / scoreless_innings (pitcher) streaks are supported; other "
+    "'in a row' conditions (games with an RBI, consecutive batters retired) "
+    "-> cannot_answer.\n"
     "- NO player named -> query_streak_leaderboard (a ranked LIST, not one "
     "player). 'Who has the longest hitting streak?' -> {streak_type:'hitting'}. "
     "'Most consecutive games with a hit' -> {streak_type:'hitting'}. 'Longest "
@@ -10628,7 +10801,11 @@ _PITCHER_STREAK_LB_LABEL = {
     "win":           "Longest win streak",
     "quality_start": "Most consecutive quality starts",
     "high_k":        "Longest 10-strikeout-game streak",
+    "scoreless_innings": "Longest scoreless-innings streak",
 }
+_SCORELESS_LB_NOTE = ("Consecutive scoreless innings, reconstructed from "
+                      "regular-season play-by-play (1910–present); streaks resting "
+                      "on eras with too many missing games are excluded.")
 _PITCHER_SPAN_LB_EVENT_LABEL = {"K": "strikeouts", "W": "wins", "SV": "saves"}
 
 
@@ -10689,9 +10866,10 @@ def _run_streak_leaderboard(streak_type, season=None, season_start=None, limit=1
         "end_date": str(r[4]) if r[4] else None,
         "subtitle": str(r[2]) if r[2] else None,
     } for i, r in enumerate(rows)]
+    lb_note = _SCORELESS_LB_NOTE if metric == "scoreless_streak" else _LB_COVERAGE_NOTE
     return {"resolved": True, "source": "game_unit_leaderboard",
             "leaderboard_title": title, "leaders": leaders,
-            "game_coverage": {"complete": False, "note": _LB_COVERAGE_NOTE}}
+            "game_coverage": {"complete": False, "note": lb_note}}
 
 
 def _run_span_leaderboard(event, window, limit=15, role="bat"):
@@ -11062,6 +11240,156 @@ def leaderboard_preview():
             {"rank": i + 1, "name": _nm(r[0]), "mlbam_id": r[0], "value": r[1],
              "start_date": str(r[2]), "end_date": str(r[3])}
             for i, r in enumerate(spans)],
+    }
+
+
+def _scoreless_leaderboard_ranked(cur):
+    """Every pitcher's longest scoreless-innings streak, ranked, from the v3 plays
+    store in ONE pass. Contributions are UNPIVOTED to the RESPONSIBLE pitcher:
+    outs -> the pitcher on the mound (PIT_ID); a scored run -> RUN{n}_RESP_PIT_ID
+    (inherited runner) or PIT_ID (batter's own play). Grouped to (pitcher, game,
+    inning, half) and walked per pitcher exactly like the single-pitcher runner,
+    so a leaderboard value equals that pitcher's card. Streaks whose span sits in
+    an era below _SCORELESS_DECLINE_PCT coverage are EXCLUDED (a missing game
+    could inflate them). Returns (ranked, excluded_count) where ranked is a list
+    of dicts sorted by whole innings desc."""
+    contrib = (
+        "SELECT PIT_ID AS pid, GAME_DATE, GAME_ID, INN_CT, BAT_HOME_ID, "
+        "COALESCE(EVENT_OUTS_CT,0) AS outs, 0 AS charged "
+        "FROM plays WHERE GAME_TYPE='R' AND PIT_ID IS NOT NULL "
+        "UNION ALL SELECT PIT_ID, GAME_DATE, GAME_ID, INN_CT, BAT_HOME_ID, 0, 1 "
+        "FROM plays WHERE GAME_TYPE='R' AND BAT_DEST_ID>=4 AND PIT_ID IS NOT NULL "
+        "UNION ALL SELECT RUN1_RESP_PIT_ID, GAME_DATE, GAME_ID, INN_CT, BAT_HOME_ID, 0, 1 "
+        "FROM plays WHERE GAME_TYPE='R' AND RUN1_DEST_ID>=4 AND RUN1_RESP_PIT_ID IS NOT NULL "
+        "UNION ALL SELECT RUN2_RESP_PIT_ID, GAME_DATE, GAME_ID, INN_CT, BAT_HOME_ID, 0, 1 "
+        "FROM plays WHERE GAME_TYPE='R' AND RUN2_DEST_ID>=4 AND RUN2_RESP_PIT_ID IS NOT NULL "
+        "UNION ALL SELECT RUN3_RESP_PIT_ID, GAME_DATE, GAME_ID, INN_CT, BAT_HOME_ID, 0, 1 "
+        "FROM plays WHERE GAME_TYPE='R' AND RUN3_DEST_ID>=4 AND RUN3_RESP_PIT_ID IS NOT NULL")
+    rows = cur.execute(
+        "WITH contrib AS (" + contrib + ") "
+        "SELECT pid, GAME_DATE, GAME_ID, INN_CT, BAT_HOME_ID, SUM(outs), SUM(charged) "
+        "FROM contrib GROUP BY pid, GAME_DATE, GAME_ID, INN_CT, BAT_HOME_ID "
+        "HAVING SUM(outs)>0 OR SUM(charged)>0 "
+        "ORDER BY pid, GAME_DATE, GAME_ID, INN_CT, BAT_HOME_ID").fetchall()
+    try:
+        coverage = dict(cur.execute("SELECT season, coverage_pct FROM coverage").fetchall())
+    except Exception:  # noqa: BLE001
+        coverage = {}
+
+    # walk each pitcher's contiguous block (rows are ORDER BY pid, then chrono)
+    best: dict = {}
+    cur_pid = None
+    bo = co = 0
+    bstart = bend = cstart = None
+    def _flush(pid):
+        if pid is not None and bo >= 3:
+            best[pid] = (bo, bstart, bend)
+    for pid, gd, _gid, _inn, _bh, outs, charged in rows:
+        if pid != cur_pid:
+            _flush(cur_pid)
+            cur_pid, bo, co, bstart, bend, cstart = pid, 0, 0, None, None, None
+        if charged and charged > 0:
+            co = 0; cstart = None
+        else:
+            if co == 0:
+                cstart = gd
+            co += int(outs or 0)
+            if co > bo:
+                bo, bstart, bend = co, cstart, gd
+    _flush(cur_pid)
+
+    ranked, excluded = [], 0
+    for pid, (outs, s, e) in best.items():
+        lo_yr, hi_yr = int(str(s)[:4]), int(str(e)[:4])
+        min_pct = min([coverage.get(y, 100.0) for y in range(lo_yr, hi_yr + 1)] or [100.0])
+        if min_pct < _SCORELESS_DECLINE_PCT:
+            excluded += 1
+            continue
+        ranked.append({"retro_id": pid, "whole": outs // 3, "outs": outs,
+                       "start_date": str(s), "end_date": str(e),
+                       "season": lo_yr, "min_pct": round(min_pct, 1)})
+    ranked.sort(key=lambda r: (-r["whole"], r["retro_id"]))
+    return ranked, excluded
+
+
+# The documented SABR ">50 scoreless innings" club — the build-time correctness
+# gate. A confirm run that doesn't reproduce these to the inning is a red flag.
+_SCORELESS_SABR_EXPECT = {"herso001": 59, "drysd101": 58, "johnw102": 55, "coomj101": 53}
+
+
+@app.post("/admin/backfill-scoreless-leaderboard")
+def backfill_scoreless_leaderboard(
+    confirm: bool = Query(False, description="true = write game_unit_leaderboard rows; false = dry run"),
+    top_n: int = Query(100, ge=10, le=500, description="how many top pitchers to store"),
+):
+    """Precompute the scoreless-innings-streak leaderboard from the v3 plays store
+    (one ~3s aggregate pass over all pitchers; see _scoreless_leaderboard_ranked)
+    and store the top N into game_unit_leaderboard (metric='scoreless_streak',
+    role='pit'), the same table the read path serves from. Idempotent (replaces
+    the scoreless rows). VERIFIES against the SABR >50 club before writing; a
+    mismatch aborts a confirm run. confirm=false = dry run (compute + SABR check +
+    top-20, no writes)."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    t0 = time.perf_counter()
+    cur = _plays_cursor()
+    try:
+        ranked, excluded = _scoreless_leaderboard_ranked(cur)
+    finally:
+        cur.close()
+    compute_ms = round((time.perf_counter() - t0) * 1000)
+
+    # SABR verification — reproduce the >50 club to the inning.
+    got = {r["retro_id"]: r["whole"] for r in ranked}
+    sabr = {rid: {"expected": exp, "got": got.get(rid)} for rid, exp in _SCORELESS_SABR_EXPECT.items()}
+    sabr_ok = all(v["got"] == v["expected"] for v in sabr.values())
+
+    top = ranked[:int(top_n)]
+    # map retro_id -> (mlbam player_id, name); rows without a mapping can't be stored
+    retro_ids = [r["retro_id"] for r in top]
+    idmap: dict = {}
+    if retro_ids:
+        with connection.get_session() as db:
+            for rid, plid, nm in db.execute(_sa_text(
+                "SELECT retro_id, player_id, name FROM pitchers WHERE retro_id IN :ids"
+            ).bindparams(_sa_bindparam("ids", expanding=True)), {"ids": retro_ids}).fetchall():
+                idmap[rid] = (plid, nm)
+    unmapped = [r["retro_id"] for r in top if r["retro_id"] not in idmap]
+
+    written = 0
+    if confirm:
+        if not sabr_ok:
+            raise HTTPException(status_code=409, detail=(
+                "SABR verification failed — refusing to write a leaderboard that "
+                f"doesn't reproduce the >50 club: {sabr}"))
+        with connection.get_session() as db:
+            db.execute(_sa_text(
+                "DELETE FROM game_unit_leaderboard WHERE metric = 'scoreless_streak'"))
+            for r in top:
+                m = idmap.get(r["retro_id"])
+                if not m:
+                    continue
+                db.execute(_sa_text(
+                    "INSERT INTO game_unit_leaderboard "
+                    '(player_id, role, metric, "window", season, event, value, start_date, end_date) '
+                    "VALUES (:pid, 'pit', 'scoreless_streak', 0, :season, '', :value, "
+                    ":start_date, :end_date)"),
+                    {"pid": m[0], "season": r["season"], "value": r["whole"],
+                     "start_date": r["start_date"], "end_date": r["end_date"]})
+                written += 1
+            db.commit()
+
+    return {
+        "confirm": confirm, "compute_ms": compute_ms,
+        "pitchers_ranked": len(ranked), "excluded_low_coverage": excluded,
+        "sabr_ok": sabr_ok, "sabr": sabr,
+        "unmapped_retro_ids": unmapped, "rows_written": written,
+        "top_20": [
+            {"rank": i + 1, "name": (idmap.get(r["retro_id"], (None, r["retro_id"]))[1]),
+             "retro_id": r["retro_id"], "innings": r["whole"], "outs": r["outs"],
+             "ip": _ip_notation(r["outs"]), "start": r["start_date"],
+             "end": r["end_date"], "coverage_min_pct": r["min_pct"]}
+            for i, r in enumerate(ranked[:20])],
     }
 
 

@@ -195,6 +195,14 @@ struct AskStreak: Decodable {
     // For a PITCHER streak (quality starts, wins), the pitching line over the
     // streak. `line` (batting) is nil in that case.
     let pitching_line: AskPitchingLine?
+    // Scoreless-innings streak (Hershiser's 59): an INNING-unit streak, not
+    // game-unit. `unit == "innings"` flips the headline to "59 consecutive
+    // scoreless innings" (whole innings; `length` IS that number). `outs` +
+    // `ip_notation` carry the exact figure ("58.2") for the middle-relief case
+    // where it differs from a whole number; both nil for game-unit streaks.
+    let unit: String?
+    let outs: Int?
+    let ip_notation: String?
 }
 
 /// The most of an event in any N-consecutive-game window (may cross seasons),
