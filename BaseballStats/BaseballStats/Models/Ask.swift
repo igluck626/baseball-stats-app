@@ -34,6 +34,9 @@ struct AskResponse: Decodable {
     let sample: [AskPlay]?
     let leaders: [AskLeader]?
     let rates: AskRates?
+    // A pitcher COUNT's pitching line (IP/H/R/ER/BB/SO/W-L/ERA), the pitching
+    // analog of `rates` — present when a pitcher stat was counted.
+    let pitching_line: AskPitchingLine?
     let splits: [AskSplit]?
 
     // Game-unit answers from the daily record (answer is nil — the card IS the
@@ -189,12 +192,15 @@ struct AskStreak: Decodable {
     let season: Int?
     let restricted: Bool?         // over fully-covered seasons only
     let line: AskStatLine?
+    // For a PITCHER streak (quality starts, wins), the pitching line over the
+    // streak. `line` (batting) is nil in that case.
+    let pitching_line: AskPitchingLine?
 }
 
 /// The most of an event in any N-consecutive-game window (may cross seasons),
 /// plus the batting line over the window's games.
 struct AskSpan: Decodable {
-    let event: String?            // plural, e.g. "home runs"
+    let event: String?            // plural, e.g. "home runs" / "strikeouts"
     let window: Int?
     let total: Int?
     let start_pretty: String?
@@ -204,6 +210,28 @@ struct AskSpan: Decodable {
     let cross_season: Bool?
     let restricted: Bool?
     let line: AskStatLine?
+    // For a PITCHER span (most K/W/SV in any N games), the pitching line summed
+    // over the window. `line` (batting) is nil in that case.
+    let pitching_line: AskPitchingLine?
+}
+
+/// A pitching line (IP/H/R/ER/BB/SO + W-L record + ERA), the pitching analog of
+/// the batting line. `IP` is a baseball-notation STRING ("66.1" = 66⅓) computed
+/// server-side from outs — never a raw decimal — so it never ends in .3–.9.
+struct AskPitchingLine: Decodable {
+    let IP: String?
+    let W: Int?
+    let L: Int?
+    let SV: Int?
+    let H: Int?
+    let R: Int?
+    let ER: Int?
+    let BB: Int?
+    let SO: Int?
+    let HR: Int?
+    let G: Int?
+    let ERA: Double?
+    let WHIP: Double?
 }
 
 /// A two-way answer: the same question resolved BOTH as a pitcher and as a
@@ -223,6 +251,11 @@ struct AskTwoWaySide: Decodable {
     /// A plain count for this role (e.g. Ohtani's 1,197 batting Ks vs his pitching
     /// Ks) — the two-way COUNT case. nil for milestone/span two-ways.
     let count: Int?
+    /// The line under a two-way COUNT: `pitching_line` on the mound side,
+    /// `batting_line` at the plate. (Span/streak sides carry their line inside
+    /// their own `span`/`streak` object.)
+    let pitching_line: AskPitchingLine?
+    let batting_line: AskRates?
     let declined: Bool?
     let reason: String?
 }

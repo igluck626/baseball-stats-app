@@ -6717,21 +6717,69 @@ def _complete_pitcher_seasons(mlbam_id):
     return complete, dg, ag
 
 
+def _ip_notation(outs):
+    """Integer OUTS -> baseball IP notation string: 40 -> '13.1' (13⅓), 41 ->
+    '13.2', 42 -> '14.0'. The decimal->notation converter (only the reverse,
+    _ip_to_decimal, existed). By construction the fractional digit is 0/1/2 only
+    — an IP display can NEVER end in .3-.9."""
+    whole, rem = divmod(int(outs), 3)
+    return f"{whole}.{rem}"
+
+
 def _pitcher_stat_line(games):
-    """Pitching line summed over a list of daily pitching-game dicts (IP/W/L/SV/
-    ERA/WHIP/SO...). None if empty. Distinct shape from the batting _stat_line."""
+    """Pitching line summed over daily pitching-game dicts. None if empty. IP is
+    accumulated in OUTS — round(IP*3) recovers the exact integer outs from the
+    stored true-decimal (6.667 -> 20), summed as ints (no float drift) and shown
+    in baseball notation ('13.1' = 13⅓); ERA/WHIP derive from outs so they're
+    exact. IP is a notation STRING and columns differ from the batting line."""
     if not games:
         return None
-    IP = sum(g["IP"] for g in games); H = sum(g["H"] for g in games)
+    outs = sum(round(g["IP"] * 3) for g in games)
+    H = sum(g["H"] for g in games);  R = sum(g["R"] for g in games)
     ER = sum(g["ER"] for g in games); BB = sum(g["BB"] for g in games)
     SO = sum(g["SO"] for g in games); HR = sum(g["HR"] for g in games)
     W = sum(1 for g in games if g["result"] == "W")
     L = sum(1 for g in games if g["result"] == "L")
     SV = sum(1 for g in games if g["result"] == "S")
-    era = round(ER * 9 / IP, 2) if IP else None
-    whip = round((H + BB) / IP, 3) if IP else None
-    return {"G": len(games), "IP": round(IP, 1), "W": W, "L": L, "SV": SV,
-            "H": H, "ER": ER, "BB": BB, "SO": SO, "HR": HR, "ERA": era, "WHIP": whip}
+    era = round(ER * 27 / outs, 2) if outs else None      # ER*9 / (outs/3)
+    whip = round((H + BB) * 3 / outs, 3) if outs else None  # (H+BB) / (outs/3)
+    return {"G": len(games), "IP": _ip_notation(outs), "outs": outs,
+            "W": W, "L": L, "SV": SV, "H": H, "R": R, "ER": ER, "BB": BB,
+            "SO": SO, "HR": HR, "ERA": era, "WHIP": whip}
+
+
+def _pitcher_season_line(mlbam, season=None, season_start=None, season_end=None):
+    """Career/season pitching line from pitcher_seasons (one combined row per year)
+    — the count-path analog of _pitcher_stat_line, so a count's line reads the same
+    as a span's. Same outs-based IP + derived ERA/WHIP. None if no innings."""
+    if not connection.db_available():
+        return None
+    where = ["player_id = :pid"]; p: dict = {"pid": int(mlbam)}
+    if season is not None:
+        where.append("year = :y"); p["y"] = int(season)
+    else:
+        if season_start is not None: where.append("year >= :ys"); p["ys"] = int(season_start)
+        if season_end is not None:   where.append("year <= :ye"); p["ye"] = int(season_end)
+    sql = ('SELECT COALESCE(SUM("G"),0), COALESCE(SUM("IP"),0), COALESCE(SUM("W"),0), '
+           'COALESCE(SUM("L"),0), COALESCE(SUM("SV"),0), COALESCE(SUM("H"),0), '
+           'COALESCE(SUM("R"),0), COALESCE(SUM("ER"),0), COALESCE(SUM("BB"),0), '
+           'COALESCE(SUM("SO"),0), COALESCE(SUM("HR"),0), COUNT(*) '
+           f'FROM pitcher_seasons WHERE {" AND ".join(where)}')
+    with connection.get_session() as db:
+        row = db.execute(_sa_text(sql), p).fetchone()
+    if not row or row[-1] == 0:
+        return None
+    g, ip_dec, w, l, sv, h, r, er, bb, so, hr = row[:11]
+    # SUM(IP) is the aggregate true-decimal; one round(*3) recovers total outs
+    # (FP error over ~18 one-per-year rows is ~1e-9, far below the 0.5 threshold).
+    outs = round(float(ip_dec or 0) * 3)
+    if outs == 0:
+        return None
+    era = round(er * 27 / outs, 2); whip = round((h + bb) * 3 / outs, 3)
+    return {"G": int(g), "IP": _ip_notation(outs), "outs": outs,
+            "W": int(w), "L": int(l), "SV": int(sv), "H": int(h), "R": int(r),
+            "ER": int(er), "BB": int(bb), "SO": int(so), "HR": int(hr),
+            "ERA": era, "WHIP": whip}
 
 
 def _is_two_way(mlbam_id):
@@ -7190,8 +7238,33 @@ def _compute_two_way(feature, params):
         return side
 
     if feature == "count":
-        bat = run(lambda: _count_for_role(params, "bat"), "count")
-        pit = run(lambda: _count_for_role(params, "pit"), "count")
+        def count_side(role):
+            try:
+                r = _count_for_role(params, role)
+            except HTTPException:
+                return None
+            if not isinstance(r, dict) or r.get("ambiguous"):
+                return None
+            side = {"count": r.get("count")}
+            pid = (r.get("player") or {}).get("mlbam_id")
+            if r.get("source") == "season_stats" and pid is not None:
+                try:
+                    if role == "pit":
+                        pl = _pitcher_season_line(pid, params.get("season"),
+                                                  params.get("season_start"),
+                                                  params.get("season_end"))
+                        if pl is not None: side["pitching_line"] = pl
+                    else:
+                        bl = _season_rate_line(pid, "bat", params.get("season"),
+                                               params.get("season_start"),
+                                               params.get("season_end"),
+                                               params.get("game_type"))
+                        if bl is not None: side["batting_line"] = bl
+                except Exception:  # noqa: BLE001 — the line is optional
+                    pass
+            return side
+        bat = count_side("bat")
+        pit = count_side("pit")
     elif feature == "milestone":
         bat = run(lambda: _run_milestone(**params), "milestone")
         pit = run(lambda: _run_pitcher_milestone(**params), "milestone")
@@ -9057,6 +9130,7 @@ def ask(request: Request,
         "leaders":         None,
         "leaderboard_title": None,
         "rates":           None,
+        "pitching_line":   None,
         "splits":          None,
         "milestone":       None,
         "streak":          None,
@@ -9709,18 +9783,27 @@ def ask(request: Request,
         return rres.get("rates") if isinstance(rres, dict) else None
 
     try:
+        role_l = (params.get("role") or "bat").lower()
         if result.get("source") == "season_stats":
-            base["rates"] = _season_rate_line(
-                result["player"]["mlbam_id"], params.get("role", "bat"),
-                params.get("season"), params.get("season_start"),
-                params.get("season_end"), params.get("game_type"))
-            # POSTSEASON has no complete season-stats line (that table lacks
-            # PA/HBP/SF), but the plays store holds every postseason event — so
-            # compute the line there for the same game_type=P filter. Modern
-            # postseason is fully covered, so the plays HR matches the count.
-            if base["rates"] is None and (params.get("game_type") or "").strip().upper() == "P":
-                base["rates"] = _plays_line()
-        else:
+            if role_l == "pit":
+                # A pitcher count gets a PITCHING line (IP/H/R/ER/BB/SO/W-L/ERA),
+                # not the batting slash line (which _season_rate_line returns None
+                # for anyway). Same outs-based IP as the span/streak line.
+                base["pitching_line"] = _pitcher_season_line(
+                    result["player"]["mlbam_id"], params.get("season"),
+                    params.get("season_start"), params.get("season_end"))
+            else:
+                base["rates"] = _season_rate_line(
+                    result["player"]["mlbam_id"], params.get("role", "bat"),
+                    params.get("season"), params.get("season_start"),
+                    params.get("season_end"), params.get("game_type"))
+                # POSTSEASON has no complete season-stats line (that table lacks
+                # PA/HBP/SF), but the plays store holds every postseason event — so
+                # compute the line there for the same game_type=P filter. Modern
+                # postseason is fully covered, so the plays HR matches the count.
+                if base["rates"] is None and (params.get("game_type") or "").strip().upper() == "P":
+                    base["rates"] = _plays_line()
+        elif role_l != "pit":
             base["rates"] = _plays_line()
     except Exception as exc:  # noqa: BLE001 — the count still stands without the line
         log.warning("ask: rate line failed for %r: %s", q, exc)

@@ -44,6 +44,10 @@ struct AskAnswerView: View {
                 // the extra component counts behind a disclosure. No prose
                 // reciting AVG/OBP/SLG/OPS the row already shows.
                 ratesSection(rates)
+            } else if let pl = response.pitching_line {
+                // A pitcher COUNT: the pitching line IS the answer, the queried
+                // stat highlighted (K→SO etc.).
+                pitchingCountSection(pl)
             } else if let m = response.milestone, m.reached == true {
                 // DATA-FIRST: the milestone game IS the answer (a not-reached or
                 // unpinpointable milestone arrives as prose in `answer`).
@@ -359,7 +363,11 @@ struct AskAnswerView: View {
             }
             // The streak LENGTH is the answer and lives in the header; the line
             // below is context (no G — that would recite the length).
-            if let line = s.line { StatTable(columns: lineColumns(line)) }
+            if let pl = s.pitching_line {
+                StatTable(columns: pitchingColumns(pl, highlight: nil))
+            } else if let line = s.line {
+                StatTable(columns: lineColumns(line))
+            }
             if s.restricted == true {
                 Text("Over this player's seasons with complete game-by-game coverage.")
                     .font(.caption).foregroundStyle(.secondary)
@@ -389,10 +397,14 @@ struct AskAnswerView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
-            if sp.line != nil {
+            if let pl = sp.pitching_line {
+                // Pitcher span: the pitching line over the window, queried stat
+                // highlighted (IP shown in baseball notation).
+                StatTable(columns: pitchingColumns(pl, highlight: pitcherSpanStatLabel(sp.event)))
+            } else if sp.line != nil {
                 StatTable(columns: spanColumns(sp))
             } else if let total = sp.total, let ev = sp.event {
-                // Pitcher spans carry no batting line — the total IS the answer.
+                // No line at all — the total IS the answer.
                 Text("\(total) \(ev)").font(.title3.weight(.bold))
             }
             coverageFootnote
@@ -423,6 +435,11 @@ struct AskAnswerView: View {
                 } else if let c = side.count {
                     Text("\(c.formatted(.number))\(stat.map { " " + $0 } ?? "")")
                         .font(.title3.weight(.bold))
+                    if let pl = side.pitching_line {
+                        StatTable(columns: pitchingColumns(pl, highlight: statToColumn(stat)))
+                    } else if let bl = side.batting_line {
+                        StatTable(columns: rateColumns(bl, highlight: statToColumn(stat)))
+                    }
                 } else if let m = side.milestone {
                     if m.reached == true {
                         milestoneSection(m)
@@ -497,6 +514,77 @@ struct AskAnswerView: View {
         case "total bases": return "TB"
         case "times hit by a pitch": return "HBP"
         default: return nil
+        }
+    }
+
+    // MARK: - Pitching line
+
+    private static let pitchCoreKeys: Set<String> = ["IP", "W-L", "ERA", "SO", "BB", "H", "R", "ER"]
+
+    /// A two-way stat label ("strikeouts"/"walks"/"home runs") -> the column to
+    /// highlight in either line.
+    private func statToColumn(_ stat: String?) -> String? {
+        switch stat {
+        case "strikeouts": return "SO"
+        case "walks":      return "BB"
+        case "home runs":  return "HR"
+        default:           return nil
+        }
+    }
+
+    /// A pitcher span's event label -> the pitching column to highlight.
+    private func pitcherSpanStatLabel(_ event: String?) -> String? {
+        switch event {
+        case "strikeouts":        return "SO"
+        case "walks":             return "BB"
+        case "wins", "losses":    return "W-L"
+        case "saves":             return "SV"
+        case "earned runs":       return "ER"
+        case "hits allowed":      return "H"
+        case "home runs allowed": return "HR"
+        default:                  return nil
+        }
+    }
+
+    /// Non-core pitching stats reachable as a leading highlighted column.
+    private func pitchMoreValue(_ l: AskPitchingLine, _ key: String) -> String? {
+        switch key {
+        case "SV": return l.SV.map { $0.formatted(.number) }
+        case "HR": return l.HR.map { $0.formatted(.number) }
+        default:   return nil
+        }
+    }
+
+    /// The pitching line as StatTable columns: IP · W-L · ERA · SO · BB · H · R ·
+    /// ER, the queried stat highlighted, with a leading highlighted column for a
+    /// non-core queried stat (SV/HR) — the same pattern as the batting SB/R fix.
+    private func pitchingColumns(_ l: AskPitchingLine, highlight: String?) -> [StatTable.Column] {
+        func col(_ label: String, _ value: String) -> StatTable.Column {
+            StatTable.Column(label: label, value: value, highlighted: label == highlight)
+        }
+        var cols: [StatTable.Column] = []
+        if let h = highlight, !Self.pitchCoreKeys.contains(h), let v = pitchMoreValue(l, h) {
+            cols.append(StatTable.Column(label: h, value: v, highlighted: true))
+        }
+        cols += [
+            col("IP", l.IP ?? "—"),
+            col("W-L", "\(l.W ?? 0)-\(l.L ?? 0)"),
+            col("ERA", l.ERA.map { String(format: "%.2f", $0) } ?? "—"),
+            col("SO", intVal(l.SO)),
+            col("BB", intVal(l.BB)),
+            col("H", intVal(l.H)),
+            col("R", intVal(l.R)),
+            col("ER", intVal(l.ER)),
+        ]
+        return cols
+    }
+
+    /// A pitcher COUNT: the pitching line with the queried stat highlighted (the
+    /// highlighted column's value IS the count).
+    private func pitchingCountSection(_ pl: AskPitchingLine) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            StatTable(columns: pitchingColumns(pl, highlight: response.highlighted_stat))
+            coverageFootnote
         }
     }
 
