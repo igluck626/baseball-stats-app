@@ -315,6 +315,8 @@ struct AskAnswerView: View {
         case "HBP": return r.HBP.map(String.init)
         case "SF":  return r.SF.map(String.init)
         case "SO":  return r.SO.map(String.init)
+        case "R":   return r.R.map { $0.formatted(.number) }
+        case "SB":  return r.SB.map { $0.formatted(.number) }
         default:    return nil
         }
     }

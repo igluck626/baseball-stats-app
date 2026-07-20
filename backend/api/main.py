@@ -5497,7 +5497,8 @@ _PLAYS_EVENT_CD = {
 # own columns; K -> SO (strikeouts); BB/HBP to theirs. A single (1B) has no
 # dedicated rate column, so nothing is highlighted.
 _EVENT_TO_STAT = {"HR": "HR", "K": "SO", "SO": "SO", "BB": "BB",
-                  "HBP": "HBP", "2B": "2B", "3B": "3B", "RBI": "RBI"}
+                  "HBP": "HBP", "2B": "2B", "3B": "3B", "RBI": "RBI",
+                  "R": "R", "SB": "SB"}
 
 
 # Persistent read-only connection to the plays store. The Railway volume is
@@ -5757,7 +5758,8 @@ def _season_rate_line(pid, role, season, season_start, season_end, game_type):
     sql = ('SELECT COALESCE(SUM("PA"),0), COALESCE(SUM("AB"),0), COALESCE(SUM("H"),0), '
            'COALESCE(SUM(doubles),0), COALESCE(SUM(triples),0), COALESCE(SUM("HR"),0), '
            'COALESCE(SUM("RBI"),0), COALESCE(SUM("SO"),0), COALESCE(SUM("BB"),0), '
-           'COALESCE(SUM("HBP"),0), COALESCE(SUM("SF"),0), COUNT(*) '
+           'COALESCE(SUM("HBP"),0), COALESCE(SUM("SF"),0), '
+           'COALESCE(SUM("R"),0), COALESCE(SUM("SB"),0), COUNT(*) '
            f'FROM player_seasons WHERE {" AND ".join(where)}')
     try:
         with connection.get_session() as db:
@@ -5767,13 +5769,13 @@ def _season_rate_line(pid, role, season, season_start, season_end, game_type):
         return None
     if not row or row[-1] == 0 or not row[1]:   # no rows, or no at-bats
         return None
-    pa, ab, h, d2, d3, hr, rbi, so, bb, hbp, sf = row[:11]
+    pa, ab, h, d2, d3, hr, rbi, so, bb, hbp, sf, r, sb = row[:13]
     tb = h + d2 + 2 * d3 + 3 * hr                # singles + 2·2B + 3·3B + 4·HR
     obp_den = ab + bb + hbp + sf
     obp = (h + bb + hbp) / obp_den if obp_den else None
     slg = tb / ab
     return {"PA": pa, "AB": ab, "H": h, "doubles": d2, "triples": d3, "HR": hr,
-            "RBI": rbi, "SO": so, "BB": bb, "HBP": hbp, "SF": sf,
+            "RBI": rbi, "SO": so, "BB": bb, "HBP": hbp, "SF": sf, "R": r, "SB": sb,
             "AVG": round(h / ab, 3),
             "OBP": round(obp, 3) if obp is not None else None,
             "SLG": round(slg, 3),
