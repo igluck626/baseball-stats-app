@@ -215,12 +215,17 @@ struct AskAnswerView: View {
                 } label: {
                     HStack(spacing: 10) {
                         // `rank_label` carries the tie convention ("T-12"); fall
-                        // back to the bare number for older payloads.
+                        // back to the bare number for older payloads. lineLimit(1)
+                        // keeps a double-digit tie ("T-15", the widest label a
+                        // 15-row board produces) on ONE line; the fixed width fits
+                        // it so every row's name column still starts at the same x.
                         Text(leader.rank_label ?? "\(leader.rank ?? index + 1)")
                             .font(.callout.weight(.semibold))
                             .monospacedDigit()
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
                             .foregroundStyle(.secondary)
-                            .frame(width: 30, alignment: .trailing)
+                            .frame(width: 40, alignment: .trailing)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(leader.player_name ?? "—")
                                 .font(.subheadline.weight(.medium))
