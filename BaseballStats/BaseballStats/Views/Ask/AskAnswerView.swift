@@ -372,6 +372,12 @@ struct AskAnswerView: View {
                 if let ip = s.ip_notation, ip != "\(len).0" {
                     Text("\(ip) IP exactly").font(.caption).foregroundStyle(.secondary)
                 }
+            } else if let ab = abUnitHeadline(s) {
+                // At-bat-unit hitter streak (consecutive hits / on base / HR).
+                Text(ab).font(.title3.weight(.bold))
+                if let detail = s.detail, !detail.isEmpty {
+                    Text(detail).font(.subheadline).foregroundStyle(.secondary)
+                }
             } else if let len = s.length, let label = s.type_label {
                 Text("\(len)-game \(label)").font(.title3.weight(.bold))
             }
@@ -394,7 +400,24 @@ struct AskAnswerView: View {
                 Text("Over this player's seasons with complete game-by-game coverage.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            // Interpretation note (e.g. consecutive-HR: "counting consecutive at-bats…").
+            if let note = s.note, !note.isEmpty {
+                Text(note).font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             coverageFootnote
+        }
+    }
+
+    /// The headline for an at-bat-unit hitter streak, by `unit`; nil for any other
+    /// streak (game-unit or scoreless, handled above).
+    private func abUnitHeadline(_ s: AskStreak) -> String? {
+        guard let len = s.length else { return nil }
+        switch s.unit {
+        case "hits":   return "\(len) consecutive hits"
+        case "on_base": return "Reached base in \(len) straight plate appearances"
+        case "hr_ab":  return "\(len) home runs in a row"
+        default:       return nil
         }
     }
 

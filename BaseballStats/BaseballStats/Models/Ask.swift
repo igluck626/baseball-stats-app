@@ -213,6 +213,12 @@ struct AskStreak: Decodable {
     // nil for a same-day ending or an active/unbroken streak (`active == true`).
     let end_broke_pretty: String?
     let active: Bool?
+    // At-bat-unit hitter streaks (plays store). `unit` is "hits" / "on_base" /
+    // "hr_ab"; `length` is the count (12 hits, 16 on base, 4 HR). `detail` is the
+    // breakdown ("8 singles, 3 doubles, 1 home run"); `note` carries the
+    // consecutive-HR interpretation ("counting consecutive at-bats…").
+    let detail: String?
+    let note: String?
 }
 
 /// The most of an event in any N-consecutive-game window (may cross seasons),

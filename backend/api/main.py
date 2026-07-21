@@ -6410,6 +6410,194 @@ def _longest_streak(games, kind):
     return best_len, best_start, best_end, best_games
 
 
+# ============================ AT-BAT-UNIT HITTER STREAKS =====================
+# The hitting analog of scoreless innings: sub-game sequences reconstructed from
+# the play-by-play event store (consecutive at-bats with a hit, consecutive
+# plate appearances reaching base, consecutive at-bats with a home run) —
+# distinct from the game-unit hitting/on-base/HR streaks (daily table, complete
+# 1901+). Chronological order is (GAME_DATE, GAME_ID, EVENT_ID). Gated by a
+# PER-STREAK GAP CHECK, not season coverage %: a streak is trustworthy iff every
+# game the batter played inside its window is present in the store, so no hidden
+# out could have been spliced over (see _ab_gap_check).
+_AB_RUNNING_EVENT_CDS = "(4,5,6,7,8,9,10,11,12,13)"  # non-PA (baserunning) events
+
+# per-kind config: the plays-row filter, the "good" (extends the run) predicate,
+# and a small category expr for the streak's breakdown line.
+_AB_STREAK_CFG = {
+    "hits": {  # official at-bats only -> walks/HBP/sacrifices neither break nor extend
+        "unit": "hits", "noun": "consecutive hits", "gap_mode": "ab",
+        "row_filter": "AB_FL=true", "good": "(H_FL > 0)", "cat": "H_FL",
+    },
+    "hr": {
+        "unit": "hr_ab", "noun": "home runs in a row", "gap_mode": "ab",
+        "row_filter": "AB_FL=true", "good": "(H_FL = 4)", "cat": "H_FL",
+    },
+    "on_base": {  # plate appearances (batting events); reached = hit / BB / IBB / HBP
+        "unit": "on_base", "noun": "straight times on base", "gap_mode": "pa",
+        "row_filter": "EVENT_CD >= 2 AND EVENT_CD NOT IN " + _AB_RUNNING_EVENT_CDS,
+        "good": "(H_FL > 0 OR EVENT_CD IN (14,15,16))",
+        "cat": "CASE WHEN H_FL>0 THEN 1 WHEN EVENT_CD IN (14,15) THEN 2 ELSE 3 END",
+    },
+}
+_AB_KIND_BY_STREAK_TYPE = {"consecutive_hits": "hits",
+                           "consecutive_on_base": "on_base",
+                           "consecutive_hr": "hr"}
+_AB_HR_NOTE = ("This counts consecutive at-bats (back-to-back home runs). For home "
+               "runs in consecutive games, ask about consecutive games.")
+
+
+def _ab_run_walk(rows):
+    """Walk (GAME_DATE, GAME_ID, EVENT_ID, good, cat) rows for ONE batter, already
+    in chronological order, and return (best_len, start_date, end_date, cat_counts)
+    for the longest run of good==1. Each row is one unit (an at-bat or a plate
+    appearance, per the caller's filter); good==0 breaks the run. `cat_counts`
+    maps the outcome category to its count over the best run (for the breakdown
+    line: hits 1-4 = 1B/2B/3B/HR; on-base 1/2/3 = hit/walk/HBP)."""
+    best = cur = 0
+    bstart = bend = cstart = None
+    ccur: dict = {}
+    cbest: dict = {}
+    for gd, _gid, _eid, good, cat in rows:
+        if good:
+            if cur == 0:
+                cstart = gd
+                ccur = {}
+            cur += 1
+            ccur[cat] = ccur.get(cat, 0) + 1
+            if cur > best:
+                best, bstart, bend = cur, cstart, gd
+                cbest = dict(ccur)
+        else:
+            cur = 0
+            cstart = None
+            ccur = {}
+    return best, bstart, bend, cbest
+
+
+def _ab_gap_check(mlbam, retro, lo_date, hi_date, mode):
+    """The per-streak GAP GATE. A consecutive-AB/PA streak is trustworthy only if
+    EVERY game the batter played inside [lo_date, hi_date] is present in the plays
+    store — otherwise a missing game's out could have been spliced over, inflating
+    the run. The two stores carry DIFFERENT game_id schemes (daily is
+    'retro-'/'mlb-'/BDL-sourced, plays is the bare Retrosheet key), so we compare
+    PER-DATE game COUNTS, which both agree on, NOT id strings.
+      mode 'ab' -> games with an official at-bat (hits / HR streaks).
+      mode 'pa' -> games with a plate appearance (on-base streak).
+    Returns (gap_free: bool, first_missing_date | None). On any error resolving
+    the daily side, returns gap_free False (conservative — decline over bluff)."""
+    ab_filter = ("AND AB_FL=true" if mode == "ab"
+                 else "AND EVENT_CD >= 2 AND EVENT_CD NOT IN " + _AB_RUNNING_EVENT_CDS)
+    pc = _plays_cursor()
+    try:
+        prows = pc.execute(
+            "SELECT GAME_DATE, COUNT(DISTINCT GAME_ID) FROM plays "
+            "WHERE BAT_ID=? AND GAME_TYPE='R' AND GAME_DATE BETWEEN ? AND ? " + ab_filter +
+            " GROUP BY GAME_DATE", [retro, str(lo_date), str(hi_date)]).fetchall()
+    finally:
+        pc.close()
+    present = {str(gd): int(n) for gd, n in prows}
+    daily_col = '"AB"' if mode == "ab" else '"PA"'
+    try:
+        with connection.get_session() as db:
+            drows = db.execute(_sa_text(
+                "SELECT game_date, COUNT(*) FROM batting_gamelogs "
+                "WHERE player_id = :pid AND game_date BETWEEN :lo AND :hi "
+                f"AND {daily_col} > 0 GROUP BY game_date"),
+                {"pid": int(mlbam), "lo": str(lo_date), "hi": str(hi_date)}).fetchall()
+    except Exception:  # noqa: BLE001 - can't verify -> don't claim the streak
+        return False, None
+    for gd, n in drows:
+        if int(n) > present.get(str(gd), 0):
+            return False, str(gd)
+    return True, None
+
+
+def _ab_detail(kind, cats):
+    """The breakdown line for an AB-unit streak, e.g. '8 singles, 3 doubles, 1
+    home run' — None for the HR streak (every unit is a home run) or when empty."""
+    if kind == "hits":
+        nm = {1: ("single", "singles"), 2: ("double", "doubles"),
+              3: ("triple", "triples"), 4: ("home run", "home runs")}
+        keys = (1, 2, 3, 4)
+    elif kind == "on_base":
+        nm = {1: ("hit", "hits"), 2: ("walk", "walks"),
+              3: ("hit by pitch", "times hit by a pitch")}
+        keys = (1, 2, 3)
+    else:
+        return None
+    parts = [f"{cats[k]} {nm[k][0] if cats[k] == 1 else nm[k][1]}"
+             for k in keys if cats.get(k)]
+    return ", ".join(parts) if parts else None
+
+
+def _run_ab_streak(player, kind, season=None, game_type=None):
+    """Longest AB-unit hitter streak of one KIND ('hits' / 'on_base' / 'hr') from
+    the plays store, per-streak gap-gated. Regular-season only; spans games and
+    seasons (no partitioning). Returns the same shape as _run_streak so the /ask
+    dispatch renders it as a streak card."""
+    cfg = _AB_STREAK_CFG[kind]
+    gt = (game_type or "R").strip().upper()
+    if gt in ("P", "ALL"):
+        return {"resolved": True, "declined": True, "source": "plays",
+                "player": {"query": player}, "streak": None,
+                "game_coverage": {"complete": False},
+                "reason": ("These streaks are reconstructed from regular-season "
+                           "play-by-play; postseason isn't included.")}
+
+    cands = [c for c in _resolve_retro_id(player, "bat")
+             if c.get("mlbam_id") is not None and c.get("retro_id")]
+    if not cands:
+        raise HTTPException(status_code=404, detail=f"No batter matching '{player}'")
+    if len({c["retro_id"] for c in cands}) > 1:
+        return {"resolved": False, "ambiguous": True, "query": player, "candidates": cands[:25]}
+    resolved = cands[0]
+    retro, mlbam = resolved["retro_id"], resolved["mlbam_id"]
+    player_block = {"query": player, "name": resolved["name"], "mlbam_id": mlbam, "role": "bat"}
+
+    cur = _plays_cursor()
+    try:
+        where = "GAME_TYPE='R' AND BAT_ID=? AND " + cfg["row_filter"]
+        params = [retro]
+        if season is not None:
+            where += " AND SEASON=?"
+            params.append(int(season))
+        rows = cur.execute(
+            f"SELECT GAME_DATE, GAME_ID, EVENT_ID, {cfg['good']} AS good, {cfg['cat']} AS cat "
+            f"FROM plays WHERE {where} ORDER BY GAME_DATE, GAME_ID, EVENT_ID", params).fetchall()
+    finally:
+        cur.close()
+
+    best, bstart, bend, cats = _ab_run_walk(rows)
+    if best < 1 or bstart is None:
+        return {"resolved": True, "declined": True, "source": "plays",
+                "player": player_block, "streak": None,
+                "game_coverage": {"complete": False},
+                "reason": (f"I don't have a play-by-play batting record for "
+                           f"{resolved['name']}" + (f" in {season}" if season else "")
+                           + " to reconstruct this from.")}
+
+    gap_free, missing = _ab_gap_check(mlbam, retro, bstart, bend, cfg["gap_mode"])
+    if not gap_free:
+        miss = f" ({missing})" if missing else ""
+        return {"resolved": True, "declined": True, "source": "plays",
+                "player": player_block, "streak": None,
+                "game_coverage": {"complete": False},
+                "reason": (f"A game in this stretch{miss} isn't in the play-by-play, "
+                           "so I can't confirm the at-bats were consecutive — the "
+                           "run could hide an out from a missing game.")}
+
+    streak = {
+        "type": f"consecutive_{kind}", "type_label": cfg["noun"], "unit": cfg["unit"],
+        "length": best, "start_date": str(bstart), "start_pretty": _pretty_date(bstart),
+        "end_date": str(bend), "end_pretty": _pretty_date(bend),
+        "season": int(str(bstart)[:4]), "covered_span": [int(str(bstart)[:4]), int(str(bend)[:4])],
+        "detail": _ab_detail(kind, cats), "note": (_AB_HR_NOTE if kind == "hr" else None),
+        "restricted": False, "line": None, "pitching_line": None,
+    }
+    return {"resolved": True, "source": "plays", "player": player_block,
+            "streak": streak, "game_coverage": {"complete": True}}
+
+
 def _run_streak(player, streak_type, season=None, game_type=None):
     """Longest run of consecutive games meeting a per-game condition (hitting /
     on-base / home-run / multi-hit), from the daily game logs. WITHIN A SEASON
@@ -6418,6 +6606,9 @@ def _run_streak(player, streak_type, season=None, game_type=None):
     incomplete seasons are excluded, and if none qualify we decline. Carries the
     player's STAT LINE over the streak's games."""
     kind = (streak_type or "").strip().lower()
+    if kind in _AB_KIND_BY_STREAK_TYPE:  # at-bat/PA-unit -> the play-by-play runner
+        return _run_ab_streak(player, _AB_KIND_BY_STREAK_TYPE[kind],
+                              season=season, game_type=game_type)
     if kind not in _STREAK_TYPE_LABEL:
         raise HTTPException(status_code=400, detail=(
             f"'{streak_type}' isn't a streak type I track "
@@ -7507,7 +7698,10 @@ def _compute_two_way(feature, params):
 # single-player card's value. Streaks per (player, season); spans per
 # (player, window, event). Gated: only COMPLETE seasons contribute.
 _LB_STREAK_METRIC = {"hitting": "hitting_streak", "on_base": "on_base_streak",
-                     "home_run": "hr_game_streak", "multi_hit": "multi_hit_streak"}
+                     "home_run": "hr_game_streak", "multi_hit": "multi_hit_streak",
+                     # AB-unit, plays-derived + gap-gated; own backfill (NOT the
+                     # daily _leaderboard_rows). The 12-hit record (Dropo/Higgins/Miranda).
+                     "consecutive_hits": "consecutive_hits"}
 _LB_SPAN_WINDOWS = (10, 20, 30, 50, 162)
 _LB_SPAN_EVENTS = ("HR", "H", "RBI", "TB")
 # Pitching leaderboard metrics/events (role='pit' rows, same table).
@@ -7542,6 +7736,8 @@ def _leaderboard_rows(mlbam, games, complete):
         if not gs:
             continue
         for kind, metric in _LB_STREAK_METRIC.items():
+            if metric == "consecutive_hits":
+                continue   # AB-unit, plays-derived; own backfill, not the daily one
             length, start, end, _run = _longest_streak(gs, kind)
             if length >= 1:
                 rows.append({"player_id": mlbam, "role": "bat", "metric": metric, "window": 0,
@@ -8686,23 +8882,33 @@ _ASK_STREAK_TOOL = {
         "consecutive games with a home run', 'longest multi-hit-game streak'. "
         "PITCHER streaks (game-unit): 'longest win streak', 'most consecutive "
         "quality starts', 'consecutive 10-strikeout games', 'longest scoreless-"
-        "innings streak' (Hershiser's 59). Returns the length + start/end dates. "
-        "One player + a streak type. A scoreless-INNINGS streak is inning-unit "
-        "(streak_type='scoreless_innings'), reconstructed from play-by-play."),
+        "innings streak' (Hershiser's 59). AT-BAT-unit hitter streaks (NOT games): "
+        "'most consecutive hits' / 'hits in a row' (consecutive_hits), 'most "
+        "consecutive times on base' (consecutive_on_base), 'most consecutive home "
+        "runs' / 'back-to-back home runs' (consecutive_hr). Returns the length + "
+        "start/end dates. One player + a streak type."),
     "input_schema": {
         "type": "object",
         "properties": {
             "player": {"type": "string", "description": "name or MLBAM id"},
             "streak_type": {"type": "string",
                             "enum": ["hitting", "on_base", "home_run", "multi_hit",
-                                     "win", "quality_start", "high_k", "scoreless_innings"],
-                            "description": "BATTER: hitting = games with a hit; on_base = "
-                            "games reaching base; home_run = games with a HR; multi_hit = "
-                            "games with 2+ hits. PITCHER: win = consecutive wins; "
-                            "quality_start = consecutive quality starts (6+ IP, <=3 ER); "
-                            "high_k = consecutive 10+ strikeout games; scoreless_innings = "
-                            "longest run of consecutive scoreless innings (inning-unit, "
-                            "from play-by-play; Hershiser's 59)."},
+                                     "win", "quality_start", "high_k", "scoreless_innings",
+                                     "consecutive_hits", "consecutive_on_base", "consecutive_hr"],
+                            "description": "BATTER game-unit: hitting = games with a hit; "
+                            "on_base = games reaching base; home_run = games with a HR; "
+                            "multi_hit = games with 2+ hits. BATTER at-bat-unit (from "
+                            "play-by-play): consecutive_hits = consecutive AT-BATS with a "
+                            "hit ('hits in a row', the 12 record — NOT the 56-game kind); "
+                            "consecutive_on_base = consecutive plate appearances reaching "
+                            "base; consecutive_hr = consecutive AT-BATS with a HR "
+                            "('consecutive/back-to-back home runs', no 'games'). PITCHER: "
+                            "win = consecutive wins; quality_start = consecutive quality "
+                            "starts (6+ IP, <=3 ER); high_k = consecutive 10+ strikeout "
+                            "games; scoreless_innings = consecutive scoreless innings "
+                            "(Hershiser's 59). KEY: 'hitting streak'/'consecutive GAMES' "
+                            "-> game-unit (hitting); 'consecutive hits'/'at-bats'/'in a "
+                            "row' (no 'games') -> at-bat-unit (consecutive_hits)."},
             "season": {"type": "integer", "description":
                        "ONLY for a single-season streak ('his 2023 hitting streak', "
                        "'longest streak in 2019'); omit for a career-longest streak."},
@@ -8765,13 +8971,16 @@ _ASK_STREAK_LB_TOOL = {
         "properties": {
             "streak_type": {"type": "string",
                             "enum": ["hitting", "on_base", "home_run", "multi_hit",
+                                     "consecutive_hits",
                                      "win", "quality_start", "high_k", "scoreless_innings"],
                             "description": "BATTER: hitting / on_base / home_run / "
-                            "multi_hit. PITCHER (set role='pit'): win = consecutive "
-                            "wins; quality_start = consecutive quality starts; high_k = "
-                            "consecutive 10-strikeout games; scoreless_innings = longest "
-                            "run of consecutive scoreless innings ('who has the longest "
-                            "scoreless streak', 'most consecutive scoreless innings')."},
+                            "multi_hit (game-unit); consecutive_hits = most consecutive "
+                            "AT-BATS with a hit ('who has the most consecutive hits', the "
+                            "12 record — NOT the 56-game hitting streak). PITCHER (set "
+                            "role='pit'): win = consecutive wins; quality_start = "
+                            "consecutive quality starts; high_k = consecutive 10-strikeout "
+                            "games; scoreless_innings = longest run of consecutive "
+                            "scoreless innings ('who has the longest scoreless streak')."},
             "role": {"type": "string", "enum": ["bat", "pit"], "description":
                      "'pit' for a pitcher-streak leaderboard (win/quality_start/high_k/"
                      "scoreless_innings); omit or 'bat' for batter streaks."},
@@ -8969,6 +9178,17 @@ _ASK_SYSTEM = (
     "- A SINGLE-SEASON streak -> add season: \"Freeman's 2023 hitting streak\" -> "
     "{player:'Freddie Freeman', streak_type:'hitting', season:2023}. Omit season "
     "for a career-longest streak (the default).\n"
+    "- AT-BAT-unit hitter streaks (from play-by-play, NOT games) — the UNIT is the "
+    "signal: 'consecutive GAMES with a hit'/'hitting streak' -> game-unit "
+    "(hitting); 'consecutive HITS'/'hits in a row'/'consecutive at-bats with a "
+    "hit' -> {streak_type:'consecutive_hits'} (the 12 record, not the 56-game "
+    "kind). 'Most consecutive times on base'/'reached base in a row' -> "
+    "{streak_type:'consecutive_on_base'}. 'Consecutive home runs'/'back-to-back "
+    "home runs'/'home runs in a row' (WITHOUT 'games') -> "
+    "{streak_type:'consecutive_hr'}; but 'home runs in consecutive GAMES' -> "
+    "game-unit {streak_type:'home_run'}. So DiMaggio's 'hitting streak' -> hitting "
+    "(56, games); DiMaggio's 'consecutive hits'/'consecutive at-bats with a hit' "
+    "-> consecutive_hits (at-bats).\n"
     "- PITCHER streaks (game-unit): 'longest win streak' -> {player:'X', "
     "streak_type:'win'}; 'most consecutive quality starts' -> "
     "{streak_type:'quality_start'}; 'consecutive 10-strikeout games' -> "
@@ -8976,10 +9196,10 @@ _ASK_SYSTEM = (
     "Kershaw's 41) is inning-unit -> {streak_type:'scoreless_innings'} (from "
     "play-by-play). Also for a two-way stat with 'as a pitcher'/'on the mound' "
     "phrasing, the CODE routes by the player — you still pick the tool.\n"
-    "Only hitting / on-base / home-run / multi-hit (batter) and win / quality_start "
-    "/ high_k / scoreless_innings (pitcher) streaks are supported; other "
-    "'in a row' conditions (games with an RBI, consecutive batters retired) "
-    "-> cannot_answer.\n"
+    "Supported: hitting / on-base / home-run / multi-hit and consecutive_hits / "
+    "consecutive_on_base / consecutive_hr (batter), win / quality_start / high_k / "
+    "scoreless_innings (pitcher); other 'in a row' conditions (games with an RBI, "
+    "consecutive batters retired) -> cannot_answer.\n"
     "- NO player named -> query_streak_leaderboard (a ranked LIST, not one "
     "player). 'Who has the longest hitting streak?' -> {streak_type:'hitting'}. "
     "'Most consecutive games with a hit' -> {streak_type:'hitting'}. 'Longest "
@@ -10890,7 +11110,11 @@ _STREAK_LB_LABEL = {
     "on_base":   "Longest on-base streak",
     "home_run":  "Most consecutive games with a home run",
     "multi_hit": "Longest multi-hit-game streak",
+    "consecutive_hits": "Most consecutive hits",
 }
+_CONSEC_HITS_LB_NOTE = ("Consecutive at-bats with a hit, reconstructed from "
+                        "regular-season play-by-play; only gap-free streaks (no "
+                        "missing games in the window) are ranked.")
 _SPAN_LB_EVENT_LABEL = {"HR": "home runs", "H": "hits", "RBI": "RBI", "TB": "total bases"}
 _PITCHER_STREAK_LB_LABEL = {
     "win":           "Longest win streak",
@@ -10991,7 +11215,8 @@ def _run_streak_leaderboard(streak_type, season=None, season_start=None, limit=1
         "subtitle": str(r[2]) if r[2] else None,
     } for i, r in enumerate(rows)]
     _rank_with_ties(leaders, "value")
-    lb_note = _SCORELESS_LB_NOTE if metric == "scoreless_streak" else _LB_COVERAGE_NOTE
+    lb_note = {"scoreless_streak": _SCORELESS_LB_NOTE,
+               "consecutive_hits": _CONSEC_HITS_LB_NOTE}.get(metric, _LB_COVERAGE_NOTE)
     return {"resolved": True, "source": "game_unit_leaderboard",
             "leaderboard_title": title, "leaders": leaders,
             "game_coverage": {"complete": False, "note": lb_note}}
@@ -11516,6 +11741,125 @@ def backfill_scoreless_leaderboard(
              "ip": _ip_notation(r["outs"]), "start": r["start_date"],
              "end": r["end_date"], "coverage_min_pct": r["min_pct"]}
             for i, r in enumerate(ranked[:20])],
+    }
+
+
+# The documented consecutive-hits club — the build-time correctness gate. Each
+# reproduces to exactly 12 AND its streak window is gap-free.
+_CONSEC_HITS_EXPECT = {"dropw101": 12, "higgm101": 12, "miraj002": 12}
+
+
+def _consecutive_hits_leaderboard_ranked(cur, want=25, cap=250):
+    """Every batter's longest consecutive-hits streak from the plays store, then
+    GAP-GATED from the top down. The raw walk (all AB, longest run of H_FL>0) is
+    one pass; the gap gate (a Postgres cross-check per candidate) is the expensive
+    part, so we only check candidates in descending order until we have `want`
+    gap-free entries or hit `cap` checks — record streaks are gap-free and near
+    the top, while a streak inflated by a missing game fails the gate and drops
+    out. Returns (ranked, checked, skipped_gappy)."""
+    rows = cur.execute(
+        "SELECT BAT_ID, GAME_DATE, GAME_ID, EVENT_ID, CASE WHEN H_FL>0 THEN 1 ELSE 0 END "
+        "FROM plays WHERE GAME_TYPE='R' AND AB_FL=true "
+        "ORDER BY BAT_ID, GAME_DATE, GAME_ID, EVENT_ID").fetchall()
+    best: dict = {}
+    cb = None
+    run = bst = 0
+    bs = be = cs = None
+    for b, gd, _gid, _eid, good in rows:
+        if b != cb:
+            if cb is not None and bst >= 1:
+                best[cb] = (bst, bs, be)
+            cb = b; run = bst = 0; bs = be = cs = None
+        if good:
+            if run == 0:
+                cs = gd
+            run += 1
+            if run > bst:
+                bst, bs, be = run, cs, gd
+        else:
+            run = 0
+    if cb is not None and bst >= 1:
+        best[cb] = (bst, bs, be)
+
+    cand = sorted(best.items(), key=lambda kv: (-kv[1][0], kv[0]))
+    retro_ids = [b for b, _ in cand[:cap]]
+    idmap: dict = {}
+    if retro_ids:
+        with connection.get_session() as db:
+            for rid, plid, nm in db.execute(_sa_text(
+                "SELECT retro_id, player_id, name FROM players WHERE retro_id IN :ids"
+            ).bindparams(_sa_bindparam("ids", expanding=True)), {"ids": retro_ids}).fetchall():
+                idmap[rid] = (plid, nm)
+
+    ranked, checked, skipped = [], 0, 0
+    for rid, (n, s, e) in cand:
+        if len(ranked) >= want or checked >= cap:
+            break
+        m = idmap.get(rid)
+        if not m:
+            continue
+        checked += 1
+        gap_free, _ = _ab_gap_check(m[0], rid, s, e, "ab")
+        if not gap_free:
+            skipped += 1
+            continue
+        ranked.append({"retro_id": rid, "mlbam": m[0], "name": m[1], "length": int(n),
+                       "start_date": str(s), "end_date": str(e), "season": int(str(s)[:4])})
+    return ranked, checked, skipped
+
+
+@app.post("/admin/backfill-consecutive-hits-leaderboard")
+def backfill_consecutive_hits_leaderboard(
+    confirm: bool = Query(False, description="true = write rows; false = dry run"),
+    want: int = Query(25, ge=10, le=100, description="how many gap-free leaders to store"),
+):
+    """Precompute the consecutive-hits (AB-unit) leaderboard from the plays store,
+    gap-gated (only streaks with no missing game in their window rank), into
+    game_unit_leaderboard (metric='consecutive_hits', role='bat'). Idempotent.
+    VERIFIES the 12-hit club (Dropo/Higgins/Miranda) before writing; a mismatch
+    aborts a confirm run. confirm=false = dry run (compute + verify + top-25)."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    t0 = time.perf_counter()
+    cur = _plays_cursor()
+    try:
+        ranked, checked, skipped = _consecutive_hits_leaderboard_ranked(cur, want=int(want))
+    finally:
+        cur.close()
+    compute_ms = round((time.perf_counter() - t0) * 1000)
+
+    got = {r["retro_id"]: r["length"] for r in ranked}
+    verify = {rid: {"expected": exp, "got": got.get(rid)} for rid, exp in _CONSEC_HITS_EXPECT.items()}
+    verify_ok = all(v["got"] == v["expected"] for v in verify.values())
+
+    written = 0
+    if confirm:
+        if not verify_ok:
+            raise HTTPException(status_code=409, detail=(
+                "consecutive-hits verification failed — refusing to write a board "
+                f"that doesn't reproduce the 12-hit club: {verify}"))
+        with connection.get_session() as db:
+            db.execute(_sa_text(
+                "DELETE FROM game_unit_leaderboard WHERE metric = 'consecutive_hits'"))
+            for r in ranked:
+                db.execute(_sa_text(
+                    "INSERT INTO game_unit_leaderboard "
+                    '(player_id, role, metric, "window", season, event, value, start_date, end_date) '
+                    "VALUES (:pid, 'bat', 'consecutive_hits', 0, :season, '', :value, "
+                    ":start_date, :end_date)"),
+                    {"pid": r["mlbam"], "season": r["season"], "value": r["length"],
+                     "start_date": r["start_date"], "end_date": r["end_date"]})
+                written += 1
+            db.commit()
+
+    return {
+        "confirm": confirm, "compute_ms": compute_ms,
+        "candidates_checked": checked, "skipped_gappy": skipped,
+        "verify_ok": verify_ok, "verify": verify, "rows_written": written,
+        "top_25": [
+            {"rank": i + 1, "name": r["name"], "retro_id": r["retro_id"],
+             "hits": r["length"], "start": r["start_date"], "end": r["end_date"]}
+            for i, r in enumerate(ranked[:25])],
     }
 
 
