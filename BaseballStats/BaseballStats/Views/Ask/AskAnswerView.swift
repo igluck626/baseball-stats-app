@@ -214,11 +214,13 @@ struct AskAnswerView: View {
                     if let id = leader.mlbam_id { onSelectPlayer(id) }
                 } label: {
                     HStack(spacing: 10) {
-                        Text("\(leader.rank ?? index + 1)")
+                        // `rank_label` carries the tie convention ("T-12"); fall
+                        // back to the bare number for older payloads.
+                        Text(leader.rank_label ?? "\(leader.rank ?? index + 1)")
                             .font(.callout.weight(.semibold))
                             .monospacedDigit()
                             .foregroundStyle(.secondary)
-                            .frame(width: 22, alignment: .trailing)
+                            .frame(width: 30, alignment: .trailing)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(leader.player_name ?? "—")
                                 .font(.subheadline.weight(.medium))
@@ -313,12 +315,12 @@ struct AskAnswerView: View {
     private func moreValue(_ r: AskRates, _ key: String) -> String? {
         switch key {
         case "PA":  return r.PA.map { $0.formatted(.number) }
-        case "2B":  return r.doubles.map(String.init)
-        case "3B":  return r.triples.map(String.init)
-        case "BB":  return r.BB.map(String.init)
-        case "HBP": return r.HBP.map(String.init)
-        case "SF":  return r.SF.map(String.init)
-        case "SO":  return r.SO.map(String.init)
+        case "2B":  return r.doubles.map { $0.formatted(.number) }
+        case "3B":  return r.triples.map { $0.formatted(.number) }
+        case "BB":  return r.BB.map { $0.formatted(.number) }
+        case "HBP": return r.HBP.map { $0.formatted(.number) }
+        case "SF":  return r.SF.map { $0.formatted(.number) }
+        case "SO":  return r.SO.map { $0.formatted(.number) }
         case "R":   return r.R.map { $0.formatted(.number) }
         case "SB":  return r.SB.map { $0.formatted(.number) }
         default:    return nil
@@ -448,12 +450,16 @@ struct AskAnswerView: View {
                     Text(side.reason ?? "Not available for this role.")
                         .font(.subheadline).foregroundStyle(.secondary)
                 } else if let c = side.count {
-                    Text("\(c.formatted(.number))\(stat.map { " " + $0 } ?? "")")
-                        .font(.title3.weight(.bold))
+                    // When a line is present the highlighted column IS the count,
+                    // so don't recite the number above it (same rule as spans). The
+                    // headline stays only when there's no line to carry the value.
                     if let pl = side.pitching_line {
                         StatTable(columns: pitchingColumns(pl, highlight: statToColumn(stat)))
                     } else if let bl = side.batting_line {
                         StatTable(columns: rateColumns(bl, highlight: statToColumn(stat)))
+                    } else {
+                        Text("\(c.formatted(.number))\(stat.map { " " + $0 } ?? "")")
+                            .font(.title3.weight(.bold))
                     }
                 } else if let m = side.milestone {
                     if m.reached == true {
@@ -581,9 +587,13 @@ struct AskAnswerView: View {
         if let h = highlight, !Self.pitchCoreKeys.contains(h), let v = pitchMoreValue(l, h) {
             cols.append(StatTable.Column(label: h, value: v, highlighted: true))
         }
+        cols.append(col("IP", l.IP ?? "—"))
+        // W-L is a decision record — meaningless over a partial-game streak (the
+        // scoreless line leaves W/L null), so it's shown only when present.
+        if l.W != nil || l.L != nil {
+            cols.append(col("W-L", "\(l.W ?? 0)-\(l.L ?? 0)"))
+        }
         cols += [
-            col("IP", l.IP ?? "—"),
-            col("W-L", "\(l.W ?? 0)-\(l.L ?? 0)"),
             col("ERA", l.ERA.map { String(format: "%.2f", $0) } ?? "—"),
             col("SO", intVal(l.SO)),
             col("BB", intVal(l.BB)),

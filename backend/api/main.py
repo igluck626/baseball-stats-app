@@ -7063,38 +7063,53 @@ def _longest_pitcher_streak(games, kind):
 
 
 def _scoreless_walk(rows):
-    """Walk half-inning rows (each: GAME_DATE, GAME_ID, INN_CT, BAT_HOME_ID, outs,
-    charged) in chronological order and return
-    (best_outs, start_date, end_date, broke_date) for the longest run of
+    """Walk half-inning rows (GAME_DATE, GAME_ID, INN_CT, BAT_HOME_ID, outs,
+    charged, [h, bb, so, hr]) in chronological order and return
+    (best_outs, start_date, end_date, broke_date, line) for the longest run of
     consecutive SCORELESS outs. A half-inning in which the pitcher is charged a
-    run resets the run to zero; a run-free half-inning adds all its outs. NO
-    season partitioning — a streak spans seasons (Hershiser's 59 ran to the end
-    of 1988 and broke in April 1989). The whole-inning record is best_outs // 3.
+    run resets the run to zero; a run-free half-inning adds all its outs AND its
+    hits/walks/strikeouts to the streak line. NO season partitioning — a streak
+    spans seasons (Hershiser's 59 ran to the end of 1988 and broke in April
+    1989). The whole-inning record is best_outs // 3.
     `broke_date` is the date of the first run-charged half-inning AFTER the best
     streak's last scoreless inning — the run that broke it — or None if the
     streak was never broken (the data ends while it's still alive: an active
     streak). For the GLOBAL-max run the row right after `end_date` is necessarily
     that breaking run (a scoreless one would have extended `end_date`), so a
-    forward scan for the first charged half-inning is exact."""
+    forward scan for the first charged half-inning is exact.
+    `line` is {H, BB, SO, HR, G} over the streak — R and ER are 0 by definition."""
     best = cur = 0
     bstart = bend = cstart = None
     bend_idx = -1
-    for i, (gd, _gid, _inn, _bh, outs, charged) in enumerate(rows):
+    ch = cbb = cso = chr_ = 0
+    cgames: set = set()
+    bH = bBB = bSO = bHR = 0
+    bgames: set = set()
+    for i, row in enumerate(rows):
+        gd, gid, outs, charged = row[0], row[1], row[4], row[5]
+        h, bb, so, hr = (row[6], row[7], row[8], row[9]) if len(row) > 6 else (0, 0, 0, 0)
         if charged and charged > 0:
             cur = 0
             cstart = None
+            ch = cbb = cso = chr_ = 0
+            cgames = set()
         else:
             if cur == 0:
                 cstart = gd
             cur += int(outs or 0)
+            ch += int(h or 0); cbb += int(bb or 0)
+            cso += int(so or 0); chr_ += int(hr or 0)
+            cgames.add(gid)
             if cur > best:
                 best, bstart, bend, bend_idx = cur, cstart, gd, i
+                bH, bBB, bSO, bHR, bgames = ch, cbb, cso, chr_, set(cgames)
     broke_date = None
-    for gd, _gid, _inn, _bh, _outs, charged in rows[bend_idx + 1:]:
-        if charged and charged > 0:
-            broke_date = gd
+    for row in rows[bend_idx + 1:]:
+        if row[5] and row[5] > 0:
+            broke_date = row[0]
             break
-    return best, bstart, bend, broke_date
+    line = {"H": bH, "BB": bBB, "SO": bSO, "HR": bHR, "G": len(bgames)}
+    return best, bstart, bend, broke_date, line
 
 
 # The half-inning reconstruction, shared by the single-pitcher runner and the
@@ -7107,7 +7122,14 @@ _SCORELESS_SELECT = (
     "SUM( (CASE WHEN BAT_DEST_ID>=4  AND PIT_ID=? THEN 1 ELSE 0 END) "
     "   + (CASE WHEN RUN1_DEST_ID>=4 AND RUN1_RESP_PIT_ID=? THEN 1 ELSE 0 END) "
     "   + (CASE WHEN RUN2_DEST_ID>=4 AND RUN2_RESP_PIT_ID=? THEN 1 ELSE 0 END) "
-    "   + (CASE WHEN RUN3_DEST_ID>=4 AND RUN3_RESP_PIT_ID=? THEN 1 ELSE 0 END) ) AS charged")
+    "   + (CASE WHEN RUN3_DEST_ID>=4 AND RUN3_RESP_PIT_ID=? THEN 1 ELSE 0 END) ) AS charged, "
+    # the pitcher's own counting line over the half-inning (EVENT_CD: 20-23 hits,
+    # 14/15 walks, 3 strikeout, 23 home run) — summed over the streak to a line
+    # whose R and ER are 0 by definition, the point of the whole thing.
+    "SUM(CASE WHEN PIT_ID=? AND EVENT_CD IN (20,21,22,23) THEN 1 ELSE 0 END) AS h, "
+    "SUM(CASE WHEN PIT_ID=? AND EVENT_CD IN (14,15) THEN 1 ELSE 0 END) AS bb, "
+    "SUM(CASE WHEN PIT_ID=? AND EVENT_CD = 3 THEN 1 ELSE 0 END) AS so, "
+    "SUM(CASE WHEN PIT_ID=? AND EVENT_CD = 23 THEN 1 ELSE 0 END) AS hr")
 _SCORELESS_WHERE_PID = (
     "( PIT_ID=? OR (RUN1_DEST_ID>=4 AND RUN1_RESP_PIT_ID=?) "
     "OR (RUN2_DEST_ID>=4 AND RUN2_RESP_PIT_ID=?) OR (RUN3_DEST_ID>=4 AND RUN3_RESP_PIT_ID=?) )")
@@ -7168,18 +7190,18 @@ def _run_scoreless_streak(player, season=None, game_type=None):
     cur = _plays_cursor()
     try:
         where = "GAME_TYPE='R'"
-        params = [pid, pid, pid, pid, pid]          # the 5 SELECT placeholders
+        params = [pid] * 9                          # the 9 SELECT placeholders
         if season is not None:
             where += " AND SEASON=?"
             params.append(int(season))
-        params += [pid, pid, pid, pid]              # the 4 WHERE placeholders
+        params += [pid] * 4                          # the 4 WHERE placeholders
         rows = cur.execute(
             "SELECT GAME_DATE, GAME_ID, INN_CT, BAT_HOME_ID, " + _SCORELESS_SELECT +
             f" FROM plays WHERE {where} AND " + _SCORELESS_WHERE_PID +
             " GROUP BY GAME_DATE, GAME_ID, INN_CT, BAT_HOME_ID "
             "HAVING outs>0 OR charged>0 "
             "ORDER BY GAME_DATE, GAME_ID, INN_CT, BAT_HOME_ID", params).fetchall()
-        outs, bstart, bend, broke = _scoreless_walk(rows)
+        outs, bstart, bend, broke, line = _scoreless_walk(rows)
         if outs < 3 or bstart is None:
             return {"resolved": True, "declined": True, "source": "plays",
                     "player": player_block, "streak": None,
@@ -7203,6 +7225,17 @@ def _run_scoreless_streak(player, season=None, game_type=None):
     active = broke is None
     end_broke_pretty = (_pretty_date(broke)
                         if broke is not None and str(broke) != str(bend) else None)
+
+    # The pitching line OVER the streak — R/ER/ERA are 0 by definition (that's the
+    # point). W/L/SV are left null (a streak is partial games, not decisions), so
+    # the card omits the W-L column. IP is the outs-based notation; WHIP is exact.
+    pitching_line = {
+        "G": line["G"], "IP": ip, "outs": outs,
+        "W": None, "L": None, "SV": None,
+        "H": line["H"], "R": 0, "ER": 0, "BB": line["BB"], "SO": line["SO"],
+        "HR": line["HR"], "ERA": 0.0,
+        "WHIP": round((line["H"] + line["BB"]) * 3 / outs, 3) if outs else None,
+    }
 
     if tier == "decline":
         return {"resolved": True, "declined": True, "source": "plays",
@@ -7233,7 +7266,7 @@ def _run_scoreless_streak(player, season=None, game_type=None):
         "end_broke_pretty": end_broke_pretty, "active": active,
         "season": lo_yr, "covered_span": [lo_yr, hi_yr],
         "restricted": False, "excluded_seasons": [],
-        "line": None, "pitching_line": None,
+        "line": None, "pitching_line": pitching_line,
     }
     return {"resolved": True, "source": "plays", "player": player_block,
             "streak": streak, "game_coverage": game_coverage}
@@ -7484,6 +7517,11 @@ _LB_PITCHER_STREAK_METRIC = {"win": "win_streak", "quality_start": "qs_streak",
                              # (NOT by _pitcher_leaderboard_rows, which is gamelog-based)
                              "scoreless_innings": "scoreless_streak"}
 _LB_PITCHER_SPAN_EVENTS = ("K", "W", "SV")
+# One fixed length for EVERY phrasing of a streak/span/scoreless leaderboard, so
+# "longest scoreless streak" and "most consecutive scoreless innings" return the
+# SAME list — the model no longer sets `limit` (removed from those tool schemas),
+# which used to vary the count by phrasing (10 vs 15).
+_LB_DEFAULT_LIMIT = 15
 
 
 def _leaderboard_rows(mlbam, games, complete):
@@ -7701,6 +7739,30 @@ def _leaderboard_gates(cur, lo, hi, uses_count, scoped):
     return game_coverage, count_data, decline
 
 
+def _rank_with_ties(leaders, value_key):
+    """Assign COMPETITION ranks (1, 2, 2, 4 …) in place to an already-sorted
+    leaders list keyed on `value_key`: tied values share the lowest rank and the
+    next distinct value skips accordingly (three at 41 → T-12, T-12, T-12, then
+    15). Sets each row's `rank` (the shared int) and `rank_label` ('T-12' when
+    tied with a neighbor, else '12'). Shared by every leaderboard so the tie
+    convention is identical across streak / span / scoreless / count boards.
+    Rows whose `value_key` is None are ranked sequentially without ties."""
+    n = len(leaders)
+    i = 0
+    while i < n:
+        v = leaders[i].get(value_key)
+        j = i
+        while j + 1 < n and v is not None and leaders[j + 1].get(value_key) == v:
+            j += 1
+        rank = i + 1
+        tied = j > i
+        for k in range(i, j + 1):
+            leaders[k]["rank"] = rank
+            leaders[k]["rank_label"] = f"T-{rank}" if tied else str(rank)
+        i = j + 1
+    return leaders
+
+
 def _run_leaderboard(event=None, role="bat", balls=None, strikes=None, outs=None,
                      inning=None, base_state=None, season=None, season_start=None,
                      season_end=None, game_type=None,
@@ -7824,6 +7886,7 @@ def _run_leaderboard(event=None, role="bat", balls=None, strikes=None, outs=None
             "rank": i,
             "player_name": info.get("name") or biofile.get(rid) or rid,
             "mlbam_id": info.get("mlbam_id"), "retro_id": rid, "count": n})
+    _rank_with_ties(leaders, "count")
     return _base(leaders=leaders, game_coverage=game_coverage,
                  count_data=count_data, query_ms=query_ms)
 
@@ -7871,6 +7934,7 @@ def _run_season_leaderboard(event=None, role="bat", season=None, season_start=No
     leaders = [{"rank": i, "player_name": names.get(pid) or str(pid),
                 "mlbam_id": pid, "count": int(n)}
                for i, (pid, n) in enumerate(rows, 1)]
+    _rank_with_ties(leaders, "count")
     return {"resolved": True, "source": "season_stats_leaderboard",
             "filters": {"event": canon, "role": role, "season": season,
                         "season_start": season_start, "season_end": season_end,
@@ -8701,21 +8765,22 @@ _ASK_STREAK_LB_TOOL = {
         "properties": {
             "streak_type": {"type": "string",
                             "enum": ["hitting", "on_base", "home_run", "multi_hit",
-                                     "win", "quality_start", "high_k"],
+                                     "win", "quality_start", "high_k", "scoreless_innings"],
                             "description": "BATTER: hitting / on_base / home_run / "
                             "multi_hit. PITCHER (set role='pit'): win = consecutive "
                             "wins; quality_start = consecutive quality starts; high_k = "
-                            "consecutive 10-strikeout games."},
+                            "consecutive 10-strikeout games; scoreless_innings = longest "
+                            "run of consecutive scoreless innings ('who has the longest "
+                            "scoreless streak', 'most consecutive scoreless innings')."},
             "role": {"type": "string", "enum": ["bat", "pit"], "description":
-                     "'pit' for a pitcher-streak leaderboard (win/quality_start/high_k); "
-                     "omit or 'bat' for batter streaks."},
+                     "'pit' for a pitcher-streak leaderboard (win/quality_start/high_k/"
+                     "scoreless_innings); omit or 'bat' for batter streaks."},
             "season": {"type": "integer", "description":
                        "ONLY to rank streaks that happened IN this exact season "
                        "('longest hitting streak in 2023')."},
             "season_start": {"type": "integer", "description":
                              "rank each player's best streak SINCE this season "
                              "('longest hitting streak since 2000')."},
-            "limit": {"type": "integer", "minimum": 1, "maximum": 25, "default": 15},
         },
         "required": ["streak_type"],
     },
@@ -8743,7 +8808,6 @@ _ASK_SPAN_LB_TOOL = {
             "role": {"type": "string", "enum": ["bat", "pit"], "description":
                      "'pit' for a pitcher-span leaderboard (K/W/SV); omit or 'bat' "
                      "for batter spans."},
-            "limit": {"type": "integer", "minimum": 1, "maximum": 25, "default": 15},
         },
         "required": ["event", "window_size"],
     },
@@ -9602,7 +9666,7 @@ def ask(request: Request,
             result = _run_streak_leaderboard(
                 streak_type=st, season=tool_input.get("season"),
                 season_start=tool_input.get("season_start"),
-                limit=tool_input.get("limit", 15), role=_lb_role)
+                limit=_LB_DEFAULT_LIMIT, role=_lb_role)
         except HTTPException as exc:
             timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
             base["reason"] = str(exc.detail)
@@ -9646,7 +9710,7 @@ def ask(request: Request,
         t0 = time.perf_counter()
         try:
             result = _run_span_leaderboard(event=ev, window=w,
-                                           limit=tool_input.get("limit", 15), role=_lb_role)
+                                           limit=_LB_DEFAULT_LIMIT, role=_lb_role)
         except HTTPException as exc:
             timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
             base["reason"] = str(exc.detail)
@@ -10926,6 +10990,7 @@ def _run_streak_leaderboard(streak_type, season=None, season_start=None, limit=1
         "end_date": str(r[4]) if r[4] else None,
         "subtitle": str(r[2]) if r[2] else None,
     } for i, r in enumerate(rows)]
+    _rank_with_ties(leaders, "value")
     lb_note = _SCORELESS_LB_NOTE if metric == "scoreless_streak" else _LB_COVERAGE_NOTE
     return {"resolved": True, "source": "game_unit_leaderboard",
             "leaderboard_title": title, "leaders": leaders,
@@ -10983,6 +11048,7 @@ def _run_span_leaderboard(event, window, limit=15, role="bat"):
         "end_date": str(r[3]) if r[3] else None,
         "subtitle": _sub(r[2], r[3]),
     } for i, r in enumerate(rows)]
+    _rank_with_ties(leaders, "value")
     return {"resolved": True, "source": "game_unit_leaderboard",
             "leaderboard_title": f"Most {label_map.get(ev, ev)} in any {w} games",
             "leaders": leaders,

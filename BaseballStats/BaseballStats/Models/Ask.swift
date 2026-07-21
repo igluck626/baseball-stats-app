@@ -101,6 +101,9 @@ struct AskPlay: Decodable, Identifiable {
 /// the row tap through to the player profile.
 struct AskLeader: Decodable, Identifiable {
     let rank: Int?
+    /// Display rank carrying the tie convention — "T-12" when this row ties its
+    /// neighbors, else "12". Falls back to `rank` when absent (older payloads).
+    let rank_label: String?
     let player_name: String?
     let mlbam_id: Int?
     let retro_id: String?
