@@ -5569,6 +5569,42 @@ def _plays_cursor():
     return conn.cursor()
 
 
+_plays_max_season_cache: dict = {"gen": None, "season": None}
+
+
+def _plays_max_season():
+    """The plays store's latest season (MAX from the coverage table), cached per
+    store GENERATION so a hot-swap re-reads it automatically. None if the store
+    isn't loaded. This is what dates the plays-derived leaderboards — never
+    hardcode the year, or the label lies after the next store rebuild."""
+    global _plays_max_season_cache
+    with _plays_conn_lock:
+        gen = _plays_gen
+    if _plays_max_season_cache["gen"] == gen:
+        return _plays_max_season_cache["season"]
+    season = None
+    try:
+        cur = _plays_cursor()
+        try:
+            row = cur.execute("SELECT MAX(season) FROM coverage").fetchone()
+        finally:
+            cur.close()
+        season = int(row[0]) if row and row[0] is not None else None
+    except Exception:  # noqa: BLE001 - store absent / no coverage table
+        season = None
+    _plays_max_season_cache = {"gen": gen, "season": season}
+    return season
+
+
+def _plays_currency_note():
+    """"Complete through the <max> season." for the plays-derived features — the
+    plays store stops at the last COMPLETE Retrosheet season (Retrosheet publishes
+    a season months after it ends), so these boards and single-player answers are
+    bounded there, unlike the nightly-refreshed game-unit boards. None if unknown."""
+    s = _plays_max_season()
+    return f"Complete through the {s} season." if s else None
+
+
 # Warmup query set — pulls the FULL working set of /plays/situational through
 # so no real query pays a cold-page cost on its first run. DuckDB reads only the
 # columns a query touches, so warming one column isn't enough; these queries
@@ -6695,8 +6731,14 @@ def _run_ab_streak(player, kind, season=None, game_type=None):
         "detail": _ab_detail(kind, cats), "note": note,
         "restricted": False, "line": None, "pitching_line": None,
     }
+    # NB: complete:False here is NOT a data-quality flag — this streak value is
+    # exact. It's purely the render hook: the coverage footnote shows a note only
+    # when complete is false, so we flip it to surface the currency label ("through
+    # the <year> season", see _plays_currency_note) through the existing plumbing.
+    currency = _plays_currency_note()
+    cov = {"complete": False, "note": currency} if currency else {"complete": True}
     return {"resolved": True, "source": "plays", "player": player_block,
-            "streak": streak, "game_coverage": {"complete": True}}
+            "streak": streak, "game_coverage": cov}
 
 
 def _run_streak(player, streak_type, season=None, game_type=None):
@@ -7539,12 +7581,22 @@ def _run_scoreless_streak(player, season=None, game_type=None):
                            "innings streak, since one unrecorded game could hide a "
                            "run. I can't give a reliable number for this era.")}
 
+    # 2025-bounded currency label (derived from the store; see _plays_currency_note),
+    # folded into the caveat note or standing alone on an otherwise-exact answer.
+    currency = _plays_currency_note()
     if tier == "caveat":
         note = (f"Play-by-play is {round(min_pct, 1)}% complete for {span_txt}; a "
                 "handful of games from this era are missing, so treat this as very "
                 "likely but not certain.")
+        if currency:
+            note = f"{note} {currency}"
         game_coverage = {"complete": False, "min_pct": min_pct,
                          "low_seasons": low_seasons, "note": note}
+    elif currency:
+        # complete:False is the render hook (footnote shows only when false), NOT a
+        # data-quality flag — this streak is exact; we're only surfacing the
+        # "through the <year> season" currency label.
+        game_coverage = {"complete": False, "note": currency}
     else:
         game_coverage = {"complete": True}
 
@@ -7830,6 +7882,10 @@ _LB_PITCHER_STREAK_METRIC = {"win": "win_streak", "quality_start": "qs_streak",
                              # within-game consecutive Ks (Seaver 10); own plays backfill
                              "consecutive_pitcher_k": "consecutive_pitcher_k"}
 _PLAYS_DERIVED_PIT_METRICS = {"scoreless_streak", "consecutive_pitcher_k"}
+# All plays-derived leaderboard metrics — these carry the "through the <year>
+# season" currency label (frozen at the plays store's end), unlike the
+# nightly-refreshed game-unit boards.
+_PLAYS_DERIVED_METRICS = _PLAYS_DERIVED_BAT_METRICS | _PLAYS_DERIVED_PIT_METRICS
 _LB_PITCHER_SPAN_EVENTS = ("K", "W", "SV")
 # One fixed length for EVERY phrasing of a streak/span/scoreless leaderboard, so
 # "longest scoreless streak" and "most consecutive scoreless innings" return the
@@ -11392,6 +11448,13 @@ def _run_streak_leaderboard(streak_type, season=None, season_start=None, limit=1
                "consecutive_doubles": _AB_LB_NOTE, "consecutive_triples": _AB_LB_NOTE,
                "consecutive_xbh": _AB_LB_NOTE, "consecutive_sb": _AB_LB_NOTE,
                "consecutive_pitcher_k": _AB_LB_NOTE}.get(metric, _LB_COVERAGE_NOTE)
+    # Plays-derived boards are frozen at the plays store's last season (the daily
+    # boards refresh nightly and are NOT labelled). Derived from the store, so a
+    # future rebuild updates the year automatically.
+    if metric in _PLAYS_DERIVED_METRICS:
+        currency = _plays_currency_note()
+        if currency:
+            lb_note = f"{lb_note} {currency}" if lb_note else currency
 
     # ROSTER shape: when the record (top value) is shared by many, a ranked list of
     # T-1 x N reads as broken — return the roster of holders instead (no ranks).
