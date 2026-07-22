@@ -59,6 +59,13 @@ struct AskResponse: Decodable {
     // "Most home runs in any 20 games" (the ranked list IS the answer).
     let leaderboard_title: String?
 
+    // ROSTER shape: a SHARED record (e.g. 4 consecutive home runs, held by many).
+    // When `roster` is true, `leaders` is the list of holders (tappable, no ranks)
+    // and `roster_headline` states the record ("4 consecutive home runs — shared
+    // by 45 players"). Distinct from a ranked leaderboard, where values vary.
+    let roster: Bool?
+    let roster_headline: String?
+
     // For a situational COUNT: which stat-table column to emphasize (the one
     // the question asked about, e.g. "HR" / "SO"). nil = emphasize nothing.
     let highlighted_stat: String?

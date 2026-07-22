@@ -181,12 +181,19 @@ struct AskAnswerView: View {
 
     private func leadersSection(_ leaders: [AskLeader]) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let qualifier = leaderQualifier {
+            if response.roster == true {
+                // A SHARED record: the headline states the mark + how many hold it,
+                // then the roster of holders (no ranks — nothing to rank).
+                if let head = response.roster_headline, !head.isEmpty {
+                    Text(head).font(.title3.weight(.bold))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else if let qualifier = leaderQualifier {
                 Text(qualifier)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            leadersTable(leaders)
+            leadersTable(leaders, roster: response.roster == true)
             coverageFootnote
         }
     }
@@ -207,25 +214,29 @@ struct AskAnswerView: View {
 
     // MARK: - Leaders
 
-    private func leadersTable(_ leaders: [AskLeader]) -> some View {
+    private func leadersTable(_ leaders: [AskLeader], roster: Bool = false) -> some View {
         VStack(spacing: 0) {
             ForEach(Array(leaders.enumerated()), id: \.element.id) { index, leader in
                 Button {
                     if let id = leader.mlbam_id { onSelectPlayer(id) }
                 } label: {
                     HStack(spacing: 10) {
-                        // `rank_label` carries the tie convention ("T-12"); fall
-                        // back to the bare number for older payloads. lineLimit(1)
-                        // keeps a double-digit tie ("T-15", the widest label a
-                        // 15-row board produces) on ONE line; the fixed width fits
-                        // it so every row's name column still starts at the same x.
-                        Text(leader.rank_label ?? "\(leader.rank ?? index + 1)")
-                            .font(.callout.weight(.semibold))
-                            .monospacedDigit()
-                            .lineLimit(1)
-                            .fixedSize(horizontal: true, vertical: false)
-                            .foregroundStyle(.secondary)
-                            .frame(width: 40, alignment: .trailing)
+                        // A roster has nothing to rank (all share the mark), so no
+                        // rank column and no trailing value — just the tappable name.
+                        if !roster {
+                            // `rank_label` carries the tie convention ("T-12"); fall
+                            // back to the bare number for older payloads. lineLimit(1)
+                            // keeps a double-digit tie ("T-15", the widest label a
+                            // 15-row board produces) on ONE line; the fixed width fits
+                            // it so every row's name column still starts at the same x.
+                            Text(leader.rank_label ?? "\(leader.rank ?? index + 1)")
+                                .font(.callout.weight(.semibold))
+                                .monospacedDigit()
+                                .lineLimit(1)
+                                .fixedSize(horizontal: true, vertical: false)
+                                .foregroundStyle(.secondary)
+                                .frame(width: 40, alignment: .trailing)
+                        }
                         VStack(alignment: .leading, spacing: 1) {
                             Text(leader.player_name ?? "—")
                                 .font(.subheadline.weight(.medium))
@@ -240,9 +251,11 @@ struct AskAnswerView: View {
                             }
                         }
                         Spacer(minLength: 8)
-                        Text(leaderValue(leader))
-                            .font(.subheadline.weight(.semibold))
-                            .monospacedDigit()
+                        if !roster {
+                            Text(leaderValue(leader))
+                                .font(.subheadline.weight(.semibold))
+                                .monospacedDigit()
+                        }
                         if leader.mlbam_id != nil {
                             Image(systemName: "chevron.right")
                                 .font(.caption2.weight(.semibold))

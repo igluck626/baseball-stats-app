@@ -7701,7 +7701,12 @@ _LB_STREAK_METRIC = {"hitting": "hitting_streak", "on_base": "on_base_streak",
                      "home_run": "hr_game_streak", "multi_hit": "multi_hit_streak",
                      # AB-unit, plays-derived + gap-gated; own backfill (NOT the
                      # daily _leaderboard_rows). The 12-hit record (Dropo/Higgins/Miranda).
-                     "consecutive_hits": "consecutive_hits"}
+                     "consecutive_hits": "consecutive_hits",
+                     # consecutive_on_base ranks normally (Williams 16, varied below);
+                     # consecutive_hr is a SHARED record (45 at 4) served as a ROSTER
+                     # at read time, not a ranked list — see _run_streak_leaderboard.
+                     "consecutive_on_base": "consecutive_on_base",
+                     "consecutive_hr": "consecutive_hr"}
 _LB_SPAN_WINDOWS = (10, 20, 30, 50, 162)
 _LB_SPAN_EVENTS = ("HR", "H", "RBI", "TB")
 # Pitching leaderboard metrics/events (role='pit' rows, same table).
@@ -8971,16 +8976,19 @@ _ASK_STREAK_LB_TOOL = {
         "properties": {
             "streak_type": {"type": "string",
                             "enum": ["hitting", "on_base", "home_run", "multi_hit",
-                                     "consecutive_hits",
+                                     "consecutive_hits", "consecutive_on_base", "consecutive_hr",
                                      "win", "quality_start", "high_k", "scoreless_innings"],
                             "description": "BATTER: hitting / on_base / home_run / "
                             "multi_hit (game-unit); consecutive_hits = most consecutive "
-                            "AT-BATS with a hit ('who has the most consecutive hits', the "
-                            "12 record — NOT the 56-game hitting streak). PITCHER (set "
-                            "role='pit'): win = consecutive wins; quality_start = "
-                            "consecutive quality starts; high_k = consecutive 10-strikeout "
-                            "games; scoreless_innings = longest run of consecutive "
-                            "scoreless innings ('who has the longest scoreless streak')."},
+                            "AT-BATS with a hit ('most consecutive hits', the 12 record — "
+                            "NOT the 56-game hitting streak); consecutive_on_base = most "
+                            "consecutive plate appearances reaching base; consecutive_hr = "
+                            "most consecutive at-bats with a HR ('most consecutive/back-to-"
+                            "back home runs', no 'games' — returns the shared-record "
+                            "roster). PITCHER (set role='pit'): win = consecutive wins; "
+                            "quality_start = consecutive quality starts; high_k = "
+                            "consecutive 10-strikeout games; scoreless_innings = longest "
+                            "run of consecutive scoreless innings."},
             "role": {"type": "string", "enum": ["bat", "pit"], "description":
                      "'pit' for a pitcher-streak leaderboard (win/quality_start/high_k/"
                      "scoreless_innings); omit or 'bat' for batter streaks."},
@@ -9875,9 +9883,12 @@ def ask(request: Request,
         st = (tool_input or {}).get("streak_type")
         if st not in _LB_STREAK_METRIC and st not in _LB_PITCHER_STREAK_METRIC:
             base["out_of_scope"] = True
-            base["reason"] = ("A streak leaderboard needs a streak type (batter: "
-                              "hitting/on_base/home_run/multi_hit; pitcher: "
-                              "win/quality_start/high_k).")
+            base["reason"] = (
+                (f"I don't rank a '{st}' leaderboard. " if st else "")
+                + "I can rank these streak leaderboards — batter: hitting, on-base, "
+                "home-run, multi-hit, consecutive-hits, consecutive-on-base, "
+                "consecutive-home-runs; pitcher: win, quality-start, high-strikeout, "
+                "scoreless-innings.")
             base["answer"] = base["reason"]
             return _finish()
         _lb_role = "pit" if st in _LB_PITCHER_STREAK_METRIC else (tool_input.get("role") or "bat")
@@ -9912,6 +9923,10 @@ def ask(request: Request,
             return _finish()
         base["leaderboard_title"] = result.get("leaderboard_title")
         base["leaders"] = result.get("leaders", [])
+        # ROSTER shape (a shared record, e.g. consecutive HR) — a headline + the
+        # holders, no ranks. The iOS card switches on `roster`.
+        base["roster"] = result.get("roster")
+        base["roster_headline"] = result.get("roster_headline")
         base["answer"] = None
         return _finish()
 
@@ -11111,10 +11126,25 @@ _STREAK_LB_LABEL = {
     "home_run":  "Most consecutive games with a home run",
     "multi_hit": "Longest multi-hit-game streak",
     "consecutive_hits": "Most consecutive hits",
+    "consecutive_on_base": "Most consecutive times on base",
+    "consecutive_hr": "Most consecutive home runs",
 }
 _CONSEC_HITS_LB_NOTE = ("Consecutive at-bats with a hit, reconstructed from "
                         "regular-season play-by-play; only gap-free streaks (no "
                         "missing games in the window) are ranked.")
+_CONSEC_ONBASE_LB_NOTE = ("Consecutive plate appearances reaching base, from "
+                          "regular-season play-by-play; only gap-free streaks "
+                          "(no missing games in the window) are ranked.")
+_CONSEC_HR_LB_NOTE = ("Consecutive at-bats with a home run, from regular-season "
+                      "play-by-play; gap-free streaks only. This is a shared "
+                      "record, so it's a roster of the holders, not a ranking.")
+# ROSTER vs RANKED: when this many players share the record (the top value), the
+# board is a mass tie — serve a ROSTER of the holders (no ranks), not a ranked
+# list. 6 cleanly separates the shared records (consecutive HR: 45 at 4 -> roster)
+# from the genuinely-ranked ones (consecutive hits: 3 at 12; HR-in-games: 3 at 8).
+_ROSTER_MIN_TIE = 6
+# The record's noun for a roster headline ("4 consecutive home runs — shared by…").
+_ROSTER_NOUN = {"consecutive_hr": "consecutive home runs"}
 _SPAN_LB_EVENT_LABEL = {"HR": "home runs", "H": "hits", "RBI": "RBI", "TB": "total bases"}
 _PITCHER_STREAK_LB_LABEL = {
     "win":           "Longest win streak",
@@ -11216,7 +11246,38 @@ def _run_streak_leaderboard(streak_type, season=None, season_start=None, limit=1
     } for i, r in enumerate(rows)]
     _rank_with_ties(leaders, "value")
     lb_note = {"scoreless_streak": _SCORELESS_LB_NOTE,
-               "consecutive_hits": _CONSEC_HITS_LB_NOTE}.get(metric, _LB_COVERAGE_NOTE)
+               "consecutive_hits": _CONSEC_HITS_LB_NOTE,
+               "consecutive_on_base": _CONSEC_ONBASE_LB_NOTE,
+               "consecutive_hr": _CONSEC_HR_LB_NOTE}.get(metric, _LB_COVERAGE_NOTE)
+
+    # ROSTER shape: when the record (top value) is shared by many, a ranked list of
+    # T-1 x N reads as broken — return the roster of holders instead (no ranks).
+    # Data-driven, not phrasing-driven: "who has the MOST consecutive home runs"
+    # must become a roster despite saying "most", so the mass tie is what decides.
+    if leaders and season is None:
+        top_val = leaders[0]["value"]
+        if sum(1 for l in leaders if l["value"] == top_val) >= _ROSTER_MIN_TIE:
+            with connection.get_session() as db:
+                rrows = db.execute(_sa_text(
+                    "SELECT DISTINCT ON (player_id) player_id, season "
+                    "FROM game_unit_leaderboard "
+                    "WHERE metric = :m AND role = :role AND value = :v "
+                    "ORDER BY player_id, season"),
+                    {"m": metric, "role": role, "v": int(top_val)}).fetchall()
+            rnames = _lb_resolve_names([r[0] for r in rrows])
+            holders = sorted(
+                [{"player_name": rnames.get(r[0]) or f"mlbam:{r[0]}", "mlbam_id": r[0],
+                  "value": int(top_val), "subtitle": str(r[1]) if r[1] else None}
+                 for r in rrows],
+                key=lambda h: h["player_name"])
+            noun = _ROSTER_NOUN.get(metric, label.lower())
+            return {"resolved": True, "source": "game_unit_leaderboard", "roster": True,
+                    "roster_mark": int(top_val), "roster_count": len(holders),
+                    "roster_headline": (f"{top_val} {noun} — shared by "
+                                        f"{len(holders)} players"),
+                    "leaders": holders,
+                    "game_coverage": {"complete": False, "note": lb_note}}
+
     return {"resolved": True, "source": "game_unit_leaderboard",
             "leaderboard_title": title, "leaders": leaders,
             "game_coverage": {"complete": False, "note": lb_note}}
@@ -11860,6 +11921,139 @@ def backfill_consecutive_hits_leaderboard(
             {"rank": i + 1, "name": r["name"], "retro_id": r["retro_id"],
              "hits": r["length"], "start": r["start_date"], "end": r["end_date"]}
             for i, r in enumerate(ranked[:25])],
+    }
+
+
+def _ab_streak_leaderboard_ranked(cur, kind, roster=False, want=25, cap=400):
+    """Generalized AB-unit leaderboard batch (the consecutive-hits one, parameterized
+    by kind via _AB_STREAK_CFG). One walk pass over the plays store, then GAP-GATED
+    per candidate. roster=True keeps EVERY gap-free player at the record (max) value
+    — the shared-record set (consecutive HR: ~45 at 4) — instead of a ranked top-N.
+    Returns (rows, checked, skipped_gappy)."""
+    cfg = _AB_STREAK_CFG[kind]
+    prows = cur.execute(
+        f"SELECT BAT_ID, GAME_DATE, GAME_ID, EVENT_ID, "
+        f"CASE WHEN {cfg['good']} THEN 1 ELSE 0 END "
+        f"FROM plays WHERE GAME_TYPE='R' AND {cfg['row_filter']} "
+        "ORDER BY BAT_ID, GAME_DATE, GAME_ID, EVENT_ID").fetchall()
+    best: dict = {}
+    cb = None
+    run = bst = 0
+    bs = be = cs = None
+    for b, gd, _g, _e, good in prows:
+        if b != cb:
+            if cb is not None and bst >= 1:
+                best[cb] = (bst, bs, be)
+            cb = b; run = bst = 0; bs = be = cs = None
+        if good:
+            if run == 0:
+                cs = gd
+            run += 1
+            if run > bst:
+                bst, bs, be = run, cs, gd
+        else:
+            run = 0
+    if cb is not None and bst >= 1:
+        best[cb] = (bst, bs, be)
+
+    if roster:
+        mx = max((v[0] for v in best.values()), default=0)
+        cand = sorted(((b, v) for b, v in best.items() if v[0] == mx), key=lambda kv: kv[0])
+    else:
+        cand = sorted(best.items(), key=lambda kv: (-kv[1][0], kv[0]))
+
+    retro_ids = [b for b, _ in cand[:cap]]
+    idmap: dict = {}
+    if retro_ids:
+        with connection.get_session() as db:
+            for rid, plid, nm in db.execute(_sa_text(
+                "SELECT retro_id, player_id, name FROM players WHERE retro_id IN :ids"
+            ).bindparams(_sa_bindparam("ids", expanding=True)), {"ids": retro_ids}).fetchall():
+                idmap[rid] = (plid, nm)
+
+    out, checked, skipped = [], 0, 0
+    for rid, (n, s, e) in cand:
+        if checked >= cap or (not roster and len(out) >= want):
+            break
+        m = idmap.get(rid)
+        if not m:
+            continue
+        checked += 1
+        gap_free, _ = _ab_gap_check(m[0], rid, s, e, cfg["gap_mode"])
+        if not gap_free:
+            skipped += 1
+            continue
+        out.append({"retro_id": rid, "mlbam": m[0], "name": m[1], "length": int(n),
+                    "start_date": str(s), "end_date": str(e), "season": int(str(s)[:4])})
+    return out, checked, skipped
+
+
+# Build-time correctness gates for the combined AB backfill.
+_CONSEC_ONBASE_EXPECT = {"willt103": 16}          # Ted Williams tops the on-base board
+_CONSEC_HR_EXPECT_MAX = 4                          # the shared HR record
+_CONSEC_HR_EXPECT_MEMBERS = {"bondb001", "bencj101", "camem001"}  # must be in the roster
+
+
+@app.post("/admin/backfill-ab-leaderboards")
+def backfill_ab_leaderboards(
+    confirm: bool = Query(False, description="true = write rows; false = dry run"),
+):
+    """Precompute the two remaining AB-unit boards in one pass, gap-gated, into
+    game_unit_leaderboard: consecutive_on_base (RANKED, top-25 — Williams 16) and
+    consecutive_hr (ROSTER — every gap-free player at the record of 4). Idempotent.
+    VERIFIES Williams 16 + the HR record=4 with known members before writing.
+    confirm=false = dry run (compute + verify + previews)."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    t0 = time.perf_counter()
+    cur = _plays_cursor()
+    try:
+        ob, ob_checked, ob_skip = _ab_streak_leaderboard_ranked(cur, "on_base", roster=False, want=25)
+        hr, hr_checked, hr_skip = _ab_streak_leaderboard_ranked(cur, "hr", roster=True)
+    finally:
+        cur.close()
+    compute_ms = round((time.perf_counter() - t0) * 1000)
+
+    ob_got = {r["retro_id"]: r["length"] for r in ob}
+    ob_verify = {rid: {"expected": exp, "got": ob_got.get(rid)}
+                 for rid, exp in _CONSEC_ONBASE_EXPECT.items()}
+    hr_max = max((r["length"] for r in hr), default=0)
+    hr_ids = {r["retro_id"] for r in hr}
+    hr_ok = (hr_max == _CONSEC_HR_EXPECT_MAX and _CONSEC_HR_EXPECT_MEMBERS <= hr_ids)
+    verify_ok = all(v["got"] == v["expected"] for v in ob_verify.values()) and hr_ok
+
+    written = 0
+    if confirm:
+        if not verify_ok:
+            raise HTTPException(status_code=409, detail=(
+                "AB-leaderboard verification failed — refusing to write. "
+                f"on_base={ob_verify}, hr_max={hr_max}, hr_has_members={_CONSEC_HR_EXPECT_MEMBERS <= hr_ids}"))
+        with connection.get_session() as db:
+            for metric in ("consecutive_on_base", "consecutive_hr"):
+                db.execute(_sa_text(
+                    "DELETE FROM game_unit_leaderboard WHERE metric = :m"), {"m": metric})
+            for metric, rowset in (("consecutive_on_base", ob), ("consecutive_hr", hr)):
+                for r in rowset:
+                    db.execute(_sa_text(
+                        "INSERT INTO game_unit_leaderboard "
+                        '(player_id, role, metric, "window", season, event, value, start_date, end_date) '
+                        "VALUES (:pid, 'bat', :m, 0, :season, '', :value, :start_date, :end_date)"),
+                        {"pid": r["mlbam"], "m": metric, "season": r["season"],
+                         "value": r["length"], "start_date": r["start_date"],
+                         "end_date": r["end_date"]})
+                    written += 1
+            db.commit()
+
+    return {
+        "confirm": confirm, "compute_ms": compute_ms, "verify_ok": verify_ok,
+        "on_base": {"verify": ob_verify, "checked": ob_checked, "skipped_gappy": ob_skip,
+                    "top_15": [{"rank": i + 1, "name": r["name"], "value": r["length"],
+                                "start": r["start_date"], "end": r["end_date"]}
+                               for i, r in enumerate(ob[:15])]},
+        "hr_roster": {"record": hr_max, "count": len(hr), "checked": hr_checked,
+                      "skipped_gappy": hr_skip, "has_members": sorted(_CONSEC_HR_EXPECT_MEMBERS & hr_ids),
+                      "members": sorted(r["name"] for r in hr)},
+        "rows_written": written,
     }
 
 
