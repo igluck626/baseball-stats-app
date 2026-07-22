@@ -430,6 +430,11 @@ struct AskAnswerView: View {
         case "hits":   return "\(len) consecutive hits"
         case "on_base": return "Reached base in \(len) straight plate appearances"
         case "hr_ab":  return "\(len) home runs in a row"
+        case "doubles": return "\(len) consecutive doubles"
+        case "triples": return "\(len) consecutive triples"
+        case "xbh":    return "\(len) consecutive extra-base hits"
+        case "pitcher_k": return "\(len) strikeouts in a row (in a game)"
+        case "sb":     return "\(len) steals in a row without being caught"
         default:       return nil
         }
     }
