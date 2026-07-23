@@ -6741,6 +6741,191 @@ def _run_ab_streak(player, kind, season=None, game_type=None):
             "streak": streak, "game_coverage": cov}
 
 
+# ======================= SINGLE-GAME ACHIEVEMENTS ============================
+# Per-game TOTALS from the daily gamelogs (complete 1901+, nightly-fresh): "4 HR
+# in a game", "12 RBI", "20 K", the cycle. A game total, NOT the at-bat SEQUENCE
+# — "4 HR in a game" (this feature, 19 players) is a different question from "4 HR
+# in consecutive at-bats" (the plays-store AB-unit feature, 45 players). Live
+# queries — no plays store, no coverage gate, no currency label, no precompute.
+#   stat -> (role, daily-table column, "did {n}…" phrase, plural noun)
+_GAME_ACH_STAT = {
+    "HR":  ("bat", '"HR"',     "hit {n} home runs",     "home runs"),
+    "H":   ("bat", '"H"',      "collected {n} hits",    "hits"),
+    "RBI": ("bat", '"RBI"',    "drove in {n} runs",     "runs batted in"),
+    "2B":  ("bat", "doubles",  "hit {n} doubles",       "doubles"),
+    "3B":  ("bat", "triples",  "hit {n} triples",       "triples"),
+    "SO":  ("pit", '"SO"',     "struck out {n} batters", "strikeouts"),
+}
+_GAME_ACH_DEFER = {"no_hitter", "perfect_game"}
+_GAME_ACH_ROSTER_CAP = 60
+# A hitter can't come to the plate 8 times in nine innings (the max is ~7 for a
+# leadoff hitter in a huge inning), so PA>=8 is a certain extra-inning game — but
+# the line carries no inning count, so we say so without inventing a number.
+_GAME_ACH_XINN_PA = 8
+
+
+def _game_ach_extra_inn(role, pa, ip):
+    """A per-game-line extra-inning note, or None. Pitching: IP>9 is definitive,
+    and a whole-number IP is a complete game so we can name the length. Batting:
+    PA>=8 can't happen in nine innings, so it's certainly extra — but we can't
+    derive the exact count, so we just say 'extra-inning game'."""
+    if role == "pit" and ip is not None and float(ip) > 9.0:
+        whole = round(float(ip))
+        return (f"in a {whole}-inning game" if abs(float(ip) - whole) < 0.34
+                else "in an extra-inning game")
+    if role == "bat" and pa is not None and int(pa) >= _GAME_ACH_XINN_PA:
+        return "in an extra-inning game"
+    return None
+
+
+def _run_game_achievement(stat, threshold=None, player=None, game_type=None):
+    """A single-game achievement over the daily gamelogs. Four shapes, by what's
+    given: (player + threshold) 'has X done N+ in a game?' -> yes/no + occasions;
+    (player, no threshold) X's most in a game; (no player + threshold / cycle)
+    'which players have done it' -> roster; (no player, no threshold) 'most in a
+    game' -> the record + holders (roster if >=6 share it, else a ranked list)."""
+    stat = (stat or "").strip()
+    if stat in _GAME_ACH_DEFER:
+        return {"resolved": True, "declined": True, "answer": None,
+                "reason": ("No-hitters and perfect games aren't something I can "
+                           "confirm from box-score totals — a perfect game means "
+                           "zero baserunners, which needs the play-by-play. I'd "
+                           "rather not guess, so I don't answer that one.")}
+    is_cycle = (stat == "cycle")
+    if not is_cycle and stat not in _GAME_ACH_STAT:
+        return {"resolved": True, "out_of_scope": True, "answer": None,
+                "reason": f"'{stat}' isn't a single-game achievement I track."}
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    if (game_type or "R").strip().upper() in ("P", "ALL"):
+        return {"resolved": True, "declined": True, "answer": None,
+                "reason": "These come from regular-season game logs; postseason isn't available."}
+
+    role = "bat" if is_cycle else _GAME_ACH_STAT[stat][0]
+    table = "batting_gamelogs" if role == "bat" else "pitching_gamelogs"
+    extra_col = '"PA"' if role == "bat" else '"IP"'
+    subject = "pitcher" if role == "pit" else "batter"
+    if is_cycle:
+        col, phrase_fmt, noun = None, "hit for the cycle", "the cycle"
+        crit = ('("H" - COALESCE(doubles,0) - COALESCE(triples,0) - "HR") >= 1 '
+                'AND COALESCE(doubles,0) >= 1 AND COALESCE(triples,0) >= 1 AND "HR" >= 1')
+    else:
+        _r, col, phrase_fmt, noun = _GAME_ACH_STAT[stat]
+        crit = None
+
+    def _occ_note(rawpa, rawip):
+        return _game_ach_extra_inn(role, rawpa, rawip)
+
+    # ---------------- single player: yes/no + occasions ----------------------
+    if player:
+        cands = [c for c in _resolve_retro_id(player, role) if c.get("mlbam_id") is not None]
+        if not cands:
+            raise HTTPException(status_code=404, detail=f"No {subject} matching '{player}'")
+        if len({c["mlbam_id"] for c in cands}) > 1:
+            return {"resolved": False, "ambiguous": True, "query": player, "candidates": cands[:25]}
+        r0 = cands[0]
+        mlbam, name = r0["mlbam_id"], r0["name"]
+        pblock = {"query": player, "name": name, "mlbam_id": mlbam, "role": role}
+        with connection.get_session() as db:
+            if is_cycle:
+                where, params = crit, {"pid": int(mlbam)}
+                n = None
+            elif threshold is not None:
+                where, params, n = f"{col} >= :n", {"pid": int(mlbam), "n": int(threshold)}, int(threshold)
+            else:  # the player's most in a game
+                mx = db.execute(_sa_text(f"SELECT MAX({col}) FROM {table} WHERE player_id=:pid"),
+                                {"pid": int(mlbam)}).scalar() or 0
+                where, params, n = f"{col} = :n", {"pid": int(mlbam), "n": int(mx)}, int(mx)
+            vsel = "1" if is_cycle else col
+            rows = db.execute(_sa_text(
+                f"SELECT game_date, opponent, {vsel} v, {extra_col} x FROM {table} "
+                f"WHERE player_id = :pid AND {where} ORDER BY game_date"), params).fetchall()
+        ach = "hit for the cycle" if is_cycle else phrase_fmt.format(n=n)
+        if not rows or (n is not None and n <= 0):
+            return {"resolved": True, "player": pblock, "answer":
+                    f"No — {name} has never {ach} in a game.", "source": "game_logs"}
+        occ = []
+        for gd, opp, v, x in rows:
+            note = _occ_note(x if role == "bat" else None, x if role == "pit" else None)
+            occ.append(f"{_pretty_date(gd)}" + (f" vs {opp}" if opp else "")
+                       + (f" ({note})" if note else ""))
+        times = "once" if len(occ) == 1 else f"{len(occ)} times"
+        shown = occ if len(occ) <= 5 else occ[-5:]
+        lead = "" if len(occ) <= 5 else "most recently "
+        ans = f"Yes — {name} has {ach} in a game {times}: {lead}{'; '.join(shown)}."
+        return {"resolved": True, "player": pblock, "answer": ans, "source": "game_logs"}
+
+    # ---------------- no player: roster (threshold/cycle) or record ----------
+    reg = ""  # gamelogs are regular-season already
+    if is_cycle or threshold is not None:
+        where = crit if is_cycle else f"{col} >= :n"
+        params = {} if is_cycle else {"n": int(threshold)}
+        with connection.get_session() as db:
+            total = db.execute(_sa_text(
+                f"SELECT COUNT(DISTINCT player_id) FROM {table} WHERE {where}"), params).scalar() or 0
+            vexpr = "1" if is_cycle else f"MAX({col})"
+            rows = db.execute(_sa_text(
+                f"SELECT player_id, {vexpr} v, MIN(game_date) first, COUNT(*) cnt "
+                f"FROM {table} WHERE {where} GROUP BY player_id "
+                f"ORDER BY v DESC, first LIMIT {_GAME_ACH_ROSTER_CAP}"), params).fetchall()
+        names = _lb_resolve_names([r[0] for r in rows])
+        leaders = [{"player_name": names.get(r[0]) or f"mlbam:{r[0]}", "mlbam_id": r[0],
+                    "value": int(r[1]), "subtitle": (str(r[2])[:4] + (f" · {r[3]}×" if r[3] > 1 else ""))}
+                   for r in rows]
+        if is_cycle:
+            head = f"The cycle — {total} players have hit for it"
+        else:
+            head = f"{threshold}+ {noun} in a game — {total} player" + ("s" if total != 1 else "")
+        more = f" (showing {_GAME_ACH_ROSTER_CAP})" if total > _GAME_ACH_ROSTER_CAP else ""
+        return {"resolved": True, "source": "game_logs", "roster": True,
+                "roster_headline": head + more, "roster_count": total, "leaders": leaders,
+                "game_coverage": {"complete": True}}
+
+    # "most X in a game" — each player's single-game best, ranked; roster if the
+    # record is shared by >= _ROSTER_MIN_TIE.
+    with connection.get_session() as db:
+        rows = db.execute(_sa_text(
+            f"SELECT player_id, game_date, opponent, v, x FROM ("
+            f"  SELECT DISTINCT ON (player_id) player_id, game_date, opponent, "
+            f"         {col} v, {extra_col} x FROM {table} "
+            f"  ORDER BY player_id, {col} DESC, game_date"
+            f") t ORDER BY v DESC, player_id LIMIT 25")).fetchall()
+        if not rows:
+            return {"resolved": True, "source": "game_logs", "answer": None,
+                    "leaders": [], "leaderboard_title": f"Most {noun} in a game"}
+        record = int(rows[0][3])
+        n_at_record = db.execute(_sa_text(
+            f"SELECT COUNT(DISTINCT player_id) FROM {table} WHERE {col} = :v"),
+            {"v": record}).scalar() or 0
+    names = _lb_resolve_names([r[0] for r in rows])
+
+    def _sub(gd, x):
+        note = _game_ach_extra_inn(role, x if role == "bat" else None, x if role == "pit" else None)
+        yr = str(gd)[:4]
+        return f"{yr} · {note}" if note else yr
+
+    if n_at_record >= _ROSTER_MIN_TIE:
+        with connection.get_session() as db:
+            rr = db.execute(_sa_text(
+                f"SELECT DISTINCT ON (player_id) player_id, game_date, opponent, {extra_col} x "
+                f"FROM {table} WHERE {col} = :v ORDER BY player_id, game_date"),
+                {"v": record}).fetchall()
+        rnames = _lb_resolve_names([r[0] for r in rr])
+        holders = sorted([{"player_name": rnames.get(r[0]) or f"mlbam:{r[0]}", "mlbam_id": r[0],
+                           "value": record, "subtitle": _sub(r[1], r[3])} for r in rr],
+                         key=lambda h: h["player_name"])
+        return {"resolved": True, "source": "game_logs", "roster": True,
+                "roster_headline": f"{record} {noun} in a game — shared by {len(holders)} players",
+                "roster_count": len(holders), "leaders": holders,
+                "game_coverage": {"complete": True}}
+    leaders = [{"player_name": names.get(r[0]) or f"mlbam:{r[0]}", "mlbam_id": r[0],
+                "value": int(r[3]), "subtitle": _sub(r[1], r[4])} for r in rows]
+    _rank_with_ties(leaders, "value")
+    return {"resolved": True, "source": "game_logs", "leaders": leaders,
+            "leaderboard_title": f"Most {noun} in a game", "answer": None,
+            "game_coverage": {"complete": True}}
+
+
 def _run_streak(player, streak_type, season=None, game_type=None):
     """Longest run of consecutive games meeting a per-game condition (hitting /
     on-base / home-run / multi-hit), from the daily game logs. WITHIN A SEASON
@@ -9211,6 +9396,39 @@ _ASK_SPAN_LB_TOOL = {
     },
 }
 
+_ASK_GAME_ACH_TOOL = {
+    "name": "query_game_achievement",
+    "description": (
+        "A single-game FEAT — a per-game TOTAL, e.g. 'has Schwarber ever hit 4 home "
+        "runs in a game?', 'which players have hit 4 HR in a game?', 'most RBIs in a "
+        "game?', 'most strikeouts in a game?', 'has anyone hit for the cycle?'. The "
+        "key phrase is IN A GAME / IN ONE GAME (a game total). CRITICAL: this is NOT "
+        "'in a row' / 'in consecutive at-bats' / 'back-to-back' — '4 HR in "
+        "consecutive at-bats' is query_streak (streak_type='consecutive_hr'), a "
+        "different question. stat = the counted thing; threshold = the N for 'N+ in "
+        "a game' (omit for 'the most'); player named -> yes/no + when; no player -> "
+        "the roster/record. No-hitters and perfect games are NOT supported."),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "stat": {"type": "string",
+                     "enum": ["HR", "H", "RBI", "2B", "3B", "SO", "cycle",
+                              "no_hitter", "perfect_game"],
+                     "description": "BATTER: HR=home runs, H=hits, RBI, 2B=doubles, "
+                     "3B=triples, cycle=hit for the cycle. PITCHER: SO=strikeouts. "
+                     "no_hitter/perfect_game are asked-but-declined."},
+            "threshold": {"type": "integer", "description":
+                          "the N for 'N+ [stat] in a game' (4 for '4 home runs in a "
+                          "game'). OMIT for 'the MOST [stat] in a game' and for the "
+                          "cycle."},
+            "player": {"type": "string", "description":
+                       "name or MLBAM id — set for 'has [player] ever…'; OMIT for "
+                       "'which players…' / 'the most…' (a roster or the record)."},
+        },
+        "required": ["stat"],
+    },
+}
+
 _ASK_SYSTEM = (
     "You translate a baseball fan's English question into a single structured "
     "query over a play-by-play database by calling exactly one tool.\n\n"
@@ -9423,6 +9641,21 @@ _ASK_SYSTEM = (
     "'Most home runs in any 162 games all-time' -> {event:'HR', window_size:162}. "
     "A NAMED player -> query_span; no player -> query_span_leaderboard. Leaderboard "
     "spans cover HR/H/RBI/TB over 10/20/30/50/162-game windows only.\n\n"
+    "SINGLE-GAME FEATS (call query_game_achievement) — a per-game TOTAL: 'IN A "
+    "GAME' / 'in one game'. stat + optional threshold + optional player.\n"
+    "- 'Has Schwarber ever hit 4 home runs in a game?' -> {stat:'HR', threshold:4, "
+    "player:'Kyle Schwarber'}. 'Which players have hit 4 HR in a game?' -> "
+    "{stat:'HR', threshold:4} (no player -> a roster). 'Most RBIs in a game?' -> "
+    "{stat:'RBI'} (no threshold -> the record). 'Most strikeouts in a game' (a "
+    "PITCHER) -> {stat:'SO'}. 'Has anyone hit for the cycle / has Player X hit for "
+    "the cycle' -> {stat:'cycle'[, player]}. stats: HR/H/RBI/2B/3B (batter), SO "
+    "(pitcher), cycle.\n"
+    "- CRITICAL vs streaks: 'N HR IN A GAME' (a game total) is "
+    "query_game_achievement; 'N HR IN A ROW / in consecutive at-bats / back-to-"
+    "back' is query_streak {streak_type:'consecutive_hr'}. Same number, different "
+    "question — 'in a game' vs 'in a row'.\n"
+    "- No-hitters and perfect games: still call query_game_achievement "
+    "({stat:'no_hitter'} or 'perfect_game'); it will decline honestly.\n\n"
     "OUT OF SCOPE (call cannot_answer) — only when the QUERY SHAPE can't do it:\n"
     "- ERA / WHIP / pitcher rate stats and other computed rates we don't support "
     "(we do AVG/OBP/SLG/OPS for hitters).\n"
@@ -9460,7 +9693,7 @@ _ask_log_write_failed = False   # so a broken log surfaces LOUDLY once (not per-
 _ASK_TOOLS = [_ASK_QUERY_TOOL, _ASK_LEADERBOARD_TOOL, _ASK_RATES_TOOL,
               _ASK_SPLITS_TOOL, _ASK_RATE_LB_TOOL, _ASK_MILESTONE_TOOL,
               _ASK_STREAK_TOOL, _ASK_SPAN_TOOL,
-              _ASK_STREAK_LB_TOOL, _ASK_SPAN_LB_TOOL,
+              _ASK_STREAK_LB_TOOL, _ASK_SPAN_LB_TOOL, _ASK_GAME_ACH_TOOL,
               {**_ASK_CANNOT_TOOL, "cache_control": {"type": "ephemeral"}}]
 _ASK_SYSTEM_BLOCKS = [{"type": "text", "text": _ASK_SYSTEM,
                        "cache_control": {"type": "ephemeral"}}]
@@ -10156,6 +10389,56 @@ def ask(request: Request,
         base["leaderboard_title"] = result.get("leaderboard_title")
         base["leaders"] = result.get("leaders", [])
         base["answer"] = None
+        return _finish()
+
+    if tool_name == "query_game_achievement":
+        base["understood_as"] = tool_input
+        st = (tool_input or {}).get("stat")
+        if not st:
+            base["out_of_scope"] = True
+            base["reason"] = ("A single-game feat needs a stat (HR/H/RBI/2B/3B, "
+                              "SO for a pitcher, or the cycle).")
+            base["answer"] = base["reason"]
+            return _finish()
+        t0 = time.perf_counter()
+        try:
+            result = _run_game_achievement(
+                stat=st, threshold=tool_input.get("threshold"),
+                player=tool_input.get("player"), game_type=tool_input.get("game_type"))
+        except HTTPException as exc:
+            timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
+            base["reason"] = str(exc.detail)
+            base["answer"] = f"Couldn't answer that: {exc.detail}"
+            return _finish()
+        except Exception as exc:  # noqa: BLE001
+            timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
+            log.exception("ask game-achievement failed for %r", q)
+            base["error"] = str(exc); base["reason"] = "query failed"
+            base["answer"] = ("Sorry — something went wrong looking that up. "
+                              "Try rephrasing the question.")
+            return _finish()
+        timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
+        if result.get("ambiguous"):
+            base["ambiguous"] = True
+            base["player_resolved"] = {"candidates": result.get("candidates", [])}
+            base["answer"] = (f'There are multiple players matching "{tool_input.get("player")}" — '
+                              "tap the one you mean.")
+            return _finish()
+        base["source"] = result.get("source")
+        base["game_coverage"] = result.get("game_coverage")
+        base["player_resolved"] = result.get("player")
+        if result.get("declined") or result.get("out_of_scope"):
+            base["declined"] = bool(result.get("declined"))
+            base["out_of_scope"] = bool(result.get("out_of_scope"))
+            base["reason"] = result.get("reason")
+            base["answer"] = result.get("reason")
+            return _finish()
+        # roster / ranked list (no player) or a prose yes-no (player)
+        base["roster"] = result.get("roster")
+        base["roster_headline"] = result.get("roster_headline")
+        base["leaders"] = result.get("leaders")
+        base["leaderboard_title"] = result.get("leaderboard_title")
+        base["answer"] = result.get("answer")
         return _finish()
 
     # ---- out of scope / no usable tool call -----------------------------
