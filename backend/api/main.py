@@ -6833,7 +6833,10 @@ def _run_game_achievement(stat, threshold=None, player=None, game_type=None,
         scope += " AND season <= :g_se"; scope_params["g_se"] = int(season_end)
         sc_parts.append(f"through {int(season_end)}")
     if home_away in ("home", "away"):
-        scope += " AND home_away = :g_ha"; scope_params["g_ha"] = home_away
+        # the gamelog column stores 'H'/'A' (both retro and BDL eras), not the
+        # model's 'home'/'away' — map it, or the WHERE matches zero rows.
+        scope += " AND home_away = :g_ha"
+        scope_params["g_ha"] = "H" if home_away == "home" else "A"
         sc_parts.append(f"in {home_away} games")
     scope_label = (" " + ", ".join(sc_parts)) if sc_parts else ""
 
@@ -6894,6 +6897,10 @@ def _run_game_achievement(stat, threshold=None, player=None, game_type=None,
                 f"SELECT player_id, {vexpr} v, MAX(game_date) recent, COUNT(*) cnt "
                 f"FROM {table} WHERE {where} GROUP BY player_id "
                 f"ORDER BY recent DESC LIMIT {_GAME_ACH_ROSTER_CAP}"), params).fetchall()
+        if total == 0:   # empty-but-correct — say the zero, don't render a blank card
+            msg = (f"No player hit for the cycle{scope_label}." if is_cycle
+                   else f"No player has {phrase_fmt.format(n=threshold)} in a game{scope_label}.")
+            return {"resolved": True, "source": "game_logs", "answer": msg}
         names = _lb_resolve_names([r[0] for r in rows])
         leaders = [{"player_name": names.get(r[0]) or f"mlbam:{r[0]}", "mlbam_id": r[0],
                     "value": int(r[1]), "subtitle": (str(r[2])[:4] + (f" · {r[3]}×" if r[3] > 1 else ""))}
@@ -6918,8 +6925,8 @@ def _run_game_achievement(stat, threshold=None, player=None, game_type=None,
             f"  ORDER BY player_id, {col} DESC, game_date"
             f") t ORDER BY v DESC, player_id LIMIT 25"), scope_params).fetchall()
         if not rows:
-            return {"resolved": True, "source": "game_logs", "answer": None,
-                    "leaders": [], "leaderboard_title": title}
+            return {"resolved": True, "source": "game_logs",
+                    "answer": f"No {noun} recorded in a game{scope_label}."}
         record = int(rows[0][3])
         n_at_record = db.execute(_sa_text(
             f"SELECT COUNT(DISTINCT player_id) FROM {table} WHERE {col} = :v{scope}"),
@@ -10493,6 +10500,7 @@ def ask(request: Request,
             result = _run_streak_leaderboard(
                 streak_type=st, season=tool_input.get("season"),
                 season_start=tool_input.get("season_start"),
+                season_end=tool_input.get("season_end"),
                 limit=_LB_DEFAULT_LIMIT, role=_lb_role)
         except HTTPException as exc:
             timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
@@ -10523,7 +10531,9 @@ def ask(request: Request,
         # holders, no ranks. The iOS card switches on `roster`.
         base["roster"] = result.get("roster")
         base["roster_headline"] = result.get("roster_headline")
-        base["answer"] = None
+        # `answer` is normally None (the list IS the answer); a scoped board with no
+        # qualifiers returns a zero-result sentence instead of a blank card.
+        base["answer"] = result.get("answer")
         return _finish()
 
     if tool_name == "query_span_leaderboard":
@@ -11815,7 +11825,8 @@ _SCORELESS_LB_NOTE = ("Consecutive scoreless innings, reconstructed from "
 _PITCHER_SPAN_LB_EVENT_LABEL = {"K": "strikeouts", "W": "wins", "SV": "saves"}
 
 
-def _run_streak_leaderboard(streak_type, season=None, season_start=None, limit=15, role="bat"):
+def _run_streak_leaderboard(streak_type, season=None, season_start=None, season_end=None,
+                            limit=15, role="bat"):
     """Top players by longest game-unit streak — a fast READ of the precomputed
     game_unit_leaderboard (no recompute), so a value equals the single-player card.
     role='pit' ranks pitcher streaks (win/quality_start/high_k). season set ->
@@ -11879,9 +11890,15 @@ def _run_streak_leaderboard(streak_type, season=None, season_start=None, limit=1
         inner = "metric = :m AND role = :role"
         title = label
         if season_start is not None:
-            inner += " AND season >= :since"
-            params["since"] = int(season_start)
+            inner += " AND season >= :since"; params["since"] = int(season_start)
+        if season_end is not None:
+            inner += " AND season <= :until"; params["until"] = int(season_end)
+        if season_start is not None and season_end is not None:
+            title = f"{label} in {int(season_start)}–{int(season_end)}"
+        elif season_start is not None:
             title = f"{label} since {int(season_start)}"
+        elif season_end is not None:
+            title = f"{label} through {int(season_end)}"
         sql = ("SELECT player_id, value, season, start_date, end_date FROM ("
                "  SELECT DISTINCT ON (player_id) player_id, value, season, "
                "         start_date, end_date "
@@ -11902,6 +11919,11 @@ def _run_streak_leaderboard(streak_type, season=None, season_start=None, limit=1
         "subtitle": str(r[2]) if r[2] else None,
     } for i, r in enumerate(rows)]
     _rank_with_ties(leaders, "value")
+    if not leaders:   # scoped to a range with no qualifiers — say so, don't blank
+        return {"resolved": True, "source": "game_unit_leaderboard",
+                "leaderboard_title": title, "leaders": [],
+                "answer": f"{title}: no players qualify.",
+                "game_coverage": {"complete": False}}
     lb_note = {"scoreless_streak": _SCORELESS_LB_NOTE,
                "consecutive_hits": _CONSEC_HITS_LB_NOTE,
                "consecutive_on_base": _CONSEC_ONBASE_LB_NOTE,
@@ -11929,6 +11951,8 @@ def _run_streak_leaderboard(streak_type, season=None, season_start=None, limit=1
             r_params = {"m": metric, "role": role, "v": int(top_val)}
             if season_start is not None:
                 r_where += " AND season >= :since"; r_params["since"] = int(season_start)
+            if season_end is not None:
+                r_where += " AND season <= :until"; r_params["until"] = int(season_end)
             with connection.get_session() as db:
                 rrows = db.execute(_sa_text(
                     "SELECT DISTINCT ON (player_id) player_id, season "
