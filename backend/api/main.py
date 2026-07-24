@@ -9458,7 +9458,9 @@ _ASK_GAME_ACH_TOOL = {
         "'which players' rule picks which), a different question. stat = the counted "
         "thing; threshold = the N for 'N+ in "
         "a game' (omit for 'the most'); player named -> yes/no + when; no player -> "
-        "the roster/record. No-hitters and perfect games are NOT supported."),
+        "the roster/record. No-hitters and perfect games are NOT supported. A feat "
+        "scoped to a specific OPPONENT CLUB ('against the Dodgers', 'vs the Yankees') "
+        "IS supported — set `opponent` to the club name."),
     "input_schema": {
         "type": "object",
         "properties": {
@@ -9481,6 +9483,12 @@ _ASK_GAME_ACH_TOOL = {
             "season_end": {"type": "integer", "description": "end of a range ('before 1990' -> 1989)."},
             "home_away": {"type": "string", "enum": ["home", "away"], "description":
                           "'at home' / 'on the road'; omit otherwise."},
+            "opponent": {"type": "string", "description":
+                         "the opposing CLUB NAME exactly as written ('Dodgers', "
+                         "'Yankees', 'the Chicago Cubs') when the feat is scoped to a "
+                         "specific team ('against the Dodgers'). Pass the NAME, never a "
+                         "code — the backend resolves the name to the right team codes "
+                         "across eras. Omit if no opponent is named."},
         },
         "required": ["stat"],
     },
@@ -9710,7 +9718,10 @@ _ASK_SYSTEM = (
     "'Most strikeouts in a game' -> {stat:'SO'}. 'Has anyone hit for the cycle / has "
     "Player X hit for the cycle' -> {stat:'cycle'[, player]}. stats: HR/H/RBI/2B/3B "
     "(batter), SO (pitcher), cycle. SCOPING: 'in 2019' -> season; 'since 2000' -> "
-    "season_start; 'at home'/'on the road' -> home_away — pass these when named.\n"
+    "season_start; 'at home'/'on the road' -> home_away; 'against the Dodgers'/'vs "
+    "the Yankees' -> opponent:'Dodgers'/'Yankees' (the CLUB NAME as written, not a "
+    "code) — pass these when named. A single-game feat scoped to a club is "
+    "ANSWERABLE; do NOT call cannot_answer for a named opponent.\n"
     "- CRITICAL vs streaks: 'N HR IN A GAME' (a game total) is "
     "query_game_achievement. But 'N HR IN A ROW' / 'in consecutive at-bats' / "
     "'back-to-back' is a RUN of at-bats, not a game total — set "
@@ -10014,6 +10025,27 @@ def _detect_opponent(question):
     return None
 
 
+# Bare (no "against" anchor) matchers for a model-passed `opponent` string — the
+# whole value IS the club, so match a nickname/city anywhere in it ("Dodgers",
+# "the Chicago Cubs", "Washington"). Nickname wins over a bare city.
+_OPP_NICK_BARE = re.compile(r"\b(" + _OPP_TEAM_ALT + r")\b")
+_OPP_CITY_BARE = re.compile(r"\b(" + _OPP_CITY_ALT + r")\b")
+
+
+def _classify_opponent(text):
+    """Classify a model-passed opponent string. Returns ('nick', token) for a
+    resolvable club, ('city', token) for an ambiguous city, or None if it names
+    no club we know (the guard then declines rather than silently widen)."""
+    t = (text or "").lower()
+    m = _OPP_NICK_BARE.search(t)
+    if m:
+        return ("nick", m.group(1))
+    m = _OPP_CITY_BARE.search(t)
+    if m:
+        return ("city", m.group(1))
+    return None
+
+
 def _norm_team(s):
     """Normalise a nickname/code for crosswalk lookup — lowercase, drop anything
     non-alphanumeric ('d-backs'/'d backs' -> 'dbacks', 'Red Sox' -> 'redsox')."""
@@ -10119,8 +10151,16 @@ def _guard_scoped_tool(question, tool_name, tool_input):
         # for a decade must survive, not be clobbered by a single injected start).
         elif not any(ti.get(k) is not None for k in ("season", "season_start", "season_end")):
             ti.update(season)
-    opp = _detect_opponent(question)
-    if opp:
+    # Opponent: prefer the club the MODEL passed (`opponent`), else DETECT the one
+    # the question named (the backstop for a model that drops it). Either way the
+    # resolver does the work — model passes a name, never a code.
+    model_opp = ti.get("opponent")
+    opp = _classify_opponent(model_opp) if model_opp else _detect_opponent(question)
+    if model_opp and opp is None:
+        # the model named an opponent we can't resolve (e.g. it passed a code, or
+        # a club we don't index) — DECLINE, never silently widen to all teams.
+        bad.append("a specific opponent (team)")
+    elif opp:
         kind, token = opp
         if kind == "city":
             # A city naming more than one club — nickname-only resolution, so
