@@ -6778,12 +6778,15 @@ def _game_ach_extra_inn(role, pa, ip):
     return None
 
 
-def _run_game_achievement(stat, threshold=None, player=None, game_type=None):
+def _run_game_achievement(stat, threshold=None, player=None, game_type=None,
+                          season=None, season_start=None, season_end=None, home_away=None):
     """A single-game achievement over the daily gamelogs. Four shapes, by what's
     given: (player + threshold) 'has X done N+ in a game?' -> yes/no + occasions;
     (player, no threshold) X's most in a game; (no player + threshold / cycle)
     'which players have done it' -> roster; (no player, no threshold) 'most in a
-    game' -> the record + holders (roster if >=6 share it, else a ranked list)."""
+    game' -> the record + holders (roster if >=6 share it, else a ranked list).
+    Scoped by season (single / start / end) and/or home_away; the scope clause is
+    appended to every query so a 'since 2000' can never be silently widened."""
     stat = (stat or "").strip()
     if stat in _GAME_ACH_DEFER:
         return {"resolved": True, "declined": True, "answer": None,
@@ -6813,6 +6816,27 @@ def _run_game_achievement(stat, threshold=None, player=None, game_type=None):
         _r, col, phrase_fmt, noun = _GAME_ACH_STAT[stat]
         crit = None
 
+    # season / home_away scope, appended to EVERY query's WHERE (so a 'since 2000'
+    # can't be silently widened) + a label for the headline/prose.
+    scope, scope_params, sc_parts = "", {}, []
+    if season is not None:
+        scope += " AND season = :g_sea"; scope_params["g_sea"] = int(season)
+        sc_parts.append(f"in {int(season)}")
+    if season_start is not None and season_end is not None:
+        scope += " AND season BETWEEN :g_ss AND :g_se"
+        scope_params["g_ss"], scope_params["g_se"] = int(season_start), int(season_end)
+        sc_parts.append(f"{int(season_start)}–{int(season_end)}")
+    elif season_start is not None:
+        scope += " AND season >= :g_ss"; scope_params["g_ss"] = int(season_start)
+        sc_parts.append(f"since {int(season_start)}")
+    elif season_end is not None:
+        scope += " AND season <= :g_se"; scope_params["g_se"] = int(season_end)
+        sc_parts.append(f"through {int(season_end)}")
+    if home_away in ("home", "away"):
+        scope += " AND home_away = :g_ha"; scope_params["g_ha"] = home_away
+        sc_parts.append(f"in {home_away} games")
+    scope_label = (" " + ", ".join(sc_parts)) if sc_parts else ""
+
     def _occ_note(rawpa, rawip):
         return _game_ach_extra_inn(role, rawpa, rawip)
 
@@ -6833,17 +6857,19 @@ def _run_game_achievement(stat, threshold=None, player=None, game_type=None):
             elif threshold is not None:
                 where, params, n = f"{col} >= :n", {"pid": int(mlbam), "n": int(threshold)}, int(threshold)
             else:  # the player's most in a game
-                mx = db.execute(_sa_text(f"SELECT MAX({col}) FROM {table} WHERE player_id=:pid"),
-                                {"pid": int(mlbam)}).scalar() or 0
+                mx = db.execute(_sa_text(
+                    f"SELECT MAX({col}) FROM {table} WHERE player_id=:pid{scope}"),
+                    {"pid": int(mlbam), **scope_params}).scalar() or 0
                 where, params, n = f"{col} = :n", {"pid": int(mlbam), "n": int(mx)}, int(mx)
+            params = {**params, **scope_params}
             vsel = "1" if is_cycle else col
             rows = db.execute(_sa_text(
                 f"SELECT game_date, opponent, {vsel} v, {extra_col} x FROM {table} "
-                f"WHERE player_id = :pid AND {where} ORDER BY game_date"), params).fetchall()
+                f"WHERE player_id = :pid AND {where}{scope} ORDER BY game_date"), params).fetchall()
         ach = "hit for the cycle" if is_cycle else phrase_fmt.format(n=n)
         if not rows or (n is not None and n <= 0):
             return {"resolved": True, "player": pblock, "answer":
-                    f"No — {name} has never {ach} in a game.", "source": "game_logs"}
+                    f"No — {name} has never {ach} in a game{scope_label}.", "source": "game_logs"}
         occ = []
         for gd, opp, v, x in rows:
             note = _occ_note(x if role == "bat" else None, x if role == "pit" else None)
@@ -6852,30 +6878,30 @@ def _run_game_achievement(stat, threshold=None, player=None, game_type=None):
         times = "once" if len(occ) == 1 else f"{len(occ)} times"
         shown = occ if len(occ) <= 5 else occ[-5:]
         lead = "" if len(occ) <= 5 else "most recently "
-        ans = f"Yes — {name} has {ach} in a game {times}: {lead}{'; '.join(shown)}."
+        ans = f"Yes — {name} has {ach} in a game{scope_label} {times}: {lead}{'; '.join(shown)}."
         return {"resolved": True, "player": pblock, "answer": ans, "source": "game_logs"}
 
     # ---------------- no player: roster (threshold/cycle) or record ----------
-    reg = ""  # gamelogs are regular-season already
     if is_cycle or threshold is not None:
-        where = crit if is_cycle else f"{col} >= :n"
-        params = {} if is_cycle else {"n": int(threshold)}
+        where = (crit if is_cycle else f"{col} >= :n") + scope
+        params = {**scope_params} if is_cycle else {"n": int(threshold), **scope_params}
         with connection.get_session() as db:
             total = db.execute(_sa_text(
                 f"SELECT COUNT(DISTINCT player_id) FROM {table} WHERE {where}"), params).scalar() or 0
             vexpr = "1" if is_cycle else f"MAX({col})"
+            # ORDER most-recent occurrence FIRST (a player who did it this year leads)
             rows = db.execute(_sa_text(
-                f"SELECT player_id, {vexpr} v, MIN(game_date) first, COUNT(*) cnt "
+                f"SELECT player_id, {vexpr} v, MAX(game_date) recent, COUNT(*) cnt "
                 f"FROM {table} WHERE {where} GROUP BY player_id "
-                f"ORDER BY v DESC, first LIMIT {_GAME_ACH_ROSTER_CAP}"), params).fetchall()
+                f"ORDER BY recent DESC LIMIT {_GAME_ACH_ROSTER_CAP}"), params).fetchall()
         names = _lb_resolve_names([r[0] for r in rows])
         leaders = [{"player_name": names.get(r[0]) or f"mlbam:{r[0]}", "mlbam_id": r[0],
                     "value": int(r[1]), "subtitle": (str(r[2])[:4] + (f" · {r[3]}×" if r[3] > 1 else ""))}
                    for r in rows]
         if is_cycle:
-            head = f"The cycle — {total} players have hit for it"
+            head = f"The cycle{scope_label} — {total} players have hit for it"
         else:
-            head = f"{threshold}+ {noun} in a game — {total} player" + ("s" if total != 1 else "")
+            head = f"{threshold}+ {noun} in a game{scope_label} — {total} player" + ("s" if total != 1 else "")
         more = f" (showing {_GAME_ACH_ROSTER_CAP})" if total > _GAME_ACH_ROSTER_CAP else ""
         return {"resolved": True, "source": "game_logs", "roster": True,
                 "roster_headline": head + more, "roster_count": total, "leaders": leaders,
@@ -6883,20 +6909,21 @@ def _run_game_achievement(stat, threshold=None, player=None, game_type=None):
 
     # "most X in a game" — each player's single-game best, ranked; roster if the
     # record is shared by >= _ROSTER_MIN_TIE.
+    title = f"Most {noun} in a game{scope_label}"
     with connection.get_session() as db:
         rows = db.execute(_sa_text(
             f"SELECT player_id, game_date, opponent, v, x FROM ("
             f"  SELECT DISTINCT ON (player_id) player_id, game_date, opponent, "
-            f"         {col} v, {extra_col} x FROM {table} "
+            f"         {col} v, {extra_col} x FROM {table} WHERE 1=1{scope} "
             f"  ORDER BY player_id, {col} DESC, game_date"
-            f") t ORDER BY v DESC, player_id LIMIT 25")).fetchall()
+            f") t ORDER BY v DESC, player_id LIMIT 25"), scope_params).fetchall()
         if not rows:
             return {"resolved": True, "source": "game_logs", "answer": None,
-                    "leaders": [], "leaderboard_title": f"Most {noun} in a game"}
+                    "leaders": [], "leaderboard_title": title}
         record = int(rows[0][3])
         n_at_record = db.execute(_sa_text(
-            f"SELECT COUNT(DISTINCT player_id) FROM {table} WHERE {col} = :v"),
-            {"v": record}).scalar() or 0
+            f"SELECT COUNT(DISTINCT player_id) FROM {table} WHERE {col} = :v{scope}"),
+            {"v": record, **scope_params}).scalar() or 0
     names = _lb_resolve_names([r[0] for r in rows])
 
     def _sub(gd, x):
@@ -6906,23 +6933,26 @@ def _run_game_achievement(stat, threshold=None, player=None, game_type=None):
 
     if n_at_record >= _ROSTER_MIN_TIE:
         with connection.get_session() as db:
+            # each holder's MOST RECENT record game, holders ordered most-recent-first
             rr = db.execute(_sa_text(
                 f"SELECT DISTINCT ON (player_id) player_id, game_date, opponent, {extra_col} x "
-                f"FROM {table} WHERE {col} = :v ORDER BY player_id, game_date"),
-                {"v": record}).fetchall()
+                f"FROM {table} WHERE {col} = :v{scope} ORDER BY player_id, game_date DESC"),
+                {"v": record, **scope_params}).fetchall()
         rnames = _lb_resolve_names([r[0] for r in rr])
         holders = sorted([{"player_name": rnames.get(r[0]) or f"mlbam:{r[0]}", "mlbam_id": r[0],
-                           "value": record, "subtitle": _sub(r[1], r[3])} for r in rr],
-                         key=lambda h: h["player_name"])
+                           "value": record, "subtitle": _sub(r[1], r[3]), "_d": str(r[1])} for r in rr],
+                         key=lambda h: h["_d"], reverse=True)
+        for h in holders:
+            h.pop("_d", None)
         return {"resolved": True, "source": "game_logs", "roster": True,
-                "roster_headline": f"{record} {noun} in a game — shared by {len(holders)} players",
+                "roster_headline": f"{record} {noun} in a game{scope_label} — shared by {len(holders)} players",
                 "roster_count": len(holders), "leaders": holders,
                 "game_coverage": {"complete": True}}
     leaders = [{"player_name": names.get(r[0]) or f"mlbam:{r[0]}", "mlbam_id": r[0],
                 "value": int(r[3]), "subtitle": _sub(r[1], r[4])} for r in rows]
     _rank_with_ties(leaders, "value")
     return {"resolved": True, "source": "game_logs", "leaders": leaders,
-            "leaderboard_title": f"Most {noun} in a game", "answer": None,
+            "leaderboard_title": title, "answer": None,
             "game_coverage": {"complete": True}}
 
 
@@ -9426,6 +9456,12 @@ _ASK_GAME_ACH_TOOL = {
             "player": {"type": "string", "description":
                        "name or MLBAM id — set for 'has [player] ever…'; OMIT for "
                        "'which players…' / 'the most…' (a roster or the record)."},
+            "season": {"type": "integer", "description": "a SINGLE season ('in 2019')."},
+            "season_start": {"type": "integer", "description":
+                             "start of a range ('since 2000' -> 2000)."},
+            "season_end": {"type": "integer", "description": "end of a range ('before 1990' -> 1989)."},
+            "home_away": {"type": "string", "enum": ["home", "away"], "description":
+                          "'at home' / 'on the road'; omit otherwise."},
         },
         "required": ["stat"],
     },
@@ -9648,10 +9684,14 @@ _ASK_SYSTEM = (
     "- 'Has Schwarber ever hit 4 home runs in a game?' -> {stat:'HR', threshold:4, "
     "player:'Kyle Schwarber'}. 'Which players have hit 4 HR in a game?' -> "
     "{stat:'HR', threshold:4} (no player -> a roster). 'Most RBIs in a game?' -> "
-    "{stat:'RBI'} (no threshold -> the record). 'Most strikeouts in a game' (a "
-    "PITCHER) -> {stat:'SO'}. 'Has anyone hit for the cycle / has Player X hit for "
-    "the cycle' -> {stat:'cycle'[, player]}. stats: HR/H/RBI/2B/3B (batter), SO "
-    "(pitcher), cycle.\n"
+    "{stat:'RBI'} (no threshold -> the record). A PITCHER's strikeouts in a game: "
+    "'has Ohtani ever struck out 10 batters in a game?' -> {stat:'SO', threshold:10, "
+    "player:'Shohei Ohtani'} (this is a game FEAT, NOT a career strikeout count — "
+    "even for a two-way player, 'struck out N in a game' is the pitching side). "
+    "'Most strikeouts in a game' -> {stat:'SO'}. 'Has anyone hit for the cycle / has "
+    "Player X hit for the cycle' -> {stat:'cycle'[, player]}. stats: HR/H/RBI/2B/3B "
+    "(batter), SO (pitcher), cycle. SCOPING: 'in 2019' -> season; 'since 2000' -> "
+    "season_start; 'at home'/'on the road' -> home_away — pass these when named.\n"
     "- CRITICAL vs streaks: 'N HR IN A GAME' (a game total) is "
     "query_game_achievement. But 'N HR IN A ROW' / 'in consecutive at-bats' / "
     "'back-to-back' is a RUN of at-bats, not a game total — set "
@@ -9884,6 +9924,123 @@ def _unsupported_reason(reasons):
             "have, so I won't guess. Try the question without that condition.")
 
 
+def _detect_season_scope(question):
+    """The SEASON scope a question names (a year filter), separate from the
+    situational _detect_constraints above. Returns the tool params it maps to, or
+    None: a SINGLE season ('in 2019' -> {season}) or a RANGE ('since 2000' ->
+    {season_start}, 'before 1990' -> {season_end}, 'between A and B' / 'the 1990s'
+    -> both). Anchored on a scope word so a bare number can't be misread."""
+    import re
+    ql = " " + (question or "").lower() + " "
+
+    def yr(s):
+        y = int(s)
+        return y if 1876 <= y <= 2035 else None
+    m = (re.search(r"\bbetween (\d{4}) and (\d{4})\b", ql)
+         or re.search(r"\bfrom (\d{4})\s*(?:to|through|-|–|—)\s*(\d{4})\b", ql))
+    if m and yr(m.group(1)) and yr(m.group(2)):
+        a, b = sorted((yr(m.group(1)), yr(m.group(2))))
+        return {"season_start": a, "season_end": b}
+    m = re.search(r"\bin the (\d{4})s\b|\b(\d{3}0)s\b", ql)
+    if m and yr(m.group(1) or m.group(2)):
+        d = yr(m.group(1) or m.group(2))
+        return {"season_start": d, "season_end": d + 9}
+    m = re.search(r"\bsince (\d{4})\b", ql)
+    if m and yr(m.group(1)):
+        return {"season_start": yr(m.group(1))}
+    m = re.search(r"\bafter (\d{4})\b", ql)
+    if m and yr(m.group(1)):
+        return {"season_start": yr(m.group(1)) + 1}
+    m = re.search(r"\bbefore (\d{4})\b", ql)
+    if m and yr(m.group(1)):
+        return {"season_end": yr(m.group(1)) - 1}
+    m = re.search(r"\bin (\d{4})\b", ql)
+    if m and yr(m.group(1)):
+        return {"season": yr(m.group(1))}
+    return None
+
+
+# MLB team nicknames (+ common short forms) — enough to DETECT that a specific
+# opponent was named ("against the Dodgers", "vs the Yankees", "off the Mets").
+# We only need to know the constraint was ASKED FOR, not resolve it — so the guard
+# can DECLINE rather than silently widen. Resolving the name to a team code (the
+# `opponent` column) is the follow-up on the launch-prep list (the team-name
+# mapping work) that would make an opponent-scoped game feat answerable.
+_OPP_TEAM_ALT = (
+    r"yankees|red ?sox|blue ?jays|orioles|rays|tigers|guardians|indians|white ?sox"
+    r"|twins|royals|astros|angels|athletics|mariners|rangers|dodgers|giants|padres"
+    r"|rockies|diamondbacks|d[- ]?backs|braves|mets|phillies|marlins|nationals|nats"
+    r"|expos|cubs|cardinals|cards|brewers|reds|pirates")
+_OPP_RE = re.compile(
+    r"\b(?:against|versus|vs\.?|facing|off)\s+(?:the\s+)?(?:" + _OPP_TEAM_ALT + r")\b")
+
+
+def _detect_opponent(question):
+    """True if the question names a specific OPPONENT ('against the Dodgers')."""
+    return bool(_OPP_RE.search(" " + (question or "").lower() + " "))
+
+
+# What SCOPE each tool dispatched OUTSIDE the _ANSWERABLE constraint pass can
+# honor. A question naming a scope not here -> DECLINE (never silently widen).
+# 'season_single' = a single year ('in 2019'); 'season_range' = since/before/
+# between (the single-player streak/span/milestone tools take only ONE season;
+# the leaderboards take a range; the span leaderboard is precomputed all-time and
+# takes neither). Kept beside the runners so it can't drift out of sync.
+_TOOL_SCOPE_CAPS = {
+    "query_milestone":          {"season_single"},
+    "query_streak":             {"season_single"},
+    "query_span":               {"season_single"},
+    "query_streak_leaderboard": {"season_single", "season_range"},
+    "query_span_leaderboard":   frozenset(),
+    "query_game_achievement":   {"season_single", "season_range", "home_away"},
+}
+_SCOPE_DECLINE = (
+    "I can't scope that question by {cond} — I'd have to drop it and answer a "
+    "broader one, which would mislead. Ask it without that, or a different way.")
+
+
+def _guard_scoped_tool(question, tool_name, tool_input):
+    """Constraint guard for a tool dispatched OUTSIDE the _ANSWERABLE pass. Repairs
+    a dropped-but-SUPPORTED scope (injects season / home_away into tool_input) and
+    returns a DECLINE reason if the question names a scope the tool CANNOT express
+    — so these tools never silently widen. None = proceed. Mutates tool_input."""
+    caps = _TOOL_SCOPE_CAPS.get(tool_name, frozenset())
+    ti = tool_input if tool_input is not None else {}
+    bad = []
+    inj, unsup = _detect_constraints(question)
+    if unsup:
+        bad.append(unsup[0])
+    if "handedness" in inj:
+        bad.append("batter/pitcher handedness")
+    if "base_state" in inj:
+        bad.append("the base/scoring situation")
+    if "balls" in inj or "strikes" in inj:
+        bad.append("the ball-strike count")
+    ha = inj.get("home_away")
+    if ha:
+        if "home_away" not in caps:
+            bad.append("home/away")
+        elif ti.get("home_away") is None:      # inject only a true drop
+            ti["home_away"] = ha
+    season = _detect_season_scope(question)
+    if season:
+        need = "season_range" if ("season_start" in season or "season_end" in season) \
+            else "season_single"
+        if need not in caps:
+            bad.append("a range of seasons" if need == "season_range" else "a single season")
+        # Inject ONLY when the model set NO season field at all (a true drop) — never
+        # override or augment a scope the model chose (e.g. its explicit start+end
+        # for a decade must survive, not be clobbered by a single injected start).
+        elif not any(ti.get(k) is not None for k in ("season", "season_start", "season_end")):
+            ti.update(season)
+    if _detect_opponent(question) and "opponent" not in caps:
+        bad.append("a specific opponent (team)")
+    if not bad:
+        return None
+    cond = bad[0] if len(bad) == 1 else ", ".join(bad[:-1]) + " or " + bad[-1]
+    return _SCOPE_DECLINE.format(cond=cond)
+
+
 # A COUNT question ("how many home runs...") wants a number, not a line. When
 # the model routes one to query_rates anyway, the rate line already holds the
 # figure — so we read it out and set count + highlighted_stat rather than
@@ -10104,6 +10261,20 @@ def ask(request: Request,
                 tool_input[_param] = _value   # base['understood_as'] is this dict — stays in sync
                 log.warning("ask: model DROPPED %s=%r (tool %s) for %r; injected in code",
                             _param, _value, tool_name, q)
+
+    # Same guarantee for the tools handled BELOW (outside _ANSWERABLE): repair a
+    # dropped-but-supported scope, or DECLINE a scope the tool can't express — so
+    # streak/span/milestone/leaderboard/game-achievement never silently widen.
+    elif tool_name in _TOOL_SCOPE_CAPS and tool_input is not None:
+        _scope_decline = _guard_scoped_tool(q, tool_name, tool_input)
+        if _scope_decline:
+            base["out_of_scope"] = True
+            base["reason"] = _scope_decline
+            base["answer"] = _scope_decline
+            base["understood_as"] = None
+            log.warning("ask: CODE-DECLINED unsupported scope (tool %s %s) for %r",
+                        tool_name, tool_input, q)
+            return _finish()
 
     # ==== MILESTONE branch ('when did X reach the Nth ...') ==============
     # Handled here (not via _ANSWERABLE) so the constraint validator above — which
@@ -10409,7 +10580,9 @@ def ask(request: Request,
         try:
             result = _run_game_achievement(
                 stat=st, threshold=tool_input.get("threshold"),
-                player=tool_input.get("player"), game_type=tool_input.get("game_type"))
+                player=tool_input.get("player"), game_type=tool_input.get("game_type"),
+                season=tool_input.get("season"), season_start=tool_input.get("season_start"),
+                season_end=tool_input.get("season_end"), home_away=tool_input.get("home_away"))
         except HTTPException as exc:
             timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
             base["reason"] = str(exc.detail)
@@ -11751,19 +11924,25 @@ def _run_streak_leaderboard(streak_type, season=None, season_start=None, limit=1
     if leaders and season is None:
         top_val = leaders[0]["value"]
         if sum(1 for l in leaders if l["value"] == top_val) >= _ROSTER_MIN_TIE:
+            # carry season_start into the re-query so a scoped roster isn't widened
+            r_where = "metric = :m AND role = :role AND value = :v"
+            r_params = {"m": metric, "role": role, "v": int(top_val)}
+            if season_start is not None:
+                r_where += " AND season >= :since"; r_params["since"] = int(season_start)
             with connection.get_session() as db:
                 rrows = db.execute(_sa_text(
                     "SELECT DISTINCT ON (player_id) player_id, season "
-                    "FROM game_unit_leaderboard "
-                    "WHERE metric = :m AND role = :role AND value = :v "
-                    "ORDER BY player_id, season"),
-                    {"m": metric, "role": role, "v": int(top_val)}).fetchall()
+                    f"FROM game_unit_leaderboard WHERE {r_where} "
+                    "ORDER BY player_id, season DESC"), r_params).fetchall()
             rnames = _lb_resolve_names([r[0] for r in rrows])
+            # most-recent streak first (a player who did it this year leads)
             holders = sorted(
                 [{"player_name": rnames.get(r[0]) or f"mlbam:{r[0]}", "mlbam_id": r[0],
-                  "value": int(top_val), "subtitle": str(r[1]) if r[1] else None}
-                 for r in rrows],
-                key=lambda h: h["player_name"])
+                  "value": int(top_val), "subtitle": str(r[1]) if r[1] else None,
+                  "_s": r[1] or 0} for r in rrows],
+                key=lambda h: h["_s"], reverse=True)
+            for h in holders:
+                h.pop("_s", None)
             noun = _ROSTER_NOUN.get(metric, label.lower())
             return {"resolved": True, "source": "game_unit_leaderboard", "roster": True,
                     "roster_mark": int(top_val), "roster_count": len(holders),
