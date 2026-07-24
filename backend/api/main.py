@@ -29,6 +29,7 @@ import sys
 import data_service
 import live_service
 import news_service
+import team_crosswalk
 from cache import cache as _cache
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -1605,6 +1606,8 @@ def team_postseason(team_id: str):
                 "year":     r.year,
                 "round":    _POSTSEASON_ROUND_DISPLAY.get(r.round, r.round),
                 "won":      won,
+                # raw Lahman code — the iOS TeamHistorySheet maps it itself
+                # (displayCode) and keys the 2017 asterisk off `== "HOU"`.
                 "opponent": opponent,
                 "wins":     r.wins,
                 "losses":   r.losses,
@@ -6057,7 +6060,7 @@ def _run_situational(
                     # link can map it to a game; see feasibility note in the PR.
                     "game_id":     str(gid),
                     "game_date":   str(gd),
-                    "opponent":    opp,
+                    "opponent":    team_name(opp, str(gd)[:4]),
                     "home_team":   home,
                     "away_team":   away,
                     "inning":      inn,
@@ -6386,7 +6389,8 @@ def _run_milestone(player, event, n, season=None, game_type=None):
                 "milestone": {"n": n, "event": label, "reached": True,
                               "date": str(row["game_date"]),
                               "date_pretty": _pretty_date(row["game_date"]),
-                              "season": row["season"], "opponent": row["opponent"],
+                              "season": row["season"],
+                              "opponent": team_name(row["opponent"], row["season"]),
                               "home_away": row["home_away"], "running_total": n},
                 "game_coverage": {"complete": True}}
     # (c) he reached it (N <= real total) but a game is missing before N, so the
@@ -6779,7 +6783,8 @@ def _game_ach_extra_inn(role, pa, ip):
 
 
 def _run_game_achievement(stat, threshold=None, player=None, game_type=None,
-                          season=None, season_start=None, season_end=None, home_away=None):
+                          season=None, season_start=None, season_end=None, home_away=None,
+                          opponent_codes=None, opponent_label=None):
     """A single-game achievement over the daily gamelogs. Four shapes, by what's
     given: (player + threshold) 'has X done N+ in a game?' -> yes/no + occasions;
     (player, no threshold) X's most in a game; (no player + threshold / cycle)
@@ -6838,6 +6843,12 @@ def _run_game_achievement(stat, threshold=None, player=None, game_type=None,
         scope += " AND home_away = :g_ha"
         scope_params["g_ha"] = "H" if home_away == "home" else "A"
         sc_parts.append(f"in {home_away} games")
+    if opponent_codes:
+        # the guard resolved a nickname to the franchise's opponent codes across
+        # the query's era (e.g. the Dodgers -> BRO/LAN + LAD). ANY() over the set.
+        scope += " AND opponent = ANY(:g_opp)"
+        scope_params["g_opp"] = list(opponent_codes)
+        sc_parts.append(f"against {opponent_label or 'that team'}")
     scope_label = (" " + ", ".join(sc_parts)) if sc_parts else ""
 
     def _occ_note(rawpa, rawip):
@@ -6876,7 +6887,7 @@ def _run_game_achievement(stat, threshold=None, player=None, game_type=None,
         occ = []
         for gd, opp, v, x in rows:
             note = _occ_note(x if role == "bat" else None, x if role == "pit" else None)
-            occ.append(f"{_pretty_date(gd)}" + (f" vs {opp}" if opp else "")
+            occ.append(f"{_pretty_date(gd)}" + (f" vs {team_name(opp, str(gd)[:4])}" if opp else "")
                        + (f" ({note})" if note else ""))
         times = "once" if len(occ) == 1 else f"{len(occ)} times"
         shown = occ if len(occ) <= 5 else occ[-5:]
@@ -7469,7 +7480,8 @@ def _run_pitcher_milestone(player, event, n, season=None, game_type=None):
                 "milestone": {"n": n, "event": label, "reached": True,
                               "date": str(row["game_date"]),
                               "date_pretty": _pretty_date(row["game_date"]),
-                              "season": row["season"], "opponent": row["opponent"],
+                              "season": row["season"],
+                              "opponent": team_name(row["opponent"], row["season"]),
                               "home_away": row["home_away"], "running_total": n},
                 "game_coverage": {"complete": True}}
     note = (f"{resolved['name']} reached {auth_total} {plural}, but some of his "
@@ -9968,23 +9980,90 @@ def _detect_season_scope(question):
 
 
 # MLB team nicknames (+ common short forms) — enough to DETECT that a specific
-# opponent was named ("against the Dodgers", "vs the Yankees", "off the Mets").
-# We only need to know the constraint was ASKED FOR, not resolve it — so the guard
-# can DECLINE rather than silently widen. Resolving the name to a team code (the
-# `opponent` column) is the follow-up on the launch-prep list (the team-name
-# mapping work) that would make an opponent-scoped game feat answerable.
+# opponent was named ("against the Dodgers", "vs the Yankees", "off the Mets")
+# and hand the nickname to the team-name resolver (team_crosswalk). A city that
+# names more than one club ("Washington", "New York") is intentionally NOT here:
+# nickname-only resolution, so those DECLINE with a clarify (see _OPP_CITY_ALT).
 _OPP_TEAM_ALT = (
     r"yankees|red ?sox|blue ?jays|orioles|rays|tigers|guardians|indians|white ?sox"
     r"|twins|royals|astros|angels|athletics|mariners|rangers|dodgers|giants|padres"
     r"|rockies|diamondbacks|d[- ]?backs|braves|mets|phillies|marlins|nationals|nats"
     r"|expos|cubs|cardinals|cards|brewers|reds|pirates")
-_OPP_RE = re.compile(
-    r"\b(?:against|versus|vs\.?|facing|off)\s+(?:the\s+)?(?:" + _OPP_TEAM_ALT + r")\b")
+# {0,2} optional words let a city precede the nickname ("the Chicago Cubs", "the
+# New York Mets") while still capturing the nickname (lazy, so it wins over a
+# bare city). Cities alone fall through to the ambiguous-city path below.
+_OPP_NICK_RE = re.compile(
+    r"\b(?:against|versus|vs\.?|facing|off)\s+(?:the\s+)?(?:\w+\s+){0,2}?("
+    + _OPP_TEAM_ALT + r")\b")
+_OPP_CITY_ALT = r"washington|new york|los angeles|chicago|st\.? ?louis"
+_OPP_CITY_RE = re.compile(
+    r"\b(?:against|versus|vs\.?|facing|off)\s+(?:the\s+)?(" + _OPP_CITY_ALT + r")\b")
 
 
 def _detect_opponent(question):
-    """True if the question names a specific OPPONENT ('against the Dodgers')."""
-    return bool(_OPP_RE.search(" " + (question or "").lower() + " "))
+    """Detect a named opponent. Returns ('nick', token) for a resolvable club,
+    ('city', token) for an ambiguous city (decline with a clarify), or None. A
+    nickname wins over a bare city so 'the Chicago Cubs' resolves, not declines."""
+    ql = " " + (question or "").lower() + " "
+    m = _OPP_NICK_RE.search(ql)
+    if m:
+        return ("nick", m.group(1))
+    m = _OPP_CITY_RE.search(ql)
+    if m:
+        return ("city", m.group(1))
+    return None
+
+
+def _norm_team(s):
+    """Normalise a nickname/code for crosswalk lookup — lowercase, drop anything
+    non-alphanumeric ('d-backs'/'d backs' -> 'dbacks', 'Red Sox' -> 'redsox')."""
+    return "".join(c for c in (s or "").lower() if c.isalnum())
+
+
+def team_name(code, year=None, scheme="retro"):
+    """Render an opponent CODE as its era-correct team name. `scheme` selects the
+    code vocabulary: 'retro' (batting/pitching_gamelogs.opponent and the plays
+    store — the bulk) or 'lahman' (the postseason series table). Current-season
+    MLB-StatsAPI short codes ('KC', 'SF') and any BR-style codes fall through to
+    the modern layer (the franchise's current name). `year` picks the era-correct
+    name for a code whose franchise was renamed in place (Indians->Guardians,
+    Devil Rays->Rays); omit it to get the latest. Unknown codes echo back."""
+    if not code:
+        return code
+    primary = (team_crosswalk.RETRO_NAME_RUNS if scheme == "retro"
+               else team_crosswalk.LAHMAN_NAME_RUNS)
+    secondary = (team_crosswalk.LAHMAN_NAME_RUNS if scheme == "retro"
+                 else team_crosswalk.RETRO_NAME_RUNS)
+    runs = primary.get(code) or secondary.get(code)
+    if runs:
+        y = int(year) if year else runs[-1][0]
+        nm = runs[0][1]
+        for start, name in runs:
+            if start <= y:
+                nm = name
+            else:
+                break
+        return nm
+    fr = team_crosswalk.MODERN_CODE_TO_FRANCH.get(code)
+    return team_crosswalk.FRANCH_CURRENT_NAME.get(fr, code) if fr else code
+
+
+def _resolve_opponent_codes(nick, year_lo=None, year_hi=None):
+    """Nickname -> the set of opponent codes to filter on: the franchise's
+    Retrosheet codes over [year_lo, year_hi] (franchise expansion across
+    relocations — the Dodgers -> BRO + LAN) PLUS its current short/BR codes (the
+    in-progress season stores those). Empty set if the nickname is unknown. The
+    modern codes are always included; they can only match current-season rows, so
+    a year-scoped query never picks up a false match from them."""
+    fr = team_crosswalk.NICK_TO_FRANCH.get(_norm_team(nick))
+    if not fr:
+        return set()
+    lo = int(year_lo) if year_lo else 1901
+    hi = int(year_hi) if year_hi else 2100
+    codes = {c for (c, clo, chi) in team_crosswalk.FRANCH_RETRO_SEGMENTS.get(fr, ())
+             if not (chi < lo or clo > hi)}
+    codes.update(team_crosswalk.FRANCH_MODERN_CODES.get(fr, ()))
+    return codes
 
 
 # What SCOPE each tool dispatched OUTSIDE the _ANSWERABLE constraint pass can
@@ -9999,7 +10078,7 @@ _TOOL_SCOPE_CAPS = {
     "query_span":               {"season_single"},
     "query_streak_leaderboard": {"season_single", "season_range"},
     "query_span_leaderboard":   frozenset(),
-    "query_game_achievement":   {"season_single", "season_range", "home_away"},
+    "query_game_achievement":   {"season_single", "season_range", "home_away", "opponent"},
 }
 _SCOPE_DECLINE = (
     "I can't scope that question by {cond} — I'd have to drop it and answer a "
@@ -10040,8 +10119,27 @@ def _guard_scoped_tool(question, tool_name, tool_input):
         # for a decade must survive, not be clobbered by a single injected start).
         elif not any(ti.get(k) is not None for k in ("season", "season_start", "season_end")):
             ti.update(season)
-    if _detect_opponent(question) and "opponent" not in caps:
-        bad.append("a specific opponent (team)")
+    opp = _detect_opponent(question)
+    if opp:
+        kind, token = opp
+        if kind == "city":
+            # A city naming more than one club — nickname-only resolution, so
+            # decline with a clarify (more useful than the generic widen refusal).
+            return team_crosswalk.AMBIG_CITY.get(
+                token, "That city has more than one club — name the team.")
+        elif "opponent" not in caps:
+            bad.append("a specific opponent (team)")
+        else:
+            # Resolve nickname -> the franchise's codes, expanded across the
+            # query's season range (season may have just been injected above).
+            lo = ti.get("season") or ti.get("season_start")
+            hi = ti.get("season") or ti.get("season_end")
+            codes = _resolve_opponent_codes(token, lo, hi)
+            if not codes:
+                bad.append("a specific opponent (team)")
+            elif ti.get("opponent_codes") is None:     # inject only a true drop
+                ti["opponent_codes"] = sorted(codes)
+                ti["opponent_label"] = f"the {token.title()}"
     if not bad:
         return None
     cond = bad[0] if len(bad) == 1 else ", ".join(bad[:-1]) + " or " + bad[-1]
@@ -10592,7 +10690,9 @@ def ask(request: Request,
                 stat=st, threshold=tool_input.get("threshold"),
                 player=tool_input.get("player"), game_type=tool_input.get("game_type"),
                 season=tool_input.get("season"), season_start=tool_input.get("season_start"),
-                season_end=tool_input.get("season_end"), home_away=tool_input.get("home_away"))
+                season_end=tool_input.get("season_end"), home_away=tool_input.get("home_away"),
+                opponent_codes=tool_input.get("opponent_codes"),
+                opponent_label=tool_input.get("opponent_label"))
         except HTTPException as exc:
             timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
             base["reason"] = str(exc.detail)
