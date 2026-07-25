@@ -10006,7 +10006,12 @@ _OPP_TEAM_ALT = (
 _OPP_NICK_RE = re.compile(
     r"\b(?:against|versus|vs\.?|facing|off)\s+(?:the\s+)?(?:\w+\s+){0,2}?("
     + _OPP_TEAM_ALT + r")\b")
-_OPP_CITY_ALT = r"washington|new york|los angeles|chicago|st\.? ?louis"
+# Cities that hosted MORE THAN ONE AL/NL franchise historically — a bare one of
+# these is ambiguous and declined (kept in sync with team_crosswalk.AMBIG_CITY,
+# which carries the per-city clarify). A single-franchise city ("Detroit",
+# "Cleveland") is deliberately absent so it resolves via its club's nickname.
+_OPP_CITY_ALT = (r"washington|new york|los angeles|kansas city|st\.? ?louis"
+                 r"|baltimore|boston|chicago|philadelphia|milwaukee|seattle")
 _OPP_CITY_RE = re.compile(
     r"\b(?:against|versus|vs\.?|facing|off)\s+(?:the\s+)?(" + _OPP_CITY_ALT + r")\b")
 
@@ -10151,11 +10156,20 @@ def _guard_scoped_tool(question, tool_name, tool_input):
         # for a decade must survive, not be clobbered by a single injected start).
         elif not any(ti.get(k) is not None for k in ("season", "season_start", "season_end")):
             ti.update(season)
-    # Opponent: prefer the club the MODEL passed (`opponent`), else DETECT the one
-    # the question named (the backstop for a model that drops it). Either way the
-    # resolver does the work — model passes a name, never a code.
+    # Opponent. A bare ambiguous city NAMED IN THE QUESTION ("against Washington")
+    # is declined DETERMINISTICALLY — even if the model self-resolved it to one club,
+    # since that pick silently drops the city's other franchises (Washington ->
+    # Nationals erases 60 years of Senators). A nickname in the question ("the
+    # Nationals", "the Washington Nationals") is unambiguous — the detector prefers
+    # it — and resolves. Otherwise prefer the club the MODEL passed, else the one the
+    # question named (the backstop for a model that drops it); the resolver does the
+    # work either way — a name in, never a code.
+    q_opp = _detect_opponent(question)
+    if q_opp and q_opp[0] == "city":
+        return team_crosswalk.AMBIG_CITY.get(
+            q_opp[1], "That city has hosted more than one club — name the team.")
     model_opp = ti.get("opponent")
-    opp = _classify_opponent(model_opp) if model_opp else _detect_opponent(question)
+    opp = _classify_opponent(model_opp) if model_opp else q_opp
     if model_opp and opp is None:
         # the model named an opponent we can't resolve (e.g. it passed a code, or
         # a club we don't index) — DECLINE, never silently widen to all teams.
@@ -10163,10 +10177,10 @@ def _guard_scoped_tool(question, tool_name, tool_input):
     elif opp:
         kind, token = opp
         if kind == "city":
-            # A city naming more than one club — nickname-only resolution, so
-            # decline with a clarify (more useful than the generic widen refusal).
+            # model passed a bare ambiguous city though the question didn't anchor
+            # one (no preposition) — same clarify, still nickname-only resolution.
             return team_crosswalk.AMBIG_CITY.get(
-                token, "That city has more than one club — name the team.")
+                token, "That city has hosted more than one club — name the team.")
         elif "opponent" not in caps:
             bad.append("a specific opponent (team)")
         else:

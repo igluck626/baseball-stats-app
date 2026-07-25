@@ -54,16 +54,29 @@ _NICK_TO_TEAMID = {
     "expos": "MON",
 }
 
-# Cities that name more than one club (nickname-only resolution declines these).
+# Cities that hosted MORE THAN ONE AL/NL franchise across history — nickname-only
+# resolution declines these, because resolving the bare city to one club silently
+# drops the city's other franchises (e.g. "Washington" -> Nationals would erase 60
+# years of Senators). Derived from Teams.csv (lgID in AL/NL, 1901+): every city
+# with >1 distinct franchID. A city that only ever hosted one franchise is NOT here
+# and resolves normally. Keys are lowercased to match the detector's capture.
+_ST_LOUIS = "St. Louis could mean the Cardinals or the Browns (who became the Orioles) — name the club."
 _AMBIG_CITY = {
-    "washington": ("Washington could mean the Senators (the franchise that became "
-                   "the Twins, or the one that became the Rangers) or the Nationals "
-                   "— name the club."),
+    "washington": ("Washington could mean the Senators (who became the Twins, or the "
+                   "later club that became the Rangers) or the Nationals — name the club."),
     "new york": "New York could mean the Yankees, the Mets, or the Giants — name the club.",
     "los angeles": "Los Angeles could mean the Dodgers or the Angels — name the club.",
     "chicago": "Chicago could mean the Cubs or the White Sox — name the club.",
-    "st. louis": "St. Louis could mean the Cardinals or the Browns — name the club.",
-    "st louis": "St. Louis could mean the Cardinals or the Browns — name the club.",
+    "st. louis": _ST_LOUIS,
+    "st louis": _ST_LOUIS,
+    "boston": "Boston could mean the Red Sox or the Braves (who moved to Atlanta) — name the club.",
+    "philadelphia": "Philadelphia could mean the Phillies or the Athletics — name the club.",
+    "baltimore": ("Baltimore could mean the Orioles or the early-1900s club that became "
+                  "the Yankees — name the club."),
+    "kansas city": ("Kansas City could mean the Royals or the Athletics (who moved to "
+                    "Oakland) — name the club."),
+    "milwaukee": "Milwaukee could mean the Brewers or the Braves (who moved to Atlanta) — name the club.",
+    "seattle": "Seattle could mean the Mariners or the Pilots (who became the Brewers) — name the club.",
 }
 
 
