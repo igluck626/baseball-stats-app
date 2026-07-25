@@ -6154,17 +6154,23 @@ _DAILY_EVENT = {
     "HBP": (lambda g: g["HBP"], '"HBP"', "hit-by-pitch"),
     "TB":  (lambda g: g["H"] + g["2B"] + 2 * g["3B"] + 3 * g["HR"],
             '("H" + doubles + 2 * triples + 3 * "HR")', "total base"),
+    "R":   (lambda g: g["R"], '"R"', "run"),
+    "SB":  (lambda g: g["SB"], '"SB"', "stolen base"),
 }
 _DAILY_EVENT_ALIAS = {
     "HOMERUN": "HR", "HOME_RUN": "HR", "HIT": "H", "HITS": "H", "SINGLE": "1B",
     "DOUBLE": "2B", "TRIPLE": "3B", "RBIS": "RBI", "WALK": "BB", "STRIKEOUT": "K",
     "SO": "K", "HITBYPITCH": "HBP", "TOTALBASES": "TB", "TOTAL_BASES": "TB",
+    "RUN": "R", "RUNS": "R", "RUNS_SCORED": "R",
+    "STEAL": "SB", "STEALS": "SB", "STOLEN_BASE": "SB", "STOLEN_BASES": "SB",
+    "STOLENBASE": "SB", "STOLENBASES": "SB",
 }
 # plural label for span prose ("best 50-game span for home runs")
 _DAILY_EVENT_PLURAL = {
     "HR": "home runs", "H": "hits", "1B": "singles", "2B": "doubles",
     "3B": "triples", "RBI": "RBIs", "BB": "walks", "K": "strikeouts",
     "HBP": "times hit by a pitch", "TB": "total bases",
+    "R": "runs", "SB": "stolen bases",
 }
 _STREAK_TYPE_LABEL = {
     "hitting": "hitting streak", "on_base": "on-base streak",
@@ -6203,7 +6209,8 @@ def _daily_games(mlbam_id, season=None):
     sql = ("SELECT game_date, game_id, season, opponent, home_away, "
            'COALESCE("AB",0), COALESCE("H",0), COALESCE(doubles,0), COALESCE(triples,0), '
            'COALESCE("HR",0), COALESCE("RBI",0), COALESCE("BB",0), COALESCE("SO",0), '
-           'COALESCE("HBP",0), COALESCE("SF",0), COALESCE("SH",0), COALESCE("IBB",0) '
+           'COALESCE("HBP",0), COALESCE("SF",0), COALESCE("SH",0), COALESCE("IBB",0), '
+           'COALESCE("R",0), COALESCE("SB",0) '
            f"FROM batting_gamelogs WHERE {' AND '.join(where)} "
            "ORDER BY game_date, game_id")
     with connection.get_session() as db:
@@ -6213,7 +6220,7 @@ def _daily_games(mlbam_id, season=None):
         "opponent": r[3], "home_away": r[4],
         "AB": r[5], "H": r[6], "2B": r[7], "3B": r[8], "HR": r[9],
         "RBI": r[10], "BB": r[11], "SO": r[12], "HBP": r[13],
-        "SF": r[14], "SH": r[15], "IBB": r[16],
+        "SF": r[14], "SH": r[15], "IBB": r[16], "R": r[17], "SB": r[18],
     } for r in rows]
 
 
@@ -6315,7 +6322,7 @@ def _run_milestone(player, event, n, season=None, game_type=None):
     if spec is None:
         raise HTTPException(status_code=400, detail=(
             f"'{event}' isn't a milestone event I track "
-            "(known: HR, H/hit, 1B, 2B, 3B, RBI, TB, BB, K, HBP)."))
+            "(known: HR, H/hit, 1B, 2B, 3B, RBI, TB, BB, K, HBP, R/run, SB/stolen base)."))
     valfn, expr, label = spec
     try:
         n = int(n)
@@ -9252,20 +9259,22 @@ _ASK_MILESTONE_TOOL = {
         "Ryan's 5000th K', 'X's 300th win', 'X's 500th save'. A milestone asks for "
         "a DATE, not a count. Detect the ORDINAL (756th -> 756) and the event. "
         "BATTING events: HR, hit, single, double, triple, RBI, total bases, walk, "
-        "strikeout, HBP. PITCHING events: strikeout (K), win (W), loss (L), save "
-        "(SV), earned run (ER), walk (BB), home run allowed (HR). Stolen-base "
-        "milestones are NOT supported — cannot_answer. For an AMBIGUOUS event "
-        "(K/BB/HR) set `role` from the player: a pitcher's strikeouts -> role='pit', "
-        "a hitter's -> role='bat'; wins/saves are always role='pit'."),
+        "strikeout, HBP, run (R), stolen base (SB) — e.g. 'Henderson's 1000th "
+        "stolen base', 'X's 2000th run'. PITCHING events: strikeout (K), win (W), "
+        "loss (L), save (SV), earned run (ER), walk (BB), home run allowed (HR). "
+        "For an AMBIGUOUS event (K/BB/HR) set `role` from the player: a pitcher's "
+        "strikeouts -> role='pit', a hitter's -> role='bat'; wins/saves are always "
+        "role='pit'."),
     "input_schema": {
         "type": "object",
         "properties": {
             "player": {"type": "string", "description": "name or MLBAM id"},
             "event": {"type": "string",
                       "enum": ["HR", "H", "1B", "2B", "3B", "RBI", "TB", "BB", "K", "HBP",
-                               "W", "L", "SV", "ER"],
+                               "R", "SB", "W", "L", "SV", "ER"],
                       "description": "HR=home run, H=hit, 1B/2B/3B, RBI, TB=total bases, "
-                                     "BB=walk, K=strikeout, HBP=hit by pitch, W=win, L=loss, "
+                                     "BB=walk, K=strikeout, HBP=hit by pitch, R=run, "
+                                     "SB=stolen base (R/SB are batting); W=win, L=loss, "
                                      "SV=save, ER=earned run (W/L/SV/ER are pitching)."},
             "n": {"type": "integer", "minimum": 1,
                   "description": "the ordinal number reached (756th -> 756, 3000th -> 3000)."},
