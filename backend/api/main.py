@@ -10035,9 +10035,9 @@ def _detect_opponent(question):
     m = _OPP_CITY_RE.search(ql)            # ambiguous city -> decline (checked first)
     if m:
         return ("city", m.group(1))
-    m = _OPP_UNAMBIG_CITY_RE.search(ql)    # single-franchise city -> resolves like a nick
+    m = _OPP_UNAMBIG_CITY_RE.search(ql)    # single-franchise city -> resolves (franchise-labelled)
     if m:
-        return ("nick", m.group(1))
+        return ("city_ok", m.group(1))
     return None
 
 
@@ -10059,9 +10059,9 @@ def _classify_opponent(text):
     m = _OPP_CITY_BARE.search(t)            # ambiguous city -> decline (checked first)
     if m:
         return ("city", m.group(1))
-    m = _OPP_UNAMBIG_CITY_BARE.search(t)    # single-franchise city -> resolves like a nick
+    m = _OPP_UNAMBIG_CITY_BARE.search(t)    # single-franchise city -> resolves (franchise-labelled)
     if m:
-        return ("nick", m.group(1))
+        return ("city_ok", m.group(1))
     return None
 
 
@@ -10118,6 +10118,17 @@ def _resolve_opponent_codes(nick, year_lo=None, year_hi=None):
              if not (chi < lo or clo > hi)}
     codes.update(team_crosswalk.FRANCH_MODERN_CODES.get(fr, ()))
     return codes
+
+
+def _franchise_label(city_token):
+    """'the <current franchise name>' for a resolved single-franchise city — the
+    result spans the whole franchise, so the current name is the natural label
+    ('Cleveland' -> 'the Cleveland Guardians'), even where the rows reach earlier
+    names or cities ('Brooklyn' -> 'the Los Angeles Dodgers'). Falls back to the
+    literal city if somehow unmapped."""
+    fr = team_crosswalk.CITY_TO_FRANCH.get((city_token or "").strip().lower())
+    name = team_crosswalk.FRANCH_CURRENT_NAME.get(fr) if fr else None
+    return f"the {name}" if name else f"the {(city_token or '').title()}"
 
 
 # What SCOPE each tool dispatched OUTSIDE the _ANSWERABLE constraint pass can
@@ -10210,7 +10221,11 @@ def _guard_scoped_tool(question, tool_name, tool_input):
                 bad.append("a specific opponent (team)")
             elif ti.get("opponent_codes") is None:     # inject only a true drop
                 ti["opponent_codes"] = sorted(codes)
-                ti["opponent_label"] = f"the {token.title()}"
+                # a nickname keeps its short label ("the Tigers"); a city resolves to
+                # its franchise's name ("Cleveland" -> "the Cleveland Guardians") so
+                # the label never reads "the Cleveland".
+                ti["opponent_label"] = (_franchise_label(token) if kind == "city_ok"
+                                        else f"the {token.title()}")
     if not bad:
         return None
     cond = bad[0] if len(bad) == 1 else ", ".join(bad[:-1]) + " or " + bad[-1]
