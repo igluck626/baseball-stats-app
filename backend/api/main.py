@@ -10014,6 +10014,14 @@ _OPP_CITY_ALT = (r"washington|new york|los angeles|kansas city|st\.? ?louis"
                  r"|baltimore|boston|chicago|philadelphia|milwaukee|seattle")
 _OPP_CITY_RE = re.compile(
     r"\b(?:against|versus|vs\.?|facing|off)\s+(?:the\s+)?(" + _OPP_CITY_ALT + r")\b")
+# Single-franchise cities/regions that RESOLVE to their one club ("against Detroit"
+# -> the Tigers). Built from the generated CITY_TO_FRANCH (single-franchID AL/NL
+# cities, 1901+) so it stays in sync and never overlaps the ambiguous set.
+_OPP_UNAMBIG_CITY_ALT = "|".join(
+    re.escape(c) for c in sorted(team_crosswalk.CITY_TO_FRANCH, key=len, reverse=True))
+_OPP_UNAMBIG_CITY_RE = re.compile(
+    r"\b(?:against|versus|vs\.?|facing|off)\s+(?:the\s+)?(" + _OPP_UNAMBIG_CITY_ALT + r")\b")
+_OPP_UNAMBIG_CITY_BARE = re.compile(r"\b(" + _OPP_UNAMBIG_CITY_ALT + r")\b")
 
 
 def _detect_opponent(question):
@@ -10024,9 +10032,12 @@ def _detect_opponent(question):
     m = _OPP_NICK_RE.search(ql)
     if m:
         return ("nick", m.group(1))
-    m = _OPP_CITY_RE.search(ql)
+    m = _OPP_CITY_RE.search(ql)            # ambiguous city -> decline (checked first)
     if m:
         return ("city", m.group(1))
+    m = _OPP_UNAMBIG_CITY_RE.search(ql)    # single-franchise city -> resolves like a nick
+    if m:
+        return ("nick", m.group(1))
     return None
 
 
@@ -10045,9 +10056,12 @@ def _classify_opponent(text):
     m = _OPP_NICK_BARE.search(t)
     if m:
         return ("nick", m.group(1))
-    m = _OPP_CITY_BARE.search(t)
+    m = _OPP_CITY_BARE.search(t)            # ambiguous city -> decline (checked first)
     if m:
         return ("city", m.group(1))
+    m = _OPP_UNAMBIG_CITY_BARE.search(t)    # single-franchise city -> resolves like a nick
+    if m:
+        return ("nick", m.group(1))
     return None
 
 
@@ -10086,13 +10100,16 @@ def team_name(code, year=None, scheme="retro"):
 
 
 def _resolve_opponent_codes(nick, year_lo=None, year_hi=None):
-    """Nickname -> the set of opponent codes to filter on: the franchise's
-    Retrosheet codes over [year_lo, year_hi] (franchise expansion across
-    relocations — the Dodgers -> BRO + LAN) PLUS its current short/BR codes (the
-    in-progress season stores those). Empty set if the nickname is unknown. The
+    """Nickname (or a single-franchise city name) -> the set of opponent codes to
+    filter on: the franchise's Retrosheet codes over [year_lo, year_hi] (franchise
+    expansion across relocations — the Dodgers -> BRO + LAN) PLUS its current
+    short/BR codes (the in-progress season stores those). A city that hosted only
+    one club resolves via CITY_TO_FRANCH ('Detroit' -> the Tigers); an ambiguous
+    city never reaches here (the guard declined it). Empty set if unknown. The
     modern codes are always included; they can only match current-season rows, so
     a year-scoped query never picks up a false match from them."""
-    fr = team_crosswalk.NICK_TO_FRANCH.get(_norm_team(nick))
+    fr = (team_crosswalk.NICK_TO_FRANCH.get(_norm_team(nick))
+          or team_crosswalk.CITY_TO_FRANCH.get((nick or "").strip().lower()))
     if not fr:
         return set()
     lo = int(year_lo) if year_lo else 1901

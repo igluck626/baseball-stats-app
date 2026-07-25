@@ -173,6 +173,44 @@ def main():
         if fr:
             nick_to_franch[_norm(nick)] = fr
 
+    # CITY/REGION -> franchID, but ONLY for cities that hosted exactly ONE AL/NL
+    # franchise across 1901+ (so "against Detroit" resolves to the Tigers, while a
+    # city in _AMBIG_CITY never appears here). Derived, not hand-listed: we split
+    # each AL/NL team name into its city prefix (the known-city list below, longest
+    # match wins) and keep cities with a single franchID. A name with no recognised
+    # city prefix (the 2025 city-less "Athletics") is skipped — the franchise is
+    # still reached through its city-named seasons ("Oakland Athletics" -> Oakland).
+    _KNOWN_CITIES = [
+        "New York", "Los Angeles", "San Francisco", "San Diego", "Kansas City",
+        "St. Louis", "Tampa Bay", "Washington", "Chicago", "Boston", "Philadelphia",
+        "Baltimore", "Milwaukee", "Seattle", "Cleveland", "Detroit", "Pittsburgh",
+        "Cincinnati", "Houston", "Atlanta", "Minnesota", "Texas", "Toronto", "Miami",
+        "Florida", "Colorado", "Arizona", "Oakland", "Anaheim", "California",
+        "Brooklyn", "Montreal",
+    ]
+    _cities_by_len = sorted(_KNOWN_CITIES, key=len, reverse=True)
+
+    def city_of(name):
+        for c in _cities_by_len:
+            if name.startswith(c):
+                return c
+        return None
+
+    city_franch = defaultdict(set)  # city (lower) -> {franchID}
+    for r in rows:
+        if r["lgID"] not in ("AL", "NL"):
+            continue
+        c = city_of(r["name"])
+        if c:
+            city_franch[c.lower()].add(r["franchID"])
+    city_to_franch = {c: next(iter(frs)) for c, frs in city_franch.items()
+                      if len(frs) == 1}
+    # A city that resolves must NOT also be an ambiguous city — they are built from
+    # the same >1-vs-1 franchID split, so this can't happen, but assert it anyway.
+    _amb = {_norm(k) for k in _AMBIG_CITY}
+    clash = {c for c in city_to_franch if _norm(c) in _amb}
+    assert not clash, f"city in BOTH resolve and ambiguous maps: {clash}"
+
     def dump(name, obj):
         print(f"{name} = {obj!r}\n")
 
@@ -192,6 +230,7 @@ def main():
     dump("MODERN_CODE_TO_FRANCH", modern_to_franch)
     dump("FRANCH_MODERN_CODES", {k: tuple(sorted(v)) for k, v in franch_modern.items()})
     dump("NICK_TO_FRANCH", nick_to_franch)
+    dump("CITY_TO_FRANCH", city_to_franch)
     dump("AMBIG_CITY", _AMBIG_CITY)
 
 
