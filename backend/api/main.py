@@ -9836,7 +9836,15 @@ def _ask_cache_get(norm):
                 "WHERE normalized = :n AND prompt_version = :v AND tool_name IS NOT NULL "
                 "ORDER BY id DESC LIMIT 1"), {"n": norm, "v": _ASK_PROMPT_VERSION}).fetchone()
         if row and row[0]:
-            return row[0], (json.loads(row[1]) if row[1] else {})
+            ti = json.loads(row[1]) if row[1] else {}
+            # MIGRATION: rows written before we cached RAW input carry the guard's
+            # injected fields. opponent_codes/opponent_label are NEVER model-emitted
+            # (not in any tool schema), so dropping them lets the guard re-derive them
+            # on replay — a pre-existing opponent row isn't stuck on its old label.
+            # (Model-settable fields like season/home_away are left untouched.)
+            ti.pop("opponent_codes", None)
+            ti.pop("opponent_label", None)
+            return row[0], ti
     except Exception as exc:  # noqa: BLE001
         log.warning("ask cache lookup failed: %s", exc)
     return None
@@ -10368,16 +10376,23 @@ def ask(request: Request,
                 tool_input = dict(block.input or {})
                 break
 
-    # Re-ask short-circuit: pin the query to the chosen player, but NEVER bake
-    # that choice into the cache — the cache stores how the QUESTION was read
-    # (the name), so the next asker still gets the choice. _finish() restores the
-    # original player before logging. _resolve_retro_id treats an all-digits
-    # player as an exact id lookup, so this can't re-ambiguate or loop.
-    _reask_orig_player = None
+    # Snapshot the model's RAW reading BEFORE any in-code mutation (the re-ask
+    # player pin below, the constraint injection, and the guard's resolution). THIS
+    # — not the mutated input — is what we cache: the validator + guard re-run on
+    # every request (cached or not, see the comment on that block), so caching raw
+    # lets them re-derive their injected fields fresh. A later guard-only change to
+    # an injected value then takes effect for previously-asked questions instead of
+    # being masked by a row that already has the field baked in.
+    raw_tool_input = dict(tool_input) if tool_input is not None else None
+
+    # Re-ask short-circuit: pin the QUERY to the chosen player. The cache is
+    # unaffected — raw_tool_input was snapshotted above, before this override, so
+    # the cached reading keeps the original NAME and the next asker still gets the
+    # disambiguation. _resolve_retro_id treats an all-digits player as an exact id
+    # lookup, so this can't re-ambiguate or loop.
     if player_id is not None and tool_input is not None and tool_name in (
             "query_situational", "query_rates", "query_splits",
             "query_milestone", "query_streak", "query_span"):
-        _reask_orig_player = tool_input.get("player")
         tool_input["player"] = str(player_id)
 
     _ANSWERABLE = ("query_situational", "query_leaderboard", "query_rates",
@@ -10412,14 +10427,12 @@ def ask(request: Request,
     }
 
     def _finish():
-        # Cache the QUESTION's reading, never the player a user picked — restore
-        # the original name so the cached translation ambiguates for the next asker.
-        log_input = tool_input
-        if _reask_orig_player is not None and tool_input is not None:
-            log_input = dict(tool_input)
-            log_input["player"] = _reask_orig_player
+        # Cache the model's RAW reading (raw_tool_input, snapshotted pre-mutation) —
+        # never the guard's injected fields or a re-ask's chosen id. Storing raw is
+        # what lets the guard's re-run on a cache hit actually re-inject, so a guard
+        # change is never masked by an already-mutated cached row.
         timing["total"] = round((time.perf_counter() - t_all) * 1000, 1)
-        _ask_log_write(q, norm, tool_name, log_input, base, cached, id_hash,
+        _ask_log_write(q, norm, tool_name, raw_tool_input, base, cached, id_hash,
                        in_tok, out_tok, timing)
         return base
 
