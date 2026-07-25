@@ -9835,14 +9835,23 @@ def _ask_rate_check(id_hash):
 
 
 def _ask_cache_get(norm):
-    """Most recent successful translation of this normalized question, or None."""
+    """Most recent successful translation of this normalized question, or None.
+
+    We NEVER serve a cached MODEL decline (tool_name='cannot_answer'): the model
+    calling cannot_answer is exactly where translation non-determinism shows up, so
+    a one-off flaky decline must not become permanent (no TTL). Re-translating a
+    genuinely-unanswerable question costs one LLM call; caching a flaky decline
+    strands an answerable one. Declines from the GUARD or a RUNNER are a different
+    thing — they carry a REAL tool_name and their decline is re-derived on replay
+    (the guard/runner re-runs on the raw translation), so those rows stay served."""
     if not connection.db_available():
         return None
     try:
         with connection.get_session() as db:
             row = db.execute(_sa_text(
                 "SELECT tool_name, understood_as FROM ask_log "
-                "WHERE normalized = :n AND prompt_version = :v AND tool_name IS NOT NULL "
+                "WHERE normalized = :n AND prompt_version = :v "
+                "AND tool_name IS NOT NULL AND tool_name <> 'cannot_answer' "
                 "ORDER BY id DESC LIMIT 1"), {"n": norm, "v": _ASK_PROMPT_VERSION}).fetchone()
         if row and row[0]:
             ti = json.loads(row[1]) if row[1] else {}
