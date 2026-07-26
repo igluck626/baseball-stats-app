@@ -341,6 +341,7 @@ struct AskAnswerView: View {
         case "SO":  return r.SO.map { $0.formatted(.number) }
         case "R":   return r.R.map { $0.formatted(.number) }
         case "SB":  return r.SB.map { $0.formatted(.number) }
+        case "TB":  return r.TB.map { $0.formatted(.number) }
         default:    return nil
         }
     }
@@ -618,13 +619,18 @@ struct AskAnswerView: View {
         switch key {
         case "SV": return l.SV.map { $0.formatted(.number) }
         case "HR": return l.HR.map { $0.formatted(.number) }
+        // W-L renders as one combined column, so a "how many wins/losses" count
+        // gets a clean single-number leading column instead (the W-L record stays
+        // for context) — same leading-column pattern as SV.
+        case "W":  return l.W.map { $0.formatted(.number) }
+        case "L":  return l.L.map { $0.formatted(.number) }
         default:   return nil
         }
     }
 
     /// The pitching line as StatTable columns: IP · W-L · ERA · SO · BB · H · R ·
     /// ER, the queried stat highlighted, with a leading highlighted column for a
-    /// non-core queried stat (SV/HR) — the same pattern as the batting SB/R fix.
+    /// non-core queried stat (SV/HR/W/L) — the same pattern as the batting SB/R fix.
     private func pitchingColumns(_ l: AskPitchingLine, highlight: String?) -> [StatTable.Column] {
         func col(_ label: String, _ value: String) -> StatTable.Column {
             StatTable.Column(label: label, value: value, highlighted: label == highlight)

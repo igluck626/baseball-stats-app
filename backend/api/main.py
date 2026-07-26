@@ -5497,12 +5497,15 @@ _PLAYS_EVENT_CD = {
     "3B": 22, "TRIPLE": 22,
 }
 
-# Which rate-line column a situational COUNT highlights. HR/2B/3B map to their
-# own columns; K -> SO (strikeouts); BB/HBP to theirs. A single (1B) has no
-# dedicated rate column, so nothing is highlighted.
+# Which line column a COUNT highlights. HR/2B/3B map to their own columns; K ->
+# SO; BB/HBP to theirs. H and ER are core columns (highlight in place); TB/R/SB
+# (batting) and W/L/SV (pitching) aren't core, so they surface as a leading
+# highlighted column (see moreValue / pitchMoreValue on the iOS side). A single
+# (1B) has no dedicated column, so nothing is highlighted.
 _EVENT_TO_STAT = {"HR": "HR", "K": "SO", "SO": "SO", "BB": "BB",
                   "HBP": "HBP", "2B": "2B", "3B": "3B", "RBI": "RBI",
-                  "R": "R", "SB": "SB"}
+                  "R": "R", "SB": "SB", "H": "H", "TB": "TB",
+                  "W": "W", "L": "L", "SV": "SV", "ER": "ER"}
 
 
 # Persistent read-only connection to the plays store. The Railway volume is
@@ -5839,6 +5842,9 @@ def _season_rate_line(pid, role, season, season_start, season_end, game_type):
     slg = tb / ab
     return {"PA": pa, "AB": ab, "H": h, "doubles": d2, "triples": d3, "HR": hr,
             "RBI": rbi, "SO": so, "BB": bb, "HBP": hbp, "SF": sf, "R": r, "SB": sb,
+            # TB carried (it's computed for SLG anyway) so a "how many total bases"
+            # count has a column to highlight — like R/SB, not a core slash stat.
+            "TB": tb,
             "AVG": round(h / ab, 3),
             "OBP": round(obp, 3) if obp is not None else None,
             "SLG": round(slg, 3),
