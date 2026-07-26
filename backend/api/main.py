@@ -5737,6 +5737,12 @@ _CANON_EVENT = {
     "R": "R", "RUN": "R", "RUNS": "R", "RUNS_SCORED": "R",
     "SB": "SB", "STEAL": "SB", "STEALS": "SB", "STOLEN_BASE": "SB",
     "STOLEN_BASES": "SB", "STOLENBASE": "SB", "STOLENBASES": "SB",
+    "H": "H", "HIT": "H", "HITS": "H",
+    "TB": "TB", "TOTAL_BASE": "TB", "TOTAL_BASES": "TB", "TOTALBASES": "TB",
+    "W": "W", "WIN": "W", "WINS": "W",
+    "SV": "SV", "SAVE": "SV", "SAVES": "SV",
+    "L": "L", "LOSS": "L", "LOSSES": "L",
+    "ER": "ER", "EARNED_RUN": "ER", "EARNED_RUNS": "ER", "EARNEDRUN": "ER",
 }
 
 # (role, canonical event) -> season-stats column expression. Combos NOT here
@@ -5751,15 +5757,24 @@ _SEASON_COL = {
     ("bat", "1B"): '("H" - doubles - triples - "HR")',
     # TOTAL-only batting counting stats (columns are capitalized -> double-quoted).
     ("bat", "RBI"): '"RBI"', ("bat", "R"): '"R"', ("bat", "SB"): '"SB"',
+    ("bat", "H"): '"H"',
+    # TB derived (like _DAILY_EVENT) so we don't depend on the TB column's fill.
+    ("bat", "TB"): '("H" + doubles + 2 * triples + 3 * "HR")',
     ("pit", "HR"): '"HR"', ("pit", "K"): '"SO"', ("pit", "BB"): '"BB"',
+    # pitcher decisions / earned runs — pitcher_seasons columns (double-quoted).
+    ("pit", "W"): '"W"', ("pit", "L"): '"L"', ("pit", "SV"): '"SV"', ("pit", "ER"): '"ER"',
 }
 
-# Canonical counting stats that exist ONLY as complete season/career totals
-# (player_seasons), NOT as plays-store events. A bare total answers from
-# season-stats; a SITUATIONAL filter on them can't be computed and declines
-# cleanly (the plays store has no RBI/R/SB event). All are unambiguous BATTING.
-_TOTAL_ONLY_EVENTS = {"RBI", "R", "SB"}
-_TOTAL_ONLY_LABEL = {"RBI": "RBIs", "R": "runs", "SB": "stolen bases"}
+# Canonical counting stats that answer from complete season/career totals
+# (player_seasons / pitcher_seasons) but are NOT single plays-store events, so a
+# SITUATIONAL filter on them can't be computed and declines cleanly. Batting: RBI,
+# R, SB, H, TB. Pitching: W, L, SV, ER (game-level decisions, no play-level form).
+# (H is derivable situationally from the plays hit flag — a future add; for now a
+# split on it declines like the rest, instead of leaking an unknown-event error.)
+_TOTAL_ONLY_EVENTS = {"RBI", "R", "SB", "H", "TB", "W", "L", "SV", "ER"}
+_TOTAL_ONLY_LABEL = {"RBI": "RBIs", "R": "runs", "SB": "stolen bases",
+                     "H": "hits", "TB": "total bases", "W": "wins", "L": "losses",
+                     "SV": "saves", "ER": "earned runs"}
 
 
 def _canon_event(event):
@@ -5967,7 +5982,7 @@ def _run_situational(
         if event_cd is None:
             raise HTTPException(
                 status_code=400,
-                detail=f"unknown event '{event}'. Known: {sorted(set(_PLAYS_EVENT_CD))}")
+                detail="I can't count that statistic yet.")
 
     gt_clause, gt_param, gt = _game_type_filter(game_type)   # default -> regular season
 
@@ -8396,7 +8411,7 @@ def _run_leaderboard(event=None, role="bat", balls=None, strikes=None, outs=None
     event_cd = _PLAYS_EVENT_CD.get((event or "").strip().upper().replace(" ", "_"))
     if event_cd is None:
         raise HTTPException(status_code=400,
-                            detail=f"leaderboard needs a known event; got {event!r}")
+                            detail="I can't rank players by that statistic yet.")
     canon = _canon_event(event)
     gt_clause, gt_param, gt = _game_type_filter(game_type)   # default -> regular season
     bs = None
@@ -9102,11 +9117,14 @@ _ASK_QUERY_TOOL = {
             "role": {"type": "string", "enum": ["bat", "pit"], "description":
                      "'bat' if the player is the hitter, 'pit' if the pitcher. Default 'bat'."},
             "event": {"type": "string",
-                      "enum": ["HR", "K", "BB", "HBP", "1B", "2B", "3B", "RBI", "R", "SB"],
+                      "enum": ["HR", "K", "BB", "HBP", "1B", "2B", "3B", "RBI", "R", "SB",
+                               "H", "TB", "W", "L", "SV", "ER"],
                       "description": "Outcome: HR=home run, K=strikeout, BB=walk, "
                                      "HBP=hit by pitch, 1B=single, 2B=double, 3B=triple. "
                                      "SEASON/CAREER TOTALS ONLY (no situational split): "
-                                     "RBI=runs batted in, R=runs scored, SB=stolen bases."},
+                                     "RBI=runs batted in, R=runs scored, SB=stolen bases, "
+                                     "H=hits, TB=total bases; pitching W=wins, L=losses, "
+                                     "SV=saves, ER=earned runs (set role='pit' for those)."},
             "balls": {"type": "integer", "minimum": 0, "maximum": 3, "description":
                       "Ball count if specified (a '3-2'/'full count' -> balls 3)."},
             "strikes": {"type": "integer", "minimum": 0, "maximum": 2, "description":
@@ -9141,10 +9159,14 @@ _ASK_LEADERBOARD_TOOL = {
     "input_schema": {
         "type": "object",
         "properties": {
-            "event": {"type": "string", "enum": ["HR", "K", "BB", "HBP", "1B", "2B", "3B"],
+            "event": {"type": "string",
+                      "enum": ["HR", "K", "BB", "HBP", "1B", "2B", "3B",
+                               "H", "TB", "RBI", "R", "SB", "W", "SV"],
                       "description": "Outcome to rank by (required). HR=home run, "
                                      "K=strikeout, BB=walk, HBP=hit by pitch, "
-                                     "1B=single, 2B=double, 3B=triple."},
+                                     "1B=single, 2B=double, 3B=triple, H=hits, "
+                                     "TB=total bases, RBI, R=runs, SB=stolen bases; "
+                                     "pitching W=wins, SV=saves (set role='pit')."},
             "role": {"type": "string", "enum": ["bat", "pit"], "description":
                      "'bat' for hitters, 'pit' for pitchers. Default 'bat'."},
             "balls": {"type": "integer", "minimum": 0, "maximum": 3},
