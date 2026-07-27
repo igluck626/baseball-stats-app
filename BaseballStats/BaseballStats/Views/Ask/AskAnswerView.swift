@@ -344,6 +344,7 @@ struct AskAnswerView: View {
         case "R":   return r.R.map { $0.formatted(.number) }
         case "SB":  return r.SB.map { $0.formatted(.number) }
         case "TB":  return r.TB.map { $0.formatted(.number) }
+        case "XBH": return r.XBH.map { $0.formatted(.number) }
         default:    return nil
         }
     }

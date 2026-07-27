@@ -148,11 +148,13 @@ struct AskRates: Decodable {
     let BB: Int?
     let HBP: Int?
     let SF: Int?
-    // Runs scored, stolen bases, total bases — carried so a "how many R/SB/TB"
-    // count can show (and highlight) that column as a leading stat; not core slash.
+    // Runs scored, stolen bases, total bases, extra-base hits — carried so a "how
+    // many R/SB/TB/XBH" count can show (and highlight) that column as a leading
+    // stat; not part of the core slash line.
     let R: Int?
     let SB: Int?
     let TB: Int?
+    let XBH: Int?
     let AVG: Double?
     let OBP: Double?
     let SLG: Double?

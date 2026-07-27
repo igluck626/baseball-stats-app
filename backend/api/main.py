@@ -5505,7 +5505,7 @@ _PLAYS_EVENT_CD = {
 _EVENT_TO_STAT = {"HR": "HR", "K": "SO", "SO": "SO", "BB": "BB",
                   "HBP": "HBP", "2B": "2B", "3B": "3B", "RBI": "RBI",
                   "R": "R", "SB": "SB", "H": "H", "TB": "TB",
-                  "W": "W", "L": "L", "SV": "SV", "ER": "ER", "AB": "AB"}
+                  "W": "W", "L": "L", "SV": "SV", "ER": "ER", "AB": "AB", "XBH": "XBH"}
 
 
 # Persistent read-only connection to the plays store. The Railway volume is
@@ -5747,6 +5747,8 @@ _CANON_EVENT = {
     "L": "L", "LOSS": "L", "LOSSES": "L",
     "ER": "ER", "EARNED_RUN": "ER", "EARNED_RUNS": "ER", "EARNEDRUN": "ER",
     "AB": "AB", "AT_BAT": "AB", "AT_BATS": "AB", "ATBAT": "AB", "ATBATS": "AB",
+    "XBH": "XBH", "EXTRA_BASE_HIT": "XBH", "EXTRA_BASE_HITS": "XBH",
+    "EXTRABASEHIT": "XBH", "EXTRABASEHITS": "XBH",
 }
 
 # (role, canonical event) -> season-stats column expression. Combos NOT here
@@ -5762,8 +5764,10 @@ _SEASON_COL = {
     # TOTAL-only batting counting stats (columns are capitalized -> double-quoted).
     ("bat", "RBI"): '"RBI"', ("bat", "R"): '"R"', ("bat", "SB"): '"SB"',
     ("bat", "H"): '"H"', ("bat", "AB"): '"AB"',
-    # TB derived (like _DAILY_EVENT) so we don't depend on the TB column's fill.
+    # TB and XBH derived (like _DAILY_EVENT) so we don't depend on a stored column's
+    # fill. XBH = extra-base hits = doubles + triples + HR (2B/3B are lowercase cols).
     ("bat", "TB"): '("H" + doubles + 2 * triples + 3 * "HR")',
+    ("bat", "XBH"): '(doubles + triples + "HR")',
     ("pit", "HR"): '"HR"', ("pit", "K"): '"SO"', ("pit", "BB"): '"BB"',
     # pitcher decisions / earned runs — pitcher_seasons columns (double-quoted).
     ("pit", "W"): '"W"', ("pit", "L"): '"L"', ("pit", "SV"): '"SV"', ("pit", "ER"): '"ER"',
@@ -5775,10 +5779,11 @@ _SEASON_COL = {
 # R, SB, H, TB. Pitching: W, L, SV, ER (game-level decisions, no play-level form).
 # (H is derivable situationally from the plays hit flag — a future add; for now a
 # split on it declines like the rest, instead of leaking an unknown-event error.)
-_TOTAL_ONLY_EVENTS = {"RBI", "R", "SB", "H", "TB", "W", "L", "SV", "ER", "AB"}
+_TOTAL_ONLY_EVENTS = {"RBI", "R", "SB", "H", "TB", "W", "L", "SV", "ER", "AB", "XBH"}
 _TOTAL_ONLY_LABEL = {"RBI": "RBIs", "R": "runs", "SB": "stolen bases",
                      "H": "hits", "TB": "total bases", "W": "wins", "L": "losses",
-                     "SV": "saves", "ER": "earned runs", "AB": "at-bats"}
+                     "SV": "saves", "ER": "earned runs", "AB": "at-bats",
+                     "XBH": "extra-base hits"}
 
 # UNSUPPORTED-CONCEPT guard. Adding a countable event (AB, TB, W...) gives the
 # model a plausible home for an ADJACENT concept the app CAN'T answer, so it maps
@@ -5884,9 +5889,10 @@ def _season_rate_line(pid, role, season, season_start, season_end, game_type):
     slg = tb / ab
     return {"PA": pa, "AB": ab, "H": h, "doubles": d2, "triples": d3, "HR": hr,
             "RBI": rbi, "SO": so, "BB": bb, "HBP": hbp, "SF": sf, "R": r, "SB": sb,
-            # TB carried (it's computed for SLG anyway) so a "how many total bases"
-            # count has a column to highlight — like R/SB, not a core slash stat.
-            "TB": tb,
+            # TB (computed for SLG anyway) and XBH (2B+3B+HR) carried so a "how many
+            # total bases / extra-base hits" count has a column to highlight — like
+            # R/SB, not core slash stats.
+            "TB": tb, "XBH": d2 + d3 + hr,
             "AVG": round(h / ab, 3),
             "OBP": round(obp, 3) if obp is not None else None,
             "SLG": round(slg, 3),
@@ -9166,13 +9172,14 @@ _ASK_QUERY_TOOL = {
                      "'bat' if the player is the hitter, 'pit' if the pitcher. Default 'bat'."},
             "event": {"type": "string",
                       "enum": ["HR", "K", "BB", "HBP", "1B", "2B", "3B", "RBI", "R", "SB",
-                               "H", "TB", "AB", "W", "L", "SV", "ER"],
+                               "H", "TB", "AB", "XBH", "W", "L", "SV", "ER"],
                       "description": "Outcome: HR=home run, K=strikeout, BB=walk, "
                                      "HBP=hit by pitch, 1B=single, 2B=double, 3B=triple. "
                                      "SEASON/CAREER TOTALS ONLY (no situational split): "
                                      "RBI=runs batted in, R=runs scored, SB=stolen bases, "
-                                     "H=hits, TB=total bases, AB=at-bats; pitching W=wins, "
-                                     "L=losses, SV=saves, ER=earned runs (set role='pit')."},
+                                     "H=hits, TB=total bases, AB=at-bats, XBH=extra-base "
+                                     "hits; pitching W=wins, L=losses, SV=saves, ER=earned "
+                                     "runs (set role='pit')."},
             "balls": {"type": "integer", "minimum": 0, "maximum": 3, "description":
                       "Ball count if specified (a '3-2'/'full count' -> balls 3)."},
             "strikes": {"type": "integer", "minimum": 0, "maximum": 2, "description":
@@ -9209,13 +9216,13 @@ _ASK_LEADERBOARD_TOOL = {
         "properties": {
             "event": {"type": "string",
                       "enum": ["HR", "K", "BB", "HBP", "1B", "2B", "3B",
-                               "H", "TB", "AB", "RBI", "R", "SB", "W", "SV"],
+                               "H", "TB", "AB", "XBH", "RBI", "R", "SB", "W", "SV"],
                       "description": "Outcome to rank by (required). HR=home run, "
                                      "K=strikeout, BB=walk, HBP=hit by pitch, "
                                      "1B=single, 2B=double, 3B=triple, H=hits, "
-                                     "TB=total bases, AB=at-bats, RBI, R=runs, "
-                                     "SB=stolen bases; pitching W=wins, SV=saves "
-                                     "(set role='pit')."},
+                                     "TB=total bases, AB=at-bats, XBH=extra-base hits, "
+                                     "RBI, R=runs, SB=stolen bases; pitching W=wins, "
+                                     "SV=saves (set role='pit')."},
             "role": {"type": "string", "enum": ["bat", "pit"], "description":
                      "'bat' for hitters, 'pit' for pitchers. Default 'bat'."},
             "balls": {"type": "integer", "minimum": 0, "maximum": 3},
