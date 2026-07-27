@@ -266,6 +266,7 @@ struct AskPitchingLine: Decodable {
     let G: Int?
     let ERA: Double?
     let WHIP: Double?
+    let SO9: Double?
 }
 
 /// A two-way answer: the same question resolved BOTH as a pitcher and as a

@@ -590,7 +590,7 @@ struct AskAnswerView: View {
 
     // MARK: - Pitching line
 
-    private static let pitchCoreKeys: Set<String> = ["IP", "W-L", "ERA", "SO", "BB", "H", "R", "ER"]
+    private static let pitchCoreKeys: Set<String> = ["IP", "W", "L", "ERA", "WHIP", "SO", "SO/9", "BB"]
 
     /// A two-way stat label ("strikeouts"/"walks"/"home runs") -> the column to
     /// highlight in either line.
@@ -608,7 +608,8 @@ struct AskAnswerView: View {
         switch event {
         case "strikeouts":        return "SO"
         case "walks":             return "BB"
-        case "wins", "losses":    return "W-L"
+        case "wins":              return "W"
+        case "losses":            return "L"
         case "saves":             return "SV"
         case "earned runs":       return "ER"
         case "hits allowed":      return "H"
@@ -617,44 +618,47 @@ struct AskAnswerView: View {
         }
     }
 
-    /// Non-core pitching stats reachable as a leading highlighted column.
+    /// Non-core pitching stats reachable as a leading highlighted column — SV/HR,
+    /// and H/R/ER (demoted from the core line to "More", like AB on the batting
+    /// side): when one of those IS the queried stat it leads, highlighted.
     private func pitchMoreValue(_ l: AskPitchingLine, _ key: String) -> String? {
         switch key {
         case "SV": return l.SV.map { $0.formatted(.number) }
         case "HR": return l.HR.map { $0.formatted(.number) }
+        case "ER": return l.ER.map { $0.formatted(.number) }
+        case "H":  return l.H.map { $0.formatted(.number) }
+        case "R":  return l.R.map { $0.formatted(.number) }
         default:   return nil
         }
     }
 
-    /// The pitching line as StatTable columns: IP · W-L · ERA · SO · BB · H · R ·
-    /// ER, the queried stat highlighted, with a leading highlighted column for a
-    /// non-core queried stat (SV/HR) — the same pattern as the batting SB/R fix.
+    /// The pitching line as StatTable columns: IP · W · L · ERA · WHIP · SO · SO/9
+    /// · BB — rate stats (ERA/WHIP/SO9) lead the counting stats, and W/L are their
+    /// own single-number columns (no compound "355-227" shrinking to fit). A
+    /// non-core queried stat (SV/HR, and the demoted H/R/ER) gets a leading
+    /// highlighted column; a core stat (SO/W/L/BB) highlights in place.
     private func pitchingColumns(_ l: AskPitchingLine, highlight: String?) -> [StatTable.Column] {
-        // A W or L count highlights the COMBINED W-L record column in place (the
-        // reader sees which number is which); no separate leading column, so the
-        // figure isn't shown twice. SV/HR have no combined column, so they still
-        // lead. Wins and losses both point at the one W-L column.
-        let hl = (highlight == "W" || highlight == "L") ? "W-L" : highlight
         func col(_ label: String, _ value: String) -> StatTable.Column {
-            StatTable.Column(label: label, value: value, highlighted: label == hl)
+            StatTable.Column(label: label, value: value, highlighted: label == highlight)
         }
         var cols: [StatTable.Column] = []
-        if let h = hl, !Self.pitchCoreKeys.contains(h), let v = pitchMoreValue(l, h) {
+        if let h = highlight, !Self.pitchCoreKeys.contains(h), let v = pitchMoreValue(l, h) {
             cols.append(StatTable.Column(label: h, value: v, highlighted: true))
         }
         cols.append(col("IP", l.IP ?? "—"))
-        // W-L is a decision record — meaningless over a partial-game streak (the
-        // scoreless line leaves W/L null), so it's shown only when present.
+        // W and L are a decision record — meaningless over a partial-game streak
+        // (the scoreless line leaves both null), so shown only when present. A wins
+        // or losses query now highlights its own column directly (no W-L mapping).
         if l.W != nil || l.L != nil {
-            cols.append(col("W-L", "\(l.W ?? 0)-\(l.L ?? 0)"))
+            cols.append(col("W", intVal(l.W)))
+            cols.append(col("L", intVal(l.L)))
         }
         cols += [
             col("ERA", l.ERA.map { String(format: "%.2f", $0) } ?? "—"),
+            col("WHIP", l.WHIP.map { String(format: "%.2f", $0) } ?? "—"),
             col("SO", intVal(l.SO)),
+            col("SO/9", l.SO9.map { String(format: "%.1f", $0) } ?? "—"),
             col("BB", intVal(l.BB)),
-            col("H", intVal(l.H)),
-            col("R", intVal(l.R)),
-            col("ER", intVal(l.ER)),
         ]
         return cols
     }

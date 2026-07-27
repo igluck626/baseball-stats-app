@@ -7397,9 +7397,10 @@ def _pitcher_stat_line(games):
     SV = sum(1 for g in games if g["result"] == "S")
     era = round(ER * 27 / outs, 2) if outs else None      # ER*9 / (outs/3)
     whip = round((H + BB) * 3 / outs, 3) if outs else None  # (H+BB) / (outs/3)
+    so9 = round(SO * 27 / outs, 1) if outs else None        # SO*9 / (outs/3)
     return {"G": len(games), "IP": _ip_notation(outs), "outs": outs,
             "W": W, "L": L, "SV": SV, "H": H, "R": R, "ER": ER, "BB": BB,
-            "SO": SO, "HR": HR, "ERA": era, "WHIP": whip}
+            "SO": SO, "HR": HR, "ERA": era, "WHIP": whip, "SO9": so9}
 
 
 def _pitcher_season_line(mlbam, season=None, season_start=None, season_end=None):
@@ -7430,10 +7431,11 @@ def _pitcher_season_line(mlbam, season=None, season_start=None, season_end=None)
     if outs == 0:
         return None
     era = round(er * 27 / outs, 2); whip = round((h + bb) * 3 / outs, 3)
+    so9 = round(so * 27 / outs, 1)                          # SO*9 / (outs/3)
     return {"G": int(g), "IP": _ip_notation(outs), "outs": outs,
             "W": int(w), "L": int(l), "SV": int(sv), "H": int(h), "R": int(r),
             "ER": int(er), "BB": int(bb), "SO": int(so), "HR": int(hr),
-            "ERA": era, "WHIP": whip}
+            "ERA": era, "WHIP": whip, "SO9": so9}
 
 
 def _is_two_way(mlbam_id):
