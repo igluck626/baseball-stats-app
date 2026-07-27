@@ -7881,6 +7881,7 @@ def _run_scoreless_streak(player, season=None, game_type=None):
         "H": line["H"], "R": 0, "ER": 0, "BB": line["BB"], "SO": line["SO"],
         "HR": line["HR"], "ERA": 0.0,
         "WHIP": round((line["H"] + line["BB"]) * 3 / outs, 3) if outs else None,
+        "SO9": round(line["SO"] * 27 / outs, 1) if outs else None,  # SO*9 / (outs/3)
     }
 
     if tier == "decline":
