@@ -293,15 +293,16 @@ struct AskAnswerView: View {
 
     // MARK: - Stat table (shared by rate lines, split rows, situational counts)
 
-    // The eight columns kept on screen. PA moved to "More" — with 4-digit PAs
-    // the nine-wide table got tight — but it's prepended back (like any "More"
-    // stat) when it's the one the question asked about.
+    // The seven columns kept on screen. PA and AB live in "More" — with 5-digit
+    // career AB (Aaron 12,364) the table got tight and AB is the least-read stat —
+    // but either is prepended back (like any "More" stat) when it's the one the
+    // question asked about.
     private static let coreStatKeys: Set<String> =
-        ["AB", "H", "HR", "RBI", "AVG", "OBP", "SLG", "OPS"]
+        ["H", "HR", "RBI", "AVG", "OBP", "SLG", "OPS"]
 
-    /// Columns for a rate line: the core eight, with the asked-for stat
-    /// highlighted. If that stat isn't one of the eight (PA/SO/BB/2B/3B/HBP),
-    /// it's prepended so it stays visible and emphasized.
+    /// Columns for a rate line: the core seven, with the asked-for stat
+    /// highlighted. If that stat isn't one of the seven (PA/AB/SO/BB/2B/3B/HBP/
+    /// TB/R/SB), it's prepended so it stays visible and emphasized.
     private func rateColumns(_ r: AskRates, highlight: String?) -> [StatTable.Column] {
         func col(_ label: String, _ value: String) -> StatTable.Column {
             StatTable.Column(label: label, value: value, highlighted: label == highlight)
@@ -311,7 +312,7 @@ struct AskAnswerView: View {
             cols.append(StatTable.Column(label: h, value: v, highlighted: true))
         }
         cols += [
-            col("AB", intVal(r.AB)),  col("H", intVal(r.H)),
+            col("H", intVal(r.H)),
             col("HR", intVal(r.HR)),  col("RBI", intVal(r.RBI)),
             col("AVG", rateVal(r.AVG)), col("OBP", rateVal(r.OBP)),
             col("SLG", rateVal(r.SLG)), col("OPS", rateVal(r.OPS)),
@@ -333,6 +334,7 @@ struct AskAnswerView: View {
     private func moreValue(_ r: AskRates, _ key: String) -> String? {
         switch key {
         case "PA":  return r.PA.map { $0.formatted(.number) }
+        case "AB":  return r.AB.map { $0.formatted(.number) }
         case "2B":  return r.doubles.map { $0.formatted(.number) }
         case "3B":  return r.triples.map { $0.formatted(.number) }
         case "BB":  return r.BB.map { $0.formatted(.number) }
@@ -619,24 +621,24 @@ struct AskAnswerView: View {
         switch key {
         case "SV": return l.SV.map { $0.formatted(.number) }
         case "HR": return l.HR.map { $0.formatted(.number) }
-        // W-L renders as one combined column, so a "how many wins/losses" count
-        // gets a clean single-number leading column instead (the W-L record stays
-        // for context) — same leading-column pattern as SV.
-        case "W":  return l.W.map { $0.formatted(.number) }
-        case "L":  return l.L.map { $0.formatted(.number) }
         default:   return nil
         }
     }
 
     /// The pitching line as StatTable columns: IP · W-L · ERA · SO · BB · H · R ·
     /// ER, the queried stat highlighted, with a leading highlighted column for a
-    /// non-core queried stat (SV/HR/W/L) — the same pattern as the batting SB/R fix.
+    /// non-core queried stat (SV/HR) — the same pattern as the batting SB/R fix.
     private func pitchingColumns(_ l: AskPitchingLine, highlight: String?) -> [StatTable.Column] {
+        // A W or L count highlights the COMBINED W-L record column in place (the
+        // reader sees which number is which); no separate leading column, so the
+        // figure isn't shown twice. SV/HR have no combined column, so they still
+        // lead. Wins and losses both point at the one W-L column.
+        let hl = (highlight == "W" || highlight == "L") ? "W-L" : highlight
         func col(_ label: String, _ value: String) -> StatTable.Column {
-            StatTable.Column(label: label, value: value, highlighted: label == highlight)
+            StatTable.Column(label: label, value: value, highlighted: label == hl)
         }
         var cols: [StatTable.Column] = []
-        if let h = highlight, !Self.pitchCoreKeys.contains(h), let v = pitchMoreValue(l, h) {
+        if let h = hl, !Self.pitchCoreKeys.contains(h), let v = pitchMoreValue(l, h) {
             cols.append(StatTable.Column(label: h, value: v, highlighted: true))
         }
         cols.append(col("IP", l.IP ?? "—"))
