@@ -5780,6 +5780,47 @@ _TOTAL_ONLY_LABEL = {"RBI": "RBIs", "R": "runs", "SB": "stolen bases",
                      "H": "hits", "TB": "total bases", "W": "wins", "L": "losses",
                      "SV": "saves", "ER": "earned runs", "AB": "at-bats"}
 
+# UNSUPPORTED-CONCEPT guard. Adding a countable event (AB, TB, W...) gives the
+# model a plausible home for an ADJACENT concept the app CAN'T answer, so it maps
+# the question onto the neighbor and returns the wrong stat with a straight face —
+# "plate appearances" -> the AB total, "extra bases" -> the TB total, "winning
+# percentage" -> the win count. We catch the concept in the QUESTION wording and
+# decline, whatever event/tool the model chose. Each pattern is anchored so it
+# CANNOT catch the supported neighbor it's confused with (see the tests). Adding
+# the next one is a single row. Checked globally, before any tool dispatch.
+_PA_DECLINE = ("I can't count plate appearances — the season totals aren't "
+               "consistent across eras, so I'd rather not give a number that's "
+               "wrong for some players.")
+_UNSUPPORTED_CONCEPT = [
+    # PLATE APPEARANCES -> AB. Two patterns: the phrase (case-insensitive) and the
+    # bare 'PA' abbreviation (UPPERCASE-only, so a lowercase word can't trip it).
+    # Never matches "at-bats".
+    (re.compile(r"plate appearances?|trips?\s+to\s+the\s+plate"
+                r"|times?(?:\s+up)?\s+to\s+the\s+plate", re.I), _PA_DECLINE),
+    (re.compile(r"\bPAs?\b"), _PA_DECLINE),
+    # EXTRA BASES -> TB. Not the same as total bases (extra bases = 2B+3B+HR). The
+    # negative lookahead spares "extra-base HIT(S)" — XBH is a real STREAK concept
+    # ("most extra-base hits in a row") a blanket match would break.
+    (re.compile(r"\bextra[\s-]bases?\b(?!\s*hits?)", re.I),
+     "I don't track extra bases as a total — that isn't the same as total bases "
+     "(which I can give), or home runs, doubles, and triples."),
+    # WINNING PERCENTAGE -> W (a rate answered as the win count). Anchored on the
+    # 'percentage/pct/%' term so a plain "how many wins" is untouched.
+    (re.compile(r"\b(?:winning|win|w[-/]?l|won[-\s]?lost)[\s-]+(?:percentage|pct|%)", re.I),
+     "I can't give winning percentage — that's a rate I don't compute. I can give "
+     "the win and loss totals."),
+]
+
+
+def _unsupported_concept(q):
+    """A decline message if the QUESTION names a concept we can't count but which
+    the model would absorb into an adjacent event; else None."""
+    q = q or ""
+    for pat, msg in _UNSUPPORTED_CONCEPT:
+        if pat.search(q):
+            return msg
+    return None
+
 
 def _canon_event(event):
     if event is None:
@@ -10483,6 +10524,20 @@ def ask(request: Request,
         _ask_log_write(q, norm, tool_name, raw_tool_input, base, cached, id_hash,
                        in_tok, out_tok, timing)
         return base
+
+    # ---- UNSUPPORTED-CONCEPT GUARD (deterministic, GLOBAL — before any tool
+    # dispatch). A concept we can't answer (PA, extra bases, winning %) that the
+    # model absorbs into an adjacent event would return the wrong stat as a count
+    # or a leaderboard. Decline on the QUESTION wording, whatever tool/event the
+    # model chose. Runs post-cache, so a wrong translation cached before this guard
+    # also declines on replay. Each pattern is anchored not to catch its supported
+    # neighbor (at-bats / extra-base hits / plain wins).
+    _concept_decline = _unsupported_concept(q)
+    if _concept_decline:
+        base["out_of_scope"] = True
+        base["reason"] = _concept_decline
+        base["answer"] = _concept_decline
+        return _finish()
 
     # ---- deterministic constraint validation (LLM proposes, CODE disposes) --
     # Runs for any answerable tool, on BOTH the fresh and cached translation, so
