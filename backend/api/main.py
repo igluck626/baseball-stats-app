@@ -5505,7 +5505,7 @@ _PLAYS_EVENT_CD = {
 _EVENT_TO_STAT = {"HR": "HR", "K": "SO", "SO": "SO", "BB": "BB",
                   "HBP": "HBP", "2B": "2B", "3B": "3B", "RBI": "RBI",
                   "R": "R", "SB": "SB", "H": "H", "TB": "TB",
-                  "W": "W", "L": "L", "SV": "SV", "ER": "ER"}
+                  "W": "W", "L": "L", "SV": "SV", "ER": "ER", "AB": "AB"}
 
 
 # Persistent read-only connection to the plays store. The Railway volume is
@@ -5746,6 +5746,7 @@ _CANON_EVENT = {
     "SV": "SV", "SAVE": "SV", "SAVES": "SV",
     "L": "L", "LOSS": "L", "LOSSES": "L",
     "ER": "ER", "EARNED_RUN": "ER", "EARNED_RUNS": "ER", "EARNEDRUN": "ER",
+    "AB": "AB", "AT_BAT": "AB", "AT_BATS": "AB", "ATBAT": "AB", "ATBATS": "AB",
 }
 
 # (role, canonical event) -> season-stats column expression. Combos NOT here
@@ -5760,7 +5761,7 @@ _SEASON_COL = {
     ("bat", "1B"): '("H" - doubles - triples - "HR")',
     # TOTAL-only batting counting stats (columns are capitalized -> double-quoted).
     ("bat", "RBI"): '"RBI"', ("bat", "R"): '"R"', ("bat", "SB"): '"SB"',
-    ("bat", "H"): '"H"',
+    ("bat", "H"): '"H"', ("bat", "AB"): '"AB"',
     # TB derived (like _DAILY_EVENT) so we don't depend on the TB column's fill.
     ("bat", "TB"): '("H" + doubles + 2 * triples + 3 * "HR")',
     ("pit", "HR"): '"HR"', ("pit", "K"): '"SO"', ("pit", "BB"): '"BB"',
@@ -5774,10 +5775,10 @@ _SEASON_COL = {
 # R, SB, H, TB. Pitching: W, L, SV, ER (game-level decisions, no play-level form).
 # (H is derivable situationally from the plays hit flag — a future add; for now a
 # split on it declines like the rest, instead of leaking an unknown-event error.)
-_TOTAL_ONLY_EVENTS = {"RBI", "R", "SB", "H", "TB", "W", "L", "SV", "ER"}
+_TOTAL_ONLY_EVENTS = {"RBI", "R", "SB", "H", "TB", "W", "L", "SV", "ER", "AB"}
 _TOTAL_ONLY_LABEL = {"RBI": "RBIs", "R": "runs", "SB": "stolen bases",
                      "H": "hits", "TB": "total bases", "W": "wins", "L": "losses",
-                     "SV": "saves", "ER": "earned runs"}
+                     "SV": "saves", "ER": "earned runs", "AB": "at-bats"}
 
 
 def _canon_event(event):
@@ -9124,13 +9125,13 @@ _ASK_QUERY_TOOL = {
                      "'bat' if the player is the hitter, 'pit' if the pitcher. Default 'bat'."},
             "event": {"type": "string",
                       "enum": ["HR", "K", "BB", "HBP", "1B", "2B", "3B", "RBI", "R", "SB",
-                               "H", "TB", "W", "L", "SV", "ER"],
+                               "H", "TB", "AB", "W", "L", "SV", "ER"],
                       "description": "Outcome: HR=home run, K=strikeout, BB=walk, "
                                      "HBP=hit by pitch, 1B=single, 2B=double, 3B=triple. "
                                      "SEASON/CAREER TOTALS ONLY (no situational split): "
                                      "RBI=runs batted in, R=runs scored, SB=stolen bases, "
-                                     "H=hits, TB=total bases; pitching W=wins, L=losses, "
-                                     "SV=saves, ER=earned runs (set role='pit' for those)."},
+                                     "H=hits, TB=total bases, AB=at-bats; pitching W=wins, "
+                                     "L=losses, SV=saves, ER=earned runs (set role='pit')."},
             "balls": {"type": "integer", "minimum": 0, "maximum": 3, "description":
                       "Ball count if specified (a '3-2'/'full count' -> balls 3)."},
             "strikes": {"type": "integer", "minimum": 0, "maximum": 2, "description":
@@ -9167,12 +9168,13 @@ _ASK_LEADERBOARD_TOOL = {
         "properties": {
             "event": {"type": "string",
                       "enum": ["HR", "K", "BB", "HBP", "1B", "2B", "3B",
-                               "H", "TB", "RBI", "R", "SB", "W", "SV"],
+                               "H", "TB", "AB", "RBI", "R", "SB", "W", "SV"],
                       "description": "Outcome to rank by (required). HR=home run, "
                                      "K=strikeout, BB=walk, HBP=hit by pitch, "
                                      "1B=single, 2B=double, 3B=triple, H=hits, "
-                                     "TB=total bases, RBI, R=runs, SB=stolen bases; "
-                                     "pitching W=wins, SV=saves (set role='pit')."},
+                                     "TB=total bases, AB=at-bats, RBI, R=runs, "
+                                     "SB=stolen bases; pitching W=wins, SV=saves "
+                                     "(set role='pit')."},
             "role": {"type": "string", "enum": ["bat", "pit"], "description":
                      "'bat' for hitters, 'pit' for pitchers. Default 'bat'."},
             "balls": {"type": "integer", "minimum": 0, "maximum": 3},
