@@ -10391,6 +10391,154 @@ def _guard_scoped_tool(question, tool_name, tool_input):
     return _SCOPE_DECLINE.format(cond=cond)
 
 
+# ============================================================================
+# CONSTRAINT-MERGE — Phase 0. DEAD CODE: nothing calls _guard_tool yet. It is the
+# single unified guard that later phases will route every tool through, one tool at
+# a time, retiring the _ANSWERABLE inject block (ask(), ~10607) and _guard_scoped_tool
+# above. Built now so it can be unit-tested against BOTH current systems in isolation
+# before anything depends on it. See backend/tests/test_guard_tool.py.
+#
+# Design: inject-or-decline per DECLARED capability, for every constraint type. It
+# reproduces current behavior EXACTLY for the cases the current systems handle, and
+# adds the two behaviors that were missing (a fix, activated only when a tool is
+# actually routed here in a later phase): season-drop repair for the answerable
+# tools, and opponent for query_situational. It intentionally does NOT yet declare
+# `opponent` for rates/splits/rate_leaderboard/leaderboard — their runners lack the
+# filter, and caps must never outrun implementation; those entries arrive with their
+# filters in later phases.
+_GUARD_ANSWERABLE = frozenset((
+    "query_situational", "query_leaderboard", "query_rates",
+    "query_splits", "query_rate_leaderboard"))
+_GUARD_CAPS = {
+    # ANSWERABLE — full situational caps (all implemented end-to-end in each runner).
+    # opponent ONLY on query_situational (the one answerable runner with the filter).
+    "query_situational":      frozenset(("handedness", "base_state", "count",
+                                         "home_away", "season_single", "season_range",
+                                         "opponent")),
+    "query_rates":            frozenset(("handedness", "base_state", "count",
+                                         "home_away", "season_single", "season_range")),
+    "query_splits":           frozenset(("handedness", "base_state", "count",
+                                         "home_away", "season_single", "season_range")),
+    "query_rate_leaderboard": frozenset(("handedness", "base_state", "count",
+                                         "home_away", "season_single", "season_range")),
+    "query_leaderboard":      frozenset(("handedness", "base_state", "count",
+                                         "home_away", "season_single", "season_range")),
+    # SCOPED — byte-identical to _TOOL_SCOPE_CAPS, so routing these here is a no-op.
+    "query_milestone":          frozenset(("season_single",)),
+    "query_streak":             frozenset(("season_single",)),
+    "query_span":               frozenset(("season_single",)),
+    "query_streak_leaderboard": frozenset(("season_single", "season_range")),
+    "query_span_leaderboard":   frozenset(),
+    "query_game_achievement":   frozenset(("season_single", "season_range",
+                                           "home_away", "opponent")),
+}
+
+
+def _guard_tool(question, tool_name, tool_input):
+    """UNIFIED constraint guard (Phase 0 — DEAD CODE, called by nothing yet).
+
+    Returns a decline message (str) or None; MUTATES tool_input with any repaired
+    (injected) constraint the tool can express. The eventual caller, on a non-None
+    return, does exactly what BOTH current sites do — identical for either message:
+        base['out_of_scope'] = True; base['reason'] = msg
+        base['answer'] = msg;        base['understood_as'] = None
+    and returns. understood_as stays in sync because we mutate the very dict base
+    points at, just like today."""
+    caps = _GUARD_CAPS.get(tool_name, frozenset())
+    answerable = tool_name in _GUARD_ANSWERABLE
+    ti = tool_input if tool_input is not None else {}
+    inj, unsup = _detect_constraints(question)
+    bad = []   # scope-style declines -> _SCOPE_DECLINE
+
+    # (1) UNSUPPORTED CONCEPTS — no tool can express them. The message differs by
+    # class, preserving current behavior: an ANSWERABLE tool declines with the
+    # "not in the play-by-play data" wording (_unsupported_reason); a SCOPED tool
+    # folds it into the scope decline (_SCOPE_DECLINE). Answerable returns here
+    # exactly as the _ANSWERABLE block does today (before any injection).
+    if unsup:
+        if answerable:
+            return _unsupported_reason(unsup)
+        bad.append(unsup[0])
+
+    # (2) HANDEDNESS — one logical marker mapped to a SIDE by role. Inject only if
+    # the model set NEITHER side (true drop); skip if it already chose one. Ported
+    # verbatim from the _ANSWERABLE block. Declined (never injected) where a tool
+    # can't express it (every scoped tool).
+    hand = inj.pop("handedness", None)
+    if hand:
+        if "handedness" in caps:
+            if ti.get("pitcher_hand") is None and ti.get("batter_side") is None:
+                side = "batter_side" if ti.get("role") == "pit" else "pitcher_hand"
+                ti[side] = hand
+                log.warning("guard: injected %s=%r (tool %s) for %r", side, hand, tool_name, question)
+        else:
+            bad.append("batter/pitcher handedness")
+
+    # (3) BASE STATE
+    if "base_state" in inj:
+        if "base_state" in caps:
+            if ti.get("base_state") is None:
+                ti["base_state"] = inj["base_state"]
+                log.warning("guard: injected base_state=%r (tool %s) for %r",
+                            inj["base_state"], tool_name, question)
+        else:
+            bad.append("the base/scoring situation")
+
+    # (4) BALL-STRIKE COUNT
+    if "balls" in inj or "strikes" in inj:
+        if "count" in caps:
+            for p in ("balls", "strikes"):
+                if p in inj and ti.get(p) is None:
+                    ti[p] = inj[p]
+                    log.warning("guard: injected %s=%r (tool %s) for %r", p, inj[p], tool_name, question)
+        else:
+            bad.append("the ball-strike count")
+
+    # (5) HOME / AWAY
+    ha = inj.get("home_away")
+    if ha:
+        if "home_away" in caps:
+            if ti.get("home_away") is None:
+                ti["home_away"] = ha
+        else:
+            bad.append("home/away")
+
+    # (6) SEASON scope — single vs range. Inject only when the model set NO season
+    # field at all (never clobber a scope it chose). NEW for answerable tools (the
+    # _ANSWERABLE block never repaired a dropped season); a no-op parity match for
+    # scoped tools, which already do this via _guard_scoped_tool.
+    season = _detect_season_scope(question)
+    if season:
+        need = "season_range" if ("season_start" in season or "season_end" in season) \
+            else "season_single"
+        if need in caps:
+            if not any(ti.get(k) is not None for k in ("season", "season_start", "season_end")):
+                ti.update(season)
+        else:
+            bad.append("a range of seasons" if need == "season_range" else "a single season")
+
+    # (7) OPPONENT — via the SHARED resolver. Read the season range AFTER any inject
+    # above. An ambiguous city returns its own clarify (distinct message); a club the
+    # tool can't scope, or one we can't resolve, is a scope decline; a resolvable club
+    # is injected on a true drop only.
+    lo = ti.get("season") or ti.get("season_start")
+    hi = ti.get("season") or ti.get("season_end")
+    opp = _question_opponent(question, ti, lo, hi)
+    if opp is not None:
+        if opp[0] == "decline":
+            return opp[1]
+        elif opp[0] == "unknown" or "opponent" not in caps:
+            bad.append("a specific opponent (team)")
+        elif ti.get("opponent_codes") is None:
+            ti["opponent_codes"] = opp[1]
+            ti["opponent_label"] = opp[2]
+
+    if not bad:
+        return None
+    cond = bad[0] if len(bad) == 1 else ", ".join(bad[:-1]) + " or " + bad[-1]
+    return _SCOPE_DECLINE.format(cond=cond)
+
+
 # A COUNT question ("how many home runs...") wants a number, not a line. When
 # the model routes one to query_rates anyway, the rate line already holds the
 # figure — so we read it out and set count + highlighted_stat rather than

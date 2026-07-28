@@ -1,0 +1,179 @@
+{"id": "q000", "bucket": "count_bat", "q": "How many home runs does Aaron Judge have?", "note": "home runs"}
+{"id": "q001", "bucket": "count_bat", "q": "How many strikeouts does Aaron Judge have?", "note": "strikeouts"}
+{"id": "q002", "bucket": "count_bat", "q": "How many walks does Aaron Judge have?", "note": "walks"}
+{"id": "q003", "bucket": "count_bat", "q": "How many hits does Aaron Judge have?", "note": "hits"}
+{"id": "q004", "bucket": "count_bat", "q": "How many doubles does Aaron Judge have?", "note": "doubles"}
+{"id": "q005", "bucket": "count_bat", "q": "How many triples does Aaron Judge have?", "note": "triples"}
+{"id": "q006", "bucket": "count_bat", "q": "How many total bases does Aaron Judge have?", "note": "total bases"}
+{"id": "q007", "bucket": "count_bat", "q": "How many stolen bases does Aaron Judge have?", "note": "stolen bases"}
+{"id": "q008", "bucket": "count_bat", "q": "How many runs does Aaron Judge have?", "note": "runs"}
+{"id": "q009", "bucket": "count_bat", "q": "How many RBIs does Aaron Judge have?", "note": "RBIs"}
+{"id": "q010", "bucket": "count_bat", "q": "How many at-bats does Aaron Judge have?", "note": "at-bats"}
+{"id": "q011", "bucket": "count_bat", "q": "How many extra-base hits does Aaron Judge have?", "note": "extra-base hits"}
+{"id": "q012", "bucket": "count_bat", "q": "How many home runs did Barry Bonds hit?", "note": "career HR, retired"}
+{"id": "q013", "bucket": "count_bat", "q": "How many grand slams has Aaron Judge hit?", "note": "grand slam -> HR base_state"}
+{"id": "q014", "bucket": "count_pit", "q": "How many strikeouts does Gerrit Cole have?", "note": "strikeouts"}
+{"id": "q015", "bucket": "count_pit", "q": "How many wins does Gerrit Cole have?", "note": "wins"}
+{"id": "q016", "bucket": "count_pit", "q": "How many saves does Gerrit Cole have?", "note": "saves"}
+{"id": "q017", "bucket": "count_pit", "q": "How many losses does Gerrit Cole have?", "note": "losses"}
+{"id": "q018", "bucket": "count_pit", "q": "How many earned runs does Gerrit Cole have?", "note": "earned runs"}
+{"id": "q019", "bucket": "count_pit", "q": "How many walks does Gerrit Cole have?", "note": "walks"}
+{"id": "q020", "bucket": "situ", "q": "How many home runs has Aaron Judge hit off left-handed pitchers?", "note": "handedness->pitcher_hand"}
+{"id": "q021", "bucket": "situ", "q": "How many home runs has Aaron Judge hit off right-handed pitchers?", "note": "handedness R"}
+{"id": "q022", "bucket": "situ", "q": "How many strikeouts does Gerrit Cole have against left-handed batters?", "note": "handedness->batter_side (pit)"}
+{"id": "q023", "bucket": "situ", "q": "How many home runs has Aaron Judge hit with runners in scoring position?", "note": "base_state risp"}
+{"id": "q024", "bucket": "situ", "q": "How many home runs has Aaron Judge hit with the bases loaded?", "note": "base_state loaded"}
+{"id": "q025", "bucket": "situ", "q": "How many home runs has Aaron Judge hit at home?", "note": "home_away home = 189 baseline"}
+{"id": "q026", "bucket": "situ", "q": "How many home runs has Aaron Judge hit on the road?", "note": "home_away away"}
+{"id": "q027", "bucket": "situ", "q": "How many home runs has Aaron Judge hit in a full count?", "note": "count 3-2"}
+{"id": "q028", "bucket": "situ", "q": "How many home runs has Aaron Judge hit with two strikes?", "note": "strikes=2"}
+{"id": "q029", "bucket": "situ", "q": "How many home runs has Aaron Judge hit in the 9th inning?", "note": "inning (model-only)"}
+{"id": "q030", "bucket": "situ", "q": "How many home runs has Aaron Judge hit with two outs?", "note": "outs (model-only)"}
+{"id": "q031", "bucket": "opp_scoped", "q": "How many home runs has Aaron Judge hit against the Red Sox?", "note": "~36 scoped"}
+{"id": "q032", "bucket": "opp_scoped", "q": "How many home runs has Aaron Judge hit against the Red Sox at home?", "note": "~18 scoped+venue"}
+{"id": "q033", "bucket": "opp_selfteam", "q": "How many home runs has Aaron Judge hit against the Yankees?", "note": "self-team note, count 0"}
+{"id": "q034", "bucket": "opp_ambig_city", "q": "How many home runs has Aaron Judge hit against Washington?", "note": "ambiguous city -> decline"}
+{"id": "q035", "bucket": "opp_city_ok", "q": "How many home runs has Aaron Judge hit against Detroit?", "note": "single-franchise city -> Tigers"}
+{"id": "q036", "bucket": "opp_nick_city", "q": "How many home runs has Aaron Judge hit against the Chicago Cubs?", "note": "city+nick -> resolves"}
+{"id": "q037", "bucket": "opp_scoped", "q": "How many strikeouts does Gerrit Cole have against the Astros?", "note": "pitcher opponent inverse"}
+{"id": "q038", "bucket": "season", "q": "How many home runs did Aaron Judge hit in 2019?", "note": "season_single"}
+{"id": "q039", "bucket": "season", "q": "How many home runs has Aaron Judge hit since 2020?", "note": "season_start"}
+{"id": "q040", "bucket": "season", "q": "How many home runs did Babe Ruth hit before 1930?", "note": "season_end"}
+{"id": "q041", "bucket": "season", "q": "How many home runs did Aaron Judge hit between 2017 and 2019?", "note": "range"}
+{"id": "q042", "bucket": "season", "q": "How many home runs did Ken Griffey Jr hit in the 1990s?", "note": "decade range"}
+{"id": "q043", "bucket": "season", "q": "How many home runs did Aaron Judge hit in 2022 off lefties?", "note": "season+handedness"}
+{"id": "q044", "bucket": "rates", "q": "What is Aaron Judge's batting average?", "note": "AVG"}
+{"id": "q045", "bucket": "rates", "q": "What is Aaron Judge's OPS?", "note": "OPS"}
+{"id": "q046", "bucket": "rates", "q": "What is Aaron Judge's on-base percentage?", "note": "OBP"}
+{"id": "q047", "bucket": "rates", "q": "What is Aaron Judge's slugging percentage?", "note": "SLG"}
+{"id": "q048", "bucket": "rates", "q": "What is Aaron Judge's batting average with runners in scoring position?", "note": "rate+risp"}
+{"id": "q049", "bucket": "rates", "q": "What is Aaron Judge's OPS off left-handed pitchers?", "note": "rate+handedness"}
+{"id": "q050", "bucket": "rates", "q": "What is Aaron Judge's batting average against the Red Sox?", "note": "rate+opponent (rates has no opp yet)"}
+{"id": "q051", "bucket": "splits", "q": "What is Aaron Judge's batting average by handedness?", "note": "split pitcher_hand"}
+{"id": "q052", "bucket": "splits", "q": "What are Aaron Judge's home and away splits?", "note": "split home_away"}
+{"id": "q053", "bucket": "splits", "q": "What is Aaron Judge's OPS by season?", "note": "split season"}
+{"id": "q054", "bucket": "lb_count", "q": "Who has hit the most home runs?", "note": "count leaderboard"}
+{"id": "q055", "bucket": "lb_count", "q": "Who hit the most home runs in 2019?", "note": "count lb + season"}
+{"id": "q056", "bucket": "lb_count", "q": "Who has hit the most home runs off left-handed pitchers?", "note": "count lb + handedness -> plays route"}
+{"id": "q057", "bucket": "lb_count", "q": "Who has the most home runs with the bases loaded?", "note": "count lb + base_state"}
+{"id": "q058", "bucket": "lb_rate", "q": "Who has the best OPS?", "note": "rate leaderboard"}
+{"id": "q059", "bucket": "lb_rate", "q": "Who has the best batting average with runners in scoring position?", "note": "rate lb + risp"}
+{"id": "q060", "bucket": "lb_count", "q": "Who has hit the most home runs against the Dodgers?", "note": "lb + opponent (no runner filter yet)"}
+{"id": "q061", "bucket": "milestone", "q": "When did Albert Pujols hit his 600th home run?", "note": "HR milestone"}
+{"id": "q062", "bucket": "milestone", "q": "When did Derek Jeter get his 3000th hit?", "note": "H milestone"}
+{"id": "q063", "bucket": "milestone", "q": "When did Rickey Henderson steal his 1000th base?", "note": "SB milestone"}
+{"id": "q064", "bucket": "milestone", "q": "When did Rickey Henderson score his 2000th run?", "note": "R milestone"}
+{"id": "q065", "bucket": "milestone", "q": "When did Hank Aaron drive in his 2000th run?", "note": "RBI milestone"}
+{"id": "q066", "bucket": "milestone", "q": "When did Albert Pujols hit his 500th home run in 2014?", "note": "milestone + season cap"}
+{"id": "q067", "bucket": "streak", "q": "What is Joe DiMaggio's longest hitting streak?", "note": "streak"}
+{"id": "q068", "bucket": "span", "q": "What is the most home runs Aaron Judge has hit in 10 games?", "note": "span"}
+{"id": "q069", "bucket": "streak", "q": "What is the longest scoreless innings streak by Orel Hershiser?", "note": "scoreless streak pitching line"}
+{"id": "q070", "bucket": "streak", "q": "What is Cal Ripken's longest consecutive games played streak?", "note": "KNOWN BUG: Ripken consecutive games"}
+{"id": "q071", "bucket": "game_ach", "q": "How many multi-home-run games has Aaron Judge had?", "note": "game ach"}
+{"id": "q072", "bucket": "game_ach", "q": "How many multi-home-run games has Aaron Judge had against the Dodgers?", "note": "game ach + opponent -> 2"}
+{"id": "q073", "bucket": "game_ach", "q": "How many multi-home-run games has Aaron Judge had against Washington?", "note": "game ach + ambiguous city -> decline"}
+{"id": "q074", "bucket": "game_ach", "q": "How many times has Aaron Judge hit for the cycle?", "note": "cycle"}
+{"id": "q075", "bucket": "game_ach", "q": "How many times has Aaron Judge hit for the cycle against the Yankees?", "note": "cycle + opponent"}
+{"id": "q076", "bucket": "pitch_line", "q": "What is Gerrit Cole's ERA?", "note": "pitching line ERA"}
+{"id": "q077", "bucket": "pitch_line", "q": "What is Gerrit Cole's WHIP?", "note": "WHIP"}
+{"id": "q078", "bucket": "pitch_line", "q": "How many strikeouts per nine does Gerrit Cole average?", "note": "SO9"}
+{"id": "q079", "bucket": "pitch_line", "q": "What is Gerrit Cole's ERA in 2023?", "note": "pitch line + season"}
+{"id": "q080", "bucket": "unsupported", "q": "How many home runs has Aaron Judge hit in day games?", "note": "day/night -> decline"}
+{"id": "q081", "bucket": "unsupported", "q": "How many home runs has Aaron Judge hit in one-run games?", "note": "leverage -> decline"}
+{"id": "q082", "bucket": "unsupported", "q": "How many home runs has Aaron Judge hit in the clutch?", "note": "clutch -> decline"}
+{"id": "q083", "bucket": "unsupported", "q": "How many walk-off home runs has Aaron Judge hit?", "note": "walk-off -> decline"}
+{"id": "q084", "bucket": "unsupported", "q": "What is Gerrit Cole's winning percentage?", "note": "winning % -> decline"}
+{"id": "q085", "bucket": "unsupported", "q": "How many plate appearances does Aaron Judge have?", "note": "PA guard -> decline (not countable)"}
+{"id": "q086", "bucket": "two_way", "q": "How many home runs does Shohei Ohtani have?", "note": "two-way HR ambiguous side -> both"}
+{"id": "q087", "bucket": "two_way", "q": "How many strikeouts does Shohei Ohtani have?", "note": "two-way K -> both"}
+{"id": "q088", "bucket": "two_way", "q": "How many home runs has Shohei Ohtani hit as a hitter?", "note": "explicit side -> bat only"}
+{"id": "q089", "bucket": "two_way", "q": "How many home runs did Babe Ruth hit?", "note": "KNOWN: Ruth two-way era"}
+{"id": "q090", "bucket": "two_way", "q": "How many wins did Babe Ruth have as a pitcher?", "note": "KNOWN: Ruth pitching side"}
+{"id": "q091", "bucket": "comparison", "q": "Who has more home runs, Aaron Judge or Mike Trout?", "note": "KNOWN BUG: comparison"}
+{"id": "q092", "bucket": "comparison", "q": "Does Aaron Judge or Giancarlo Stanton have more home runs?", "note": "KNOWN BUG: comparison"}
+{"id": "q093", "bucket": "postseason", "q": "How many home runs has Aaron Judge hit in the postseason?", "note": "game_type P"}
+{"id": "q094", "bucket": "postseason", "q": "How many home runs has Aaron Judge hit in the World Series?", "note": "postseason"}
+{"id": "q095", "bucket": "roster", "q": "Who plays for the New York Yankees?", "note": "roster (not a leaderboard)"}
+{"id": "q096", "bucket": "roster", "q": "Who is on the Dodgers roster?", "note": "roster"}
+{"id": "q097", "bucket": "floor", "q": "How many home runs did Babe Ruth hit off left-handed pitchers?", "note": "pre-plays-floor situational -> decline"}
+{"id": "q098", "bucket": "floor", "q": "What is Ty Cobb's batting average with runners in scoring position?", "note": "pre-floor rate -> decline"}
+{"id": "q099", "bucket": "ambig_player", "q": "How many strikeouts does Wagner have?", "note": "KNOWN FLAKY: Billy Wagner vs Honus Wagner"}
+{"id": "q100", "bucket": "ambig_player", "q": "How many home runs does Rodriguez have?", "note": "ambiguous surname"}
+{"id": "q101", "bucket": "ab_unit", "q": "How many at-bats did Aaron Judge have in 2022?", "note": "AB + season"}
+{"id": "q102", "bucket": "count_spread", "q": "How many home runs does Mike Trout have?", "note": "Mike Trout home runs"}
+{"id": "q103", "bucket": "count_spread", "q": "How many stolen bases does Mookie Betts have?", "note": "Mookie Betts stolen bases"}
+{"id": "q104", "bucket": "count_spread", "q": "How many strikeouts does Clayton Kershaw have?", "note": "Clayton Kershaw strikeouts"}
+{"id": "q105", "bucket": "count_spread", "q": "How many saves does Mariano Rivera have?", "note": "Mariano Rivera saves"}
+{"id": "q106", "bucket": "count_spread", "q": "How many home runs does Ted Williams have?", "note": "Ted Williams home runs"}
+{"id": "q107", "bucket": "count_spread", "q": "How many home runs does Willie Mays have?", "note": "Willie Mays home runs"}
+{"id": "q108", "bucket": "count_spread", "q": "How many wins does Greg Maddux have?", "note": "Greg Maddux wins"}
+{"id": "q109", "bucket": "count_spread", "q": "How many hits does Tony Gwynn have?", "note": "Tony Gwynn hits"}
+{"id": "q110", "bucket": "count_spread", "q": "How many stolen bases does Rickey Henderson have?", "note": "Rickey Henderson stolen bases"}
+{"id": "q111", "bucket": "count_spread", "q": "How many strikeouts does Pedro Martinez have?", "note": "Pedro Martinez strikeouts"}
+{"id": "q112", "bucket": "situ", "q": "How many strikeouts does Aaron Judge have with two strikes?", "note": "batter K + strikes"}
+{"id": "q113", "bucket": "situ", "q": "How many hits does Aaron Judge have with runners in scoring position?", "note": "H + risp"}
+{"id": "q114", "bucket": "opp_scoped", "q": "How many hits does Aaron Judge have against the Orioles?", "note": "H + opponent"}
+{"id": "q115", "bucket": "opp_scoped", "q": "What is Aaron Judge's OPS against the Blue Jays?", "note": "rate + opponent"}
+{"id": "q116", "bucket": "season", "q": "How many strikeouts did Gerrit Cole have in 2021?", "note": "pit K + season"}
+{"id": "q117", "bucket": "rates", "q": "What is Mike Trout's OPS in 2019?", "note": "rate + season"}
+{"id": "q118", "bucket": "lb_count", "q": "Who hit the most home runs in the 1990s?", "note": "count lb + decade"}
+{"id": "q119", "bucket": "milestone", "q": "When did Miguel Cabrera get his 3000th hit?", "note": "H milestone 2"}
+{"id": "q120", "bucket": "game_ach", "q": "How many two-home-run games did Babe Ruth have?", "note": "game ach pre-modern"}
+{"id": "q121", "bucket": "pitch_line", "q": "What is Clayton Kershaw's ERA in the postseason?", "note": "pitch line + postseason"}
+{"id": "q122", "bucket": "count_spread", "q": "How many home runs does Hank Aaron have?", "note": "Hank Aaron home runs"}
+{"id": "q123", "bucket": "count_spread", "q": "How many hits does Stan Musial have?", "note": "Stan Musial hits"}
+{"id": "q124", "bucket": "count_spread", "q": "How many runs does Rickey Henderson have?", "note": "Rickey Henderson runs"}
+{"id": "q125", "bucket": "count_spread", "q": "How many home runs does Cal Ripken have?", "note": "Cal Ripken home runs"}
+{"id": "q126", "bucket": "count_spread", "q": "How many walks does Frank Thomas have?", "note": "Frank Thomas walks"}
+{"id": "q127", "bucket": "count_spread", "q": "How many hits does Ichiro Suzuki have?", "note": "Ichiro Suzuki hits"}
+{"id": "q128", "bucket": "count_spread", "q": "How many strikeouts does Randy Johnson have?", "note": "Randy Johnson strikeouts"}
+{"id": "q129", "bucket": "count_spread", "q": "How many strikeouts does Nolan Ryan have?", "note": "Nolan Ryan strikeouts"}
+{"id": "q130", "bucket": "count_spread", "q": "How many saves does Trevor Hoffman have?", "note": "Trevor Hoffman saves"}
+{"id": "q131", "bucket": "count_spread", "q": "How many wins does Roger Clemens have?", "note": "Roger Clemens wins"}
+{"id": "q132", "bucket": "count_spread", "q": "How many home runs does Vladimir Guerrero have?", "note": "Vladimir Guerrero home runs"}
+{"id": "q133", "bucket": "count_spread", "q": "How many home runs does David Ortiz have?", "note": "David Ortiz home runs"}
+{"id": "q134", "bucket": "count_spread", "q": "How many home runs does Chipper Jones have?", "note": "Chipper Jones home runs"}
+{"id": "q135", "bucket": "count_spread", "q": "How many home runs does Jeff Bagwell have?", "note": "Jeff Bagwell home runs"}
+{"id": "q136", "bucket": "count_spread", "q": "How many hits does Craig Biggio have?", "note": "Craig Biggio hits"}
+{"id": "q137", "bucket": "situ", "q": "How many home runs has Mike Trout hit off left-handed pitchers?", "note": "Trout handedness"}
+{"id": "q138", "bucket": "situ", "q": "How many home runs has Giancarlo Stanton hit with the bases loaded?", "note": "Stanton loaded"}
+{"id": "q139", "bucket": "situ", "q": "How many hits does Mookie Betts have with runners in scoring position?", "note": "Betts risp"}
+{"id": "q140", "bucket": "situ", "q": "How many home runs has Freddie Freeman hit at home?", "note": "Freeman home"}
+{"id": "q141", "bucket": "situ", "q": "How many strikeouts does Jacob deGrom have with two strikes?", "note": "deGrom strikes"}
+{"id": "q142", "bucket": "situ", "q": "How many home runs has Pete Alonso hit in the 9th inning?", "note": "Alonso inning"}
+{"id": "q143", "bucket": "opp_scoped", "q": "How many home runs has Mike Trout hit against the Astros?", "note": "Trout vs HOU"}
+{"id": "q144", "bucket": "opp_scoped", "q": "How many home runs has Mookie Betts hit against the Giants?", "note": "Betts vs SFN"}
+{"id": "q145", "bucket": "opp_selfteam", "q": "How many home runs has Mike Trout hit against the Angels?", "note": "Trout self-team (Angels)"}
+{"id": "q146", "bucket": "opp_ambig_city", "q": "How many home runs has Aaron Judge hit against New York?", "note": "NY ambiguous city"}
+{"id": "q147", "bucket": "opp_city_ok", "q": "How many home runs has Aaron Judge hit against Cleveland?", "note": "Cleveland single-franchise"}
+{"id": "q148", "bucket": "opp_scoped", "q": "What is Mike Trout's batting average against the Mariners?", "note": "rate + opponent (no runner yet)"}
+{"id": "q149", "bucket": "season", "q": "How many home runs did Mike Trout hit in 2016?", "note": "Trout season"}
+{"id": "q150", "bucket": "season", "q": "How many hits did Ichiro Suzuki have since 2001?", "note": "Ichiro since"}
+{"id": "q151", "bucket": "season", "q": "How many strikeouts did Randy Johnson have before 2000?", "note": "RJ before"}
+{"id": "q152", "bucket": "season", "q": "How many home runs did Sammy Sosa hit between 1998 and 2001?", "note": "Sosa range"}
+{"id": "q153", "bucket": "season", "q": "How many saves did Mariano Rivera have in the 2000s?", "note": "Rivera decade"}
+{"id": "q154", "bucket": "rates", "q": "What is Mookie Betts's slugging percentage?", "note": "Betts SLG"}
+{"id": "q155", "bucket": "rates", "q": "What is Freddie Freeman's OPS with runners in scoring position?", "note": "Freeman rate+risp"}
+{"id": "q156", "bucket": "rates", "q": "What is Mike Trout's on-base percentage off right-handed pitchers?", "note": "Trout rate+hand"}
+{"id": "q157", "bucket": "splits", "q": "What are Mike Trout's home and away splits?", "note": "Trout splits home_away"}
+{"id": "q158", "bucket": "splits", "q": "What is Mookie Betts's batting average by handedness?", "note": "Betts split hand"}
+{"id": "q159", "bucket": "lb_count", "q": "Who has hit the most home runs since 2015?", "note": "count lb season_start"}
+{"id": "q160", "bucket": "lb_count", "q": "Who has the most strikeouts as a pitcher?", "note": "pit count lb"}
+{"id": "q161", "bucket": "lb_count", "q": "Who has the most saves?", "note": "saves lb"}
+{"id": "q162", "bucket": "lb_rate", "q": "Who has the best batting average since 2010?", "note": "rate lb + range"}
+{"id": "q163", "bucket": "lb_rate", "q": "Who has the highest OPS with the bases loaded?", "note": "rate lb + loaded"}
+{"id": "q164", "bucket": "milestone", "q": "When did Barry Bonds hit his 700th home run?", "note": "Bonds HR milestone"}
+{"id": "q165", "bucket": "milestone", "q": "When did Ichiro Suzuki get his 3000th hit?", "note": "Ichiro H milestone"}
+{"id": "q166", "bucket": "streak", "q": "What is Pete Rose's longest hitting streak?", "note": "Rose streak"}
+{"id": "q167", "bucket": "game_ach", "q": "How many multi-home-run games has Giancarlo Stanton had?", "note": "Stanton game ach"}
+{"id": "q168", "bucket": "game_ach", "q": "How many times has Mookie Betts hit for the cycle?", "note": "Betts cycle"}
+{"id": "q169", "bucket": "pitch_line", "q": "What is Jacob deGrom's WHIP?", "note": "deGrom WHIP"}
+{"id": "q170", "bucket": "pitch_line", "q": "What is Justin Verlander's ERA since 2018?", "note": "Verlander ERA + range"}
+{"id": "q171", "bucket": "postseason", "q": "How many strikeouts does Clayton Kershaw have in the postseason?", "note": "Kershaw postseason K"}
+{"id": "q172", "bucket": "postseason", "q": "How many home runs has Mike Trout hit in the playoffs?", "note": "Trout playoffs"}
+{"id": "q173", "bucket": "unsupported", "q": "How many home runs has Aaron Judge hit in extra innings?", "note": "extra innings -> decline"}
+{"id": "q174", "bucket": "unsupported", "q": "How many home runs has Aaron Judge hit at night?", "note": "night -> decline"}
+{"id": "q175", "bucket": "unsupported", "q": "What is Aaron Judge's WAR?", "note": "WAR unsupported -> decline"}
+{"id": "q176", "bucket": "two_way", "q": "How many strikeouts does Shohei Ohtani have as a pitcher?", "note": "Ohtani explicit pit side"}
+{"id": "q177", "bucket": "comparison", "q": "Who has more strikeouts, Randy Johnson or Nolan Ryan?", "note": "comparison pitchers"}
+{"id": "q178", "bucket": "roster", "q": "Who plays for the Boston Red Sox?", "note": "Red Sox roster"}
