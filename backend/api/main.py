@@ -10419,7 +10419,8 @@ _GUARD_CAPS = {
                                          "home_away", "season_single", "season_range",
                                          "opponent")),
     "query_rates":            frozenset(("handedness", "base_state", "count",
-                                         "home_away", "season_single", "season_range")),
+                                         "home_away", "season_single", "season_range",
+                                         "opponent")),   # Phase 2: _run_rates has the filter
     "query_splits":           frozenset(("handedness", "base_state", "count",
                                          "home_away", "season_single", "season_range")),
     "query_rate_leaderboard": frozenset(("handedness", "base_state", "count",
@@ -10435,6 +10436,10 @@ _GUARD_CAPS = {
     "query_game_achievement":   frozenset(("season_single", "season_range",
                                            "home_away", "opponent")),
 }
+# Tools migrated onto the unified _guard_tool, one phase at a time. Everything else
+# still uses the legacy _ANSWERABLE block / _guard_scoped_tool. Phase 1: situational.
+# Phase 2: rates.
+_GUARD_ROUTED = frozenset(("query_situational", "query_rates"))
 
 
 def _guard_tool(question, tool_name, tool_input):
@@ -10756,15 +10761,14 @@ def ask(request: Request,
     # Runs for any answerable tool, on BOTH the fresh and cached translation, so
     # a dropped/unsupported constraint can never slip through non-deterministically.
     #
-    # CONSTRAINT-MERGE Phase 1: query_situational is the FIRST tool routed through
-    # the unified _guard_tool. It does everything the _ANSWERABLE block below does
-    # for this tool (unsupported-concept decline; role-aware handedness / base_state
-    # / count / home_away inject-on-drop) AND, newly, season-drop repair — plus it
-    # owns opponent resolution, retiring this tool's inline opponent block further
-    # down (it injects opponent_codes/opponent_label into tool_input, which the
-    # situational dispatch's whitelist forwards). The other four answerable tools
-    # stay on the block below until their own phases.
-    if tool_name == "query_situational" and tool_input is not None:
+    # CONSTRAINT-MERGE: tools in _GUARD_ROUTED go through the unified _guard_tool,
+    # which does everything the _ANSWERABLE block below does (unsupported-concept
+    # decline; role-aware handedness / base_state / count / home_away inject-on-drop)
+    # AND, newly, season-drop repair + opponent resolution (injecting opponent_codes/
+    # opponent_label into tool_input for the dispatch whitelist to forward). Phase 1
+    # migrated query_situational; Phase 2 adds query_rates. The remaining answerable
+    # tools stay on the block below until their own phases.
+    if tool_name in _GUARD_ROUTED and tool_input is not None:
         _decline = _guard_tool(q, tool_name, tool_input)
         if _decline:
             base["out_of_scope"] = True
@@ -11247,7 +11251,12 @@ def ask(request: Request,
         t0 = time.perf_counter()
         try:
             if tool_name == "query_rates":
-                kw = {k: tool_input.get(k) for k in ("player",) + situ_keys
+                # Phase 2: opponent_codes (injected by _guard_tool) reaches _run_rates,
+                # which scopes BOTH the numerator and denominator of every rate to the
+                # opponent — so a "vs the Red Sox" average isn't a Red-Sox hit count
+                # over a career of at-bats. splits/rate_leaderboard omit it (their
+                # runners lack the filter) until their own phases.
+                kw = {k: tool_input.get(k) for k in ("player", "opponent_codes") + situ_keys
                       if tool_input.get(k) is not None}
                 if not kw.get("player"):
                     base["out_of_scope"] = True; base["reason"] = "No player identified."

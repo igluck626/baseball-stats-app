@@ -189,22 +189,29 @@ check("[divergence opponent decline None on situational]", d, None)
 check("[divergence opponent_codes injected on situational]", bool(a.get("opponent_codes")), True)
 check("[divergence opponent_label injected on situational]", bool(a.get("opponent_label")), True)
 
-# 3c. opponent NOT in caps for query_rates -> scope-decline (current: silent widen)
-a = copy.deepcopy(ti); d = guard_tool("How many home runs has Aaron Judge hit against the Red Sox?", "query_rates", a)
-check("[divergence opponent scope-declined on query_rates]",
+# 3c. Phase 2: opponent now RESOLVES for query_rates too (runner filter added) —
+# it injects opponent_codes (no label needed; rates has no self-team note), where
+# it previously silently widened to all teams.
+a = copy.deepcopy(ti); d = guard_tool("What is Aaron Judge's batting average against the Red Sox?", "query_rates", a)
+check("[phase2 opponent decline None on query_rates]", d, None)
+check("[phase2 opponent_codes injected on query_rates]", a.get("opponent_codes"), ["BOS"])
+# opponent still NOT in caps for splits/rate_leaderboard/leaderboard -> scope-decline
+a = copy.deepcopy(ti); d = guard_tool("What is Aaron Judge's batting average against the Red Sox?", "query_splits", a)
+check("[opponent scope-declined on query_splits (no filter yet)]",
       d, NS["_SCOPE_DECLINE"].format(cond="a specific opponent (team)"))
-check("[divergence opponent NOT injected on query_rates]", a.get("opponent_codes"), None)
 
 # 3d. ambiguous city declines on ANY tool that reaches opponent (situational here)
 a = copy.deepcopy(ti); d = guard_tool("How many home runs has Aaron Judge hit against Washington?", "query_situational", a)
 check("[ambiguous-city declines on situational]", (d is not None and "Washington" in d), True)
 
 # ============================================================================
-# 4. CAPS DISCIPLINE — no answerable tool without the runner filter declares opponent
+# 4. CAPS DISCIPLINE — a tool declares opponent ONLY once its runner has the filter.
+# Phase 1: query_situational. Phase 2: query_rates. The rest must still NOT (yet).
 # ============================================================================
-for tool in ["query_rates", "query_splits", "query_rate_leaderboard", "query_leaderboard"]:
-    check(f"[caps: {tool} must NOT declare opponent]", "opponent" in NS["_GUARD_CAPS"][tool], False)
-check("[caps: query_situational DOES declare opponent]", "opponent" in NS["_GUARD_CAPS"]["query_situational"], True)
+for tool in ["query_splits", "query_rate_leaderboard", "query_leaderboard"]:
+    check(f"[caps: {tool} must NOT declare opponent (no filter yet)]", "opponent" in NS["_GUARD_CAPS"][tool], False)
+for tool in ["query_situational", "query_rates"]:
+    check(f"[caps: {tool} DOES declare opponent (filter exists)]", "opponent" in NS["_GUARD_CAPS"][tool], True)
 # scoped caps byte-identical to _TOOL_SCOPE_CAPS
 for tool, caps in NS["_TOOL_SCOPE_CAPS"].items():
     check(f"[caps: {tool} scoped caps unchanged]", set(NS["_GUARD_CAPS"][tool]), set(caps))

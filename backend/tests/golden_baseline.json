@@ -1453,7 +1453,7 @@
         "reason100": "",
         "source": "plays_rates",
         "tool_name": "query_rates",
-        "understood_as": "{\"opponent\": \"Red Sox\", \"player\": \"Aaron Judge\"}"
+        "understood_as": "{\"opponent\": \"Red Sox\", \"opponent_codes\": [\"BOS\"], \"opponent_label\": \"the Red Sox\", \"player\": \"Aaron Judge\"}"
       },
       "q": "What is Aaron Judge's batting average against the Red Sox?",
       "unstable": []
@@ -3504,7 +3504,7 @@
         "reason100": "",
         "source": "plays_rates",
         "tool_name": "query_rates",
-        "understood_as": "{\"opponent\": \"Blue Jays\", \"player\": \"Aaron Judge\"}"
+        "understood_as": "{\"opponent\": \"Blue Jays\", \"opponent_codes\": [\"TOR\"], \"opponent_label\": \"the Blue Jays\", \"player\": \"Aaron Judge\"}"
       },
       "q": "What is Aaron Judge's OPS against the Blue Jays?",
       "unstable": []
@@ -4470,7 +4470,7 @@
         "reason100": "",
         "source": "plays_rates",
         "tool_name": "query_rates",
-        "understood_as": "{\"opponent\": \"Mariners\", \"player\": \"Mike Trout\"}"
+        "understood_as": "{\"opponent\": \"Mariners\", \"opponent_codes\": [\"SEA\"], \"opponent_label\": \"the Mariners\", \"player\": \"Mike Trout\"}"
       },
       "q": "What is Mike Trout's batting average against the Mariners?",
       "unstable": []
