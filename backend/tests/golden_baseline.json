@@ -1005,7 +1005,7 @@
         "reason100": "Washington could mean the Senators (who became the Twins, or the later club that became the Rangers)",
         "source": null,
         "tool_name": "query_situational",
-        "understood_as": "{\"event\": \"HR\", \"opponent\": \"Nationals\", \"player\": \"Aaron Judge\"}"
+        "understood_as": null
       },
       "q": "How many home runs has Aaron Judge hit against Washington?",
       "unstable": []
