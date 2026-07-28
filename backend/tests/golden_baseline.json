@@ -921,7 +921,7 @@
         "reason100": "",
         "source": "plays",
         "tool_name": "query_situational",
-        "understood_as": "{\"event\": \"HR\", \"opponent\": \"Red Sox\", \"player\": \"Aaron Judge\"}"
+        "understood_as": "{\"event\": \"HR\", \"opponent\": \"Red Sox\", \"opponent_codes\": [\"BOS\"], \"opponent_label\": \"the Red Sox\", \"player\": \"Aaron Judge\"}"
       },
       "q": "How many home runs has Aaron Judge hit against the Red Sox?",
       "unstable": []
@@ -949,7 +949,7 @@
         "reason100": "",
         "source": "plays",
         "tool_name": "query_situational",
-        "understood_as": "{\"event\": \"HR\", \"home_away\": \"home\", \"opponent\": \"Red Sox\", \"player\": \"Aaron Judge\"}"
+        "understood_as": "{\"event\": \"HR\", \"home_away\": \"home\", \"opponent\": \"Red Sox\", \"opponent_codes\": [\"BOS\"], \"opponent_label\": \"the Red Sox\", \"player\": \"Aaron Judge\"}"
       },
       "q": "How many home runs has Aaron Judge hit against the Red Sox at home?",
       "unstable": []
@@ -977,7 +977,7 @@
         "reason100": "Aaron Judge played for the Yankees — he has no plate appearances against them.",
         "source": "plays",
         "tool_name": "query_situational",
-        "understood_as": "{\"event\": \"HR\", \"opponent\": \"Yankees\", \"player\": \"Aaron Judge\"}"
+        "understood_as": "{\"event\": \"HR\", \"opponent\": \"Yankees\", \"opponent_codes\": [\"BLA\", \"NYA\", \"NYY\"], \"opponent_label\": \"the Yankees\", \"player\": \"Aaron Judge\"}"
       },
       "q": "How many home runs has Aaron Judge hit against the Yankees?",
       "unstable": []
@@ -1033,7 +1033,7 @@
         "reason100": "",
         "source": "plays",
         "tool_name": "query_situational",
-        "understood_as": "{\"event\": \"HR\", \"opponent\": \"Tigers\", \"player\": \"Aaron Judge\"}"
+        "understood_as": "{\"event\": \"HR\", \"opponent\": \"Tigers\", \"opponent_codes\": [\"DET\"], \"opponent_label\": \"the Tigers\", \"player\": \"Aaron Judge\"}"
       },
       "q": "How many home runs has Aaron Judge hit against Detroit?",
       "unstable": []
@@ -1061,7 +1061,7 @@
         "reason100": "",
         "source": "plays",
         "tool_name": "query_situational",
-        "understood_as": "{\"event\": \"HR\", \"opponent\": \"Cubs\", \"player\": \"Aaron Judge\"}"
+        "understood_as": "{\"event\": \"HR\", \"opponent\": \"Cubs\", \"opponent_codes\": [\"CHC\", \"CHN\"], \"opponent_label\": \"the Cubs\", \"player\": \"Aaron Judge\"}"
       },
       "q": "How many home runs has Aaron Judge hit against the Chicago Cubs?",
       "unstable": []
@@ -1089,7 +1089,7 @@
         "reason100": "",
         "source": "plays",
         "tool_name": "query_situational",
-        "understood_as": "{\"event\": \"K\", \"opponent\": \"Astros\", \"player\": \"Gerrit Cole\", \"role\": \"pit\"}"
+        "understood_as": "{\"event\": \"K\", \"opponent\": \"Astros\", \"opponent_codes\": [\"HOU\"], \"opponent_label\": \"the Astros\", \"player\": \"Gerrit Cole\", \"role\": \"pit\"}"
       },
       "q": "How many strikeouts does Gerrit Cole have against the Astros?",
       "unstable": []
@@ -3476,7 +3476,7 @@
         "reason100": "I can give hits as a season or career total, but not broken down by situation — that needs play-by-p",
         "source": null,
         "tool_name": "query_situational",
-        "understood_as": "{\"event\": \"H\", \"opponent\": \"Orioles\", \"player\": \"Aaron Judge\"}"
+        "understood_as": "{\"event\": \"H\", \"opponent\": \"Orioles\", \"opponent_codes\": [\"BAL\", \"MLA\", \"SLA\"], \"opponent_label\": \"the Orioles\", \"player\": \"Aaron Judge\"}"
       },
       "q": "How many hits does Aaron Judge have against the Orioles?",
       "unstable": []
@@ -4309,7 +4309,7 @@
         "reason100": "",
         "source": "plays",
         "tool_name": "query_situational",
-        "understood_as": "{\"event\": \"HR\", \"opponent\": \"Astros\", \"player\": \"Mike Trout\"}"
+        "understood_as": "{\"event\": \"HR\", \"opponent\": \"Astros\", \"opponent_codes\": [\"HOU\"], \"opponent_label\": \"the Astros\", \"player\": \"Mike Trout\"}"
       },
       "q": "How many home runs has Mike Trout hit against the Astros?",
       "unstable": []
@@ -4337,7 +4337,7 @@
         "reason100": "",
         "source": "plays",
         "tool_name": "query_situational",
-        "understood_as": "{\"event\": \"HR\", \"opponent\": \"Giants\", \"player\": \"Mookie Betts\"}"
+        "understood_as": "{\"event\": \"HR\", \"opponent\": \"Giants\", \"opponent_codes\": [\"NY1\", \"SF\", \"SFG\", \"SFN\"], \"opponent_label\": \"the Giants\", \"player\": \"Mookie Betts\"}"
       },
       "q": "How many home runs has Mookie Betts hit against the Giants?",
       "unstable": []
@@ -4365,7 +4365,7 @@
         "reason100": "Mike Trout played for the Angels — he has no plate appearances against them.",
         "source": "plays",
         "tool_name": "query_situational",
-        "understood_as": "{\"event\": \"HR\", \"opponent\": \"Angels\", \"player\": \"Mike Trout\"}"
+        "understood_as": "{\"event\": \"HR\", \"opponent\": \"Angels\", \"opponent_codes\": [\"ANA\", \"CAL\", \"LAA\"], \"opponent_label\": \"the Angels\", \"player\": \"Mike Trout\"}"
       },
       "q": "How many home runs has Mike Trout hit against the Angels?",
       "unstable": []
@@ -4442,7 +4442,7 @@
         "reason100": "",
         "source": "plays",
         "tool_name": "query_situational",
-        "understood_as": "{\"event\": \"HR\", \"opponent\": \"Cleveland\", \"player\": \"Aaron Judge\"}"
+        "understood_as": "{\"event\": \"HR\", \"opponent\": \"Cleveland\", \"opponent_codes\": [\"CLE\"], \"opponent_label\": \"the Cleveland Guardians\", \"player\": \"Aaron Judge\"}"
       },
       "q": "How many home runs has Aaron Judge hit against Cleveland?",
       "unstable": []

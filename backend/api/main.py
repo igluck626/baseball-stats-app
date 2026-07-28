@@ -6020,8 +6020,11 @@ def _run_situational(
     season_start: int | None = None, season_end: int | None = None,
     game_type: str | None = None,
     pitcher_hand: str | None = None, batter_side: str | None = None,
-    home_away: str | None = None, opponent_codes=None, sample_limit: int = 10,
+    home_away: str | None = None, opponent_codes=None, opponent_label=None,
+    sample_limit: int = 10,
 ):
+    # opponent_label is accepted-and-ignored: the /ask dispatch spreads a params dict
+    # that carries it (for the self-team note) into this runner; the filter uses codes.
     """Core situational query, shared by GET /plays/situational and POST /ask.
     Raises HTTPException on bad input / missing store (400/404/503); returns the
     ambiguous-candidates dict when a name maps to >1 player; otherwise returns
@@ -10752,7 +10755,25 @@ def ask(request: Request,
     # ---- deterministic constraint validation (LLM proposes, CODE disposes) --
     # Runs for any answerable tool, on BOTH the fresh and cached translation, so
     # a dropped/unsupported constraint can never slip through non-deterministically.
-    if tool_name in _ANSWERABLE and tool_input is not None:
+    #
+    # CONSTRAINT-MERGE Phase 1: query_situational is the FIRST tool routed through
+    # the unified _guard_tool. It does everything the _ANSWERABLE block below does
+    # for this tool (unsupported-concept decline; role-aware handedness / base_state
+    # / count / home_away inject-on-drop) AND, newly, season-drop repair — plus it
+    # owns opponent resolution, retiring this tool's inline opponent block further
+    # down (it injects opponent_codes/opponent_label into tool_input, which the
+    # situational dispatch's whitelist forwards). The other four answerable tools
+    # stay on the block below until their own phases.
+    if tool_name == "query_situational" and tool_input is not None:
+        _decline = _guard_tool(q, tool_name, tool_input)
+        if _decline:
+            base["out_of_scope"] = True
+            base["reason"] = _decline
+            base["answer"] = _decline
+            base["understood_as"] = None
+            log.warning("ask: CODE-DECLINED (guard) %s %s for %r", tool_name, tool_input, q)
+            return _finish()
+    elif tool_name in _ANSWERABLE and tool_input is not None:
         _inject, _unsupported = _detect_constraints(q)
         if _unsupported:
             base["out_of_scope"] = True
@@ -11328,10 +11349,14 @@ def ask(request: Request,
         return _finish()
 
     # ---- 2. execute the situational query -------------------------------
+    # opponent_codes/opponent_label are injected into tool_input by _guard_tool
+    # (Phase 1) — forward BOTH: opponent_codes filters the query, opponent_label
+    # feeds the self-team note. _run_situational accepts (and ignores) the label.
     params = {k: tool_input.get(k) for k in (
         "player", "role", "event", "balls", "strikes", "outs", "inning",
         "base_state", "season", "season_start", "season_end", "game_type",
-        "pitcher_hand", "batter_side", "home_away")
+        "pitcher_hand", "batter_side", "home_away",
+        "opponent_codes", "opponent_label")
         if tool_input.get(k) is not None}
     if not params.get("player"):
         base["out_of_scope"] = True
@@ -11339,29 +11364,10 @@ def ask(request: Request,
         base["answer"] = base["reason"]
         return _finish()
 
-    # ---- OPPONENT (shared resolver, _question_opponent). The plays store carries
-    # the opposing team, so a situational count CAN be scoped to a club — resolve
-    # the club the model/question named to filter codes. THE BUG: the model passes
-    # `opponent` and the params whitelist above strips it, so the runner returned
-    # the un-scoped total; now we resolve it (and inject opponent_codes into params
-    # so it routes to plays and filters). An ambiguous city or an unresolvable
-    # opponent DECLINES — never a silent widen. Also catches a model-DROPPED
-    # opponent (from the question text).
-    _lo = params.get("season") or params.get("season_start")
-    _hi = params.get("season") or params.get("season_end")
-    _opp = _question_opponent(q, tool_input, _lo, _hi)
-    _opp_label = None
-    if _opp is not None:
-        if _opp[0] == "resolve":
-            params["opponent_codes"] = _opp[1]
-            _opp_label = _opp[2]        # for the self-team note ("played for the Yankees")
-        else:   # ("decline", clarify) for an ambiguous city, or ("unknown", None)
-            _msg = _opp[1] if _opp[0] == "decline" else \
-                "I can't identify that opponent — name the club (e.g. \"the Red Sox\")."
-            base["out_of_scope"] = True
-            base["reason"] = _msg
-            base["answer"] = _msg
-            return _finish()
+    # OPPONENT is now resolved upstream by _guard_tool (Phase 1): it injected
+    # opponent_codes/opponent_label into tool_input and the whitelist above forwarded
+    # them into params. An ambiguous city / unresolvable opponent already declined at
+    # the guard, before reaching here.
 
     # ---- TWO-WAY count: a genuinely two-way player (Ohtani) asked an AMBIGUOUS
     # stat (K/BB/HR) with NO explicit side in the question returns BOTH counts.
@@ -11469,7 +11475,7 @@ def ask(request: Request,
         _role = (params.get("role") or "bat").lower()
         _tail = ("he never pitched against them" if _role == "pit"
                  else "he has no plate appearances against them")
-        _note = f"{_nm} played for {_opp_label or 'that club'} — {_tail}."
+        _note = f"{_nm} played for {params.get('opponent_label') or 'that club'} — {_tail}."
         base["declined"] = True
         base["reason"] = _note
         base["answer"] = _note
