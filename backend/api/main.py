@@ -6020,7 +6020,7 @@ def _run_situational(
     season_start: int | None = None, season_end: int | None = None,
     game_type: str | None = None,
     pitcher_hand: str | None = None, batter_side: str | None = None,
-    home_away: str | None = None, sample_limit: int = 10,
+    home_away: str | None = None, opponent_codes=None, sample_limit: int = 10,
 ):
     """Core situational query, shared by GET /plays/situational and POST /ask.
     Raises HTTPException on bad input / missing store (400/404/503); returns the
@@ -6101,6 +6101,16 @@ def _run_situational(
                       "AND BASE3_RUN_ID IS NOT NULL)")
     hw, hp, hand_meta = _hand_venue_clauses(pitcher_hand, batter_side, home_away)
     where += hw; params += hp
+    if opponent_codes:
+        # A batter's opponent is the FIELDING team — the team he is NOT on:
+        # BAT_HOME_ID=1 (his team bats at home) -> opponent = AWAY, else HOME. For a
+        # PITCHER it's the BATTING team, the inverse. Retro team codes, the same
+        # ones _resolve_opponent_codes returns (the plays store is all-retro).
+        opp_expr = ("CASE WHEN BAT_HOME_ID = 1 THEN HOME_TEAM_ID ELSE AWAY_TEAM_ID END"
+                    if role == "pit" else
+                    "CASE WHEN BAT_HOME_ID = 1 THEN AWAY_TEAM_ID ELSE HOME_TEAM_ID END")
+        where.append(f"({opp_expr}) IN ({', '.join('?' * len(opponent_codes))})")
+        params += list(opponent_codes)
     clause = " AND ".join(where)
 
     # ---- run (count + sample), timed ------------------------------------
@@ -6113,6 +6123,21 @@ def _run_situational(
         t0 = time.perf_counter()
         count = cur.execute(
             f"SELECT count(*) FROM plays WHERE {clause}", params).fetchone()[0]
+        # SELF-TEAM: an opponent-scoped 0 is ambiguous — did the player never do
+        # this against that club, or did he PLAY FOR it (so of course he has no
+        # appearances against his own team)? One cheap existence probe on his OWN
+        # team disambiguates: the own-team expr is the INVERSE of the opponent expr
+        # (a batter's own team is the batting side; a pitcher's is the fielding
+        # side). A hit -> he played for them; no hit -> a genuine never-faced 0.
+        self_team = False
+        if opponent_codes and count == 0:
+            own_expr = ("CASE WHEN BAT_HOME_ID = 1 THEN AWAY_TEAM_ID ELSE HOME_TEAM_ID END"
+                        if role == "pit" else
+                        "CASE WHEN BAT_HOME_ID = 1 THEN HOME_TEAM_ID ELSE AWAY_TEAM_ID END")
+            _own_ph = ", ".join("?" * len(opponent_codes))
+            self_team = cur.execute(
+                f"SELECT 1 FROM plays WHERE {id_col} = ? AND ({own_expr}) IN ({_own_ph}) LIMIT 1",
+                [retro_id] + list(opponent_codes)).fetchone() is not None
         sample = []
         if sample_limit:
             rows = cur.execute(
@@ -6164,6 +6189,7 @@ def _run_situational(
     if count_data is not None and count_data.get("available") is False:
         count = None
         sample = []
+        self_team = False   # a coverage decline, not a genuine self-team 0
 
     result = {
         "resolved": True,
@@ -6185,6 +6211,7 @@ def _run_situational(
         "sample":        sample,
         "query_ms":      query_ms,
         "game_coverage": game_coverage,
+        "self_team":     self_team,
     }
     if uses_count:
         result["count_data"] = count_data
@@ -8080,7 +8107,7 @@ def _decide_role(event, player, explicit_side=None):
 # Situational filters that route a count to the plays store instead of season
 # stats (mirrors GATE 0 in the count dispatch). Used by the two-way count path.
 _SITU_KEYS = ("balls", "strikes", "outs", "inning", "base_state",
-              "pitcher_hand", "batter_side", "home_away")
+              "pitcher_hand", "batter_side", "home_away", "opponent_codes")
 
 
 def _count_for_role(params, role):
@@ -8766,7 +8793,8 @@ def _rate_span(cur, span_clause, span_params, season, season_start, season_end):
 
 def _run_rates(player, role="bat", balls=None, strikes=None, outs=None, inning=None,
                base_state=None, season=None, season_start=None, season_end=None,
-               game_type=None, pitcher_hand=None, batter_side=None, home_away=None):
+               game_type=None, pitcher_hand=None, batter_side=None, home_away=None,
+               opponent_codes=None):
     """Situational RATE line (AVG/OBP/SLG/OPS + components) for one player.
     Coverage: game-coverage only CAVEATS (a rate is a ratio — numerator and
     denominator miss the same ~6%, so the rate stays a valid estimate; unlike a
@@ -8794,6 +8822,12 @@ def _run_rates(player, role="bat", balls=None, strikes=None, outs=None, inning=N
     sclauses, sparams, meta = _situ_clauses(balls, strikes, outs, inning, base_state,
                                             season, season_start, season_end, game_type,
                                             pitcher_hand, batter_side, home_away)
+    if opponent_codes:
+        opp_expr = ("CASE WHEN BAT_HOME_ID = 1 THEN HOME_TEAM_ID ELSE AWAY_TEAM_ID END"
+                    if role == "pit" else
+                    "CASE WHEN BAT_HOME_ID = 1 THEN AWAY_TEAM_ID ELSE HOME_TEAM_ID END")
+        sclauses.append(f"({opp_expr}) IN ({', '.join('?' * len(opponent_codes))})")
+        sparams += list(opponent_codes)
     clause = " AND ".join([f"{id_col} = ?"] + sclauses)
     params = [retro] + sparams
     try:
@@ -9198,6 +9232,11 @@ _ASK_QUERY_TOOL = {
                           "R=regular season (DEFAULT — omit for normal questions), "
                           "P=postseason/playoffs/World Series, ALL=regular season + "
                           "postseason combined. Only set this when the user explicitly asks."},
+            "opponent": {"type": "string", "description":
+                         "the opposing CLUB NAME exactly as written ('Red Sox', 'the "
+                         "Cubs') when the count is scoped to a specific team ('vs the "
+                         "Red Sox'). Pass the NAME, never a code — the backend resolves "
+                         "it to the right team codes. Omit if no opponent is named."},
             **_ASK_FILTER_PROPS,
         },
         "required": ["player"],
@@ -10238,6 +10277,44 @@ def _franchise_label(city_token):
     return f"the {name}" if name else f"the {(city_token or '').title()}"
 
 
+def _question_opponent(question, tool_input, year_lo=None, year_hi=None):
+    """SHARED opponent resolution — the ONE place opponent detection/resolution/
+    decline lives, used by BOTH the _ANSWERABLE path (query_situational) and the
+    scoped-tool guard (_guard_scoped_tool). Returns one of:
+      ("decline", message)       — a bare ambiguous city: decline with the clarify.
+      ("resolve", codes, label)  — a club resolved to filter codes + a display label.
+      ("unknown", None)          — the MODEL named an opponent we can't resolve.
+      None                       — no opponent named.
+    Prefers the model's `opponent` value, else the question wording; a bare
+    ambiguous city NAMED IN THE QUESTION declines even if the model resolved it to
+    one club (that pick would silently drop the city's other franchises). The
+    caller decides what to do with the result (inject, or decline per its caps)."""
+    ti = tool_input or {}
+    q_opp = _detect_opponent(question)
+    if q_opp and q_opp[0] == "city":
+        return ("decline", team_crosswalk.AMBIG_CITY.get(
+            q_opp[1], "That city has hosted more than one club — name the team."))
+    model_opp = ti.get("opponent")
+    opp = _classify_opponent(model_opp) if model_opp else q_opp
+    if model_opp and opp is None:
+        # the model named an opponent we can't resolve (a code, or a club we don't
+        # index) — the caller declines, never silently widens to all teams.
+        return ("unknown", None)
+    if not opp:
+        return None
+    kind, token = opp
+    if kind == "city":
+        return ("decline", team_crosswalk.AMBIG_CITY.get(
+            token, "That city has hosted more than one club — name the team."))
+    codes = _resolve_opponent_codes(token, year_lo, year_hi)
+    if not codes:
+        return ("unknown", None)
+    # a nickname keeps its short label ("the Tigers"); a single-franchise city
+    # resolves to its franchise's name ("Cleveland" -> "the Cleveland Guardians").
+    label = _franchise_label(token) if kind == "city_ok" else f"the {token.title()}"
+    return ("resolve", sorted(codes), label)
+
+
 # What SCOPE each tool dispatched OUTSIDE the _ANSWERABLE constraint pass can
 # honor. A question naming a scope not here -> DECLINE (never silently widen).
 # 'season_single' = a single year ('in 2019'); 'season_range' = since/before/
@@ -10291,48 +10368,23 @@ def _guard_scoped_tool(question, tool_name, tool_input):
         # for a decade must survive, not be clobbered by a single injected start).
         elif not any(ti.get(k) is not None for k in ("season", "season_start", "season_end")):
             ti.update(season)
-    # Opponent. A bare ambiguous city NAMED IN THE QUESTION ("against Washington")
-    # is declined DETERMINISTICALLY — even if the model self-resolved it to one club,
-    # since that pick silently drops the city's other franchises (Washington ->
-    # Nationals erases 60 years of Senators). A nickname in the question ("the
-    # Nationals", "the Washington Nationals") is unambiguous — the detector prefers
-    # it — and resolves. Otherwise prefer the club the MODEL passed, else the one the
-    # question named (the backstop for a model that drops it); the resolver does the
-    # work either way — a name in, never a code.
-    q_opp = _detect_opponent(question)
-    if q_opp and q_opp[0] == "city":
-        return team_crosswalk.AMBIG_CITY.get(
-            q_opp[1], "That city has hosted more than one club — name the team.")
-    model_opp = ti.get("opponent")
-    opp = _classify_opponent(model_opp) if model_opp else q_opp
-    if model_opp and opp is None:
-        # the model named an opponent we can't resolve (e.g. it passed a code, or
-        # a club we don't index) — DECLINE, never silently widen to all teams.
-        bad.append("a specific opponent (team)")
-    elif opp:
-        kind, token = opp
-        if kind == "city":
-            # model passed a bare ambiguous city though the question didn't anchor
-            # one (no preposition) — same clarify, still nickname-only resolution.
-            return team_crosswalk.AMBIG_CITY.get(
-                token, "That city has hosted more than one club — name the team.")
-        elif "opponent" not in caps:
+    # Opponent — via the SHARED resolver (_question_opponent, also used by the
+    # query_situational path). An ambiguous city declines with the clarify; a club
+    # the tool CAN'T scope (opponent not in caps) or one we can't resolve declines
+    # generically; a resolvable club is injected — only on a true drop, never over
+    # a season the model set. season may have just been injected above, so read the
+    # range after that.
+    lo = ti.get("season") or ti.get("season_start")
+    hi = ti.get("season") or ti.get("season_end")
+    _opp = _question_opponent(question, ti, lo, hi)
+    if _opp is not None:
+        if _opp[0] == "decline":
+            return _opp[1]
+        elif _opp[0] == "unknown" or "opponent" not in caps:
             bad.append("a specific opponent (team)")
-        else:
-            # Resolve nickname -> the franchise's codes, expanded across the
-            # query's season range (season may have just been injected above).
-            lo = ti.get("season") or ti.get("season_start")
-            hi = ti.get("season") or ti.get("season_end")
-            codes = _resolve_opponent_codes(token, lo, hi)
-            if not codes:
-                bad.append("a specific opponent (team)")
-            elif ti.get("opponent_codes") is None:     # inject only a true drop
-                ti["opponent_codes"] = sorted(codes)
-                # a nickname keeps its short label ("the Tigers"); a city resolves to
-                # its franchise's name ("Cleveland" -> "the Cleveland Guardians") so
-                # the label never reads "the Cleveland".
-                ti["opponent_label"] = (_franchise_label(token) if kind == "city_ok"
-                                        else f"the {token.title()}")
+        elif ti.get("opponent_codes") is None:     # ("resolve", codes, label) — true drop only
+            ti["opponent_codes"] = _opp[1]
+            ti["opponent_label"] = _opp[2]
     if not bad:
         return None
     cond = bad[0] if len(bad) == 1 else ", ".join(bad[:-1]) + " or " + bad[-1]
@@ -11139,6 +11191,30 @@ def ask(request: Request,
         base["answer"] = base["reason"]
         return _finish()
 
+    # ---- OPPONENT (shared resolver, _question_opponent). The plays store carries
+    # the opposing team, so a situational count CAN be scoped to a club — resolve
+    # the club the model/question named to filter codes. THE BUG: the model passes
+    # `opponent` and the params whitelist above strips it, so the runner returned
+    # the un-scoped total; now we resolve it (and inject opponent_codes into params
+    # so it routes to plays and filters). An ambiguous city or an unresolvable
+    # opponent DECLINES — never a silent widen. Also catches a model-DROPPED
+    # opponent (from the question text).
+    _lo = params.get("season") or params.get("season_start")
+    _hi = params.get("season") or params.get("season_end")
+    _opp = _question_opponent(q, tool_input, _lo, _hi)
+    _opp_label = None
+    if _opp is not None:
+        if _opp[0] == "resolve":
+            params["opponent_codes"] = _opp[1]
+            _opp_label = _opp[2]        # for the self-team note ("played for the Yankees")
+        else:   # ("decline", clarify) for an ambiguous city, or ("unknown", None)
+            _msg = _opp[1] if _opp[0] == "decline" else \
+                "I can't identify that opponent — name the club (e.g. \"the Red Sox\")."
+            base["out_of_scope"] = True
+            base["reason"] = _msg
+            base["answer"] = _msg
+            return _finish()
+
     # ---- TWO-WAY count: a genuinely two-way player (Ohtani) asked an AMBIGUOUS
     # stat (K/BB/HR) with NO explicit side in the question returns BOTH counts.
     # We decide from the question text + the player — NOT the model's volunteered
@@ -11161,7 +11237,7 @@ def ask(request: Request,
     # by them, so they MUST count as situational or a "HR off lefties" count
     # would route to season stats and silently drop the filter (return the total).
     situ_keys = ("balls", "strikes", "outs", "inning", "base_state",
-                 "pitcher_hand", "batter_side", "home_away")
+                 "pitcher_hand", "batter_side", "home_away", "opponent_codes")
     is_split = any(params.get(k) is not None for k in situ_keys)
 
     # TOTAL-ONLY guard: RBI/R/SB live only in season-stats, never the plays store,
@@ -11236,6 +11312,21 @@ def ask(request: Request,
     base["count_data"]     = result.get("count_data")
     cnt = result.get("count")
 
+    # SELF-TEAM: an opponent-scoped 0 where the player PLAYED FOR that club is not
+    # a stat — it's a category error in the question. Say so plainly instead of a
+    # bare 0 that reads as a bug. (_run_situational ran the existence probe; a
+    # genuine never-faced-them 0 leaves self_team False and falls through as a 0.)
+    if result.get("self_team"):
+        _nm = (result.get("player") or {}).get("name") or params.get("player")
+        _role = (params.get("role") or "bat").lower()
+        _tail = ("he never pitched against them" if _role == "pit"
+                 else "he has no plate appearances against them")
+        _note = f"{_nm} played for {_opp_label or 'that club'} — {_tail}."
+        base["declined"] = True
+        base["reason"] = _note
+        base["answer"] = _note
+        return _finish()
+
     # A situational count is really a question about a SPLIT — "76 HR off
     # lefties" also wants .293/.898. So return the FULL rate line for the
     # IDENTICAL filter set (reuse _run_rates) plus which stat was asked about,
@@ -11251,7 +11342,8 @@ def ask(request: Request,
         rkw = {k: params.get(k) for k in (
             "player", "role", "balls", "strikes", "outs", "inning", "base_state",
             "season", "season_start", "season_end", "game_type",
-            "pitcher_hand", "batter_side", "home_away") if params.get(k) is not None}
+            "pitcher_hand", "batter_side", "home_away",
+            "opponent_codes") if params.get(k) is not None}
         rres = _run_rates(**rkw)
         return rres.get("rates") if isinstance(rres, dict) else None
 
