@@ -27,14 +27,26 @@ def main():
     total_unstable = 0
     unstable_by_key = {}
     unstable_qs = []
+    n_cannot_answer = 0
     for qid in ids:
         cells = [(r.get(qid) or {}).get("cell", {}) for r in runs]
         keys = sorted(set().union(*[set(c) for c in cells]))
         unstable = [k for k in keys if len({repr(c.get(k)) for c in cells}) > 1]
         rec = next(r[qid] for r in reversed(runs) if qid in r)
         goldcell = (last.get(qid) or {}).get("cell") or cells[0]
+        # RULE (not observation): a question whose translation was cannot_answer in
+        # ANY run is model-non-deterministic by construction — cannot_answer is never
+        # cached, so it re-translates every run and can flip to a real tool at any
+        # time (or vice versa). Flag ALL its cells advisory so the gate is stable
+        # regardless of which flaky questions happen to wobble on a given run, not
+        # just the ones observed to differ across these N baseline runs.
+        cannot_answer = any(c.get("tool_name") == "cannot_answer" for c in cells)
+        if cannot_answer:
+            n_cannot_answer += 1
+            unstable = keys
         questions[qid] = {"q": rec["q"], "bucket": rec["bucket"],
-                          "cell": goldcell, "unstable": unstable}
+                          "cell": goldcell, "unstable": unstable,
+                          "cannot_answer_class": cannot_answer}
         if unstable:
             total_unstable += len(unstable)
             unstable_qs.append((qid, rec["q"], unstable))
@@ -42,6 +54,8 @@ def main():
                 unstable_by_key[k] = unstable_by_key.get(k, 0) + 1
 
     golden = {"meta": {"n_runs": len(runs), "n_questions": len(ids),
+                       "n_cannot_answer_class": n_cannot_answer,
+                       "n_gated_questions": len(ids) - len(unstable_qs),
                        "n_unstable_cells": total_unstable,
                        "n_unstable_questions": len(unstable_qs),
                        "unstable_by_key": unstable_by_key},
