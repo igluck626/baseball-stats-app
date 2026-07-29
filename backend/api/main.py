@@ -8481,7 +8481,8 @@ def _rank_with_ties(leaders, value_key):
 def _run_leaderboard(event=None, role="bat", balls=None, strikes=None, outs=None,
                      inning=None, base_state=None, season=None, season_start=None,
                      season_end=None, game_type=None,
-                     pitcher_hand=None, batter_side=None, home_away=None, limit=10):
+                     pitcher_hand=None, batter_side=None, home_away=None, limit=10,
+                     opponent_codes=None):
     """'Who has the most <event> in situation Y' — the plays store keyed the same
     way, but GROUP BY the batter/pitcher id instead of filtering to one player,
     ranked DESC. Coverage gates (see _leaderboard_gates) can DECLINE a badly
@@ -8541,6 +8542,17 @@ def _run_leaderboard(event=None, role="bat", balls=None, strikes=None, outs=None
                      "AND BASE3_RUN_ID IS NOT NULL)")
     hw, hp, hand_meta = _hand_venue_clauses(pitcher_hand, batter_side, home_away)
     where += hw; params += hp
+    if opponent_codes:
+        # opponent is plays-only (the dispatch forces the plays route for it, since
+        # the complete-season leaderboard can't scope by club). Batter's opponent is
+        # the fielding team; a pitcher's is the batting team (inverse). Franchise codes
+        # already span relocations (the Dodgers -> BRO + LAN + LAD), so the total is
+        # career-vs-that-club across eras.
+        opp_expr = ("CASE WHEN BAT_HOME_ID = 1 THEN HOME_TEAM_ID ELSE AWAY_TEAM_ID END"
+                    if role == "pit" else
+                    "CASE WHEN BAT_HOME_ID = 1 THEN AWAY_TEAM_ID ELSE HOME_TEAM_ID END")
+        where.append(f"({opp_expr}) IN ({', '.join('?' * len(opponent_codes))})")
+        params += list(opponent_codes)
     clause = " AND ".join(where)
     filters = {"event": canon, "role": role, "balls": balls, "strikes": strikes,
                "outs": outs, "inning": inning, "base_state": bs, "season": season,
@@ -10450,7 +10462,8 @@ _GUARD_CAPS = {
                                          "home_away", "season_single", "season_range",
                                          "opponent")),   # Phase 4: _run_rate_leaderboard has the filter
     "query_leaderboard":      frozenset(("handedness", "base_state", "count",
-                                         "home_away", "season_single", "season_range")),
+                                         "home_away", "season_single", "season_range",
+                                         "opponent")),   # Phase 5: _run_leaderboard has the filter
     # SCOPED — byte-identical to _TOOL_SCOPE_CAPS, so routing these here is a no-op.
     "query_milestone":          frozenset(("season_single",)),
     "query_streak":             frozenset(("season_single",)),
@@ -10462,9 +10475,10 @@ _GUARD_CAPS = {
 }
 # Tools migrated onto the unified _guard_tool, one phase at a time. Everything else
 # still uses the legacy _ANSWERABLE block / _guard_scoped_tool. Phase 1: situational.
-# Phase 2: rates. Phase 3: splits. Phase 4: rate leaderboard.
+# Phase 2: rates. Phase 3: splits. Phase 4: rate leaderboard. Phase 5: leaderboard —
+# ALL five _ANSWERABLE tools now routed; the legacy inject block below is dead.
 _GUARD_ROUTED = frozenset(("query_situational", "query_rates", "query_splits",
-                           "query_rate_leaderboard"))
+                           "query_rate_leaderboard", "query_leaderboard"))
 
 
 def _guard_tool(question, tool_name, tool_input):
@@ -11205,7 +11219,7 @@ def ask(request: Request,
         lb_params = {k: tool_input.get(k) for k in (
             "event", "role", "balls", "strikes", "outs", "inning", "base_state",
             "season", "season_start", "season_end", "game_type", "limit",
-            "pitcher_hand", "batter_side", "home_away")
+            "pitcher_hand", "batter_side", "home_away", "opponent_codes")
             if tool_input.get(k) is not None}
         asked = [lb_params[k] for k in ("season", "season_start", "season_end")
                  if lb_params.get(k) is not None]
@@ -11222,9 +11236,13 @@ def ask(request: Request,
             # they must force the plays route (the complete-season leaderboard
             # can't express them, so treating them as "situational" is what keeps
             # a "most HR off lefties" board from silently ranking overall HRs).
+            # Phase 5: OPPONENT is plays-only too — the season-stats board can't
+            # scope by club, so an opponent-scoped leaderboard MUST take the plays
+            # route (else "most HR vs the Dodgers" silently ranks all-time HRs).
             lb_situ = any(lb_params.get(k) is not None
                           for k in ("balls", "strikes", "outs", "inning", "base_state",
-                                    "pitcher_hand", "batter_side", "home_away"))
+                                    "pitcher_hand", "batter_side", "home_away",
+                                    "opponent_codes"))
             result = None
             if not lb_situ:
                 result = _run_season_leaderboard(

@@ -203,10 +203,10 @@ check("[phase3 opponent_codes injected on query_splits]", a.get("opponent_codes"
 a = copy.deepcopy(ti); d = guard_tool("Who has the best batting average against the Red Sox?", "query_rate_leaderboard", a)
 check("[phase4 opponent decline None on query_rate_leaderboard]", d, None)
 check("[phase4 opponent_codes injected on query_rate_leaderboard]", a.get("opponent_codes"), ["BOS"])
-# opponent still NOT in caps for query_leaderboard -> scope-decline
+# Phase 5: opponent now RESOLVES for query_leaderboard too (runner filter added).
 a = copy.deepcopy(ti); d = guard_tool("Who has the most home runs against the Red Sox?", "query_leaderboard", a)
-check("[opponent scope-declined on query_leaderboard (no filter yet)]",
-      d, NS["_SCOPE_DECLINE"].format(cond="a specific opponent (team)"))
+check("[phase5 opponent decline None on query_leaderboard]", d, None)
+check("[phase5 opponent_codes injected on query_leaderboard]", a.get("opponent_codes"), ["BOS"])
 
 # 3d. ambiguous city declines on ANY tool that reaches opponent (situational here)
 a = copy.deepcopy(ti); d = guard_tool("How many home runs has Aaron Judge hit against Washington?", "query_situational", a)
@@ -216,9 +216,8 @@ check("[ambiguous-city declines on situational]", (d is not None and "Washington
 # 4. CAPS DISCIPLINE — a tool declares opponent ONLY once its runner has the filter.
 # Phase 1: query_situational. Phase 2: query_rates. The rest must still NOT (yet).
 # ============================================================================
-for tool in ["query_leaderboard"]:
-    check(f"[caps: {tool} must NOT declare opponent (no filter yet)]", "opponent" in NS["_GUARD_CAPS"][tool], False)
-for tool in ["query_situational", "query_rates", "query_splits", "query_rate_leaderboard"]:
+# Phase 5: ALL five answerable tools now declare opponent (every runner has the filter).
+for tool in ["query_situational", "query_rates", "query_splits", "query_rate_leaderboard", "query_leaderboard"]:
     check(f"[caps: {tool} DOES declare opponent (filter exists)]", "opponent" in NS["_GUARD_CAPS"][tool], True)
 # scoped caps byte-identical to _TOOL_SCOPE_CAPS
 for tool, caps in NS["_TOOL_SCOPE_CAPS"].items():
