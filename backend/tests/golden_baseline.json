@@ -1726,14 +1726,17 @@
         "has_two_way": false,
         "highlighted_stat": null,
         "http": 200,
+        "leaders_val": "[[\"maysw101\", null, null, 98], [\"aaroh101\", null, null, 95], [\"musis101\", null, null, 74], [\"ott-m101\", null, null, 70], [\"banke101\", null, null, 64], [\"bondb001\", null, null, 64], [\"kiner101\", null, null, 61], [\"mathe101\", null, null, 60]]",
         "n_leaders": 10,
         "n_sample": 0,
         "n_splits": 0,
         "out_of_scope": false,
+        "rates_val": null,
         "reason100": "",
-        "source": "season_stats_leaderboard",
+        "source": "plays_leaderboard",
+        "splits_val": null,
         "tool_name": "query_leaderboard",
-        "understood_as": "{\"event\": \"HR\", \"opponent\": \"Dodgers\"}"
+        "understood_as": "{\"event\": \"HR\", \"opponent\": \"Dodgers\", \"opponent_codes\": [\"BRO\", \"LAD\", \"LAN\"], \"opponent_label\": \"the Dodgers\"}"
       },
       "q": "Who has hit the most home runs against the Dodgers?",
       "unstable": []

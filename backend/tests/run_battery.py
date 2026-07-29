@@ -69,8 +69,11 @@ def cell_from_response(http, d):
                               for r in splits], sort_keys=True) if splits else None)
     # leader values incl. AB — for a rate leaderboard, AB is the QUALIFIER signal:
     # a fluke regression (single-digit AB at the top) would change this and fail the
-    # gate. retro_id anchors identity; AVG/HR carry the ranked figure.
-    leaders_val = (json.dumps([[r.get("retro_id"), r.get("AB"), r.get("AVG"), r.get("HR")]
+    # gate. retro_id anchors identity; the 4th slot is the ranked figure — a rate
+    # board's HR (populated), else a count board's `count` (e.g. HR-vs-a-club) so the
+    # scoped total is captured too. (Rate rows are unchanged: their HR is present.)
+    leaders_val = (json.dumps([[r.get("retro_id"), r.get("AB"), r.get("AVG"),
+                                r.get("HR") if r.get("HR") is not None else r.get("count")]
                                for r in leaders[:8]], sort_keys=True) if leaders else None)
     return {
         "http": http,
