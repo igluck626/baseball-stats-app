@@ -10817,6 +10817,7 @@ def ask(request: Request,
             log.warning("ask: CODE-DECLINED (guard) %s %s for %r", tool_name, tool_input, q)
             return _finish()
     elif tool_name in _ANSWERABLE and tool_input is not None:
+        log.error("PHASE6_DEADBLOCK_FIRED tool=%s q=%r", tool_name, q)  # TEMP: prove dead before deleting
         _inject, _unsupported = _detect_constraints(q)
         if _unsupported:
             base["out_of_scope"] = True
