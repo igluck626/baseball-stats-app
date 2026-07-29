@@ -177,3 +177,8 @@
 {"id": "q176", "bucket": "two_way", "q": "How many strikeouts does Shohei Ohtani have as a pitcher?", "note": "Ohtani explicit pit side"}
 {"id": "q177", "bucket": "comparison", "q": "Who has more strikeouts, Randy Johnson or Nolan Ryan?", "note": "comparison pitchers"}
 {"id": "q178", "bucket": "roster", "q": "Who plays for the Boston Red Sox?", "note": "Red Sox roster"}
+{"id": "q179", "bucket": "opp_ext_count", "q": "How many doubles has Aaron Judge hit against the Orioles?", "note": "situational count scoped to a club (~20)"}
+{"id": "q180", "bucket": "opp_ext_rate", "q": "What is Aaron Judge's OPS against the Rays?", "note": "rate scoped to a club — rates_val gates AVG/AB"}
+{"id": "q181", "bucket": "opp_ext_split", "q": "What is Aaron Judge's batting average against the Red Sox by handedness?", "note": "SPLIT scoped to a club — splits_val gates each row's AB (sums to vs-BOS, not career)"}
+{"id": "q182", "bucket": "opp_ext_ambig", "q": "How many home runs has Mike Trout hit against Chicago?", "note": "ambiguous city (Cubs/White Sox) -> decline"}
+{"id": "q183", "bucket": "opp_ext_selfteam", "q": "How many home runs has Derek Jeter hit against the Yankees?", "note": "self-team (Jeter NYA-only) -> the played-for note, count 0"}

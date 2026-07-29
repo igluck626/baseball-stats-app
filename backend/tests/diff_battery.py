@@ -25,7 +25,10 @@ def main():
         gcell = g["cell"]
         unstable = set(g.get("unstable", []))
         ncell = (new.get(qid) or {}).get("cell", {})
-        keys = sorted(set(gcell) | set(ncell))
+        # Gate ONLY on keys the golden RECORDED. A newer run_battery may capture extra
+        # fields (e.g. rates_val/splits_val added later) that older golden cells lack —
+        # those must not read as changes. Missing/changed golden keys are still caught.
+        keys = sorted(gcell)
         for k in keys:
             if gcell.get(k) == ncell.get(k):
                 continue

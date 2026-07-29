@@ -26,7 +26,7 @@ import urllib.request
 BASE = os.getenv("ASK_BASE", "https://baseball-stats-app-production-0ef1.up.railway.app")
 DEVICE = os.getenv("ASK_DEVICE", "phase0-golden-battery")
 HERE = os.path.dirname(__file__)
-BATTERY = os.path.join(HERE, "ask_battery.jsonl")
+BATTERY = os.getenv("ASK_BATTERY", os.path.join(HERE, "ask_battery.jsonl"))
 
 
 def normalize(qtext):
@@ -54,6 +54,18 @@ def cell_from_response(http, d):
     def n(x):
         return len(x) if isinstance(x, list) else 0
     ua = d.get("understood_as")
+    # VALUE capture (rates / split rows). Present in the response for the rate/split
+    # tools, so scoping correctness is gate-VISIBLE, not just understood_as. NOTE:
+    # these are store-snapshot-dependent — they gate a CODE change within one store,
+    # and must be recaptured if the deployed plays store updates. diff_battery gates
+    # only on keys the golden RECORDED, so adding these here never disturbs the
+    # existing cells (whose golden has no rates_val/splits_val key).
+    rates = d.get("rates") or None
+    splits = d.get("splits") or None
+    rates_val = (json.dumps({k: rates.get(k) for k in ("AVG", "OBP", "SLG", "AB", "H")},
+                            sort_keys=True) if rates else None)
+    splits_val = (json.dumps([[r.get("split_value"), r.get("AB"), r.get("AVG")]
+                              for r in splits], sort_keys=True) if splits else None)
     return {
         "http": http,
         "count": d.get("count"),
@@ -66,6 +78,8 @@ def cell_from_response(http, d):
         "n_leaders": n(d.get("leaders")),
         "n_splits": n(d.get("splits")),
         "has_rates": bool(d.get("rates")),
+        "rates_val": rates_val,
+        "splits_val": splits_val,
         "has_milestone": bool(d.get("milestone")),
         "has_streak": bool(d.get("streak")),
         "has_span": bool(d.get("span")),

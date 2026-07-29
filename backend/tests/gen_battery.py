@@ -243,6 +243,21 @@ add("two_way", "How many strikeouts does Shohei Ohtani have as a pitcher?", "Oht
 add("comparison", "Who has more strikeouts, Randy Johnson or Nolan Ryan?", "comparison pitchers")
 add("roster", "Who plays for the Boston Red Sox?", "Red Sox roster")
 
+# ---- 31. OPPONENT-SCOPED EXTENSION (post-Phase-3) — one per migrated tool, plus
+# an ambiguous-city and a self-team case. APPENDED LAST so existing q-ids are stable
+# (a battery EXTENSION, not a rebaseline). These carry value capture (rates_val/
+# splits_val) so opponent scoping is gate-visible, not just understood_as.
+add("opp_ext_count", "How many doubles has Aaron Judge hit against the Orioles?",
+    "situational count scoped to a club (~20)")
+add("opp_ext_rate", "What is Aaron Judge's OPS against the Rays?",
+    "rate scoped to a club — rates_val gates AVG/AB")
+add("opp_ext_split", "What is Aaron Judge's batting average against the Red Sox by handedness?",
+    "SPLIT scoped to a club — splits_val gates each row's AB (sums to vs-BOS, not career)")
+add("opp_ext_ambig", "How many home runs has Mike Trout hit against Chicago?",
+    "ambiguous city (Cubs/White Sox) -> decline")
+add("opp_ext_selfteam", "How many home runs has Derek Jeter hit against the Yankees?",
+    "self-team (Jeter NYA-only) -> the played-for note, count 0")
+
 if __name__ == "__main__":
     # stable ids by position; dedupe on normalized q
     seen = set()
