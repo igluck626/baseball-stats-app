@@ -8877,7 +8877,8 @@ _SPLIT_DIMS = {
 def _run_splits(player, split_by, role="bat", balls=None, strikes=None, outs=None,
                 inning=None, base_state=None, season=None, season_start=None,
                 season_end=None, game_type=None,
-                pitcher_hand=None, batter_side=None, home_away=None):
+                pitcher_hand=None, batter_side=None, home_away=None,
+                opponent_codes=None):
     """Rate line broken out BY a dimension (pitcher_hand / batter_side / home_away
     / season / game_type) — a table of {split_value, PA, AB, H, AVG, OBP, SLG, OPS}."""
     role = (role or "bat").lower()
@@ -8906,6 +8907,15 @@ def _run_splits(player, split_by, role="bat", balls=None, strikes=None, outs=Non
     sclauses, sparams, meta = _situ_clauses(balls, strikes, outs, inning, base_state,
                                             season, season_start, season_end, game_type,
                                             pitcher_hand, batter_side, home_away)
+    if opponent_codes:
+        # Filters the WHERE, so EVERY split row (each GROUP BY bucket) is scoped to
+        # the opponent — never a mix of scoped and unscoped rows. Batter's opponent
+        # is the fielding team; a pitcher's is the batting team (inverse).
+        opp_expr = ("CASE WHEN BAT_HOME_ID = 1 THEN HOME_TEAM_ID ELSE AWAY_TEAM_ID END"
+                    if role == "pit" else
+                    "CASE WHEN BAT_HOME_ID = 1 THEN AWAY_TEAM_ID ELSE HOME_TEAM_ID END")
+        sclauses.append(f"({opp_expr}) IN ({', '.join('?' * len(opponent_codes))})")
+        sparams += list(opponent_codes)
     clause = " AND ".join([f"{id_col} = ?"] + sclauses)
     params = [retro] + sparams
     try:
@@ -10422,7 +10432,8 @@ _GUARD_CAPS = {
                                          "home_away", "season_single", "season_range",
                                          "opponent")),   # Phase 2: _run_rates has the filter
     "query_splits":           frozenset(("handedness", "base_state", "count",
-                                         "home_away", "season_single", "season_range")),
+                                         "home_away", "season_single", "season_range",
+                                         "opponent")),   # Phase 3: _run_splits has the filter
     "query_rate_leaderboard": frozenset(("handedness", "base_state", "count",
                                          "home_away", "season_single", "season_range")),
     "query_leaderboard":      frozenset(("handedness", "base_state", "count",
@@ -10438,8 +10449,8 @@ _GUARD_CAPS = {
 }
 # Tools migrated onto the unified _guard_tool, one phase at a time. Everything else
 # still uses the legacy _ANSWERABLE block / _guard_scoped_tool. Phase 1: situational.
-# Phase 2: rates.
-_GUARD_ROUTED = frozenset(("query_situational", "query_rates"))
+# Phase 2: rates. Phase 3: splits.
+_GUARD_ROUTED = frozenset(("query_situational", "query_rates", "query_splits"))
 
 
 def _guard_tool(question, tool_name, tool_input):
@@ -11263,7 +11274,10 @@ def ask(request: Request,
                     base["answer"] = base["reason"]; return _finish()
                 result = _run_rates(**kw)
             elif tool_name == "query_splits":
-                kw = {k: tool_input.get(k) for k in ("player", "split_by") + situ_keys
+                # Phase 3: opponent_codes (injected by _guard_tool) reaches _run_splits,
+                # scoping every split row to the opponent. rate_leaderboard/leaderboard
+                # still omit it (their runners lack the filter) until their phases.
+                kw = {k: tool_input.get(k) for k in ("player", "split_by", "opponent_codes") + situ_keys
                       if tool_input.get(k) is not None}
                 if not kw.get("player") or not kw.get("split_by"):
                     base["out_of_scope"] = True
