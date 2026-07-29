@@ -10800,13 +10800,13 @@ def ask(request: Request,
     # Runs for any answerable tool, on BOTH the fresh and cached translation, so
     # a dropped/unsupported constraint can never slip through non-deterministically.
     #
-    # CONSTRAINT-MERGE: tools in _GUARD_ROUTED go through the unified _guard_tool,
-    # which does everything the _ANSWERABLE block below does (unsupported-concept
-    # decline; role-aware handedness / base_state / count / home_away inject-on-drop)
-    # AND, newly, season-drop repair + opponent resolution (injecting opponent_codes/
-    # opponent_label into tool_input for the dispatch whitelist to forward). Phase 1
-    # migrated query_situational; Phase 2 adds query_rates. The remaining answerable
-    # tools stay on the block below until their own phases.
+    # CONSTRAINT-MERGE (complete): all five answerable tools are in _GUARD_ROUTED and
+    # go through the unified _guard_tool — unsupported-concept decline; role-aware
+    # handedness / base_state / count / home_away inject-on-drop; season-drop repair;
+    # opponent resolution (injecting opponent_codes/opponent_label into tool_input for
+    # the dispatch whitelist to forward). The legacy per-tool _ANSWERABLE inject block
+    # that used to sit here was retired once every tool had migrated (Phase 6); the
+    # scoped-tool guard below is unchanged.
     if tool_name in _GUARD_ROUTED and tool_input is not None:
         _decline = _guard_tool(q, tool_name, tool_input)
         if _decline:
@@ -10816,33 +10816,6 @@ def ask(request: Request,
             base["understood_as"] = None
             log.warning("ask: CODE-DECLINED (guard) %s %s for %r", tool_name, tool_input, q)
             return _finish()
-    elif tool_name in _ANSWERABLE and tool_input is not None:
-        log.error("PHASE6_DEADBLOCK_FIRED tool=%s q=%r", tool_name, q)  # TEMP: prove dead before deleting
-        _inject, _unsupported = _detect_constraints(q)
-        if _unsupported:
-            base["out_of_scope"] = True
-            base["reason"] = _unsupported_reason(_unsupported)
-            base["answer"] = base["reason"]
-            base["understood_as"] = None
-            log.warning("ask: CODE-DECLINED unsupported %s (model chose %s %s) for %r",
-                        _unsupported, tool_name, tool_input, q)
-            return _finish()
-        # Handedness -> pitcher_hand OR batter_side, chosen by role. Inject only
-        # if the model set NEITHER (a true drop): a pitcher "against lefties"
-        # faces left-handed BATTERS; a hitter "against lefties" faces left-handed
-        # PITCHERS. If the model already picked a side, trust it (don't double up).
-        _hand = _inject.pop("handedness", None)
-        if _hand and tool_input.get("pitcher_hand") is None \
-                and tool_input.get("batter_side") is None:
-            _side = "batter_side" if tool_input.get("role") == "pit" else "pitcher_hand"
-            tool_input[_side] = _hand
-            log.warning("ask: model dropped handedness; injected %s=%r (tool %s) for %r",
-                        _side, _hand, tool_name, q)
-        for _param, _value in _inject.items():
-            if tool_input.get(_param) is None:
-                tool_input[_param] = _value   # base['understood_as'] is this dict — stays in sync
-                log.warning("ask: model DROPPED %s=%r (tool %s) for %r; injected in code",
-                            _param, _value, tool_name, q)
 
     # Same guarantee for the tools handled BELOW (outside _ANSWERABLE): repair a
     # dropped-but-supported scope, or DECLINE a scope the tool can't express — so
