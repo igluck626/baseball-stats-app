@@ -182,3 +182,4 @@
 {"id": "q181", "bucket": "opp_ext_split", "q": "What is Aaron Judge's batting average against the Red Sox by handedness?", "note": "SPLIT scoped to a club — splits_val gates each row's AB (sums to vs-BOS, not career)"}
 {"id": "q182", "bucket": "opp_ext_ambig", "q": "How many home runs has Mike Trout hit against Chicago?", "note": "ambiguous city (Cubs/White Sox) -> decline"}
 {"id": "q183", "bucket": "opp_ext_selfteam", "q": "How many home runs has Derek Jeter hit against the Yankees?", "note": "self-team (Jeter NYA-only) -> the played-for note, count 0"}
+{"id": "q184", "bucket": "opp_ext_rate_lb", "q": "Who has the highest batting average against the Yankees?", "note": "rate leaderboard scoped — leaders_val AB must be 40s+, not fluke single digits"}

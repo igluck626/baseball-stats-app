@@ -258,6 +258,14 @@ add("opp_ext_ambig", "How many home runs has Mike Trout hit against Chicago?",
 add("opp_ext_selfteam", "How many home runs has Derek Jeter hit against the Yankees?",
     "self-team (Jeter NYA-only) -> the played-for note, count 0")
 
+# ---- 32. RATE-LEADERBOARD opponent case — closes the gate blind spot for the
+# scoped board. Phase-4-live: leaders_val gates the qualifier (top AB in the 40s+,
+# not single digits). NOTE: the COUNT-leaderboard opponent case already exists as
+# q060 ("most home runs against the Dodgers"), currently capturing its pre-Phase-5
+# unscoped behavior; Phase 5 rebaselines q060 when query_leaderboard is routed.
+add("opp_ext_rate_lb", "Who has the highest batting average against the Yankees?",
+    "rate leaderboard scoped — leaders_val AB must be 40s+, not fluke single digits")
+
 if __name__ == "__main__":
     # stable ids by position; dedupe on normalized q
     seen = set()

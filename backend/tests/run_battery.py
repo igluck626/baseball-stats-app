@@ -62,10 +62,16 @@ def cell_from_response(http, d):
     # existing cells (whose golden has no rates_val/splits_val key).
     rates = d.get("rates") or None
     splits = d.get("splits") or None
+    leaders = d.get("leaders") or None
     rates_val = (json.dumps({k: rates.get(k) for k in ("AVG", "OBP", "SLG", "AB", "H")},
                             sort_keys=True) if rates else None)
     splits_val = (json.dumps([[r.get("split_value"), r.get("AB"), r.get("AVG")]
                               for r in splits], sort_keys=True) if splits else None)
+    # leader values incl. AB — for a rate leaderboard, AB is the QUALIFIER signal:
+    # a fluke regression (single-digit AB at the top) would change this and fail the
+    # gate. retro_id anchors identity; AVG/HR carry the ranked figure.
+    leaders_val = (json.dumps([[r.get("retro_id"), r.get("AB"), r.get("AVG"), r.get("HR")]
+                               for r in leaders[:8]], sort_keys=True) if leaders else None)
     return {
         "http": http,
         "count": d.get("count"),
@@ -80,6 +86,7 @@ def cell_from_response(http, d):
         "has_rates": bool(d.get("rates")),
         "rates_val": rates_val,
         "splits_val": splits_val,
+        "leaders_val": leaders_val,
         "has_milestone": bool(d.get("milestone")),
         "has_streak": bool(d.get("streak")),
         "has_span": bool(d.get("span")),

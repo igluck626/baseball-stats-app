@@ -1,8 +1,8 @@
 {
   "meta": {
     "n_cannot_answer_class": 18,
-    "n_gated_questions": 166,
-    "n_questions": 184,
+    "n_gated_questions": 167,
+    "n_questions": 185,
     "n_runs": 3,
     "n_unstable_cells": 360,
     "n_unstable_questions": 18,
@@ -5568,6 +5568,37 @@
         "understood_as": "{\"event\": \"HR\", \"opponent\": \"Yankees\", \"opponent_codes\": [\"BLA\", \"NYA\", \"NYY\"], \"opponent_label\": \"the Yankees\", \"player\": \"Derek Jeter\"}"
       },
       "q": "How many home runs has Derek Jeter hit against the Yankees?",
+      "unstable": []
+    },
+    "q184": {
+      "bucket": "opp_ext_rate_lb",
+      "cannot_answer_class": false,
+      "cell": {
+        "ambiguous": false,
+        "answer100": "",
+        "count": null,
+        "db_status": "ok",
+        "declined": false,
+        "has_milestone": false,
+        "has_rates": false,
+        "has_span": false,
+        "has_streak": false,
+        "has_two_way": false,
+        "highlighted_stat": null,
+        "http": 200,
+        "leaders_val": "[[\"magad001\", 44, 0.432, 1], [\"archm101\", 48, 0.417, 0], [\"hidar001\", 46, 0.413, 6], [\"iguct001\", 66, 0.409, 3], [\"cirip001\", 54, 0.407, 0], [\"murpd106\", 176, 0.398, 2], [\"eatoa002\", 99, 0.394, 2], [\"gloar001\", 74, 0.392, 3]]",
+        "n_leaders": 10,
+        "n_sample": 0,
+        "n_splits": 0,
+        "out_of_scope": false,
+        "rates_val": null,
+        "reason100": "",
+        "source": "plays_rate_leaderboard",
+        "splits_val": null,
+        "tool_name": "query_rate_leaderboard",
+        "understood_as": "{\"opponent\": \"Yankees\", \"opponent_codes\": [\"BLA\", \"NYA\", \"NYY\"], \"opponent_label\": \"the Yankees\", \"stat\": \"AVG\"}"
+      },
+      "q": "Who has the highest batting average against the Yankees?",
       "unstable": []
     }
   }
