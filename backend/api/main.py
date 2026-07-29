@@ -8960,7 +8960,8 @@ _RATE_LB_DEFAULT_MIN_PA = 50
 def _run_rate_leaderboard(stat="OPS", role="bat", balls=None, strikes=None, outs=None,
                           inning=None, base_state=None, season=None, season_start=None,
                           season_end=None, game_type=None, min_pa=None, limit=10,
-                          pitcher_hand=None, batter_side=None, home_away=None):
+                          pitcher_hand=None, batter_side=None, home_away=None,
+                          opponent_codes=None):
     stat = (stat or "OPS").upper()
     if stat not in _RATE_STATS:
         raise HTTPException(status_code=400, detail=f"stat must be one of {_RATE_STATS}")
@@ -8982,6 +8983,17 @@ def _run_rate_leaderboard(stat="OPS", role="bat", balls=None, strikes=None, outs
     sclauses, sparams, meta = _situ_clauses(balls, strikes, outs, inning, base_state,
                                             season, season_start, season_end, game_type,
                                             pitcher_hand, batter_side, home_away)
+    if opponent_codes:
+        # Scopes the WHOLE CTE to the opponent, so the per-player PA the qualifier
+        # reads (ab+bb+hbp+sf+sh) and the rate are BOTH computed over the vs-opponent
+        # sample — the 50-PA floor stays proportional, never career PA over a scoped
+        # rate. Batter's opponent is the fielding team; a pitcher's is the batting
+        # team (inverse).
+        opp_expr = ("CASE WHEN BAT_HOME_ID = 1 THEN HOME_TEAM_ID ELSE AWAY_TEAM_ID END"
+                    if role == "pit" else
+                    "CASE WHEN BAT_HOME_ID = 1 THEN AWAY_TEAM_ID ELSE HOME_TEAM_ID END")
+        sclauses.append(f"({opp_expr}) IN ({', '.join('?' * len(opponent_codes))})")
+        sparams += list(opponent_codes)
     clause = " AND ".join([f"{id_col} IS NOT NULL", f"{id_col} <> ''"] + sclauses)
     params = list(sparams)
     order = {"AVG": "avg", "OBP": "obp", "SLG": "slg", "OPS": "ops"}[stat]
@@ -10435,7 +10447,8 @@ _GUARD_CAPS = {
                                          "home_away", "season_single", "season_range",
                                          "opponent")),   # Phase 3: _run_splits has the filter
     "query_rate_leaderboard": frozenset(("handedness", "base_state", "count",
-                                         "home_away", "season_single", "season_range")),
+                                         "home_away", "season_single", "season_range",
+                                         "opponent")),   # Phase 4: _run_rate_leaderboard has the filter
     "query_leaderboard":      frozenset(("handedness", "base_state", "count",
                                          "home_away", "season_single", "season_range")),
     # SCOPED — byte-identical to _TOOL_SCOPE_CAPS, so routing these here is a no-op.
@@ -10449,8 +10462,9 @@ _GUARD_CAPS = {
 }
 # Tools migrated onto the unified _guard_tool, one phase at a time. Everything else
 # still uses the legacy _ANSWERABLE block / _guard_scoped_tool. Phase 1: situational.
-# Phase 2: rates. Phase 3: splits.
-_GUARD_ROUTED = frozenset(("query_situational", "query_rates", "query_splits"))
+# Phase 2: rates. Phase 3: splits. Phase 4: rate leaderboard.
+_GUARD_ROUTED = frozenset(("query_situational", "query_rates", "query_splits",
+                           "query_rate_leaderboard"))
 
 
 def _guard_tool(question, tool_name, tool_input):
@@ -11285,7 +11299,11 @@ def ask(request: Request,
                     base["answer"] = base["reason"]; return _finish()
                 result = _run_splits(**kw)
             else:  # query_rate_leaderboard
-                kw = {k: tool_input.get(k) for k in ("stat", "min_pa", "limit") + situ_keys
+                # Phase 4: opponent_codes (injected by _guard_tool) reaches
+                # _run_rate_leaderboard, scoping the CTE so the qualifier PA and the
+                # rate are both over the vs-opponent sample. query_leaderboard is the
+                # last holdout until its phase.
+                kw = {k: tool_input.get(k) for k in ("stat", "min_pa", "limit", "opponent_codes") + situ_keys
                       if tool_input.get(k) is not None}
                 result = _run_rate_leaderboard(**kw)
         except HTTPException as exc:
