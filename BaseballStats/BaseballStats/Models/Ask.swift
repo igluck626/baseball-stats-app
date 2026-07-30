@@ -51,6 +51,9 @@ struct AskResponse: Decodable {
     // same milestone/streak/span computed BOTH as a pitcher and as a hitter.
     let two_way: AskTwoWay?
 
+    // Two or more NAMED players compared on ONE stat ("more HR, Bonds or Aaron").
+    let comparison: AskComparison?
+
     // Rate-leaderboard qualifier metadata.
     let stat: String?
     let min_pa: Int?
@@ -293,6 +296,29 @@ struct AskTwoWaySide: Decodable {
     let batting_line: AskRates?
     let declined: Bool?
     let reason: String?
+}
+
+/// Two or more players ranked on ONE stat. `entries` is sorted best-first; `winner`
+/// is the single leader (nil on a tie), `winners` the top group. `scope` is a human
+/// phrase ("career", "vs the Dodgers", "in 2024").
+struct AskComparison: Decodable {
+    let stat: String?
+    let scope: String?
+    let entries: [AskComparisonEntry]
+    let winner: String?
+    let winners: [String]?
+    let tie: Bool?
+}
+
+/// One player's row in a comparison — the compared `count` plus an optional stat
+/// line (reused from the two-way card: batting slash / pitching line).
+struct AskComparisonEntry: Decodable {
+    let name: String
+    let count: Int?
+    let rank: Int?
+    let mlbam_id: Int?
+    let batting_line: AskRates?
+    let pitching_line: AskPitchingLine?
 }
 
 /// The batting line summed over a streak's or span's games. `2B`/`3B` map to

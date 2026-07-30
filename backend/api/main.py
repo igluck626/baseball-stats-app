@@ -8334,6 +8334,116 @@ def _compute_two_way(feature, params):
     return {"stat": stat, "batting": bat, "pitching": pit}
 
 
+_COMPARE_STAT_LABEL = {
+    "HR": "home runs", "K": "strikeouts", "BB": "walks", "H": "hits",
+    "TB": "total bases", "RBI": "RBIs", "R": "runs", "SB": "stolen bases",
+    "1B": "singles", "2B": "doubles", "3B": "triples", "AB": "at-bats",
+    "XBH": "extra-base hits", "HBP": "hit by pitches",
+    "W": "wins", "L": "losses", "SV": "saves", "ER": "earned runs"}
+
+
+def _run_comparison(params):
+    """Compare 2+ NAMED players on ONE stat. Reuses the single-player count path
+    (_count_for_role) once per player WITH the shared scope, so each number equals
+    exactly what the single-player card returns. Ranks, flags winner/tie. If any
+    player is ambiguous -> surface THAT player's picker; if any 404s / can't be
+    counted -> decline (never a partial comparison against nothing)."""
+    players = params.get("players") or []
+    event = (params.get("event") or "").strip().upper()
+    role = (params.get("role") or "bat").lower()
+    scope = {k: v for k, v in params.items() if k != "players"}   # per-player scope
+    entries = []
+    for name in players:
+        pp = dict(scope); pp["player"] = name
+        try:
+            r = _count_for_role(pp, role)
+        except HTTPException as exc:
+            # a player that doesn't resolve stops the comparison honestly
+            return {"resolved": False, "declined": True,
+                    "reason": (str(exc.detail) if exc.status_code == 404
+                               else f"Couldn't look up {name}: {exc.detail}")}
+        if not isinstance(r, dict):
+            return {"resolved": False, "declined": True,
+                    "reason": f"Couldn't look up {name}."}
+        if r.get("ambiguous"):      # surface the picker for the ambiguous name
+            return {"resolved": False, "ambiguous": True,
+                    "query": name, "candidates": r.get("candidates", [])}
+        if r.get("declined") or r.get("out_of_scope") or r.get("count") is None:
+            return {"resolved": False, "declined": True,
+                    "reason": (r.get("reason")
+                               or f"I couldn't get a comparable number for {name}.")}
+        pinfo = r.get("player") or {}
+        pid = pinfo.get("mlbam_id")
+        entry = {"name": pinfo.get("name") or name, "mlbam_id": pid,
+                 "count": r.get("count")}
+        if r.get("source") == "season_stats" and pid is not None:  # optional stat line
+            try:
+                if role == "pit":
+                    pl = _pitcher_season_line(pid, scope.get("season"),
+                                              scope.get("season_start"), scope.get("season_end"))
+                    if pl is not None:
+                        entry["pitching_line"] = pl
+                else:
+                    bl = _season_rate_line(pid, "bat", scope.get("season"),
+                                           scope.get("season_start"), scope.get("season_end"),
+                                           scope.get("game_type"))
+                    if bl is not None:
+                        entry["batting_line"] = bl
+            except Exception:  # noqa: BLE001 — the line is optional
+                pass
+        entries.append(entry)
+
+    entries.sort(key=lambda e: e["count"], reverse=True)
+    top = entries[0]["count"]
+    winners = [e["name"] for e in entries if e["count"] == top]
+    tie = len(winners) > 1
+    prev, rk = None, 0
+    for i, e in enumerate(entries):
+        if e["count"] != prev:
+            rk = i + 1; prev = e["count"]
+        e["rank"] = rk
+
+    # human-readable scope for the card ("career" / "vs the Dodgers" / "in 2024")
+    bits = []
+    if scope.get("opponent_label"):
+        bits.append(scope["opponent_label"])
+    if scope.get("season") is not None:
+        bits.append(f"in {scope['season']}")
+    elif scope.get("season_start") is not None or scope.get("season_end") is not None:
+        lo, hi = scope.get("season_start"), scope.get("season_end")
+        bits.append(f"{lo or '…'}–{hi}" if hi else f"since {lo}")
+    scope_txt = ", ".join(bits) if bits else "career"
+
+    return {"resolved": True, "source": "comparison",
+            "comparison": {"stat": _COMPARE_STAT_LABEL.get(event, event),
+                           "scope": scope_txt, "entries": entries,
+                           "winner": (None if tie else winners[0]),
+                           "winners": winners, "tie": tie}}
+
+
+def _join_names(names):
+    names = [n for n in names if n]
+    if len(names) <= 1:
+        return names[0] if names else ""
+    if len(names) == 2:
+        return f"{names[0]} and {names[1]}"
+    return ", ".join(names[:-1]) + f", and {names[-1]}"
+
+
+def _comparison_summary(cmp):
+    """One-line prose beside the comparison card ('Bonds leads, 762 to 755' /
+    'Tied at 512 — Mathews and Banks')."""
+    ents = cmp.get("entries") or []
+    if not ents:
+        return None
+    stat, scope = cmp.get("stat"), cmp.get("scope")
+    tail = "" if not scope or scope == "career" else f" ({scope})"
+    if cmp.get("tie"):
+        return f"Tied at {ents[0]['count']} {stat}{tail} — {_join_names(cmp.get('winners') or [])}."
+    nums = " to ".join(str(e["count"]) for e in ents)
+    return f"{ents[0]['name']} leads with {nums} {stat}{tail}."
+
+
 # ---- Game-unit leaderboard PRECOMPUTE ---------------------------------------
 # One player's leaderboard rows, computed by REUSING the exact verified helpers
 # (_daily_games / _complete_seasons / _longest_streak / _best_span / _DAILY_EVENT)
@@ -9473,6 +9583,54 @@ _ASK_LEADERBOARD_TOOL = {
     },
 }
 
+# Comparison tool — COMPARE two or more NAMED players on ONE stat. Same event +
+# situational scope as query_situational (it reuses that runner per player), but a
+# `players` LIST instead of a single `player`. Subjective 'who is better' has no
+# stat -> the model can't fill `event` -> the runner declines (no special case).
+_ASK_COMPARISON_TOOL = {
+    "name": "query_comparison",
+    "description": (
+        "COMPARE two or more NAMED players on ONE stat and say who leads — 'who has "
+        "more career HR, Bonds or Aaron', 'most strikeouts: Pedro, Randy, or "
+        "Clemens', 'did Judge or Ohtani hit more HR in 2024', 'more HR vs the "
+        "Dodgers, Bonds or Aaron'. List EVERY player named in `players` (2 or more) "
+        "and the stat in `event`. For a SINGLE player use query_situational; for an "
+        "UNNAMED ranking ('who has the most HR') use query_leaderboard. This needs a "
+        "specific countable stat — a subjective 'who is the better player' does not "
+        "have one, so leave it to a normal (cannot-answer) response."),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "players": {"type": "array", "items": {"type": "string"}, "minItems": 2,
+                        "description": "EVERY player named in the question, full names "
+                                       "(e.g. ['Barry Bonds', 'Hank Aaron']). Required, 2+."},
+            "event": {"type": "string",
+                      "enum": ["HR", "K", "BB", "HBP", "1B", "2B", "3B", "RBI", "R", "SB",
+                               "H", "TB", "AB", "XBH", "W", "L", "SV", "ER"],
+                      "description": "The ONE stat to compare on (required). HR=home run, "
+                                     "K=strikeout, BB=walk, 1B/2B/3B, RBI, R=runs, SB, "
+                                     "H=hits, TB=total bases, AB, XBH=extra-base hits; "
+                                     "pitching W/L/SV/ER (set role='pit')."},
+            "role": {"type": "string", "enum": ["bat", "pit"], "description":
+                     "'bat' for hitters, 'pit' for pitchers. Default 'bat'."},
+            "balls": {"type": "integer", "minimum": 0, "maximum": 3},
+            "strikes": {"type": "integer", "minimum": 0, "maximum": 2},
+            "outs": {"type": "integer", "minimum": 0, "maximum": 2},
+            "inning": {"type": "integer", "minimum": 1},
+            "base_state": {"type": "string", "enum": ["risp", "loaded"]},
+            "season": {"type": "integer"}, "season_start": {"type": "integer"},
+            "season_end": {"type": "integer"},
+            "game_type": {"type": "string", "enum": ["R", "P", "ALL"], "description":
+                          "R=regular season (DEFAULT), P=postseason, ALL=both; set only if asked"},
+            "opponent": {"type": "string", "description":
+                         "opposing CLUB NAME as written ('the Dodgers') when scoped to a "
+                         "team; the backend resolves it. Omit if no opponent is named."},
+            **_ASK_FILTER_PROPS,
+        },
+        "required": ["players", "event"],
+    },
+}
+
 # --- Phase 6: rate stats + splits -------------------------------------------
 _ASK_SITU_PROPS = {   # the shared situational params (reused by the rate tools)
     "role": {"type": "string", "enum": ["bat", "pit"]},
@@ -9882,6 +10040,22 @@ _ASK_SYSTEM = (
     "('who has the MOST X'). Leaderboard questions want the ranked LIST — default "
     "to 10 so the user sees the leader AND the players behind them. Use a smaller "
     "limit only when explicitly asked ('top 3', 'the single leader').\n\n"
+    "COMPARISONS (call query_comparison — TWO OR MORE NAMED players, ONE stat): "
+    "'who has more career HR, Bonds or Aaron', 'most strikeouts: Pedro, Randy, or "
+    "Clemens', 'did Judge or Ohtani hit more HR in 2024', 'more HR vs the Dodgers, "
+    "Bonds or Aaron'. Put EVERY named player in `players` (never drop one) and the "
+    "stat in `event`; carry any situation/season/opponent through just like "
+    "query_situational.\n"
+    "- 'Who has more home runs, Bonds or Aaron?' -> {players:['Barry Bonds','Hank "
+    "Aaron'], event:'HR'}\n"
+    "- 'Most strikeouts: Pedro, Randy, or Clemens?' -> {players:['Pedro Martinez',"
+    "'Randy Johnson','Roger Clemens'], event:'K', role:'pit'}\n"
+    "- 'Did Judge or Ohtani hit more HR in 2024?' -> {players:['Aaron Judge','Shohei "
+    "Ohtani'], event:'HR', season:2024}\n"
+    "One named player -> query_situational; an UNNAMED ranking -> query_leaderboard; "
+    "TWO+ NAMED players on a stat -> query_comparison. A subjective 'who is the "
+    "BETTER player' has no stat to compare — do NOT force query_comparison; answer "
+    "cannot_answer as usual.\n\n"
     "RATE STATS (batting average / on-base / slugging / OPS — 'how well does X "
     "hit'):\n"
     "COUNT vs RATE — which tool: 'How many home runs / strikeouts / walks / hits "
@@ -10078,7 +10252,8 @@ _ask_log_write_failed = False   # so a broken log surfaces LOUDLY once (not per-
 # system prompt) cacheable, so repeat translate calls within the 5-min TTL read
 # it at ~10% of input price instead of resending it. Breakpoints on the last
 # tool (caches the whole tools array) and the system block.
-_ASK_TOOLS = [_ASK_QUERY_TOOL, _ASK_LEADERBOARD_TOOL, _ASK_RATES_TOOL,
+_ASK_TOOLS = [_ASK_QUERY_TOOL, _ASK_LEADERBOARD_TOOL, _ASK_COMPARISON_TOOL,
+              _ASK_RATES_TOOL,
               _ASK_SPLITS_TOOL, _ASK_RATE_LB_TOOL, _ASK_MILESTONE_TOOL,
               _ASK_STREAK_TOOL, _ASK_SPAN_TOOL,
               _ASK_STREAK_LB_TOOL, _ASK_SPAN_LB_TOOL, _ASK_GAME_ACH_TOOL,
@@ -10592,8 +10767,15 @@ def _guard_scoped_tool(question, tool_name, tool_input):
 # filters in later phases.
 _GUARD_ANSWERABLE = frozenset((
     "query_situational", "query_leaderboard", "query_rates",
-    "query_splits", "query_rate_leaderboard"))
+    "query_splits", "query_rate_leaderboard", "query_comparison"))
 _GUARD_CAPS = {
+    # query_comparison reuses the query_situational count runner PER PLAYER, so its
+    # caps are truthful for exactly what that runner filters (handedness/base/count/
+    # home_away/season/opponent). The guard resolves the scope ONCE; _run_comparison
+    # applies it to every player.
+    "query_comparison":       frozenset(("handedness", "base_state", "count",
+                                         "home_away", "season_single", "season_range",
+                                         "opponent")),
     # ANSWERABLE — full situational caps (all implemented end-to-end in each runner).
     # opponent ONLY on query_situational (the one answerable runner with the filter).
     "query_situational":      frozenset(("handedness", "base_state", "count",
@@ -10625,7 +10807,8 @@ _GUARD_CAPS = {
 # Phase 2: rates. Phase 3: splits. Phase 4: rate leaderboard. Phase 5: leaderboard —
 # ALL five _ANSWERABLE tools now routed; the legacy inject block below is dead.
 _GUARD_ROUTED = frozenset(("query_situational", "query_rates", "query_splits",
-                           "query_rate_leaderboard", "query_leaderboard"))
+                           "query_rate_leaderboard", "query_leaderboard",
+                           "query_comparison"))
 
 
 def _guard_tool(question, tool_name, tool_input):
@@ -10892,7 +11075,7 @@ def ask(request: Request,
         tool_input["player"] = str(player_id)
 
     _ANSWERABLE = ("query_situational", "query_leaderboard", "query_rates",
-                   "query_splits", "query_rate_leaderboard")
+                   "query_splits", "query_rate_leaderboard", "query_comparison")
     base = {
         "question":        q,
         "understood_as":   tool_input if tool_name in _ANSWERABLE else None,
@@ -10908,6 +11091,7 @@ def ask(request: Request,
         "streak":          None,
         "span":            None,
         "two_way":         None,
+        "comparison":      None,
         "player_resolved": None,
         "source":          None,
         "game_coverage":   None,
@@ -11348,6 +11532,55 @@ def ask(request: Request,
         base["out_of_scope"] = True
         base["reason"] = reason
         base["answer"] = reason
+        return _finish()
+
+    # ==== COMPARISON branch ('who has more HR, X or Y') =================
+    # Reuses the single-player count runner per player (via _run_comparison), so each
+    # number equals the single-player card. Scope was resolved once by _guard_tool and
+    # is applied to every player. A subjective 'who is better' arrives with no event
+    # (nothing to count) and declines here.
+    if tool_name == "query_comparison":
+        cmp_params = {k: tool_input.get(k) for k in (
+            "players", "event", "role", "balls", "strikes", "outs", "inning",
+            "base_state", "season", "season_start", "season_end", "game_type",
+            "pitcher_hand", "batter_side", "home_away", "opponent_codes", "opponent_label")
+            if tool_input.get(k) is not None}
+        if len([p for p in (cmp_params.get("players") or []) if p]) < 2:
+            base["out_of_scope"] = True
+            base["reason"] = "A comparison needs two or more named players."
+            base["answer"] = base["reason"]; return _finish()
+        if not cmp_params.get("event"):
+            base["out_of_scope"] = True
+            base["reason"] = ("A comparison needs a specific stat to compare "
+                              "(home runs, hits, strikeouts, …) — not just who is 'better'.")
+            base["answer"] = base["reason"]; return _finish()
+        t0 = time.perf_counter()
+        try:
+            result = _run_comparison(cmp_params)
+        except HTTPException as exc:
+            timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
+            base["reason"] = str(exc.detail)
+            base["answer"] = f"Couldn't answer that: {exc.detail}"; return _finish()
+        except Exception as exc:  # noqa: BLE001
+            timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
+            log.exception("ask comparison failed for %r", q)
+            base["error"] = str(exc); base["reason"] = "query failed"
+            base["answer"] = ("Sorry — something went wrong looking that up. "
+                              "Try rephrasing the question."); return _finish()
+        timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
+        if result.get("ambiguous"):     # one of the names needs the picker
+            base["ambiguous"] = True
+            base["player_resolved"] = {"candidates": result.get("candidates", [])}
+            base["answer"] = (f'There are multiple players matching "{result.get("query")}" — '
+                              "tap the one you mean.")
+            return _finish()
+        if not result.get("resolved"):  # a name 404'd, or the stat/scope can't be counted
+            base["out_of_scope"] = True
+            base["reason"] = result.get("reason")
+            base["answer"] = result.get("reason"); return _finish()
+        base["source"] = "comparison"
+        base["comparison"] = result.get("comparison")
+        base["answer"] = _comparison_summary(result["comparison"])
         return _finish()
 
     # ==== LEADERBOARD branch ('who has the most ...') ====================

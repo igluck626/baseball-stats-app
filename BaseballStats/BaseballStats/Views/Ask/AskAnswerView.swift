@@ -39,6 +39,9 @@ struct AskAnswerView: View {
             } else if let tw = response.two_way {
                 // A two-way player's ambiguous stat: both roles, side by side.
                 twoWaySection(tw)
+            } else if let cmp = response.comparison, !cmp.entries.isEmpty {
+                // Two or more players ranked on one stat, side by side / listed.
+                comparisonSection(cmp)
             } else if let rates = response.rates {
                 // DATA-FIRST: a stat line IS the answer — shown up front, with
                 // the extra component counts behind a disclosure. No prose
@@ -486,6 +489,41 @@ struct AskAnswerView: View {
             twoWayRole("On the mound", tw.pitching, stat: tw.stat)
             if tw.pitching != nil && tw.batting != nil { Divider() }
             twoWayRole("At the plate", tw.batting, stat: tw.stat)
+        }
+    }
+
+    /// A comparison: the same two-column shape as the two-way card, but labeled by
+    /// PLAYER NAME instead of role. Two players read as two columns; N as a ranked
+    /// list. The leader is crowned (nil on a tie — every top row is then unmarked).
+    private func comparisonSection(_ cmp: AskComparison) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            ForEach(Array(cmp.entries.enumerated()), id: \.offset) { idx, e in
+                if idx > 0 { Divider() }
+                comparisonRow(e, stat: cmp.stat,
+                              isWinner: cmp.tie != true && idx == 0)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func comparisonRow(_ e: AskComparisonEntry, stat: String?, isWinner: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Text(e.name.uppercased())
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(isWinner ? Color.accentColor : .secondary)
+                if isWinner {
+                    Image(systemName: "crown.fill").font(.caption2).foregroundStyle(.tint)
+                }
+            }
+            if let pl = e.pitching_line {
+                StatTable(columns: pitchingColumns(pl, highlight: statToColumn(stat)))
+            } else if let bl = e.batting_line {
+                StatTable(columns: rateColumns(bl, highlight: statToColumn(stat)))
+            } else if let c = e.count {
+                Text("\(c.formatted(.number))\(stat.map { " " + $0 } ?? "")")
+                    .font(.title3.weight(.bold))
+            }
         }
     }
 
