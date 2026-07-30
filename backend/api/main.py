@@ -9,6 +9,7 @@ import re
 import threading
 import time
 import traceback
+import unicodedata
 from contextlib import asynccontextmanager
 from urllib.parse import urlparse
 
@@ -5686,6 +5687,49 @@ def _plays_warmup_worker():
 _NAME_SUFFIX = re.compile(r"\s+(jr|sr|iv|iii|ii)\.?\s*$", re.I)
 
 
+def _strip_accents(s):
+    """Fold accents to their ASCII base (á->a, ñ->n) via NFD, dropping combining
+    marks — the SAME rule used to derive the SQL translate() map below, so the two
+    sides fold identically."""
+    return "".join(c for c in unicodedata.normalize("NFD", s or "")
+                   if unicodedata.category(c) != "Mn")
+
+
+# The DB stores names INCONSISTENTLY accented ("Ronald Acuña" but "Jose Ramirez"),
+# so a query whose accent form differs from the stored form misses in EITHER
+# direction. The accent fallback folds both sides. Column side uses SQL translate()
+# — its (accented, plain) pair is DERIVED ONCE from the DB's actual accented-char
+# inventory (so column coverage matches the NFD query side exactly, no silent miss)
+# and cached. If the DB is unreachable we fall back to the Spanish/Portuguese set.
+_ACCENT_MAP = None
+_ACCENT_MAP_DEFAULT = ("ÁÀÂÄÃáàâäãÉÈÊËéèêëÍÌÎÏíìîïÓÒÔÖÕóòôöõÚÙÛÜúùûüÑñÇç",
+                       "AAAAAaaaaaEEEEeeeeIIIIiiiiOOOOOoooooUUUUuuuuNnCc")
+
+
+def _accent_translate_map():
+    """(accented_chars, plain_chars) for SQL translate(lower(name), acc, pla),
+    derived once from the DB's DISTINCT non-ASCII name chars (via the same NFD fold
+    as _strip_accents). Cached module-side; only chars NFD reduces to a single ASCII
+    base are included (others can't be folded on either side, so they're left as-is)."""
+    global _ACCENT_MAP
+    if _ACCENT_MAP is None:
+        try:
+            with connection.get_session() as db:
+                rows = db.execute(_sa_text(
+                    "SELECT DISTINCT name FROM players WHERE name ~ '[^ -~]' "
+                    "UNION SELECT DISTINCT name FROM pitchers WHERE name ~ '[^ -~]'")).fetchall()
+            acc, pla = [], []
+            for ch in sorted({c for (nm,) in rows for c in (nm or "") if ord(c) > 127}):
+                base = _strip_accents(ch)
+                if len(base) == 1 and ord(base) < 128:
+                    acc.append(ch); pla.append(base)
+            _ACCENT_MAP = ("".join(acc), "".join(pla)) if acc else _ACCENT_MAP_DEFAULT
+        except Exception as exc:  # noqa: BLE001 - never fail resolution on the map
+            log.warning("accent map derivation failed (%s); using default set", exc)
+            _ACCENT_MAP = _ACCENT_MAP_DEFAULT
+    return _ACCENT_MAP
+
+
 def _resolve_retro_id(player: str, role: str):
     """Map an app player (MLBAM id if all-digits, else a name) to the Retrosheet
     person id the plays table keys on. Batters resolve via `players`, pitchers
@@ -5703,9 +5747,23 @@ def _resolve_retro_id(player: str, role: str):
             f"ORDER BY s.year DESC LIMIT 1)")
 
     def _by_name(nm, db):
-        return db.execute(_sa_text(
+        # EXACT first — short-circuits, so any name that resolves today is byte-
+        # identical (and no seq scan is wasted when the plain match works).
+        rows = db.execute(_sa_text(
             f"SELECT {cols} FROM {table} p WHERE p.name ILIKE :nm "
             "ORDER BY p.name LIMIT 25"), {"nm": f"%{nm}%"}).fetchall()
+        if not rows:
+            # ACCENT FALLBACK — fold BOTH sides: query via Python NFD, column via SQL
+            # translate() with the DB-derived map. Runs even when the query itself has
+            # no accent, because the MISS may be on the column side ("Ronald Acuna"
+            # query vs "Ronald Acuña" row). Only ever ADDS matches (the plain miss
+            # already returned nothing). Already a Seq Scan, so no index is lost.
+            acc, pla = _accent_translate_map()
+            rows = db.execute(_sa_text(
+                f"SELECT {cols} FROM {table} p WHERE translate(lower(p.name), :acc, :pla) "
+                "ILIKE :nm ORDER BY p.name LIMIT 25"),
+                {"acc": acc, "pla": pla, "nm": f"%{_strip_accents(nm).lower()}%"}).fetchall()
+        return rows
 
     with connection.get_session() as db:
         if p.isdigit():
