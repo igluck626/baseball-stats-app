@@ -5680,6 +5680,12 @@ def _plays_warmup_worker():
             log.info("plays store warmed in %ss", _plays_warm_secs)
 
 
+# A generational suffix at the END of a name, case-tolerant, optional period:
+# " Jr", " Jr.", " sr", " III". Anchored to $ so it can't fire mid-string; the
+# space requirement keeps it from eating a real trailing token that isn't a suffix.
+_NAME_SUFFIX = re.compile(r"\s+(jr|sr|iv|iii|ii)\.?\s*$", re.I)
+
+
 def _resolve_retro_id(player: str, role: str):
     """Map an app player (MLBAM id if all-digits, else a name) to the Retrosheet
     person id the plays table keys on. Batters resolve via `players`, pitchers
@@ -5695,15 +5701,37 @@ def _resolve_retro_id(player: str, role: str):
     cols = (f"p.player_id, p.name, p.retro_id, p.mlb_debut, p.mlb_last_season, p.position, "
             f"(SELECT s.team FROM {seasons} s WHERE s.player_id = p.player_id "
             f"ORDER BY s.year DESC LIMIT 1)")
+
+    def _by_name(nm, db):
+        return db.execute(_sa_text(
+            f"SELECT {cols} FROM {table} p WHERE p.name ILIKE :nm "
+            "ORDER BY p.name LIMIT 25"), {"nm": f"%{nm}%"}).fetchall()
+
     with connection.get_session() as db:
         if p.isdigit():
             rows = db.execute(_sa_text(
                 f"SELECT {cols} FROM {table} p WHERE p.player_id = :pid"),
                 {"pid": int(p)}).fetchall()
         else:
-            rows = db.execute(_sa_text(
-                f"SELECT {cols} FROM {table} p WHERE p.name ILIKE :nm "
-                "ORDER BY p.name LIMIT 25"), {"nm": f"%{p}%"}).fetchall()
+            rows = _by_name(p, db)
+            # SUFFIX FALLBACK (only when the full name found nothing — a name that
+            # matched above is never touched). The DB stores names WITHOUT a
+            # generational suffix, so a model-appended "Jr./Sr." misses. Strip a
+            # TRAILING suffix and retry the base: 0 -> genuine 404; 1 -> resolve
+            # (Ripken Jr. -> Cal Ripken). For a father/son PAIR the suffix is the
+            # disambiguator the data lacks — Jr/II/III/IV means the younger (LATER
+            # debut), Sr the elder (EARLIER) — so we pick directly rather than
+            # send a question the user already disambiguated to the picker.
+            m = _NAME_SUFFIX.search(p) if not rows else None
+            if m:
+                base = _NAME_SUFFIX.sub("", p).strip()
+                if base:
+                    rows = _by_name(base, db)
+                    if len(rows) > 1:
+                        elder = m.group(1).lower() == "sr"
+                        pool = [r for r in rows if r[3] is not None] or rows
+                        rows = [min(pool, key=lambda r: r[3]) if elder
+                                else max(pool, key=lambda r: r[3])]
     return [{"mlbam_id": r[0], "name": r[1], "retro_id": r[2], "debut": r[3],
              "last_season": r[4], "position": r[5], "team": r[6]} for r in rows]
 
