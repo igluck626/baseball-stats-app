@@ -1,6 +1,7 @@
 {
   "meta": {
     "n_cannot_answer_class": 18,
+    "n_drift_tolerant": 31,
     "n_gated_questions": 167,
     "n_questions": 185,
     "n_runs": 3,
@@ -55,6 +56,9 @@
         "tool_name": "query_situational",
         "understood_as": "{\"event\": \"HR\", \"player\": \"Aaron Judge\"}"
       },
+      "drift_tolerant": [
+        "count"
+      ],
       "q": "How many home runs does Aaron Judge have?",
       "unstable": []
     },
@@ -83,6 +87,9 @@
         "tool_name": "query_situational",
         "understood_as": "{\"event\": \"K\", \"player\": \"Aaron Judge\"}"
       },
+      "drift_tolerant": [
+        "count"
+      ],
       "q": "How many strikeouts does Aaron Judge have?",
       "unstable": []
     },
@@ -111,6 +118,9 @@
         "tool_name": "query_situational",
         "understood_as": "{\"event\": \"BB\", \"player\": \"Aaron Judge\"}"
       },
+      "drift_tolerant": [
+        "count"
+      ],
       "q": "How many walks does Aaron Judge have?",
       "unstable": []
     },
@@ -139,6 +149,9 @@
         "tool_name": "query_situational",
         "understood_as": "{\"event\": \"H\", \"player\": \"Aaron Judge\"}"
       },
+      "drift_tolerant": [
+        "count"
+      ],
       "q": "How many hits does Aaron Judge have?",
       "unstable": []
     },
@@ -167,6 +180,9 @@
         "tool_name": "query_situational",
         "understood_as": "{\"event\": \"2B\", \"player\": \"Aaron Judge\"}"
       },
+      "drift_tolerant": [
+        "count"
+      ],
       "q": "How many doubles does Aaron Judge have?",
       "unstable": []
     },
@@ -195,6 +211,9 @@
         "tool_name": "query_situational",
         "understood_as": "{\"event\": \"3B\", \"player\": \"Aaron Judge\"}"
       },
+      "drift_tolerant": [
+        "count"
+      ],
       "q": "How many triples does Aaron Judge have?",
       "unstable": []
     },
@@ -223,6 +242,9 @@
         "tool_name": "query_situational",
         "understood_as": "{\"event\": \"TB\", \"player\": \"Aaron Judge\"}"
       },
+      "drift_tolerant": [
+        "count"
+      ],
       "q": "How many total bases does Aaron Judge have?",
       "unstable": []
     },
@@ -251,6 +273,9 @@
         "tool_name": "query_situational",
         "understood_as": "{\"event\": \"SB\", \"player\": \"Aaron Judge\"}"
       },
+      "drift_tolerant": [
+        "count"
+      ],
       "q": "How many stolen bases does Aaron Judge have?",
       "unstable": []
     },
@@ -279,6 +304,9 @@
         "tool_name": "query_situational",
         "understood_as": "{\"event\": \"R\", \"player\": \"Aaron Judge\"}"
       },
+      "drift_tolerant": [
+        "count"
+      ],
       "q": "How many runs does Aaron Judge have?",
       "unstable": []
     },
@@ -307,6 +335,9 @@
         "tool_name": "query_situational",
         "understood_as": "{\"event\": \"RBI\", \"player\": \"Aaron Judge\"}"
       },
+      "drift_tolerant": [
+        "count"
+      ],
       "q": "How many RBIs does Aaron Judge have?",
       "unstable": []
     },
@@ -335,6 +366,9 @@
         "tool_name": "query_situational",
         "understood_as": "{\"event\": \"AB\", \"player\": \"Aaron Judge\"}"
       },
+      "drift_tolerant": [
+        "count"
+      ],
       "q": "How many at-bats does Aaron Judge have?",
       "unstable": []
     },
@@ -363,6 +397,9 @@
         "tool_name": "query_situational",
         "understood_as": "{\"event\": \"XBH\", \"player\": \"Aaron Judge\"}"
       },
+      "drift_tolerant": [
+        "count"
+      ],
       "q": "How many extra-base hits does Aaron Judge have?",
       "unstable": []
     },
@@ -447,6 +484,9 @@
         "tool_name": "query_situational",
         "understood_as": "{\"event\": \"K\", \"player\": \"Gerrit Cole\", \"role\": \"pit\"}"
       },
+      "drift_tolerant": [
+        "count"
+      ],
       "q": "How many strikeouts does Gerrit Cole have?",
       "unstable": []
     },
@@ -475,6 +515,9 @@
         "tool_name": "query_situational",
         "understood_as": "{\"event\": \"W\", \"player\": \"Gerrit Cole\", \"role\": \"pit\"}"
       },
+      "drift_tolerant": [
+        "count"
+      ],
       "q": "How many wins does Gerrit Cole have?",
       "unstable": []
     },
@@ -503,6 +546,9 @@
         "tool_name": "query_situational",
         "understood_as": "{\"event\": \"SV\", \"player\": \"Gerrit Cole\", \"role\": \"pit\"}"
       },
+      "drift_tolerant": [
+        "count"
+      ],
       "q": "How many saves does Gerrit Cole have?",
       "unstable": []
     },
@@ -531,6 +577,9 @@
         "tool_name": "query_situational",
         "understood_as": "{\"event\": \"L\", \"player\": \"Gerrit Cole\", \"role\": \"pit\"}"
       },
+      "drift_tolerant": [
+        "count"
+      ],
       "q": "How many losses does Gerrit Cole have?",
       "unstable": []
     },
@@ -559,6 +608,9 @@
         "tool_name": "query_situational",
         "understood_as": "{\"event\": \"ER\", \"player\": \"Gerrit Cole\", \"role\": \"pit\"}"
       },
+      "drift_tolerant": [
+        "count"
+      ],
       "q": "How many earned runs does Gerrit Cole have?",
       "unstable": []
     },
@@ -587,6 +639,9 @@
         "tool_name": "query_situational",
         "understood_as": "{\"event\": \"BB\", \"player\": \"Gerrit Cole\", \"role\": \"pit\"}"
       },
+      "drift_tolerant": [
+        "count"
+      ],
       "q": "How many walks does Gerrit Cole have?",
       "unstable": []
     },
@@ -1147,6 +1202,9 @@
         "tool_name": "query_situational",
         "understood_as": "{\"event\": \"HR\", \"player\": \"Aaron Judge\", \"season_start\": 2020}"
       },
+      "drift_tolerant": [
+        "count"
+      ],
       "q": "How many home runs has Aaron Judge hit since 2020?",
       "unstable": []
     },
@@ -2711,6 +2769,9 @@
         "tool_name": "query_situational",
         "understood_as": "{\"event\": \"HR\", \"player\": \"Shohei Ohtani\"}"
       },
+      "drift_tolerant": [
+        "count"
+      ],
       "q": "How many home runs has Shohei Ohtani hit as a hitter?",
       "unstable": []
     },
@@ -2795,6 +2856,9 @@
         "tool_name": "query_situational",
         "understood_as": "{\"event\": \"HR\", \"player\": \"Aaron Judge\"}"
       },
+      "drift_tolerant": [
+        "count"
+      ],
       "q": "Who has more home runs, Aaron Judge or Mike Trout?",
       "unstable": []
     },
@@ -2823,6 +2887,9 @@
         "tool_name": "query_situational",
         "understood_as": "{\"event\": \"HR\", \"player\": \"Aaron Judge\"}"
       },
+      "drift_tolerant": [
+        "count"
+      ],
       "q": "Does Aaron Judge or Giancarlo Stanton have more home runs?",
       "unstable": []
     },
@@ -2851,6 +2918,9 @@
         "tool_name": "query_situational",
         "understood_as": "{\"event\": \"HR\", \"game_type\": \"P\", \"player\": \"Aaron Judge\"}"
       },
+      "drift_tolerant": [
+        "count"
+      ],
       "q": "How many home runs has Aaron Judge hit in the postseason?",
       "unstable": []
     },
@@ -2879,6 +2949,9 @@
         "tool_name": "query_situational",
         "understood_as": "{\"event\": \"HR\", \"game_type\": \"P\", \"player\": \"Aaron Judge\"}"
       },
+      "drift_tolerant": [
+        "count"
+      ],
       "q": "How many home runs has Aaron Judge hit in the World Series?",
       "unstable": []
     },
@@ -3145,6 +3218,9 @@
         "tool_name": "query_situational",
         "understood_as": "{\"event\": \"HR\", \"player\": \"Mike Trout\"}"
       },
+      "drift_tolerant": [
+        "count"
+      ],
       "q": "How many home runs does Mike Trout have?",
       "unstable": []
     },
@@ -3173,6 +3249,9 @@
         "tool_name": "query_situational",
         "understood_as": "{\"event\": \"SB\", \"player\": \"Mookie Betts\"}"
       },
+      "drift_tolerant": [
+        "count"
+      ],
       "q": "How many stolen bases does Mookie Betts have?",
       "unstable": []
     },
@@ -3201,6 +3280,9 @@
         "tool_name": "query_situational",
         "understood_as": "{\"event\": \"K\", \"player\": \"Clayton Kershaw\", \"role\": \"pit\"}"
       },
+      "drift_tolerant": [
+        "count"
+      ],
       "q": "How many strikeouts does Clayton Kershaw have?",
       "unstable": []
     },
@@ -5035,6 +5117,9 @@
         "tool_name": "query_situational",
         "understood_as": "{\"event\": \"H\", \"player\": \"Mookie Betts\"}"
       },
+      "drift_tolerant": [
+        "count"
+      ],
       "q": "How many times has Mookie Betts hit for the cycle?",
       "unstable": []
     },
@@ -5161,6 +5246,9 @@
         "tool_name": "query_situational",
         "understood_as": "{\"event\": \"K\", \"game_type\": \"P\", \"player\": \"Clayton Kershaw\", \"role\": \"pit\"}"
       },
+      "drift_tolerant": [
+        "count"
+      ],
       "q": "How many strikeouts does Clayton Kershaw have in the postseason?",
       "unstable": []
     },
@@ -5189,6 +5277,9 @@
         "tool_name": "query_situational",
         "understood_as": "{\"event\": \"HR\", \"game_type\": \"P\", \"player\": \"Mike Trout\"}"
       },
+      "drift_tolerant": [
+        "count"
+      ],
       "q": "How many home runs has Mike Trout hit in the playoffs?",
       "unstable": []
     },
@@ -5343,6 +5434,9 @@
         "tool_name": "query_situational",
         "understood_as": "{\"event\": \"K\", \"player\": \"Shohei Ohtani\", \"role\": \"pit\"}"
       },
+      "drift_tolerant": [
+        "count"
+      ],
       "q": "How many strikeouts does Shohei Ohtani have as a pitcher?",
       "unstable": []
     },

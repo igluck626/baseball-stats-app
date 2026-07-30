@@ -18,6 +18,64 @@ HERE = os.path.dirname(__file__)
 OUT = os.path.join(HERE, "golden_baseline.json")
 
 
+def flag_drift_tolerant(questions):
+    """Mark a question's `count` cell drift_tolerant when it's an ACTIVE player's
+    career (or current-inclusive) season-stats total — those grow nightly as the
+    live season advances, so the gate must judge them by direction, not equality
+    (see diff_battery). Computed HERE so a golden rebuild recomputes it rather than
+    quietly losing the flags. NEEDS the DB (active-status) via $ASK_DB_URL — the same
+    URL run_battery uses for tool_name. If it's absent, we WARN and skip rather than
+    emit an unflagged golden that would then read the season as a fault."""
+    cands = {}   # qid -> player, for gated season-stats CAREER/current-inclusive counts
+    for qid, rec in questions.items():
+        c = rec["cell"]
+        if c.get("count") is None or "count" in set(rec.get("unstable", [])):
+            continue
+        if not str(c.get("source") or "").startswith("season_stats"):
+            continue
+        try:
+            ua = json.loads(c["understood_as"]) if c.get("understood_as") else {}
+        except Exception:
+            ua = {}
+        # a single past season or a bounded (season_end) range is FIXED, not drift-prone
+        if ua.get("season") is not None or ua.get("season_end") is not None:
+            continue
+        if ua.get("player"):
+            cands[qid] = ua["player"]
+    if not cands:
+        return 0
+    url = os.getenv("ASK_DB_URL")
+    if not url:
+        print("  WARNING: no ASK_DB_URL — drift_tolerant flags NOT computed. Rebuild "
+              "with DB access to restore them, or the gate will read the live season "
+              "as a fault.", file=sys.stderr)
+        return 0
+    try:
+        import psycopg2
+        con = psycopg2.connect(url, connect_timeout=25); cur = con.cursor()
+        active = {}
+        for p in set(cands.values()):
+            base = p.split(" Jr")[0]      # DB stores names without a suffix
+            yr = None
+            for tbl, pl in (("player_seasons", "players"), ("pitcher_seasons", "pitchers")):
+                cur.execute(f"SELECT max(ps.year) FROM {tbl} ps JOIN {pl} p "
+                            f"ON p.player_id = ps.player_id WHERE p.name ILIKE %s", (base + "%",))
+                y = cur.fetchone()[0]
+                if y and (yr is None or y > yr):
+                    yr = y
+            active[p] = yr is not None and yr >= 2025   # played in the last ~2 seasons
+        cur.close(); con.close()
+    except Exception as exc:  # noqa: BLE001
+        print(f"  WARNING: drift-flag DB query failed ({exc}); flags NOT computed.", file=sys.stderr)
+        return 0
+    n = 0
+    for qid, p in cands.items():
+        if active.get(p):
+            questions[qid]["drift_tolerant"] = ["count"]
+            n += 1
+    return n
+
+
 def main():
     runs = [json.load(open(p)) for p in sys.argv[1:]]
     assert len(runs) >= 2, "need >=2 result files"
@@ -53,16 +111,19 @@ def main():
             for k in unstable:
                 unstable_by_key[k] = unstable_by_key.get(k, 0) + 1
 
+    n_drift = flag_drift_tolerant(questions)
+
     golden = {"meta": {"n_runs": len(runs), "n_questions": len(ids),
                        "n_cannot_answer_class": n_cannot_answer,
                        "n_gated_questions": len(ids) - len(unstable_qs),
                        "n_unstable_cells": total_unstable,
                        "n_unstable_questions": len(unstable_qs),
+                       "n_drift_tolerant": n_drift,
                        "unstable_by_key": unstable_by_key},
               "questions": questions}
     json.dump(golden, open(OUT, "w"), indent=2, ensure_ascii=False, sort_keys=True)
     print(f"wrote {OUT}")
-    print(f"questions: {len(ids)}")
+    print(f"questions: {len(ids)}   drift_tolerant count cells: {n_drift}")
     print(f"UNSTABLE questions: {len(unstable_qs)}  (cells: {total_unstable})")
     print(f"unstable by key: {unstable_by_key}")
     for qid, q, keys in unstable_qs:
