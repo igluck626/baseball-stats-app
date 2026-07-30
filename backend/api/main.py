@@ -5853,6 +5853,41 @@ def _unsupported_concept(q):
     return None
 
 
+# Concepts the app CAN answer but under a DIFFERENT tool than the model tends to
+# pick — the sibling of _UNSUPPORTED_CONCEPT: reroute instead of refuse. Each row is
+# (question pattern, target tool, forced params). _redirect_concept preserves the
+# player and any scope the target understands, so the constraint guard (which runs
+# AFTER the redirect) resolves opponent/season for the new tool. Add a row here when
+# a supported statistic keeps getting absorbed into an adjacent event.
+_REDIRECT_CONCEPT = [
+    # THE CYCLE is a single-game feat (query_game_achievement counts occurrences),
+    # not a season-stat COUNT. Seeing "hit for the cycle", the model absorbs it into
+    # event=H (returning career hits) or event=cycle (which the count path rejects
+    # with "I can't count that statistic yet"). Reroute to the game-achievement
+    # counter. Only when the model DIDN'T already pick it (so "which players hit for
+    # the cycle" / "has X ever", already routed correctly, are left untouched).
+    (re.compile(r"\bhit(?:ting|s)?\s+for\s+the\s+cycle\b|\bthe\s+cycle\b|\bcycles?\b", re.I),
+     "query_game_achievement", {"stat": "cycle"}),
+]
+# scope params a redirect target can carry through (the guard resolves opponent later)
+_REDIRECT_KEEP = ("player", "season", "season_start", "season_end",
+                  "opponent", "home_away", "game_type")
+
+
+def _redirect_concept(question, tool_name, tool_input):
+    """If the QUESTION names a concept answerable under a different tool than the one
+    the model chose, return (target_tool, new_tool_input) with the player + scope
+    preserved; else None. No-op when the model already picked the target tool."""
+    ti = tool_input or {}
+    for pat, target, forced in _REDIRECT_CONCEPT:
+        if tool_name == target:
+            continue
+        if pat.search(question or ""):
+            keep = {k: ti[k] for k in _REDIRECT_KEEP if ti.get(k) is not None}
+            return target, {**keep, **forced}
+    return None
+
+
 def _canon_event(event):
     if event is None:
         return None
@@ -10756,6 +10791,9 @@ def ask(request: Request,
     # an injected value then takes effect for previously-asked questions instead of
     # being masked by a row that already has the field baked in.
     raw_tool_input = dict(tool_input) if tool_input is not None else None
+    raw_tool_name = tool_name   # the model's ORIGINAL tool choice — cached (not any
+    # redirected one), so a _redirect_concept re-fires on replay from the raw reading
+    # rather than being masked by a row already rewritten to the target tool.
 
     # Re-ask short-circuit: pin the QUERY to the chosen player. The cache is
     # unaffected — raw_tool_input was snapshotted above, before this override, so
@@ -10804,7 +10842,7 @@ def ask(request: Request,
         # what lets the guard's re-run on a cache hit actually re-inject, so a guard
         # change is never masked by an already-mutated cached row.
         timing["total"] = round((time.perf_counter() - t_all) * 1000, 1)
-        _ask_log_write(q, norm, tool_name, raw_tool_input, base, cached, id_hash,
+        _ask_log_write(q, norm, raw_tool_name, raw_tool_input, base, cached, id_hash,
                        in_tok, out_tok, timing)
         return base
 
@@ -10821,6 +10859,18 @@ def ask(request: Request,
         base["reason"] = _concept_decline
         base["answer"] = _concept_decline
         return _finish()
+
+    # ---- SUPPORTED-CONCEPT REDIRECT (deterministic, GLOBAL — before the constraint
+    # guard). A concept the app CAN answer but under a different tool than the model
+    # chose (the cycle -> a game achievement, not a season-stat count). Unlike the
+    # decline above, this REROUTES: rewrite tool_name/tool_input to the target, keep
+    # the ORIGINAL for the cache (raw_tool_name), and fall through so the guard below
+    # resolves opponent/season for the new tool and the normal dispatch runs it. Runs
+    # on the cached translation too, so a stale mis-route is corrected on replay.
+    _redir = _redirect_concept(q, tool_name, tool_input)
+    if _redir is not None:
+        log.warning("ask: REDIRECT %s %s -> %s for %r", tool_name, tool_input, _redir[0], q)
+        tool_name, tool_input = _redir
 
     # ---- deterministic constraint validation (LLM proposes, CODE disposes) --
     # Runs for any answerable tool, on BOTH the fresh and cached translation, so
