@@ -1,7 +1,7 @@
 {
   "meta": {
     "n_cannot_answer_class": 18,
-    "n_drift_tolerant": 31,
+    "n_drift_tolerant": 30,
     "n_gated_questions": 167,
     "n_questions": 185,
     "n_runs": 3,
@@ -5097,29 +5097,29 @@
       "cannot_answer_class": false,
       "cell": {
         "ambiguous": false,
-        "answer100": "",
-        "count": 1829,
+        "answer100": "Yes — Mookie Betts has hit for the cycle in a game once: August 9, 2018 vs Toronto Blue Jays.",
+        "count": null,
         "db_status": "ok",
         "declined": false,
         "has_milestone": false,
-        "has_rates": true,
+        "has_rates": false,
         "has_span": false,
         "has_streak": false,
         "has_two_way": false,
-        "highlighted_stat": "H",
+        "highlighted_stat": null,
         "http": 200,
+        "leaders_val": null,
         "n_leaders": 0,
         "n_sample": 0,
         "n_splits": 0,
         "out_of_scope": false,
+        "rates_val": null,
         "reason100": "",
-        "source": "season_stats",
+        "source": "game_logs",
+        "splits_val": null,
         "tool_name": "query_situational",
-        "understood_as": "{\"event\": \"H\", \"player\": \"Mookie Betts\"}"
+        "understood_as": "{\"player\": \"Mookie Betts\", \"stat\": \"cycle\"}"
       },
-      "drift_tolerant": [
-        "count"
-      ],
       "q": "How many times has Mookie Betts hit for the cycle?",
       "unstable": []
     },
