@@ -5814,6 +5814,32 @@ _UNSUPPORTED_CONCEPT = [
     (re.compile(r"\b(?:winning|win|w[-/]?l|won[-\s]?lost)[\s-]+(?:percentage|pct|%)", re.I),
      "I can't give winning percentage — that's a rate I don't compute. I can give "
      "the win and loss totals."),
+    # CONSECUTIVE GAMES PLAYED (the iron-man streak, Ripken's 2,632) -> the model
+    # coerces it into a hit MILESTONE ("2131st hit") or a hitting STREAK, both wrong.
+    # Not answerable: a games-PLAYED streak breaks on a MISSED team game, and the
+    # daily table only has games the player DID play (no schedule to see the gap),
+    # so a missed game is undetectable. The seam is the point — this must NOT catch
+    # the answerable neighbours ("consecutive games WITH a hit/home run", "reaching
+    # base", hitting/on-base/HR streaks). It fires only on the games-PLAYED signals:
+    # 'iron man', 'games played in a row', 'consecutive games played', an ordinal
+    # 'Nth consecutive game' (spared when '...with a hit' follows), a bare
+    # 'consecutive-game streak', or the verb 'play' adjacent to 'consecutive games'
+    # with no stat between (the tempered lookahead spares 'hit/homered/reached in N
+    # consecutive games', where the stat precedes the number). Same negative-lookahead
+    # discipline as the extra-base(?!\s*hits?) seam above.
+    (re.compile(
+        r"\biron[\s-]?man\b"
+        r"|games?\s+played\s+in\s+a\s+row"
+        r"|consecutive\s+games?\s+played"
+        r"|consecutive[\s-]games?\s+streak"
+        r"|\d+(?:st|nd|rd|th)\s+consecutive\s+game\b(?!\s+(?:with|reaching|scoring|on|of))"
+        r"|play(?:ed|ing|s)?\b(?:(?!\bwith\b|\bhits?\b|\bhome\s*runs?\b|\brbis?\b"
+        r"|\breach|\bon.base\b|\bscor).){0,30}?consecutive\s+games?"
+        r"|consecutive\s+games?\b(?:(?!\bwith\b|\bhits?\b|\bhome\s*runs?\b|\brbis?\b"
+        r"|\breach|\bon.base\b|\bscor).){0,30}?\bplay(?:ed|ing|s)?\b",
+        re.I),
+     "I don't track consecutive games played (the iron-man streak) — that needs "
+     "game-by-game schedule data I don't have."),
 ]
 
 
