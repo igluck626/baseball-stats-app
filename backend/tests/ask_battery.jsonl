@@ -64,7 +64,7 @@
 {"id": "q063", "bucket": "milestone", "q": "When did Rickey Henderson steal his 1000th base?", "note": "SB milestone"}
 {"id": "q064", "bucket": "milestone", "q": "When did Rickey Henderson score his 2000th run?", "note": "R milestone"}
 {"id": "q065", "bucket": "milestone", "q": "When did Hank Aaron drive in his 2000th run?", "note": "RBI milestone"}
-{"id": "q066", "bucket": "milestone", "q": "When did Albert Pujols hit his 500th home run in 2014?", "note": "milestone + season cap"}
+{"id": "q066", "bucket": "milestone", "q": "When did Albert Pujols hit his 500th home run?", "note": "milestone"}
 {"id": "q067", "bucket": "streak", "q": "What is Joe DiMaggio's longest hitting streak?", "note": "streak"}
 {"id": "q068", "bucket": "span", "q": "What is the most home runs Aaron Judge has hit in 10 games?", "note": "span"}
 {"id": "q069", "bucket": "streak", "q": "What is the longest scoreless innings streak by Orel Hershiser?", "note": "scoreless streak pitching line"}

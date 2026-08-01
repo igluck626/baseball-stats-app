@@ -1953,7 +1953,7 @@
       "cannot_answer_class": false,
       "cell": {
         "ambiguous": false,
-        "answer100": "Albert Pujols hasn't reached 500 home runs — through 2014 he's at 28.",
+        "answer100": "",
         "count": null,
         "db_status": "ok",
         "declined": false,
@@ -1964,16 +1964,19 @@
         "has_two_way": false,
         "highlighted_stat": null,
         "http": 200,
+        "leaders_val": null,
         "n_leaders": 0,
         "n_sample": 0,
         "n_splits": 0,
         "out_of_scope": false,
+        "rates_val": null,
         "reason100": "",
         "source": "daily",
+        "splits_val": null,
         "tool_name": "query_milestone",
-        "understood_as": "{\"event\": \"HR\", \"n\": 500, \"player\": \"Albert Pujols\", \"season\": 2014}"
+        "understood_as": "{\"event\": \"HR\", \"n\": 500, \"player\": \"Albert Pujols\"}"
       },
-      "q": "When did Albert Pujols hit his 500th home run in 2014?",
+      "q": "When did Albert Pujols hit his 500th home run?",
       "unstable": []
     },
     "q067": {
