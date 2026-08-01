@@ -183,3 +183,9 @@
 {"id": "q182", "bucket": "opp_ext_ambig", "q": "How many home runs has Mike Trout hit against Chicago?", "note": "ambiguous city (Cubs/White Sox) -> decline"}
 {"id": "q183", "bucket": "opp_ext_selfteam", "q": "How many home runs has Derek Jeter hit against the Yankees?", "note": "self-team (Jeter NYA-only) -> the played-for note, count 0"}
 {"id": "q184", "bucket": "opp_ext_rate_lb", "q": "Who has the highest batting average against the Yankees?", "note": "rate leaderboard scoped — leaders_val AB must be 40s+, not fluke single digits"}
+{"id": "q185", "bucket": "team_champ", "q": "How many World Series have the Yankees won?", "note": "query_team championships — franchise-keyed, 27 (stable/historical)"}
+{"id": "q186", "bucket": "team_record", "q": "What was the Mariners' record in 2001?", "note": "query_team record — 116-46 .716, a fixed past season"}
+{"id": "q187", "bucket": "team_standing", "q": "Who won the AL East in 2019?", "note": "query_team standing — division winner (no team named), era-correct name = Yankees"}
+{"id": "q188", "bucket": "team_super", "q": "What is the most wins in a season?", "note": "query_team superlative (no team) — 116, a TIE (1906 Cubs / 2001 Mariners)"}
+{"id": "q189", "bucket": "team_continuity", "q": "How many World Series have the Expos won?", "note": "query_team continuity — folds to the Nationals franchise, 1 (2019), states the rename"}
+{"id": "q190", "bucket": "team_ambig", "q": "How many World Series has Chicago won?", "note": "query_team ambiguous-city — declines with the Cubs/White Sox clarify (subject-side)"}
