@@ -5959,12 +5959,78 @@ _REDIRECT_CONCEPT = [
 _REDIRECT_KEEP = ("player", "season", "season_start", "season_end",
                   "opponent", "home_away", "game_type")
 
+# ---- PER-GAME FEAT shape ("multi-home-run games", "3-hit games", "games with 4+
+# RBI") — a game-achievement question (count of GAMES with N+ of a stat) that the
+# model recurrently mis-routes to a COUNT tool, which then counts the STAT (career
+# home runs / hits) rather than the GAMES. The cycle redirect handles one fixed
+# feat; this handles the whole PARAMETRIC family, so a new stat doesn't need a new
+# row. Fires ONLY on the "<qty> <stat> game(s)" / "game(s) with <qty>[+] <stat>"
+# phrasing — a plain stat count ("how many home runs vs the Dodgers") has no such
+# game-unit and is left alone (the seam).
+_FEAT_QTY = {"multi": 2, "multiple": 2, "several": 2, "two": 2, "three": 3,
+             "four": 4, "five": 5, "six": 6, "double": 2, "triple": 3}
+_FEAT_STAT_ALT = (r"home[- ]?runs?|homers?|dingers?|long[- ]?balls?|hits?"
+                  r"|rbis?|runs? batted in|doubles?|triples?|strike ?outs?|k'?s")
+# Shape 1: "<qty>-<stat> game(s)"   e.g. "multi-home-run games", "3-hit games"
+_FEAT_SHAPE1 = re.compile(
+    r"\b(multi|multiple|several|two|three|four|five|six|\d+)[\s-]+(" + _FEAT_STAT_ALT
+    + r")\s+games?\b", re.I)
+# Shape 2: "game(s) with <qty>[+ / or more] <stat>"  e.g. "games with 4 or more RBIs"
+_FEAT_SHAPE2 = re.compile(
+    r"\bgames?\s+with\s+(multi|multiple|several|two|three|four|five|six|\d+)\s*"
+    r"(?:\+|or\s+more)?\s+(" + _FEAT_STAT_ALT + r")\b", re.I)
+
+
+def _feat_stat_code(tok):
+    """The game-achievement stat code for a matched stat noun."""
+    t = (tok or "").lower()
+    if "home" in t or "homer" in t or "dinger" in t or "long" in t:
+        return "HR"
+    if "rbi" in t or "batted in" in t:
+        return "RBI"
+    if "double" in t:
+        return "2B"
+    if "triple" in t:
+        return "3B"
+    if "strike" in t or t.strip() in ("k", "ks", "k's"):
+        return "SO"
+    if "hit" in t:
+        return "H"
+    return None
+
+
+def _game_feat_redirect(question):
+    """Parse a per-game feat phrasing -> {stat, threshold}, or None. 'multi' / 'several'
+    read as 2+ (the game-achievement threshold is >= N)."""
+    for rx in (_FEAT_SHAPE1, _FEAT_SHAPE2):
+        m = rx.search(question or "")
+        if not m:
+            continue
+        qty = _FEAT_QTY.get(m.group(1).lower())
+        if qty is None:
+            try:
+                qty = int(m.group(1))
+            except (TypeError, ValueError):
+                continue
+        stat = _feat_stat_code(m.group(2))
+        if stat:
+            return {"stat": stat, "threshold": qty}
+    return None
+
 
 def _redirect_concept(question, tool_name, tool_input):
     """If the QUESTION names a concept answerable under a different tool than the one
     the model chose, return (target_tool, new_tool_input) with the player + scope
     preserved; else None. No-op when the model already picked the target tool."""
     ti = tool_input or {}
+    # PARAMETRIC per-game feat ("multi-home-run games", "3-hit games") -> the
+    # game-achievement counter with the parsed stat + threshold. Skipped if the
+    # model already routed there (so a correct 'two-HR games' is left untouched).
+    if tool_name != "query_game_achievement":
+        feat = _game_feat_redirect(question)
+        if feat is not None:
+            keep = {k: ti[k] for k in _REDIRECT_KEEP if ti.get(k) is not None}
+            return "query_game_achievement", {**keep, **feat}
     for pat, target, forced in _REDIRECT_CONCEPT:
         if tool_name == target:
             continue
