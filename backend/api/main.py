@@ -7703,22 +7703,38 @@ def _is_two_way(mlbam_id):
     return int(pit_games) >= 20 and int(bat_only) >= 50
 
 
-# Stat -> which table. AMBIGUOUS routes by the player's role (two-way -> BOTH).
+# Stat -> which table.
 _BATTING_ONLY_EVENTS = {"H", "1B", "2B", "3B", "RBI", "TB", "HBP", "R", "SB"}
 _PITCHING_ONLY_EVENTS = {"W", "L", "SV", "ER"}
-_AMBIGUOUS_EVENTS = {"K", "BB", "HR"}
+# GENUINELY two-sided in USER INTENT: "how many strikeouts does Ohtani have" means
+# either his batting Ks or his pitching Ks — both are real, headline answers, and no
+# verb disambiguates. A two-way player gets BOTH (the two-way card).
+_TWO_SIDED_EVENTS = {"K"}
+# Ambiguous only in the DATA (a pitcher CAN hit HRs / issue walks), not in intent:
+# "how many home runs did Ruth hit" means hit, ~always; the HR-allowed reading is
+# phrased "gave up / allowed". Default to BATTING; the pitching reading needs an
+# EXPLICIT signal. NEVER a two-way card, even for a genuine two-way player.
+_BATTING_DEFAULT_EVENTS = {"HR", "BB"}
+# The union: the events we resolve the player for, to decide a side at all.
+_AMBIGUOUS_EVENTS = _TWO_SIDED_EVENTS | _BATTING_DEFAULT_EVENTS
 
 
 def _route_stat_role(event, resolved_bat, mlbam):
     """('bat'|'pit'|'two_way') for a (stat, player). Unambiguous stats are fixed by
-    the stat; ambiguous K/BB/HR route by the player's role — a two-way player gets
-    BOTH, a primary pitcher (position 'P') gets pitching, everyone else batting."""
+    the stat. A TWO-SIDED stat (K) routes by role — a two-way player gets BOTH, a
+    primary pitcher gets pitching, everyone else batting. A BATTING-DEFAULT stat
+    (HR/BB) is batting UNLESS the player is a primary pitcher (who barely bats, so
+    means HR-allowed / walks-issued) — never a two-way card."""
     ev = (event or "").strip().upper()
     if ev in _PITCHING_ONLY_EVENTS:
         return "pit"
-    if ev in _AMBIGUOUS_EVENTS:
+    if ev in _TWO_SIDED_EVENTS:
         if mlbam is not None and _is_two_way(mlbam):
             return "two_way"
+        if resolved_bat and resolved_bat.get("position") == "P":
+            return "pit"
+        return "bat"
+    if ev in _BATTING_DEFAULT_EVENTS:
         if resolved_bat and resolved_bat.get("position") == "P":
             return "pit"
         return "bat"
@@ -8272,7 +8288,8 @@ _TWO_WAY_STAT_LABEL = {"K": "strikeouts", "BB": "walks", "HR": "home runs"}
 # question text in code, never trust the model's unsolicited param.
 _ROLE_SIDE_PIT_RE = re.compile(
     r"\b(as a pitcher|on the mound|from the mound|pitching|as a starter|"
-    r"as a reliever)\b", re.I)
+    r"as a reliever|allowed|allow|gave up|give up|given up|giving up|"
+    r"surrendered|surrender|issued|issue)\b", re.I)
 _ROLE_SIDE_BAT_RE = re.compile(
     r"\b(as a (?:hitter|batter)|at the plate|with the bat|batting|as a dh)\b", re.I)
 
@@ -8312,10 +8329,14 @@ def _decide_role(event, player, explicit_side=None):
         return "bat"
     resolved = cands[0]
     base_role = _route_stat_role(ev, resolved, resolved["mlbam_id"])
-    # An EXPLICIT user-named side only DISAMBIGUATES a two-way player to one side;
-    # it never overrides a clear bat/pit (which would risk routing Judge's Ks to an
-    # empty pitching table).
+    # An explicit user-named side DISAMBIGUATES a two-sided event's two-way card to
+    # one side, and ROUTES a batting-default event (HR/BB) to its pitching reading
+    # ('HR allowed' / 'walks issued') or back to batting. It never overrides a clear
+    # bat/pit for a two-sided event (which would risk routing Judge's Ks to an empty
+    # pitching table).
     if base_role == "two_way" and side in ("bat", "pit"):
+        return side
+    if ev in _BATTING_DEFAULT_EVENTS and side in ("bat", "pit"):
         return side
     return base_role
 
@@ -12328,7 +12349,15 @@ def ask(request: Request,
         base["source"] = "season_stats"
         base["two_way"] = _compute_two_way("count", params)
         return _finish()
-    if _side in ("bat", "pit"):
+    _ev_up = (params.get("event") or "").strip().upper()
+    if _ev_up == "SO":
+        _ev_up = "K"
+    if _ev_up in _AMBIGUOUS_EVENTS:
+        # code disposes: _decide_role has already folded in any explicit side + the
+        # batting-default rule, so enforce ITS side over the model's volunteered role
+        # ('Ruth HR' -> bat not two-way; 'Ruth HR allowed' -> pit).
+        params["role"] = _route
+    elif _side in ("bat", "pit"):
         params["role"] = _side   # honor a user-named side over the model's guess
 
     # ---- GATE 0: routing predicate (deterministic, not LLM judgment) ----
