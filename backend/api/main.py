@@ -12352,10 +12352,13 @@ def ask(request: Request,
     _ev_up = (params.get("event") or "").strip().upper()
     if _ev_up == "SO":
         _ev_up = "K"
-    if _ev_up in _AMBIGUOUS_EVENTS:
-        # code disposes: _decide_role has already folded in any explicit side + the
-        # batting-default rule, so enforce ITS side over the model's volunteered role
-        # ('Ruth HR' -> bat not two-way; 'Ruth HR allowed' -> pit).
+    if _ev_up in _BATTING_DEFAULT_EVENTS:
+        # code disposes for HR/BB: enforce the batting-default decision over the
+        # model's volunteered role ('Ruth HR' -> bat not two-way; 'Ruth HR allowed'
+        # -> pit). NOT for K (two-sided): there _decide_role returns 'bat' as a
+        # MULTI-CANDIDATE fallback, and forcing that would misroute an ambiguous-named
+        # pitcher's Ks to the batting resolver (Randy Johnson -> a picker instead of
+        # 4875). K keeps the model's role, which correctly names the pitcher.
         params["role"] = _route
     elif _side in ("bat", "pit"):
         params["role"] = _side   # honor a user-named side over the model's guess
