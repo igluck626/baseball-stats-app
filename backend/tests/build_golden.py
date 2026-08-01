@@ -16,6 +16,7 @@ import sys
 
 HERE = os.path.dirname(__file__)
 OUT = os.path.join(HERE, "golden_baseline.json")
+ROUTING_KEYS = ("tool_name", "understood_as")  # advisory-by-rule at gate time; see diff_battery
 
 
 def flag_drift_tolerant(questions):
@@ -89,7 +90,14 @@ def main():
     for qid in ids:
         cells = [(r.get(qid) or {}).get("cell", {}) for r in runs]
         keys = sorted(set().union(*[set(c) for c in cells]))
-        unstable = [k for k in keys if len({repr(c.get(k)) for c in cells}) > 1]
+        # ROUTING keys (tool_name/understood_as) are advisory-BY-RULE at gate time
+        # (diff_battery never gates them — the server-side redirect/guard overrides the
+        # model's raw pick, so it re-rolls harmlessly every prompt_version bump). They
+        # are still CAPTURED in the cell for diagnosis; we just don't list them per
+        # question as "unstable", which would be redundant double-bookkeeping and would
+        # muddy the unstable summary that should track genuine OUTCOME flakiness.
+        unstable = [k for k in keys
+                    if k not in ROUTING_KEYS and len({repr(c.get(k)) for c in cells}) > 1]
         rec = next(r[qid] for r in reversed(runs) if qid in r)
         goldcell = (last.get(qid) or {}).get("cell") or cells[0]
         # RULE (not observation): a question whose translation was cannot_answer in
