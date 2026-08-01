@@ -8492,6 +8492,23 @@ def _resolve_team_subject(name):
     return ("resolve", fr, current, token)
 
 
+def _question_ambiguous_city(question):
+    """If the team SUBJECT named in the QUESTION is a bare ambiguous city (no
+    nickname to disambiguate it), return that city's clarify — even when the model
+    quietly resolved it to one club ('Chicago' -> 'the Cubs'), because that pick
+    silently drops the city's other franchise. The subject-side mirror of the
+    opponent path's bare-city protection, minus the against/vs anchor (here the
+    city IS the subject). A nickname anywhere in the question ('the Chicago Cubs',
+    'the White Sox') means it was named, so no decline."""
+    ql = " " + (question or "").lower() + " "
+    if _OPP_NICK_BARE.search(ql):        # a club nickname is present -> not bare
+        return None
+    for city in team_crosswalk.AMBIG_CITY:
+        if re.search(r"\b" + re.escape(city) + r"\b", ql):
+            return team_crosswalk.AMBIG_CITY[city]
+    return None
+
+
 def _team_current_year(db):
     """The latest season in team_seasons (the nightly-maintained current year)."""
     return db.query(_sa_func.max(TeamSeason.year)).scalar()
@@ -11933,6 +11950,15 @@ def ask(request: Request,
     # runner resolves the club via team_crosswalk (or declines an ambiguous city),
     # then queries team_seasons + series_post. No team named -> the superlative form.
     if tool_name == "query_team":
+        # A bare ambiguous city as the subject declines with its clarify, even if
+        # the model already resolved it to one club (same rule as the opponent path).
+        _ambig = _question_ambiguous_city(q)
+        if _ambig:
+            base["out_of_scope"] = True
+            base["reason"] = _ambig
+            base["answer"] = _ambig
+            base["understood_as"] = None
+            return _finish()
         team_params = {k: tool_input.get(k) for k in (
             "metric", "team", "division", "season", "season_start", "season_end",
             "current") if tool_input.get(k) is not None}
