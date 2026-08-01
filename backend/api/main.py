@@ -8444,6 +8444,314 @@ def _comparison_summary(cmp):
     return f"{ents[0]['name']} leads with {nums} {stat}{tail}."
 
 
+# ---- TEAM / FRANCHISE questions (query_team) --------------------------------
+# Subject = a franchise (not a player). All from team_seasons (1871-current,
+# nightly-refreshed) + series_post (World Series). The team-name resolver is
+# team_crosswalk, reused wholesale — the SAME nickname/city maps and the SAME
+# ambiguous-city "name the club" decline as the opponent path.
+_TEAM_DIV_CODE = {"east": "E", "central": "C", "west": "W"}
+
+
+def _ordinal(n):
+    if n is None:
+        return "?"
+    if 10 <= (n % 100) <= 20:
+        suf = "th"
+    else:
+        suf = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suf}"
+
+
+def _pct3(v):
+    """A win pct as '.716' (no leading zero), or '—' if absent."""
+    if v is None:
+        return "—"
+    return f"{v:.3f}".lstrip("0") if v < 1 else f"{v:.3f}"
+
+
+def _resolve_team_subject(name):
+    """Resolve a team SUBJECT string ('the Yankees', 'Chicago', 'the Expos') to a
+    franchise. Mirrors _question_opponent's contract but for the team the question
+    is ABOUT (not an opponent): returns ('resolve', franch_id, current_name, token)
+    or ('decline', clarify). Reuses the opponent CLASSIFIER + crosswalk maps
+    wholesale, so an ambiguous city declines with the SAME 'name the club' clarify
+    and a defunct name folds into its modern franchise (Expos -> WSN)."""
+    cls = _classify_opponent(name or "")
+    if cls is None:
+        return ("decline", f"I couldn't tell which club '{name}' is — name the team, "
+                           "like 'the Yankees' or 'the Dodgers'.")
+    kind, token = cls
+    if kind == "city":     # a city that hosted more than one club
+        return ("decline", team_crosswalk.AMBIG_CITY.get(
+            token, "That city has hosted more than one club — name the team."))
+    fr = (team_crosswalk.NICK_TO_FRANCH.get(_norm_team(token))
+          or team_crosswalk.CITY_TO_FRANCH.get(token))
+    if not fr:
+        return ("decline", f"I couldn't identify the club '{name}'.")
+    current = team_crosswalk.FRANCH_CURRENT_NAME.get(fr, token.title())
+    return ("resolve", fr, current, token)
+
+
+def _team_current_year(db):
+    """The latest season in team_seasons (the nightly-maintained current year)."""
+    return db.query(_sa_func.max(TeamSeason.year)).scalar()
+
+
+def _franchise_subject(asked, current, token):
+    """The subject phrase for the answer. When the asked name still lives in the
+    current name ('Dodgers' in 'Los Angeles Dodgers', 'Nationals' in 'Washington
+    Nationals') just say the current name; when it DOESN'T ('Expos' -> 'Washington
+    Nationals') name the continuity, so a fan asking about the old club isn't told
+    a number under a name they didn't use. This is the Brooklyn->LA case: the count
+    is always the FRANCHISE's."""
+    if _norm_team(token) in _norm_team(current):
+        return f"the {current}", None
+    old = (asked or token).strip()
+    if old.lower().startswith("the "):
+        old = old[4:]
+    note = f"The {old} are now the {current}"
+    return f"the {current}", note
+
+
+def _franchise_team_ids(db, fr):
+    return [r[0] for r in db.query(TeamSeason.team_id)
+            .filter(TeamSeason.franch_id == fr).distinct().all()]
+
+
+def _team_championships(db, fr, current, asked, token, season):
+    """World Series titles — franchise-keyed via series_post (Lahman codes joined
+    to franch_id), so 'the Braves' counts Boston+Milwaukee+Atlanta and 'the Dodgers'
+    includes Brooklyn 1955. No team named -> the leaderboard ('which team most')."""
+    if fr is None:
+        # LEADERBOARD form: which franchise has the most titles
+        ws = db.query(SeriesPost.team_id_winner).filter(SeriesPost.round == "WS").all()
+        code2fr = dict(db.query(TeamSeason.team_id, TeamSeason.franch_id).distinct().all())
+        from collections import Counter
+        cnt = Counter(code2fr.get(w[0]) for w in ws if code2fr.get(w[0]))
+        if not cnt:
+            return {"resolved": False, "declined": True,
+                    "reason": "No World Series data is available."}
+        top = max(cnt.values())
+        leaders = sorted(f for f, c in cnt.items() if c == top)
+        names = [team_crosswalk.FRANCH_CURRENT_NAME.get(f, f) for f in leaders]
+        rows = [{"team": team_crosswalk.FRANCH_CURRENT_NAME.get(f, f), "value": c}
+                for f, c in sorted(cnt.items(), key=lambda kv: -kv[1])[:5]]
+        if len(names) == 1:
+            ans = f"The {names[0]} have won the most World Series, with {top}."
+        else:
+            ans = f"{_join_names(names)} share the most World Series, with {top} each."
+        return {"resolved": True, "source": "team", "answer": ans,
+                "team": {"title": "Most World Series titles", "headline": str(top),
+                         "label": "titles", "detail": None, "scope": "all-time",
+                         "partial": False, "rows": rows}}
+    # A NAMED franchise: count its titles
+    tids = _franchise_team_ids(db, fr)
+    wins = db.query(SeriesPost).filter(
+        SeriesPost.round == "WS", SeriesPost.team_id_winner.in_(tids)).all()
+    years = sorted((w.year for w in wins), reverse=True)
+    subject, cont = _franchise_subject(asked, current, token)
+    n = len(years)
+    if n == 0:
+        detail = None
+        ans = f"{subject[0].upper() + subject[1:]} have never won a World Series."
+    else:
+        detail = f"Most recent: {years[0]}" + (f". First: {years[-1]}." if n > 1 else ".")
+        titles = "World Series" if n == 1 else "World Series titles"
+        ans = f"{subject[0].upper() + subject[1:]} have won {n} {titles} ({', '.join(str(y) for y in years[:8])}{'…' if n > 8 else ''})."
+    if cont:
+        ans = f"{cont}. " + ans
+    return {"resolved": True, "source": "team", "answer": ans,
+            "team": {"title": current, "headline": str(n),
+                     "label": "World Series titles", "detail": detail,
+                     "scope": "all-time", "partial": False,
+                     "rows": [{"team": str(y), "value": None} for y in years[:12]]}}
+
+
+def _team_record(db, fr, current, asked, token, season, s_start, s_end, cur_year):
+    """A club's W-L. Named team + season (or 'this year') -> that season's record;
+    a range -> summed. NO team named -> the superlative 'most wins in a season'."""
+    if fr is None:
+        # SUPERLATIVE: most wins in a season (a TIE is stated as such)
+        rng = db.query(TeamSeason)
+        maxw = db.query(_sa_func.max(TeamSeason.W)).scalar()
+        rows = (db.query(TeamSeason).filter(TeamSeason.W == maxw)
+                .order_by(TeamSeason.year).all())
+        who = [f"the {r.year} {r.team_name}" for r in rows]
+        if len(who) == 1:
+            ans = f"The most wins in a season is {maxw} — {who[0]} ({maxw}-{rows[0].L})."
+        else:
+            ans = (f"The most wins in a season is {maxw}, a tie — "
+                   f"{_join_names(who)}.")
+        return {"resolved": True, "source": "team", "answer": ans,
+                "team": {"title": "Most wins in a season", "headline": str(maxw),
+                         "label": "wins", "detail": None, "scope": "single season",
+                         "partial": False,
+                         "rows": [{"team": f"{r.year} {r.team_name}",
+                                   "value": r.W} for r in rows]}}
+    # A NAMED franchise
+    subject, cont = _franchise_subject(asked, current, token)
+    if s_start is not None or s_end is not None:
+        lo = s_start or 1871
+        hi = s_end or cur_year
+        agg = (db.query(_sa_func.sum(TeamSeason.W), _sa_func.sum(TeamSeason.L))
+               .filter(TeamSeason.franch_id == fr,
+                       TeamSeason.year >= lo, TeamSeason.year <= hi).one())
+        w, l = agg[0] or 0, agg[1] or 0
+        scope = f"{lo}-{hi}"
+        ans = f"{subject[0].upper() + subject[1:]} went {w}-{l} from {lo} to {hi}."
+        return {"resolved": True, "source": "team", "answer": ans,
+                "team": {"title": current, "headline": f"{w}-{l}", "label": "record",
+                         "detail": scope, "scope": scope, "partial": False, "rows": []}}
+    yr = season if season is not None else cur_year
+    partial = (yr == cur_year)
+    row = (db.query(TeamSeason)
+           .filter(TeamSeason.franch_id == fr, TeamSeason.year == yr).first())
+    if row is None:
+        return {"resolved": False, "declined": True,
+                "reason": f"I don't have a {yr} season for {current}."}
+    where = _standing_phrase(row)
+    tail = " so far this season" if partial else ""
+    verb = "are" if partial else "went"
+    ans = (f"The {yr} {row.team_name} {verb} {row.W}-{row.L} "
+           f"({_pct3(row.win_pct)}){tail}" + (f", {where}." if where else "."))
+    if cont:
+        ans = f"{cont}. " + ans
+    return {"resolved": True, "source": "team", "answer": ans,
+            "team": {"title": f"{yr} {row.team_name}", "headline": f"{row.W}-{row.L}",
+                     "label": _pct3(row.win_pct), "detail": where,
+                     "scope": str(yr), "partial": partial, "rows": []}}
+
+
+def _standing_phrase(row):
+    """'1st in the AL West' from a team_seasons row (era-correct league/division)."""
+    if row.rank is None or not row.league or not row.division:
+        return None
+    divname = {"E": "East", "C": "Central", "W": "West"}.get(row.division, row.division)
+    return f"{_ordinal(row.rank)} in the {row.league} {divname}"
+
+
+def _team_standing(db, fr, current, asked, token, division, season, cur_year):
+    """Where a club finished, or who won a division. Named team -> its place that
+    year; a division named with NO team -> that division's winner (rank 1),
+    era-correctly named. 'This year' is in-progress, so 'lead(s)', not 'won'."""
+    yr = season if season is not None else cur_year
+    partial = (yr == cur_year)
+    if fr is not None:
+        row = (db.query(TeamSeason)
+               .filter(TeamSeason.franch_id == fr, TeamSeason.year == yr).first())
+        if row is None:
+            return {"resolved": False, "declined": True,
+                    "reason": f"I don't have a {yr} season for {current}."}
+        where = _standing_phrase(row)
+        if partial:
+            ans = (f"The {row.team_name} are {where} in {yr} "
+                   f"({row.W}-{row.L}), so far.") if where else \
+                  f"The {row.team_name} are {row.W}-{row.L} in {yr} so far."
+        else:
+            ans = (f"The {yr} {row.team_name} finished {where} "
+                   f"({row.W}-{row.L}).") if where else \
+                  f"The {yr} {row.team_name} went {row.W}-{row.L}."
+        return {"resolved": True, "source": "team", "answer": ans,
+                "team": {"title": f"{yr} {row.team_name}",
+                         "headline": _ordinal(row.rank) if row.rank else f"{row.W}-{row.L}",
+                         "label": where, "detail": f"{row.W}-{row.L}",
+                         "scope": str(yr), "partial": partial, "rows": []}}
+    # No team -> a division winner (needs a division)
+    if not division:
+        return {"resolved": False, "declined": True,
+                "reason": "Name a team ('where did the Mets finish') or a division "
+                          "('who won the AL East')."}
+    parts = str(division).lower().split()
+    league = "AL" if "al" in parts or "american" in parts else \
+             ("NL" if "nl" in parts or "national" in parts else None)
+    div = next((_TEAM_DIV_CODE[w] for w in parts if w in _TEAM_DIV_CODE), None)
+    if not league or not div:
+        return {"resolved": False, "declined": True,
+                "reason": f"I couldn't read the division '{division}' — try 'AL East', "
+                          "'NL West', etc."}
+    divname = {"E": "East", "C": "Central", "W": "West"}[div]
+    q = (db.query(TeamSeason).filter(TeamSeason.year == yr, TeamSeason.league == league,
+                                     TeamSeason.division == div))
+    if partial:
+        row = q.filter(TeamSeason.division_leader.is_(True)).first() \
+            or q.order_by(TeamSeason.rank).first()
+    else:
+        row = q.filter(TeamSeason.rank == 1).first()
+    if row is None:
+        return {"resolved": False, "declined": True,
+                "reason": f"I don't have {league} {divname} standings for {yr}."}
+    if partial:
+        ans = (f"The {row.team_name} lead the {league} {divname} in {yr} "
+               f"({row.W}-{row.L}).")
+    else:
+        ans = (f"The {yr} {row.team_name} won the {league} {divname} "
+               f"({row.W}-{row.L}).")
+    return {"resolved": True, "source": "team", "answer": ans,
+            "team": {"title": f"{league} {divname} {yr}", "headline": row.team_name,
+                     "label": "won" if not partial else "leading",
+                     "detail": f"{row.W}-{row.L}", "scope": str(yr),
+                     "partial": partial, "rows": []}}
+
+
+def _team_franchise_total(db, fr, current, asked, token):
+    """A franchise's all-time totals (wins/losses/games), summed across every season
+    under every name it has carried."""
+    if fr is None:
+        return {"resolved": False, "declined": True,
+                "reason": "Name a team for an all-time total (e.g. 'how many games "
+                          "have the Cubs won all-time')."}
+    agg = (db.query(_sa_func.sum(TeamSeason.W), _sa_func.sum(TeamSeason.L),
+                    _sa_func.min(TeamSeason.year), _sa_func.max(TeamSeason.year))
+           .filter(TeamSeason.franch_id == fr).one())
+    w, l, y0, y1 = agg[0] or 0, agg[1] or 0, agg[2], agg[3]
+    subject, cont = _franchise_subject(asked, current, token)
+    ans = (f"{subject[0].upper() + subject[1:]} have won {w:,} games all-time "
+           f"(since {y0}), against {l:,} losses.")
+    if cont:
+        ans = f"{cont}. " + ans
+    return {"resolved": True, "source": "team", "answer": ans,
+            "team": {"title": current, "headline": f"{w:,}", "label": "all-time wins",
+                     "detail": f"{l:,} losses · since {y0}", "scope": "all-time",
+                     "partial": False, "rows": []}}
+
+
+def _run_team(params):
+    """Route a team-subject question to the right team_seasons / series_post query.
+    Resolves the franchise once (or declines an ambiguous city), then dispatches on
+    `metric`. A missing team means the superlative/leaderboard form."""
+    if not connection.db_available():
+        return {"resolved": False, "declined": True,
+                "reason": "The team database isn't available right now."}
+    metric = (params.get("metric") or "").lower()
+    team = params.get("team")
+    season = params.get("season")
+    s_start, s_end = params.get("season_start"), params.get("season_end")
+    current = bool(params.get("current"))
+    division = params.get("division")
+
+    fr = disp = token = None
+    if team:
+        sub = _resolve_team_subject(team)
+        if sub[0] == "decline":
+            return {"resolved": False, "declined": True, "reason": sub[1]}
+        _, fr, disp, token = sub
+
+    with connection.get_session() as db:
+        cur_year = _team_current_year(db)
+        if current and season is None:
+            season = cur_year
+        if metric == "championships":
+            return _team_championships(db, fr, disp, team, token, season)
+        if metric == "record":
+            return _team_record(db, fr, disp, team, token, season, s_start, s_end, cur_year)
+        if metric == "standing":
+            return _team_standing(db, fr, disp, team, token, division, season, cur_year)
+        if metric == "franchise_total":
+            return _team_franchise_total(db, fr, disp, team, token)
+    return {"resolved": False, "declined": True,
+            "reason": "I couldn't tell what to look up about that team."}
+
+
 # ---- Game-unit leaderboard PRECOMPUTE ---------------------------------------
 # One player's leaderboard rows, computed by REUSING the exact verified helpers
 # (_daily_games / _complete_seasons / _longest_streak / _best_span / _DAILY_EVENT)
@@ -9631,6 +9939,53 @@ _ASK_COMPARISON_TOOL = {
     },
 }
 
+_ASK_TEAM_TOOL = {
+    "name": "query_team",
+    "description": (
+        "Questions whose SUBJECT is a TEAM / franchise (not a player) — championships, "
+        "season records, standings, all-time totals. Examples: 'How many World Series "
+        "have the Yankees won?' (metric=championships, team='the Yankees'); 'Which team "
+        "has won the most World Series?' (championships, NO team); 'What was the "
+        "Mariners' record in 2001?' (record, team, season=2001); 'What's the Dodgers' "
+        "record this year?' (record, team, current=true); 'Who won the AL East in 2019?' "
+        "(standing, division='AL East', NO team); 'What place did the Mets finish in "
+        "2023?' (standing, team, season=2023); \"Who's leading the NL West?\" (standing, "
+        "division='NL West', current=true); 'most wins in a season' (record, NO team); "
+        "'How many games have the Cubs won all-time?' (franchise_total, team). LEAVE "
+        "`team` OUT for the superlative/leaderboard forms ('which team…', 'most wins in "
+        "a season'). Use the club NICKNAME as written ('the Yankees', 'the Expos'); the "
+        "backend resolves relocations and old names. A HEAD-TO-HEAD team record ('Yankees "
+        "vs the Red Sox') is NOT supported — leave it to a normal response."),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "metric": {"type": "string",
+                       "enum": ["record", "standing", "championships", "franchise_total"],
+                       "description": "record=season W-L (or 'most wins in a season' when "
+                                      "no team); standing=division finish/place, or a "
+                                      "division's winner when no team; championships=World "
+                                      "Series titles (a team's count, or 'which team most' "
+                                      "when no team); franchise_total=all-time wins."},
+            "team": {"type": "string", "description":
+                     "The club as written ('the Yankees', 'the Dodgers', 'the Expos'). "
+                     "OMIT for a superlative/leaderboard ('which team has the most…', "
+                     "'most wins in a season')."},
+            "division": {"type": "string",
+                         "enum": ["AL East", "AL Central", "AL West",
+                                  "NL East", "NL Central", "NL West"],
+                         "description": "For 'who won the <division>' when no team is "
+                                        "named. Omit otherwise."},
+            "season": {"type": "integer", "description": "a specific season, e.g. 2001"},
+            "season_start": {"type": "integer"},
+            "season_end": {"type": "integer"},
+            "current": {"type": "boolean", "description":
+                        "true for 'this year' / 'this season' / 'right now' / 'currently' "
+                        "— the in-progress season."},
+        },
+        "required": ["metric"],
+    },
+}
+
 # --- Phase 6: rate stats + splits -------------------------------------------
 _ASK_SITU_PROPS = {   # the shared situational params (reused by the rate tools)
     "role": {"type": "string", "enum": ["bat", "pit"]},
@@ -10056,6 +10411,30 @@ _ASK_SYSTEM = (
     "TWO+ NAMED players on a stat -> query_comparison. A subjective 'who is the "
     "BETTER player' has no stat to compare — do NOT force query_comparison; answer "
     "cannot_answer as usual.\n\n"
+    "TEAMS / FRANCHISES (call query_team — the SUBJECT is a CLUB, not a player): "
+    "championships, season records, standings/place, all-time totals. Set `metric` "
+    "and, for a specific club, `team` (the nickname as written). LEAVE `team` OUT for "
+    "the superlative/leaderboard forms.\n"
+    "- 'How many World Series have the Yankees won?' -> {metric:'championships', "
+    "team:'the Yankees'}\n"
+    "- 'Which team has won the most World Series?' -> {metric:'championships'} (no team)\n"
+    "- \"What was the Mariners' record in 2001?\" -> {metric:'record', team:'the "
+    "Mariners', season:2001}\n"
+    "- \"What's the Dodgers' record this year?\" -> {metric:'record', team:'the "
+    "Dodgers', current:true}\n"
+    "- 'Most wins in a season?' -> {metric:'record'} (no team)\n"
+    "- 'Who won the AL East in 2019?' -> {metric:'standing', division:'AL East', "
+    "season:2019} (no team)\n"
+    "- 'What place did the Mets finish in 2023?' -> {metric:'standing', team:'the "
+    "Mets', season:2023}\n"
+    "- \"Who's leading the NL West?\" -> {metric:'standing', division:'NL West', "
+    "current:true}\n"
+    "- 'How many games have the Cubs won all-time?' -> {metric:'franchise_total', "
+    "team:'the Cubs'}\n"
+    "Use the club as written — an old name ('the Expos') is fine; the backend folds it "
+    "into the modern franchise. A HEAD-TO-HEAD team record ('Yankees vs the Red Sox') "
+    "is NOT supported — answer cannot_answer. A question about a PLAYER who plays for a "
+    "team ('most HR by a Yankee') is NOT query_team.\n\n"
     "RATE STATS (batting average / on-base / slugging / OPS — 'how well does X "
     "hit'):\n"
     "COUNT vs RATE — which tool: 'How many home runs / strikeouts / walks / hits "
@@ -10259,7 +10638,7 @@ _ask_log_write_failed = False   # so a broken log surfaces LOUDLY once (not per-
 # it at ~10% of input price instead of resending it. Breakpoints on the last
 # tool (caches the whole tools array) and the system block.
 _ASK_TOOLS = [_ASK_QUERY_TOOL, _ASK_LEADERBOARD_TOOL, _ASK_COMPARISON_TOOL,
-              _ASK_RATES_TOOL,
+              _ASK_TEAM_TOOL, _ASK_RATES_TOOL,
               _ASK_SPLITS_TOOL, _ASK_RATE_LB_TOOL, _ASK_MILESTONE_TOOL,
               _ASK_STREAK_TOOL, _ASK_SPAN_TOOL,
               _ASK_STREAK_LB_TOOL, _ASK_SPAN_LB_TOOL, _ASK_GAME_ACH_TOOL,
@@ -10773,8 +11152,15 @@ def _guard_scoped_tool(question, tool_name, tool_input):
 # filters in later phases.
 _GUARD_ANSWERABLE = frozenset((
     "query_situational", "query_leaderboard", "query_rates",
-    "query_splits", "query_rate_leaderboard", "query_comparison"))
+    "query_splits", "query_rate_leaderboard", "query_comparison", "query_team"))
 _GUARD_CAPS = {
+    # query_team's SUBJECT is a franchise, scoped only by season/range. HONEST caps:
+    # no handedness/base/count/home_away (a team question can't carry them), and NO
+    # opponent — head-to-head team records are deferred, so declaring `opponent`
+    # would be a caps lie. A team NAMED as the subject isn't an opponent anyway: the
+    # opponent detector only fires on an 'against/vs' anchor, so a subject team never
+    # trips it; a head-to-head ('Yankees vs the Red Sox') DOES, and honestly declines.
+    "query_team":             frozenset(("season_single", "season_range")),
     # query_comparison reuses the query_situational count runner PER PLAYER, so its
     # caps are truthful for exactly what that runner filters (handedness/base/count/
     # home_away/season/opponent). The guard resolves the scope ONCE; _run_comparison
@@ -10814,7 +11200,7 @@ _GUARD_CAPS = {
 # ALL five _ANSWERABLE tools now routed; the legacy inject block below is dead.
 _GUARD_ROUTED = frozenset(("query_situational", "query_rates", "query_splits",
                            "query_rate_leaderboard", "query_leaderboard",
-                           "query_comparison"))
+                           "query_comparison", "query_team"))
 
 
 def _guard_tool(question, tool_name, tool_input):
@@ -11081,7 +11467,8 @@ def ask(request: Request,
         tool_input["player"] = str(player_id)
 
     _ANSWERABLE = ("query_situational", "query_leaderboard", "query_rates",
-                   "query_splits", "query_rate_leaderboard", "query_comparison")
+                   "query_splits", "query_rate_leaderboard", "query_comparison",
+                   "query_team")
     base = {
         "question":        q,
         "understood_as":   tool_input if tool_name in _ANSWERABLE else None,
@@ -11098,6 +11485,7 @@ def ask(request: Request,
         "span":            None,
         "two_way":         None,
         "comparison":      None,
+        "team":            None,
         "player_resolved": None,
         "source":          None,
         "game_coverage":   None,
@@ -11538,6 +11926,38 @@ def ask(request: Request,
         base["out_of_scope"] = True
         base["reason"] = reason
         base["answer"] = reason
+        return _finish()
+
+    # ==== TEAM branch (championships / record / standing / franchise total) ====
+    # Subject is a FRANCHISE. Scope (season/range) was resolved by _guard_tool; the
+    # runner resolves the club via team_crosswalk (or declines an ambiguous city),
+    # then queries team_seasons + series_post. No team named -> the superlative form.
+    if tool_name == "query_team":
+        team_params = {k: tool_input.get(k) for k in (
+            "metric", "team", "division", "season", "season_start", "season_end",
+            "current") if tool_input.get(k) is not None}
+        if not team_params.get("metric"):
+            base["out_of_scope"] = True
+            base["reason"] = ("A team question needs a metric (record, standings, "
+                              "championships, or all-time total).")
+            base["answer"] = base["reason"]; return _finish()
+        t0 = time.perf_counter()
+        try:
+            result = _run_team(team_params)
+        except Exception as exc:  # noqa: BLE001
+            timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
+            log.exception("ask team failed for %r", q)
+            base["error"] = str(exc); base["reason"] = "query failed"
+            base["answer"] = ("Sorry — something went wrong looking that up. "
+                              "Try rephrasing the question."); return _finish()
+        timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
+        if not result.get("resolved"):
+            base["out_of_scope"] = True
+            base["reason"] = result.get("reason")
+            base["answer"] = result.get("reason"); return _finish()
+        base["source"] = "team"
+        base["team"] = result.get("team")
+        base["answer"] = result.get("answer")
         return _finish()
 
     # ==== COMPARISON branch ('who has more HR, X or Y') =================

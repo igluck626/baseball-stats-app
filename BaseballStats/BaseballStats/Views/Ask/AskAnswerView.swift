@@ -42,6 +42,9 @@ struct AskAnswerView: View {
             } else if let cmp = response.comparison, !cmp.entries.isEmpty {
                 // Two or more players ranked on one stat, side by side / listed.
                 comparisonSection(cmp)
+            } else if let tm = response.team {
+                // A team/franchise answer: prose lead + a compact headline card.
+                teamSection(tm)
             } else if let rates = response.rates {
                 // DATA-FIRST: a stat line IS the answer — shown up front, with
                 // the extra component counts behind a disclosure. No prose
@@ -523,6 +526,74 @@ struct AskAnswerView: View {
             } else if let c = e.count {
                 Text("\(c.formatted(.number))\(stat.map { " " + $0 } ?? "")")
                     .font(.title3.weight(.bold))
+            }
+        }
+    }
+
+    // MARK: - Team / franchise
+
+    /// Prose-first team answer with a compact headline card: the marquee value
+    /// (titles / record / place), a caption, an optional detail line, and a short
+    /// list (title years, or a division rival + win total).
+    private func teamSection(_ tm: AskTeam) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let answer = response.answer, !answer.isEmpty {
+                Text(.init(answer))
+                    .font(.body)
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                if let title = tm.title, !title.isEmpty {
+                    Text(title.uppercased())
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    if let head = tm.headline, !head.isEmpty {
+                        Text(head)
+                            .font(.title.weight(.bold))
+                            .monospacedDigit()
+                            .foregroundStyle(.primary)
+                    }
+                    if let label = tm.label, !label.isEmpty {
+                        Text(label)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                if let detail = tm.detail, !detail.isEmpty {
+                    Text(detail)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                if tm.partial == true {
+                    Text("In-progress season — not final.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            if let rows = tm.rows, !rows.isEmpty {
+                DisclosureGroup {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(rows) { r in
+                            HStack {
+                                Text(r.team ?? "")
+                                    .font(.subheadline)
+                                if let v = r.value {
+                                    Spacer()
+                                    Text(v.formatted(.number))
+                                        .font(.subheadline.weight(.semibold))
+                                        .monospacedDigit()
+                                }
+                            }
+                        }
+                    }
+                    .padding(.top, 6)
+                } label: {
+                    Text("More").font(.subheadline.weight(.semibold))
+                }
+                .tint(.secondary)
             }
         }
     }

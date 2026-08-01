@@ -54,6 +54,9 @@ struct AskResponse: Decodable {
     // Two or more NAMED players compared on ONE stat ("more HR, Bonds or Aaron").
     let comparison: AskComparison?
 
+    // A team/franchise answer (championships, record, standings, all-time total).
+    let team: AskTeam?
+
     // Rate-leaderboard qualifier metadata.
     let stat: String?
     let min_pa: Int?
@@ -308,6 +311,28 @@ struct AskComparison: Decodable {
     let winner: String?
     let winners: [String]?
     let tie: Bool?
+}
+
+/// A team/franchise answer card. `headline` is the marquee value ("27", "116-46",
+/// a place, a club name), `label` its caption; `detail` is a secondary line and
+/// `rows` an optional short list (title-year list, division standings). `partial`
+/// flags an in-progress ("this year") record so the UI can say "so far".
+struct AskTeam: Decodable {
+    let title: String?
+    let headline: String?
+    let label: String?
+    let detail: String?
+    let scope: String?
+    let partial: Bool?
+    let rows: [AskTeamRow]?
+}
+
+/// One row in a team card's list — a labelled value (e.g. "2009" / a division rival
+/// and its win total). `value` is optional so a bare year-list row can omit it.
+struct AskTeamRow: Decodable, Identifiable {
+    let team: String?
+    let value: Int?
+    var id: String { "\(team ?? "")-\(value ?? 0)" }
 }
 
 /// One player's row in a comparison — the compared `count` plus an optional stat
