@@ -8585,6 +8585,29 @@ def _resolve_team_subject(name):
     return ("resolve", fr, current, token)
 
 
+def _team_scope_codes(team_name, year_lo=None, year_hi=None):
+    """Resolve a team name to the set of team CODES for a player-team filter ('as a
+    Yankee' -> {BLA, NYA, NYY}). Reuses _resolve_team_subject (so an ambiguous city
+    declines with the same clarify), then expands the franchise to its Retrosheet
+    codes over the year range (franchise-correct: 'as a Dodger' -> BRO + LAN, Brooklyn
+    included) plus its modern short codes. The RETRO codes match player_season_stints.
+    team (completed seasons); the MODERN codes match the plays store's in-progress
+    rows and are harmless on the stints table (no false match). Returns
+    ('resolve', sorted_codes, franch_id, display) or ('decline', message)."""
+    sub = _resolve_team_subject(team_name)
+    if sub[0] == "decline":
+        return ("decline", sub[1])
+    _, fr, display, _token = sub
+    lo = int(year_lo) if year_lo else 1901
+    hi = int(year_hi) if year_hi else 2100
+    codes = {c for (c, clo, chi) in team_crosswalk.FRANCH_RETRO_SEGMENTS.get(fr, ())
+             if not (chi < lo or clo > hi)}
+    codes.update(team_crosswalk.FRANCH_MODERN_CODES.get(fr, ()))
+    if not codes:
+        return ("decline", f"I couldn't map '{team_name}' to team records.")
+    return ("resolve", sorted(codes), fr, display)
+
+
 def _question_ambiguous_city(question):
     """If the team SUBJECT named in the QUESTION is a bare ambiguous city (no
     nickname to disambiguate it), return that city's clarify — even when the model
@@ -9153,11 +9176,41 @@ def _rank_with_ties(leaders, value_key):
     return leaders
 
 
+def _lb_title(label, team_display=None, season=None, season_start=None,
+              season_end=None, month=None):
+    """Scope-labelled leaderboard heading — 'Most home runs for the New York Yankees
+    in April 2024'. Names the team and/or the time the SAME way the streak boards name
+    their year. None when there's nothing to name (a bare situational board stays
+    titleless, as before). Season/month compose into one phrase ('in April 2024')."""
+    mon = _MONTH_NAMES[int(month)] if month and 1 <= int(month) <= 12 else None
+    if season is not None:
+        yr = str(int(season))
+    elif season_start is not None and season_end is not None:
+        yr = f"{int(season_start)}–{int(season_end)}"
+    elif season_start is not None:
+        yr = f"since {int(season_start)}"
+    elif season_end is not None:
+        yr = f"through {int(season_end)}"
+    else:
+        yr = None
+    if mon and yr:
+        when = f"in {mon} {yr}"
+    elif mon:
+        when = f"in {mon}"
+    elif yr:
+        when = yr if yr.startswith(("since", "through")) else f"in {yr}"
+    else:
+        when = None
+    team = f"for the {team_display}" if team_display else None
+    tail = " ".join(x for x in (team, when) if x)
+    return f"Most {label} {tail}" if tail else None
+
+
 def _run_leaderboard(event=None, role="bat", balls=None, strikes=None, outs=None,
                      inning=None, base_state=None, season=None, season_start=None,
                      season_end=None, game_type=None,
                      pitcher_hand=None, batter_side=None, home_away=None, limit=10,
-                     opponent_codes=None, month=None):
+                     opponent_codes=None, month=None, team_codes=None, team_display=None):
     """'Who has the most <event> in situation Y' — the plays store keyed the same
     way, but GROUP BY the batter/pitcher id instead of filtering to one player,
     ranked DESC. Coverage gates (see _leaderboard_gates) can DECLINE a badly
@@ -9232,43 +9285,31 @@ def _run_leaderboard(event=None, role="bat", balls=None, strikes=None, outs=None
                     "CASE WHEN BAT_HOME_ID = 1 THEN AWAY_TEAM_ID ELSE HOME_TEAM_ID END")
         where.append(f"({opp_expr}) IN ({', '.join('?' * len(opponent_codes))})")
         params += list(opponent_codes)
+    if team_codes:
+        # The player's OWN team — the INVERSE of the opponent expr. A batter's own
+        # team is the BATTING side; a pitcher's is the FIELDING side. Franchise codes
+        # span relocations (the Dodgers -> BRO + LAN), so 'as a Dodger' includes
+        # Brooklyn. (A situational team board; the plain 'most HR as a Yankee' takes
+        # the complete-season stints route in _run_season_leaderboard instead.)
+        own_expr = ("CASE WHEN BAT_HOME_ID = 1 THEN AWAY_TEAM_ID ELSE HOME_TEAM_ID END"
+                    if role == "pit" else
+                    "CASE WHEN BAT_HOME_ID = 1 THEN HOME_TEAM_ID ELSE AWAY_TEAM_ID END")
+        where.append(f"({own_expr}) IN ({', '.join('?' * len(team_codes))})")
+        params += list(team_codes)
     clause = " AND ".join(where)
     filters = {"event": canon, "role": role, "balls": balls, "strikes": strikes,
                "outs": outs, "inning": inning, "base_state": bs, "season": season,
                "season_start": season_start, "season_end": season_end,
                "game_type": gt, "month": month, **hand_meta}
 
-    # Scope-labelled board title ("Most home runs in April", "...in April 2024").
-    # Season and month compose the SAME way the streak boards label their year, so a
-    # month reads as just another part of the season named in the heading.
+    # Scope-labelled board title ("Most home runs for the New York Yankees in April").
     _lbl = (_COMPARE_STAT_LABEL.get(canon or (event or "").upper())
             or (event or "").lower())
-    _mon = _MONTH_NAMES[int(month)] if month and 1 <= int(month) <= 12 else None
-    if season is not None:
-        _yr = str(int(season))
-    elif season_start is not None and season_end is not None:
-        _yr = f"{int(season_start)}–{int(season_end)}"
-    elif season_start is not None:
-        _yr = f"since {int(season_start)}"
-    elif season_end is not None:
-        _yr = f"through {int(season_end)}"
-    else:
-        _yr = None
-    if _mon and _yr:
-        _scope = f" in {_mon} {_yr}"                       # "in April 2024"
-    elif _mon:
-        _scope = f" in {_mon}"                             # "in April"
-    elif _yr:
-        _scope = f" {_yr}" if _yr.startswith(("since", "through")) else f" in {_yr}"
-    else:
-        _scope = ""
-    # Only heading the board when there's a TIME scope to name — a bare situational
-    # board (e.g. 'most HR off lefties') stays titleless, as before.
-    _lb_title = f"Most {_lbl}{_scope}" if _scope else None
+    _lb_title_str = _lb_title(_lbl, team_display, season, season_start, season_end, month)
 
     def _base(**extra):
         out = {"resolved": True, "source": "plays_leaderboard", "filters": filters,
-               "limit": limit, "leaderboard_title": _lb_title}
+               "limit": limit, "leaderboard_title": _lb_title_str}
         out.update(extra)
         return out
 
@@ -9326,27 +9367,43 @@ def _run_leaderboard(event=None, role="bat", balls=None, strikes=None, outs=None
 
 
 def _run_season_leaderboard(event=None, role="bat", season=None, season_start=None,
-                            season_end=None, game_type=None, limit=10):
+                            season_end=None, game_type=None, limit=10,
+                            team_codes=None, team_display=None):
     """Plain (non-situational) leaderboard from the COMPLETE season-stats tables
     — the leaderboard analogue of _run_season_total, so 'most career home runs'
     ranks by real totals (Ruth included) instead of coverage-limited plays.
     Returns None for (role, event) season-stats can't express (HBP, pitcher
-    1B/2B/3B, All-Star) so the caller falls through to the plays leaderboard."""
+    1B/2B/3B, All-Star) so the caller falls through to the plays leaderboard.
+
+    TEAM-SCOPED ('most HR as a Yankee'): rank over the per-(player, year, TEAM)
+    STINT tables, not player_seasons — a mid-season-traded player's stint totals go
+    to each team separately (J.D. Martinez 2017: ARI 29 / DET 16), where a single
+    player_seasons row could not split them. So 'as a Yankee' sums a man's Yankee
+    SEASONS (Ruth 659), never his whole career (714) just because he was once one."""
     role = (role or "bat").lower()
     canon = _canon_event(event)
     gt = (game_type or "").strip().upper() or None
     col = _SEASON_COL.get((role, canon))
     if col is None or gt == "A":
         return None
+    if team_codes and gt == "P":
+        return None   # no per-team postseason stints -> fall through to the plays board
     if not connection.db_available():
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
     limit = max(1, min(int(limit or 10), 25))
     if gt == "P":
         table = "player_postseason_pitching" if role == "pit" else "player_postseason_batting"
+    elif team_codes:
+        table = "pitcher_season_stints" if role == "pit" else "player_season_stints"
     else:
         table = "pitcher_seasons" if role == "pit" else "player_seasons"
     where = ["1=1"]
     p: dict = {"lim": limit}
+    if team_codes:
+        ph = ", ".join(f":tc{i}" for i in range(len(team_codes)))
+        where.append(f"team IN ({ph})")
+        for i, c in enumerate(team_codes):
+            p[f"tc{i}"] = c
     if season is not None:
         where.append("year = :y"); p["y"] = int(season)
     else:
@@ -9369,11 +9426,13 @@ def _run_season_leaderboard(event=None, role="bat", season=None, season_start=No
                 "mlbam_id": pid, "count": int(n)}
                for i, (pid, n) in enumerate(rows, 1)]
     _rank_with_ties(leaders, "count")
+    _lbl = _COMPARE_STAT_LABEL.get(canon or (event or "").upper()) or (event or "").lower()
     return {"resolved": True, "source": "season_stats_leaderboard",
             "filters": {"event": canon, "role": role, "season": season,
                         "season_start": season_start, "season_end": season_end,
-                        "game_type": gt},
+                        "game_type": gt, "team": team_display},
             "limit": limit, "leaders": leaders,
+            "leaderboard_title": _lb_title(_lbl, team_display, season, season_start, season_end),
             "game_coverage": {"complete": True}, "count_data": None}
 
 
@@ -9688,7 +9747,7 @@ def _run_rate_leaderboard(stat="OPS", role="bat", balls=None, strikes=None, outs
                           inning=None, base_state=None, season=None, season_start=None,
                           season_end=None, game_type=None, min_pa=None, limit=10,
                           pitcher_hand=None, batter_side=None, home_away=None,
-                          opponent_codes=None, month=None):
+                          opponent_codes=None, month=None, team_codes=None):
     stat = (stat or "OPS").upper()
     if stat not in _RATE_STATS:
         raise HTTPException(status_code=400, detail=f"stat must be one of {_RATE_STATS}")
@@ -9721,6 +9780,15 @@ def _run_rate_leaderboard(stat="OPS", role="bat", balls=None, strikes=None, outs
                     "CASE WHEN BAT_HOME_ID = 1 THEN AWAY_TEAM_ID ELSE HOME_TEAM_ID END")
         sclauses.append(f"({opp_expr}) IN ({', '.join('?' * len(opponent_codes))})")
         sparams += list(opponent_codes)
+    if team_codes:
+        # The player's OWN team — the INVERSE of the opponent expr (batter -> batting
+        # side, pitcher -> fielding side) — scoping the WHOLE CTE, so the qualifier PA
+        # and the rate are both over his as-a-Yankee sample.
+        own_expr = ("CASE WHEN BAT_HOME_ID = 1 THEN AWAY_TEAM_ID ELSE HOME_TEAM_ID END"
+                    if role == "pit" else
+                    "CASE WHEN BAT_HOME_ID = 1 THEN HOME_TEAM_ID ELSE AWAY_TEAM_ID END")
+        sclauses.append(f"({own_expr}) IN ({', '.join('?' * len(team_codes))})")
+        sparams += list(team_codes)
     clause = " AND ".join([f"{id_col} IS NOT NULL", f"{id_col} <> ''"] + sclauses)
     params = list(sparams)
     order = {"AVG": "avg", "OBP": "obp", "SLG": "slg", "OPS": "ops"}[stat]
@@ -10039,6 +10107,13 @@ _ASK_LEADERBOARD_TOOL = {
                       "description": "How many players to return; default 10. Do NOT "
                                      "set this to 1 just because the question says "
                                      "'the most' — a leaderboard wants the ranked list."},
+            "team": {"type": "string", "description":
+                     "Rank players by their record FOR A CLUB — 'most HR as a Yankee', "
+                     "'most wins as a Dodger', 'most saves for the Cubs'. The club name "
+                     "as written; the backend sums each player's SEASONS with that "
+                     "franchise (relocations included, so 'as a Dodger' spans Brooklyn). "
+                     "This is the player's OWN team, NOT an opponent — for 'vs the "
+                     "Dodgers' use the opponent, not this. Omit for an all-player board."},
             **_ASK_FILTER_PROPS,
         },
         "required": ["event"],
@@ -10199,6 +10274,10 @@ _ASK_RATE_LB_TOOL = {
                        "min_pa": {"type": "integer", "minimum": 0,
                            "description": "qualifier; omit for the default, 0 = include everyone"},
                        "limit": {"type": "integer", "minimum": 1, "maximum": 25},
+                       "team": {"type": "string", "description":
+                                "rank players by a rate FOR A CLUB ('best average as a "
+                                "Yankee') — the player's OWN team, franchise-scoped. "
+                                "NOT an opponent."},
                        **_ASK_SITU_PROPS},
         "required": ["stat"]},
 }
@@ -10545,6 +10624,11 @@ _ASK_SYSTEM = (
     "- 'Who has the most career grand slams?' -> {event:'HR', base_state:'loaded'}\n"
     "- 'Top 5 pitchers by strikeouts on a full count' -> "
     "{event:'K', role:'pit', balls:3, strikes:2, limit:5}\n"
+    "- TEAM-SCOPED ('as a Yankee', 'as a Dodger', 'for the Cubs') -> set `team` to the "
+    "club: 'Who has hit the most home runs as a Yankee?' -> {event:'HR', team:'the "
+    "Yankees'}; 'most wins as a Dodger' -> {event:'W', role:'pit', team:'the Dodgers'}. "
+    "This ranks players by their record WITH that club (his seasons there), NOT who he "
+    "faced — do NOT use opponent for 'as a'. Compose with a season/month normally.\n"
     "Named player -> query_situational; no named player -> query_leaderboard.\n"
     "LIMIT: do NOT set limit to 1 just because the question is phrased singularly "
     "('who has the MOST X'). Leaderboard questions want the ranked LIST — default "
@@ -10646,8 +10730,9 @@ _ASK_SYSTEM = (
     "- Rank players by a rate -> query_rate_leaderboard. 'Best average with the "
     "bases loaded' -> {stat:'AVG', base_state:'loaded'}. 'Highest OPS with two "
     "strikes' -> {stat:'OPS', strikes:2}. 'Who hits lefties best?' -> "
-    "{stat:'OPS', pitcher_hand:'L'}. Set min_pa=0 ONLY if the user says to "
-    "include everyone regardless of playing time.\n\n"
+    "{stat:'OPS', pitcher_hand:'L'}. 'Best average as a Yankee' -> {stat:'AVG', "
+    "team:'the Yankees'} (his OWN club, not an opponent). Set min_pa=0 ONLY if the "
+    "user says to include everyone regardless of playing time.\n\n"
     "MILESTONES (call query_milestone) — WHEN a player reached the Nth of "
     "something. A milestone asks for a DATE, not a count. Detect the ORDINAL "
     "(756th -> 756, 3000th -> 3000) and the event. This is DISTINCT from a count "
@@ -11362,10 +11447,10 @@ _GUARD_CAPS = {
                                          "opponent", "month")),   # Phase 3: _run_splits has the filter
     "query_rate_leaderboard": frozenset(("handedness", "base_state", "count",
                                          "home_away", "season_single", "season_range",
-                                         "opponent", "month")),   # Phase 4: _run_rate_leaderboard has the filter
+                                         "opponent", "month", "team")),   # Phase 4: _run_rate_leaderboard has the filter
     "query_leaderboard":      frozenset(("handedness", "base_state", "count",
                                          "home_away", "season_single", "season_range",
-                                         "opponent", "month")),   # Phase 5: _run_leaderboard has the filter
+                                         "opponent", "month", "team")),   # Phase 5: _run_leaderboard has the filter
     # SCOPED — byte-identical to _TOOL_SCOPE_CAPS, so routing these here is a no-op.
     "query_milestone":          frozenset(("season_single",)),
     "query_streak":             frozenset(("season_single",)),
@@ -12218,6 +12303,25 @@ def ask(request: Request,
             "season", "season_start", "season_end", "game_type", "limit",
             "pitcher_hand", "batter_side", "home_away", "opponent_codes", "month")
             if tool_input.get(k) is not None}
+        # TEAM SCOPE ('most HR as a Yankee'): resolve the club -> its franchise team
+        # codes (or decline an ambiguous city, as everywhere else). team is NOT a
+        # situational filter — it does NOT force the plays route, because a plain team
+        # board wants the COMPLETE-SEASON stint totals (Ruth 659), not coverage-limited
+        # plays. The raw name stays in understood_as; the codes travel separately.
+        team_codes = team_display = None
+        _team_name = tool_input.get("team")
+        if _team_name:
+            _amb = _question_ambiguous_city(q)
+            if _amb:
+                base["out_of_scope"] = True; base["reason"] = _amb
+                base["answer"] = _amb; base["understood_as"] = None; return _finish()
+            _lo = lb_params.get("season") or lb_params.get("season_start")
+            _hi = lb_params.get("season") or lb_params.get("season_end")
+            _tc = _team_scope_codes(_team_name, _lo, _hi)
+            if _tc[0] == "decline":
+                base["out_of_scope"] = True; base["reason"] = _tc[1]
+                base["answer"] = _tc[1]; base["understood_as"] = None; return _finish()
+            team_codes, team_display = _tc[1], _tc[3]
         asked = [lb_params[k] for k in ("season", "season_start", "season_end")
                  if lb_params.get(k) is not None]
         if asked and max(asked) < _PLAYS_FLOOR:
@@ -12248,9 +12352,11 @@ def ask(request: Request,
                     season_start=lb_params.get("season_start"),
                     season_end=lb_params.get("season_end"),
                     game_type=lb_params.get("game_type"),
-                    limit=lb_params.get("limit", 10))
+                    limit=lb_params.get("limit", 10),
+                    team_codes=team_codes, team_display=team_display)
             if result is None:
-                result = _run_leaderboard(**lb_params)
+                result = _run_leaderboard(**lb_params, team_codes=team_codes,
+                                          team_display=team_display)
         except HTTPException as exc:
             timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
             base["reason"] = str(exc.detail)
@@ -12321,6 +12427,18 @@ def ask(request: Request,
                 # last holdout until its phase.
                 kw = {k: tool_input.get(k) for k in ("stat", "min_pa", "limit", "opponent_codes") + situ_keys
                       if tool_input.get(k) is not None}
+                # TEAM SCOPE ('best average as a Yankee') -> the own-side CASE in the CTE.
+                if tool_input.get("team"):
+                    _amb = _question_ambiguous_city(q)
+                    if _amb:
+                        base["out_of_scope"] = True; base["reason"] = _amb
+                        base["answer"] = _amb; base["understood_as"] = None; return _finish()
+                    _tc = _team_scope_codes(tool_input["team"], kw.get("season") or kw.get("season_start"),
+                                            kw.get("season") or kw.get("season_end"))
+                    if _tc[0] == "decline":
+                        base["out_of_scope"] = True; base["reason"] = _tc[1]
+                        base["answer"] = _tc[1]; base["understood_as"] = None; return _finish()
+                    kw["team_codes"] = _tc[1]
                 result = _run_rate_leaderboard(**kw)
         except HTTPException as exc:
             timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
