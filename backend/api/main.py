@@ -5612,6 +5612,40 @@ def _plays_currency_note():
     return f"Complete through the {s} season." if s else None
 
 
+def _stints_max_season(role="bat"):
+    """The latest season in the (batting|pitching) STINT table — dates a team-scoped
+    leaderboard's currency. Read LIVE (a cheap indexed MAX) so the note self-updates
+    the moment the nightly job writes a newer season; NEVER hardcode the year. The
+    stint tables load from Retrosheet (complete seasons only), so they trail the
+    nightly-refreshed player_seasons until the nightly stint-write lands. None if the
+    DB is unavailable."""
+    table = "pitcher_season_stints" if role == "pit" else "player_season_stints"
+    if not connection.db_available():
+        return None
+    try:
+        with connection.get_session() as db:
+            row = db.execute(_sa_text(f"SELECT max(year) FROM {table}")).fetchone()
+        return int(row[0]) if row and row[0] is not None else None
+    except Exception:  # noqa: BLE001 - never let a currency probe break the board
+        return None
+
+
+def _stints_currency_note(role, season, season_start, season_end):
+    """"Complete through the <max> season." for a team-scoped board — but ONLY when
+    the board's range REACHES PAST the last complete stint year, so the missing
+    current season would otherwise be in scope. A board bounded to a finished period
+    ('as a Yankee in the 1990s') is fully covered by the stints — no note, no noise.
+    Derived, never hardcoded: when the nightly stint-write reaches the current year,
+    the note disappears (or advances) on its own."""
+    mx = _stints_max_season(role)
+    if mx is None:
+        return None
+    upper = season if season is not None else season_end   # None = open-ended -> reaches now
+    if upper is not None and int(upper) <= mx:
+        return None
+    return f"Complete through the {mx} season."
+
+
 # Warmup query set — pulls the FULL working set of /plays/situational through
 # so no real query pays a cold-page cost on its first run. DuckDB reads only the
 # columns a query touches, so warming one column isn't enough; these queries
@@ -9427,13 +9461,22 @@ def _run_season_leaderboard(event=None, role="bat", season=None, season_start=No
                for i, (pid, n) in enumerate(rows, 1)]
     _rank_with_ties(leaders, "count")
     _lbl = _COMPARE_STAT_LABEL.get(canon or (event or "").upper()) or (event or "").lower()
+    # A TEAM board reads the STINT tables, which trail the nightly player_seasons by
+    # the in-progress season — flag that currency (only when the range reaches into
+    # the missing year, so a board fixed to a finished period stays clean). Non-team
+    # boards read the nightly-fresh player_seasons and carry no such caveat.
+    gc = {"complete": True}
+    if team_codes:
+        _note = _stints_currency_note(role, season, season_start, season_end)
+        if _note:
+            gc = {"complete": False, "note": _note}
     return {"resolved": True, "source": "season_stats_leaderboard",
             "filters": {"event": canon, "role": role, "season": season,
                         "season_start": season_start, "season_end": season_end,
                         "game_type": gt, "team": team_display},
             "limit": limit, "leaders": leaders,
             "leaderboard_title": _lb_title(_lbl, team_display, season, season_start, season_end),
-            "game_coverage": {"complete": True}, "count_data": None}
+            "game_coverage": gc, "count_data": None}
 
 
 # ============================================================================
