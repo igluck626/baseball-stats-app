@@ -52,4 +52,10 @@ backend/data/retrosheet/*
 !backend/data/retrosheet/retrosheet_pitching_seasons.csv
 !backend/data/retrosheet/retrosheet_batting_stints.csv
 !backend/data/retrosheet/retrosheet_pitching_stints.csv
+
+# Stray/empty local plays DB. The real play-by-play store is DuckDB, loaded onto
+# the Railway volume at the absolute path /data/plays.duckdb (never committed, never
+# under backend/). No code writes here — this is a local artifact only.
+backend/data/plays.db
+
 *.xcuserstate
