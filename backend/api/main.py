@@ -6234,7 +6234,7 @@ def _run_situational(
     game_type: str | None = None,
     pitcher_hand: str | None = None, batter_side: str | None = None,
     home_away: str | None = None, opponent_codes=None, opponent_label=None,
-    sample_limit: int = 10,
+    month: int | None = None, sample_limit: int = 10,
 ):
     # opponent_label is accepted-and-ignored: the /ask dispatch spreads a params dict
     # that carries it (for the self-team note) into this runner; the filter uses codes.
@@ -6308,6 +6308,10 @@ def _run_situational(
         where.append("SEASON >= ?");     params.append(season_start)
     if season_end is not None:
         where.append("SEASON <= ?");     params.append(season_end)
+    if month is not None:
+        if not 1 <= int(month) <= 12:
+            raise HTTPException(status_code=400, detail="month must be 1-12")
+        where.append("EXTRACT(MONTH FROM GAME_DATE) = ?"); params.append(int(month))
     if gt_clause:
         where.append(gt_clause);         params.append(gt_param)
     if bs == "risp":
@@ -8344,7 +8348,7 @@ def _decide_role(event, player, explicit_side=None):
 # Situational filters that route a count to the plays store instead of season
 # stats (mirrors GATE 0 in the count dispatch). Used by the two-way count path.
 _SITU_KEYS = ("balls", "strikes", "outs", "inning", "base_state",
-              "pitcher_hand", "batter_side", "home_away", "opponent_codes")
+              "pitcher_hand", "batter_side", "home_away", "opponent_codes", "month")
 
 
 def _count_for_role(params, role):
@@ -8494,6 +8498,8 @@ def _run_comparison(params):
     bits = []
     if scope.get("opponent_label"):
         bits.append(scope["opponent_label"])
+    if scope.get("month") is not None and 1 <= int(scope["month"]) <= 12:
+        bits.append(f"in {_MONTH_NAMES[int(scope['month'])]}")
     if scope.get("season") is not None:
         bits.append(f"in {scope['season']}")
     elif scope.get("season_start") is not None or scope.get("season_end") is not None:
@@ -9151,7 +9157,7 @@ def _run_leaderboard(event=None, role="bat", balls=None, strikes=None, outs=None
                      inning=None, base_state=None, season=None, season_start=None,
                      season_end=None, game_type=None,
                      pitcher_hand=None, batter_side=None, home_away=None, limit=10,
-                     opponent_codes=None):
+                     opponent_codes=None, month=None):
     """'Who has the most <event> in situation Y' — the plays store keyed the same
     way, but GROUP BY the batter/pitcher id instead of filtering to one player,
     ranked DESC. Coverage gates (see _leaderboard_gates) can DECLINE a badly
@@ -9202,6 +9208,10 @@ def _run_leaderboard(event=None, role="bat", balls=None, strikes=None, outs=None
         where.append("SEASON >= ?");     params.append(season_start)
     if season_end is not None:
         where.append("SEASON <= ?");     params.append(season_end)
+    if month is not None:
+        if not 1 <= int(month) <= 12:
+            raise HTTPException(status_code=400, detail="month must be 1-12")
+        where.append("EXTRACT(MONTH FROM GAME_DATE) = ?"); params.append(int(month))
     if gt_clause:
         where.append(gt_clause);         params.append(gt_param)
     if bs == "risp":
@@ -9226,11 +9236,39 @@ def _run_leaderboard(event=None, role="bat", balls=None, strikes=None, outs=None
     filters = {"event": canon, "role": role, "balls": balls, "strikes": strikes,
                "outs": outs, "inning": inning, "base_state": bs, "season": season,
                "season_start": season_start, "season_end": season_end,
-               "game_type": gt, **hand_meta}
+               "game_type": gt, "month": month, **hand_meta}
+
+    # Scope-labelled board title ("Most home runs in April", "...in April 2024").
+    # Season and month compose the SAME way the streak boards label their year, so a
+    # month reads as just another part of the season named in the heading.
+    _lbl = (_COMPARE_STAT_LABEL.get(canon or (event or "").upper())
+            or (event or "").lower())
+    _mon = _MONTH_NAMES[int(month)] if month and 1 <= int(month) <= 12 else None
+    if season is not None:
+        _yr = str(int(season))
+    elif season_start is not None and season_end is not None:
+        _yr = f"{int(season_start)}–{int(season_end)}"
+    elif season_start is not None:
+        _yr = f"since {int(season_start)}"
+    elif season_end is not None:
+        _yr = f"through {int(season_end)}"
+    else:
+        _yr = None
+    if _mon and _yr:
+        _scope = f" in {_mon} {_yr}"                       # "in April 2024"
+    elif _mon:
+        _scope = f" in {_mon}"                             # "in April"
+    elif _yr:
+        _scope = f" {_yr}" if _yr.startswith(("since", "through")) else f" in {_yr}"
+    else:
+        _scope = ""
+    # Only heading the board when there's a TIME scope to name — a bare situational
+    # board (e.g. 'most HR off lefties') stays titleless, as before.
+    _lb_title = f"Most {_lbl}{_scope}" if _scope else None
 
     def _base(**extra):
         out = {"resolved": True, "source": "plays_leaderboard", "filters": filters,
-               "limit": limit}
+               "limit": limit, "leaderboard_title": _lb_title}
         out.update(extra)
         return out
 
@@ -9422,7 +9460,7 @@ def _hand_venue_clauses(pitcher_hand=None, batter_side=None, home_away=None):
 
 def _situ_clauses(balls, strikes, outs, inning, base_state,
                   season, season_start, season_end, game_type,
-                  pitcher_hand=None, batter_side=None, home_away=None):
+                  pitcher_hand=None, batter_side=None, home_away=None, month=None):
     """Shared situational filters (no player, no event). Returns
     (clauses, params, echo_meta); validates enums. pitcher_hand / batter_side /
     home_away are single-line FILTERS (narrow the rows) — not split_by, which
@@ -9435,6 +9473,10 @@ def _situ_clauses(balls, strikes, outs, inning, base_state,
     if season is not None:       where.append("SEASON = ?");     params.append(season)
     if season_start is not None: where.append("SEASON >= ?");    params.append(season_start)
     if season_end is not None:   where.append("SEASON <= ?");    params.append(season_end)
+    if month is not None:
+        if not 1 <= int(month) <= 12:
+            raise HTTPException(status_code=400, detail="month must be 1-12")
+        where.append("EXTRACT(MONTH FROM GAME_DATE) = ?"); params.append(int(month))
     gt_clause, gt_param, gt = _game_type_filter(game_type)   # default -> regular season
     if gt_clause:
         where.append(gt_clause); params.append(gt_param)
@@ -9453,7 +9495,7 @@ def _situ_clauses(balls, strikes, outs, inning, base_state,
     where += hw; params += hp
     meta = {"balls": balls, "strikes": strikes, "outs": outs, "inning": inning,
             "base_state": bs, "season": season, "season_start": season_start,
-            "season_end": season_end, "game_type": gt, **hmeta}
+            "season_end": season_end, "game_type": gt, "month": month, **hmeta}
     return where, params, meta
 
 
@@ -9478,7 +9520,7 @@ def _rate_span(cur, span_clause, span_params, season, season_start, season_end):
 def _run_rates(player, role="bat", balls=None, strikes=None, outs=None, inning=None,
                base_state=None, season=None, season_start=None, season_end=None,
                game_type=None, pitcher_hand=None, batter_side=None, home_away=None,
-               opponent_codes=None):
+               opponent_codes=None, month=None):
     """Situational RATE line (AVG/OBP/SLG/OPS + components) for one player.
     Coverage: game-coverage only CAVEATS (a rate is a ratio — numerator and
     denominator miss the same ~6%, so the rate stays a valid estimate; unlike a
@@ -9505,7 +9547,7 @@ def _run_rates(player, role="bat", balls=None, strikes=None, outs=None, inning=N
     id_col = "PIT_ID" if role == "pit" else "BAT_ID"
     sclauses, sparams, meta = _situ_clauses(balls, strikes, outs, inning, base_state,
                                             season, season_start, season_end, game_type,
-                                            pitcher_hand, batter_side, home_away)
+                                            pitcher_hand, batter_side, home_away, month)
     if opponent_codes:
         opp_expr = ("CASE WHEN BAT_HOME_ID = 1 THEN HOME_TEAM_ID ELSE AWAY_TEAM_ID END"
                     if role == "pit" else
@@ -9552,6 +9594,10 @@ _SPLIT_DIMS = {
     "game_type":    ("GAME_TYPE",
                      lambda v: {"R": "regular season", "P": "postseason",
                                 "A": "all-star"}.get(v, v)),
+    # By calendar month, across ALL seasons (career-by-month). DuckDB EXTRACT returns
+    # the month number; label it with the existing month names.
+    "month":        ("EXTRACT(MONTH FROM GAME_DATE)",
+                     lambda v: _MONTH_NAMES[int(v)] if v and 1 <= int(v) <= 12 else "?"),
 }
 
 
@@ -9559,7 +9605,7 @@ def _run_splits(player, split_by, role="bat", balls=None, strikes=None, outs=Non
                 inning=None, base_state=None, season=None, season_start=None,
                 season_end=None, game_type=None,
                 pitcher_hand=None, batter_side=None, home_away=None,
-                opponent_codes=None):
+                opponent_codes=None, month=None):
     """Rate line broken out BY a dimension (pitcher_hand / batter_side / home_away
     / season / game_type) — a table of {split_value, PA, AB, H, AVG, OBP, SLG, OPS}."""
     role = (role or "bat").lower()
@@ -9587,7 +9633,7 @@ def _run_splits(player, split_by, role="bat", balls=None, strikes=None, outs=Non
     id_col = "PIT_ID" if role == "pit" else "BAT_ID"
     sclauses, sparams, meta = _situ_clauses(balls, strikes, outs, inning, base_state,
                                             season, season_start, season_end, game_type,
-                                            pitcher_hand, batter_side, home_away)
+                                            pitcher_hand, batter_side, home_away, month)
     if opponent_codes:
         # Filters the WHERE, so EVERY split row (each GROUP BY bucket) is scoped to
         # the opponent — never a mix of scoped and unscoped rows. Batter's opponent
@@ -9642,7 +9688,7 @@ def _run_rate_leaderboard(stat="OPS", role="bat", balls=None, strikes=None, outs
                           inning=None, base_state=None, season=None, season_start=None,
                           season_end=None, game_type=None, min_pa=None, limit=10,
                           pitcher_hand=None, batter_side=None, home_away=None,
-                          opponent_codes=None):
+                          opponent_codes=None, month=None):
     stat = (stat or "OPS").upper()
     if stat not in _RATE_STATS:
         raise HTTPException(status_code=400, detail=f"stat must be one of {_RATE_STATS}")
@@ -9663,7 +9709,7 @@ def _run_rate_leaderboard(stat="OPS", role="bat", balls=None, strikes=None, outs
     id_col = "PIT_ID" if role == "pit" else "BAT_ID"
     sclauses, sparams, meta = _situ_clauses(balls, strikes, outs, inning, base_state,
                                             season, season_start, season_end, game_type,
-                                            pitcher_hand, batter_side, home_away)
+                                            pitcher_hand, batter_side, home_away, month)
     if opponent_codes:
         # Scopes the WHOLE CTE to the opponent, so the per-player PA the qualifier
         # reads (ab+bb+hbp+sf+sh) and the rate are BOTH computed over the vs-opponent
@@ -9896,6 +9942,10 @@ _ASK_FILTER_PROPS = {
                     "filter to PAs where the BATTER hit from the Left or Right side"},
     "home_away": {"type": "string", "enum": ["home", "away"], "description":
                   "filter to HOME or AWAY games"},
+    "month": {"type": "integer", "minimum": 1, "maximum": 12, "description":
+              "filter to a CALENDAR MONTH (1-12; 9='September'). 'HR in September' -> "
+              "month:9. With NO season it means that month across ALL seasons (career). "
+              "For 'by month' use query_splits split_by:'month', NOT this filter."},
 }
 
 # Tool the model calls to run a situational count. Its input schema mirrors
@@ -10129,8 +10179,9 @@ _ASK_SPLITS_TOOL = {
         "properties": {"player": {"type": "string"},
                        "split_by": {"type": "string",
                            "enum": ["pitcher_hand", "batter_side", "home_away",
-                                    "season", "game_type"],
-                           "description": "the dimension to break out by"},
+                                    "season", "game_type", "month"],
+                           "description": "the dimension to break out by ('month' = "
+                                          "by calendar month across all seasons)"},
                        **_ASK_SITU_PROPS},
         "required": ["player", "split_by"]},
 }
@@ -10577,9 +10628,15 @@ _ASK_SYSTEM = (
     "split_by:'pitcher_hand'). Never answer 'against lefties' with a split, and "
     "never answer it with his overall line.\n"
     "- A player's rates broken out BY a dimension -> query_splits (split_by = "
-    "pitcher_hand / batter_side / home_away / season / game_type). 'Judge's stats "
-    "by pitcher hand' -> {player:'Judge', split_by:'pitcher_hand'}. 'Betts home vs "
-    "away' -> {player:'Betts', split_by:'home_away'}.\n"
+    "pitcher_hand / batter_side / home_away / season / game_type / month). 'Judge's "
+    "stats by pitcher hand' -> {player:'Judge', split_by:'pitcher_hand'}. 'Betts home "
+    "vs away' -> {player:'Betts', split_by:'home_away'}.\n"
+    "- MONTH: a specific month is a FILTER (`month`, 1-12); 'by month' is a SPLIT. "
+    "'How many HR did Judge hit in September?' -> query_situational {player:'Judge', "
+    "event:'HR', month:9}. 'Judge's average in April' -> query_rates {player:'Judge', "
+    "month:4}. 'Judge's average by month' -> query_splits {player:'Judge', "
+    "split_by:'month'}. A month with NO year means that month across ALL seasons "
+    "(career); don't invent a year.\n"
     "- 'BY HANDEDNESS' / 'by hand' / 'vs lefties and righties' is role-relative — it "
     "means the OPPOSING hand, because a player's OWN hand is fixed. For a HITTER, "
     "'Betts by handedness' -> split_by:'pitcher_hand' (his line vs LHP and vs RHP); "
@@ -10984,6 +11041,26 @@ def _detect_season_scope(question):
     return None
 
 
+# Month name -> number, from the existing display names (+ the common "sept").
+_MONTH_TO_NUM = {name.lower(): i for i, name in enumerate(_MONTH_NAMES) if name}
+_MONTH_TO_NUM["sept"] = 9
+# Anchored on a scope word ('in/during/for [the month of] April') so a bare month
+# word — "May" the verb, "March" the verb, a surname — can't be misread as a filter.
+_MONTH_SCOPE_RE = re.compile(
+    r"\b(?:in|during|for)\s+(?:the\s+month\s+of\s+)?"
+    r"(january|february|march|april|may|june|july|august|september|sept|"
+    r"october|november|december)\b", re.I)
+
+
+def _detect_month(question):
+    """A CALENDAR MONTH named as a scope ('in September') -> {'month': N}, else None.
+    A bare 'by month' is NOT a scope — that's a split_by the model sets directly."""
+    m = _MONTH_SCOPE_RE.search(question or "")
+    if not m:
+        return None
+    return {"month": _MONTH_TO_NUM.get(m.group(1).lower())}
+
+
 # MLB team nicknames (+ common short forms) — enough to DETECT that a specific
 # opponent was named ("against the Dodgers", "vs the Yankees", "off the Mets")
 # and hand the nickname to the team-name resolver (team_crosswalk). A city that
@@ -11271,24 +11348,24 @@ _GUARD_CAPS = {
     # applies it to every player.
     "query_comparison":       frozenset(("handedness", "base_state", "count",
                                          "home_away", "season_single", "season_range",
-                                         "opponent")),
+                                         "opponent", "month")),
     # ANSWERABLE — full situational caps (all implemented end-to-end in each runner).
     # opponent ONLY on query_situational (the one answerable runner with the filter).
     "query_situational":      frozenset(("handedness", "base_state", "count",
                                          "home_away", "season_single", "season_range",
-                                         "opponent")),
+                                         "opponent", "month")),
     "query_rates":            frozenset(("handedness", "base_state", "count",
                                          "home_away", "season_single", "season_range",
-                                         "opponent")),   # Phase 2: _run_rates has the filter
+                                         "opponent", "month")),   # Phase 2: _run_rates has the filter
     "query_splits":           frozenset(("handedness", "base_state", "count",
                                          "home_away", "season_single", "season_range",
-                                         "opponent")),   # Phase 3: _run_splits has the filter
+                                         "opponent", "month")),   # Phase 3: _run_splits has the filter
     "query_rate_leaderboard": frozenset(("handedness", "base_state", "count",
                                          "home_away", "season_single", "season_range",
-                                         "opponent")),   # Phase 4: _run_rate_leaderboard has the filter
+                                         "opponent", "month")),   # Phase 4: _run_rate_leaderboard has the filter
     "query_leaderboard":      frozenset(("handedness", "base_state", "count",
                                          "home_away", "season_single", "season_range",
-                                         "opponent")),   # Phase 5: _run_leaderboard has the filter
+                                         "opponent", "month")),   # Phase 5: _run_leaderboard has the filter
     # SCOPED — byte-identical to _TOOL_SCOPE_CAPS, so routing these here is a no-op.
     "query_milestone":          frozenset(("season_single",)),
     "query_streak":             frozenset(("season_single",)),
@@ -11389,6 +11466,17 @@ def _guard_tool(question, tool_name, tool_input):
                 ti.update(season)
         else:
             bad.append("a range of seasons" if need == "season_range" else "a single season")
+
+    # (6b) MONTH scope — a calendar month named in the question ('in September').
+    # Inject only on a true model-drop; DECLINE where the tool can't filter by month
+    # (a scoped tool would otherwise ignore it and answer the unfiltered total).
+    mon = _detect_month(question)
+    if mon and mon.get("month"):
+        if "month" in caps:
+            if ti.get("month") is None:
+                ti.update(mon)
+        else:
+            bad.append("a calendar month")
 
     # (7) OPPONENT — via the SHARED resolver. Read the season range AFTER any inject
     # above. An ambiguous city returns its own clarify (distinct message); a club the
@@ -12082,7 +12170,8 @@ def ask(request: Request,
         cmp_params = {k: tool_input.get(k) for k in (
             "players", "event", "role", "balls", "strikes", "outs", "inning",
             "base_state", "season", "season_start", "season_end", "game_type",
-            "pitcher_hand", "batter_side", "home_away", "opponent_codes", "opponent_label")
+            "pitcher_hand", "batter_side", "home_away", "opponent_codes",
+            "opponent_label", "month")
             if tool_input.get(k) is not None}
         if len([p for p in (cmp_params.get("players") or []) if p]) < 2:
             base["out_of_scope"] = True
@@ -12127,7 +12216,7 @@ def ask(request: Request,
         lb_params = {k: tool_input.get(k) for k in (
             "event", "role", "balls", "strikes", "outs", "inning", "base_state",
             "season", "season_start", "season_end", "game_type", "limit",
-            "pitcher_hand", "batter_side", "home_away", "opponent_codes")
+            "pitcher_hand", "batter_side", "home_away", "opponent_codes", "month")
             if tool_input.get(k) is not None}
         asked = [lb_params[k] for k in ("season", "season_start", "season_end")
                  if lb_params.get(k) is not None]
@@ -12150,7 +12239,7 @@ def ask(request: Request,
             lb_situ = any(lb_params.get(k) is not None
                           for k in ("balls", "strikes", "outs", "inning", "base_state",
                                     "pitcher_hand", "batter_side", "home_away",
-                                    "opponent_codes"))
+                                    "opponent_codes", "month"))
             result = None
             if not lb_situ:
                 result = _run_season_leaderboard(
@@ -12185,6 +12274,7 @@ def ask(request: Request,
             base["reason"] = result.get("reason")
             base["answer"] = result.get("reason")
             return _finish()
+        base["leaderboard_title"] = result.get("leaderboard_title")
         base["leaders"] = result.get("leaders", [])
         # DATA-FIRST: a leaderboard IS its ranked list — the app renders the
         # rows directly, so we skip the phrasing LLM call entirely. That's also
@@ -12198,7 +12288,7 @@ def ask(request: Request,
     if tool_name in ("query_rates", "query_splits", "query_rate_leaderboard"):
         situ_keys = ("role", "balls", "strikes", "outs", "inning", "base_state",
                      "season", "season_start", "season_end", "game_type",
-                     "pitcher_hand", "batter_side", "home_away")
+                     "pitcher_hand", "batter_side", "home_away", "month")
         t0 = time.perf_counter()
         try:
             if tool_name == "query_rates":
@@ -12289,7 +12379,7 @@ def ask(request: Request,
                 hstat = _count_question_stat(q)
                 situational = any(tool_input.get(k) is not None for k in (
                     "balls", "strikes", "outs", "inning", "base_state",
-                    "pitcher_hand", "batter_side", "home_away"))
+                    "pitcher_hand", "batter_side", "home_away", "month"))
                 gc = base.get("game_coverage") or {}
                 if hstat and situational and gc.get("complete") is not False:
                     val = (result.get("rates") or {}).get(_STAT_RATE_KEY.get(hstat, hstat))
@@ -12323,7 +12413,7 @@ def ask(request: Request,
         "player", "role", "event", "balls", "strikes", "outs", "inning",
         "base_state", "season", "season_start", "season_end", "game_type",
         "pitcher_hand", "batter_side", "home_away",
-        "opponent_codes", "opponent_label")
+        "opponent_codes", "opponent_label", "month")
         if tool_input.get(k) is not None}
     if not params.get("player"):
         base["out_of_scope"] = True
@@ -12369,7 +12459,7 @@ def ask(request: Request,
     # by them, so they MUST count as situational or a "HR off lefties" count
     # would route to season stats and silently drop the filter (return the total).
     situ_keys = ("balls", "strikes", "outs", "inning", "base_state",
-                 "pitcher_hand", "batter_side", "home_away", "opponent_codes")
+                 "pitcher_hand", "batter_side", "home_away", "opponent_codes", "month")
     is_split = any(params.get(k) is not None for k in situ_keys)
 
     # TOTAL-ONLY guard: RBI/R/SB live only in season-stats, never the plays store,
@@ -12475,7 +12565,7 @@ def ask(request: Request,
             "player", "role", "balls", "strikes", "outs", "inning", "base_state",
             "season", "season_start", "season_end", "game_type",
             "pitcher_hand", "batter_side", "home_away",
-            "opponent_codes") if params.get(k) is not None}
+            "opponent_codes", "month") if params.get(k) is not None}
         rres = _run_rates(**rkw)
         return rres.get("rates") if isinstance(rres, dict) else None
 
