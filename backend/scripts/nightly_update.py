@@ -57,6 +57,7 @@ import pybaseball                                     # noqa: E402
 from sqlalchemy import func as _sql_func              # noqa: E402
 
 import data_service                                   # noqa: E402
+import team_crosswalk                                 # noqa: E402
 from database import connection, crud                 # noqa: E402
 from database.models import (                          # noqa: E402
     BattingGameLog,
@@ -1169,6 +1170,183 @@ def run_catchup_update() -> dict:
 # Main
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# CURRENT-SEASON STINT MATERIALISATION (team-scoped leaderboards)
+#
+# player_season_stints / pitcher_season_stints load from Retrosheet, which
+# publishes only AFTER a season ends — so the in-progress year is missing, and
+# a team-scoped board (Gap 3) reads a man short his current season (Judge 368
+# vs 385). bWAR carries the per-stint TEAM but no counting stats; BDL gives a
+# season aggregate that can't be split. The GAMELOGS can: a game's two teams
+# are its two distinct `opponent` values, so a player's OWN team is the OTHER
+# one — game-level truth that splits a mid-season trade exactly (verified vs
+# Retrosheet: Martinez 2017 ARI 29/DET 16, Suarez 2025 ARI 36/SEA 13).
+# ---------------------------------------------------------------------------
+
+# A gamelog team is a bWAR-style code (NYY) or a display name ("New York
+# Yankees"); map either to a franchise, then to that franchise's era-correct
+# RETRO code (NYA) — the vocabulary the stint table + the eventual Retrosheet
+# load use, so the (player, year, team) upsert key ALIGNS and overwrites rather
+# than duplicating.
+_STINT_NAME_TO_FRANCH = {name: fr for fr, name in team_crosswalk.FRANCH_CURRENT_NAME.items()}
+# Fallbacks for gamelog team values team_crosswalk doesn't key directly: bWAR/gamelogs
+# use "OAK" for the Athletics (crosswalk keys "ATH"); and the gamelogs sometimes carry
+# "Los Angeles Angels" where the crosswalk's current name is "…of Anaheim". Any value
+# that still maps to nothing is SKIPPED + logged, never written with a bad key.
+_STINT_TEAM_FALLBACK = {"OAK": "OAK", "Los Angeles Angels": "ANA"}
+
+
+def _derived_team_to_retro(raw, year):
+    """A gamelog-derived team CODE or NAME -> the franchise's era-correct RETRO code
+    for `year` ('NYY' / 'New York Yankees' -> 'NYA'), or None when it maps to neither
+    a known code nor a known name (the caller SKIPS + LOGS — never writes a bad key)."""
+    if not raw:
+        return None
+    fr = (_STINT_NAME_TO_FRANCH.get(raw)
+          or team_crosswalk.MODERN_CODE_TO_FRANCH.get(raw)
+          or _STINT_TEAM_FALLBACK.get(raw))
+    if fr is None:
+        return None
+    segs = team_crosswalk.FRANCH_RETRO_SEGMENTS.get(fr, ())
+    if not segs:
+        return None
+    y = int(year)
+    for code, lo, hi in segs:
+        if lo <= y <= hi:
+            return code
+    return segs[-1][0]   # a year past the last segment (the in-progress season) -> latest code
+
+
+# Batting stint columns summed per game (integers); G = game count, TB derived.
+_STINT_BAT_COLS = ["G", "AB", "R", "H", "doubles", "triples", "HR", "RBI", "BB",
+                   "SO", "SB", "CS", "IBB", "HBP", "SF", "SH", "GIDP", "PA"]
+_STINT_BAT_SQL = """
+WITH game_team AS (
+  SELECT game_id, opponent AS team FROM batting_gamelogs WHERE season = :yr
+  GROUP BY game_id, opponent
+),
+per_game AS (   -- ONE row per (player, game): the other team + that game's line
+  SELECT g.player_id, g.game_id, MIN(gt.team) AS raw_team, MAX(g.game_date) AS gd,
+         MAX(g."AB") "AB", MAX(g."R") "R", MAX(g."H") "H", MAX(g.doubles) doubles,
+         MAX(g.triples) triples, MAX(g."HR") "HR", MAX(g."RBI") "RBI", MAX(g."BB") "BB",
+         MAX(g."SO") "SO", MAX(g."SB") "SB", MAX(g."CS") "CS", MAX(g."IBB") "IBB",
+         MAX(g."HBP") "HBP", MAX(g."SF") "SF", MAX(g."SH") "SH", MAX(g."GIDP") "GIDP",
+         MAX(g."PA") "PA"
+  FROM batting_gamelogs g
+  JOIN game_team gt ON gt.game_id = g.game_id AND gt.team <> g.opponent
+  WHERE g.season = :yr
+  GROUP BY g.player_id, g.game_id
+)
+SELECT player_id, raw_team, min(gd) AS first_date, count(*) AS "G",
+       sum("AB") "AB", sum("R") "R", sum("H") "H", sum(doubles) doubles, sum(triples) triples,
+       sum("HR") "HR", sum("RBI") "RBI", sum("BB") "BB", sum("SO") "SO", sum("SB") "SB",
+       sum("CS") "CS", sum("IBB") "IBB", sum("HBP") "HBP", sum("SF") "SF", sum("SH") "SH",
+       sum("GIDP") "GIDP", sum("PA") "PA"
+FROM per_game GROUP BY player_id, raw_team
+"""
+
+# Pitching: W/L/SV counted from `result`; IP summed as OUTS (6.2 = 6⅔) so the
+# decimal-innings notation adds up correctly. GS/CG/SHO/etc. aren't in the
+# gamelog and stay NULL (the team board ranks by W/L/SV/SO/ER, all derivable).
+_STINT_PIT_COLS = ["G", "W", "L", "SV", "H", "R", "ER", "BB", "SO", "HR", "HBP", "WP", "ip_outs"]
+_STINT_PIT_SQL = """
+WITH game_team AS (
+  SELECT game_id, opponent AS team FROM pitching_gamelogs WHERE season = :yr
+  GROUP BY game_id, opponent
+),
+per_game AS (
+  SELECT g.player_id, g.game_id, MIN(gt.team) AS raw_team, MAX(g.game_date) AS gd,
+         MAX(g.result) AS result, MAX(g."IP") AS ip,
+         MAX(g."H") "H", MAX(g."R") "R", MAX(g."ER") "ER", MAX(g."BB") "BB",
+         MAX(g."SO") "SO", MAX(g."HR") "HR", MAX(g."HBP") "HBP", MAX(g."WP") "WP"
+  FROM pitching_gamelogs g
+  JOIN game_team gt ON gt.game_id = g.game_id AND gt.team <> g.opponent
+  WHERE g.season = :yr
+  GROUP BY g.player_id, g.game_id
+)
+SELECT player_id, raw_team, min(gd) AS first_date, count(*) AS "G",
+       count(*) FILTER (WHERE result = 'W') "W",
+       count(*) FILTER (WHERE result = 'L') "L",
+       count(*) FILTER (WHERE result = 'S') "SV",
+       sum("H") "H", sum("R") "R", sum("ER") "ER", sum("BB") "BB", sum("SO") "SO",
+       sum("HR") "HR", sum("HBP") "HBP", sum("WP") "WP",
+       sum(floor(ip) * 3 + round((ip - floor(ip)) * 10))::int AS ip_outs
+FROM per_game GROUP BY player_id, raw_team
+"""
+
+
+def _derive_stints(db, year, is_pitch):
+    """Run the gamelog derivation, map each derived team to a retro code, and return
+    the list of stint row dicts (one per player+franchise) tagged source='nightly'.
+    Unmappable teams are skipped and counted in `unmapped`."""
+    from sqlalchemy import text as _text
+    cols = _STINT_PIT_COLS if is_pitch else _STINT_BAT_COLS
+    sql = _STINT_PIT_SQL if is_pitch else _STINT_BAT_SQL
+    rows = db.execute(_text(sql), {"yr": year}).fetchall()
+    # accumulate by (player, RETRO team) — two raw codes ('NYY'/'New York Yankees')
+    # can fold to the same franchise, and their lines must sum, not collide.
+    accum: dict = {}      # (pid, retro) -> {"_first": date, col: int}
+    unmapped: dict = {}
+    for r in rows:
+        pid, raw_team, first_date = r[0], r[1], r[2]
+        retro = _derived_team_to_retro(raw_team, year)
+        if retro is None:
+            unmapped[raw_team] = unmapped.get(raw_team, 0) + 1
+            continue
+        acc = accum.setdefault((pid, retro), {"_first": first_date})
+        if first_date is not None and (acc["_first"] is None or first_date < acc["_first"]):
+            acc["_first"] = first_date
+        for i, c in enumerate(cols):
+            acc[c] = acc.get(c, 0) + int(r[3 + i] or 0)
+    # assign stint_order per player by first appearance, and build the row dicts
+    by_player: dict = {}
+    for (pid, retro), acc in accum.items():
+        by_player.setdefault(pid, []).append((retro, acc))
+    out_rows = []
+    for pid, teams in by_player.items():
+        teams.sort(key=lambda t: (t[1]["_first"] or datetime.date.max))
+        for order, (retro, acc) in enumerate(teams, 1):
+            row = {"player_id": pid, "year": year, "team": retro,
+                   "stint_order": order, "source": "nightly"}
+            if is_pitch:
+                outs = acc["ip_outs"]
+                row.update({"G": acc["G"], "W": acc["W"], "L": acc["L"], "SV": acc["SV"],
+                            "IP": round(outs // 3 + (outs % 3) / 10.0, 1),
+                            "H": acc["H"], "R": acc["R"], "ER": acc["ER"], "BB": acc["BB"],
+                            "SO": acc["SO"], "HR": acc["HR"], "HBP": acc["HBP"], "WP": acc["WP"]})
+            else:
+                row.update({c: acc[c] for c in _STINT_BAT_COLS})
+                row["TB"] = acc["H"] + acc["doubles"] + 2 * acc["triples"] + 3 * acc["HR"]
+            out_rows.append(row)
+    return out_rows, unmapped
+
+
+def _update_stints(current_year: int) -> dict:
+    """Materialise the CURRENT-season per-(player, team) stint rows from the gamelogs.
+    REPLACES this year's source='nightly' rows (idempotent; never touches Retrosheet
+    history), so re-running can't double anything and a mid-season trade lands as
+    exactly two rows. Non-fatal for the rest of the nightly."""
+    from sqlalchemy import text as _text
+    summary = {"bat_written": 0, "pit_written": 0, "unmapped": {}}
+    with connection.get_session() as db:
+        for is_pitch, tbl in ((False, "player_season_stints"), (True, "pitcher_season_stints")):
+            out_rows, unmapped = _derive_stints(db, current_year, is_pitch)
+            # REPLACE only this year's nightly rows — Retrosheet history is untouched,
+            # and a re-run inserts the same keys (player, year, team) idempotently.
+            db.execute(_text(f"DELETE FROM {tbl} WHERE year = :yr AND source = 'nightly'"),
+                       {"yr": current_year})
+            save = crud.save_pitcher_season_stints if is_pitch else crud.save_player_season_stints
+            save(db, out_rows)
+            summary["pit_written" if is_pitch else "bat_written"] = len(out_rows)
+            for k, v in unmapped.items():
+                summary["unmapped"][k] = summary["unmapped"].get(k, 0) + v
+        db.commit()
+    if summary["unmapped"]:
+        log.warning("stint derivation: %d unmapped team value(s) SKIPPED: %s",
+                    sum(summary["unmapped"].values()), summary["unmapped"])
+    return summary
+
+
 def main() -> None:
     if not connection.db_available():
         sys.exit("ERROR: DATABASE_URL is not set.")
@@ -1344,6 +1522,21 @@ def main() -> None:
         )
     except Exception as exc:
         log.error(f"Heat compute FAILED (non-fatal): {exc}")
+
+    log.info("=" * 52)
+    log.info("Phase 7: current-season team stints (from game logs)")
+    log.info("=" * 52)
+    # Materialise the in-progress season's per-(player, team) stint rows from the
+    # gamelogs (Phase 4 refreshed them), so team-scoped leaderboards are current —
+    # the only source that splits a mid-season trade correctly. Non-fatal.
+    try:
+        st = _update_stints(current_year)
+        log.info(
+            f"Team stints — batting rows: {st['bat_written']}, pitching rows: "
+            f"{st['pit_written']}, unmapped-skipped: {sum(st['unmapped'].values())}"
+        )
+    except Exception as exc:
+        log.error(f"Team stint materialisation FAILED (non-fatal): {exc}")
 
     log.info("=" * 52)
     log.info(
