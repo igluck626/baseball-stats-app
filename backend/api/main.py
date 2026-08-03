@@ -977,6 +977,28 @@ def _run_nightly_update() -> None:
             )
         except Exception as exc:
             log.error(f"[nightly] heat phase FAILED (non-fatal): {exc}")
+
+        # Phase 7 — current-season team stints (from game logs). Rewrites this
+        # year's source='nightly' stint rows so the team-scoped player boards
+        # ('most HR as a Yankee') include the in-progress season instead of
+        # trailing it until Retrosheet publishes the finished year. Derives each
+        # player's club per game via the gamelog self-join, maps it to the retro
+        # code the finished-season stints use, and splits a mid-season trade into
+        # two rows. Idempotent (DELETE this year's nightly rows + re-derive), so a
+        # re-run can't double and history is never touched. This is what keeps the
+        # currency note ('Complete through …') retired once it lands. Non-fatal;
+        # mirrors `scripts/nightly_update.py::main()` Phase 7 — the cron drives
+        # THIS function, not the script's main(), so the phase must live here too.
+        log.info("[nightly] starting team-stints phase")
+        try:
+            st = nightly_update._update_stints(current_year)
+            log.info(
+                "[nightly] team-stints phase done: bat_rows=%d pit_rows=%d unmapped=%s",
+                st.get("bat_written", 0), st.get("pit_written", 0),
+                st.get("unmapped") or {},
+            )
+        except Exception as exc:
+            log.error(f"[nightly] team-stints phase FAILED (non-fatal): {exc}")
     except Exception as exc:
         # Log the full traceback so silent thread crashes are visible in
         # Railway's log stream. The previous handler stored only str(exc),
@@ -5640,8 +5662,14 @@ def _stints_currency_note(role, season, season_start, season_end):
     mx = _stints_max_season(role)
     if mx is None:
         return None
-    upper = season if season is not None else season_end   # None = open-ended -> reaches now
-    if upper is not None and int(upper) <= mx:
+    # An open-ended board ('as a Yankee') reaches the CURRENT season, so that is its
+    # effective upper bound. Comparing against it (not treating open-ended as "forever
+    # ahead of mx") is what lets the note RETIRE the moment the nightly stint-write
+    # materialises the current year: mx == current -> upper <= mx -> no note.
+    upper = season if season is not None else season_end
+    if upper is None:
+        upper = data_service._current_year()
+    if int(upper) <= mx:
         return None
     return f"Complete through the {mx} season."
 
@@ -8634,8 +8662,19 @@ def _team_scope_codes(team_name, year_lo=None, year_hi=None):
     _, fr, display, _token = sub
     lo = int(year_lo) if year_lo else 1901
     hi = int(year_hi) if year_hi else 2100
-    codes = {c for (c, clo, chi) in team_crosswalk.FRANCH_RETRO_SEGMENTS.get(fr, ())
+    segs = team_crosswalk.FRANCH_RETRO_SEGMENTS.get(fr, ())
+    codes = {c for (c, clo, chi) in segs
              if not (chi < lo or clo > hi)}
+    # The last retro segment's code stays valid into the in-progress season(s)
+    # Retrosheet hasn't published yet — its segments stop at the last COMPLETE
+    # season (e.g. NYA 1903-2025), but the club plays on under that same code.
+    # The nightly stint-write keys the current year's rows with it
+    # (_derived_team_to_retro's segs[-1][0] fallback), so a board bounded to the
+    # current year — past every segment's hi — must still seek it. Without this,
+    # such a board collapses to only the MODERN code and misses the nightly retro
+    # rows entirely, returning 0 ('most HR as a Yankee in 2026' -> nothing).
+    if segs and hi > segs[-1][2]:
+        codes.add(segs[-1][0])
     codes.update(team_crosswalk.FRANCH_MODERN_CODES.get(fr, ()))
     if not codes:
         return ("decline", f"I couldn't map '{team_name}' to team records.")
