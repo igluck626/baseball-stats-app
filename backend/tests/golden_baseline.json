@@ -6181,8 +6181,8 @@
         "has_two_way": false,
         "highlighted_stat": null,
         "http": 200,
-        "leaders_val": "[[null, null, null, 659], [null, null, null, 536], [null, null, null, 493], [null, null, null, 361], [null, null, null, 358], [null, null, null, 250], [null, null, null, 222], [null, null, null, 205]]",
-        "n_leaders": 10,
+        "leaders_val": "[[null, null, null, 659]]",
+        "n_leaders": 1,
         "n_sample": 0,
         "n_splits": 0,
         "out_of_scope": false,
@@ -6191,7 +6191,7 @@
         "source": "season_stats_leaderboard",
         "splits_val": null,
         "tool_name": "query_leaderboard",
-        "understood_as": "{\"event\": \"HR\", \"season_end\": 1999, \"team\": \"the Yankees\"}"
+        "understood_as": "{\"event\": \"HR\", \"limit\": 1, \"season_end\": 1999, \"team\": \"the Yankees\"}"
       },
       "q": "Who hit the most home runs as a Yankee in the 20th century?",
       "unstable": []
@@ -6274,8 +6274,8 @@
         "has_two_way": false,
         "highlighted_stat": null,
         "http": 200,
-        "leaders_val": "[[null, null, null, 151], [null, null, null, 146], [null, null, null, 125], [null, null, null, 81], [null, null, null, 72], [null, null, null, 71], [null, null, null, 64], [null, null, null, 63]]",
-        "n_leaders": 10,
+        "leaders_val": "[[null, null, null, 151]]",
+        "n_leaders": 1,
         "n_sample": 0,
         "n_splits": 0,
         "out_of_scope": false,
@@ -6284,7 +6284,7 @@
         "source": "season_stats_leaderboard",
         "splits_val": null,
         "tool_name": "query_leaderboard",
-        "understood_as": "{\"event\": \"HR\", \"season_end\": 1999, \"season_start\": 1990, \"team\": \"the Yankees\"}"
+        "understood_as": "{\"event\": \"HR\", \"limit\": 1, \"season_end\": 1999, \"season_start\": 1990, \"team\": \"the Yankees\"}"
       },
       "q": "Who hit the most home runs as a Yankee in the 1990s?",
       "unstable": []
