@@ -1,7 +1,21 @@
-"""Nightly update — refresh current-season stats for every player in the database.
+"""Nightly update — the phase-FUNCTION LIBRARY that refreshes current-season stats.
 
-Designed to run as a Railway cron job (e.g., daily at 04:00 UTC after
-Baseball Reference publishes the previous day's data).
+This module is NOT an entry point and has no orchestrator. It holds the individual
+phase functions (_update_batters, _update_pitchers, _update_standings,
+_update_gamelogs, _update_stints, the _build_current_* entry builders, and
+run_catchup_update); the ORCHESTRATION — the ordered phase list, the gamelog dedup
+that must precede every gamelog reader, and the game-unit-leaderboard rebuild — lives
+in `_run_nightly_update()` in `api/main.py`, which the Railway cron drives via
+`run_nightly.py` -> `POST /admin/nightly-update`. `bulk_load.py` and main.py's
+bulk-rebuild path also import these functions.
+
+⚠️ Do NOT re-add a `main()` / CLI orchestrator here. A second copy of the phase list
+is exactly the drift that once made this file and the endpoint diverge (the endpoint
+had gamelog dedup + the game-unit leaderboard that this file's old `main()` lacked,
+and this file had the team-stints phase the endpoint was missing). Add or reorder
+phases in ONE place: `_run_nightly_update` in `api/main.py`.
+
+The per-phase notes below document what each FUNCTION does.
 
 Phase 1 (batters): fetches bwar_bat once for the WAR/OPS+ layer, then
 per-player BallDontLie season_stats for standard counting + rate stats,
@@ -67,8 +81,6 @@ from database.models import (                          # noqa: E402
     PlayerSeason,
     TeamSeason,
 )
-
-import time as _time                                  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -1346,237 +1358,3 @@ def _update_stints(current_year: int) -> dict:
                     sum(summary["unmapped"].values()), summary["unmapped"])
     return summary
 
-
-def main() -> None:
-    if not connection.db_available():
-        sys.exit("ERROR: DATABASE_URL is not set.")
-
-    current_year = data_service._current_year()
-    log.info(f"Nightly update — season {current_year}")
-
-    log.info("=" * 52)
-    log.info("Phase 1: batters")
-    log.info("=" * 52)
-    bat_updated, bat_skipped, bat_failed = _update_batters(current_year)
-
-    log.info("=" * 52)
-    log.info("Phase 2: pitchers")
-    log.info("=" * 52)
-    pit_updated, pit_skipped, pit_failed = _update_pitchers(current_year)
-
-    log.info("=" * 52)
-    log.info("Phase 3: standings")
-    log.info("=" * 52)
-    standings_updated, standings_failed = _update_standings(current_year)
-
-    log.info("=" * 52)
-    log.info("Phase 4: game logs (active rosters only)")
-    log.info("=" * 52)
-    gl = _update_gamelogs(current_year)
-
-    log.info("=" * 52)
-    log.info("Phase 4a: gamelog dedup (cross-format duplicates)")
-    log.info("=" * 52)
-    # MUST run after game logs and BEFORE every gamelog reader below (counting,
-    # heat, team stints). The gamelogs phase can write the same logical game twice
-    # — once under an MLB Stats API id, once under a BDL id — and the stint phase
-    # groups by game_id, so an un-deduped duplicate double-counts. Mirrors the
-    # deployed _run_nightly_update dedup phase exactly. Non-fatal.
-    try:
-        bat_removed = connection.dedupe_gamelog_duplicates(
-            "batting_gamelogs", connection._BATTING_GAMELOGS_QUALITY_COLUMNS)
-        pit_removed = connection.dedupe_gamelog_duplicates(
-            "pitching_gamelogs", connection._PITCHING_GAMELOGS_QUALITY_COLUMNS)
-        log.info(f"Gamelog dedup — batting_removed: {bat_removed}, "
-                 f"pitching_removed: {pit_removed}")
-    except Exception as exc:
-        log.error(f"Gamelog dedup FAILED (non-fatal): {exc}")
-
-    log.info("=" * 52)
-    log.info("Phase 4b: batting counting aggregation (GIDP/SH/HBP/SF/CS/PA/H)")
-    log.info("=" * 52)
-    # Runs AFTER game logs so it sums the freshest per-game rows. Overwrites
-    # the current-season counting fields the BDL batter phase doesn't write
-    # (and corrects stale bref-seed values like GIDP). Non-fatal.
-    try:
-        with connection.get_session() as db:
-            bc_updated = data_service.recalculate_batting_counting(db, current_year)
-            db.commit()
-        log.info(f"Batting counting aggregation — rows updated: {bc_updated}")
-    except Exception as exc:
-        log.error(f"Batting counting aggregation FAILED (non-fatal): {exc}")
-
-    # Pitcher counterpart — R / HBP summed from pitching_gamelogs into
-    # pitcher_seasons (BDL's pitcher season phase omits them). Non-fatal.
-    try:
-        with connection.get_session() as db:
-            pc_updated = data_service.recalculate_pitching_counting(db, current_year)
-            db.commit()
-        log.info(f"Pitching counting aggregation — rows updated: {pc_updated}")
-    except Exception as exc:
-        log.error(f"Pitching counting aggregation FAILED (non-fatal): {exc}")
-
-    log.info("=" * 52)
-    log.info("Phase 4c: advanced batting rates (wOBA / K% / BB% / ISO)")
-    log.info("=" * 52)
-    # Runs AFTER 4b so the components are correct. BDL omits these rate
-    # columns, so without this pass current-season rows stay NULL. Non-fatal.
-    try:
-        with connection.get_session() as db:
-            br_updated = data_service.recalculate_batting_rates(db, current_year)
-            db.commit()
-        log.info(f"Batting rates — rows updated: {br_updated}")
-    except Exception as exc:
-        log.error(f"Batting rates FAILED (non-fatal): {exc}")
-
-    log.info("=" * 52)
-    log.info("Phase 5: reconcile teams from active rosters")
-    log.info("=" * 52)
-    # Belt-and-suspenders for offseason-trade / FA-signing cases
-    # where bref's `Tm` column lags the move. 30 API calls (one per
-    # team) — much cheaper than per-player /people/{id} hits.
-    try:
-        team_sync = data_service.sync_all_player_teams_from_rosters(current_year)
-        log.info(
-            f"Teams reconciled — rows updated: {team_sync.get('updated', 0)}, "
-            f"failed teams: {team_sync.get('failed_teams', [])}"
-        )
-    except Exception as exc:
-        log.error(f"Team reconcile FAILED (non-fatal): {exc}")
-
-    # Phase 5b — active-status sync via BDL `/players?player_ids[]=`.
-    # The roster walk above only sees players currently on a 40-man,
-    # so it can't detect retirements (player BDL knows is inactive)
-    # or comebacks (Lahman still says retired even though BDL
-    # rosters them). This pass reconciles `mlb_last_season` against
-    # BDL's `active` flag for every player_id we have a `bdl_id`
-    # mapping for. Non-fatal — degrades silently if BDL is down.
-    try:
-        active_sync = data_service.sync_player_active_status_from_bdl(current_year)
-        ac = active_sync.get("counts") or {}
-        log.info(
-            f"Active-status reconciled — activated: {ac.get('activated', 0)}, "
-            f"retired: {ac.get('retired', 0)}, "
-            f"team_updated: {ac.get('team_updated', 0)}, "
-            f"no_data: {ac.get('no_data', 0)}, "
-            f"failed: {ac.get('failed', 0)}"
-        )
-    except Exception as exc:
-        log.error(f"Active-status reconcile FAILED (non-fatal): {exc}")
-
-    # Phase 5c — call-up discovery via BDL's active-roster walk.
-    # Same 30-team walk that Phase 5 uses, but here we care about
-    # the new-bio side: any BDL roster player without a matching
-    # MLBAM-keyed row in `players` / `pitchers` gets resolved via
-    # MLB Stats API name search and inserted on the spot, plus a
-    # same-season stats backfill. Catches fresh call-ups so iOS
-    # sees a real bio + headshot the morning after their debut
-    # rather than waiting for the next Lahman archive drop.
-    # Non-fatal — discovery failures don't roll back the rest of
-    # the nightly.
-    dc: dict = {}
-    try:
-        discover_result = data_service.discover_new_players(current_year)
-        dc = discover_result.get("counts") or {}
-        log.info(
-            "[nightly] discover phase: %d new batters, "
-            "%d new pitchers, %d failed",
-            dc.get("new_players_created", 0),
-            dc.get("new_pitchers_created", 0),
-            dc.get("new_players_failed", 0),
-        )
-    except Exception as exc:
-        log.error(f"Discover phase FAILED (non-fatal): {exc}")
-
-    # Phase 5d — same-season gamelog backfill for newly-discovered
-    # players. Only fires when Phase 5c actually inserted at least
-    # one new bio — the operation walks every BDL final from
-    # March 25 through today, which is ~900 games for a typical
-    # full season and not worth running on quiet nights. The
-    # backfill is idempotent (PK upsert) so we can re-scan dates
-    # that already have rows; the cost is the BDL API budget.
-    # Auto-dedup tail runs inside `backfill_bdl_gamelogs` already.
-    new_bios = (
-        dc.get("new_players_created",  0)
-        + dc.get("new_pitchers_created", 0)
-    )
-    if new_bios > 0:
-        try:
-            today_et = datetime.datetime.now(
-                data_service._MLB_LOCAL_TZ,
-            ).date().isoformat()
-            start_date = f"{current_year}-03-25"
-            log.info(
-                "[nightly] new player gamelog backfill: "
-                "%d new bios → walking %s..%s",
-                new_bios, start_date, today_et,
-            )
-            bf = data_service.backfill_bdl_gamelogs(start_date, today_et)
-            log.info(
-                "[nightly] new player game log backfill: "
-                "%d games, %d bat_rows, %d pit_rows",
-                bf.get("total_games",    0),
-                bf.get("total_bat_rows", 0),
-                bf.get("total_pit_rows", 0),
-            )
-        except Exception as exc:
-            log.error(
-                f"New-player gamelog backfill FAILED (non-fatal): {exc}"
-            )
-
-    # Phase 6 — hot/cold heat. Compares each active player's last-N-game
-    # window to their season baseline and stamps heat_score / heat_tier.
-    # Runs last so it reads fully-ingested, deduped gamelogs. Non-fatal.
-    log.info("=" * 52)
-    log.info("Phase 6: hot/cold heat")
-    log.info("=" * 52)
-    try:
-        with connection.get_session() as db:
-            heat = data_service.compute_all_player_heat(db, current_year)
-        log.info(
-            f"Heat computed — scored: {heat.get('scored', 0)}, "
-            f"hot: {heat.get('hot', 0)}, cold: {heat.get('cold', 0)}, "
-            f"neutral: {heat.get('neutral', 0)}, skipped: {heat.get('skipped', 0)}"
-        )
-    except Exception as exc:
-        log.error(f"Heat compute FAILED (non-fatal): {exc}")
-
-    log.info("=" * 52)
-    log.info("Phase 7: current-season team stints (from game logs)")
-    log.info("=" * 52)
-    # Materialise the in-progress season's per-(player, team) stint rows from the
-    # gamelogs (Phase 4 refreshed them), so team-scoped leaderboards are current —
-    # the only source that splits a mid-season trade correctly. Non-fatal.
-    try:
-        st = _update_stints(current_year)
-        log.info(
-            f"Team stints — batting rows: {st['bat_written']}, pitching rows: "
-            f"{st['pit_written']}, unmapped-skipped: {sum(st['unmapped'].values())}"
-        )
-    except Exception as exc:
-        log.error(f"Team stint materialisation FAILED (non-fatal): {exc}")
-
-    log.info("=" * 52)
-    log.info(
-        f"Batters   — updated: {bat_updated}, skipped: {bat_skipped}, failed: {len(bat_failed)}"
-    )
-    log.info(
-        f"Pitchers  — updated: {pit_updated}, skipped: {pit_skipped}, failed: {len(pit_failed)}"
-    )
-    log.info(
-        f"Standings — updated: {standings_updated}, unmatched names: {standings_failed}"
-    )
-    log.info(
-        f"Game logs — batters processed: {gl['batters_processed']} "
-        f"(rows: {gl['batter_games_saved']}, failed: {gl['batters_failed']}); "
-        f"pitchers processed: {gl['pitchers_processed']} "
-        f"(rows: {gl['pitcher_games_saved']}, failed: {gl['pitchers_failed']})"
-    )
-    if bat_failed:
-        log.error(f"Failed batter IDs: {bat_failed}")
-    if pit_failed:
-        log.error(f"Failed pitcher IDs: {pit_failed}")
-
-
-if __name__ == "__main__":
-    main()

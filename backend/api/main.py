@@ -841,7 +841,7 @@ def _run_nightly_update() -> None:
         # Phase 5 — reconcile current-year season teams from BDL's
         # active rosters. Belt-and-suspenders for offseason-trade /
         # FA-signing cases where bref's `Tm` column lags the move.
-        # Mirrors `scripts/nightly_update.py::main()`; each post-stat
+        # This function is the SOLE nightly orchestrator; each post-stat
         # phase is independently try/except'd so one failure doesn't
         # abort the others.
         log.info("[nightly] starting team-reconcile phase")
@@ -986,9 +986,11 @@ def _run_nightly_update() -> None:
         # code the finished-season stints use, and splits a mid-season trade into
         # two rows. Idempotent (DELETE this year's nightly rows + re-derive), so a
         # re-run can't double and history is never touched. This is what keeps the
-        # currency note ('Complete through …') retired once it lands. Non-fatal;
-        # mirrors `scripts/nightly_update.py::main()` Phase 7 — the cron drives
-        # THIS function, not the script's main(), so the phase must live here too.
+        # currency note ('Complete through …') retired once it lands. Non-fatal.
+        # This function is the SOLE nightly orchestrator (the cron drives it via
+        # run_nightly.py -> POST /admin/nightly-update); nightly_update.py is now a
+        # phase-function library with no main() of its own, so this list is the one
+        # place phases are arranged.
         log.info("[nightly] starting team-stints phase")
         try:
             st = nightly_update._update_stints(current_year)
