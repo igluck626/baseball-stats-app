@@ -180,7 +180,7 @@ struct AskAnswerView: View {
 
     private func splitsSection(_ splits: [AskSplit]) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            splitsTable(splits)
+            splitsTable(splits, highlight: response.highlighted_stat)
             coverageFootnote
         }
     }
@@ -327,12 +327,16 @@ struct AskAnswerView: View {
     }
 
     /// Columns for one split row — the core eight (PA sits on the split label).
-    private func splitColumns(_ s: AskSplit) -> [StatTable.Column] {
-        [.init(label: "AB", value: intVal(s.AB)),
-         .init(label: "H", value: intVal(s.H)), .init(label: "HR", value: intVal(s.HR)),
-         .init(label: "RBI", value: intVal(s.RBI)), .init(label: "AVG", value: rateVal(s.AVG)),
-         .init(label: "OBP", value: rateVal(s.OBP)), .init(label: "SLG", value: rateVal(s.SLG)),
-         .init(label: "OPS", value: rateVal(s.OPS))]
+    /// `highlight` bolds the asked column (AVG/OPS/…) in every row, the same as the
+    /// rate card; nil (a generic split naming no stat) bolds nothing.
+    private func splitColumns(_ s: AskSplit, highlight: String?) -> [StatTable.Column] {
+        func col(_ label: String, _ value: String) -> StatTable.Column {
+            StatTable.Column(label: label, value: value, highlighted: label == highlight)
+        }
+        return [col("AB", intVal(s.AB)), col("H", intVal(s.H)), col("HR", intVal(s.HR)),
+                col("RBI", intVal(s.RBI)), col("AVG", rateVal(s.AVG)),
+                col("OBP", rateVal(s.OBP)), col("SLG", rateVal(s.SLG)),
+                col("OPS", rateVal(s.OPS))]
     }
 
     private func intVal(_ n: Int?) -> String { n.map { $0.formatted(.number) } ?? "—" }
@@ -795,7 +799,7 @@ struct AskAnswerView: View {
     /// rate line, so "vs LHP / vs RHP" reads as two rows of one component. The
     /// label sits on its own line above the table so nine columns keep the full
     /// phone width.
-    private func splitsTable(_ splits: [AskSplit]) -> some View {
+    private func splitsTable(_ splits: [AskSplit], highlight: String?) -> some View {
         VStack(spacing: 0) {
             ForEach(splits) { split in
                 VStack(alignment: .leading, spacing: 6) {
@@ -810,7 +814,7 @@ struct AskAnswerView: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
-                    StatTable(columns: splitColumns(split))
+                    StatTable(columns: splitColumns(split, highlight: highlight))
                 }
                 .padding(.vertical, 8)
 

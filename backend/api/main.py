@@ -12592,6 +12592,11 @@ def ask(request: Request,
             # the UI renders the rows directly and shows any coverage note as a
             # footnote from the structured game_coverage/count_data fields.
             base["answer"] = None
+            # Bold the asked column in every split row — 'batting average by month'
+            # highlights AVG, 'OPS by season' highlights OPS. Question-detection (same
+            # _asked_stat the rate path uses), so a GENERIC split ('home and away
+            # splits') names no stat -> None -> no highlight, rendered as before.
+            base["highlighted_stat"] = _asked_stat(q)
 
         else:  # query_rate_leaderboard
             base["leaders"] = result.get("leaders")
