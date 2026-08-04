@@ -9833,6 +9833,16 @@ _PER_SEASON_RE = re.compile(
     r"|\bseason\s+record\b",                        # season record
     re.I)
 
+# For a NAMED player, 'most X in a season' is MAX over HIS seasons (Judge 62 in 2022) —
+# the same per-season phrases PLUS the career-high / best-season idioms the leaguewide
+# board never needs. Reused only when a player is named (else the leaguewide board runs).
+_SEASON_MAX_RE = re.compile(
+    _PER_SEASON_RE.pattern
+    + r"|\bcareer[\s-]high\b|\bbest\s+(?:\w+\s+){0,3}season\b|\bsingle[\s-]season\s+high\b"
+    + r"|\bpersonal\s+best\b"
+    + r"|\bmost\b(?:(?!\?).){0,40}?\bever\b(?:(?!\?).){0,25}?\b(?:in\s+a\s+)?(?:season|year)\b",
+    re.I)
+
 # /ask event canon -> data_service.get_leaderboard stat key. Only stats the all_time
 # catalog (_LEADERBOARD_BATTING/PITCHING) can rank; an event not here (TB/XBH/GIDP/…)
 # returns None and falls through to the career board rather than a wrong per-season one.
@@ -9914,6 +9924,58 @@ def _run_per_season_leaderboard(event, role, season_start, season_end, limit):
             "limit": lim, "leaders": leaders,
             "leaderboard_title": f"Most {_lbl} in a single season{span_txt}",
             "game_coverage": gc, "count_data": None}
+
+
+def _run_player_season_max(player, event, role):
+    """A NAMED player's SINGLE-SEASON high in a COUNTING stat: MAX over his own season
+    rows, with the YEAR (Judge HR -> 62 in 2022, Ryan K -> 383 in 1973) — NOT a career
+    sum and NOT the leaguewide board, the two wrong readings the model volunteers. The
+    season's own line rides along, the stat highlighted. Returns the resolved dict, an
+    ambiguous dict, or None (fall through) for a stat we can't MAX cleanly.
+    Rates/composites are DEFERRED: their season VALUE is stored, so a MAX (or MIN, for
+    ERA/WHIP) over the stored column works where a career fold does not — but 'best'
+    needs a per-stat direction (ERA down, OPS+ up, K% by role) AND a qualifier floor (a
+    5-inning 0.00 ERA is not a best season), the same Gap-2 work the rate leaderboards
+    need. Counting stats need neither, so they ship now."""
+    role = (role or "bat").lower()
+    canon = _canon_event(event)
+    if canon in _SEASON_RATES or canon in _SEASON_FLOAT:
+        return None
+    col = _SEASON_COL.get((role, canon))
+    if col is None:
+        return None
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    cands = [c for c in _resolve_retro_id(player, role) if c["mlbam_id"] is not None]
+    if not cands:
+        raise HTTPException(status_code=404, detail=f"No player matching '{player}'")
+    if len({c["mlbam_id"] for c in cands}) > 1:
+        return {"resolved": False, "ambiguous": True, "query": player, "candidates": cands[:25]}
+    resolved = cands[0]; pid = resolved["mlbam_id"]; name = resolved["name"]
+    table = "pitcher_seasons" if role == "pit" else "player_seasons"
+    sql = (f"SELECT year, {col} AS v FROM {table} WHERE player_id = :pid "
+           f"AND {col} IS NOT NULL ORDER BY v DESC, year LIMIT 1")
+    with connection.get_session() as db:
+        row = db.execute(_sa_text(sql), {"pid": int(pid)}).fetchone()
+    label = _COMPARE_STAT_LABEL.get(canon or (event or "").upper()) or (event or "").lower()
+    res = {"resolved": True, "source": "season_stats",
+           "player": {"query": player, "name": name, "mlbam_id": pid, "role": role},
+           "game_coverage": {"complete": True}, "count_data": None}
+    if not row or row[1] is None:
+        res.update(count=None, answer=f"I don't have season {label} on record for {name}.")
+        return res
+    year, val = int(row[0]), int(row[1])
+    try:
+        line = (_pitcher_season_line(pid, year, None, None) if role == "pit"
+                else _season_rate_line(pid, "bat", year, None, None, None))
+    except Exception:  # noqa: BLE001 — the number stands without the line
+        line = None
+    hl = _EVENT_TO_STAT.get(canon)
+    res.update(count=val, season=year, highlighted_stat=hl,
+               stat_value={"label": hl or label, "value": val, "display": str(val), "role": role},
+               answer=f"{name}'s single-season high in {label} is {val}, in {year}.")
+    res["pitching_line" if role == "pit" else "rates"] = line
+    return res
 
 
 def _run_season_leaderboard(event=None, role="bat", season=None, season_start=None,
@@ -12459,6 +12521,41 @@ def ask(request: Request,
         elif _ce in _BATTING_ONLY_FORCE:
             tool_input["role"] = "bat"
 
+    # ---- NAMED-PLAYER SEASON-MAX (deterministic, GLOBAL). 'most HR in a season' /
+    # 'career high' / 'best season' for a NAMED player is MAX over HIS seasons (Judge 62
+    # in 2022) — not a career sum (where the model sends it via query_situational with a
+    # career-span range) nor the leaguewide board (query_leaderboard, ignoring the
+    # player). Reroute whatever tool it picked. A specific-year filter ('in 2022') and a
+    # plain career total carry none of these phrases and are untouched.
+    if (tool_input is not None and tool_input.get("player") and tool_input.get("event")
+            and _SEASON_MAX_RE.search(q)):
+        try:
+            _sm = _run_player_season_max(tool_input.get("player"),
+                                         tool_input.get("event"), tool_input.get("role"))
+        except HTTPException as exc:
+            base["out_of_scope"] = True
+            base["reason"] = str(exc.detail)
+            base["answer"] = f"Couldn't answer that: {exc.detail}"
+            return _finish()
+        if _sm is not None:
+            base["understood_as"] = tool_input
+            if _sm.get("ambiguous"):
+                base["ambiguous"] = True
+                base["player_resolved"] = {"candidates": _sm.get("candidates", [])}
+                base["answer"] = (f'There are multiple players matching '
+                                  f'"{tool_input.get("player")}" — tap the one you mean.')
+                return _finish()
+            base["source"]          = _sm.get("source")
+            base["player_resolved"] = _sm.get("player")
+            base["count"]           = _sm.get("count")
+            base["rates"]           = _sm.get("rates")
+            base["pitching_line"]   = _sm.get("pitching_line")
+            base["highlighted_stat"] = _sm.get("highlighted_stat")
+            base["stat_value"]      = _sm.get("stat_value")
+            base["game_coverage"]   = _sm.get("game_coverage")
+            base["answer"]          = _sm.get("answer")
+            return _finish()
+
     # ---- FUTURE SEASON / PROJECTION (deterministic, GLOBAL — after the 'this season'
     # resolution above, so the in-progress current season is never mistaken for future).
     # A season not yet played, or a will/projected/on-pace question, DECLINES rather than
@@ -13013,6 +13110,15 @@ def ask(request: Request,
                           for k in ("balls", "strikes", "outs", "inning", "base_state",
                                     "pitcher_hand", "batter_side", "home_away",
                                     "opponent_codes", "month"))
+            # LIMIT:1 OVERRIDE. The model reads 'the most' / 'the record' as singular and
+            # emits limit:1 on a SEASON-STATS board (per-season, team, or plain career),
+            # ignoring the tool's own 'do NOT set this to 1' guidance — so the board came
+            # back a lone row. The top row already answers 'the record'; the other nine
+            # are the context. Default to 10 in code. The PLAYS/situational board keeps
+            # the model's limit (unaffected). No case found where a lone row is the right
+            # board — 'who holds the record' is answered by row 1 of ten.
+            if not lb_situ and lb_params.get("limit") == 1:
+                lb_params["limit"] = 10
             result = None
             if not lb_situ:
                 # SINGLE-SEASON record board first (top individual seasons, not career
