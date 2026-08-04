@@ -8134,7 +8134,18 @@ def _is_two_way(mlbam_id):
 
 # Stat -> which table.
 _BATTING_ONLY_EVENTS = {"H", "1B", "2B", "3B", "RBI", "TB", "HBP", "R", "SB"}
-_PITCHING_ONLY_EVENTS = {"W", "L", "SV", "ER"}
+# Events that can ONLY be a pitching statistic — the side is fixed by the stat, so a
+# dropped/wrong model role is overridden to 'pit' (see the dispatch backstop). Audit
+# follow-up extended this beyond W/L/SV/ER to the newly-exposed pitcher-only counts and
+# rates. NB: H/R/HBP/IBB/SF/SH/GIDP are NOT here — a pitcher allows/induces those, so
+# they're genuinely two-sided; and WAR/IP-less floats like WAR belong to both sides.
+_PITCHING_ONLY_EVENTS = {"W", "L", "SV", "ER",
+    "CG", "SHO", "GS", "GF", "BFP", "WP", "BK", "IP",
+    "ERA", "WHIP", "K9", "BB9", "HR9", "ERA_PLUS", "FIP"}
+# The inverse: events that can ONLY be a batting statistic -> force role=bat. A strict
+# subset of _BATTING_ONLY_EVENTS: H / R / HBP are DELIBERATELY excluded because a pitcher
+# ALLOWS hits and runs and hits batsmen, so those stay two-sided (the question decides).
+_BATTING_ONLY_FORCE = {"1B", "2B", "3B", "RBI", "TB", "XBH", "SB", "CS"}
 # GENUINELY two-sided in USER INTENT: "how many strikeouts does Ohtani have" means
 # either his batting Ks or his pitching Ks — both are real, headline answers, and no
 # verb disambiguates. A two-way player gets BOTH (the two-way card).
@@ -12433,6 +12444,20 @@ def ask(request: Request,
             tool_input.pop("season_start", None)
             tool_input.pop("season_end", None)
             log.info("ask: 'this season' -> %s (model said %r) for %r", _cs, _was, q)
+
+    # ---- PITCHER-ONLY ROLE (deterministic, GLOBAL). A save / win / shutout / ERA
+    # belongs to the pitching side by definition, so fix role=pit in CODE — the model
+    # infers it correctly only until something (a prompt change) disturbs it, and a
+    # dropped role sends the stat to the batting tables, where the column doesn't exist
+    # and the answer comes back EMPTY (Hoffman's 601 saves -> nothing). Ambiguous events
+    # (K/BB/HR) are left to the two-way/role logic — for those the side is a real question.
+    # H/R/HBP stay two-sided too (a pitcher allows them), so they're in neither set.
+    if tool_input is not None:
+        _ce = _canon_event(tool_input.get("event"))
+        if _ce in _PITCHING_ONLY_EVENTS:
+            tool_input["role"] = "pit"
+        elif _ce in _BATTING_ONLY_FORCE:
+            tool_input["role"] = "bat"
 
     # ---- FUTURE SEASON / PROJECTION (deterministic, GLOBAL — after the 'this season'
     # resolution above, so the in-progress current season is never mistaken for future).
