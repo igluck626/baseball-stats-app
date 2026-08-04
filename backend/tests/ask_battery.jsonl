@@ -186,7 +186,7 @@
 {"id": "q185", "bucket": "team_champ", "q": "How many World Series have the Yankees won?", "note": "query_team championships — franchise-keyed, 27 (stable/historical)"}
 {"id": "q186", "bucket": "team_record", "q": "What was the Mariners' record in 2001?", "note": "query_team record — 116-46 .716, a fixed past season"}
 {"id": "q187", "bucket": "team_standing", "q": "Who won the AL East in 2019?", "note": "query_team standing — division winner (no team named), era-correct name = Yankees"}
-{"id": "q188", "bucket": "team_super", "q": "What is the most wins in a season?", "note": "query_team superlative (no team) — 116, a TIE (1906 Cubs / 2001 Mariners)"}
+{"id": "q188", "bucket": "team_super", "q": "What is the most wins in a season?", "note": "bare ambiguous 'most wins in a season' — settled on the PITCHER season board (Radbourn 60, 1884, + the 19th-c era note). The explicit TEAM reading is q198."}
 {"id": "q189", "bucket": "team_continuity", "q": "How many World Series have the Expos won?", "note": "query_team continuity — folds to the Nationals franchise, 1 (2019), states the rename"}
 {"id": "q190", "bucket": "team_ambig", "q": "How many World Series has Chicago won?", "note": "query_team ambiguous-city — declines with the Cubs/White Sox clarify (subject-side)"}
 {"id": "q191", "bucket": "month_scope", "q": "How many home runs did Babe Ruth hit in September?", "note": "month filter (plays), retired subject -> fixed"}
@@ -196,3 +196,4 @@
 {"id": "q195", "bucket": "team_ambig", "q": "Who has hit the most home runs as a Chicago player?", "note": "ambiguous-city team scope -> Cubs/White Sox clarify decline"}
 {"id": "q196", "bucket": "team_traded", "q": "Who were the top 5 home run hitters for the Diamondbacks in 2017?", "note": "mid-season trade: Martinez 29 (ARI stint, #3 in the top 5), NOT his 45 season total. Explicit 'top 5' pins limit=5 so the discriminating 29 stays on the board (a bare 'the most' collapses to limit=1 and drops it)."}
 {"id": "q197", "bucket": "team_compose", "q": "Who hit the most home runs as a Yankee in the 1990s?", "note": "team + season compose (stints, 1990-1999)"}
+{"id": "q198", "bucket": "team_super", "q": "Which team has the most wins in a season?", "note": "explicit TEAM reading of the ambiguous 'most wins in a season' -> query_team, 116 (2001 Mariners / 1906 Cubs). Guards the team path regardless of which way the bare form (q188) drifts."}

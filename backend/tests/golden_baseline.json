@@ -3,7 +3,7 @@
     "n_cannot_answer_class": 23,
     "n_drift_tolerant": 33,
     "n_gated_questions": 173,
-    "n_questions": 198,
+    "n_questions": 199,
     "n_runs": 3,
     "n_unstable_cells": 479,
     "n_unstable_questions": 25,
@@ -5984,7 +5984,7 @@
       "cannot_answer_class": false,
       "cell": {
         "ambiguous": false,
-        "answer100": "The most wins in a season is 116, a tie — the 1906 Chicago Cubs and the 2001 Seattle Mariners.",
+        "answer100": "",
         "count": null,
         "db_status": "ok",
         "declined": false,
@@ -5995,17 +5995,17 @@
         "has_two_way": false,
         "highlighted_stat": null,
         "http": 200,
-        "leaders_val": null,
-        "n_leaders": 0,
+        "leaders_val": "[[\"radbc101\", null, null, 60], [\"spala101\", null, null, 54], [\"clarj102\", null, null, 53], [\"spala101\", null, null, 52], [\"heckg101\", null, null, 52], [\"clarj102\", null, null, 49], [\"radbc101\", null, null, 48], [\"buffc101\", null, null, 48]]",
+        "n_leaders": 10,
         "n_sample": 0,
         "n_splits": 0,
         "out_of_scope": false,
         "rates_val": null,
         "reason100": "",
-        "source": "team",
+        "source": "season_stats_leaderboard",
         "splits_val": null,
-        "tool_name": "query_team",
-        "understood_as": "{\"metric\": \"record\"}"
+        "tool_name": "query_leaderboard",
+        "understood_as": "{\"event\": \"W\", \"limit\": 10, \"per_season\": true, \"role\": \"pit\"}"
       },
       "q": "What is the most wins in a season?",
       "unstable": []
@@ -6181,8 +6181,8 @@
         "has_two_way": false,
         "highlighted_stat": null,
         "http": 200,
-        "leaders_val": "[[null, null, null, 659]]",
-        "n_leaders": 1,
+        "leaders_val": "[[null, null, null, 659], [null, null, null, 536], [null, null, null, 493], [null, null, null, 361], [null, null, null, 358], [null, null, null, 250], [null, null, null, 222], [null, null, null, 205]]",
+        "n_leaders": 10,
         "n_sample": 0,
         "n_splits": 0,
         "out_of_scope": false,
@@ -6191,7 +6191,7 @@
         "source": "season_stats_leaderboard",
         "splits_val": null,
         "tool_name": "query_leaderboard",
-        "understood_as": "{\"event\": \"HR\", \"limit\": 1, \"season_end\": 1999, \"team\": \"the Yankees\"}"
+        "understood_as": "{\"event\": \"HR\", \"limit\": 1, \"season_end\": 1999, \"season_start\": 1901, \"team\": \"the Yankees\"}"
       },
       "q": "Who hit the most home runs as a Yankee in the 20th century?",
       "unstable": []
@@ -6274,8 +6274,8 @@
         "has_two_way": false,
         "highlighted_stat": null,
         "http": 200,
-        "leaders_val": "[[null, null, null, 151]]",
-        "n_leaders": 1,
+        "leaders_val": "[[null, null, null, 151], [null, null, null, 146], [null, null, null, 125], [null, null, null, 81], [null, null, null, 72], [null, null, null, 71], [null, null, null, 64], [null, null, null, 63]]",
+        "n_leaders": 10,
         "n_sample": 0,
         "n_splits": 0,
         "out_of_scope": false,
@@ -6287,6 +6287,37 @@
         "understood_as": "{\"event\": \"HR\", \"limit\": 1, \"season_end\": 1999, \"season_start\": 1990, \"team\": \"the Yankees\"}"
       },
       "q": "Who hit the most home runs as a Yankee in the 1990s?",
+      "unstable": []
+    },
+    "q198": {
+      "bucket": "team_super",
+      "cannot_answer_class": false,
+      "cell": {
+        "ambiguous": false,
+        "answer100": "The most wins in a season is 116, a tie — the 1906 Chicago Cubs and the 2001 Seattle Mariners.",
+        "count": null,
+        "db_status": "ok",
+        "declined": false,
+        "has_milestone": false,
+        "has_rates": false,
+        "has_span": false,
+        "has_streak": false,
+        "has_two_way": false,
+        "highlighted_stat": null,
+        "http": 200,
+        "leaders_val": null,
+        "n_leaders": 0,
+        "n_sample": 0,
+        "n_splits": 0,
+        "out_of_scope": false,
+        "rates_val": null,
+        "reason100": "",
+        "source": "team",
+        "splits_val": null,
+        "tool_name": "query_team",
+        "understood_as": "{\"metric\": \"record\"}"
+      },
+      "q": "Which team has the most wins in a season?",
       "unstable": []
     }
   }
