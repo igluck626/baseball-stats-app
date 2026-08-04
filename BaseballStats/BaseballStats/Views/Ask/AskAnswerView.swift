@@ -136,7 +136,8 @@ struct AskAnswerView: View {
     /// sample plays sit behind "More". No prose.
     private func ratesSection(_ rates: AskRates) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            StatTable(columns: rateColumns(rates, highlight: response.highlighted_stat))
+            StatTable(columns: rateColumns(rates, highlight: response.highlighted_stat,
+                                           extra: statValueExtra))
             if ratesHasMore(rates) {
                 DisclosureGroup {
                     VStack(alignment: .leading, spacing: 12) {
@@ -309,13 +310,28 @@ struct AskAnswerView: View {
     /// Columns for a rate line: the core seven, with the asked-for stat
     /// highlighted. If that stat isn't one of the seven (PA/AB/SO/BB/2B/3B/HBP/
     /// TB/R/SB), it's prepended so it stays visible and emphasized.
-    private func rateColumns(_ r: AskRates, highlight: String?) -> [StatTable.Column] {
+    /// The queried stat's value as a leading-column fallback (label + pre-formatted
+    /// display), when it isn't one of the line's own columns. nil for in-line stats.
+    private var statValueExtra: (label: String, display: String)? {
+        guard let sv = response.stat_value, let l = sv.label, let d = sv.display else { return nil }
+        return (l, d)
+    }
+
+    private func rateColumns(_ r: AskRates, highlight: String?,
+                             extra: (label: String, display: String)? = nil) -> [StatTable.Column] {
         func col(_ label: String, _ value: String) -> StatTable.Column {
             StatTable.Column(label: label, value: value, highlighted: label == highlight)
         }
         var cols: [StatTable.Column] = []
-        if let h = highlight, !Self.coreStatKeys.contains(h), let v = moreValue(r, h) {
-            cols.append(StatTable.Column(label: h, value: v, highlighted: true))
+        // A non-core queried stat leads with a highlighted column: its value from the
+        // line if present (moreValue), else from stat_value (a newly-exposed stat like
+        // WAR/GIDP that isn't a line column).
+        if let h = highlight, !Self.coreStatKeys.contains(h) {
+            if let v = moreValue(r, h) {
+                cols.append(StatTable.Column(label: h, value: v, highlighted: true))
+            } else if let e = extra, e.label == h {
+                cols.append(StatTable.Column(label: h, value: e.display, highlighted: true))
+            }
         }
         cols += [
             col("H", intVal(r.H)),
@@ -750,13 +766,21 @@ struct AskAnswerView: View {
     /// own single-number columns (no compound "355-227" shrinking to fit). A
     /// non-core queried stat (SV/HR, and the demoted H/R/ER) gets a leading
     /// highlighted column; a core stat (SO/W/L/BB) highlights in place.
-    private func pitchingColumns(_ l: AskPitchingLine, highlight: String?) -> [StatTable.Column] {
+    private func pitchingColumns(_ l: AskPitchingLine, highlight: String?,
+                                 extra: (label: String, display: String)? = nil) -> [StatTable.Column] {
         func col(_ label: String, _ value: String) -> StatTable.Column {
             StatTable.Column(label: label, value: value, highlighted: label == highlight)
         }
         var cols: [StatTable.Column] = []
-        if let h = highlight, !Self.pitchCoreKeys.contains(h), let v = pitchMoreValue(l, h) {
-            cols.append(StatTable.Column(label: h, value: v, highlighted: true))
+        // Non-core queried stat leads with a highlighted column: from the line
+        // (pitchMoreValue) if present, else from stat_value (a newly-exposed pitching
+        // stat like WAR/ERA+/BK/SHO that isn't a line column).
+        if let h = highlight, !Self.pitchCoreKeys.contains(h) {
+            if let v = pitchMoreValue(l, h) {
+                cols.append(StatTable.Column(label: h, value: v, highlighted: true))
+            } else if let e = extra, e.label == h {
+                cols.append(StatTable.Column(label: h, value: e.display, highlighted: true))
+            }
         }
         cols.append(col("IP", l.IP ?? "—"))
         // W and L are a decision record — meaningless over a partial-game streak
@@ -780,7 +804,8 @@ struct AskAnswerView: View {
     /// highlighted column's value IS the count).
     private func pitchingCountSection(_ pl: AskPitchingLine) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            StatTable(columns: pitchingColumns(pl, highlight: response.highlighted_stat))
+            StatTable(columns: pitchingColumns(pl, highlight: response.highlighted_stat,
+                                               extra: statValueExtra))
             coverageFootnote
         }
     }

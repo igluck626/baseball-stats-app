@@ -5530,7 +5530,18 @@ _PLAYS_EVENT_CD = {
 _EVENT_TO_STAT = {"HR": "HR", "K": "SO", "SO": "SO", "BB": "BB",
                   "HBP": "HBP", "2B": "2B", "3B": "3B", "RBI": "RBI",
                   "R": "R", "SB": "SB", "H": "H", "TB": "TB",
-                  "W": "W", "L": "L", "SV": "SV", "ER": "ER", "AB": "AB", "XBH": "XBH"}
+                  "W": "W", "L": "L", "SV": "SV", "ER": "ER", "AB": "AB", "XBH": "XBH",
+                  # Audit follow-up counts — the highlight label the count answer bolds
+                  # (matched in the line, or carried as a leading column via stat_value).
+                  "GIDP": "GIDP", "SF": "SF", "IBB": "IBB", "CS": "CS", "SH": "SH",
+                  "WP": "WP", "BK": "BK", "CG": "CG", "SHO": "SHO", "G": "G",
+                  "GS": "GS", "GF": "GF", "BFP": "BFP"}
+
+# RATE stats that already sit in the role's stat LINE, so the answer highlights the
+# existing column IN PLACE (no leading column). Everything else in _SEASON_RATES /
+# _SEASON_FLOAT is carried as a leading column from stat_value. Value maps to the
+# column label the line/iOS uses (K/9 renders as 'SO/9').
+_RATE_INLINE_HIGHLIGHT = {"ERA": "ERA", "WHIP": "WHIP", "K9": "SO/9"}
 
 
 # Persistent read-only connection to the plays store. The Railway volume is
@@ -6371,7 +6382,32 @@ def _run_season_rate(player, role, canon, season, season_start, season_end, gt):
                         answer=f"I don't have {label} on record for {name} {scope}.")
             return base
         phrase = f"career {label}" if scope == "career" else f"{label} {scope}"
-        base.update(stat_value={"label": label, "value": value, "role": role},
+        # A rate/float answer is a stat LINE with the queried stat highlighted, like
+        # every count/rate answer — never a bare number. ERA/WHIP/K9 highlight the
+        # existing pitching-line column IN PLACE; everything else leads with a
+        # highlighted column carried by stat_value (display pre-formatted so the UI
+        # shows 10.43 / 1.12 / 90, not a truncated int).
+        try:
+            if role == "pit":
+                base["pitching_line"] = _pitcher_season_line(pid, season, season_start, season_end)
+            else:
+                base["rates"] = _season_rate_line(pid, "bat", season, season_start, season_end, gt)
+        except Exception as exc:  # noqa: BLE001 — the number still stands without the line
+            log.warning("season rate line failed for pid=%s: %s", pid, exc)
+        inline = _RATE_INLINE_HIGHLIGHT.get(canon)
+        base["highlighted_stat"] = inline or label
+        # Display form by convention: BB%/K% are PERCENTAGES (rate per PA -> 15.2%);
+        # BABIP/ISO are .300-STYLE rates (like AVG, leading zero dropped), NOT percents;
+        # counts are ints; every other rate/float shows in its natural form.
+        if canon in ("BB_PCT", "K_PCT"):
+            display = f"{value * 100:.1f}%"
+        elif canon in ("BABIP", "ISO"):
+            _s = f"{value:.3f}"
+            display = _s[1:] if _s.startswith("0.") else _s
+        else:
+            display = f"{value:g}" if isinstance(value, float) else str(value)
+        base.update(stat_value={"label": label, "value": value, "display": display,
+                                "role": role},
                     span=list(span),
                     answer=f"{name}'s {phrase} is {value}.")
         return base
@@ -13033,6 +13069,12 @@ def ask(request: Request,
         base["understood_as"]   = params
         base["stat_value"]      = result.get("stat_value")
         base["game_coverage"]   = result.get("game_coverage")
+        # The line + highlight the rate runner built (pitching line for a pitching
+        # rate, batting line for a batting one). A career composite decline carries
+        # none — it stays prose.
+        base["rates"]           = result.get("rates")
+        base["pitching_line"]   = result.get("pitching_line")
+        base["highlighted_stat"] = result.get("highlighted_stat")
         if result.get("declined"):
             base["declined"] = True
             base["reason"]   = result.get("reason")
@@ -13067,6 +13109,12 @@ def ask(request: Request,
     # and let the UI show the whole slash line with that stat highlighted. The
     # count is that stat's value.
     base["highlighted_stat"] = _EVENT_TO_STAT.get((params.get("event") or "").strip().upper())
+    # Carry the count as stat_value too, so a stat NOT in the line (GIDP, BK, SHO…)
+    # still leads with a highlighted column — the same fix TB/SB/AB/XBH got, unified.
+    # A core/in-line stat (HR, ER) ignores this and highlights in place.
+    if cnt is not None and base["highlighted_stat"]:
+        base["stat_value"] = {"label": base["highlighted_stat"], "value": cnt,
+                              "display": str(cnt), "role": (params.get("role") or "bat").lower()}
     # The rate line MUST come from the SAME source as the count. A plays-derived
     # line under a COMPLETE season-stats total mixes ~90%-coverage numbers with a
     # complete one — Williams 1941 would read "37" while the HR column shows 30.

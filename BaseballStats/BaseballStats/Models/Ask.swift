@@ -76,6 +76,12 @@ struct AskResponse: Decodable {
     // the question asked about, e.g. "HR" / "SO"). nil = emphasize nothing.
     let highlighted_stat: String?
 
+    // Audit follow-up: the queried stat's value when it is NOT one of the line's
+    // columns (WAR / ERA+ / GIDP / BK / …). Lets the answer lead with a highlighted
+    // column carrying it, so the stat the user asked about always appears. `display`
+    // is pre-formatted server-side (10.43 / 1.12 / 90). nil for in-line stats.
+    let stat_value: AskStatValue?
+
     // Resolution + provenance.
     let player_resolved: AskPlayerResolved?
     let source: String?
@@ -137,6 +143,14 @@ struct AskLeader: Decodable, Identifiable {
     let OPS: Double?
 
     var id: String { retro_id ?? "\(rank ?? 0)-\(player_name ?? "?")" }
+}
+
+/// A newly-exposed stat's value carried alongside its line, so a stat that isn't
+/// one of the line's columns still leads with a highlighted column. `display` is
+/// pre-formatted by the backend (10.43 / 1.12 / 90); `label` matches highlighted_stat.
+struct AskStatValue: Decodable {
+    let label: String?
+    let display: String?
 }
 
 /// The slash line + volume for a single rate query. The core set (PA/AB/H/HR/
