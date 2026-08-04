@@ -194,5 +194,5 @@
 {"id": "q193", "bucket": "month_compose", "q": "How many home runs did Babe Ruth hit in September 1927?", "note": "month + season compose, a fixed historical figure"}
 {"id": "q194", "bucket": "team_lb", "q": "Who hit the most home runs as a Yankee in the 20th century?", "note": "THE TEST: Ruth 659 (stints, team=Yankees), NOT career 714. Bounded to pre-2001 so the board is all-retired/stable (Judge is active); leaders_val top must be 659."}
 {"id": "q195", "bucket": "team_ambig", "q": "Who has hit the most home runs as a Chicago player?", "note": "ambiguous-city team scope -> Cubs/White Sox clarify decline"}
-{"id": "q196", "bucket": "team_traded", "q": "Who hit the most home runs as a Diamondback in 2017?", "note": "mid-season trade: Martinez 29 (ARI stint), NOT his 45 season total"}
+{"id": "q196", "bucket": "team_traded", "q": "Who were the top 5 home run hitters for the Diamondbacks in 2017?", "note": "mid-season trade: Martinez 29 (ARI stint, #3 in the top 5), NOT his 45 season total. Explicit 'top 5' pins limit=5 so the discriminating 29 stays on the board (a bare 'the most' collapses to limit=1 and drops it)."}
 {"id": "q197", "bucket": "team_compose", "q": "Who hit the most home runs as a Yankee in the 1990s?", "note": "team + season compose (stints, 1990-1999)"}
