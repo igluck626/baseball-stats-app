@@ -5899,6 +5899,45 @@ _CANON_EVENT = {
     "AB": "AB", "AT_BAT": "AB", "AT_BATS": "AB", "ATBAT": "AB", "ATBATS": "AB",
     "XBH": "XBH", "EXTRA_BASE_HIT": "XBH", "EXTRA_BASE_HITS": "XBH",
     "EXTRABASEHIT": "XBH", "EXTRABASEHITS": "XBH",
+    # ---- Audit follow-up: stats stored in player_seasons/pitcher_seasons but
+    # previously unexposed. COUNTS (SUM across seasons), FLOATS (SUM, non-int),
+    # RATES (component-sum-then-divide, Class B) and COMPOSITES (season-only, Class C).
+    # Threaded through _SEASON_COL / _SEASON_FLOAT / _SEASON_RATE + _TOTAL_ONLY_EVENTS.
+    "GIDP": "GIDP", "GDP": "GIDP", "GROUNDED_INTO_DOUBLE_PLAY": "GIDP",
+    "GROUND_INTO_DOUBLE_PLAY": "GIDP", "DOUBLE_PLAY": "GIDP", "DOUBLE_PLAYS": "GIDP",
+    "SF": "SF", "SAC_FLY": "SF", "SAC_FLIES": "SF", "SACRIFICE_FLY": "SF",
+    "SACRIFICE_FLIES": "SF", "SACRIFICE_FLYS": "SF",
+    "SH": "SH", "SAC_BUNT": "SH", "SAC_BUNTS": "SH", "SACRIFICE_BUNT": "SH",
+    "SACRIFICE_BUNTS": "SH", "SACRIFICE_HIT": "SH", "SACRIFICE_HITS": "SH",
+    "IBB": "IBB", "INTENTIONAL_WALK": "IBB", "INTENTIONAL_WALKS": "IBB",
+    "INTENTIONAL_BB": "IBB", "IW": "IBB",
+    "CS": "CS", "CAUGHT_STEALING": "CS", "CAUGHTSTEALING": "CS",
+    "WP": "WP", "WILD_PITCH": "WP", "WILD_PITCHES": "WP",
+    "BK": "BK", "BALK": "BK", "BALKS": "BK",
+    "CG": "CG", "COMPLETE_GAME": "CG", "COMPLETE_GAMES": "CG",
+    "SHO": "SHO", "SHUTOUT": "SHO", "SHUTOUTS": "SHO",
+    "GS": "GS", "GAME_STARTED": "GS", "GAMES_STARTED": "GS", "STARTS": "GS", "START": "GS",
+    "G": "G", "GAME": "G", "GAMES": "G", "APPEARANCE": "G", "APPEARANCES": "G",
+    "GF": "GF", "GAME_FINISHED": "GF", "GAMES_FINISHED": "GF",
+    "BFP": "BFP", "BATTERS_FACED": "BFP", "BATTER_FACED": "BFP", "TBF": "BFP",
+    # Summable FLOATS
+    "WAR": "WAR", "WINS_ABOVE_REPLACEMENT": "WAR", "BWAR": "WAR",
+    "IP": "IP", "INNINGS": "IP", "INNINGS_PITCHED": "IP",
+    # Computable RATES (Class B)
+    "ERA": "ERA", "EARNED_RUN_AVERAGE": "ERA",
+    "WHIP": "WHIP", "WALKS_AND_HITS_PER_INNING_PITCHED": "WHIP",
+    "K/9": "K9", "K9": "K9", "KPER9": "K9", "K_PER_9": "K9", "STRIKEOUTS_PER_9": "K9",
+    "BB/9": "BB9", "BB9": "BB9", "WALKS_PER_9": "BB9",
+    "HR/9": "HR9", "HR9": "HR9", "HOME_RUNS_PER_9": "HR9",
+    "BABIP": "BABIP",
+    "ISO": "ISO", "ISOLATED_POWER": "ISO",
+    "BB%": "BB_PCT", "BB_PCT": "BB_PCT", "WALK_RATE": "BB_PCT", "WALK_PCT": "BB_PCT",
+    "K%": "K_PCT", "K_PCT": "K_PCT", "STRIKEOUT_RATE": "K_PCT", "STRIKEOUT_PCT": "K_PCT",
+    # Season-only COMPOSITES (Class C)
+    "OPS+": "OPS_PLUS", "OPS_PLUS": "OPS_PLUS", "OPSPLUS": "OPS_PLUS", "ADJUSTED_OPS": "OPS_PLUS",
+    "ERA+": "ERA_PLUS", "ERA_PLUS": "ERA_PLUS", "ERAPLUS": "ERA_PLUS", "ADJUSTED_ERA": "ERA_PLUS",
+    "WOBA": "WOBA", "WEIGHTED_ON_BASE_AVERAGE": "WOBA",
+    "FIP": "FIP", "FIELDING_INDEPENDENT_PITCHING": "FIP",
 }
 
 # (role, canonical event) -> season-stats column expression. Combos NOT here
@@ -5918,10 +5957,61 @@ _SEASON_COL = {
     # fill. XBH = extra-base hits = doubles + triples + HR (2B/3B are lowercase cols).
     ("bat", "TB"): '("H" + doubles + 2 * triples + 3 * "HR")',
     ("bat", "XBH"): '(doubles + triples + "HR")',
+    # ---- Audit follow-up: batting COUNT columns (all ~100% populated). ----
+    ("bat", "GIDP"): '"GIDP"', ("bat", "SF"): '"SF"', ("bat", "SH"): '"SH"',
+    ("bat", "IBB"): '"IBB"', ("bat", "CS"): '"CS"', ("bat", "HBP"): '"HBP"',
+    ("bat", "WAR"): '"WAR"',                       # summable float
     ("pit", "HR"): '"HR"', ("pit", "K"): '"SO"', ("pit", "BB"): '"BB"',
     # pitcher decisions / earned runs — pitcher_seasons columns (double-quoted).
     ("pit", "W"): '"W"', ("pit", "L"): '"L"', ("pit", "SV"): '"SV"', ("pit", "ER"): '"ER"',
+    # ---- Audit follow-up: pitching COUNT columns. ----
+    ("pit", "H"): '"H"', ("pit", "R"): '"R"', ("pit", "GIDP"): '"GIDP"',
+    ("pit", "SF"): '"SF"', ("pit", "SH"): '"SH"', ("pit", "IBB"): '"IBB"',
+    ("pit", "HBP"): '"HBP"', ("pit", "WP"): '"WP"', ("pit", "BK"): '"BK"',
+    ("pit", "CG"): '"CG"', ("pit", "SHO"): '"SHO"', ("pit", "G"): '"G"',
+    ("pit", "GS"): '"GS"', ("pit", "GF"): '"GF"', ("pit", "BFP"): '"BFP"',
+    ("pit", "WAR"): '"WAR"', ("pit", "IP"): '"IP"',   # summable floats
 }
+
+# Canonical stats whose season-stats total is a FLOAT (WAR is additive across
+# seasons; IP is decimal-summable). They ride the same SUM path as the int counts
+# but round-not-truncate — an int() cast would silently turn WAR 10.43 into 10.
+_SEASON_FLOAT = {"WAR", "IP"}
+
+# ---- RATE stats from season-stats. Two classes:
+#   B (computable): the CAREER value = a formula over SUMMED components, NEVER the
+#     mean of the per-season rate. Each entry lists (role, the component columns to
+#     SUM, a lambda(sums)->value). Correct for a single season AND a career.
+#   C (composite): league/park-normalized (OPS+/ERA+) or year-weighted (wOBA/FIP) —
+#     there is no correct way to fold seasons together from our columns, so a SINGLE
+#     season returns the stored column and a CAREER/RANGE declines (never averages).
+def _safe_div(n, d):
+    return round(n / d, 3) if d else None
+
+_SEASON_RATE_B = {
+    # pitching
+    "ERA":   ("pit", ('"ER"', '"IP"'),          lambda s: _safe_div(9.0 * s[0], s[1]), 2),
+    "WHIP":  ("pit", ('"BB"', '"H"', '"IP"'),   lambda s: _safe_div(s[0] + s[1], s[2]), 2),
+    "K9":    ("pit", ('"SO"', '"IP"'),          lambda s: _safe_div(9.0 * s[0], s[1]), 2),
+    "BB9":   ("pit", ('"BB"', '"IP"'),          lambda s: _safe_div(9.0 * s[0], s[1]), 2),
+    "HR9":   ("pit", ('"HR"', '"IP"'),          lambda s: _safe_div(9.0 * s[0], s[1]), 2),
+    # batting
+    "BABIP": ("bat", ('"H"', '"HR"', '"AB"', '"SO"', '"SF"'),
+              lambda s: _safe_div(s[0] - s[1], s[2] - s[3] - s[1] + s[4]), 3),
+    "ISO":   ("bat", ('doubles', 'triples', '"HR"', '"AB"'),
+              lambda s: _safe_div(s[0] + 2 * s[1] + 3 * s[2], s[3]), 3),
+    "BB_PCT": ("bat", ('"BB"', '"PA"'),         lambda s: _safe_div(s[0], s[1]), 3),
+    "K_PCT":  ("bat", ('"SO"', '"PA"'),         lambda s: _safe_div(s[0], s[1]), 3),
+}
+# Class C: (role, stored column, human label, "specific season" reason).
+_SEASON_RATE_C = {
+    "OPS_PLUS": ("bat", '"OPS_plus"', "OPS+"),
+    "ERA_PLUS": ("pit", '"ERA_plus"', "ERA+"),
+    "WOBA":     ("bat", '"wOBA"',     "wOBA"),
+    "FIP":      ("pit", '"FIP"',      "FIP"),
+}
+# Every rate token, for routing. A rate never sums, so it is never in _SEASON_COL.
+_SEASON_RATES = set(_SEASON_RATE_B) | set(_SEASON_RATE_C)
 
 # Canonical counting stats that answer from complete season/career totals
 # (player_seasons / pitcher_seasons) but are NOT single plays-store events, so a
@@ -5929,11 +6019,26 @@ _SEASON_COL = {
 # R, SB, H, TB. Pitching: W, L, SV, ER (game-level decisions, no play-level form).
 # (H is derivable situationally from the plays hit flag — a future add; for now a
 # split on it declines like the rest, instead of leaking an unknown-event error.)
-_TOTAL_ONLY_EVENTS = {"RBI", "R", "SB", "H", "TB", "W", "L", "SV", "ER", "AB", "XBH"}
+_TOTAL_ONLY_EVENTS = {"RBI", "R", "SB", "H", "TB", "W", "L", "SV", "ER", "AB", "XBH",
+    # Audit follow-up: counts/floats/rates that live only in season-stats. HBP is
+    # NOT here — it IS a plays event, so it keeps its situational form (and now also
+    # a complete season total). A rate/composite never has a play-level form either.
+    "GIDP", "SF", "SH", "IBB", "CS", "WP", "BK", "CG", "SHO", "G", "GS", "GF", "BFP",
+    "WAR", "IP", "ERA", "WHIP", "K9", "BB9", "HR9", "BABIP", "ISO", "BB_PCT", "K_PCT",
+    "OPS_PLUS", "ERA_PLUS", "WOBA", "FIP"}
 _TOTAL_ONLY_LABEL = {"RBI": "RBIs", "R": "runs", "SB": "stolen bases",
                      "H": "hits", "TB": "total bases", "W": "wins", "L": "losses",
                      "SV": "saves", "ER": "earned runs", "AB": "at-bats",
-                     "XBH": "extra-base hits"}
+                     "XBH": "extra-base hits",
+                     "GIDP": "grounded-into-double-plays", "SF": "sacrifice flies",
+                     "SH": "sacrifice bunts", "IBB": "intentional walks",
+                     "CS": "times caught stealing", "WP": "wild pitches", "BK": "balks",
+                     "CG": "complete games", "SHO": "shutouts", "G": "games",
+                     "GS": "games started", "GF": "games finished", "BFP": "batters faced",
+                     "WAR": "WAR", "IP": "innings pitched", "ERA": "ERA", "WHIP": "WHIP",
+                     "K9": "K/9", "BB9": "BB/9", "HR9": "HR/9", "BABIP": "BABIP",
+                     "ISO": "ISO", "BB_PCT": "walk rate", "K_PCT": "strikeout rate",
+                     "OPS_PLUS": "OPS+", "ERA_PLUS": "ERA+", "WOBA": "wOBA", "FIP": "FIP"}
 
 # UNSUPPORTED-CONCEPT guard. Adding a countable event (AB, TB, W...) gives the
 # model a plausible home for an ADJACENT concept the app CAN'T answer, so it maps
@@ -5990,6 +6095,32 @@ _UNSUPPORTED_CONCEPT = [
         re.I),
      "I don't track consecutive games played (the iron-man streak) — that needs "
      "game-by-game schedule data I don't have."),
+    # ---- Audit follow-up near-neighbours: exposing CG/SHO/GS/SV/W and the counting
+    # stats opens plausible-but-wrong homes for these adjacent concepts. ----
+    # QUALITY STARTS -> the model would map to GS / CG / SHO. A QS (>=6 IP, <=3 ER)
+    # is a per-game composite we don't store. Anchored on 'quality start(s)' so a
+    # plain 'games started' / 'complete game' is untouched.
+    (re.compile(r"\bquality\s+starts?\b", re.I),
+     "I don't track quality starts — that's a per-game rule (6+ innings, 3 or fewer "
+     "earned runs) I can't reconstruct from season totals. I can give games started, "
+     "complete games, shutouts, and ERA."),
+    # HOLDS -> the model would map to SV (saves). A hold is a separate reliever stat
+    # not stored. Anchored on 'hold(s)' with a reliever/save context so it can't catch
+    # unrelated uses of the word 'hold'.
+    (re.compile(r"\bholds?\b(?=(?:(?!\?).){0,40}(?:reliever|bullpen|setup|save|game))"
+                r"|\b(?:reliever|bullpen|setup|save)\b(?:(?!\?).){0,40}?\bholds?\b", re.I),
+     "I don't track holds — that reliever stat isn't in the season records I have. I "
+     "can give saves, games finished, and ERA."),
+    # FIELDING / DEFENSE -> the model would reach for an offensive count. Putouts,
+    # assists, errors, total chances, fielding %, range factor, defensive WAR beyond
+    # what's stored — none are in player_seasons (a separate Fielding table the /ask
+    # tools don't read). Anchored on the fielding nouns.
+    (re.compile(r"\b(?:put[\s-]?outs?|assists?|fielding\s+(?:percentage|pct|average)"
+                r"|total\s+chances|range\s+factor|errors?"   # no supported stat is 'error(s)'
+                r"|gold\s+gloves?|defensive\s+runs?\s+saved|\bDRS\b)\b", re.I),
+     "I don't have fielding stats — putouts, assists, errors, fielding percentage and "
+     "the like live in a separate defensive record my tools don't read. I can answer "
+     "batting and pitching questions."),
 ]
 
 
@@ -6176,6 +6307,114 @@ def _season_rate_line(pid, role, season, season_start, season_end, game_type):
             "OPS": round(obp + slg, 3) if obp is not None else None}
 
 
+def _run_season_rate(player, role, canon, season, season_start, season_end, gt):
+    """Audit follow-up: RATE / FLOAT stats from the COMPLETE season-stats tables.
+      FLOAT  (WAR/IP): summable — career = SUM, rounded (never int-cast).
+      Class B (ERA/WHIP/K9/BB9/HR9/BABIP/ISO/BB%/K%): value = a formula over SUMMED
+              components — correct for a single season AND a career. NEVER the mean
+              of the per-season rate.
+      Class C (OPS+/ERA+/wOBA/FIP): league/park-normalized or year-weighted; a SINGLE
+              season returns the stored column, a CAREER/RANGE DECLINES (no correct
+              way to fold seasons — we refuse rather than average and be quietly wrong).
+    Returns the resolved dict, the ambiguous dict, a declined dict, or None (gt the
+    season tables can't express)."""
+    if gt in ("P", "A"):
+        # No postseason / all-star rate columns — decline HONESTLY here rather than
+        # return None (which would fall through to the plays store, where ERA/WAR
+        # don't exist and the query would error).
+        _lbl = _TOTAL_ONLY_LABEL.get(canon, canon)
+        return {"resolved": True, "is_rate": True, "declined": True,
+                "source": "season_stats", "stat_value": None, "player": None,
+                "filters": {"event": canon, "game_type": gt},
+                "reason": f"I only have {_lbl} for the regular season, not the "
+                          f"{'postseason' if gt == 'P' else 'All-Star Game'}.",
+                "answer": f"I only have {_lbl} for the regular season, not the "
+                          f"{'postseason' if gt == 'P' else 'All-Star Game'}."}
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    cands = [c for c in _resolve_retro_id(player, role) if c["mlbam_id"] is not None]
+    if not cands:
+        raise HTTPException(status_code=404, detail=f"No player matching '{player}'")
+    if len({c["mlbam_id"] for c in cands}) > 1:
+        return {"resolved": False, "ambiguous": True, "query": player, "candidates": cands[:25]}
+    resolved = cands[0]; pid = resolved["mlbam_id"]; name = resolved["name"]
+    table = "pitcher_seasons" if role == "pit" else "player_seasons"
+    where = ["player_id = :pid"]; p: dict = {"pid": int(pid)}
+    if season is not None:
+        where.append("year = :y"); p["y"] = int(season)
+    else:
+        if season_start is not None: where.append("year >= :ys"); p["ys"] = int(season_start)
+        if season_end is not None:   where.append("year <= :ye"); p["ye"] = int(season_end)
+    wc = " AND ".join(where)
+    label = _TOTAL_ONLY_LABEL.get(canon, canon)
+    is_single = season is not None or (
+        season_start is not None and season_start == season_end)
+    if season is not None:                 scope = f"in {season}"
+    elif season_start and season_end:      scope = f"from {season_start} to {season_end}"
+    elif season_start:                     scope = f"since {season_start}"
+    elif season_end:                       scope = f"through {season_end}"
+    else:                                  scope = "career"
+
+    base = {"resolved": True, "source": "season_stats", "is_rate": True,
+            "player": {"query": player, "name": name, "mlbam_id": pid, "role": role},
+            "filters": {"event": canon, "season": season, "season_start": season_start,
+                        "season_end": season_end, "game_type": gt},
+            "count": None, "game_coverage": {"complete": True}, "count_data": None}
+
+    def finish(value, span):
+        if value is None:
+            base.update(empty=True, stat_value=None,
+                        answer=f"I don't have {label} on record for {name} {scope}.")
+            return base
+        phrase = f"career {label}" if scope == "career" else f"{label} {scope}"
+        base.update(stat_value={"label": label, "value": value, "role": role},
+                    span=list(span),
+                    answer=f"{name}'s {phrase} is {value}.")
+        return base
+
+    # ---- Class C composite: season-only, else decline (never fold seasons) ----
+    if canon in _SEASON_RATE_C:
+        _r, col, clabel = _SEASON_RATE_C[canon]
+        if not is_single:
+            base.update(declined=True, stat_value=None,
+                        reason=(f"{clabel} is normalized to each season's league and "
+                                f"park, so there's no correct way to combine seasons "
+                                f"into one career figure — ask for a specific season."),
+                        answer=(f"{clabel} is normalized to each season's league and "
+                                f"park, so I can give {name}'s {clabel} for a single "
+                                f"season but not a career number — name a year."))
+            return base
+        sql = f"SELECT MAX({col}), MIN(year), MAX(year), COUNT(*) FROM {table} WHERE {wc}"
+        with connection.get_session() as db:
+            val, mn, mx, nrows = db.execute(_sa_text(sql), p).fetchone()
+        if not nrows or val is None:
+            return finish(None, [mn, mx])
+        digits = 1 if canon in ("OPS_PLUS", "ERA_PLUS") else 3
+        return finish(round(float(val), digits), [mn, mx])
+
+    # ---- FLOAT (summable): career = SUM ----
+    if canon in _SEASON_FLOAT:
+        col = _SEASON_COL[(role, canon)]
+        sql = f"SELECT COALESCE(SUM({col}),0), MIN(year), MAX(year), COUNT(*) FROM {table} WHERE {wc}"
+        with connection.get_session() as db:
+            val, mn, mx, nrows = db.execute(_sa_text(sql), p).fetchone()
+        if not nrows:
+            return finish(None, [mn, mx])
+        return finish(round(float(val), 2 if canon == "WAR" else 1), [mn, mx])
+
+    # ---- Class B computable: sum components, then divide ----
+    _r, comps, fn, digits = _SEASON_RATE_B[canon]
+    sums = ", ".join(f"COALESCE(SUM({c}),0)" for c in comps)
+    sql = f"SELECT {sums}, MIN(year), MAX(year), COUNT(*) FROM {table} WHERE {wc}"
+    with connection.get_session() as db:
+        row = db.execute(_sa_text(sql), p).fetchone()
+    nrows = row[-1]
+    if not nrows:
+        return finish(None, [row[-3], row[-2]])
+    value = fn([float(x) for x in row[:len(comps)]])
+    return finish(round(value, digits) if value is not None else None, [row[-3], row[-2]])
+
+
 def _run_season_total(player, role="bat", event=None, season=None,
                       season_start=None, season_end=None, game_type=None):
     """GATE 0 (plain-total branch): answer a non-situational count from the
@@ -6189,6 +6428,10 @@ def _run_season_total(player, role="bat", event=None, season=None,
     role = (role or "bat").lower()
     canon = _canon_event(event)
     gt = (game_type or "").strip().upper() or None
+    # RATE / FLOAT stats (ERA, WAR, OPS+, …) don't SUM — hand to the rate runner,
+    # which computes Class-B from summed components and declines a Class-C career.
+    if canon in _SEASON_RATES or canon in _SEASON_FLOAT:
+        return _run_season_rate(player, role, canon, season, season_start, season_end, gt)
     col = _SEASON_COL.get((role, canon))
     # All-Star totals and unsupported (role, event) combos aren't in season-stats
     if col is None or gt == "A":
@@ -8494,7 +8737,12 @@ _COMPARE_STAT_LABEL = {
     "TB": "total bases", "RBI": "RBIs", "R": "runs", "SB": "stolen bases",
     "1B": "singles", "2B": "doubles", "3B": "triples", "AB": "at-bats",
     "XBH": "extra-base hits", "HBP": "hit by pitches",
-    "W": "wins", "L": "losses", "SV": "saves", "ER": "earned runs"}
+    "W": "wins", "L": "losses", "SV": "saves", "ER": "earned runs",
+    # Audit follow-up (counts — used for leaderboard titles + comparisons).
+    "GIDP": "grounded-into-double-plays", "SF": "sacrifice flies",
+    "SH": "sacrifice bunts", "IBB": "intentional walks", "CS": "caught stealing",
+    "WP": "wild pitches", "BK": "balks", "CG": "complete games", "SHO": "shutouts",
+    "G": "games", "GS": "games started", "GF": "games finished", "BFP": "batters faced"}
 
 
 def _run_comparison(params):
@@ -9458,6 +9706,11 @@ def _run_season_leaderboard(event=None, role="bat", season=None, season_start=No
     role = (role or "bat").lower()
     canon = _canon_event(event)
     gt = (game_type or "").strip().upper() or None
+    # RATE / FLOAT boards (lowest ERA, most WAR) need a qualifier floor and/or a
+    # float leader field the UI lacks — not exposed for ranking yet. COUNT boards
+    # ('most complete games') rank correctly by SUM as integers.
+    if canon in _SEASON_RATES or canon in _SEASON_FLOAT:
+        return None
     col = _SEASON_COL.get((role, canon))
     if col is None or gt == "A":
         return None
@@ -10117,14 +10370,23 @@ _ASK_QUERY_TOOL = {
                      "'bat' if the player is the hitter, 'pit' if the pitcher. Default 'bat'."},
             "event": {"type": "string",
                       "enum": ["HR", "K", "BB", "HBP", "1B", "2B", "3B", "RBI", "R", "SB",
-                               "H", "TB", "AB", "XBH", "W", "L", "SV", "ER"],
+                               "H", "TB", "AB", "XBH", "W", "L", "SV", "ER",
+                               "GIDP", "SF", "SH", "IBB", "CS", "WP", "BK", "CG", "SHO",
+                               "G", "GS", "GF", "BFP", "WAR", "IP",
+                               "ERA", "WHIP", "K/9", "BB/9", "HR/9", "BABIP", "ISO",
+                               "BB%", "K%", "OPS+", "ERA+", "wOBA", "FIP"],
                       "description": "Outcome: HR=home run, K=strikeout, BB=walk, "
                                      "HBP=hit by pitch, 1B=single, 2B=double, 3B=triple. "
                                      "SEASON/CAREER TOTALS ONLY (no situational split): "
-                                     "RBI=runs batted in, R=runs scored, SB=stolen bases, "
-                                     "H=hits, TB=total bases, AB=at-bats, XBH=extra-base "
-                                     "hits; pitching W=wins, L=losses, SV=saves, ER=earned "
-                                     "runs (set role='pit')."},
+                                     "RBI, R=runs, SB=stolen bases, H=hits, TB=total bases, "
+                                     "AB, XBH=extra-base hits; pitching W/L/SV/ER. Also "
+                                     "GIDP, SF=sac flies, SH=sac bunts, IBB, CS=caught "
+                                     "stealing, WP=wild pitches, BK=balks, CG=complete "
+                                     "games, SHO=shutouts, G, GS=games started, GF, "
+                                     "BFP=batters faced, WAR, IP=innings. RATES (season or "
+                                     "career): ERA, WHIP, K/9, BB/9, HR/9, BABIP, ISO, "
+                                     "BB%, K%. OPS+/ERA+/wOBA/FIP are per-SEASON only. Set "
+                                     "role='pit' for pitching stats."},
             "balls": {"type": "integer", "minimum": 0, "maximum": 3, "description":
                       "Ball count if specified (a '3-2'/'full count' -> balls 3)."},
             "strikes": {"type": "integer", "minimum": 0, "maximum": 2, "description":
@@ -10166,13 +10428,18 @@ _ASK_LEADERBOARD_TOOL = {
         "properties": {
             "event": {"type": "string",
                       "enum": ["HR", "K", "BB", "HBP", "1B", "2B", "3B",
-                               "H", "TB", "AB", "XBH", "RBI", "R", "SB", "W", "SV"],
-                      "description": "Outcome to rank by (required). HR=home run, "
-                                     "K=strikeout, BB=walk, HBP=hit by pitch, "
-                                     "1B=single, 2B=double, 3B=triple, H=hits, "
-                                     "TB=total bases, AB=at-bats, XBH=extra-base hits, "
-                                     "RBI, R=runs, SB=stolen bases; pitching W=wins, "
-                                     "SV=saves (set role='pit')."},
+                               "H", "TB", "AB", "XBH", "RBI", "R", "SB", "W", "SV", "L", "ER",
+                               "GIDP", "SF", "SH", "IBB", "CS", "WP", "BK",
+                               "CG", "SHO", "G", "GS", "GF", "BFP"],
+                      "description": "COUNT to rank by (required). HR=home run, "
+                                     "K=strikeout, BB=walk, HBP, 1B/2B/3B, H=hits, "
+                                     "TB=total bases, AB, XBH, RBI, R=runs, SB; pitching "
+                                     "W=wins, L, SV=saves, ER, CG=complete games, "
+                                     "SHO=shutouts, G, GS=games started, GF, BFP, WP=wild "
+                                     "pitches, BK=balks (set role='pit'). Also GIDP, SF, "
+                                     "SH=sac bunts, IBB, CS=caught stealing. NOTE: ranking "
+                                     "by a RATE (ERA, WAR) or a rate-leaderboard is NOT "
+                                     "supported here — use query_situational for one player."},
             "role": {"type": "string", "enum": ["bat", "pit"], "description":
                      "'bat' for hitters, 'pit' for pitchers. Default 'bat'."},
             "balls": {"type": "integer", "minimum": 0, "maximum": 3},
@@ -10227,11 +10494,14 @@ _ASK_COMPARISON_TOOL = {
                                        "(e.g. ['Barry Bonds', 'Hank Aaron']). Required, 2+."},
             "event": {"type": "string",
                       "enum": ["HR", "K", "BB", "HBP", "1B", "2B", "3B", "RBI", "R", "SB",
-                               "H", "TB", "AB", "XBH", "W", "L", "SV", "ER"],
-                      "description": "The ONE stat to compare on (required). HR=home run, "
+                               "H", "TB", "AB", "XBH", "W", "L", "SV", "ER",
+                               "GIDP", "SF", "SH", "IBB", "CS", "WP", "BK", "CG", "SHO",
+                               "G", "GS", "GF", "BFP"],
+                      "description": "The ONE COUNT to compare on (required). HR=home run, "
                                      "K=strikeout, BB=walk, 1B/2B/3B, RBI, R=runs, SB, "
-                                     "H=hits, TB=total bases, AB, XBH=extra-base hits; "
-                                     "pitching W/L/SV/ER (set role='pit')."},
+                                     "H=hits, TB=total bases, AB, XBH; pitching W/L/SV/ER, "
+                                     "CG, SHO, G, GS, GF, BFP, WP, BK (role='pit'). Also "
+                                     "GIDP, SF, SH, IBB, CS. Compare on a COUNT, not a rate."},
             "role": {"type": "string", "enum": ["bat", "pit"], "description":
                      "'bat' for hitters, 'pit' for pitchers. Default 'bat'."},
             "balls": {"type": "integer", "minimum": 0, "maximum": 3},
@@ -10676,6 +10946,22 @@ _ASK_SYSTEM = (
     "Series ('Ohtani's postseason HRs' -> game_type:'P'). Set game_type='ALL' "
     "ONLY when they explicitly ask to INCLUDE the postseason ('regular season and "
     "playoffs combined', 'including the postseason').\n\n"
+    "SEASON-STATS TOTALS & RATES (call query_situational — these ARE supported, "
+    "do NOT decline them): beyond the play-level events, the season records also "
+    "hold complete counting stats — GIDP, SF (sacrifice flies), SH (sacrifice "
+    "bunts), IBB (intentional walks), CS (caught stealing); pitching WP (wild "
+    "pitches), BK (balks), CG (complete games), SHO (shutouts), G, GS (games "
+    "started), GF, BFP (batters faced) — plus WAR, IP, and RATES: ERA, WHIP, K/9, "
+    "BB/9, HR/9, BABIP, ISO, BB%, K% (set role='pit' for pitching stats). "
+    "'Bob Gibson's ERA in 1968' -> {player:'Bob Gibson', role:'pit', event:'ERA', "
+    "season:1968}; 'Trout's WAR in 2016' -> {player:'Trout', event:'WAR', "
+    "season:2016}; 'Rickey Henderson's career caught stealing' -> {player:'Rickey "
+    "Henderson', event:'CS'}. These have NO situational split — if the question "
+    "adds a situation (vs lefties, RISP, a count), THEN call cannot_answer. "
+    "OPS+, ERA+, wOBA, FIP are stored PER SEASON: route a single-season question "
+    "normally (event:'ERA+', season:2000); for a CAREER OPS+/ERA+ still route it "
+    "(event, no season) — the backend returns the honest 'ask for a specific "
+    "season' note, so do NOT pre-empt it with cannot_answer.\n\n"
     "IN-SCOPE EXAMPLES (call query_situational):\n"
     "- 'How many grand slams has Aaron Judge hit?' -> {player:'Aaron Judge', "
     "event:'HR', base_state:'loaded'}  (career — no season)\n"
@@ -12732,6 +13018,21 @@ def ask(request: Request,
         base["player_resolved"] = {"candidates": cands}
         base["answer"] = (f'There are multiple players matching '
                           f'"{params["player"]}" — tap the one you mean.')
+        return _finish()
+
+    # RATE / FLOAT stat (audit follow-up): the result carries a computed stat_value +
+    # a deterministic answer string (or a Class-C career decline), NOT a count. The
+    # answer string renders today; stat_value travels structurally for a future card.
+    if result.get("is_rate"):
+        base["source"]          = result.get("source")
+        base["player_resolved"] = result.get("player")
+        base["understood_as"]   = params
+        base["stat_value"]      = result.get("stat_value")
+        base["game_coverage"]   = result.get("game_coverage")
+        if result.get("declined"):
+            base["declined"] = True
+            base["reason"]   = result.get("reason")
+        base["answer"] = result.get("answer")
         return _finish()
 
     base["count"]          = result.get("count")
