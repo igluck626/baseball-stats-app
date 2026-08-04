@@ -30,6 +30,74 @@ HERE = os.path.dirname(__file__)
 DRIFT_MAX_JUMP = 500   # up-by-a-few is the season; +500 (or a decrease) is a bug
 ROUTING_KEYS = ("tool_name", "understood_as")  # advisory-by-rule; see module docstring
 
+# Rate-line drift (rates_val / splits_val for an ACTIVE player — flagged by
+# build_golden). A rate line splits into two kinds of component, judged differently:
+#   * COUNTING (AB, H, IP, SO, BB, PA, ER, R, …): grows with the season -> same
+#     direction rule as `count` (bounded monotonic increase; decrease/vanish/jump fails).
+#   * RATE (AVG, OBP, SLG, OPS, ERA, WHIP, …): moves BOTH ways — an 0-for-4 lowers an
+#     average — so direction can't gate it. Judged by TOLERANCE instead: a move within
+#     RATE_TOL is a season; a move at/over it (or to non-numeric) is a regression.
+# RATE_TOL = 0.075 sits above the worst single-season drift observed on the smallest
+# live bucket in the battery (~.056, Judge's ~44-AB vs-one-team line) and below the
+# .100 "real regression" threshold — so it tolerates a full season yet still catches a
+# rate that jumps .100 or collapses toward zero (a .282 AVG -> 0 is a .282 move).
+RATE_TOL = 0.075
+VALUE_KEYS = ("rates_val", "splits_val")
+RATE_COMPONENTS = {"AVG", "OBP", "SLG", "OPS", "ISO", "BABIP", "wOBA",
+                   "ERA", "WHIP", "K%", "BB%"}
+
+
+def _num(x):
+    return isinstance(x, (int, float)) and not isinstance(x, bool)
+
+
+def _component_ok(key, g, n):
+    """One rate-line component: (ok, reason). RATE keys gate on tolerance (both ways);
+    everything else is a COUNTING component gated on bounded increase (like `count`)."""
+    if not _num(g):                       # non-numeric baseline -> demand equality
+        return (n == g), (f"{key} {g!r}->{n!r}" if n != g else "")
+    if not _num(n):                       # value vanished / went non-numeric -> regression
+        return False, f"{key} {g!r}->{n!r} (vanished)"
+    if key in RATE_COMPONENTS:
+        return (abs(n - g) < RATE_TOL), (f"{key} {g}->{n} (|Δ|>={RATE_TOL})"
+                                         if abs(n - g) >= RATE_TOL else "")
+    ok = g <= n <= g + DRIFT_MAX_JUMP     # counting component: bounded monotonic increase
+    return ok, ("" if ok else f"{key} {g}->{n} (decrease/jump)")
+
+
+def _rate_line_drift_ok(gv, nv):
+    """True iff a rates_val (dict) or splits_val (list of [label, N, rate]) blob moved
+    only as a live season would. Returns (ok, reason). New splits labels (a fresh month)
+    are tolerated; a vanished label is not."""
+    try:
+        gj = json.loads(gv) if isinstance(gv, str) else gv
+        nj = json.loads(nv) if isinstance(nv, str) else nv
+    except Exception:
+        return False, "unparseable blob"
+    if isinstance(gj, dict) and isinstance(nj, dict):
+        for key, g in gj.items():
+            ok, why = _component_ok(key, g, nj.get(key))
+            if not ok:
+                return False, why
+        return True, ""
+    if isinstance(gj, list) and isinstance(nj, list):
+        nmap = {row[0]: row for row in nj if isinstance(row, (list, tuple)) and row}
+        for row in gj:
+            if not (isinstance(row, (list, tuple)) and len(row) >= 3):
+                return False, "malformed split row"
+            label, gN, gR = row[0], row[1], row[2]
+            nr = nmap.get(label)
+            if nr is None:
+                return False, f"split '{label}' vanished"
+            ok, why = _component_ok(f"'{label}' N", gN, nr[1])   # bucket size: counting
+            if not ok:
+                return False, why
+            ok, why = _component_ok("AVG", gR, nr[2])            # bucket rate: tolerance
+            if not ok:
+                return False, f"'{label}' rate {gR}->{nr[2]}"
+        return True, ""
+    return False, "blob type mismatch"
+
 
 def main():
     new = json.load(open(sys.argv[1]))
@@ -67,16 +135,24 @@ def main():
                 routing_advisory += 1
                 routing.append((k, gv, nv))
                 continue
-            # DRIFT-TOLERANT: pass a bounded monotonic increase (the live season),
-            # but still FAIL a decrease / vanish / gross jump (a real regression).
-            if k in drift_ok and isinstance(gv, (int, float)) and not isinstance(gv, bool):
-                if isinstance(nv, (int, float)) and not isinstance(nv, bool) \
-                        and gv <= nv <= gv + DRIFT_MAX_JUMP:
+            # DRIFT-TOLERANT: pass a season's worth of movement, still FAIL a real
+            # regression. A rate-line value key (rates_val/splits_val) is judged
+            # structurally — counting components by direction, rate components by
+            # tolerance; a scalar (`count`) by bounded monotonic increase.
+            if k in drift_ok:
+                if k in VALUE_KEYS:
+                    ok, why = _rate_line_drift_ok(gv, nv)
+                    if ok:
+                        advisory += 1
+                        continue
+                    gated.append((k, gv, nv, f"  [rate-line: {why}]"))
+                    continue
+                if _num(gv) and _num(nv) and gv <= nv <= gv + DRIFT_MAX_JUMP:
                     advisory += 1
-                    continue  # drift within bound — tolerated
-                # else falls through to CHANGED (decrease, None, or jump > bound)
-            note = "  [drift-tolerant: DECREASE/VANISH/JUMP]" if k in drift_ok else ""
-            gated.append((k, gv, nv, note))
+                    continue  # scalar drift within bound — tolerated
+                gated.append((k, gv, nv, "  [drift-tolerant: DECREASE/VANISH/JUMP]"))
+                continue
+            gated.append((k, gv, nv, ""))
 
         for k, gv, nv, note in gated:
             changed += 1

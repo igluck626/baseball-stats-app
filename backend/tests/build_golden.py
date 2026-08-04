@@ -19,30 +19,53 @@ OUT = os.path.join(HERE, "golden_baseline.json")
 ROUTING_KEYS = ("tool_name", "understood_as")  # advisory-by-rule at gate time; see diff_battery
 
 
+# Cell VALUE keys that carry a rate line (a dict of components, or a list of
+# [label, N, rate] splits). Flagged drift_tolerant for an ACTIVE player exactly as
+# `count` is, and enforced structurally by diff_battery (counting components by
+# direction, rate components by tolerance).
+VALUE_KEYS = ("rates_val", "splits_val")
+
+
 def flag_drift_tolerant(questions):
-    """Mark a question's `count` cell drift_tolerant when it's an ACTIVE player's
-    career (or current-inclusive) season-stats total — those grow nightly as the
-    live season advances, so the gate must judge them by direction, not equality
-    (see diff_battery). Computed HERE so a golden rebuild recomputes it rather than
-    quietly losing the flags. NEEDS the DB (active-status) via $ASK_DB_URL — the same
-    URL run_battery uses for tool_name. If it's absent, we WARN and skip rather than
-    emit an unflagged golden that would then read the season as a fault."""
-    cands = {}   # qid -> player, for gated season-stats CAREER/current-inclusive counts
+    """Mark cells drift_tolerant when they belong to an ACTIVE player and hold a value
+    that moves as the live season advances — judged by direction/tolerance at gate
+    time (see diff_battery), not equality. Two kinds:
+      * `count` — an active player's career / current-inclusive SEASON-STATS total
+        (a plays count is a different, coverage-limited quantity the rule omits).
+      * `rates_val` / `splits_val` — an active player's RATE LINE, from ANY source: a
+        plays-scoped line ('vs the Rays', 'by month') drifts just as a career one does.
+        Its counting components (AB/H/IP/SO/BB…) grow; its rate components
+        (AVG/OBP/SLG/OPS/ERA/WHIP) move both ways.
+    A single past season or a season_end-bounded range is FIXED (never flagged), as is
+    a RETIRED player's line. Computed HERE so a golden rebuild RECOMPUTES the flags
+    rather than quietly losing them. NEEDS the DB (active-status) via $ASK_DB_URL — the
+    same URL run_battery uses for tool_name. Absent, we WARN and skip rather than emit
+    an unflagged golden that would then read the season as a fault."""
+    cands = {}   # qid -> {"player": name, "keys": [flaggable keys]}
     for qid, rec in questions.items():
         c = rec["cell"]
-        if c.get("count") is None or "count" in set(rec.get("unstable", [])):
-            continue
-        if not str(c.get("source") or "").startswith("season_stats"):
-            continue
+        unstable = set(rec.get("unstable", []))
         try:
             ua = json.loads(c["understood_as"]) if c.get("understood_as") else {}
         except Exception:
             ua = {}
+        player = ua.get("player")
+        if not player:
+            continue
         # a single past season or a bounded (season_end) range is FIXED, not drift-prone
         if ua.get("season") is not None or ua.get("season_end") is not None:
             continue
-        if ua.get("player"):
-            cands[qid] = ua["player"]
+        keys = []
+        # count: ONLY a season-stats career/current-inclusive total (unchanged rule)
+        if (c.get("count") is not None and "count" not in unstable
+                and str(c.get("source") or "").startswith("season_stats")):
+            keys.append("count")
+        # rate line: any source — a plays-scoped line drifts for an active player too
+        for vk in VALUE_KEYS:
+            if c.get(vk) is not None and vk not in unstable:
+                keys.append(vk)
+        if keys:
+            cands[qid] = {"player": player, "keys": keys}
     if not cands:
         return 0
     url = os.getenv("ASK_DB_URL")
@@ -55,7 +78,7 @@ def flag_drift_tolerant(questions):
         import psycopg2
         con = psycopg2.connect(url, connect_timeout=25); cur = con.cursor()
         active = {}
-        for p in set(cands.values()):
+        for p in {info["player"] for info in cands.values()}:
             base = p.split(" Jr")[0]      # DB stores names without a suffix
             yr = None
             for tbl, pl in (("player_seasons", "players"), ("pitcher_seasons", "pitchers")):
@@ -70,9 +93,9 @@ def flag_drift_tolerant(questions):
         print(f"  WARNING: drift-flag DB query failed ({exc}); flags NOT computed.", file=sys.stderr)
         return 0
     n = 0
-    for qid, p in cands.items():
-        if active.get(p):
-            questions[qid]["drift_tolerant"] = ["count"]
+    for qid, info in cands.items():
+        if active.get(info["player"]):
+            questions[qid]["drift_tolerant"] = sorted(set(info["keys"]))
             n += 1
     return n
 
@@ -131,7 +154,7 @@ def main():
               "questions": questions}
     json.dump(golden, open(OUT, "w"), indent=2, ensure_ascii=False, sort_keys=True)
     print(f"wrote {OUT}")
-    print(f"questions: {len(ids)}   drift_tolerant count cells: {n_drift}")
+    print(f"questions: {len(ids)}   drift-tolerant cells (count + rate lines): {n_drift}")
     print(f"UNSTABLE questions: {len(unstable_qs)}  (cells: {total_unstable})")
     print(f"unstable by key: {unstable_by_key}")
     for qid, q, keys in unstable_qs:

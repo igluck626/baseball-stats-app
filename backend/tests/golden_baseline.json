@@ -1,7 +1,7 @@
 {
   "meta": {
     "n_cannot_answer_class": 23,
-    "n_drift_tolerant": 29,
+    "n_drift_tolerant": 33,
     "n_gated_questions": 173,
     "n_questions": 198,
     "n_runs": 3,
@@ -1124,6 +1124,9 @@
         "tool_name": "query_situational",
         "understood_as": "{\"event\": \"HR\", \"opponent\": \"the Cubs\", \"opponent_codes\": [\"CHC\", \"CHN\"], \"opponent_label\": \"the Cubs\", \"player\": \"Aaron Judge\"}"
       },
+      "drift_tolerant": [
+        "rates_val"
+      ],
       "q": "How many home runs has Aaron Judge hit against the Chicago Cubs?",
       "unstable": []
     },
@@ -2765,7 +2768,8 @@
         "understood_as": "{\"event\": \"HR\", \"player\": \"Shohei Ohtani\"}"
       },
       "drift_tolerant": [
-        "count"
+        "count",
+        "rates_val"
       ],
       "q": "How many home runs does Shohei Ohtani have?",
       "unstable": []
@@ -5694,6 +5698,9 @@
         "tool_name": "query_situational",
         "understood_as": "{\"event\": \"2B\", \"opponent\": \"Orioles\", \"opponent_codes\": [\"BAL\", \"MLA\", \"SLA\"], \"opponent_label\": \"the Orioles\", \"player\": \"Aaron Judge\"}"
       },
+      "drift_tolerant": [
+        "rates_val"
+      ],
       "q": "How many doubles has Aaron Judge hit against the Orioles?",
       "unstable": []
     },
@@ -5724,6 +5731,9 @@
         "tool_name": "query_rates",
         "understood_as": "{\"opponent\": \"Rays\", \"opponent_codes\": [\"TB\", \"TBA\", \"TBR\"], \"opponent_label\": \"the Rays\", \"player\": \"Aaron Judge\"}"
       },
+      "drift_tolerant": [
+        "rates_val"
+      ],
       "q": "What is Aaron Judge's OPS against the Rays?",
       "unstable": []
     },
@@ -5754,6 +5764,9 @@
         "tool_name": "query_splits",
         "understood_as": "{\"opponent\": \"Red Sox\", \"opponent_codes\": [\"BOS\"], \"opponent_label\": \"the Red Sox\", \"player\": \"Aaron Judge\", \"split_by\": \"pitcher_hand\"}"
       },
+      "drift_tolerant": [
+        "splits_val"
+      ],
       "q": "What is Aaron Judge's batting average against the Red Sox by handedness?",
       "unstable": []
     },
