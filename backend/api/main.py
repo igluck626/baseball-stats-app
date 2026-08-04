@@ -5665,6 +5665,84 @@ def _stints_max_season(role="bat"):
         return None
 
 
+# Play-by-play detail runs 1910..this year; season/career totals run through the
+# CURRENT season (the nightly writes the in-progress year). The plays store trails —
+# it reloads from Retrosheet after a season ends — so its max is the last COMPLETE
+# season. This bound is the plays-route ceiling used across the situational paths.
+_PLAYS_MAX = 2025
+
+# The relative-time phrases that mean "the current season". 'last season' / an explicit
+# year carry no 'this' and are deliberately NOT matched; 'currently'/'right now' are
+# left out too (genuinely ambiguous between season-to-date and career — career is safer).
+_THIS_SEASON_RE = re.compile(
+    r"\bthis\s+season\b|\bthis\s+year\b|\bthis\s+campaign\b", re.I)
+
+_CURRENT_SEASON_CACHE = {"year": None, "at": 0.0}
+
+
+def _current_season() -> int:
+    """The current MLB season = the latest year present in the season tables. The
+    nightly writes the in-progress season, so max(year) tracks 'now' AND is right in the
+    OFF-season: before a new season's first rows land, it's the season just completed —
+    which is what 'this season' means in, say, December. DB-DERIVED, never the calendar
+    year (date says 2026 in a January with zero 2026 games). Cached ~1h (the nightly's
+    _cache.clear doesn't touch this dict, so a short TTL keeps it fresh across a rollover
+    without a per-request MAX). Falls back to the calendar year only if the DB is down."""
+    now = time.time()
+    if _CURRENT_SEASON_CACHE["year"] is not None and now - _CURRENT_SEASON_CACHE["at"] < 3600:
+        return _CURRENT_SEASON_CACHE["year"]
+    val = datetime.date.today().year
+    if connection.db_available():
+        try:
+            with connection.get_session() as db:
+                y = db.execute(_sa_text("SELECT max(year) FROM player_seasons")).scalar()
+            if y:
+                val = int(y)
+        except Exception:  # noqa: BLE001 - never let the probe break translation
+            pass
+    _CURRENT_SEASON_CACHE.update(year=val, at=now)
+    return val
+
+
+# FUTURE / PROJECTION guard. A season AFTER the current one hasn't been played, so it
+# must DECLINE, not return an empty 0 that reads like a real total. A PROJECTION —
+# 'will he…', 'projected', 'on pace for' — asks for a number we don't compute, not a
+# recorded one. 'on pace' is a real (uncomputed) stat concept, distinct from a season
+# that doesn't exist, so it gets its own message.
+# NOTE: the projection 'will' is anchored on a PRONOUN ('will he/she/they/it') so the
+# name "Will" (Will Smith) can't trip it; a 'will <Name> hit' phrasing is caught instead
+# by its 'next season' / explicit-future-year, which such questions carry in practice.
+_NEXT_SEASON_RE = re.compile(r"\bnext\s+(?:season|year|campaign)\b", re.I)
+_ON_PACE_RE     = re.compile(r"\bon\s+(?:pace|track)\b", re.I)
+_PROJECTION_RE  = re.compile(
+    r"\bwill\s+(?:he|she|they|it)\b"
+    r"|\bprojected?\b|\bprojections?\b|\bpredict\w*|\bforecast\w*|\bexpected\s+to\b",
+    re.I)
+
+
+def _future_or_projection_decline(q, tool_input, current):
+    """A decline when the question asks for a season not yet played or a projected/
+    predicted value; else None. Order: on-pace (own message) -> projection -> 'next
+    season' -> an explicit FUTURE year in the resolved input. The CURRENT season (in
+    progress) and every PAST season are never caught."""
+    ql = q or ""
+    if _ON_PACE_RE.search(ql):
+        return ("I don't compute on-pace or projected full-season numbers — I can give "
+                "the actual total for the season so far.")
+    if _PROJECTION_RE.search(ql):
+        return "I can't project or predict future stats — only what's been recorded."
+    if _NEXT_SEASON_RE.search(ql):
+        return f"The {current + 1} season hasn't been played yet."
+    for k in ("season", "season_start", "season_end"):
+        v = (tool_input or {}).get(k)
+        try:
+            if v is not None and int(v) > current:
+                return f"The {int(v)} season hasn't been played yet."
+        except (TypeError, ValueError):
+            pass
+    return None
+
+
 def _stints_currency_note(role, season, season_start, season_end):
     """"Complete through the <max> season." for a team-scoped board — but ONLY when
     the board's range REACHES PAST the last complete stint year, so the missing
@@ -11054,11 +11132,19 @@ _ASK_GAME_ACH_TOOL = {
     },
 }
 
+# Computed at prompt-build time (import), so the stated current season self-updates
+# yearly and never hardcodes a stale value — see _current_season. It also enters the
+# prompt-version hash, so the cache invalidates when the season rolls over (correct).
+_ASK_CS = _current_season()
 _ASK_SYSTEM = (
     "You translate a baseball fan's English question into a single structured "
     "query over a play-by-play database by calling exactly one tool.\n\n"
-    "The database holds every pitch-level play from 1910 to 2025, regular "
-    "season AND postseason. It counts how many times ONE specific named player "
+    f"Play-by-play DETAIL — situational splits (ball/strike count, base state, "
+    f"handedness, inning) — covers 1910 to {_PLAYS_MAX}, regular season AND postseason. "
+    f"SEASON and CAREER totals (counts, rates, leaderboards) run through the CURRENT "
+    f"{_ASK_CS} season, which the nightly update keeps live; 'this season' and 'this "
+    f"year' mean {_ASK_CS} (NOT a prior year — do not guess {_ASK_CS - 1}). The database "
+    "counts how many times ONE specific named player "
     "had ONE specific outcome (home run, strikeout, walk, hit-by-pitch, single, "
     "double, triple), optionally narrowed by ball/strike count, outs, inning, "
     "base state, season (or season range), and regular-season vs postseason.\n\n"
@@ -12328,6 +12414,37 @@ def ask(request: Request,
     if _redir is not None:
         log.warning("ask: REDIRECT %s %s -> %s for %r", tool_name, tool_input, _redir[0], q)
         tool_name, tool_input = _redir
+
+    # ---- RELATIVE-TIME RESOLUTION (deterministic, GLOBAL — before the guard).
+    # 'this season' / 'this year' means the CURRENT season, but the model reads the
+    # prompt's play-by-play range and volunteers the prior year (or drops it). Read the
+    # phrase from the QUESTION and OVERRIDE with the DERIVED current season — authoritative,
+    # like the per-season and opponent detectors (the model can't be trusted here: it
+    # hallucinated a year in the per-season case). A single season, so any model-emitted
+    # RANGE is cleared. Explicit years ('in 2025') and 'last season' carry no 'this' and
+    # never match; 'currently'/'right now' are intentionally left as career. Mutates
+    # tool_input (which IS understood_as by reference); raw_tool_input keeps the model's
+    # reading for the cache, so this re-fires on replay.
+    if tool_input is not None and _THIS_SEASON_RE.search(q):
+        _cs = _current_season()
+        if tool_input.get("season") != _cs or "season_start" in tool_input or "season_end" in tool_input:
+            _was = tool_input.get("season")
+            tool_input["season"] = _cs
+            tool_input.pop("season_start", None)
+            tool_input.pop("season_end", None)
+            log.info("ask: 'this season' -> %s (model said %r) for %r", _cs, _was, q)
+
+    # ---- FUTURE SEASON / PROJECTION (deterministic, GLOBAL — after the 'this season'
+    # resolution above, so the in-progress current season is never mistaken for future).
+    # A season not yet played, or a will/projected/on-pace question, DECLINES rather than
+    # returning an empty 0 that reads like a real total.
+    _future = _future_or_projection_decline(q, tool_input, _current_season())
+    if _future:
+        base["out_of_scope"] = True
+        base["reason"] = _future
+        base["answer"] = _future
+        base["understood_as"] = None
+        return _finish()
 
     # ---- deterministic constraint validation (LLM proposes, CODE disposes) --
     # Runs for any answerable tool, on BOTH the fresh and cached translation, so
