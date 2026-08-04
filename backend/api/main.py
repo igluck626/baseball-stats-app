@@ -9729,6 +9729,104 @@ def _run_leaderboard(event=None, role="bat", balls=None, strikes=None, outs=None
                  count_data=count_data, query_ms=query_ms)
 
 
+# SINGLE-SEASON ('in a season') is a UNIT, not a season value/range — the model has
+# no clean parameter for it, so it either drops it (-> a career board) or hallucinates
+# a specific year ('single-season HR record' -> season:2022 -> Judge 62). Detect it in
+# the QUESTION and override: fire per-season mode and DISCARD a model-emitted single
+# `season` (the misread unit). A real RANGE ('in the 1990s') is kept as year bounds. The
+# seam is deliberate: 'in a season' fires; 'in 2001' / 'career' / 'in a month|game' do NOT.
+_PER_SEASON_RE = re.compile(
+    r"\bin\s+a\s+(?:single\s+)?season\b"          # in a season / in a single season
+    r"|\bsingle[\s-]season\b"                       # single-season (record)
+    r"|\bper\s+season\b"                            # per season
+    r"|\bin\s+one\s+(?:season|year)\b"             # in one season / in one year
+    r"|\bin\s+a\s+single\s+year\b"                 # in a single year
+    r"|\bseason\s+record\b",                        # season record
+    re.I)
+
+# /ask event canon -> data_service.get_leaderboard stat key. Only stats the all_time
+# catalog (_LEADERBOARD_BATTING/PITCHING) can rank; an event not here (TB/XBH/GIDP/…)
+# returns None and falls through to the career board rather than a wrong per-season one.
+_PER_SEASON_STAT = {
+    ("bat", "HR"): "HR", ("bat", "H"): "H", ("bat", "RBI"): "RBI", ("bat", "R"): "R",
+    ("bat", "SB"): "SB", ("bat", "BB"): "BB", ("bat", "2B"): "2B", ("bat", "3B"): "3B",
+    ("bat", "K"): "SO", ("bat", "AB"): "AB",
+    ("pit", "K"): "SO", ("pit", "W"): "W", ("pit", "SV"): "SV", ("pit", "H"): "H",
+    ("pit", "BB"): "BB", ("pit", "HR"): "HR",
+}
+
+
+def _run_per_season_leaderboard(event, role, season_start, season_end, limit):
+    """SINGLE-SEASON record board: the top individual-season totals across all years
+    (most HR in a season -> Bonds 73, 2001), NOT career sums. Reuses the proven
+    all_time ranking in data_service.get_leaderboard; each leader carries its YEAR as
+    the subtitle ('Barry Bonds / 2001 / 73'). Unbounded spans every year (most wins ->
+    Radbourn 59, 1884); season_start/end map to year_from/to for a modern/decade bound.
+    Returns None (-> the career board) for an event the all_time catalog can't rank."""
+    role = (role or "bat").lower()
+    canon = _canon_event(event)
+    stat = _PER_SEASON_STAT.get((role, canon))
+    if stat is None:
+        return None
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    lim = max(1, min(int(limit or 10), 25))
+    res = data_service.get_leaderboard(
+        stat=stat, year=None, player_type=("pitcher" if role == "pit" else "batter"),
+        mode="all_time", limit=lim,
+        year_from=(int(season_start) if season_start else None),
+        year_to=(int(season_end) if season_end else None))
+    leaders = []
+    for r in (res.get("leaders") or []):
+        pl = r.get("player") or {}
+        leaders.append({
+            "rank": r.get("rank"),
+            "player_name": pl.get("name") or str(pl.get("player_id")),
+            "mlbam_id": pl.get("player_id"), "retro_id": pl.get("retro_id"),
+            "count": int(r["value"]) if r.get("value") is not None else None,
+            "subtitle": str(r.get("year")) if r.get("year") is not None else None})
+    _rank_with_ties(leaders, "count")
+    _lbl = _COMPARE_STAT_LABEL.get(canon or (event or "").upper()) or (event or "").lower()
+    if season_start and season_end:   span_txt = f", {season_start}–{season_end}"
+    elif season_start:                span_txt = f", since {season_start}"
+    elif season_end:                  span_txt = f", through {season_end}"
+    else:                             span_txt = ""
+
+    # 19th-CENTURY CONTEXT: an UNBOUNDED pitcher record usually lands in the 1880s —
+    # Kilroy's 513 K (1886), Radbourn's 60 W (1884) — when a staff was one arm throwing
+    # 600+ innings. The mark is real, but it reads like a bug next to the modern number,
+    # so name BOTH: the record and the post-1900 record (one extra ranked query, and
+    # ONLY here — a bounded question already has its era). Surfaced via the coverage-note
+    # channel (complete=false is that channel's flag, not a data-completeness claim).
+    # KNOWN SOURCE-VINTAGE items, documented not chased: Radbourn 1884 W is 60 in our
+    # column vs Baseball-Reference's 59, and Cy Young's career W is 510 vs BR's 511 —
+    # long-disputed historical figures, kept as stored, surfaced as-is.
+    gc = {"complete": True}
+    top = leaders[0] if leaders else None
+    if (role == "pit" and season_start is None and season_end is None
+            and top and top.get("subtitle") and top["subtitle"].isdigit()
+            and int(top["subtitle"]) < 1900):
+        try:
+            mrows = (data_service.get_leaderboard(
+                stat=stat, year=None, player_type="pitcher", mode="all_time",
+                limit=1, year_from=1900, year_to=None).get("leaders") or [])
+            if mrows:
+                m = mrows[0]; mp = (m.get("player") or {}).get("name")
+                gc = {"complete": False,
+                      "note": (f"{top['player_name']}'s {top['count']} {_lbl} came in "
+                               f"{top['subtitle']}, when pitchers threw far more innings; "
+                               f"the modern record is {mp}'s {int(m['value'])} ({m['year']}).")}
+        except Exception:  # noqa: BLE001 — the record still stands without the caveat
+            pass
+
+    return {"resolved": True, "source": "season_stats_leaderboard",
+            "filters": {"event": canon, "role": role, "per_season": True,
+                        "season_start": season_start, "season_end": season_end},
+            "limit": lim, "leaders": leaders,
+            "leaderboard_title": f"Most {_lbl} in a single season{span_txt}",
+            "game_coverage": gc, "count_data": None}
+
+
 def _run_season_leaderboard(event=None, role="bat", season=None, season_start=None,
                             season_end=None, game_type=None, limit=10,
                             team_codes=None, team_display=None):
@@ -10505,6 +10603,14 @@ _ASK_LEADERBOARD_TOOL = {
                      "franchise (relocations included, so 'as a Dodger' spans Brooklyn). "
                      "This is the player's OWN team, NOT an opponent — for 'vs the "
                      "Dodgers' use the opponent, not this. Omit for an all-player board."},
+            "per_season": {"type": "boolean", "description":
+                     "TRUE for a SINGLE-SEASON record — the best individual SEASON: "
+                     "'most HR in a season', 'single-season home run record', 'most "
+                     "strikeouts in one year'. Ranks the top season totals (Bonds 73 in "
+                     "2001), NOT career totals. Do NOT set a `season` with it (the "
+                     "record spans all years unless a RANGE is named, e.g. 'in a season "
+                     "since 1900' -> season_start:1900). Omit for a career board ('most "
+                     "career HR') or a specific-year board ('most HR in 2001' -> season)."},
             **_ASK_FILTER_PROPS,
         },
         "required": ["event"],
@@ -12732,9 +12838,20 @@ def ask(request: Request,
                 base["out_of_scope"] = True; base["reason"] = _tc[1]
                 base["answer"] = _tc[1]; base["understood_as"] = None; return _finish()
             team_codes, team_display = _tc[1], _tc[3]
+        # SINGLE-SEASON record ('most HR in a season' / 'single-season record'): a
+        # per-season UNIT the model can't carry, so detect it in the QUESTION and
+        # OVERRIDE — discard a misread/hallucinated single `season` (a real RANGE like
+        # 'the 1990s' stays as season_start/end bounds). tool_input.per_season lets the
+        # model volunteer it too. Team + per-season is not combined yet (falls to the
+        # career team board).
+        per_season = (_PER_SEASON_RE.search(q) is not None) or bool(tool_input.get("per_season"))
+        if per_season:
+            lb_params.pop("season", None)
         asked = [lb_params[k] for k in ("season", "season_start", "season_end")
                  if lb_params.get(k) is not None]
-        if asked and max(asked) < _PLAYS_FLOOR:
+        # The plays floor is a PLAYS-route limit; the season-stats boards (career and
+        # per-season) read player_seasons (1871+), so a per-season board bypasses it.
+        if asked and max(asked) < _PLAYS_FLOOR and not per_season:
             base["out_of_scope"] = True
             base["reason"] = (f"Play-by-play data starts in {_PLAYS_FLOOR}; there is "
                               f"no pitch-level data for {max(asked)}.")
@@ -12756,14 +12873,23 @@ def ask(request: Request,
                                     "opponent_codes", "month"))
             result = None
             if not lb_situ:
-                result = _run_season_leaderboard(
-                    event=lb_params.get("event"), role=lb_params.get("role"),
-                    season=lb_params.get("season"),
-                    season_start=lb_params.get("season_start"),
-                    season_end=lb_params.get("season_end"),
-                    game_type=lb_params.get("game_type"),
-                    limit=lb_params.get("limit", 10),
-                    team_codes=team_codes, team_display=team_display)
+                # SINGLE-SEASON record board first (top individual seasons, not career
+                # sums); None -> the stat isn't per-season rankable -> career board.
+                if per_season and not team_codes:
+                    result = _run_per_season_leaderboard(
+                        event=lb_params.get("event"), role=lb_params.get("role"),
+                        season_start=lb_params.get("season_start"),
+                        season_end=lb_params.get("season_end"),
+                        limit=lb_params.get("limit", 10))
+                if result is None:
+                    result = _run_season_leaderboard(
+                        event=lb_params.get("event"), role=lb_params.get("role"),
+                        season=lb_params.get("season"),
+                        season_start=lb_params.get("season_start"),
+                        season_end=lb_params.get("season_end"),
+                        game_type=lb_params.get("game_type"),
+                        limit=lb_params.get("limit", 10),
+                        team_codes=team_codes, team_display=team_display)
             if result is None:
                 result = _run_leaderboard(**lb_params, team_codes=team_codes,
                                           team_display=team_display)
