@@ -1375,6 +1375,24 @@ def main() -> None:
     gl = _update_gamelogs(current_year)
 
     log.info("=" * 52)
+    log.info("Phase 4a: gamelog dedup (cross-format duplicates)")
+    log.info("=" * 52)
+    # MUST run after game logs and BEFORE every gamelog reader below (counting,
+    # heat, team stints). The gamelogs phase can write the same logical game twice
+    # — once under an MLB Stats API id, once under a BDL id — and the stint phase
+    # groups by game_id, so an un-deduped duplicate double-counts. Mirrors the
+    # deployed _run_nightly_update dedup phase exactly. Non-fatal.
+    try:
+        bat_removed = connection.dedupe_gamelog_duplicates(
+            "batting_gamelogs", connection._BATTING_GAMELOGS_QUALITY_COLUMNS)
+        pit_removed = connection.dedupe_gamelog_duplicates(
+            "pitching_gamelogs", connection._PITCHING_GAMELOGS_QUALITY_COLUMNS)
+        log.info(f"Gamelog dedup — batting_removed: {bat_removed}, "
+                 f"pitching_removed: {pit_removed}")
+    except Exception as exc:
+        log.error(f"Gamelog dedup FAILED (non-fatal): {exc}")
+
+    log.info("=" * 52)
     log.info("Phase 4b: batting counting aggregation (GIDP/SH/HBP/SF/CS/PA/H)")
     log.info("=" * 52)
     # Runs AFTER game logs so it sums the freshest per-game rows. Overwrites
