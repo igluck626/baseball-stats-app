@@ -6107,8 +6107,12 @@ _UNSUPPORTED_CONCEPT = [
     # HOLDS -> the model would map to SV (saves). A hold is a separate reliever stat
     # not stored. Anchored on 'hold(s)' with a reliever/save context so it can't catch
     # unrelated uses of the word 'hold'.
-    (re.compile(r"\bholds?\b(?=(?:(?!\?).){0,40}(?:reliever|bullpen|setup|save|game))"
-                r"|\b(?:reliever|bullpen|setup|save)\b(?:(?!\?).){0,40}?\bholds?\b", re.I),
+    # HOLDS -> the model maps it to H (hits allowed, now exposed for pitchers). Fire
+    # only on 'holds' as a countable NOUN (a quantifier/possessive before it, or a
+    # 'holds does/did/leader' frame), NEVER the verb ('who HOLDS the record for saves',
+    # 'he holds a franchise record') — same seam discipline as the neighbours above.
+    (re.compile(r"(?:how\s+many|number\s+of|most|total|career|his|her|their)\s+holds?\b"
+                r"|\bholds?\s+(?:does|did|leaders?)\b", re.I),
      "I don't track holds — that reliever stat isn't in the season records I have. I "
      "can give saves, games finished, and ERA."),
     # FIELDING / DEFENSE -> the model would reach for an offensive count. Putouts,
