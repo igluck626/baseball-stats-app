@@ -9150,6 +9150,119 @@ def _question_ambiguous_city(question):
     return None
 
 
+_gamelog_floor_cache: dict = {"ts": None, "year": None}
+
+
+def _gamelog_floor():
+    """Earliest season in the gamelogs (~1898), DERIVED and cached ~1h — never
+    hardcoded, so it moves if the data ever reaches further back. Used to tell a
+    TRUNCATED all-time head-to-head (both clubs already present at the floor, so
+    earlier meetings are cut off) from a COMPLETE one (a club founded later bounds
+    the matchup, so we have all of it)."""
+    now = time.time()
+    c = _gamelog_floor_cache
+    if c["year"] is not None and c["ts"] and now - c["ts"] < 3600:
+        return c["year"]
+    try:
+        with connection.get_session() as db:
+            y = db.execute(_sa_text(
+                "SELECT MIN(season) FROM batting_gamelogs "
+                "WHERE game_id LIKE 'retro-%'")).scalar()
+    except Exception:  # noqa: BLE001
+        y = 1901
+    c["ts"] = now; c["year"] = int(y) if y else 1901
+    return c["year"]
+
+
+def _h2h_prose(a, b, w, l, ties, season, season_start, season_end, min_season, floor):
+    """A head-to-head record sentence. Two qualifiers are load-bearing:
+      - REGULAR SEASON: the gamelogs hold no postseason games (verified: 162/team-
+        season, no Nov games), so an October rivalry like Yankees-Red Sox is NOT in
+        these numbers — say so, always.
+      - TRUNCATION: an all-time record between two clubs BOTH already present at the
+        gamelog floor (Cubs-Cardinals) is missing their pre-floor meetings — say
+        'since <floor>, as far back as the logs reach'. A matchup bounded by a
+        later-founded club (Mets-anyone) is COMPLETE — just 'all-time'."""
+    rec = f"{w}-{l}" + (f"-{ties}" if ties else "")
+    if season is not None:
+        return f"The {a} went {rec} against the {b} in the {season} regular season."
+    if season_start is not None and season_end is not None:
+        return f"The {a} are {rec} against the {b} in regular-season play from {season_start} to {season_end}."
+    if season_start is not None:
+        return f"The {a} are {rec} against the {b} in regular-season play since {season_start}."
+    if season_end is not None:
+        return f"The {a} are {rec} against the {b} in regular-season play through {season_end}."
+    if min_season <= floor:                    # both clubs at the floor -> truncated
+        return (f"The {a} are {rec} against the {b} in regular-season play since "
+                f"{min_season}, as far back as the game logs reach.")
+    return f"The {a} are {rec} against the {b} all-time in regular-season play."
+
+
+def _run_head_to_head(team_a, team_b, season=None, season_start=None, season_end=None):
+    """Head-to-head W-L between two FRANCHISES, from batting_gamelogs. Both sides
+    resolve through _team_scope_codes — franchise-correct across relocations (Dodgers
+    -> BRO+LAN, Braves -> BSN+MLN+ATL), and an ambiguous city ('Chicago') declines
+    with the standard clarify. GRAIN: DISTINCT game_id, HOME rows only — the game_id
+    prefix is the home club's Retrosheet code and `opponent` the away code, so home
+    rows cover every game exactly once (no ambiguous away-side lookup, no double
+    count). Coverage is stated from MIN(season), never hardcoded — our per-player
+    gamelogs begin ~1901, short of Retrosheet's own 1871 team logs, so an all-time
+    record says 'since <first year present>'. Returns a resolved dict or {declined}."""
+    lo = season or season_start
+    hi = season or season_end
+    ra = _team_scope_codes(team_a, lo, hi)
+    if ra[0] == "decline":
+        return {"declined": True, "reason": ra[1]}
+    rb = _team_scope_codes(team_b, lo, hi)
+    if rb[0] == "decline":
+        return {"declined": True, "reason": rb[1]}
+    _, a_codes, a_fr, a_disp = ra
+    _, b_codes, b_fr, b_disp = rb
+    if a_fr == b_fr:
+        return {"declined": True,
+                "reason": f"The {a_disp} can't play themselves — name two different clubs."}
+    if not connection.db_available():
+        return {"declined": True, "reason": "The game logs aren't available right now."}
+    where = ["home_away = 'H'", "result IN ('W','L','T')",
+             "((substr(game_id, 7, 3) = ANY(:a) AND opponent = ANY(:b))"
+             " OR (substr(game_id, 7, 3) = ANY(:b) AND opponent = ANY(:a)))"]
+    p = {"a": a_codes, "b": b_codes}
+    if season is not None:
+        where.append("season = :yr"); p["yr"] = int(season)
+    else:
+        if season_start is not None:
+            where.append("season >= :ys"); p["ys"] = int(season_start)
+        if season_end is not None:
+            where.append("season <= :ye"); p["ye"] = int(season_end)
+    sql = (
+        "WITH g AS (SELECT DISTINCT game_id, substr(game_id, 7, 3) AS home, "
+        "result, season FROM batting_gamelogs "
+        f"WHERE {' AND '.join(where)}) "
+        "SELECT "
+        "SUM(CASE WHEN home = ANY(:a) AND result='W' THEN 1 "
+        "         WHEN home = ANY(:b) AND result='L' THEN 1 ELSE 0 END) AS a_w, "
+        "SUM(CASE WHEN home = ANY(:a) AND result='L' THEN 1 "
+        "         WHEN home = ANY(:b) AND result='W' THEN 1 ELSE 0 END) AS a_l, "
+        "SUM(CASE WHEN result='T' THEN 1 ELSE 0 END) AS ties, "
+        "MIN(season) AS lo, COUNT(*) AS games FROM g")
+    try:
+        with connection.get_session() as db:
+            row = db.execute(_sa_text(sql), p).fetchone()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("head-to-head query failed: %s", exc)
+        return {"declined": True, "reason": "Something went wrong looking that up."}
+    a_w, a_l, ties, mn, games = (int(x) if x is not None else 0 for x in row)
+    if not games:
+        scope = f" in {season}" if season is not None else ""
+        return {"resolved": True, "source": "gamelogs",
+                "answer": f"I don't have any regular-season games between the "
+                          f"{a_disp} and the {b_disp}{scope}."}
+    return {"resolved": True, "source": "gamelogs",
+            "a_display": a_disp, "b_display": b_disp, "a_wins": a_w, "a_losses": a_l,
+            "answer": _h2h_prose(a_disp, b_disp, a_w, a_l, ties, season,
+                                 season_start, season_end, mn, _gamelog_floor())}
+
+
 def _team_current_year(db):
     """The latest season in team_seasons (the nightly-maintained current year)."""
     return db.query(_sa_func.max(TeamSeason.year)).scalar()
@@ -11130,8 +11243,8 @@ _ASK_TEAM_TOOL = {
         "'How many games have the Cubs won all-time?' (franchise_total, team). LEAVE "
         "`team` OUT for the superlative/leaderboard forms ('which team…', 'most wins in "
         "a season'). Use the club NICKNAME as written ('the Yankees', 'the Expos'); the "
-        "backend resolves relocations and old names. A HEAD-TO-HEAD team record ('Yankees "
-        "vs the Red Sox') is NOT supported — leave it to a normal response."),
+        "backend resolves relocations and old names. A HEAD-TO-HEAD record between TWO "
+        "clubs ('Yankees vs the Red Sox') is NOT this tool — use query_head_to_head."),
     "input_schema": {
         "type": "object",
         "properties": {
@@ -11649,9 +11762,11 @@ _ASK_SYSTEM = (
     "- 'How many games have the Cubs won all-time?' -> {metric:'franchise_total', "
     "team:'the Cubs'}\n"
     "Use the club as written — an old name ('the Expos') is fine; the backend folds it "
-    "into the modern franchise. A HEAD-TO-HEAD team record ('Yankees vs the Red Sox') "
-    "is NOT supported — answer cannot_answer. A question about a PLAYER who plays for a "
-    "team ('most HR by a Yankee') is NOT query_team.\n\n"
+    "into the modern franchise. A HEAD-TO-HEAD record between TWO clubs ('Yankees vs "
+    "the Red Sox', 'Dodgers against the Giants', 'Cubs vs Cardinals in 2016') goes to "
+    "query_head_to_head, NOT query_team — but ONE club named alone ('the Yankees' "
+    "record', 'how many games did the Cubs win') stays query_team. A question about a "
+    "PLAYER who plays for a team ('most HR by a Yankee') is NOT query_team.\n\n"
     "AWARDS (call query_awards): the FOUR major TROPHIES — Cy Young, MVP, Rookie of "
     "the Year, Gold Glove. 'How many Cy Youngs does Clemens have', 'who has the most "
     "MVPs', 'who won the 1968 NL Cy Young', 'has Trout won a Gold Glove'. THE SEAM: "
@@ -11903,12 +12018,35 @@ _ASK_AWARDS_TOOL = {
         "required": ["award"],
     },
 }
+_ASK_H2H_TOOL = {
+    "name": "query_head_to_head",
+    "description": (
+        "The W-L record BETWEEN two clubs — 'what's the Yankees' record against the "
+        "Red Sox', 'Dodgers vs Giants all-time', 'how did the Cubs do against the "
+        "Cardinals in 2016'. Requires TWO clubs. THE SEAM: if only ONE club is named "
+        "('the Yankees' record', 'the Dodgers' win total', 'how many games did the "
+        "Cubs win') that is a single-team question -> query_team, NOT this. Pass each "
+        "club NAME as written ('the Yankees', 'Chicago', 'the Expos') — never a code; "
+        "the backend folds relocations and old names into the modern franchise and "
+        "declines an ambiguous city."),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "team_a": {"type": "string", "description": "the first club, as written (required)."},
+            "team_b": {"type": "string", "description": "the second club, as written (required)."},
+            "season": {"type": "integer", "description": "a single season ('in 2004')."},
+            "season_start": {"type": "integer", "description": "range start ('since 2000')."},
+            "season_end": {"type": "integer", "description": "range end ('through 2010')."},
+        },
+        "required": ["team_a", "team_b"],
+    },
+}
 _ASK_TOOLS = [_ASK_QUERY_TOOL, _ASK_LEADERBOARD_TOOL, _ASK_COMPARISON_TOOL,
               _ASK_TEAM_TOOL, _ASK_RATES_TOOL,
               _ASK_SPLITS_TOOL, _ASK_RATE_LB_TOOL, _ASK_MILESTONE_TOOL,
               _ASK_STREAK_TOOL, _ASK_SPAN_TOOL,
               _ASK_STREAK_LB_TOOL, _ASK_SPAN_LB_TOOL, _ASK_GAME_ACH_TOOL,
-              _ASK_AWARDS_TOOL,
+              _ASK_AWARDS_TOOL, _ASK_H2H_TOOL,
               {**_ASK_CANNOT_TOOL, "cache_control": {"type": "ephemeral"}}]
 _ASK_SYSTEM_BLOCKS = [{"type": "text", "text": _ASK_SYSTEM,
                        "cache_control": {"type": "ephemeral"}}]
@@ -12443,10 +12581,12 @@ _GUARD_ANSWERABLE = frozenset((
 _GUARD_CAPS = {
     # query_team's SUBJECT is a franchise, scoped only by season/range. HONEST caps:
     # no handedness/base/count/home_away (a team question can't carry them), and NO
-    # opponent — head-to-head team records are deferred, so declaring `opponent`
-    # would be a caps lie. A team NAMED as the subject isn't an opponent anyway: the
-    # opponent detector only fires on an 'against/vs' anchor, so a subject team never
-    # trips it; a head-to-head ('Yankees vs the Red Sox') DOES, and honestly declines.
+    # opponent — a two-club head-to-head is its OWN tool (query_head_to_head), which
+    # resolves both sides itself and never routes through this guard. Declaring
+    # `opponent` here would be a caps lie for _run_team. A team NAMED as the subject
+    # isn't an opponent anyway (the opponent detector only fires on an 'against/vs'
+    # anchor); a head-to-head that MISroutes to query_team still trips it and honestly
+    # declines — a safe fallback now that the real answer lives in the other tool.
     "query_team":             frozenset(("season_single", "season_range")),
     # query_comparison reuses the query_situational count runner PER PLAYER, so its
     # caps are truthful for exactly what that runner filters (handedness/base/count/
@@ -12766,7 +12906,7 @@ def ask(request: Request,
 
     _ANSWERABLE = ("query_situational", "query_leaderboard", "query_rates",
                    "query_splits", "query_rate_leaderboard", "query_comparison",
-                   "query_team", "query_awards")
+                   "query_team", "query_awards", "query_head_to_head")
     base = {
         "question":        q,
         "understood_as":   tool_input if tool_name in _ANSWERABLE else None,
@@ -13394,6 +13534,38 @@ def ask(request: Request,
             base["answer"] = result.get("reason"); return _finish()
         base["source"] = "team"
         base["team"] = result.get("team")
+        base["answer"] = result.get("answer")
+        return _finish()
+
+    # ==== HEAD-TO-HEAD branch (TWO clubs -> their W-L series, from the gamelogs) ====
+    # A separate tool from query_team (whose caps deliberately omit `opponent`): both
+    # sides resolve through _team_scope_codes, so an ambiguous city declines per side.
+    # Prose answer (no single-franchise card). The one-club SEAM stays on query_team.
+    if tool_name == "query_head_to_head":
+        if not tool_input.get("team_a") or not tool_input.get("team_b"):
+            base["out_of_scope"] = True
+            base["reason"] = ("A head-to-head needs two clubs — like 'the Yankees "
+                              "against the Red Sox'.")
+            base["answer"] = base["reason"]; base["understood_as"] = None
+            return _finish()
+        hh = {k: tool_input.get(k) for k in (
+            "team_a", "team_b", "season", "season_start", "season_end")
+            if tool_input.get(k) is not None}
+        t0 = time.perf_counter()
+        try:
+            result = _run_head_to_head(**hh)
+        except Exception as exc:  # noqa: BLE001
+            timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
+            log.exception("ask head-to-head failed for %r", q)
+            base["error"] = str(exc); base["reason"] = "query failed"
+            base["answer"] = ("Sorry — something went wrong looking that up. "
+                              "Try rephrasing the question."); return _finish()
+        timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
+        if result.get("declined"):
+            base["out_of_scope"] = True; base["reason"] = result.get("reason")
+            base["answer"] = result.get("reason"); base["understood_as"] = None
+            return _finish()
+        base["source"] = result.get("source")
         base["answer"] = result.get("answer")
         return _finish()
 
