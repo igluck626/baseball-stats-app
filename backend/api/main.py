@@ -6175,9 +6175,13 @@ _UNSUPPORTED_CONCEPT = [
     # NAME rather than bent onto the nearest award or a stat count. These run before
     # the award redirect, so they WIN over it — a "World Series MVP" question declines
     # instead of matching the bare "MVP" redirect.
-    (re.compile(r"\bsilver\s+sluggers?\b|\bworld\s+series\s+mvps?\b|\bhank\s+aaron\b"
-                r"|\breliever\s+of\s+the\s+year\b|\bcomeback\s+player\b|\bplatinum\s+glove\b"
-                r"|\broberto\s+clemente\s+award\b", re.I),
+    # NB: "Hank Aaron" and "Roberto Clemente" are PLAYERS as well as awards — both
+    # patterns REQUIRE the word "award" so "how many HR does Hank Aaron have" stays a
+    # normal count and only "the Hank Aaron Award" declines.
+    (re.compile(r"\bsilver\s+sluggers?\b|\bworld\s+series\s+mvps?\b"
+                r"|\bhank\s+aaron\s+awards?\b|\breliever\s+of\s+the\s+year\b"
+                r"|\bcomeback\s+player\b|\bplatinum\s+glove\b"
+                r"|\broberto\s+clemente\s+awards?\b", re.I),
      "I answer the four major awards — MVP, Cy Young, Rookie of the Year, and Gold "
      "Glove. Others like the Silver Slugger, World Series MVP, and Hank Aaron Award "
      "aren't in that set."),
