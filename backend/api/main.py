@@ -11104,6 +11104,19 @@ _ASK_FILTER_PROPS = {
               "month:9. With NO season it means that month across ALL seasons (career). "
               "For 'by month' use query_splits split_by:'month', NOT this filter."},
 }
+# Game-context filters — supported ONLY on query_situational + query_leaderboard (a
+# walk-off/extra-inning RATE is meaningless / not implemented, so these are NOT spread
+# into rates/splits/comparison, which decline them via caps). Booleans, not enums.
+_ASK_GAME_CONTEXT_PROPS = {
+    "walk_off": {"type": "boolean", "description":
+                 "true for WALK-OFF plays ONLY — the home team ending the game by "
+                 "scoring the go-ahead run ('walk-off home runs', 'walk-off hits'). "
+                 "Supported; do NOT answer cannot_answer for it. Omit otherwise."},
+    "extra_innings": {"type": "boolean", "description":
+                      "true for EXTRA INNINGS ONLY — the 10th inning or later ('home "
+                      "runs in extra innings'). Supported; do NOT answer cannot_answer "
+                      "for it. Omit otherwise."},
+}
 
 # Tool the model calls to run a situational count. Its input schema mirrors
 # _run_situational's params EXACTLY, so whatever the model fills in maps 1:1.
@@ -11160,6 +11173,7 @@ _ASK_QUERY_TOOL = {
                          "Red Sox'). Pass the NAME, never a code — the backend resolves "
                          "it to the right team codes. Omit if no opponent is named."},
             **_ASK_FILTER_PROPS,
+            **_ASK_GAME_CONTEXT_PROPS,
         },
         "required": ["player"],
     },
@@ -11226,6 +11240,7 @@ _ASK_LEADERBOARD_TOOL = {
                      "since 1900' -> season_start:1900). Omit for a career board ('most "
                      "career HR') or a specific-year board ('most HR in 2001' -> season)."},
             **_ASK_FILTER_PROPS,
+            **_ASK_GAME_CONTEXT_PROPS,
         },
         "required": ["event"],
     },
@@ -11683,7 +11698,12 @@ _ASK_SYSTEM = (
     "counts how many times ONE specific named player "
     "had ONE specific outcome (home run, strikeout, walk, hit-by-pitch, single, "
     "double, triple), optionally narrowed by ball/strike count, outs, inning, "
-    "base state, season (or season range), and regular-season vs postseason.\n\n"
+    "base state, season (or season range), and regular-season vs postseason. "
+    "WALK-OFF ('walk-off home runs') and EXTRA INNINGS ('HR in extra innings') ARE "
+    "supported situational filters — set walk_off / extra_innings on query_situational "
+    "(a count) or query_leaderboard (a ranking); do NOT call cannot_answer for them. "
+    "But the CLUTCH and HIGH LEVERAGE are NOT — those are pressure measures, not plain "
+    "facts about a game, so cannot_answer them.\n\n"
     "DEFAULT TO ANSWERING. If the question is a COUNT of a specific EVENT by ONE "
     "named PLAYER, call query_situational — even if it spans their whole career. "
     "OMITTING season means a CAREER total, which is a perfectly VALID query, NOT "
