@@ -190,7 +190,7 @@
 {"id": "q189", "bucket": "team_continuity", "q": "How many World Series have the Expos won?", "note": "query_team continuity — folds to the Nationals franchise, 1 (2019), states the rename"}
 {"id": "q190", "bucket": "team_ambig", "q": "How many World Series has Chicago won?", "note": "query_team ambiguous-city — declines with the Cubs/White Sox clarify (subject-side)"}
 {"id": "q191", "bucket": "month_scope", "q": "How many home runs did Babe Ruth hit in September?", "note": "month filter (plays), retired subject -> fixed"}
-{"id": "q192", "bucket": "month_split", "q": "What is Babe Ruth's batting average by month?", "note": "split_by month -> month-name rows, career, fixed"}
+{"id": "q192", "bucket": "month_split", "q": "What is Babe Ruth's batting average by month?", "note": "split_by month -> month-name rows, career. The explicit SINGLE-month SCOPE reading is q200."}
 {"id": "q193", "bucket": "month_compose", "q": "How many home runs did Babe Ruth hit in September 1927?", "note": "month + season compose, a fixed historical figure"}
 {"id": "q194", "bucket": "team_lb", "q": "Who hit the most home runs as a Yankee in the 20th century?", "note": "THE TEST: Ruth 659 (stints, team=Yankees), NOT career 714. Bounded to pre-2001 so the board is all-retired/stable (Judge is active); leaders_val top must be 659."}
 {"id": "q195", "bucket": "team_ambig", "q": "Who has hit the most home runs as a Chicago player?", "note": "ambiguous-city team scope -> Cubs/White Sox clarify decline"}
@@ -198,3 +198,4 @@
 {"id": "q197", "bucket": "team_compose", "q": "Who hit the most home runs as a Yankee in the 1990s?", "note": "team + season compose (stints, 1990-1999)"}
 {"id": "q198", "bucket": "team_super", "q": "Which team has the most wins in a season?", "note": "explicit TEAM reading of the ambiguous 'most wins in a season' -> query_team, 116 (2001 Mariners / 1906 Cubs). Guards the team path regardless of which way the bare form (q188) drifts."}
 {"id": "q199", "bucket": "lb_count", "q": "What is the most wins by a pitcher in a season?", "note": "explicit PITCHER reading of the ambiguous 'most wins in a season' -> the pitcher season board (Radbourn 60, 1884, + the 19th-c era note). Guards the pitcher path regardless of which way the bare form (q188) drifts."}
+{"id": "q200", "bucket": "month_scope", "q": "What was Babe Ruth's batting average in April?", "note": "explicit SCOPE reading of the ambiguous 'by month' \u2014 one month's filtered rate line (month=4). Counterpart to q192's split reading; guards the scope path regardless of which way the bare 'by month' form drifts."}
