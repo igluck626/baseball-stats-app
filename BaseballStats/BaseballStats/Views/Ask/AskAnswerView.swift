@@ -136,6 +136,7 @@ struct AskAnswerView: View {
     /// sample plays sit behind "More". No prose.
     private func ratesSection(_ rates: AskRates) -> some View {
         VStack(alignment: .leading, spacing: 12) {
+            seasonMaxCaption
             StatTable(columns: rateColumns(rates, highlight: response.highlighted_stat,
                                            extra: statValueExtra))
             if ratesHasMore(rates) {
@@ -807,9 +808,24 @@ struct AskAnswerView: View {
     /// highlighted column's value IS the count).
     private func pitchingCountSection(_ pl: AskPitchingLine) -> some View {
         VStack(alignment: .leading, spacing: 12) {
+            seasonMaxCaption
             StatTable(columns: pitchingColumns(pl, highlight: response.highlighted_stat,
                                                extra: statValueExtra))
             coverageFootnote
+        }
+    }
+
+    /// A named-player season-high answer is a count/rates card whose year the app
+    /// COMPUTED (a season-scoped count gets its year from the question, so it shows
+    /// none). The backend rides that year in `leaderboard_title`; surface it as a
+    /// caption above the card. Nil for ordinary counts (no title set).
+    @ViewBuilder private var seasonMaxCaption: some View {
+        if let title = response.leaderboard_title, !title.isEmpty,
+           response.leaders?.isEmpty ?? true {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
