@@ -6723,6 +6723,23 @@ def _coverage_gates(cur, lo, hi, uses_count, single_season):
     return game_coverage, count_data
 
 
+# WALK-OFF and EXTRA-INNINGS game-context filters (fully populated 1910-2025, so no
+# coverage gate — GAME_END_FL/INN_CT are on every row). A walk-off is the HOME team,
+# batting, ENDING the game by taking the lead ON the final play. HOME/AWAY_SCORE_CT are
+# PRE-play, so the winning run(s) are added back: a destination >= 4 means that runner
+# scored. Keying on the ending lead (not the hit) captures every finish — HR, single,
+# walk, HBP, error, sac-fly out, and extra-inning / placed-runner (2020+) walk-offs.
+# (Verified: 18,482 walk-offs vs 110,634 for the naive GAME_END_FL+home, which wrongly
+# counts home teams making the last out while LOSING.) Extra innings = inning 10+.
+_RUNS_ON_PLAY = ("((CASE WHEN BAT_DEST_ID>=4 THEN 1 ELSE 0 END)"
+                 "+(CASE WHEN RUN1_DEST_ID>=4 THEN 1 ELSE 0 END)"
+                 "+(CASE WHEN RUN2_DEST_ID>=4 THEN 1 ELSE 0 END)"
+                 "+(CASE WHEN RUN3_DEST_ID>=4 THEN 1 ELSE 0 END))")
+_WALKOFF_CLAUSE = (f"(GAME_END_FL AND BAT_HOME_ID = 1 AND {_RUNS_ON_PLAY} > 0 "
+                   f"AND (HOME_SCORE_CT + {_RUNS_ON_PLAY}) > AWAY_SCORE_CT)")
+_EXTRA_INNINGS_CLAUSE = "INN_CT > 9"
+
+
 def _run_situational(
     player: str, role: str = "bat", event: str | None = None,
     balls: int | None = None, strikes: int | None = None,
@@ -6733,6 +6750,7 @@ def _run_situational(
     pitcher_hand: str | None = None, batter_side: str | None = None,
     home_away: str | None = None, opponent_codes=None, opponent_label=None,
     month: int | None = None, sample_limit: int = 10,
+    walk_off: bool = False, extra_innings: bool = False,
 ):
     # opponent_label is accepted-and-ignored: the /ask dispatch spreads a params dict
     # that carries it (for the self-team note) into this runner; the filter uses codes.
@@ -6819,6 +6837,10 @@ def _run_situational(
                       "AND BASE3_RUN_ID IS NOT NULL)")
     hw, hp, hand_meta = _hand_venue_clauses(pitcher_hand, batter_side, home_away)
     where += hw; params += hp
+    if walk_off:
+        where.append(_WALKOFF_CLAUSE)
+    if extra_innings:
+        where.append(_EXTRA_INNINGS_CLAUSE)
     if opponent_codes:
         # A batter's opponent is the FIELDING team — the team he is NOT on:
         # BAT_HOME_ID=1 (his team bats at home) -> opponent = AWAY, else HOME. For a
@@ -6923,7 +6945,9 @@ def _run_situational(
             "event": event, "event_cd": event_cd, "balls": balls,
             "strikes": strikes, "outs": outs, "inning": inning,
             "base_state": bs, "season": season, "season_start": season_start,
-            "season_end": season_end, "game_type": gt, **hand_meta,
+            "season_end": season_end, "game_type": gt,
+            "walk_off": walk_off or None, "extra_innings": extra_innings or None,
+            **hand_meta,
         },
         "count":         count,
         "sample":        sample,
@@ -10005,7 +10029,8 @@ def _run_leaderboard(event=None, role="bat", balls=None, strikes=None, outs=None
                      inning=None, base_state=None, season=None, season_start=None,
                      season_end=None, game_type=None,
                      pitcher_hand=None, batter_side=None, home_away=None, limit=10,
-                     opponent_codes=None, month=None, team_codes=None, team_display=None):
+                     opponent_codes=None, month=None, team_codes=None, team_display=None,
+                     walk_off=False, extra_innings=False):
     """'Who has the most <event> in situation Y' — the plays store keyed the same
     way, but GROUP BY the batter/pitcher id instead of filtering to one player,
     ranked DESC. Coverage gates (see _leaderboard_gates) can DECLINE a badly
@@ -10069,6 +10094,10 @@ def _run_leaderboard(event=None, role="bat", balls=None, strikes=None, outs=None
                      "AND BASE3_RUN_ID IS NOT NULL)")
     hw, hp, hand_meta = _hand_venue_clauses(pitcher_hand, batter_side, home_away)
     where += hw; params += hp
+    if walk_off:
+        where.append(_WALKOFF_CLAUSE)
+    if extra_innings:
+        where.append(_EXTRA_INNINGS_CLAUSE)
     if opponent_codes:
         # opponent is plays-only (the dispatch forces the plays route for it, since
         # the complete-season leaderboard can't scope by club). Batter's opponent is
@@ -12204,9 +12233,13 @@ def _ask_log_write(q, norm, tool_name, tool_input, base, cached, id_hash,
 _UNSUPPORTED_CONSTRAINTS = [
     (r"\bday games?\b|\bnight games?\b|\bat night\b|\bin the day\b|\bday or night\b"
      r"|\bday[- ]night\b|\bunder the lights\b|\bafternoon games?\b", "day vs night"),
+    # walk-off and extra-innings CARVED OUT — now supported situational filters (see
+    # _WALKOFF_CLAUSE / _EXTRA_INNINGS_CLAUSE, injected by _detect_constraints). What
+    # remains is genuinely score/leverage-based and NOT in the play data: one-run,
+    # close, blowout, tie games, high-leverage, clutch, late-and-close.
     (r"\bone[- ]run\b|\b1[- ]run\b|\bclose games?\b|\bblowouts?\b|\btie games?\b"
-     r"|\btied games?\b|\bextra innings?\b|\bhigh[- ]leverage\b|\bin the clutch\b"
-     r"|\bclutch\b|\bwalk[- ]?offs?\b|\blate and close\b", "game score or leverage"),
+     r"|\btied games?\b|\bhigh[- ]leverage\b|\bin the clutch\b"
+     r"|\bclutch\b|\blate and close\b", "game score or leverage"),
     (r"\bsinker\w*|\bfastball\w*|\bcurveball\w*|\bsliders?\b|\bchange[- ]?ups?\b"
      r"|\bcutters?\b|\bsplitters?\b|\bknuckle\w*|\bbreaking balls?\b|\boff[- ]?speed\b"
      r"|\bpitch type\b|\b4[- ]?seam\w*|\btwo[- ]?seam\w*", "pitch type"),
@@ -12259,6 +12292,12 @@ def _detect_constraints(question):
         if mc:
             inject.setdefault("balls", int(mc.group(1)))
             inject.setdefault("strikes", int(mc.group(2)))
+    # WALK-OFF / EXTRA-INNINGS game-context filters. Detected from the question and
+    # injected (a tool that can't express them — rates/splits — declines via caps).
+    if re.search(r"\bwalk[- ]?offs?\b", ql):
+        inject.setdefault("walk_off", True)
+    if re.search(r"\bextra[- ]?innings?\b|\bin extras\b", ql):
+        inject.setdefault("extra_innings", True)
 
     unsupported = []
     for pat, reason in _UNSUPPORTED_CONSTRAINTS:
@@ -12624,7 +12663,8 @@ _GUARD_CAPS = {
     # opponent ONLY on query_situational (the one answerable runner with the filter).
     "query_situational":      frozenset(("handedness", "base_state", "count",
                                          "home_away", "season_single", "season_range",
-                                         "opponent", "month")),
+                                         "opponent", "month",
+                                         "walk_off", "extra_innings")),
     "query_rates":            frozenset(("handedness", "base_state", "count",
                                          "home_away", "season_single", "season_range",
                                          "opponent", "month")),   # Phase 2: _run_rates has the filter
@@ -12636,7 +12676,8 @@ _GUARD_CAPS = {
                                          "opponent", "month", "team")),   # Phase 4: _run_rate_leaderboard has the filter
     "query_leaderboard":      frozenset(("handedness", "base_state", "count",
                                          "home_away", "season_single", "season_range",
-                                         "opponent", "month", "team")),   # Phase 5: _run_leaderboard has the filter
+                                         "opponent", "month", "team",
+                                         "walk_off", "extra_innings")),   # Phase 5: _run_leaderboard has the filter
     # SCOPED — byte-identical to _TOOL_SCOPE_CAPS, so routing these here is a no-op.
     "query_milestone":          frozenset(("season_single",)),
     "query_streak":             frozenset(("season_single",)),
@@ -12714,6 +12755,19 @@ def _guard_tool(question, tool_name, tool_input):
                     log.warning("guard: injected %s=%r (tool %s) for %r", p, inj[p], tool_name, question)
         else:
             bad.append("the ball-strike count")
+
+    # (4b) WALK-OFF / EXTRA-INNINGS — game-context flags. Injected where the tool can
+    # express them (situational count + count leaderboard); declined honestly on a
+    # tool that can't (a walk-off/extra-inning RATE), never silently dropped.
+    for _flag, _label in (("walk_off", "walk-off games"),
+                          ("extra_innings", "extra innings")):
+        if _flag in inj:
+            if _flag in caps:
+                if not ti.get(_flag):
+                    ti[_flag] = True
+                    log.warning("guard: injected %s (tool %s) for %r", _flag, tool_name, question)
+            else:
+                bad.append(_label)
 
     # (5) HOME / AWAY
     ha = inj.get("home_away")
@@ -13657,7 +13711,8 @@ def ask(request: Request,
         lb_params = {k: tool_input.get(k) for k in (
             "event", "role", "balls", "strikes", "outs", "inning", "base_state",
             "season", "season_start", "season_end", "game_type", "limit",
-            "pitcher_hand", "batter_side", "home_away", "opponent_codes", "month")
+            "pitcher_hand", "batter_side", "home_away", "opponent_codes", "month",
+            "walk_off", "extra_innings")
             if tool_input.get(k) is not None}
         # TEAM SCOPE ('most HR as a Yankee'): resolve the club -> its franchise team
         # codes (or decline an ambiguous city, as everywhere else). team is NOT a
@@ -13710,7 +13765,8 @@ def ask(request: Request,
             lb_situ = any(lb_params.get(k) is not None
                           for k in ("balls", "strikes", "outs", "inning", "base_state",
                                     "pitcher_hand", "batter_side", "home_away",
-                                    "opponent_codes", "month"))
+                                    "opponent_codes", "month",
+                                    "walk_off", "extra_innings"))
             # LIMIT:1 OVERRIDE. The model reads 'the most' / 'the record' as singular and
             # emits limit:1 on a SEASON-STATS board (per-season, team, or plain career),
             # ignoring the tool's own 'do NOT set this to 1' guidance — so the board came
@@ -13936,7 +13992,8 @@ def ask(request: Request,
         "player", "role", "event", "balls", "strikes", "outs", "inning",
         "base_state", "season", "season_start", "season_end", "game_type",
         "pitcher_hand", "batter_side", "home_away",
-        "opponent_codes", "opponent_label", "month")
+        "opponent_codes", "opponent_label", "month",
+        "walk_off", "extra_innings")
         if tool_input.get(k) is not None}
     if not params.get("player"):
         base["out_of_scope"] = True
@@ -13982,7 +14039,8 @@ def ask(request: Request,
     # by them, so they MUST count as situational or a "HR off lefties" count
     # would route to season stats and silently drop the filter (return the total).
     situ_keys = ("balls", "strikes", "outs", "inning", "base_state",
-                 "pitcher_hand", "batter_side", "home_away", "opponent_codes", "month")
+                 "pitcher_hand", "batter_side", "home_away", "opponent_codes", "month",
+                 "walk_off", "extra_innings")
     is_split = any(params.get(k) is not None for k in situ_keys)
 
     # TOTAL-ONLY guard: RBI/R/SB live only in season-stats, never the plays store,
