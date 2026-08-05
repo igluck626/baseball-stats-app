@@ -9965,16 +9965,17 @@ def _run_player_season_max(player, event, role):
         res.update(count=None, answer=f"I don't have season {label} on record for {name}.")
         return res
     year, val = int(row[0]), int(row[1])
-    try:
-        line = (_pitcher_season_line(pid, year, None, None) if role == "pit"
-                else _season_rate_line(pid, "bat", year, None, None, None))
-    except Exception:  # noqa: BLE001 — the number stands without the line
-        line = None
-    hl = _EVENT_TO_STAT.get(canon)
-    res.update(count=val, season=year, highlighted_stat=hl,
-               stat_value={"label": hl or label, "value": val, "display": str(val), "role": role},
-               answer=f"{name}'s single-season high in {label} is {val}, in {year}.")
-    res["pitching_line" if role == "pit" else "rates"] = line
+    # Render as a ONE-ROW board so the YEAR shows via the leader row's subtitle (the same
+    # field the single-season leaderboard uses), through the same leadersTable — a count
+    # card has no slot for the year. The reroute bypasses the leaderboard dispatch, so the
+    # limit:1->10 override never applies (this is a legitimately single-row answer), and
+    # nothing sets `roster`, so the ROSTER shape (>=6 sharing a value) can't trip either.
+    res.update(
+        leaders=[{"rank": 1, "rank_label": "1", "player_name": name,
+                  "mlbam_id": pid, "retro_id": resolved.get("retro_id"),
+                  "count": val, "subtitle": str(year)}],
+        leaderboard_title=f"{name}'s single-season high in {label}",
+        answer=None)
     return res
 
 
@@ -12552,15 +12553,13 @@ def ask(request: Request,
                 base["answer"] = (f'There are multiple players matching '
                                   f'"{tool_input.get("player")}" — tap the one you mean.')
                 return _finish()
-            base["source"]          = _sm.get("source")
-            base["player_resolved"] = _sm.get("player")
-            base["count"]           = _sm.get("count")
-            base["rates"]           = _sm.get("rates")
-            base["pitching_line"]   = _sm.get("pitching_line")
-            base["highlighted_stat"] = _sm.get("highlighted_stat")
-            base["stat_value"]      = _sm.get("stat_value")
-            base["game_coverage"]   = _sm.get("game_coverage")
-            base["answer"]          = _sm.get("answer")
+            base["source"]           = _sm.get("source")
+            base["player_resolved"]  = _sm.get("player")
+            base["leaders"]          = _sm.get("leaders")
+            base["leaderboard_title"] = _sm.get("leaderboard_title")
+            base["count"]            = _sm.get("count")   # None on the board path; set on empty
+            base["game_coverage"]    = _sm.get("game_coverage")
+            base["answer"]           = _sm.get("answer")  # None (board) or the empty-case note
             return _finish()
 
     # ---- FUTURE SEASON / PROJECTION (deterministic, GLOBAL — after the 'this season'

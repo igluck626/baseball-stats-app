@@ -142,7 +142,13 @@ struct AskLeader: Decodable, Identifiable {
     let SLG: Double?
     let OPS: Double?
 
-    var id: String { retro_id ?? "\(rank ?? 0)-\(player_name ?? "?")" }
+    // A ROW id, not a player id: a single-season board repeats a player across years,
+    // so the year (subtitle) and rank distinguish his rows. The list render keys on the
+    // enumeration offset regardless, but this keeps Identifiable correct for any future
+    // use. (Was `retro_id` alone, which collided on repeated players.)
+    var id: String {
+        "\(retro_id ?? player_name ?? "?")|\(subtitle ?? "")|\(rank ?? 0)"
+    }
 }
 
 /// A newly-exposed stat's value carried alongside its line, so a stat that isn't

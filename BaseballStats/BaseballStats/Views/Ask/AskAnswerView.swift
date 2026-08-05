@@ -223,7 +223,10 @@ struct AskAnswerView: View {
 
     private func leadersTable(_ leaders: [AskLeader], roster: Bool = false) -> some View {
         VStack(spacing: 0) {
-            ForEach(Array(leaders.enumerated()), id: \.element.id) { index, leader in
+            // Key on the ROW (enumeration offset), never leader.id — a single-season
+            // board repeats a player across years (McGwire 1998 & 1999), and AskLeader.id
+            // is the PLAYER's identity, so keying on it collapsed/duplicated those rows.
+            ForEach(Array(leaders.enumerated()), id: \.offset) { index, leader in
                 Button {
                     if let id = leader.mlbam_id { onSelectPlayer(id) }
                 } label: {
