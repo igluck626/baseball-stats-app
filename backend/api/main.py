@@ -5743,6 +5743,34 @@ def _future_or_projection_decline(q, tool_input, current):
     return None
 
 
+# Model-volunteered NO-OP situational filter values: as a filter value, "any" /
+# "all" / "either" mean NO filter at all. Left in place they read as a real split —
+# a plain career rate misroutes to the 1910-floored plays store instead of the
+# complete season tables, and a plain current-season query trips the play-by-play
+# path (which has no in-progress year). Stripped before anything branches on the
+# situational / is_split check. game_type is DELIBERATELY excluded from the fields
+# below: its "ALL" is a MEANINGFUL value (all game types), not a no-op.
+_NOOP_FILTER_VALUES = {"any", "all", "either"}
+_SITU_FILTER_FIELDS = ("base_state", "pitcher_hand", "batter_side", "home_away",
+                       "month", "balls", "strikes", "outs", "inning", "opponent_codes")
+
+
+def _strip_noop_filters(tool_input):
+    """Drop no-op situational filters ('any'/'all'/'either') the model volunteered,
+    in place, so a plain rate/count stays on the complete season tables. Returns the
+    number stripped (for logging). Only string values are touched — an integer
+    balls/strikes/outs is never a no-op token."""
+    if not tool_input:
+        return 0
+    n = 0
+    for k in _SITU_FILTER_FIELDS:
+        v = tool_input.get(k)
+        if isinstance(v, str) and v.strip().lower() in _NOOP_FILTER_VALUES:
+            tool_input.pop(k, None)
+            n += 1
+    return n
+
+
 def _stints_currency_note(role, season, season_start, season_end):
     """"Complete through the <max> season." for a team-scoped board — but ONLY when
     the board's range REACHES PAST the last complete stint year, so the missing
@@ -6369,10 +6397,16 @@ def _season_rate_line(pid, role, season, season_start, season_end, game_type):
         if season_end is not None:   where.append("year <= :ye"); p["ye"] = int(season_end)
     # Capitalized columns are stored quoted in Postgres (see _SEASON_COL);
     # doubles/triples are lowercase. TB is derived so we don't depend on it.
+    # SF joins the OBP denominator ONLY from 1954, the year it became an official
+    # stat. player_seasons carries phantom pre-1954 SF (Cobb shows 112, but sac
+    # flies weren't recorded in his era) — counting them deflates OBP below the
+    # Baseball-Reference figure (Cobb .430 vs the true .433). Zero it pre-1954, as
+    # BR does. HBP, by contrast, was recorded from the start, so it stays as-is.
     sql = ('SELECT COALESCE(SUM("PA"),0), COALESCE(SUM("AB"),0), COALESCE(SUM("H"),0), '
            'COALESCE(SUM(doubles),0), COALESCE(SUM(triples),0), COALESCE(SUM("HR"),0), '
            'COALESCE(SUM("RBI"),0), COALESCE(SUM("SO"),0), COALESCE(SUM("BB"),0), '
-           'COALESCE(SUM("HBP"),0), COALESCE(SUM("SF"),0), '
+           'COALESCE(SUM("HBP"),0), '
+           'COALESCE(SUM(CASE WHEN year >= 1954 THEN "SF" ELSE 0 END),0), '
            'COALESCE(SUM("R"),0), COALESCE(SUM("SB"),0), COUNT(*) '
            f'FROM player_seasons WHERE {" AND ".join(where)}')
     try:
@@ -10208,6 +10242,47 @@ def _rate_span(cur, span_clause, span_params, season, season_start, season_end):
     return _PLAYS_FLOOR, 2025, False
 
 
+def _prefloor_rate_caveat(cur, retro, mlbam, name):
+    """(b) A batter whose career began before the play-by-play floor (1910) has
+    at-bats the plays store never held. The era-coverage gate only spans the
+    seasons that ARE in the store (>= 1910), so it reports 'complete' and cannot
+    see the gap — a situational rate like 'Cobb vs left-handers' ships silently
+    partial. Return a game_coverage caveat naming the CONCRETE shortfall (plays
+    at-bats vs. true career at-bats), or None if the player has no pre-floor
+    seasons after all. Only consulted when the plays span already reaches the
+    floor, so modern players never pay for the lookup."""
+    try:
+        with connection.get_session() as db:
+            row = db.execute(_sa_text(
+                'SELECT MIN(year), COALESCE(SUM("AB"), 0) FROM player_seasons '
+                'WHERE player_id = :pid'), {"pid": int(mlbam)}).fetchone()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("prefloor caveat lookup failed for %s: %s", mlbam, exc)
+        return None
+    if not row or row[0] is None or int(row[0]) >= _PLAYS_FLOOR:
+        return None                          # debuted in-era: nothing is missing
+    career_ab = int(row[1] or 0)
+    if career_ab <= 0:
+        return None
+    try:
+        pab = cur.execute(
+            "SELECT SUM(CASE WHEN AB_FL THEN 1 ELSE 0 END) FROM plays WHERE BAT_ID = ?",
+            [retro]).fetchone()
+        plays_ab = int(pab[0]) if pab and pab[0] is not None else None
+    except Exception:  # noqa: BLE001
+        plays_ab = None
+    who = f"{name}'s" if name else "the player's"
+    if plays_ab is not None and plays_ab < career_ab:
+        note = (f"Computed from the play-by-play, which covers {plays_ab:,} of "
+                f"{who} {career_ab:,} career at-bats — it begins in {_PLAYS_FLOOR}, "
+                "so earlier seasons aren't included.")
+    else:
+        note = (f"Computed from the play-by-play, which begins in {_PLAYS_FLOOR}; "
+                f"{who} earlier seasons aren't included.")
+    return {"complete": False, "note": note, "prefloor": True,
+            "career_start": int(row[0])}
+
+
 def _run_rates(player, role="bat", balls=None, strikes=None, outs=None, inning=None,
                base_state=None, season=None, season_start=None, season_end=None,
                game_type=None, pitcher_hand=None, batter_side=None, home_away=None,
@@ -10258,6 +10333,16 @@ def _run_rates(player, role="bat", balls=None, strikes=None, outs=None, inning=N
         rates = _derive_rates(dict(zip(_RATE_COLS, row)))
         lo, hi, single = _rate_span(cur, f"{id_col} = ?", [retro], season, season_start, season_end)
         game_coverage, count_data = _coverage_gates(cur, lo, hi, uses_count, single)
+        # (b) The era gate above only sees seasons that made it into the store. A
+        # career rate for a batter whose plays data starts AT the floor may be
+        # hiding pre-1910 seasons entirely — replace the (falsely complete) gate
+        # with a concrete pre-floor caveat. Guarded by lo <= floor so only the
+        # deadball-era crowd triggers the extra lookup.
+        if (role == "bat" and season is None and season_start is None
+                and season_end is None and lo <= _PLAYS_FLOOR):
+            pre = _prefloor_rate_caveat(cur, retro, resolved["mlbam_id"], resolved["name"])
+            if pre:
+                game_coverage = pre
         query_ms = round((time.perf_counter() - t0) * 1000, 1)
     finally:
         cur.close()
@@ -10273,6 +10358,40 @@ def _run_rates(player, role="bat", balls=None, strikes=None, outs=None, inning=N
     if uses_count:
         result["count_data"] = count_data
     return result
+
+
+def _run_plain_rates(player, role, season, season_start, season_end, game_type):
+    """(a) A PLAIN (non-situational) regular-season slash line — AVG/OBP/SLG/OPS —
+    from the COMPLETE season tables (player_seasons component sums), the same
+    source as the count answers. Exact for every era back to 1871 AND the current
+    season, unlike the plays store (1910 floor, ~90% early coverage, no in-progress
+    year). The caller routes here ONLY when no situational filter is present; any
+    split, and postseason/all-star, still needs the plays stream (_run_rates).
+    Returns a _run_rates-shaped envelope, an ambiguous dict, or None when it can't
+    serve (pitcher, postseason, or no season rows) so the caller falls back."""
+    role = (role or "bat").lower()
+    if role != "bat":                       # no opponent slash line for pitchers
+        return None
+    if not connection.db_available():
+        return None
+    cands = [c for c in _resolve_retro_id(player, role) if c["retro_id"]]
+    if not cands:
+        return None
+    if len({c["retro_id"] for c in cands}) > 1:
+        return {"resolved": False, "ambiguous": True, "query": player, "candidates": cands[:25]}
+    resolved = cands[0]
+    line = _season_rate_line(resolved["mlbam_id"], role, season, season_start,
+                             season_end, game_type)
+    if line is None:                        # P/A game_type, or no rows: fall back
+        return None
+    return {
+        "resolved": True, "source": "season_stats",
+        "player": {"query": player, "name": resolved["name"],
+                   "mlbam_id": resolved["mlbam_id"], "retro_id": resolved["retro_id"],
+                   "role": role},
+        "rates": line,
+        "game_coverage": {"complete": True},
+    }
 
 
 # split dimension -> (column, value-labeler). GROUP BY that column, rate each group.
@@ -12571,6 +12690,15 @@ def ask(request: Request,
             base["answer"]           = _sm.get("answer")  # None (card) or the empty-case note
             return _finish()
 
+    # ---- NO-OP FILTER STRIP (deterministic, GLOBAL). Drop a model-volunteered
+    # "any"/"all"/"either" situational filter BEFORE anything branches on the
+    # situational / is_split check, so a plain rate stays on the complete season
+    # tables (not the 1910-floored plays store) and a plain current-season query
+    # doesn't trip the play-by-play path. game_type's "ALL" is untouched (it's real).
+    _stripped = _strip_noop_filters(tool_input)
+    if _stripped:
+        log.info("ask: stripped %d no-op filter(s) from %s for %r", _stripped, tool_name, q)
+
     # ---- FUTURE SEASON / PROJECTION (deterministic, GLOBAL — after the 'this season'
     # resolution above, so the in-progress current season is never mistaken for future).
     # A season not yet played, or a will/projected/on-pace question, DECLINES rather than
@@ -13207,7 +13335,22 @@ def ask(request: Request,
                 if not kw.get("player"):
                     base["out_of_scope"] = True; base["reason"] = "No player identified."
                     base["answer"] = base["reason"]; return _finish()
-                result = _run_rates(**kw)
+                # (a) A PLAIN regular-season rate (no situational filter) comes from
+                # the COMPLETE season tables — exact for every era 1871+ and the
+                # current season, not the 1910-floored, ~90%-coverage plays store.
+                # ANY split (vs LHP, RISP, count, base state, month, opponent,
+                # home/away) or postseason/all-star still needs the play-by-play.
+                _situ = any(kw.get(k) is not None for k in (
+                    "balls", "strikes", "outs", "inning", "base_state", "pitcher_hand",
+                    "batter_side", "home_away", "month", "opponent_codes"))
+                _pa = (kw.get("game_type") or "").strip().upper() in ("P", "A")
+                result = None
+                if not _situ and not _pa:
+                    result = _run_plain_rates(
+                        kw["player"], kw.get("role"), kw.get("season"),
+                        kw.get("season_start"), kw.get("season_end"), kw.get("game_type"))
+                if result is None:
+                    result = _run_rates(**kw)
             elif tool_name == "query_splits":
                 # Phase 3: opponent_codes (injected by _guard_tool) reaches _run_splits,
                 # scoping every split row to the opponent. rate_leaderboard/leaderboard
