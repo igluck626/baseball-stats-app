@@ -6169,6 +6169,24 @@ _PA_DECLINE = ("I can't count plate appearances — the season totals aren't "
                "consistent across eras, so I'd rather not give a number that's "
                "wrong for some players.")
 _UNSUPPORTED_CONCEPT = [
+    # AWARDS WE DON'T EXPOSE. query_awards covers exactly FOUR — Cy Young, MVP,
+    # Rookie of the Year, Gold Glove. Everything else a fan might ask (Silver Slugger,
+    # World Series MVP, Hank Aaron, All-Star selections, Hall of Fame) is refused BY
+    # NAME rather than bent onto the nearest award or a stat count. These run before
+    # the award redirect, so they WIN over it — a "World Series MVP" question declines
+    # instead of matching the bare "MVP" redirect.
+    (re.compile(r"\bsilver\s+sluggers?\b|\bworld\s+series\s+mvps?\b|\bhank\s+aaron\b"
+                r"|\breliever\s+of\s+the\s+year\b|\bcomeback\s+player\b|\bplatinum\s+glove\b"
+                r"|\broberto\s+clemente\s+award\b", re.I),
+     "I answer the four major awards — MVP, Cy Young, Rookie of the Year, and Gold "
+     "Glove. Others like the Silver Slugger, World Series MVP, and Hank Aaron Award "
+     "aren't in that set."),
+    (re.compile(r"\ball[\s-]?stars?\b|\ball[\s-]?star\s+(?:game|selection|appearance|team)s?\b", re.I),
+     "I don't track All-Star selections — I answer the four major awards: MVP, "
+     "Cy Young, Rookie of the Year, and Gold Glove."),
+    (re.compile(r"\bhall\s+of\s+fame\b|\bhall[\s-]of[\s-]famers?\b|\bcooperstown\b|\bHOF\b", re.I),
+     "I don't have Hall-of-Fame data in this view — I answer the four major awards: "
+     "MVP, Cy Young, Rookie of the Year, and Gold Glove."),
     # PLATE APPEARANCES -> AB. Two patterns: the phrase (case-insensitive) and the
     # bare 'PA' abbreviation (UPPERCASE-only, so a lowercase word can't trip it).
     # Never matches "at-bats".
@@ -6238,7 +6256,9 @@ _UNSUPPORTED_CONCEPT = [
     # tools don't read). Anchored on the fielding nouns.
     (re.compile(r"\b(?:put[\s-]?outs?|assists?|fielding\s+(?:percentage|pct|average)"
                 r"|total\s+chances|range\s+factor|errors?"   # no supported stat is 'error(s)'
-                r"|gold\s+gloves?|defensive\s+runs?\s+saved|\bDRS\b)\b", re.I),
+                # gold gloves REMOVED — now answered by query_awards (an award, not a
+                # fielding metric). Putouts/assists/errors/DRS still decline here.
+                r"|defensive\s+runs?\s+saved|\bDRS\b)\b", re.I),
      "I don't have fielding stats — putouts, assists, errors, fielding percentage and "
      "the like live in a separate defensive record my tools don't read. I can answer "
      "batting and pitching questions."),
@@ -6270,10 +6290,25 @@ _REDIRECT_CONCEPT = [
     # the cycle" / "has X ever", already routed correctly, are left untouched).
     (re.compile(r"\bhit(?:ting|s)?\s+for\s+the\s+cycle\b|\bthe\s+cycle\b|\bcycles?\b", re.I),
      "query_game_achievement", {"stat": "cycle"}),
+    # AWARDS — kill the silent-wrong (today "most Cy Young awards" -> career WINS
+    # leaders, because query_leaderboard forces an `event` and the model picks W).
+    # Backstop for when the model still misroutes an award phrase; the primary route
+    # is the model picking query_awards off its description. Patterns are TIGHT to
+    # protect two seams: "Cy Young"/"Denny McLain" the PLAYER ('Cy Young's career
+    # wins' has no plural/'award'/'the Cy Young' and won't match), and the name "Roy"
+    # (so no bare \bROY\b). Only the four supported awards redirect here — Silver
+    # Slugger / World Series MVP / Hank Aaron are declined upstream, never redirected.
+    (re.compile(r"cy\s*young\s+awards?\b|cy\s*youngs\b"
+                r"|\bthe\s+(?:\d{4}\s+)?(?:al\s+|nl\s+|american\s+league\s+|national\s+league\s+)?"
+                r"cy\s*young\b", re.I),
+     "query_awards", {"award": "cy_young"}),
+    (re.compile(r"\bmvps?\b|\bmost\s+valuable\s+players?\b", re.I), "query_awards", {"award": "mvp"}),
+    (re.compile(r"\brookie\s+of\s+the\s+year\b", re.I), "query_awards", {"award": "roy"}),
+    (re.compile(r"\bgold\s+gloves?\b", re.I), "query_awards", {"award": "gold_glove"}),
 ]
 # scope params a redirect target can carry through (the guard resolves opponent later)
 _REDIRECT_KEEP = ("player", "season", "season_start", "season_end",
-                  "opponent", "home_away", "game_type")
+                  "opponent", "home_away", "game_type", "league")
 
 # ---- PER-GAME FEAT shape ("multi-home-run games", "3-hit games", "games with 4+
 # RBI") — a game-achievement question (count of GAMES with N+ of a stat) that the
@@ -9662,6 +9697,138 @@ def _rank_with_ties(leaders, value_key):
     return leaders
 
 
+# ---- AWARDS. Exact `player_awards.award_name` strings for the MAJOR awards a fan
+# asks about. The table also holds ~80 minor/noise awards (Player of the Week, TSN
+# All-Star, Baseball-Magazine All-Star …) that we deliberately DON'T expose; a
+# question about an award NOT in this map declines (see _unsupported_concept) rather
+# than silently matching a neighbour. `league` is stored (AL/NL/ML), `tie='Y'` marks
+# a shared award (e.g. 1969 AL Cy Young: Cuellar & McLain).
+_AWARD_DB_NAME = {
+    "cy_young": "Cy Young Award", "mvp": "Most Valuable Player",
+    "roy": "Rookie of the Year", "gold_glove": "Gold Glove"}
+_AWARD_SINGULAR = {
+    "cy_young": "Cy Young Award", "mvp": "MVP", "roy": "Rookie of the Year",
+    "gold_glove": "Gold Glove"}
+_AWARD_PLURAL = {
+    "cy_young": "Cy Young Awards", "mvp": "MVPs", "roy": "Rookie of the Year awards",
+    "gold_glove": "Gold Gloves"}
+# Resolution role: a Cy Young is a pitcher's, so resolve "Randy Johnson" to the
+# pitcher (disambiguates same-name players). Others default to the comprehensive
+# `players` table, which carries pitchers too (Clemens resolves there).
+_AWARD_ROLE = {"cy_young": "pit"}
+
+
+def _award_label(award, n):
+    return _AWARD_SINGULAR[award] if n == 1 else _AWARD_PLURAL[award]
+
+
+def _awards_player_prose(name, award, n, years, shared, league, season):
+    lg = f"{league} " if league in ("AL", "NL") else ""
+    if season is not None:                       # "did X win the 1986 award?"
+        if n:
+            s = f"Yes — {name} won the {season} {lg}{_AWARD_SINGULAR[award]}."
+            return s + (" (shared)." if shared else "")
+        return f"No — {name} did not win the {season} {lg}{_AWARD_SINGULAR[award]}."
+    if not n:
+        return f"{name} never won {'a ' if award != 'roy' else ''}{lg}{_AWARD_SINGULAR[award]}."
+    body = f"{name} won {n} {lg}{_award_label(award, n)} ({', '.join(str(y) for y in years)})."
+    if shared:
+        body += (f" {'The' if len(shared) == 1 else 'Those in'} "
+                 f"{', '.join(str(y) for y in shared)} {'was' if len(shared) == 1 else 'were'} shared.")
+    return body
+
+
+def _awards_winner_prose(rows, award, season, league):
+    # rows: [(name, league, tie)] ordered by league. Ties (>=2 in one league) share it.
+    if not rows:
+        lg = f"{league} " if league in ("AL", "NL") else ""
+        return f"I don't have a {season} {lg}{_AWARD_SINGULAR[award]} winner on record."
+    by_lg = {}
+    for nm, lg, tie in rows:
+        by_lg.setdefault(lg, []).append(nm)
+    parts = []
+    for lg, names in by_lg.items():
+        who = names[0] if len(names) == 1 else " and ".join(names)
+        tag = f" ({lg})" if lg in ("AL", "NL") and league not in ("AL", "NL") else ""
+        parts.append(f"{who}{tag}")
+    lg = f"{league} " if league in ("AL", "NL") else ""
+    verb = "shared" if any(len(v) > 1 for v in by_lg.values()) else "won"
+    return f"{', '.join(parts)} {verb} the {season} {lg}{_AWARD_SINGULAR[award]}."
+
+
+def _run_awards(award, player=None, league=None, season=None, limit=10):
+    """AWARDS runner over `player_awards`. Three shapes off the same filter:
+      (A) player set     -> career COUNT + the years (also 'has X ever won').
+      (B) season, no player -> WHO WON that year (one per league; ties share).
+      (C) neither        -> LEADERBOARD (most of the award), ties via _rank_with_ties.
+    Awards are joined to `players` by the MLBAM `player_id`; resolution reuses
+    _resolve_retro_id (accents/suffixes handled)."""
+    name = _AWARD_DB_NAME.get(award)
+    if name is None:
+        return {"resolved": True, "declined": True,
+                "reason": "I don't track that award yet."}
+    if not connection.db_available():
+        return {"resolved": True, "declined": True,
+                "reason": "The awards database isn't available right now."}
+    where = ["a.award_name = :nm"]; p = {"nm": name}
+    lg = (league or "").strip().upper() or None
+    if lg in ("AL", "NL"):
+        where.append("a.league = :lg"); p["lg"] = lg
+
+    # (A) NAMED PLAYER — career count + years
+    if player:
+        cands = [c for c in _resolve_retro_id(player, _AWARD_ROLE.get(award, "bat"))
+                 if c["mlbam_id"] is not None]
+        if not cands:
+            return {"resolved": False,
+                    "answer": f"I couldn't find a player named {player}."}
+        if len({c["mlbam_id"] for c in cands}) > 1:
+            return {"resolved": False, "ambiguous": True,
+                    "query": player, "candidates": cands[:25]}
+        pid = cands[0]["mlbam_id"]; pname = cands[0]["name"]
+        w2 = where + ["a.player_id = :pid"]; p2 = dict(p, pid=int(pid))
+        if season is not None:
+            w2.append("a.year = :yr"); p2["yr"] = int(season)
+        with connection.get_session() as db:
+            rows = db.execute(_sa_text(
+                f"SELECT a.year, a.tie FROM player_awards a "
+                f"WHERE {' AND '.join(w2)} ORDER BY a.year"), p2).fetchall()
+        years = [int(r[0]) for r in rows]
+        shared = [int(r[0]) for r in rows if r[1] == "Y"]
+        return {"resolved": True, "source": "awards", "count": len(rows),
+                "player": {"query": player, "name": pname, "mlbam_id": pid, "role": "bat"},
+                "answer": _awards_player_prose(pname, award, len(rows), years, shared, lg, season)}
+
+    # (B) WHO WON in a YEAR
+    if season is not None:
+        w2 = where + ["a.year = :yr"]; p2 = dict(p, yr=int(season))
+        with connection.get_session() as db:
+            rows = db.execute(_sa_text(
+                f"SELECT p.name, a.league, a.tie FROM player_awards a "
+                f"JOIN players p ON p.player_id = a.player_id "
+                f"WHERE {' AND '.join(w2)} ORDER BY a.league, p.name"), p2).fetchall()
+        return {"resolved": True, "source": "awards",
+                "answer": _awards_winner_prose(rows, award, int(season), lg)}
+
+    # (C) LEADERBOARD — most of the award
+    lim = max(1, min(int(limit or 10), 25))
+    if lim == 1:                                  # 'who has the most' -> a board, not a lone row
+        lim = 10
+    with connection.get_session() as db:
+        rows = db.execute(_sa_text(
+            f"SELECT p.player_id, p.name, p.retro_id, COUNT(*) AS c "
+            f"FROM player_awards a JOIN players p ON p.player_id = a.player_id "
+            f"WHERE {' AND '.join(where)} "
+            f"GROUP BY p.player_id, p.name, p.retro_id "
+            f"ORDER BY c DESC, p.name LIMIT :lim"), dict(p, lim=lim)).fetchall()
+    leaders = [{"player_name": r[1], "mlbam_id": r[0], "retro_id": r[2], "count": int(r[3])}
+               for r in rows]
+    _rank_with_ties(leaders, "count")
+    title = "Most " + _AWARD_PLURAL[award] + (f" ({lg})" if lg in ("AL", "NL") else "")
+    return {"resolved": True, "source": "awards",
+            "leaders": leaders, "leaderboard_title": title}
+
+
 def _lb_title(label, team_display=None, season=None, season_start=None,
               season_end=None, month=None):
     """Scope-labelled leaderboard heading — 'Most home runs for the New York Yankees
@@ -11481,6 +11648,15 @@ _ASK_SYSTEM = (
     "into the modern franchise. A HEAD-TO-HEAD team record ('Yankees vs the Red Sox') "
     "is NOT supported — answer cannot_answer. A question about a PLAYER who plays for a "
     "team ('most HR by a Yankee') is NOT query_team.\n\n"
+    "AWARDS (call query_awards): the FOUR major TROPHIES — Cy Young, MVP, Rookie of "
+    "the Year, Gold Glove. 'How many Cy Youngs does Clemens have', 'who has the most "
+    "MVPs', 'who won the 1968 NL Cy Young', 'has Trout won a Gold Glove'. THE SEAM: "
+    "an award is a trophy, NOT a stat — 'most wins' is query_leaderboard(event=W), "
+    "'lowest ERA' is a rate, NEITHER is an award. 'Cy Young' the AWARD ('most Cy "
+    "Youngs') vs 'Cy Young' the PITCHER ('Cy Young's win total') — the latter is a "
+    "player stat, not query_awards. Only those FOUR: the Silver Slugger, World "
+    "Series MVP, Hank Aaron Award, All-Star selections, and the Hall of Fame are "
+    "NOT among them — cannot_answer.\n\n"
     "RATE STATS (batting average / on-base / slugging / OPS — 'how well does X "
     "hit'):\n"
     "COUNT vs RATE — which tool: 'How many home runs / strikeouts / walks / hits "
@@ -11690,11 +11866,45 @@ _ask_log_write_failed = False   # so a broken log surfaces LOUDLY once (not per-
 # system prompt) cacheable, so repeat translate calls within the 5-min TTL read
 # it at ~10% of input price instead of resending it. Breakpoints on the last
 # tool (caches the whole tools array) and the system block.
+_ASK_AWARDS_TOOL = {
+    "name": "query_awards",
+    "description": (
+        "The FOUR major end-of-season AWARDS a player WON — Cy Young, MVP, Rookie "
+        "of the Year, Gold Glove. Use for: 'how many Cy Youngs does Clemens have', "
+        "'who has the most MVPs', 'who won the 1968 NL Cy Young', 'has Trout ever "
+        "won a Gold Glove'. CRITICAL SEAM: this is ONLY for those four trophies. A "
+        "question about WINS, ERA, home runs, or any on-field STAT is NOT an award "
+        "— 'most wins' is query_leaderboard(event=W), not this. 'Cy Young' the "
+        "AWARD vs 'Cy Young' the PITCHER: 'most Cy Youngs' / 'won the Cy Young' is "
+        "the award; 'Cy Young's career wins' is the player. We do NOT have Silver "
+        "Slugger, World Series MVP, Hank Aaron, All-Star selections, or the Hall of "
+        "Fame — do NOT map those here (they are declined elsewhere)."),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "award": {"type": "string",
+                      "enum": ["cy_young", "mvp", "roy", "gold_glove"],
+                      "description": "the award (required)."},
+            "player": {"type": "string", "description":
+                       "name or MLBAM id — SET for a player's count / 'has X ever "
+                       "won'; OMIT for a leaderboard ('who has the most')."},
+            "league": {"type": "string", "enum": ["AL", "NL"], "description":
+                       "only when the question names a league ('the NL MVP')."},
+            "season": {"type": "integer", "description":
+                       "a single year — 'who won the 1968 Cy Young' (no player), or "
+                       "'did X win the 1986 MVP' (with player)."},
+            "limit": {"type": "integer", "description":
+                      "leaderboard size; default 10. Do NOT set to 1."},
+        },
+        "required": ["award"],
+    },
+}
 _ASK_TOOLS = [_ASK_QUERY_TOOL, _ASK_LEADERBOARD_TOOL, _ASK_COMPARISON_TOOL,
               _ASK_TEAM_TOOL, _ASK_RATES_TOOL,
               _ASK_SPLITS_TOOL, _ASK_RATE_LB_TOOL, _ASK_MILESTONE_TOOL,
               _ASK_STREAK_TOOL, _ASK_SPAN_TOOL,
               _ASK_STREAK_LB_TOOL, _ASK_SPAN_LB_TOOL, _ASK_GAME_ACH_TOOL,
+              _ASK_AWARDS_TOOL,
               {**_ASK_CANNOT_TOOL, "cache_control": {"type": "ephemeral"}}]
 _ASK_SYSTEM_BLOCKS = [{"type": "text", "text": _ASK_SYSTEM,
                        "cache_control": {"type": "ephemeral"}}]
@@ -12547,12 +12757,12 @@ def ask(request: Request,
     # lookup, so this can't re-ambiguate or loop.
     if player_id is not None and tool_input is not None and tool_name in (
             "query_situational", "query_rates", "query_splits",
-            "query_milestone", "query_streak", "query_span"):
+            "query_milestone", "query_streak", "query_span", "query_awards"):
         tool_input["player"] = str(player_id)
 
     _ANSWERABLE = ("query_situational", "query_leaderboard", "query_rates",
                    "query_splits", "query_rate_leaderboard", "query_comparison",
-                   "query_team")
+                   "query_team", "query_awards")
     base = {
         "question":        q,
         "understood_as":   tool_input if tool_name in _ANSWERABLE else None,
@@ -13101,6 +13311,45 @@ def ask(request: Request,
         base["out_of_scope"] = True
         base["reason"] = reason
         base["answer"] = reason
+        return _finish()
+
+    # ==== AWARDS branch (the four majors: Cy Young / MVP / ROY / Gold Glove) ====
+    # player set -> career count; season set -> who won that year; neither -> most-of.
+    # A leaderboard renders DATA-FIRST (structured leaders, no prose); a count/winner
+    # answer carries deterministic prose (no phrasing LLM call).
+    if tool_name == "query_awards":
+        aw = {k: tool_input.get(k) for k in ("award", "player", "league", "season", "limit")
+              if tool_input.get(k) is not None}
+        if not aw.get("award"):
+            base["out_of_scope"] = True
+            base["reason"] = "I couldn't tell which award that is."
+            base["answer"] = base["reason"]; return _finish()
+        t0 = time.perf_counter()
+        try:
+            result = _run_awards(**aw)
+        except Exception as exc:  # noqa: BLE001
+            timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
+            log.exception("ask awards failed for %r", q)
+            base["error"] = str(exc); base["reason"] = "query failed"
+            base["answer"] = ("Sorry — something went wrong looking that up. "
+                              "Try rephrasing the question.")
+            return _finish()
+        timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
+        if result.get("ambiguous"):
+            base["ambiguous"] = True
+            base["player_resolved"] = {"candidates": result.get("candidates", [])}
+            base["answer"] = (f'There are multiple players matching '
+                              f'"{aw.get("player")}" — tap the one you mean.')
+            return _finish()
+        base["source"] = result.get("source")
+        if result.get("declined"):
+            base["declined"] = True; base["reason"] = result.get("reason")
+            base["answer"] = result.get("reason"); return _finish()
+        base["player_resolved"] = result.get("player")
+        base["count"] = result.get("count")
+        base["leaders"] = result.get("leaders")
+        base["leaderboard_title"] = result.get("leaderboard_title")
+        base["answer"] = None if result.get("leaders") is not None else result.get("answer")
         return _finish()
 
     # ==== TEAM branch (championships / record / standing / franchise total) ====
