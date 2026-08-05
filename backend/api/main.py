@@ -9198,6 +9198,31 @@ def _h2h_prose(a, b, w, l, ties, season, season_start, season_end, min_season, f
     return f"The {a} are {rec} against the {b} all-time in regular-season play."
 
 
+def _h2h_ambiguous_city(question, team_a, team_b):
+    """Two-club mirror of _question_ambiguous_city. A bare ambiguous city on EITHER
+    side must decline even when the model silently resolved it ('Chicago' -> 'the
+    Chicago White Sox' in the tool arg). The single-subject check is fooled here
+    because the OTHER club's nickname ('Yankees') trips its short-circuit. So: for
+    each ambiguous city NAMED in the question, the disambiguating NICKNAME must ALSO
+    be in the question (the model adding it to the arg doesn't count as the user
+    naming it); else decline with that city's standard clarify."""
+    ql = " " + (question or "").lower() + " "
+    for city, clarify in team_crosswalk.AMBIG_CITY.items():
+        if not re.search(r"\b" + re.escape(city) + r"\b", ql):
+            continue
+        named = False
+        for t in (team_a, team_b):
+            tl = (t or "").lower()
+            if city in tl:                         # the club the model put in this city
+                nick = tl.replace(city, "").replace("the", "").strip()
+                if nick and nick in ql:            # ...whose nickname the USER wrote
+                    named = True
+                    break
+        if not named:
+            return clarify
+    return None
+
+
 def _run_head_to_head(team_a, team_b, season=None, season_start=None, season_end=None):
     """Head-to-head W-L between two FRANCHISES, from batting_gamelogs. Both sides
     resolve through _team_scope_codes — franchise-correct across relocations (Dodgers
@@ -13547,6 +13572,14 @@ def ask(request: Request,
             base["reason"] = ("A head-to-head needs two clubs — like 'the Yankees "
                               "against the Red Sox'.")
             base["answer"] = base["reason"]; base["understood_as"] = None
+            return _finish()
+        # A bare ambiguous city on EITHER side declines, even when the model resolved
+        # it to one club — same clarify as everywhere else (the per-side resolver
+        # can't see the drop; this reads the QUESTION).
+        _cityamb = _h2h_ambiguous_city(q, tool_input.get("team_a"), tool_input.get("team_b"))
+        if _cityamb:
+            base["out_of_scope"] = True; base["reason"] = _cityamb
+            base["answer"] = _cityamb; base["understood_as"] = None
             return _finish()
         hh = {k: tool_input.get(k) for k in (
             "team_a", "team_b", "season", "season_start", "season_end")
