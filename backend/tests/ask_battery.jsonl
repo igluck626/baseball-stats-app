@@ -56,7 +56,7 @@
 {"id": "q055", "bucket": "lb_count", "q": "Who hit the most home runs in 2019?", "note": "count lb + season"}
 {"id": "q056", "bucket": "lb_count", "q": "Who has hit the most home runs off left-handed pitchers?", "note": "count lb + handedness -> plays route"}
 {"id": "q057", "bucket": "lb_count", "q": "Who has the most home runs with the bases loaded?", "note": "count lb + base_state"}
-{"id": "q058", "bucket": "lb_rate", "q": "Who has the best OPS?", "note": "rate leaderboard"}
+{"id": "q058", "bucket": "lb_rate", "q": "Who has the best OPS?", "note": "PLAIN rate board \u2014 'best OPS' -> season_stats CAREER board (Ruth 1.164, min 3000 PA), NOT the old plays board (50-PA fluke). Was plays_rate_leaderboard."}
 {"id": "q059", "bucket": "lb_rate", "q": "Who has the best batting average with runners in scoring position?", "note": "rate lb + risp"}
 {"id": "q060", "bucket": "lb_count", "q": "Who has hit the most home runs against the Dodgers?", "note": "lb + opponent (no runner filter yet)"}
 {"id": "q061", "bucket": "milestone", "q": "When did Albert Pujols hit his 600th home run?", "note": "HR milestone"}
@@ -160,7 +160,7 @@
 {"id": "q159", "bucket": "lb_count", "q": "Who has hit the most home runs since 2015?", "note": "count lb season_start"}
 {"id": "q160", "bucket": "lb_count", "q": "Who has the most strikeouts as a pitcher?", "note": "pit count lb"}
 {"id": "q161", "bucket": "lb_count", "q": "Who has the most saves?", "note": "saves lb"}
-{"id": "q162", "bucket": "lb_rate", "q": "Who has the best batting average since 2010?", "note": "rate lb + range"}
+{"id": "q162", "bucket": "lb_rate", "q": "Who has the best batting average since 2010?", "note": "PLAIN rate board over a RANGE -> season_stats board (best AVG since 2010, min 3000 PA). Was plays_rate_leaderboard."}
 {"id": "q163", "bucket": "lb_rate", "q": "Who has the highest OPS with the bases loaded?", "note": "rate lb + loaded"}
 {"id": "q164", "bucket": "milestone", "q": "When did Barry Bonds hit his 700th home run?", "note": "Bonds HR milestone"}
 {"id": "q165", "bucket": "milestone", "q": "When did Ichiro Suzuki get his 3000th hit?", "note": "Ichiro H milestone"}
@@ -199,3 +199,5 @@
 {"id": "q198", "bucket": "team_super", "q": "Which team has the most wins in a season?", "note": "explicit TEAM reading of the ambiguous 'most wins in a season' -> query_team, 116 (2001 Mariners / 1906 Cubs). Guards the team path regardless of which way the bare form (q188) drifts."}
 {"id": "q199", "bucket": "lb_count", "q": "What is the most wins by a pitcher in a season?", "note": "explicit PITCHER reading of the ambiguous 'most wins in a season' -> the pitcher season board (Radbourn 60, 1884, + the 19th-c era note). Guards the pitcher path regardless of which way the bare form (q188) drifts."}
 {"id": "q200", "bucket": "month_scope", "q": "What was Babe Ruth's batting average in April?", "note": "explicit SCOPE reading of the ambiguous 'by month' \u2014 one month's filtered rate line (month=4). Counterpart to q192's split reading; guards the scope path regardless of which way the bare 'by month' form drifts."}
+{"id": "q201", "bucket": "lb_rate", "q": "Who has the highest slugging percentage in a season?", "note": "SINGLE-SEASON rate board (per_season) -> Bonds .863 (2001), min 502 PA. Counterpart to the CAREER boards (q058 OPS, q202 AVG) \u2014 the two are different questions."}
+{"id": "q202", "bucket": "lb_rate", "q": "Who has the highest career batting average?", "note": "CAREER rate board AND the QUALIFIER GUARD: with the 3000-PA floor -> Cobb .366; WITHOUT it the pool is topped by a ~19-AB .364 (Red Dorman) and Cobb vanishes. If the floor ever regresses, THIS cell's leader changes."}
