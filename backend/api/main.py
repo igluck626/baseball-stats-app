@@ -6166,6 +6166,42 @@ def _qual_floor(role, season):
     g = _SHORT_SEASON_GAMES.get(season)
     return round(base * g / 162) if g else base
 
+
+# FEWEST-<counting stat> detector. The model maps 'fewest strikeouts' onto the only
+# low-is-better stat it has (ERA) — a silent-wrong ERA board. So detect the question
+# DETERMINISTICALLY and force the counting-MIN board, whatever the model picked. Stat
+# noun -> canon event; role from an 'allowed'/'pitcher'/'batter' cue, else the stat's
+# usual side (fewest K -> a batter's contact; walks 'allowed' -> a pitcher's control).
+_FEWEST_LEAD = (r"\b(?:fewest|least|lowest|smallest)\s+"
+                r"(?:(?:number\s+of|career|single[\s-]season|qualified|total)\s+){0,2}")
+_FEWEST_STATS = [
+    (r"strike[\s-]?outs?|\bk'?s\b", "K", "bat"),
+    (r"home[\s-]?runs?|homers?|\bhrs?\b|dingers?", "HR", "bat"),
+    (r"walks?|bases\s+on\s+balls|free\s+passes", "BB", "bat"),
+    (r"doubles?", "2B", "bat"), (r"triples?", "3B", "bat"),
+    (r"runs\s+batted\s+in|\brbis?\b", "RBI", "bat"),
+    (r"stolen\s+bases?", "SB", "bat"), (r"\bhits?\b", "H", "bat"),
+]
+_FEWEST_ANY = re.compile(_FEWEST_LEAD + r"(?:" + "|".join(a for a, _, _ in _FEWEST_STATS) + r")", re.I)
+
+
+def _detect_fewest_count(question):
+    """(canon_event, role) for a 'fewest <counting stat>' question, else None."""
+    ql = " " + (question or "").lower() + " "
+    if not _FEWEST_ANY.search(ql):
+        return None
+    for alt, canon, default_role in _FEWEST_STATS:
+        if re.search(_FEWEST_LEAD + r"(?:" + alt + r")", ql):
+            if re.search(r"\ballowed\b|\bgiven\s+up\b|\bsurrendered\b|by\s+a\s+pitcher"
+                         r"|\bpitchers?\b", ql):
+                role = "pit"
+            elif re.search(r"by\s+a\s+(?:batter|hitter)|\bbatters?\b|\bhitters?\b", ql):
+                role = "bat"
+            else:
+                role = default_role
+            return canon, role
+    return None
+
 # Canonical counting stats that answer from complete season/career totals
 # (player_seasons / pitcher_seasons) but are NOT single plays-store events, so a
 # SITUATIONAL filter on them can't be computed and declines cleanly. Batting: RBI,
@@ -10683,6 +10719,91 @@ def _rate_board_ascending(question, stat):
     return lower_better
 
 
+# Counting-stat MIN board ('fewest strikeouts in a season'). Unlike a rate MIN, a raw
+# COUNT isn't comparable across season lengths, so the qualifier is the FULL floor with
+# NO proration (a 60-game 2020 total can't race a 162-game one). Gated to 1913+, when
+# these were reliably recorded (batter strikeouts were untracked before, showing as
+# fake zeros). The playing-time counters ARE the qualifier, so minimizing them is
+# circular — excluded. Everything else a season column can express is allowed (we don't
+# curate which MIN questions are 'interesting' — a qualified floor makes them well-defined).
+_COUNT_MIN_MIN_YEAR = 1913
+_COUNT_MIN_EXCLUDE = {"G", "GS", "GF", "PA", "AB", "IP", "BFP"}
+
+
+def _run_season_count_min_leaderboard(canon, role, per_season=False, season=None,
+                                      season_start=None, season_end=None, limit=10):
+    """FEWEST <counting stat> among QUALIFIED players (full 502 PA / 162 IP; career
+    3000 PA / 1000 IP), ranked ASC. Role picks the side ('fewest K' -> a batter's
+    contact, Sewell 1932; 'fewest walks allowed' -> a pitcher's control). None if the
+    stat has no season column or is a playing-time counter (circular to minimize)."""
+    role = (role or "bat").lower()
+    if canon in _COUNT_MIN_EXCLUDE:
+        return None
+    col = _SEASON_COL.get((role, canon))
+    if col is None:
+        return None
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    table = "pitcher_seasons" if role == "pit" else "player_seasons"
+    qual_col = "IP" if role == "pit" else "PA"
+    limit = max(1, min(int(limit or 10), 25))
+    single = season is not None and not per_season
+    where = [f's.year >= {_COUNT_MIN_MIN_YEAR}']
+    p: dict = {"lim": limit}
+    if single:
+        where.append("s.year = :yr"); p["yr"] = int(season)
+    else:
+        if season_start is not None:
+            where.append("s.year >= :ys"); p["ys"] = int(season_start)
+        if season_end is not None:
+            where.append("s.year <= :ye"); p["ye"] = int(season_end)
+    if per_season or single:
+        floor = _QUAL_IP_SEASON if role == "pit" else _QUAL_PA_SEASON
+        where.append(f's."{qual_col}" >= {floor}')
+        grp = "s.player_id, s.year" if per_season else "s.player_id"
+        sql = (f'SELECT s.player_id, {"s.year" if per_season else "NULL AS year"}, '
+               f'SUM({col}) AS v FROM {table} s WHERE {" AND ".join(where)} '
+               f'GROUP BY {grp} HAVING SUM({col}) IS NOT NULL ORDER BY v ASC, '
+               f'{"s.year" if per_season else "s.player_id"} LIMIT :lim')
+    else:
+        floor = _QUAL_IP_CAREER if role == "pit" else _QUAL_PA_CAREER
+        sql = (f'SELECT s.player_id, NULL AS year, SUM({col}) AS v FROM {table} s '
+               f'WHERE {" AND ".join(where)} GROUP BY s.player_id '
+               f'HAVING SUM(s."{qual_col}") >= {floor} AND SUM({col}) IS NOT NULL '
+               f'ORDER BY v ASC, s.player_id LIMIT :lim')
+    with connection.get_session() as db:
+        rows = db.execute(_sa_text(sql), p).fetchall()
+        ids = [r[0] for r in rows]
+        names = {}
+        if ids:
+            for pid, nm in db.execute(_sa_text(
+                    "SELECT player_id, name FROM players WHERE player_id = ANY(:ids)"),
+                    {"ids": ids}).fetchall():
+                names[pid] = nm
+    leaders = []
+    for i, (pid, yr, v) in enumerate(rows, 1):
+        row = {"rank": i, "player_name": names.get(pid) or str(pid),
+               "mlbam_id": pid, "count": int(v) if v is not None else None}
+        if yr is not None:
+            row["subtitle"] = str(int(yr))
+        leaders.append(row)
+    _rank_with_ties(leaders, "count")
+    label = _COMPARE_STAT_LABEL.get(canon) or canon.lower()
+    _sco = ("single-season" if (per_season or single) and season is None else
+            str(season) if single else
+            (f"{season_start}-{season_end}" if season_start and season_end else
+             f"since {season_start}" if season_start else
+             f"through {season_end}" if season_end else "career"))
+    fl = (_QUAL_IP_SEASON if role == "pit" else _QUAL_PA_SEASON) if (per_season or single) \
+        else (_QUAL_IP_CAREER if role == "pit" else _QUAL_PA_CAREER)
+    side = "allowed" if role == "pit" and canon in ("BB", "HR", "H", "R") else ""
+    title = f"Fewest {label}{(' ' + side) if side else ''} ({_sco}, min. {fl} {qual_col})"
+    return {"resolved": True, "source": "season_count_min_leaderboard",
+            "role": role, "limit": limit, "leaders": leaders,
+            "leaderboard_title": title,
+            "game_coverage": {"complete": True}, "count_data": None}
+
+
 # ============================================================================
 # Rate stats + splits (Phase 6). Formulas verified EXACT vs official on
 # 100%-covered seasons (Judge 2022 .311/.425/.686/1.111, Betts 2018, Trout 2019):
@@ -13378,6 +13499,54 @@ def ask(request: Request,
             tool_input["role"] = "pit"
         elif _ce in _BATTING_ONLY_FORCE:
             tool_input["role"] = "bat"
+
+    # ---- FEWEST <counting stat> (deterministic, GLOBAL). 'fewest strikeouts in a
+    # season' is a MIN counting board — but the model, having a MIN direction only on
+    # rate stats, maps it onto ERA (a silent-wrong ERA board). Detect it on the QUESTION
+    # and force the counting-MIN board, whatever tool/stat the model chose. No player ->
+    # a leaguewide board; a NAMED-player 'fewest' is left to the season paths below.
+    _fw = _detect_fewest_count(q) if (tool_input is not None
+                                      and not tool_input.get("player")) else None
+    if _fw == ("K", "pit"):
+        # DELIBERATELY not ranked: fewest strikeouts BY A PITCHER sounds like a failing
+        # and isn't — a low-K pitcher who keeps runs down is a contact pitcher, so a
+        # 'fewest' ranking would imply a judgment the figures don't make. (Fewest K by a
+        # BATTER is contact skill; fewest walks a pitcher ALLOWS is control — both kept.)
+        base["out_of_scope"] = True
+        base["reason"] = (
+            "I don't rank pitchers by fewest strikeouts — a low strikeout total isn't a "
+            "failing (a contact pitcher can be excellent), so ranking it would imply a "
+            "judgment the numbers don't make. I can give the fewest strikeouts by a "
+            "batter, or the fewest walks a pitcher allowed.")
+        base["answer"] = base["reason"]; base["understood_as"] = None
+        return _finish()
+    if _fw:
+        _fcanon, _frole = _fw
+        _fscoped = any(tool_input.get(k) is not None
+                       for k in ("season", "season_start", "season_end"))
+        # per-season (rank single seasons, the Sewell-1932 record) unless 'career' is
+        # named or a specific year/range is scoped. A bare 'fewest K' -> the single-
+        # season record, matching how a bare 'most HR in a season' reads.
+        _fps = (not re.search(r"\bcareer\b", q or "", re.I)) and not _fscoped
+        _fps = _fps or (_PER_SEASON_RE.search(q) is not None) or bool(tool_input.get("per_season"))
+        try:
+            _fr = _run_season_count_min_leaderboard(
+                _fcanon, _frole, per_season=_fps,
+                season=tool_input.get("season"),
+                season_start=tool_input.get("season_start"),
+                season_end=tool_input.get("season_end"),
+                limit=tool_input.get("limit") or 10)
+        except HTTPException as exc:
+            base["reason"] = str(exc.detail)
+            base["answer"] = f"Couldn't answer that: {exc.detail}"; return _finish()
+        if _fr is not None:
+            base["understood_as"] = {"event": _fcanon, "role": _frole, "fewest": True}
+            base["source"] = _fr.get("source")
+            base["leaders"] = _fr.get("leaders")
+            base["leaderboard_title"] = _fr.get("leaderboard_title")
+            base["game_coverage"] = _fr.get("game_coverage")
+            base["answer"] = None
+            return _finish()
 
     # ---- NAMED-PLAYER SEASON-MAX (deterministic, GLOBAL). 'most HR in a season' /
     # 'career high' / 'best season' for a NAMED player is MAX over HIS seasons (Judge 62
