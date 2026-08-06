@@ -10624,7 +10624,7 @@ def _prefloor_rate_caveat(cur, retro, mlbam, name):
 def _run_rates(player, role="bat", balls=None, strikes=None, outs=None, inning=None,
                base_state=None, season=None, season_start=None, season_end=None,
                game_type=None, pitcher_hand=None, batter_side=None, home_away=None,
-               opponent_codes=None, month=None):
+               opponent_codes=None, month=None, walk_off=False, extra_innings=False):
     """Situational RATE line (AVG/OBP/SLG/OPS + components) for one player.
     Coverage: game-coverage only CAVEATS (a rate is a ratio — numerator and
     denominator miss the same ~6%, so the rate stays a valid estimate; unlike a
@@ -10658,6 +10658,13 @@ def _run_rates(player, role="bat", balls=None, strikes=None, outs=None, inning=N
                     "CASE WHEN BAT_HOME_ID = 1 THEN AWAY_TEAM_ID ELSE HOME_TEAM_ID END")
         sclauses.append(f"({opp_expr}) IN ({', '.join('?' * len(opponent_codes))})")
         sparams += list(opponent_codes)
+    # Same game-context clauses the count/leaderboard runners use — so a rate line
+    # attached UNDER a walk-off / extra-inning count is filtered the SAME way (else
+    # the line reads the career total under a filtered count — the render bug).
+    if walk_off:
+        sclauses.append(_WALKOFF_CLAUSE)
+    if extra_innings:
+        sclauses.append(_EXTRA_INNINGS_CLAUSE)
     clause = " AND ".join([f"{id_col} = ?"] + sclauses)
     params = [retro] + sparams
     try:
@@ -10696,6 +10703,15 @@ def _run_rates(player, role="bat", balls=None, strikes=None, outs=None, inning=N
     if uses_count:
         result["count_data"] = count_data
     return result
+
+
+# The rate-line filter set is DERIVED from _run_rates's own parameters, not typed
+# alongside it — so a filter added to the runner is picked up here automatically and
+# can never again be filtered by the count while the rate line under it stays career
+# (the walk-off/extra-inning render bug). Params are the first co_argcount local
+# names; the guard against a mismatch is a real test, not a comment.
+_RUN_RATES_PARAMS = frozenset(
+    _run_rates.__code__.co_varnames[:_run_rates.__code__.co_argcount])
 
 
 def _run_plain_rates(player, role, season, season_start, season_end, game_type):
@@ -14189,11 +14205,10 @@ def ask(request: Request,
     # So: season-stats total -> season-stats line; plays count -> plays line.
 
     def _plays_line():
-        rkw = {k: params.get(k) for k in (
-            "player", "role", "balls", "strikes", "outs", "inning", "base_state",
-            "season", "season_start", "season_end", "game_type",
-            "pitcher_hand", "batter_side", "home_away",
-            "opponent_codes", "month") if params.get(k) is not None}
+        # Derive the kwargs from _run_rates's OWN parameters (_RUN_RATES_PARAMS) so a
+        # filter the count applied is applied to the rate line too — every situational
+        # param the runner accepts flows through, nothing is dropped by omission.
+        rkw = {k: params.get(k) for k in _RUN_RATES_PARAMS if params.get(k) is not None}
         rres = _run_rates(**rkw)
         return rres.get("rates") if isinstance(rres, dict) else None
 
