@@ -138,13 +138,16 @@ def _ingest_batting_seasons(year, league_map, existing, state, lock) -> dict:
                 "GIDP": _i(r["GIDP"]), "TB": _i(r["TB"]),
                 **derived,   # PA(raw) + BA/OBP/SLG/OPS/BABIP/ISO/BB_pct/K_pct/wOBA
             }
+            # LAHMAN IS AUTHORITATIVE for season counting totals (see the pitching
+            # ingest). Retrosheet only inserts years Lahman lacks; never overwrites an
+            # existing batting season total (AB/H/RBI/SO/… disagree pre-1960).
             if (pid, yr) in existing:
                 over += 1
-            else:
-                new += 1
-                lg = league_map.get((team, yr))
-                if lg:
-                    season["league"] = lg   # NEW rows only; existing keep theirs
+                continue
+            new += 1
+            lg = league_map.get((team, yr))
+            if lg:
+                season["league"] = lg   # NEW rows only; existing keep theirs
             by_pid[pid].append(season)
 
     pids = list(by_pid.keys())
@@ -197,13 +200,20 @@ def _ingest_pitching_seasons(year, league_map, existing, state, lock) -> dict:
                 "ERA": era, "BAOpp": baopp,
                 **derived,   # IP + WHIP/FIP/K_per9/BB_per9/HR_per9/BABIP
             }
+            # LAHMAN IS AUTHORITATIVE for season counting totals. Retrosheet's daybyday
+            # sums disagree with Lahman/Baseball-Reference in the pre-1960 era (and its
+            # dead-ball ER is blank), so overwriting a Lahman row corrupts ER/R/H/BB/SO/
+            # IP — the bug this ingest previously caused. Retrosheet season ingest now
+            # only INSERTS years Lahman doesn't yet have (a just-finished season before
+            # the annual Lahman refresh); it never overwrites an existing season total.
+            # The play-by-play DuckDB store (Retrosheet's real contribution) is separate.
             if (pid, yr) in existing:
                 over += 1
-            else:
-                new += 1
-                lg = league_map.get((team, yr))
-                if lg:
-                    season["league"] = lg
+                continue
+            new += 1
+            lg = league_map.get((team, yr))
+            if lg:
+                season["league"] = lg
             by_pid[pid].append(season)
 
     pids = list(by_pid.keys())

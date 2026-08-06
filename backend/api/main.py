@@ -6150,14 +6150,11 @@ _QUAL_IP_NAMED = 100      # a named player's OWN best season — a softer bar (h
 # still qualifies (2020's 60-game champ is not held to 162 IP). floor = round(base * g/162).
 _SHORT_SEASON_GAMES = {1918: 126, 1919: 140, 1981: 107, 1994: 114, 1995: 144, 2020: 60}
 
-# EARNED RUNS became an OFFICIAL stat in 1913 (AL; NL 1912). Before then ER wasn't
-# recorded — our data carries ER=0 for those seasons, so a computed ERA is a FALSE
-# 0.00. An ERA board (season or career) is therefore gated to 1913+, and the answer
-# states WHY the earlier era is absent, not just the date. WHIP/K9/BB9/etc. use only
-# H/BB/SO/IP — all recorded from the start — so they carry NO era gate (a dead-ball
-# WHIP like Walsh 1910 is a real, includable record).
-_ER_OFFICIAL_YEAR = 1913
-_ERA_FAMILY = {"ERA"}     # stats whose value depends on earned runs -> era-gated
+# NO ER era gate. The ERA boards once floored at 1913 because Retrosheet's daybyday
+# ER was blank for the dead-ball era and its ingest overwrote Lahman's real values with
+# 0 — so a computed dead-ball ERA read as a false 0.00. The season tables are now
+# repaired from Lahman (ER complete to 1871), so ERA is correct for every era and the
+# gate is gone; Ed Walsh's 1.82 leads the career board as the record books have it.
 
 
 def _qual_floor(role, season):
@@ -10405,8 +10402,8 @@ def _run_player_season_rate_best(player, canon, event):
     ascending = canon in _LOWER_IS_BETTER
     label = _COMPARE_STAT_LABEL.get(canon) or canon
     where = [f's."{qual_col}" >= {floor}']; p = {"pid": int(pid)}
-    if canon in _ERA_FAMILY:
-        where.append(f"s.year >= {_ER_OFFICIAL_YEAR}")
+    # No era gate — ER is repaired from Lahman (complete to 1871), so a dead-ball
+    # pitcher's best ERA season is now computable (see _run_season_rate_leaderboard).
     # per (player, year) single row -> the season's own value
     sql = (f'SELECT s.year, ROUND(({rate_sql})::numeric, {digits}) AS rate '
            f'FROM {table} s WHERE s.player_id = :pid AND {" AND ".join(where)} '
@@ -10641,13 +10638,11 @@ def _run_season_rate_leaderboard(stat, ascending, per_season=False, season=None,
             where.append("s.year >= :ys"); p["ys"] = int(season_start)
         if season_end is not None:
             where.append("s.year <= :ye"); p["ye"] = int(season_end)
+    # NO era gate. The gate here (and its "ERA wasn't official before 1913" note) only
+    # existed to hide Retrosheet's blank dead-ball ER, which overwrote Lahman's real
+    # values. That data is now repaired from Lahman (complete to 1871), so the ERA board
+    # ranks every era correctly — Ed Walsh's 1.82 leads it, as the record books have it.
     era_note = None
-    if stat in _ERA_FAMILY:
-        where.append("s.year >= :ery"); p["ery"] = _ER_OFFICIAL_YEAR
-        era_note = (f"Earned runs only became an official statistic in "
-                    f"{_ER_OFFICIAL_YEAR} — they weren't recorded before then, so "
-                    f"dead-ball-era pitchers have no computable ERA and can't be "
-                    f"ranked here. This is the live-ball era on.")
     order = "ASC" if ascending else "DESC"
 
     if per_season:
