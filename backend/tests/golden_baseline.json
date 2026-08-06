@@ -2,8 +2,8 @@
   "meta": {
     "n_cannot_answer_class": 23,
     "n_drift_tolerant": 33,
-    "n_gated_questions": 176,
-    "n_questions": 203,
+    "n_gated_questions": 177,
+    "n_questions": 204,
     "n_runs": 3,
     "n_unstable_cells": 479,
     "n_unstable_questions": 27,
@@ -6454,6 +6454,37 @@
         "understood_as": "{\"limit\": 10, \"stat\": \"AVG\"}"
       },
       "q": "Who has the highest career batting average?",
+      "unstable": []
+    },
+    "q203": {
+      "bucket": "lb_count",
+      "cannot_answer_class": false,
+      "cell": {
+        "ambiguous": false,
+        "answer100": "",
+        "count": null,
+        "db_status": "ok",
+        "declined": false,
+        "has_milestone": false,
+        "has_rates": false,
+        "has_span": false,
+        "has_streak": false,
+        "has_two_way": false,
+        "highlighted_stat": null,
+        "http": 200,
+        "leaders_val": "[[null, null, null, 7], [null, null, null, 8], [null, null, null, 9], [null, null, null, 9], [null, null, null, 9], [null, null, null, 9], [null, null, null, 9], [null, null, null, 9]]",
+        "n_leaders": 10,
+        "n_sample": 0,
+        "n_splits": 0,
+        "out_of_scope": false,
+        "rates_val": null,
+        "reason100": "",
+        "source": "season_count_min_leaderboard",
+        "splits_val": null,
+        "tool_name": "query_rate_leaderboard",
+        "understood_as": "{\"event\": \"BB\", \"fewest\": true, \"role\": \"bat\"}"
+      },
+      "q": "Who drew the fewest walks in a qualified season?",
       "unstable": []
     }
   }
