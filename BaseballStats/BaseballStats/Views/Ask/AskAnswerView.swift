@@ -292,11 +292,19 @@ struct AskAnswerView: View {
         if let count = leader.count {
             return count.formatted(.number)
         }
+        // A rate board carries a preformatted display (ERA "1.12", WHIP "0.74") at the
+        // stat's own precision — used before the batting-rate switch so any rate,
+        // including pitching rates with no typed column here, renders correctly.
+        if let rd = leader.rate_display, !rd.isEmpty {
+            return rd
+        }
         let value: Double?
         switch response.stat {
         case "AVG": value = leader.AVG
         case "OBP": value = leader.OBP
         case "SLG": value = leader.SLG
+        case "ERA": value = leader.ERA
+        case "WHIP": value = leader.WHIP
         default:    value = leader.OPS
         }
         return LeaderboardRow.formatted(value, as: .threeDecimal)

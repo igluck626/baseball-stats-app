@@ -6130,6 +6130,42 @@ _SEASON_RATE_C = {
 # Every rate token, for routing. A rate never sums, so it is never in _SEASON_COL.
 _SEASON_RATES = set(_SEASON_RATE_B) | set(_SEASON_RATE_C)
 
+# ---- RATE LEADERBOARD support (Gap 2): direction, qualifier floors, era gates. ----
+# DIRECTION is a PROPERTY of the stat, not a list to maintain per board: for these,
+# LOWER is better, so the natural ("best"/"lowest") board sorts ASC and "worst"/
+# "highest" sorts DESC. Everything else (AVG/OBP/SLG/OPS/OPS+/wOBA/BABIP/BB%) is
+# higher-better. Note BB9 (walks a PITCHER allows, per 9) is lower-better while BB%
+# (walks a BATTER draws, per PA) is higher-better — the same "walks" idea, opposite
+# by role, already told apart because they are DISTINCT tokens the role backstop routes.
+_LOWER_IS_BETTER = {"ERA", "WHIP", "BB9", "HR9", "FIP", "K_PCT"}
+
+# QUALIFIER FLOORS. A MIN/DESC board is won by the smallest sample unless a bar is set,
+# so the bar IS the board's meaning. Rulebook thresholds: 502 PA (3.1/game) and 162 IP
+# (1.0/game) for a SEASON; the record-book convention 3000 PA / 1000 IP for a CAREER.
+_QUAL_PA_SEASON, _QUAL_IP_SEASON = 502, 162
+_QUAL_PA_CAREER, _QUAL_IP_CAREER = 3000, 1000
+_QUAL_IP_NAMED = 100      # a named player's OWN best season — a softer bar (his identity
+                          # already bounds the sample; the floor only rules out a fluke)
+# Prorated schedule length for the shortened seasons, so a full-for-that-year workload
+# still qualifies (2020's 60-game champ is not held to 162 IP). floor = round(base * g/162).
+_SHORT_SEASON_GAMES = {1918: 126, 1919: 140, 1981: 107, 1994: 114, 1995: 144, 2020: 60}
+
+# EARNED RUNS became an OFFICIAL stat in 1913 (AL; NL 1912). Before then ER wasn't
+# recorded — our data carries ER=0 for those seasons, so a computed ERA is a FALSE
+# 0.00. An ERA board (season or career) is therefore gated to 1913+, and the answer
+# states WHY the earlier era is absent, not just the date. WHIP/K9/BB9/etc. use only
+# H/BB/SO/IP — all recorded from the start — so they carry NO era gate (a dead-ball
+# WHIP like Walsh 1910 is a real, includable record).
+_ER_OFFICIAL_YEAR = 1913
+_ERA_FAMILY = {"ERA"}     # stats whose value depends on earned runs -> era-gated
+
+
+def _qual_floor(role, season):
+    """The qualified-SEASON PA/IP bar for `season`, prorated for a short schedule."""
+    base = _QUAL_IP_SEASON if role == "pit" else _QUAL_PA_SEASON
+    g = _SHORT_SEASON_GAMES.get(season)
+    return round(base * g / 162) if g else base
+
 # Canonical counting stats that answer from complete season/career totals
 # (player_seasons / pitcher_seasons) but are NOT single plays-store events, so a
 # SITUATIONAL filter on them can't be computed and declines cleanly. Batting: RBI,
@@ -6191,6 +6227,20 @@ _UNSUPPORTED_CONCEPT = [
     (re.compile(r"\bhall\s+of\s+fame\b|\bhall[\s-]of[\s-]famers?\b|\bcooperstown\b|\bHOF\b", re.I),
      "I don't have Hall-of-Fame data in this view — I answer the four major awards: "
      "MVP, Cy Young, Rookie of the Year, and Gold Glove."),
+    # JUDGMENTS, not directions. Rate boards now answer 'worst ERA' / 'lowest average'
+    # (a direction on a STAT). But 'worst pitcher', 'least valuable player', 'worst
+    # season ever', 'most overrated' are EVALUATIONS the app doesn't compute. The seam
+    # is the noun after the superlative: 'worst ERA' (a stat -> answered) vs 'worst
+    # pitcher' (a person -> declined). Anchored on the person/evaluation nouns so a
+    # stat superlative never trips it.
+    (re.compile(r"\b(?:worst|best|greatest)\s+(?:player|pitcher|hitter|batter|"
+                r"team|season|year|career)\s+(?:ever|of all[\s-]time|in history|"
+                r"in baseball)\b"
+                r"|\bleast\s+valuable\s+players?\b|\bmost\s+overrated\b"
+                r"|\bbiggest\s+bust\b|\bworst\s+(?:player|pitcher|hitter|batter)\b", re.I),
+     "That's a judgment I don't make — I can't rank who's the 'worst' or 'best' "
+     "player overall. Ask for a specific stat ('worst ERA', 'lowest batting average') "
+     "and I'll rank by that."),
     # PLATE APPEARANCES -> AB. Two patterns: the phrase (case-insensitive) and the
     # bare 'PA' abbreviation (UPPERCASE-only, so a lowercase word can't trip it).
     # Never matches "at-bats".
@@ -10298,6 +10348,57 @@ def _run_per_season_leaderboard(event, role, season_start, season_end, limit):
             "game_coverage": gc, "count_data": None}
 
 
+def _run_player_season_rate_best(player, canon, event):
+    """A NAMED player's BEST RATE season — 'Kershaw's best ERA season' -> his lowest
+    QUALIFYING season ERA + that year's line. Direction is the stat's natural best
+    (_LOWER_IS_BETTER -> lowest); a softer floor than the leaderboard (100 IP / 300 PA)
+    since his identity bounds the sample; ERA keeps the 1913 gate. Returns the resolved
+    card dict (year + line + highlighted stat), an ambiguous dict, or an empty note."""
+    role, rate_sql, digits = _SEASON_LB_RATE[canon]
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    cands = [c for c in _resolve_retro_id(player, role) if c["mlbam_id"] is not None]
+    if not cands:
+        raise HTTPException(status_code=404, detail=f"No player matching '{player}'")
+    if len({c["mlbam_id"] for c in cands}) > 1:
+        return {"resolved": False, "ambiguous": True, "query": player, "candidates": cands[:25]}
+    resolved = cands[0]; pid = resolved["mlbam_id"]; name = resolved["name"]
+    table = "pitcher_seasons" if role == "pit" else "player_seasons"
+    qual_col = "IP" if role == "pit" else "PA"
+    floor = _QUAL_IP_NAMED if role == "pit" else 300
+    ascending = canon in _LOWER_IS_BETTER
+    label = _COMPARE_STAT_LABEL.get(canon) or canon
+    where = [f's."{qual_col}" >= {floor}']; p = {"pid": int(pid)}
+    if canon in _ERA_FAMILY:
+        where.append(f"s.year >= {_ER_OFFICIAL_YEAR}")
+    # per (player, year) single row -> the season's own value
+    sql = (f'SELECT s.year, ROUND(({rate_sql})::numeric, {digits}) AS rate '
+           f'FROM {table} s WHERE s.player_id = :pid AND {" AND ".join(where)} '
+           f'GROUP BY s.year HAVING ({rate_sql}) IS NOT NULL '
+           f'ORDER BY rate {"ASC" if ascending else "DESC"} LIMIT 1')
+    res = {"resolved": True, "source": "season_stats",
+           "player": {"query": player, "name": name, "mlbam_id": pid, "role": role},
+           "game_coverage": {"complete": True}, "count_data": None}
+    with connection.get_session() as db:
+        row = db.execute(_sa_text(sql), p).fetchone()
+    if not row:
+        res.update(count=None,
+                   answer=f"{name} doesn't have a qualifying season {label} on record.")
+        return res
+    year = int(row[0]); rate = float(row[1])
+    disp = f"{{:.{digits}f}}".format(rate)
+    try:
+        line = (_pitcher_season_line(pid, year, None, None) if role == "pit"
+                else _season_rate_line(pid, "bat", year, None, None, None))
+    except Exception:  # noqa: BLE001
+        line = None
+    res.update(season=year, highlighted_stat=canon,
+               stat_value={"label": canon, "value": rate, "display": disp, "role": role},
+               leaderboard_title=f"{name}'s best {label} season — {year}", answer=None)
+    res["pitching_line" if role == "pit" else "rates"] = line
+    return res
+
+
 def _run_player_season_max(player, event, role):
     """A NAMED player's SINGLE-SEASON high in a COUNTING stat: MAX over his own season
     rows, with the YEAR (Judge HR -> 62 in 2022, Ryan K -> 383 in 1973) — NOT a career
@@ -10311,6 +10412,11 @@ def _run_player_season_max(player, event, role):
     need. Counting stats need neither, so they ship now."""
     role = (role or "bat").lower()
     canon = _canon_event(event)
+    # RATE best-season (Gap 2): 'Kershaw's best ERA season'. The stat dictates role
+    # and direction; a SOFTER floor than the leaderboard (his identity already bounds
+    # the sample). ERA still needs the 1913 ER gate. Returns his best QUALIFYING season.
+    if canon in _SEASON_LB_RATE:
+        return _run_player_season_rate_best(player, canon, event)
     if canon in _SEASON_RATES or canon in _SEASON_FLOAT:
         return None
     col = _SEASON_COL.get((role, canon))
@@ -10438,6 +10544,143 @@ def _run_season_leaderboard(event=None, role="bat", season=None, season_start=No
             "limit": limit, "leaders": leaders,
             "leaderboard_title": _lb_title(_lbl, team_display, season, season_start, season_end),
             "game_coverage": gc, "count_data": None}
+
+
+# Rate expressions over SUMMED season-stat components (so a career value is the
+# formula on the totals, never a mean of season rates). SF joins the OBP denominator
+# only from 1954 (it wasn't an official stat before — same gate as _season_rate_line).
+_LB_OBP = ('(SUM("H")+SUM("BB")+SUM("HBP"))::numeric / '
+           'NULLIF(SUM("AB")+SUM("BB")+SUM("HBP")+SUM(CASE WHEN year>=1954 THEN "SF" ELSE 0 END),0)')
+_LB_SLG = '(SUM("H")+SUM(doubles)+2*SUM(triples)+3*SUM("HR"))::numeric / NULLIF(SUM("AB"),0)'
+# stat -> (role, rate SQL expression, decimal places)
+_SEASON_LB_RATE = {
+    "AVG":  ("bat", 'SUM("H")::numeric / NULLIF(SUM("AB"),0)', 3),
+    "OBP":  ("bat", _LB_OBP, 3),
+    "SLG":  ("bat", _LB_SLG, 3),
+    "OPS":  ("bat", f'({_LB_OBP}) + ({_LB_SLG})', 3),
+    "ERA":  ("pit", '9.0*SUM("ER")::numeric / NULLIF(SUM("IP"),0)', 2),
+    "WHIP": ("pit", '(SUM("BB")+SUM("H"))::numeric / NULLIF(SUM("IP"),0)', 2),
+}
+
+
+def _prorated_floor_case(role):
+    """A SQL CASE giving each season's qualified floor, prorated for a short schedule
+    (2020 -> 60 IP / 186 PA), else the standard 162 IP / 502 PA. Used per-row for a
+    PER-SEASON board so a 2020 champion isn't held to a 162-game bar."""
+    base = _QUAL_IP_SEASON if role == "pit" else _QUAL_PA_SEASON
+    whens = " ".join(f"WHEN {y} THEN {round(base * g / 162)}"
+                     for y, g in sorted(_SHORT_SEASON_GAMES.items()))
+    return f"CASE s.year {whens} ELSE {base} END"
+
+
+def _run_season_rate_leaderboard(stat, ascending, per_season=False, season=None,
+                                 season_start=None, season_end=None, limit=10):
+    """PLAIN (non-situational) rate leaderboard from the COMPLETE season tables, with
+    the QUALIFIER that makes a MIN board meaningful. THREE shapes:
+      - per_season=True  -> rank individual (player, year) SEASONS (Gibson 1968 1.12),
+                            floor = that year's 502 PA / 162 IP (prorated for short years).
+      - season set       -> that one year's board.
+      - else             -> CAREER, summed components, 3000 PA / 1000 IP floor.
+    ERA is gated to 1913+ (earned runs weren't official earlier; the note says why).
+    `ascending` is the caller's decision from the stat's direction (_LOWER_IS_BETTER)
+    and any 'worst' override — never the model's. None if `stat` isn't a season-rate
+    stat (caller falls back to the plays board)."""
+    stat = (stat or "").upper()
+    spec = _SEASON_LB_RATE.get(stat)
+    if spec is None:
+        return None
+    role, rate_sql, digits = spec
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    table = "pitcher_seasons" if role == "pit" else "player_seasons"
+    qual_col = "IP" if role == "pit" else "PA"
+    limit = max(1, min(int(limit or 10), 25))
+    single = season is not None and not per_season
+    where = [f's."{qual_col}" IS NOT NULL']
+    p: dict = {"lim": limit}
+    if single:
+        where.append("s.year = :yr"); p["yr"] = int(season)
+    else:
+        if season_start is not None:
+            where.append("s.year >= :ys"); p["ys"] = int(season_start)
+        if season_end is not None:
+            where.append("s.year <= :ye"); p["ye"] = int(season_end)
+    era_note = None
+    if stat in _ERA_FAMILY:
+        where.append("s.year >= :ery"); p["ery"] = _ER_OFFICIAL_YEAR
+        era_note = (f"Earned runs only became an official statistic in "
+                    f"{_ER_OFFICIAL_YEAR} — they weren't recorded before then, so "
+                    f"dead-ball-era pitchers have no computable ERA and can't be "
+                    f"ranked here. This is the live-ball era on.")
+    order = "ASC" if ascending else "DESC"
+
+    if per_season:
+        # one row per (player, year); the queried YEAR itself is the qualifier row.
+        where.append(f's."{qual_col}" >= {_prorated_floor_case(role)}')
+        sql = (f'SELECT s.player_id, s.year, ROUND(({rate_sql})::numeric, {digits}) AS rate, '
+               f'SUM(s."{qual_col}") AS qual FROM {table} s WHERE {" AND ".join(where)} '
+               f'GROUP BY s.player_id, s.year HAVING ({rate_sql}) IS NOT NULL '
+               f'ORDER BY rate {order}, qual DESC LIMIT :lim')
+    else:
+        floor = (_qual_floor(role, int(season)) if single else
+                 (_QUAL_IP_CAREER if role == "pit" else _QUAL_PA_CAREER))
+        sql = (f'SELECT s.player_id, NULL AS year, ROUND(({rate_sql})::numeric, {digits}) AS rate, '
+               f'SUM(s."{qual_col}") AS qual FROM {table} s WHERE {" AND ".join(where)} '
+               f'GROUP BY s.player_id HAVING SUM(s."{qual_col}") >= {floor} '
+               f'AND ({rate_sql}) IS NOT NULL ORDER BY rate {order}, qual DESC LIMIT :lim')
+
+    with connection.get_session() as db:
+        rows = db.execute(_sa_text(sql), p).fetchall()
+        ids = [r[0] for r in rows]
+        names = {}
+        if ids:
+            for pid, nm, rid in db.execute(_sa_text(
+                    "SELECT player_id, name, retro_id FROM players "
+                    "WHERE player_id = ANY(:ids)"), {"ids": ids}).fetchall():
+                names[pid] = (nm, rid)
+    fmt = f"{{:.{digits}f}}"
+    leaders = []
+    for i, (pid, yr, rate, qual) in enumerate(rows, 1):
+        nm, rid = names.get(pid, (str(pid), None))
+        rv = float(rate) if rate is not None else None
+        row = {"rank": i, "player_name": nm, "mlbam_id": pid, "retro_id": rid,
+               stat: rv, "rate_display": fmt.format(rv) if rv is not None else None}
+        if yr is not None:
+            row["subtitle"] = str(int(yr))
+        leaders.append(row)
+    _rank_with_ties(leaders, stat)
+    _dir = "Lowest" if ascending else "Highest"
+    _sco = ("single-season" if per_season else str(season) if single else
+            (f"{season_start}-{season_end}" if season_start and season_end else
+             f"since {season_start}" if season_start else
+             f"through {season_end}" if season_end else "career"))
+    fl = (_QUAL_IP_SEASON if role == "pit" else _QUAL_PA_SEASON) if (per_season or single) \
+        else (_QUAL_IP_CAREER if role == "pit" else _QUAL_PA_CAREER)
+    title = f"{_dir} {stat} ({_sco}, min. {fl} {qual_col})"
+    gc = {"complete": True} if not era_note else {"complete": True, "note": era_note}
+    return {"resolved": True, "source": "season_rate_leaderboard",
+            "stat": stat, "role": role, "limit": limit, "leaders": leaders,
+            "leaderboard_title": title, "game_coverage": gc, "count_data": None}
+
+
+def _rate_board_ascending(question, stat):
+    """Sort direction for a rate board, as a PROPERTY not a guess. ASC (smallest
+    first) when the question wants the low end: 'lowest/fewest/least' always; 'best'
+    for a lower-is-better stat (best ERA = lowest); 'worst' for a higher-is-better
+    stat (worst average = lowest). 'highest/most' -> DESC. No superlative -> the
+    stat's natural best. 'worst ERA' resolves to DESC here (a real query); the
+    JUDGMENT 'worst pitcher' never reaches this — it's declined upstream by name."""
+    ql = " " + (question or "").lower() + " "
+    lower_better = (stat or "").upper() in _LOWER_IS_BETTER
+    if re.search(r"\blowest\b|\bfewest\b|\bleast\b|\bsmallest\b", ql):
+        return True
+    if re.search(r"\bhighest\b|\bmost\b|\bgreatest\b|\blargest\b", ql):
+        return False
+    if re.search(r"\bbest\b", ql):
+        return lower_better
+    if re.search(r"\bworst\b", ql):
+        return not lower_better
+    return lower_better
 
 
 # ============================================================================
@@ -11409,16 +11652,30 @@ _ASK_SPLITS_TOOL = {
 _ASK_RATE_LB_TOOL = {
     "name": "query_rate_leaderboard",
     "description": (
-        "Rank players by a RATE in a situation — 'best batting average with the "
-        "bases loaded', 'highest OPS with two strikes', 'who slugs best in the "
-        "postseason'. Qualified by a minimum plate-appearance threshold by default "
-        "(so a 2-for-2 fluke can't top it); set min_pa=0 only if the user asks to "
-        "include everyone regardless of playing time."),
+        "Rank players by a RATE — batting AVG/OBP/SLG/OPS or pitching ERA/WHIP. "
+        "Handles 'lowest career ERA', 'lowest ERA in a season' (Gibson 1968), "
+        "'highest batting average', 'worst ERA', 'best OPS', and rate splits ('best "
+        "average with the bases loaded'). DIRECTION: pass the stat and the season "
+        "scope; the backend sorts by the stat's natural direction (ERA/WHIP low is "
+        "best) and honors 'lowest'/'highest'/'worst'. per_season=true for 'in a "
+        "season' (rank single seasons, e.g. lowest single-season ERA) vs a career "
+        "board. Qualified by a plate-appearance / innings floor by default so a tiny "
+        "sample can't top it — do NOT set min_pa for a plain season/career board. "
+        "NOTE: a JUDGMENT ('worst pitcher', 'least valuable player') is NOT a rate "
+        "and is refused elsewhere; only rank an actual stat here."),
     "input_schema": {"type": "object",
-        "properties": {"stat": {"type": "string", "enum": ["AVG", "OBP", "SLG", "OPS"]},
+        "properties": {"stat": {"type": "string",
+                           "enum": ["AVG", "OBP", "SLG", "OPS", "ERA", "WHIP"]},
+                       "per_season": {"type": "boolean", "description":
+                           "true for a SINGLE-SEASON board ('lowest ERA in a season', "
+                           "'highest average in a season'); omit for career."},
                        "min_pa": {"type": "integer", "minimum": 0,
-                           "description": "qualifier; omit for the default, 0 = include everyone"},
+                           "description": "SITUATIONAL splits only; omit for a plain "
+                           "season/career board (it uses the rulebook qualifier)"},
                        "limit": {"type": "integer", "minimum": 1, "maximum": 25},
+                       "season": {"type": "integer", "description":
+                           "a single year ('lowest ERA in 2020')"},
+                       "season_start": {"type": "integer"}, "season_end": {"type": "integer"},
                        "team": {"type": "string", "description":
                                 "rank players by a rate FOR A CLUB ('best average as a "
                                 "Yankee') — the player's OWN team, franchise-scoped. "
@@ -13913,6 +14170,38 @@ def ask(request: Request,
                     base["answer"] = base["reason"]; return _finish()
                 result = _run_splits(**kw)
             else:  # query_rate_leaderboard
+                # PLAIN rate board (no situation/team) -> the COMPLETE season-stats
+                # board with the qualified floor + direction. This is where ERA/WHIP
+                # live (the plays board has no earned runs) AND where a plain batting
+                # rate belongs (the plays board's 50-PA floor gives a 50-AB .400 fluke
+                # for 'highest career average'). Situational stays on the plays board.
+                _rstat = (tool_input.get("stat") or "").upper()
+                _rsitu = any(tool_input.get(k) is not None for k in (
+                    "balls", "strikes", "outs", "inning", "base_state", "pitcher_hand",
+                    "batter_side", "home_away", "opponent_codes", "month")) or bool(tool_input.get("team"))
+                if not _rsitu and _rstat in _SEASON_LB_RATE:
+                    _asc = _rate_board_ascending(q, _rstat)
+                    _ps = (_PER_SEASON_RE.search(q) is not None) or bool(tool_input.get("per_season"))
+                    result = _run_season_rate_leaderboard(
+                        _rstat, _asc, per_season=_ps, season=tool_input.get("season"),
+                        season_start=tool_input.get("season_start"),
+                        season_end=tool_input.get("season_end"),
+                        limit=tool_input.get("limit") or 10)
+                    base["source"] = result.get("source")
+                    base["stat"] = result.get("stat")
+                    base["leaders"] = result.get("leaders")
+                    base["leaderboard_title"] = result.get("leaderboard_title")
+                    base["game_coverage"] = result.get("game_coverage")
+                    base["answer"] = None
+                    timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
+                    return _finish()
+                if _rstat in _SEASON_LB_RATE and _rstat not in _RATE_STATS:
+                    # a situational ERA/WHIP board — the plays store has no earned runs
+                    base["out_of_scope"] = True
+                    base["reason"] = (f"I can't compute {_rstat} for a specific situation "
+                                      "— it isn't in the play-by-play data. I can give the "
+                                      f"season or career {_rstat} leaders.")
+                    base["answer"] = base["reason"]; return _finish()
                 # Phase 4: opponent_codes (injected by _guard_tool) reaches
                 # _run_rate_leaderboard, scoping the CTE so the qualifier PA and the
                 # rate are both over the vs-opponent sample. query_leaderboard is the

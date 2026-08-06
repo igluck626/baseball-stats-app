@@ -141,6 +141,12 @@ struct AskLeader: Decodable, Identifiable {
     let OBP: Double?
     let SLG: Double?
     let OPS: Double?
+    let ERA: Double?
+    let WHIP: Double?
+    /// Preformatted ranked value for a rate board (e.g. "1.12" for ERA, "0.74" for
+    /// WHIP) — the backend formats to the stat's own precision, so the row renders any
+    /// rate without a per-stat case in the view.
+    let rate_display: String?
 
     // A ROW id, not a player id: a single-season board repeats a player across years,
     // so the year (subtitle) and rank distinguish his rows. The list render keys on the
