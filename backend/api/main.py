@@ -12525,6 +12525,119 @@ _ASK_PROMPT_VERSION = __import__("hashlib").sha256(
 log.info("ask translation cache: prompt_version=%s", _ASK_PROMPT_VERSION)
 
 
+# ---- Qwen (DeepInfra) translation option — gated by ASK_LLM_PROVIDER (default "haiku").
+# The Qwen path is DORMANT unless ASK_LLM_PROVIDER == "qwen" AND DEEPINFRA_API_KEY is set;
+# any misconfiguration (unset/typo'd var, missing key) or any degraded Qwen response falls
+# back to Haiku in the translate branch. A config mistake costs money, never correctness.
+# The <think>-suppression rule rides on the Qwen CALL PATH ONLY — it is NOT added to
+# _ASK_SYSTEM, so _ASK_PROMPT_VERSION is unchanged and Haiku's cached (model-agnostic)
+# translations stay valid across the switch: no 200+ re-translation.
+_ASK_QWEN_MODEL = os.getenv("ASK_QWEN_MODEL", "Qwen/Qwen2.5-7B-Instruct")
+_ASK_QWEN_BASE  = os.getenv("ASK_QWEN_BASE", "https://api.deepinfra.com/v1/openai")
+_ASK_QWEN_SUPPRESS = (
+    "\n\n<<OUTPUT RULE>> Decide silently. Do NOT think out loud, explain your choice, or "
+    "emit any prose, preamble, or <think> block. Respond with EXACTLY ONE tool call and "
+    "nothing else.")
+_ASK_KNOWN_TOOLS = {t["name"] for t in _ASK_TOOLS}
+
+
+def _ask_tools_openai():
+    """_ASK_TOOLS (Anthropic tool schema) -> OpenAI function-calling format. Strips the
+    Anthropic-only cache_control and copies input_schema verbatim, so arrays/enums/
+    required survive intact (it is the same dict object)."""
+    out = []
+    for t in _ASK_TOOLS:
+        t = {k: v for k, v in t.items() if k != "cache_control"}
+        out.append({"type": "function", "function": {
+            "name": t["name"], "description": t.get("description", ""),
+            "parameters": t.get("input_schema", {"type": "object", "properties": {}})}})
+    return out
+
+
+_ASK_OPENAI_TOOLS = _ask_tools_openai()
+
+
+class _QwenDegraded(Exception):
+    """A degraded-but-200 Qwen response (truncation / no tool_call / bad args / unknown
+    tool) OR a transport failure — signals the caller to fall back to Haiku."""
+
+
+def _translate_via_qwen(q, timeout=10.0, max_tokens=1024):
+    """Translate ONE question through DeepInfra Qwen. Returns
+    (tool_name, tool_input, in_tok, out_tok) on a CLEAN tool call; raises _QwenDegraded on
+    ANY transport failure OR degraded-but-200 shape so the caller falls back to Haiku. The
+    RESPONSE is inspected, not just the HTTP status — DeepInfra returns 200 with
+    finish_reason='length' on a truncated (incomplete) tool call."""
+    import requests
+    key = os.environ.get("DEEPINFRA_API_KEY")
+    if not key:
+        raise _QwenDegraded("no DEEPINFRA_API_KEY")
+    try:
+        resp = requests.post(
+            f"{_ASK_QWEN_BASE}/chat/completions",
+            headers={"Authorization": f"Bearer {key}"},
+            json={"model": _ASK_QWEN_MODEL, "tools": _ASK_OPENAI_TOOLS,
+                  "tool_choice": "required", "max_tokens": max_tokens,
+                  "messages": [
+                      {"role": "system", "content": _ASK_SYSTEM + _ASK_QWEN_SUPPRESS},
+                      {"role": "user", "content": q}]},
+            timeout=timeout)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:                       # timeout / connection / HTTP 4xx-5xx
+        raise _QwenDegraded(f"transport: {exc}")
+    choices = data.get("choices") or []
+    if not choices:
+        raise _QwenDegraded("no choices")
+    ch = choices[0]
+    if ch.get("finish_reason") not in ("stop", "tool_calls"):   # 'length'/'content_filter'/…
+        raise _QwenDegraded(f"finish_reason={ch.get('finish_reason')!r}")
+    tcs = (ch.get("message") or {}).get("tool_calls") or []
+    if not tcs:
+        raise _QwenDegraded("no tool_call")
+    fn = tcs[0].get("function") or {}
+    name = fn.get("name")
+    if name not in _ASK_KNOWN_TOOLS:
+        raise _QwenDegraded(f"unknown tool {name!r}")
+    try:
+        args = json.loads(fn.get("arguments") or "{}")
+    except (ValueError, TypeError):
+        raise _QwenDegraded("unparseable arguments")
+    if not isinstance(args, dict):
+        raise _QwenDegraded("arguments not an object")
+    u = data.get("usage") or {}
+    return name, args, u.get("prompt_tokens", 0) or 0, u.get("completion_tokens", 0) or 0
+
+
+def _shadow_compare_async(q, haiku_tool, haiku_input):
+    """SHADOW mode: translate q via Qwen in a background daemon thread, compare to the
+    Haiku reading we SERVE, and log any divergence. Fire-and-forget — it never touches the
+    served answer or its latency (the request has already been answered by Haiku). Two
+    greppable tags: ASK_SHADOW_SILENT_RISK is the asymmetric case that is the whole point
+    of shadowing — Haiku declines / Qwen commits, a candidate silent-wrong — and
+    ASK_SHADOW_DIVERGE is any other disagreement. Agreement is not logged; the miss
+    denominator comes from ask_log (cached=false rows) over the window."""
+    _hi = dict(haiku_input) if haiku_input is not None else None
+
+    def _run():
+        try:
+            q_tool, q_input, _in, _out = _translate_via_qwen(q)
+        except Exception as exc:  # noqa: BLE001 — Qwen unavailable/degraded in shadow: informational
+            log.info("ASK_SHADOW_ERROR | q=%r | err=%s", q, exc)
+            return
+        if q_tool == haiku_tool and q_input == _hi:
+            return                     # the two readings agree — nothing to decide
+        haiku_declines = haiku_tool in (None, "cannot_answer")
+        qwen_commits = q_tool not in (None, "cannot_answer")
+        tag = ("ASK_SHADOW_SILENT_RISK" if (haiku_declines and qwen_commits)
+               else "ASK_SHADOW_DIVERGE")
+        log.warning("%s | q=%r | haiku=%s %s | qwen=%s %s", tag, q,
+                    haiku_tool, json.dumps(_hi, sort_keys=True, default=str),
+                    q_tool, json.dumps(q_input, sort_keys=True, default=str))
+
+    threading.Thread(target=_run, name="ask-shadow", daemon=True).start()
+
+
 def _hash_identity(identity):
     import hashlib
     return hashlib.sha256((_ASK_HASH_SALT + "|" + (identity or "?")).encode()).hexdigest()[:32]
@@ -13349,26 +13462,43 @@ def ask(request: Request,
         timing["llm_translate"] = 0.0
     else:
         t0 = time.perf_counter()
-        try:
-            msg = client.messages.create(
-                model=_ASK_MODEL, max_tokens=1024, system=_ASK_SYSTEM_BLOCKS,
-                tools=_ASK_TOOLS, tool_choice={"type": "any"},   # cached prefix + force a tool
-                messages=[{"role": "user", "content": q}],
-            )
-        except Exception as exc:  # noqa: BLE001
-            raise HTTPException(status_code=502, detail=f"LLM translate failed: {exc}")
+        # Provider selection. Qwen (DeepInfra) is attempted ONLY when explicitly enabled;
+        # an unset/typo'd ASK_LLM_PROVIDER, a missing key, or ANY Qwen failure (transport,
+        # timeout, or a degraded-but-200 response) falls through to the Haiku block below.
+        # Default is Haiku — a config mistake costs money, never correctness.
+        _provider = os.getenv("ASK_LLM_PROVIDER", "haiku").strip().lower()
+        _served_by_qwen = False
+        if _provider == "qwen":
+            try:
+                tool_name, tool_input, in_tok, out_tok = _translate_via_qwen(q)
+                _served_by_qwen = True
+            except Exception as exc:  # noqa: BLE001  — ANY Qwen error -> Haiku, never a 5xx
+                log.warning("ask: Qwen translate -> Haiku fallback (%s) for %r", exc, q)
+        if not _served_by_qwen:
+            try:
+                msg = client.messages.create(
+                    model=_ASK_MODEL, max_tokens=1024, system=_ASK_SYSTEM_BLOCKS,
+                    tools=_ASK_TOOLS, tool_choice={"type": "any"},   # cached prefix + force a tool
+                    messages=[{"role": "user", "content": q}],
+                )
+            except Exception as exc:  # noqa: BLE001
+                raise HTTPException(status_code=502, detail=f"LLM translate failed: {exc}")
+            u = getattr(msg, "usage", None)
+            if u:
+                in_tok = ((getattr(u, "input_tokens", 0) or 0)
+                          + (getattr(u, "cache_read_input_tokens", 0) or 0)
+                          + (getattr(u, "cache_creation_input_tokens", 0) or 0))
+                out_tok = getattr(u, "output_tokens", 0) or 0
+            for block in msg.content:
+                if getattr(block, "type", None) == "tool_use":
+                    tool_name = block.name
+                    tool_input = dict(block.input or {})
+                    break
+            # SHADOW: Haiku is served (above); ask Qwen the same question in the background
+            # and log where they diverge. Async, so it adds no latency to this response.
+            if _provider == "shadow":
+                _shadow_compare_async(q, tool_name, tool_input)
         timing["llm_translate"] = round((time.perf_counter() - t0) * 1000, 1)
-        u = getattr(msg, "usage", None)
-        if u:
-            in_tok = ((getattr(u, "input_tokens", 0) or 0)
-                      + (getattr(u, "cache_read_input_tokens", 0) or 0)
-                      + (getattr(u, "cache_creation_input_tokens", 0) or 0))
-            out_tok = getattr(u, "output_tokens", 0) or 0
-        for block in msg.content:
-            if getattr(block, "type", None) == "tool_use":
-                tool_name = block.name
-                tool_input = dict(block.input or {})
-                break
 
     # Snapshot the model's RAW reading BEFORE any in-code mutation (the re-ask
     # player pin below, the constraint injection, and the guard's resolution). THIS
