@@ -12510,17 +12510,21 @@ _ASK_TOOLS = [_ASK_QUERY_TOOL, _ASK_LEADERBOARD_TOOL, _ASK_COMPARISON_TOOL,
               _ASK_STREAK_TOOL, _ASK_SPAN_TOOL,
               _ASK_STREAK_LB_TOOL, _ASK_SPAN_LB_TOOL, _ASK_GAME_ACH_TOOL,
               _ASK_AWARDS_TOOL, _ASK_H2H_TOOL,
-              {**_ASK_CANNOT_TOOL, "cache_control": {"type": "ephemeral"}}]
+              {**_ASK_CANNOT_TOOL, "cache_control": {"type": "ephemeral", "ttl": "1h"}}]
 _ASK_SYSTEM_BLOCKS = [{"type": "text", "text": _ASK_SYSTEM,
-                       "cache_control": {"type": "ephemeral"}}]
+                       "cache_control": {"type": "ephemeral", "ttl": "1h"}}]
 
 # Fingerprint of the translation contract (system prompt + tool schemas). Every
 # ask_log row is stamped with this, and the cache only reuses rows matching it,
 # so ANY change to the prompt or tools re-translates old questions instead of
 # serving a translation the current prompt would no longer produce. Cache stays
 # effective within a version; a deploy that changes neither keeps the same hash.
+# cache_control is a CACHING directive, not translation content — exclude it from the
+# version hash so a TTL/caching tweak never invalidates the cache and re-translates every
+# question once (a change to how long the prefix is kept changes nothing the model reads).
+_ASK_TOOLS_FOR_VERSION = [{k: v for k, v in t.items() if k != "cache_control"} for t in _ASK_TOOLS]
 _ASK_PROMPT_VERSION = __import__("hashlib").sha256(
-    (_ASK_SYSTEM + "\n" + json.dumps(_ASK_TOOLS, sort_keys=True, default=str)).encode()
+    (_ASK_SYSTEM + "\n" + json.dumps(_ASK_TOOLS_FOR_VERSION, sort_keys=True, default=str)).encode()
 ).hexdigest()[:12]
 log.info("ask translation cache: prompt_version=%s", _ASK_PROMPT_VERSION)
 
@@ -13480,15 +13484,23 @@ def ask(request: Request,
                     model=_ASK_MODEL, max_tokens=1024, system=_ASK_SYSTEM_BLOCKS,
                     tools=_ASK_TOOLS, tool_choice={"type": "any"},   # cached prefix + force a tool
                     messages=[{"role": "user", "content": q}],
+                    # 1-hour prompt cache (vs the 5-min default) — the stable ~19k prefix
+                    # stays warm across the gaps between question bursts, cutting cold
+                    # cache WRITES. See cache_control ttl:"1h" on _ASK_SYSTEM_BLOCKS/_ASK_TOOLS.
+                    extra_headers={"anthropic-beta": "extended-cache-ttl-2025-04-11"},
                 )
             except Exception as exc:  # noqa: BLE001
                 raise HTTPException(status_code=502, detail=f"LLM translate failed: {exc}")
             u = getattr(msg, "usage", None)
             if u:
-                in_tok = ((getattr(u, "input_tokens", 0) or 0)
-                          + (getattr(u, "cache_read_input_tokens", 0) or 0)
-                          + (getattr(u, "cache_creation_input_tokens", 0) or 0))
+                _cc = getattr(u, "cache_creation_input_tokens", 0) or 0
+                _cr = getattr(u, "cache_read_input_tokens", 0) or 0
+                in_tok = ((getattr(u, "input_tokens", 0) or 0) + _cr + _cc)
                 out_tok = getattr(u, "output_tokens", 0) or 0
+                # 1h-cache warm/cold split — a WRITE (cc>0) is a cold prefix, a READ (cr>0)
+                # is warm. Logged separately (in_tok sums them) so the post-deploy cold
+                # fraction is measurable: grep ASK_CACHE, count COLD vs warm.
+                log.info("ASK_CACHE %s cc=%d cr=%d", "COLD" if _cc else "warm", _cc, _cr)
             for block in msg.content:
                 if getattr(block, "type", None) == "tool_use":
                     tool_name = block.name
