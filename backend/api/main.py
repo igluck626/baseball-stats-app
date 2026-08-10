@@ -13418,8 +13418,8 @@ def _asked_stat(question):
 # (a miss costs one model call, a false match costs a wrong answer). Output is byte-for-byte
 # the tool_input the model produces, so it enters the SAME guard pipeline, runners, and
 # translation cache. Two shapes, both of which the model translates DETERMINISTICALLY:
-#   1. "how many <count-stat> does <player> have [in YYYY]"  -> query_situational{event,player[,season]}
-#   2. "how many strikeouts does <pitcher> have"             -> query_situational{event:K,player,role:pit}
+#   1. "how many <batting-count> does <player> have [in YYYY]"      -> query_situational{event,player[,season]}
+#   2. "how many <K|wins|losses|earned runs> does <pitcher> have" -> query_situational{event,player,role:pit}
 # Deliberately NOT fast-pathed because the model's OWN output for them is non-deterministic
 # (varies on identical phrasings, so no fixed output is byte-identical): a BATTER's strikeouts
 # (role:bat present ~half the time) and BATTING AVERAGE (a stat:AVG key present ~1/7 of the
@@ -13428,17 +13428,28 @@ def _asked_stat(question):
 # only, decline-prone) and ERA/WHIP/holds (unsupported) are ABSENT by design. 'career'/'all-
 # time' is a stop-word so career questions fall through (the model routes them inconsistently).
 #
-# COUNT stats -> canonical event. ONLY the play-by-play events the situational runner
-# actually serves (home runs, strikeouts, walks, hit-by-pitch, singles, doubles, triples,
-# hits). Deliberately EXCLUDES RBI/R/SB/TB/AB/XBH — those are box-score/total-only stats the
-# runner DECLINES, so a template for them would fire on refuse-questions. K is TWO-SIDED (a
-# batter's or a pitcher's) and is routed by the resolved player's side below.
+# COUNT stats -> canonical event. Batting counts the situational runner serves (home runs,
+# walks, hit-by-pitch, singles, doubles, triples, hits) plus a pitcher's counting decisions
+# (wins, losses, saves, earned runs). Deliberately EXCLUDES RBI/R/SB/TB/AB/XBH — box-score/
+# total-only stats the runner DECLINES, so a template for them would fire on refuse-questions.
+# K is TWO-SIDED (a batter's or a pitcher's); W/L/SV/ER are PITCHER-ONLY — both routed by the
+# resolved player's side below.
 _FP_COUNT = {
     "home run": "HR", "home runs": "HR", "homer": "HR", "homers": "HR",
     "hit": "H", "hits": "H", "double": "2B", "doubles": "2B",
     "triple": "3B", "triples": "3B", "single": "1B", "singles": "1B",
     "walk": "BB", "walks": "BB", "strikeout": "K", "strikeouts": "K",
+    "win": "W", "wins": "W", "loss": "L", "losses": "L",
+    "earned run": "ER", "earned runs": "ER",
 }
+# Pitcher-only counting events: they mean nothing for a batter, so they resolve as a PURE
+# pitcher (role:pit) or fall through. The model always emits role:pit for W/L/ER (283/67/73,
+# zero without), so {event,player,role:pit} is byte-identical. SAVES is DELIBERATELY EXCLUDED:
+# the model reads it two ways on identical phrasing (183 with role:pit, 32 without — the same
+# "how many saves does Rivera have" split both ways), so no fixed output can match it. And
+# "what is X's winning percentage" (a declining rate) is a DIFFERENT phrasing ("what is …",
+# not "how many … have"), so the count template never matches it — the entire W-decline edge.
+_FP_PITCH_ONLY = {"W", "L", "ER"}
 _FP_TAIL_VERB = {"have", "has", "hit", "hits", "had", "drawn", "drew", "recorded",
                  "record", "stolen", "scored", "made"}
 # Words never part of a bare player name — their presence means an unparsed clause survived.
@@ -13505,6 +13516,20 @@ def _ask_fast_path(q):
     name, season = _fp_name_season(mc.group(2).strip())
     if name is None:
         return None
+    if stat in _FP_PITCH_ONLY:
+        # PITCHER counting decisions (W/L/SV/ER) -> {event, role:pit}, for a PURE pitcher only.
+        # Mirrors the K pitcher branch: fall through if unresolvable, or if the name is also a
+        # position player (two-way, e.g. Ohtani — the model's call). "how many wins does X have"
+        # is served; "what is X's winning percentage" is a different (declining) shape the count
+        # regex never matches, so the W-decline edge cannot fire here.
+        pit = _fp_resolve(name, "pit")
+        bat = _fp_resolve(name, "bat")
+        if not pit or (bool(bat) and (bat.get("position") or "").upper() != "P"):
+            return None
+        ti = {"player": pit["name"], "event": stat, "role": "pit"}
+        if season is not None:
+            ti["season"] = season
+        return "query_situational", ti
     if stat == "K":
         # PITCHER strikeouts only -> {event:K, role:pit} (model is 100% consistent there). A
         # BATTER's Ks are NOT fast-pathed: the model is self-inconsistent (role:bat vs no role,
