@@ -13417,16 +13417,19 @@ def _asked_stat(question):
 # COMPLETE and UNAMBIGUOUS; ANY doubt returns None and the caller falls through to the model
 # (a miss costs one model call, a false match costs a wrong answer). Output is byte-for-byte
 # the tool_input the model produces, so it enters the SAME guard pipeline, runners, and
-# translation cache. Two shapes, both of which the model translates DETERMINISTICALLY:
-#   1. "how many <batting-count> does <player> have [in YYYY]"      -> query_situational{event,player[,season]}
-#   2. "how many <K|wins|losses|earned runs> does <pitcher> have" -> query_situational{event,player,role:pit}
-# Deliberately NOT fast-pathed because the model's OWN output for them is non-deterministic
-# (varies on identical phrasings, so no fixed output is byte-identical): a BATTER's strikeouts
-# (role:bat present ~half the time) and BATTING AVERAGE (a stat:AVG key present ~1/7 of the
-# time). The COUNT whitelist lists ONLY events the runner serves plainly; an unknown word is
-# absent -> parse fails -> fall through (never a near neighbour). RBI/R/SB/TB/AB/XBH (total-
-# only, decline-prone) and ERA/WHIP/holds (unsupported) are ABSENT by design. 'career'/'all-
-# time' is a stop-word so career questions fall through (the model routes them inconsistently).
+# translation cache — OR, under the served-answer gate, output that CONVERGES to the model's
+# via a PINNED normalization. Three shapes:
+#   1. "how many <batting-count> does <player> have [in YYYY]"          -> query_situational{event,player[,season]}
+#   2. "how many <K|wins|losses|saves|earned runs> does <pitcher> have" -> query_situational{event,player,role:pit}
+#   3. "what is <player>'s batting average"                             -> query_rates{player}
+# GATE: tool_input-identical OR served-answer-identical. Saves (in 2) and batting average (3)
+# use the latter — the model emits variant tool_inputs that all serve the SAME answer because a
+# server-side normalization collapses them: SV's role is force-set (_PITCHING_ONLY_EVENTS) and
+# the rate highlight is derived from the QUESTION (_asked_stat), NOT the tool_input. BOTH
+# invariants are PINNED in tests/test_guard_tool.py — no test, no template. Still deliberately
+# OUT: a BATTER's strikeouts (role:bat vs none ~50/50, plus two-way ambiguity); RBI/R/SB/TB/AB/
+# XBH (total-only — the runner DECLINES them); ERA/WHIP/holds (unsupported). 'career'/'all-time'
+# is a stop-word, so those fall through (the model routes them inconsistently).
 #
 # COUNT stats -> canonical event. Batting counts the situational runner serves (home runs,
 # walks, hit-by-pitch, singles, doubles, triples, hits) plus a pitcher's counting decisions
@@ -13440,16 +13443,16 @@ _FP_COUNT = {
     "triple": "3B", "triples": "3B", "single": "1B", "singles": "1B",
     "walk": "BB", "walks": "BB", "strikeout": "K", "strikeouts": "K",
     "win": "W", "wins": "W", "loss": "L", "losses": "L",
-    "earned run": "ER", "earned runs": "ER",
+    "save": "SV", "saves": "SV", "earned run": "ER", "earned runs": "ER",
 }
 # Pitcher-only counting events: they mean nothing for a batter, so they resolve as a PURE
-# pitcher (role:pit) or fall through. The model always emits role:pit for W/L/ER (283/67/73,
-# zero without), so {event,player,role:pit} is byte-identical. SAVES is DELIBERATELY EXCLUDED:
-# the model reads it two ways on identical phrasing (183 with role:pit, 32 without — the same
-# "how many saves does Rivera have" split both ways), so no fixed output can match it. And
-# "what is X's winning percentage" (a declining rate) is a DIFFERENT phrasing ("what is …",
-# not "how many … have"), so the count template never matches it — the entire W-decline edge.
-_FP_PITCH_ONLY = {"W", "L", "ER"}
+# pitcher and emit role:pit, or fall through. W/L/ER are byte-identical (the model always emits
+# role:pit — 283/67/73, zero without). SAVES is served-answer-gated: the model splits 183 with
+# role:pit / 32 without on identical phrasing, but the 'without' variant CONVERGES because SV is
+# pitching-only and its role is force-set to 'pit' downstream (pinned in test_guard_tool.py). And
+# "what is X's winning percentage" (a declining rate) is a DIFFERENT phrasing ("what is …", not
+# "how many … have"), so the count template never matches it — the entire W-decline edge.
+_FP_PITCH_ONLY = {"W", "L", "SV", "ER"}
 _FP_TAIL_VERB = {"have", "has", "hit", "hits", "had", "drawn", "drew", "recorded",
                  "record", "stolen", "scored", "made"}
 # Words never part of a bare player name — their presence means an unparsed clause survived.
@@ -13464,6 +13467,15 @@ _FP_STOP = {"against", "versus", "vs", "with", "in", "on", "at", "off", "during"
             "team", "as"}
 _FP_COUNT_RE = re.compile(r"^\s*how many ([a-z][a-z '-]*?) (?:does|did|has|have) (.+?)\s*\??\s*$", re.I)
 _FP_NAME_RE = re.compile(r"[A-Za-z.'\-]+(?: [A-Za-z.'\-]+){0,3}")
+# RATE template (served-answer-gated): "what is <player>'s batting average" -> query_rates{player}.
+# The model emits {player} / {player,role:bat} / {player,stat:AVG}; all serve the SAME card
+# because the highlighted stat is derived from the QUESTION (_asked_stat -> AVG), pinned in
+# test_guard_tool.py. ONLY batting average — OBP/SLG/OPS qualify identically but are not built
+# here. A CLAUSE ("against X", "by month", "highest", "who has") means a DIFFERENT tool, so the
+# whole-question anchor (rate word at end) + stop-words fall through on them.
+_FP_RATE = ("batting average", "average")
+_FP_RATE_RE = re.compile(r"^\s*what(?:'s| is| was) (.+?)\s*(?:'s|’s|s')?\s+(" +
+                         "|".join(_FP_RATE) + r")\s*\??\s*$", re.I)
 
 
 def _fp_resolve(name, role):
@@ -13506,7 +13518,17 @@ def _ask_fast_path(q):
     """Whole, whitelisted, unambiguous question -> (tool_name, tool_input) IDENTICAL to the
     model's, or None. See the block comment for the safety contract."""
     q0 = re.sub(r"\s{2,}", " ", (q or "")).strip()
-    # ---- A count question -> query_situational (batting counts, or pitcher strikeouts).
+    # ---- Batting average -> query_rates{player} (served-answer-gated; see _FP_RATE). Fall
+    # through on any clause (against/by/highest/who) — those are a different tool.
+    mr = _FP_RATE_RE.match(q0)
+    if mr and mr.group(2).strip().lower() in _FP_RATE:
+        name = mr.group(1).strip()
+        if _FP_NAME_RE.fullmatch(name) and not any(t.lower() in _FP_STOP for t in name.split()):
+            cand = _fp_resolve(name, "bat")
+            if cand and (cand.get("position") or "").upper() != "P":
+                return "query_rates", {"player": cand["name"]}
+        return None                                      # a rate question we could not fully parse
+    # ---- A count question -> query_situational (batting counts, or pitcher W/L/SV/ER/K).
     mc = _FP_COUNT_RE.match(q0)
     if not mc:
         return None

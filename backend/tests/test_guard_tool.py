@@ -33,7 +33,8 @@ MAIN = os.path.join(API, "main.py")
 
 # ---- extract the constraint subsystem from main.py by name -------------------
 NEEDED = [
-    "_UNSUPPORTED_CONSTRAINTS", "_detect_constraints", "_unsupported_reason",
+    "_UNSUPPORTED_CONSTRAINTS", "_detect_constraints", "_detect_month",
+    "_MONTH_NAMES", "_MONTH_SCOPE_RE", "_MONTH_TO_NUM", "_unsupported_reason",
     "_detect_season_scope", "_OPP_TEAM_ALT", "_OPP_NICK_RE", "_OPP_CITY_ALT",
     "_OPP_CITY_RE", "_OPP_UNAMBIG_CITY_ALT", "_OPP_UNAMBIG_CITY_RE",
     "_OPP_UNAMBIG_CITY_BARE", "_detect_opponent", "_OPP_NICK_BARE",
@@ -41,6 +42,10 @@ NEEDED = [
     "_resolve_opponent_codes", "_franchise_label", "_question_opponent",
     "_TOOL_SCOPE_CAPS", "_SCOPE_DECLINE", "_guard_scoped_tool",
     "_GUARD_ANSWERABLE", "_GUARD_CAPS", "_guard_tool",
+    # fast-path normalization invariants (the served-answer-gated /ask templates depend on
+    # these to make the model's variant tool_inputs converge to one served answer)
+    "_canon_event", "_CANON_EVENT", "_PITCHING_ONLY_EVENTS",
+    "_asked_stat", "_RATE_STAT_NOUN", "_STAT_NOUN",
 ]
 
 
@@ -222,6 +227,28 @@ for tool in ["query_situational", "query_rates", "query_splits", "query_rate_lea
 # scoped caps byte-identical to _TOOL_SCOPE_CAPS
 for tool, caps in NS["_TOOL_SCOPE_CAPS"].items():
     check(f"[caps: {tool} scoped caps unchanged]", set(NS["_GUARD_CAPS"][tool]), set(caps))
+
+# ---- FAST-PATH NORMALIZATION INVARIANTS --------------------------------------
+# The /ask deterministic fast path emits ONE canonical tool_input and relies on these
+# server-side normalizations to make the model's OTHER (equally-valid) variant tool_inputs
+# converge to the SAME served answer — the premise of the "served-answer-identical" gate.
+# If any of these breaks, a served-answer-gated template would silently serve something the
+# model would not, so pin them here where the test suite runs.
+_canon_event = NS["_canon_event"]
+_asked_stat = NS["_asked_stat"]
+_PITCH_ONLY = NS["_PITCHING_ONLY_EVENTS"]
+# SAVES template emits {SV,player,role:pit}; the model's {SV,player} (no role) converges ONLY
+# because SV is a pitching-only event whose role is force-set to 'pit' downstream.
+for _ev in ("SV", "W", "L", "ER"):
+    check(f"[fast-path invariant: {_ev} pitching-only -> role:pit forced]",
+          _canon_event(_ev) in _PITCH_ONLY, True)
+# BATTING-AVERAGE template emits query_rates{player}; the model's {player,stat:AVG} and
+# {player,role:bat} variants converge ONLY because the highlighted stat is derived from the
+# QUESTION (via _asked_stat), not from the tool_input.
+check("[fast-path invariant: 'batting average' -> AVG highlight from question]",
+      _asked_stat("What is Aaron Judge's batting average?"), "AVG")
+check("[fast-path invariant: bare 'average' -> AVG highlight from question]",
+      _asked_stat("What's Mike Trout's average?"), "AVG")
 
 # ---- report -----------------------------------------------------------------
 print(f"ran {N} assertions across {len(SCOPED)} scoped + {len(ANSWERABLE)} answerable tools")
