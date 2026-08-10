@@ -13412,6 +13412,123 @@ def _asked_stat(question):
     return None
 
 
+# ---- DETERMINISTIC FAST PATH ------------------------------------------------
+# Parse a NARROW set of whole-question shapes without the model — but ONLY when the parse is
+# COMPLETE and UNAMBIGUOUS; ANY doubt returns None and the caller falls through to the model
+# (a miss costs one model call, a false match costs a wrong answer). Output is byte-for-byte
+# the tool_input the model produces, so it enters the SAME guard pipeline, runners, and
+# translation cache. Two shapes, both of which the model translates DETERMINISTICALLY:
+#   1. "how many <count-stat> does <player> have [in YYYY]"  -> query_situational{event,player[,season]}
+#   2. "how many strikeouts does <pitcher> have"             -> query_situational{event:K,player,role:pit}
+# Deliberately NOT fast-pathed because the model's OWN output for them is non-deterministic
+# (varies on identical phrasings, so no fixed output is byte-identical): a BATTER's strikeouts
+# (role:bat present ~half the time) and BATTING AVERAGE (a stat:AVG key present ~1/7 of the
+# time). The COUNT whitelist lists ONLY events the runner serves plainly; an unknown word is
+# absent -> parse fails -> fall through (never a near neighbour). RBI/R/SB/TB/AB/XBH (total-
+# only, decline-prone) and ERA/WHIP/holds (unsupported) are ABSENT by design. 'career'/'all-
+# time' is a stop-word so career questions fall through (the model routes them inconsistently).
+#
+# COUNT stats -> canonical event. ONLY the play-by-play events the situational runner
+# actually serves (home runs, strikeouts, walks, hit-by-pitch, singles, doubles, triples,
+# hits). Deliberately EXCLUDES RBI/R/SB/TB/AB/XBH — those are box-score/total-only stats the
+# runner DECLINES, so a template for them would fire on refuse-questions. K is TWO-SIDED (a
+# batter's or a pitcher's) and is routed by the resolved player's side below.
+_FP_COUNT = {
+    "home run": "HR", "home runs": "HR", "homer": "HR", "homers": "HR",
+    "hit": "H", "hits": "H", "double": "2B", "doubles": "2B",
+    "triple": "3B", "triples": "3B", "single": "1B", "singles": "1B",
+    "walk": "BB", "walks": "BB", "strikeout": "K", "strikeouts": "K",
+}
+_FP_TAIL_VERB = {"have", "has", "hit", "hits", "had", "drawn", "drew", "recorded",
+                 "record", "stolen", "scored", "made"}
+# Words never part of a bare player name — their presence means an unparsed clause survived.
+# 'career'/'all' are here (not stripped): the model routes "career …" questions inconsistently
+# (a leaderboard, or role:bat on K), so anything mentioning career FALLS THROUGH to the model.
+_FP_STOP = {"against", "versus", "vs", "with", "in", "on", "at", "off", "during", "since",
+            "before", "after", "facing", "when", "through", "for", "by", "the", "a", "an",
+            "and", "or", "this", "last", "ever", "per", "than", "career", "all", "home",
+            "away", "road", "night", "day", "postseason", "playoffs", "inning", "count",
+            "loaded", "risp", "scoring", "lefties", "righties", "left", "right", "season",
+            "month", "streak", "game", "row", "span", "allow", "allowed", "give", "gave",
+            "team", "as"}
+_FP_COUNT_RE = re.compile(r"^\s*how many ([a-z][a-z '-]*?) (?:does|did|has|have) (.+?)\s*\??\s*$", re.I)
+_FP_NAME_RE = re.compile(r"[A-Za-z.'\-]+(?: [A-Za-z.'\-]+){0,3}")
+
+
+def _fp_resolve(name, role):
+    """The ONE candidate whose canonical name EXACTLY equals `name` (case-insensitive) and
+    resolves unambiguously via the SHARED resolver, else None. Exact match keeps the emitted
+    player byte-identical to the model's; partial/ambiguous names fall to the model/picker."""
+    try:
+        cands = [c for c in _resolve_retro_id(name, role) if c.get("mlbam_id") is not None]
+    except Exception:                                    # ANY resolver trouble -> fall through
+        return None
+    if not cands or len({c.get("retro_id") for c in cands}) > 1:
+        return None                                      # 0 = unresolvable, >1 retro_id = ambiguous
+    cand = cands[0]
+    if (cand.get("name") or "").strip().lower() != name.strip().lower():
+        return None
+    return cand
+
+
+def _fp_name_season(rest):
+    """`rest` (name [+ trailing verb] [+ 'in YYYY']) -> (name, season), or (None, None) if any
+    leftover clause survives (the WHOLE-QUESTION / no-leftover guarantee)."""
+    season = None
+    ms = re.search(r"\s+in\s+((?:18|19|20)\d\d)$", rest)  # ONLY a 4-digit year; other 'in ...' stays
+    if ms:
+        season = int(ms.group(1)); rest = rest[:ms.start()].strip()
+    toks = rest.split()
+    if toks and toks[-1].lower().strip(".,") in _FP_TAIL_VERB:   # strip ONE trailing verb
+        toks = toks[:-1]
+    name = " ".join(toks).strip()
+    if not (1 <= len(toks) <= 4):
+        return None, None
+    if any(t.lower().strip(".,") in _FP_STOP for t in toks):
+        return None, None
+    if not _FP_NAME_RE.fullmatch(name):
+        return None, None
+    return name, season
+
+
+def _ask_fast_path(q):
+    """Whole, whitelisted, unambiguous question -> (tool_name, tool_input) IDENTICAL to the
+    model's, or None. See the block comment for the safety contract."""
+    q0 = re.sub(r"\s{2,}", " ", (q or "")).strip()
+    # ---- A count question -> query_situational (batting counts, or pitcher strikeouts).
+    mc = _FP_COUNT_RE.match(q0)
+    if not mc:
+        return None
+    stat = _FP_COUNT.get(mc.group(1).strip().lower())
+    if stat is None:                                     # WHITELIST miss -> fall through
+        return None
+    name, season = _fp_name_season(mc.group(2).strip())
+    if name is None:
+        return None
+    if stat == "K":
+        # PITCHER strikeouts only -> {event:K, role:pit} (model is 100% consistent there). A
+        # BATTER's Ks are NOT fast-pathed: the model is self-inconsistent (role:bat vs no role,
+        # ~50/50 on identical phrasings), so no output is byte-identical -> fall through. Fire
+        # only for a PURE pitcher; a two-way name (resolves as a position player too) also falls
+        # through.
+        pit = _fp_resolve(name, "pit")
+        bat = _fp_resolve(name, "bat")
+        if not pit or (bat and (bat.get("position") or "").upper() != "P"):
+            return None
+        ti = {"player": pit["name"], "event": "K", "role": "pit"}
+        if season is not None:
+            ti["season"] = season
+        return "query_situational", ti
+    # plain batting count -> POSITION PLAYER only (a pitcher's HR/BB/etc. is role-ambiguous).
+    cand = _fp_resolve(name, "bat")
+    if not cand or (cand.get("position") or "").upper() == "P":
+        return None
+    ti = {"player": cand["name"], "event": stat}
+    if season is not None:
+        ti["season"] = season
+    return "query_situational", ti
+
+
 @app.post("/ask")
 def ask(request: Request,
         question: str = Body(..., embed=True,
@@ -13466,50 +13583,61 @@ def ask(request: Request,
         timing["llm_translate"] = 0.0
     else:
         t0 = time.perf_counter()
-        # Provider selection. Qwen (DeepInfra) is attempted ONLY when explicitly enabled;
-        # an unset/typo'd ASK_LLM_PROVIDER, a missing key, or ANY Qwen failure (transport,
-        # timeout, or a degraded-but-200 response) falls through to the Haiku block below.
-        # Default is Haiku — a config mistake costs money, never correctness.
-        _provider = os.getenv("ASK_LLM_PROVIDER", "haiku").strip().lower()
-        _served_by_qwen = False
-        if _provider == "qwen":
-            try:
-                tool_name, tool_input, in_tok, out_tok = _translate_via_qwen(q)
-                _served_by_qwen = True
-            except Exception as exc:  # noqa: BLE001  — ANY Qwen error -> Haiku, never a 5xx
-                log.warning("ask: Qwen translate -> Haiku fallback (%s) for %r", exc, q)
-        if not _served_by_qwen:
-            try:
-                msg = client.messages.create(
-                    model=_ASK_MODEL, max_tokens=1024, system=_ASK_SYSTEM_BLOCKS,
-                    tools=_ASK_TOOLS, tool_choice={"type": "any"},   # cached prefix + force a tool
-                    messages=[{"role": "user", "content": q}],
-                    # 1-hour prompt cache (vs the 5-min default) — the stable ~19k prefix
-                    # stays warm across the gaps between question bursts, cutting cold
-                    # cache WRITES. See cache_control ttl:"1h" on _ASK_SYSTEM_BLOCKS/_ASK_TOOLS.
-                    extra_headers={"anthropic-beta": "extended-cache-ttl-2025-04-11"},
-                )
-            except Exception as exc:  # noqa: BLE001
-                raise HTTPException(status_code=502, detail=f"LLM translate failed: {exc}")
-            u = getattr(msg, "usage", None)
-            if u:
-                _cc = getattr(u, "cache_creation_input_tokens", 0) or 0
-                _cr = getattr(u, "cache_read_input_tokens", 0) or 0
-                in_tok = ((getattr(u, "input_tokens", 0) or 0) + _cr + _cc)
-                out_tok = getattr(u, "output_tokens", 0) or 0
-                # 1h-cache warm/cold split — a WRITE (cc>0) is a cold prefix, a READ (cr>0)
-                # is warm. Logged separately (in_tok sums them) so the post-deploy cold
-                # fraction is measurable: grep ASK_CACHE, count COLD vs warm.
-                log.info("ASK_CACHE %s cc=%d cr=%d", "COLD" if _cc else "warm", _cc, _cr)
-            for block in msg.content:
-                if getattr(block, "type", None) == "tool_use":
-                    tool_name = block.name
-                    tool_input = dict(block.input or {})
-                    break
-            # SHADOW: Haiku is served (above); ask Qwen the same question in the background
-            # and log where they diverge. Async, so it adds no latency to this response.
-            if _provider == "shadow":
-                _shadow_compare_async(q, tool_name, tool_input)
+        # ---- DETERMINISTIC FAST PATH (before any model). Handles a narrow set of whole,
+        # whitelisted, unambiguously-resolvable questions and produces the SAME tool_input
+        # the model would; ANY doubt returns None and we fall through to the model. It is
+        # NOT a model call (in_tok=out_tok=0), and its output flows into the SAME guard
+        # pipeline, runners, and translation cache as the model's, below.
+        _fp = _ask_fast_path(q)
+        if _fp is not None:
+            tool_name, tool_input = _fp
+            in_tok = out_tok = 0
+            log.info("ASK_FASTPATH %s %s", tool_name, json.dumps(tool_input, sort_keys=True))
+        else:
+            # Provider selection. Qwen (DeepInfra) is attempted ONLY when explicitly enabled;
+            # an unset/typo'd ASK_LLM_PROVIDER, a missing key, or ANY Qwen failure (transport,
+            # timeout, or a degraded-but-200 response) falls through to the Haiku block below.
+            # Default is Haiku — a config mistake costs money, never correctness.
+            _provider = os.getenv("ASK_LLM_PROVIDER", "haiku").strip().lower()
+            _served_by_qwen = False
+            if _provider == "qwen":
+                try:
+                    tool_name, tool_input, in_tok, out_tok = _translate_via_qwen(q)
+                    _served_by_qwen = True
+                except Exception as exc:  # noqa: BLE001  — ANY Qwen error -> Haiku, never a 5xx
+                    log.warning("ask: Qwen translate -> Haiku fallback (%s) for %r", exc, q)
+            if not _served_by_qwen:
+                try:
+                    msg = client.messages.create(
+                        model=_ASK_MODEL, max_tokens=1024, system=_ASK_SYSTEM_BLOCKS,
+                        tools=_ASK_TOOLS, tool_choice={"type": "any"},   # cached prefix + force a tool
+                        messages=[{"role": "user", "content": q}],
+                        # 1-hour prompt cache (vs the 5-min default) — the stable ~19k prefix
+                        # stays warm across the gaps between question bursts, cutting cold
+                        # cache WRITES. See cache_control ttl:"1h" on _ASK_SYSTEM_BLOCKS/_ASK_TOOLS.
+                        extra_headers={"anthropic-beta": "extended-cache-ttl-2025-04-11"},
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    raise HTTPException(status_code=502, detail=f"LLM translate failed: {exc}")
+                u = getattr(msg, "usage", None)
+                if u:
+                    _cc = getattr(u, "cache_creation_input_tokens", 0) or 0
+                    _cr = getattr(u, "cache_read_input_tokens", 0) or 0
+                    in_tok = ((getattr(u, "input_tokens", 0) or 0) + _cr + _cc)
+                    out_tok = getattr(u, "output_tokens", 0) or 0
+                    # 1h-cache warm/cold split — a WRITE (cc>0) is a cold prefix, a READ (cr>0)
+                    # is warm. Logged separately (in_tok sums them) so the post-deploy cold
+                    # fraction is measurable: grep ASK_CACHE, count COLD vs warm.
+                    log.info("ASK_CACHE %s cc=%d cr=%d", "COLD" if _cc else "warm", _cc, _cr)
+                for block in msg.content:
+                    if getattr(block, "type", None) == "tool_use":
+                        tool_name = block.name
+                        tool_input = dict(block.input or {})
+                        break
+                # SHADOW: Haiku is served (above); ask Qwen the same question in the background
+                # and log where they diverge. Async, so it adds no latency to this response.
+                if _provider == "shadow":
+                    _shadow_compare_async(q, tool_name, tool_input)
         timing["llm_translate"] = round((time.perf_counter() - t0) * 1000, 1)
 
     # Snapshot the model's RAW reading BEFORE any in-code mutation (the re-ask
