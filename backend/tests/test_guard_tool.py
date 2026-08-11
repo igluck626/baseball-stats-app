@@ -242,13 +242,24 @@ _PITCH_ONLY = NS["_PITCHING_ONLY_EVENTS"]
 for _ev in ("SV", "W", "L", "ER"):
     check(f"[fast-path invariant: {_ev} pitching-only -> role:pit forced]",
           _canon_event(_ev) in _PITCH_ONLY, True)
-# BATTING-AVERAGE template emits query_rates{player}; the model's {player,stat:AVG} and
-# {player,role:bat} variants converge ONLY because the highlighted stat is derived from the
-# QUESTION (via _asked_stat), not from the tool_input.
-check("[fast-path invariant: 'batting average' -> AVG highlight from question]",
-      _asked_stat("What is Aaron Judge's batting average?"), "AVG")
-check("[fast-path invariant: bare 'average' -> AVG highlight from question]",
-      _asked_stat("What's Mike Trout's average?"), "AVG")
+# RATE templates emit query_rates{player}; the model's {player,stat:<S>} and {player,role:bat}
+# variants converge ONLY because the highlighted stat is derived from the QUESTION (via
+# _asked_stat), not from the tool_input. One assertion per rate phrasing the template accepts,
+# each keyed to the stat its served card must highlight — if any phrasing stopped mapping to its
+# stat, the served answer would silently diverge and this test says so.
+for _q, _want in (
+    ("What is Aaron Judge's batting average?", "AVG"),
+    ("What's Mike Trout's average?", "AVG"),
+    ("What is Aaron Judge's on-base percentage?", "OBP"),
+    ("What is Aaron Judge's on base percentage?", "OBP"),
+    ("What's Mike Trout's OBP?", "OBP"),
+    ("What is Aaron Judge's slugging percentage?", "SLG"),
+    ("What's Mike Trout's slugging?", "SLG"),
+    ("What is Aaron Judge's SLG?", "SLG"),
+    ("What is Aaron Judge's OPS?", "OPS"),
+):
+    check(f"[fast-path invariant: rate phrasing {_q!r} -> {_want} highlight from question]",
+          _asked_stat(_q), _want)
 
 # ---- report -----------------------------------------------------------------
 print(f"ran {N} assertions across {len(SCOPED)} scoped + {len(ANSWERABLE)} answerable tools")

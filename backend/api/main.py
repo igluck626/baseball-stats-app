@@ -13421,12 +13421,15 @@ def _asked_stat(question):
 # via a PINNED normalization. Three shapes:
 #   1. "how many <batting-count> does <player> have [in YYYY]"          -> query_situational{event,player[,season]}
 #   2. "how many <K|wins|losses|saves|earned runs> does <pitcher> have" -> query_situational{event,player,role:pit}
-#   3. "what is <player>'s batting average"                             -> query_rates{player}
-# GATE: tool_input-identical OR served-answer-identical. Saves (in 2) and batting average (3)
+#   3. "what is <player>'s <batting average|OBP|SLG|OPS>"               -> query_rates{player}
+# GATE: tool_input-identical OR served-answer-identical. Saves (in 2) and the rate stats (3)
 # use the latter — the model emits variant tool_inputs that all serve the SAME answer because a
 # server-side normalization collapses them: SV's role is force-set (_PITCHING_ONLY_EVENTS) and
 # the rate highlight is derived from the QUESTION (_asked_stat), NOT the tool_input. BOTH
-# invariants are PINNED in tests/test_guard_tool.py — no test, no template. Still deliberately
+# invariants are PINNED in tests/test_guard_tool.py — no test, no template. The rate template
+# is also a CORRECTNESS win, not just speed: the model has been seen misrouting a plain OBP
+# question to base_state:loaded (a bases-loaded OBP — wrong); the deterministic {player} cannot
+# make that class of error. After AVG/OBP/SLG/OPS the qualifying rate list is EXHAUSTED. Still deliberately
 # OUT: a BATTER's strikeouts (role:bat vs none ~50/50, plus two-way ambiguity); RBI/R/SB/TB/AB/
 # XBH (total-only — the runner DECLINES them); ERA/WHIP/holds (unsupported). 'career'/'all-time'
 # is a stop-word, so those fall through (the model routes them inconsistently).
@@ -13467,13 +13470,16 @@ _FP_STOP = {"against", "versus", "vs", "with", "in", "on", "at", "off", "during"
             "team", "as"}
 _FP_COUNT_RE = re.compile(r"^\s*how many ([a-z][a-z '-]*?) (?:does|did|has|have) (.+?)\s*\??\s*$", re.I)
 _FP_NAME_RE = re.compile(r"[A-Za-z.'\-]+(?: [A-Za-z.'\-]+){0,3}")
-# RATE template (served-answer-gated): "what is <player>'s batting average" -> query_rates{player}.
-# The model emits {player} / {player,role:bat} / {player,stat:AVG}; all serve the SAME card
-# because the highlighted stat is derived from the QUESTION (_asked_stat -> AVG), pinned in
-# test_guard_tool.py. ONLY batting average — OBP/SLG/OPS qualify identically but are not built
-# here. A CLAUSE ("against X", "by month", "highest", "who has") means a DIFFERENT tool, so the
-# whole-question anchor (rate word at end) + stop-words fall through on them.
-_FP_RATE = ("batting average", "average")
+# RATE template (served-answer-gated): "what is <player>'s <rate>" -> query_rates{player}, where
+# <rate> is one of the four season rate stats query_rates serves. The model emits {player} /
+# {player,role:bat} / {player,stat:<S>}; all serve the SAME card because the highlighted stat is
+# derived from the QUESTION (_asked_stat -> AVG/OBP/SLG/OPS), pinned in test_guard_tool.py. The
+# rate WORD is anchored to the END of the whole question (\s*\??\s*$), so a CLAUSE ("against X",
+# "by month", "highest", "who has") — which is a DIFFERENT tool — cannot reach that anchor and
+# falls through; a stop-word in the captured name is a second net. Every phrasing here is a whole
+# noun that _asked_stat also recognizes, so the emitted {player} and the highlight always agree.
+_FP_RATE = ("batting average", "on-base percentage", "on base percentage",
+            "slugging percentage", "average", "slugging", "obp", "slg", "ops")
 _FP_RATE_RE = re.compile(r"^\s*what(?:'s| is| was) (.+?)\s*(?:'s|’s|s')?\s+(" +
                          "|".join(_FP_RATE) + r")\s*\??\s*$", re.I)
 
@@ -13518,8 +13524,8 @@ def _ask_fast_path(q):
     """Whole, whitelisted, unambiguous question -> (tool_name, tool_input) IDENTICAL to the
     model's, or None. See the block comment for the safety contract."""
     q0 = re.sub(r"\s{2,}", " ", (q or "")).strip()
-    # ---- Batting average -> query_rates{player} (served-answer-gated; see _FP_RATE). Fall
-    # through on any clause (against/by/highest/who) — those are a different tool.
+    # ---- A season rate stat (AVG/OBP/SLG/OPS) -> query_rates{player} (served-answer-gated; see
+    # _FP_RATE). Fall through on any clause (against/by/highest/who) — those are a different tool.
     mr = _FP_RATE_RE.match(q0)
     if mr and mr.group(2).strip().lower() in _FP_RATE:
         name = mr.group(1).strip()
