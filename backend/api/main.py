@@ -13620,33 +13620,46 @@ def ask(request: Request,
     t_all = time.perf_counter()
     in_tok = out_tok = 0
 
-    # ---- 1. translate — serve the cached parse if we have one -----------
+    # ---- 1. translate ---------------------------------------------------
     cached = False
     tool_name, tool_input = None, None
-    cached_tr = _ask_cache_get(norm)
-    # A cached translation whose player is a bare numeric id, requested WITHOUT a
-    # player_id, is a leaked disambiguation pick (an earlier re-ask baked the
-    # chosen id into the cache). Ignore it and re-translate, so the question
-    # ambiguates for everyone as it should.
-    if cached_tr and player_id is None and str((cached_tr[1] or {}).get("player") or "").isdigit():
-        cached_tr = None
-    if cached_tr:
-        tool_name, tool_input = cached_tr           # skip the LLM; query still re-runs (fresh data)
-        cached = True
-        timing["llm_translate"] = 0.0
+    # DETERMINISTIC FAST PATH — FIRST, ahead of the cache. A question it matches is read
+    # deterministically, and that reading takes precedence over BOTH a cached parse and the
+    # model. Two reasons it leads:
+    #   (a) CORRECTNESS — a stale/buggy cached parse (e.g. an OBP question the model once
+    #       tagged base_state:loaded) can no longer SHADOW the fixed reading; and because the
+    #       clean {player} row the fast path logs becomes the most-recent for that question, a
+    #       previously-poisoned cache entry SELF-CORRECTS instead of needing manual eviction.
+    #   (b) CHEAP on a non-match — _ask_fast_path rejects on the regex + whitelist BEFORE any DB
+    #       resolve, so a question it does NOT handle returns None at ~no cost and falls straight
+    #       through to the cache below. The cache->model ordering for non-matches is UNCHANGED;
+    #       nothing that hit the cache before becomes a model call.
+    # The trade: a REPEAT of a MATCHED question now pays a ~30ms name-resolve instead of a ~0ms
+    # cache read (the query re-runs for fresh data either way) — the price of the guarantee, on
+    # the ~5% of traffic the fast path handles. Skipped when a player_id is pinned (an ambiguity
+    # re-ask): that keeps its exact current cache->model->pin behaviour, and such questions were
+    # ambiguous, where the fast path returns None anyway.
+    t0 = time.perf_counter()
+    _fp = _ask_fast_path(q) if player_id is None else None
+    if _fp is not None:
+        tool_name, tool_input = _fp
+        in_tok = out_tok = 0
+        log.info("ASK_FASTPATH %s %s", tool_name, json.dumps(tool_input, sort_keys=True))
+        timing["llm_translate"] = round((time.perf_counter() - t0) * 1000, 1)
     else:
-        t0 = time.perf_counter()
-        # ---- DETERMINISTIC FAST PATH (before any model). Handles a narrow set of whole,
-        # whitelisted, unambiguously-resolvable questions and produces the SAME tool_input
-        # the model would; ANY doubt returns None and we fall through to the model. It is
-        # NOT a model call (in_tok=out_tok=0), and its output flows into the SAME guard
-        # pipeline, runners, and translation cache as the model's, below.
-        _fp = _ask_fast_path(q)
-        if _fp is not None:
-            tool_name, tool_input = _fp
-            in_tok = out_tok = 0
-            log.info("ASK_FASTPATH %s %s", tool_name, json.dumps(tool_input, sort_keys=True))
+        cached_tr = _ask_cache_get(norm)
+        # A cached translation whose player is a bare numeric id, requested WITHOUT a
+        # player_id, is a leaked disambiguation pick (an earlier re-ask baked the
+        # chosen id into the cache). Ignore it and re-translate, so the question
+        # ambiguates for everyone as it should.
+        if cached_tr and player_id is None and str((cached_tr[1] or {}).get("player") or "").isdigit():
+            cached_tr = None
+        if cached_tr:
+            tool_name, tool_input = cached_tr       # skip the LLM; query still re-runs (fresh data)
+            cached = True
+            timing["llm_translate"] = 0.0
         else:
+            t0 = time.perf_counter()
             # Provider selection. Qwen (DeepInfra) is attempted ONLY when explicitly enabled;
             # an unset/typo'd ASK_LLM_PROVIDER, a missing key, or ANY Qwen failure (transport,
             # timeout, or a degraded-but-200 response) falls through to the Haiku block below.
@@ -13691,7 +13704,7 @@ def ask(request: Request,
                 # and log where they diverge. Async, so it adds no latency to this response.
                 if _provider == "shadow":
                     _shadow_compare_async(q, tool_name, tool_input)
-        timing["llm_translate"] = round((time.perf_counter() - t0) * 1000, 1)
+            timing["llm_translate"] = round((time.perf_counter() - t0) * 1000, 1)
 
     # Snapshot the model's RAW reading BEFORE any in-code mutation (the re-ask
     # player pin below, the constraint injection, and the guard's resolution). THIS
