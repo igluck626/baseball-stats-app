@@ -13431,6 +13431,33 @@ def _asked_stat(question):
     return None
 
 
+# Season-rate nouns query_rates does NOT itself serve, keyed off the QUESTION because
+# the model routes them here yet passes the stat unreliably: it DROPS "ISO" (-> {player}),
+# and maps "walk rate"/"strikeout rate" to the BB/K COUNT rather than BB_PCT/K_PCT. Detecting
+# from the question turns those silent empties into a computed number (or an honest wOBA
+# decline). Order matters: the more specific "... rate" must win over the bare count noun,
+# and these are checked before falling back to the tool_input's event/stat.
+_QUESTION_RATE = [
+    (r"\bbabip\b|\bbatting average on balls in play\b|\bballs? in play\b", "BABIP"),
+    (r"\bisolated power\b|\biso\b", "ISO"),
+    (r"\bwalk rate\b|\bwalk ?%|\bbb ?%|\bbase[- ]on[- ]balls rate\b", "BB_PCT"),
+    (r"\bstrikeout rate\b|\bk[- ]rate\b|\bk ?%|\bstrikeout ?%", "K_PCT"),
+    (r"\bwoba\b|\bweighted on[- ]base\b", "WOBA"),
+]
+
+
+def _asked_season_rate(question):
+    """A season-rate named in the QUESTION that query_rates can't serve itself
+    (BABIP/ISO/BB%/K%/wOBA), or None. Robust to the model dropping or mis-mapping
+    the stat — the runner delegates on this so nothing comes back silently empty."""
+    import re
+    ql = " " + (question or "").lower() + " "
+    for pat, stat in _QUESTION_RATE:
+        if re.search(pat, ql):
+            return stat
+    return None
+
+
 # ---- DETERMINISTIC FAST PATH ------------------------------------------------
 # Parse a NARROW set of whole-question shapes without the model — but ONLY when the parse is
 # COMPLETE and UNAMBIGUOUS; ANY doubt returns None and the caller falls through to the model
@@ -14688,8 +14715,20 @@ def ask(request: Request,
                 # neither a number nor an explanation). Plain only; a SITUATIONAL split
                 # on such a rate can't come from the season tables, so decline honestly.
                 _asked_rate = _canon_event(tool_input.get("event") or tool_input.get("stat"))
+                # The model passes these unreliably (drops ISO, maps "walk rate" to the
+                # BB count) — so if the tool_input didn't name a season-rate, read it off
+                # the QUESTION. Never a silent empty for a rate the question clearly names.
+                if _asked_rate not in _SEASON_RATES and _asked_rate not in _SEASON_FLOAT:
+                    _asked_rate = _asked_season_rate(q) or _asked_rate
                 if _asked_rate in _SEASON_RATES or _asked_rate in _SEASON_FLOAT:
-                    if any(tool_input.get(k) is not None for k in situ_keys):
+                    # A play-by-play SPLIT can't be computed from the season tables, so
+                    # decline it. NB: season/role/game_type are NOT splits (a season or
+                    # career rate is fine) — the in-scope `situ_keys` here wrongly bundles
+                    # them, so use an explicit play-by-play-only list.
+                    _pbp_split = ("balls", "strikes", "outs", "inning", "base_state",
+                                  "pitcher_hand", "batter_side", "home_away", "month",
+                                  "opponent_codes", "walk_off", "extra_innings")
+                    if any(tool_input.get(k) is not None for k in _pbp_split):
                         base["out_of_scope"] = True
                         base["reason"] = (
                             f"I can give {_TOTAL_ONLY_LABEL.get(_asked_rate, _asked_rate)} as a "
