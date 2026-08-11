@@ -44,7 +44,7 @@ NEEDED = [
     "_GUARD_ANSWERABLE", "_GUARD_CAPS", "_guard_tool",
     # fast-path normalization invariants (the served-answer-gated /ask templates depend on
     # these to make the model's variant tool_inputs converge to one served answer)
-    "_canon_event", "_CANON_EVENT", "_PITCHING_ONLY_EVENTS",
+    "_canon_event", "_CANON_EVENT", "_PITCHING_ONLY_EVENTS", "_BATTING_ONLY_FORCE",
     "_asked_stat", "_RATE_STAT_NOUN", "_STAT_NOUN",
 ]
 
@@ -237,11 +237,18 @@ for tool, caps in NS["_TOOL_SCOPE_CAPS"].items():
 _canon_event = NS["_canon_event"]
 _asked_stat = NS["_asked_stat"]
 _PITCH_ONLY = NS["_PITCHING_ONLY_EVENTS"]
-# SAVES template emits {SV,player,role:pit}; the model's {SV,player} (no role) converges ONLY
-# because SV is a pitching-only event whose role is force-set to 'pit' downstream.
+_BAT_FORCE = NS["_BATTING_ONLY_FORCE"]
+# PITCHER counting templates (SV/W/L/ER) emit role:pit; the model's no-role variants converge
+# ONLY because these are pitching-only events whose role is force-set to 'pit' downstream.
 for _ev in ("SV", "W", "L", "ER"):
     check(f"[fast-path invariant: {_ev} pitching-only -> role:pit forced]",
           _canon_event(_ev) in _PITCH_ONLY, True)
+# BATTING-ONLY counting templates (RBI/SB/TB) emit {event,player} with NO role; they converge to
+# batting ONLY because these events are force-set to role:bat downstream. If any dropped out of
+# the force set, a stray model role:pit would send it to the empty pitching column silently.
+for _ev in ("RBI", "SB", "TB"):
+    check(f"[fast-path invariant: {_ev} batting-only -> role:bat forced]",
+          _canon_event(_ev) in _BAT_FORCE, True)
 # RATE templates emit query_rates{player}; the model's {player,stat:<S>} and {player,role:bat}
 # variants converge ONLY because the highlighted stat is derived from the QUESTION (via
 # _asked_stat), not from the tool_input. One assertion per rate phrasing the template accepts,

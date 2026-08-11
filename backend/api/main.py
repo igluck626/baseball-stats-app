@@ -13422,32 +13422,44 @@ def _asked_stat(question):
 #   1. "how many <batting-count> does <player> have [in YYYY]"          -> query_situational{event,player[,season]}
 #   2. "how many <K|wins|losses|saves|earned runs> does <pitcher> have" -> query_situational{event,player,role:pit}
 #   3. "what is <player>'s <batting average|OBP|SLG|OPS>"               -> query_rates{player}
-# GATE: tool_input-identical OR served-answer-identical. Saves (in 2) and the rate stats (3)
+# GATE: tool_input-identical OR served-answer-identical. Saves (in 2) and the batting rates (3)
 # use the latter — the model emits variant tool_inputs that all serve the SAME answer because a
-# server-side normalization collapses them: SV's role is force-set (_PITCHING_ONLY_EVENTS) and
-# the rate highlight is derived from the QUESTION (_asked_stat), NOT the tool_input. BOTH
-# invariants are PINNED in tests/test_guard_tool.py — no test, no template. The rate template
-# is also a CORRECTNESS win, not just speed: the model has been seen misrouting a plain OBP
-# question to base_state:loaded (a bases-loaded OBP — wrong); the deterministic {player} cannot
-# make that class of error. After AVG/OBP/SLG/OPS the qualifying rate list is EXHAUSTED. Still deliberately
-# OUT: a BATTER's strikeouts (role:bat vs none ~50/50, plus two-way ambiguity); RBI/R/SB/TB/AB/
-# XBH (total-only — the runner DECLINES them); ERA/WHIP/holds (unsupported). 'career'/'all-time'
-# is a stop-word, so those fall through (the model routes them inconsistently).
+# server-side normalization collapses them: a role in _PITCHING_ONLY_EVENTS/_BATTING_ONLY_FORCE is
+# force-set, and the rate highlight is derived from the QUESTION (_asked_stat), NOT the tool_input.
+# Those invariants are PINNED in tests/test_guard_tool.py — no test, no template. The batting-rate
+# template is also a CORRECTNESS win, not just speed: the model has been seen misrouting a plain OBP
+# question to base_state:loaded (a bases-loaded OBP — wrong); the deterministic {player} cannot make
+# that class of error.
 #
-# COUNT stats -> canonical event. Batting counts the situational runner serves (home runs,
-# walks, hit-by-pitch, singles, doubles, triples, hits) plus a pitcher's counting decisions
-# (wins, losses, saves, earned runs). Deliberately EXCLUDES RBI/R/SB/TB/AB/XBH — box-score/
-# total-only stats the runner DECLINES, so a template for them would fire on refuse-questions.
-# K is TWO-SIDED (a batter's or a pitcher's); W/L/SV/ER are PITCHER-ONLY — both routed by the
-# resolved player's side below.
+# COUNT stats -> canonical event. The situational runner serves them all (a 2026 stat-exposure
+# pass put RBI/R/SB/TB/AB/XBH into season_stats — the OLD "the runner declines them" note was
+# stale and is gone). Batting-ONLY events force role:bat (_BATTING_ONLY_FORCE: 1B/2B/3B/RBI/TB/
+# XBH/SB) — the fast path serves the plain ones (HR/H/2B/3B/1B/BB/RBI/SB/TB). W/L/SV/ER are
+# PITCHER-ONLY (_PITCHING_ONLY_EVENTS, force role:pit). K is TWO-SIDED — all routed by the
+# resolved player's side below. Still deliberately OUT: a BATTER's strikeouts (role:bat vs none
+# ~50/50, plus two-way ambiguity); R (runs) — two-sided and NOT force-set, held pending review;
+# AB (not in either force set); WAR (two-sided, ~no traffic to judge determinism). ERA/WHIP are a
+# SEPARATE case, deliberately NOT fast-pathed: the runner + pitcher_seasons CAN serve them, but the
+# system prompt lists them OUT OF SCOPE and the model declines them 117× in the log — a fast path
+# would be a decline-fire against explicit policy. Expose them in the prompt first (prompt_version
+# bump), then they can be added. 'career'/'all-time' is a stop-word, so those fall through.
 _FP_COUNT = {
     "home run": "HR", "home runs": "HR", "homer": "HR", "homers": "HR",
     "hit": "H", "hits": "H", "double": "2B", "doubles": "2B",
     "triple": "3B", "triples": "3B", "single": "1B", "singles": "1B",
     "walk": "BB", "walks": "BB", "strikeout": "K", "strikeouts": "K",
+    "rbi": "RBI", "rbis": "RBI", "runs batted in": "RBI",
+    "stolen base": "SB", "stolen bases": "SB", "steal": "SB", "steals": "SB",
+    "total base": "TB", "total bases": "TB",
     "win": "W", "wins": "W", "loss": "L", "losses": "L",
     "save": "SV", "saves": "SV", "earned run": "ER", "earned runs": "ER",
 }
+# Batting-only counting events the guard force-sets to role:bat (_BATTING_ONLY_FORCE): RBI/SB/TB
+# join the plain batting-count branch below. The model emits them WITHOUT a role (uniform in
+# traffic: RBI 6/6, SB 6/6, TB 11/11), so the fast path's {event,player} is byte-identical AND
+# the role-force guarantees convergence even if a stray role ever appears (pinned in
+# test_guard_tool.py). NOT here: R (runs) — two-sided, NOT force-set, held for review; AB — not in
+# the force set either.
 # Pitcher-only counting events: they mean nothing for a batter, so they resolve as a PURE
 # pitcher and emit role:pit, or fall through. W/L/ER are byte-identical (the model always emits
 # role:pit — 283/67/73, zero without). SAVES is served-answer-gated: the model splits 183 with
@@ -13480,6 +13492,11 @@ _FP_NAME_RE = re.compile(r"[A-Za-z.'\-]+(?: [A-Za-z.'\-]+){0,3}")
 # noun that _asked_stat also recognizes, so the emitted {player} and the highlight always agree.
 _FP_RATE = ("batting average", "on-base percentage", "on base percentage",
             "slugging percentage", "average", "slugging", "obp", "slg", "ops")
+# ERA/WHIP are DELIBERATELY not here: the runner CAN compute them (the data is in
+# pitcher_seasons), but the system prompt (_ASK_SYSTEM, "OUT OF SCOPE") tells the model to
+# DECLINE them, and it does so 117× in the log. A fast path answering them would contradict that
+# explicit policy (a decline-fire) — the fix is to change the policy first (expose ERA/WHIP in
+# the prompt, bump prompt_version), not to override a deliberate decline in the fast path.
 _FP_RATE_RE = re.compile(r"^\s*what(?:'s| is| was) (.+?)\s*(?:'s|’s|s')?\s+(" +
                          "|".join(_FP_RATE) + r")\s*\??\s*$", re.I)
 
@@ -13524,8 +13541,10 @@ def _ask_fast_path(q):
     """Whole, whitelisted, unambiguous question -> (tool_name, tool_input) IDENTICAL to the
     model's, or None. See the block comment for the safety contract."""
     q0 = re.sub(r"\s{2,}", " ", (q or "")).strip()
-    # ---- A season rate stat (AVG/OBP/SLG/OPS) -> query_rates{player} (served-answer-gated; see
-    # _FP_RATE). Fall through on any clause (against/by/highest/who) — those are a different tool.
+    # ---- A season rate stat (AVG/OBP/SLG/OPS) -> query_rates{player} for a POSITION player
+    # (served-answer-gated; see _FP_RATE). Fall through on any clause (against/by/highest/who):
+    # the rate word is anchored to the END, so a clause can't reach it, and a stop-word in the
+    # captured name is a second net.
     mr = _FP_RATE_RE.match(q0)
     if mr and mr.group(2).strip().lower() in _FP_RATE:
         name = mr.group(1).strip()
