@@ -1084,7 +1084,7 @@ app = FastAPI(title="Baseball Stats API", version="0.1.0", lifespan=lifespan)
 # stale one that Railway merely REPORTS as deployed. GET / echoes it; the boot log below
 # records it once at import. If the deployed marker is old, the container is serving old
 # code no matter what the dashboard says — which is a different bug from a logic error.
-_BUILD_MARKER = "2026-08-11-erawhip-fp-mk6"
+_BUILD_MARKER = "2026-08-11-rate-season-mk7"
 log.info("BUILD_MARKER=%s", _BUILD_MARKER)
 
 
@@ -13494,8 +13494,8 @@ def _asked_season_rate(question):
 # via a PINNED normalization. Three shapes:
 #   1. "how many <batting-count> does <player> have [in YYYY]"          -> query_situational{event,player[,season]}
 #   2. "how many <K|wins|losses|saves|earned runs> does <pitcher> have" -> query_situational{event,player,role:pit}
-#   3. "what is <player>'s <batting average|OBP|SLG|OPS>"               -> query_rates{player}
-#   4. "what is <player>'s <ERA|WHIP>"                                  -> query_situational{event,player,role:pit}
+#   3. "what is <player>'s <batting average|OBP|SLG|OPS> [in YYYY]"     -> query_rates{player[,season]}
+#   4. "what is <player>'s <ERA|WHIP> [in YYYY]"                        -> query_situational{event,player,role:pit[,season]}
 # GATE: tool_input-identical OR served-answer-identical. Saves (in 2) and the batting rates (3)
 # use the latter — the model emits variant tool_inputs that all serve the SAME answer because a
 # server-side normalization collapses them: a role in _PITCHING_ONLY_EVENTS/_BATTING_ONLY_FORCE is
@@ -13577,7 +13577,8 @@ _FP_RATE = ("batting average", "on-base percentage", "on base percentage",
 _FP_PITCH_RATE = {"era": "ERA", "whip": "WHIP"}
 _FP_RATE_WORDS = _FP_RATE + tuple(_FP_PITCH_RATE)
 _FP_RATE_RE = re.compile(r"^\s*what(?:'s| is| was) (.+?)\s*(?:'s|’s|s')?\s+(" +
-                         "|".join(_FP_RATE_WORDS) + r")\s*\??\s*$", re.I)
+                         "|".join(_FP_RATE_WORDS) + r")(?:\s+in\s+((?:18|19|20)\d\d))?\s*\??\s*$",
+                         re.I)
 
 
 def _fp_resolve(name, role):
@@ -13628,14 +13629,18 @@ def _ask_fast_path(q):
     if mr:
         word = mr.group(2).strip().lower()
         name = mr.group(1).strip()
+        season = int(mr.group(3)) if mr.group(3) else None   # ONLY a bare 'in YYYY' after the rate
         if not (_FP_NAME_RE.fullmatch(name) and not any(t.lower() in _FP_STOP for t in name.split())):
             return None                                  # a rate question we could not fully parse
         if word in _FP_RATE:                             # BATTING rate -> query_rates, position player
             cand = _fp_resolve(name, "bat")
             if cand and (cand.get("position") or "").upper() != "P":
-                return "query_rates", {"player": cand["name"]}
+                ti = {"player": cand["name"]}            # model emits query_rates{player[,season]}
+                if season is not None:
+                    ti["season"] = season
+                return "query_rates", ti
             return None
-        # PITCHER rate (ERA/WHIP) -> query_situational{event,role:pit}, PURE pitcher only.
+        # PITCHER rate (ERA/WHIP) -> query_situational{event,role:pit[,season]}, PURE pitcher only.
         # Mirrors the pitcher-count branch: fall through if unresolvable or if the name is also
         # a position player (two-way, e.g. Ohtani — the model's call). role:pit is force-set
         # downstream, and a fixed reading here overrides the model's ERA->ERA+ / dropped-WHIP.
@@ -13644,7 +13649,10 @@ def _ask_fast_path(q):
         bat = _fp_resolve(name, "bat")
         if not pit or (bool(bat) and (bat.get("position") or "").upper() != "P"):
             return None
-        return "query_situational", {"player": pit["name"], "event": stat, "role": "pit"}
+        ti = {"player": pit["name"], "event": stat, "role": "pit"}
+        if season is not None:
+            ti["season"] = season
+        return "query_situational", ti
     # ---- A count question -> query_situational (batting counts, or pitcher W/L/SV/ER/K).
     mc = _FP_COUNT_RE.match(q0)
     if not mc:
