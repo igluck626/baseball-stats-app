@@ -1084,7 +1084,7 @@ app = FastAPI(title="Baseball Stats API", version="0.1.0", lifespan=lifespan)
 # stale one that Railway merely REPORTS as deployed. GET / echoes it; the boot log below
 # records it once at import. If the deployed marker is old, the container is serving old
 # code no matter what the dashboard says — which is a different bug from a logic error.
-_BUILD_MARKER = "2026-08-11-rate-fallback-mk1"
+_BUILD_MARKER = "2026-08-11-rate-israte-mk2"
 log.info("BUILD_MARKER=%s", _BUILD_MARKER)
 
 
@@ -14745,10 +14745,34 @@ def ask(request: Request,
                         base["answer"] = base["reason"]; return _finish()
                     _rrole = (_SEASON_RATE_B.get(_asked_rate) or _SEASON_RATE_C.get(_asked_rate)
                               or (kw.get("role") or "bat",))[0]
-                    result = _run_season_rate(
+                    _rr = _run_season_rate(
                         kw["player"], _rrole, _asked_rate, tool_input.get("season"),
                         tool_input.get("season_start"), tool_input.get("season_end"),
                         (tool_input.get("game_type") or "").strip().upper() or None)
+                    # _run_season_rate returns an IS_RATE result (stat_value/answer, or a
+                    # decline) — the query_rates result handler further down renders only a
+                    # `rates` CARD and would read this as an empty/pitch-count decline, so
+                    # finish it HERE (mirrors the situational is_rate handler).
+                    timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
+                    if _rr.get("ambiguous"):
+                        base["ambiguous"] = True
+                        base["player_resolved"] = {"candidates": _rr.get("candidates", [])}
+                        base["answer"] = (f'There are multiple players matching '
+                                          f'"{kw.get("player")}" — tap the one you mean.')
+                        return _finish()
+                    base["understood_as"]   = tool_input
+                    base["source"]          = _rr.get("source")
+                    base["player_resolved"] = _rr.get("player")
+                    base["stat_value"]      = _rr.get("stat_value")
+                    base["game_coverage"]   = _rr.get("game_coverage")
+                    base["rates"]           = _rr.get("rates")
+                    base["pitching_line"]   = _rr.get("pitching_line")
+                    base["highlighted_stat"] = _rr.get("highlighted_stat")
+                    if _rr.get("declined"):
+                        base["declined"] = True
+                        base["reason"]   = _rr.get("reason")
+                    base["answer"] = _rr.get("answer")
+                    return _finish()
                 else:
                     # (a) A PLAIN regular-season rate (no situational filter) comes from
                     # the COMPLETE season tables — exact for every era 1871+ and the
