@@ -238,9 +238,10 @@ _canon_event = NS["_canon_event"]
 _asked_stat = NS["_asked_stat"]
 _PITCH_ONLY = NS["_PITCHING_ONLY_EVENTS"]
 _BAT_FORCE = NS["_BATTING_ONLY_FORCE"]
-# PITCHER counting templates (SV/W/L/ER) emit role:pit; the model's no-role variants converge
-# ONLY because these are pitching-only events whose role is force-set to 'pit' downstream.
-for _ev in ("SV", "W", "L", "ER"):
+# PITCHER templates emit role:pit — the counting decisions (SV/W/L/ER) and the rate stats
+# (ERA/WHIP) — and the model's no-role / wrong-role variants converge ONLY because these are
+# pitching-only events whose role is force-set to 'pit' downstream.
+for _ev in ("SV", "W", "L", "ER", "ERA", "WHIP"):
     check(f"[fast-path invariant: {_ev} pitching-only -> role:pit forced]",
           _canon_event(_ev) in _PITCH_ONLY, True)
 # BATTING-ONLY counting templates (RBI/SB/TB) emit {event,player} with NO role; they converge to

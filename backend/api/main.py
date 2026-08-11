@@ -1084,7 +1084,7 @@ app = FastAPI(title="Baseball Stats API", version="0.1.0", lifespan=lifespan)
 # stale one that Railway merely REPORTS as deployed. GET / echoes it; the boot log below
 # records it once at import. If the deployed marker is old, the container is serving old
 # code no matter what the dashboard says — which is a different bug from a logic error.
-_BUILD_MARKER = "2026-08-11-allrates-mk5"
+_BUILD_MARKER = "2026-08-11-erawhip-fp-mk6"
 log.info("BUILD_MARKER=%s", _BUILD_MARKER)
 
 
@@ -13495,6 +13495,7 @@ def _asked_season_rate(question):
 #   1. "how many <batting-count> does <player> have [in YYYY]"          -> query_situational{event,player[,season]}
 #   2. "how many <K|wins|losses|saves|earned runs> does <pitcher> have" -> query_situational{event,player,role:pit}
 #   3. "what is <player>'s <batting average|OBP|SLG|OPS>"               -> query_rates{player}
+#   4. "what is <player>'s <ERA|WHIP>"                                  -> query_situational{event,player,role:pit}
 # GATE: tool_input-identical OR served-answer-identical. Saves (in 2) and the batting rates (3)
 # use the latter — the model emits variant tool_inputs that all serve the SAME answer because a
 # server-side normalization collapses them: a role in _PITCHING_ONLY_EVENTS/_BATTING_ONLY_FORCE is
@@ -13565,13 +13566,18 @@ _FP_NAME_RE = re.compile(r"[A-Za-z.'\-]+(?: [A-Za-z.'\-]+){0,3}")
 # noun that _asked_stat also recognizes, so the emitted {player} and the highlight always agree.
 _FP_RATE = ("batting average", "on-base percentage", "on base percentage",
             "slugging percentage", "average", "slugging", "obp", "slg", "ops")
-# ERA/WHIP are DELIBERATELY not here: the runner CAN compute them (the data is in
-# pitcher_seasons), but the system prompt (_ASK_SYSTEM, "OUT OF SCOPE") tells the model to
-# DECLINE them, and it does so 117× in the log. A fast path answering them would contradict that
-# explicit policy (a decline-fire) — the fix is to change the policy first (expose ERA/WHIP in
-# the prompt, bump prompt_version), not to override a deliberate decline in the fast path.
+# PITCHER rate stats -> query_situational{event,role:pit} for a PURE pitcher (the prompt now
+# exposes ERA/WHIP, so this no longer fights an out-of-scope decline). A CORRECTNESS template,
+# like OBP: the model is non-deterministic here — it mis-maps "career ERA" to the ERA+ composite
+# (a different number that then DECLINES) and sometimes DROPS WHIP entirely; a fixed reading
+# cannot make those mistakes. role:pit is force-set (_PITCHING_ONLY_EVENTS), pinned in
+# test_guard_tool.py. "ERA+"/"ERA plus" do NOT match — the '+' breaks the end-anchor — so the
+# composite still routes to the model. "earned run average" also falls through (its "average"
+# tail is a batting word), which is fine: the model reads that phrasing reliably.
+_FP_PITCH_RATE = {"era": "ERA", "whip": "WHIP"}
+_FP_RATE_WORDS = _FP_RATE + tuple(_FP_PITCH_RATE)
 _FP_RATE_RE = re.compile(r"^\s*what(?:'s| is| was) (.+?)\s*(?:'s|’s|s')?\s+(" +
-                         "|".join(_FP_RATE) + r")\s*\??\s*$", re.I)
+                         "|".join(_FP_RATE_WORDS) + r")\s*\??\s*$", re.I)
 
 
 def _fp_resolve(name, role):
@@ -13619,13 +13625,26 @@ def _ask_fast_path(q):
     # the rate word is anchored to the END, so a clause can't reach it, and a stop-word in the
     # captured name is a second net.
     mr = _FP_RATE_RE.match(q0)
-    if mr and mr.group(2).strip().lower() in _FP_RATE:
+    if mr:
+        word = mr.group(2).strip().lower()
         name = mr.group(1).strip()
-        if _FP_NAME_RE.fullmatch(name) and not any(t.lower() in _FP_STOP for t in name.split()):
+        if not (_FP_NAME_RE.fullmatch(name) and not any(t.lower() in _FP_STOP for t in name.split())):
+            return None                                  # a rate question we could not fully parse
+        if word in _FP_RATE:                             # BATTING rate -> query_rates, position player
             cand = _fp_resolve(name, "bat")
             if cand and (cand.get("position") or "").upper() != "P":
                 return "query_rates", {"player": cand["name"]}
-        return None                                      # a rate question we could not fully parse
+            return None
+        # PITCHER rate (ERA/WHIP) -> query_situational{event,role:pit}, PURE pitcher only.
+        # Mirrors the pitcher-count branch: fall through if unresolvable or if the name is also
+        # a position player (two-way, e.g. Ohtani — the model's call). role:pit is force-set
+        # downstream, and a fixed reading here overrides the model's ERA->ERA+ / dropped-WHIP.
+        stat = _FP_PITCH_RATE[word]
+        pit = _fp_resolve(name, "pit")
+        bat = _fp_resolve(name, "bat")
+        if not pit or (bool(bat) and (bat.get("position") or "").upper() != "P"):
+            return None
+        return "query_situational", {"player": pit["name"], "event": stat, "role": "pit"}
     # ---- A count question -> query_situational (batting counts, or pitcher W/L/SV/ER/K).
     mc = _FP_COUNT_RE.match(q0)
     if not mc:
