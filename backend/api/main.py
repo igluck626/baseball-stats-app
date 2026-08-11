@@ -1084,7 +1084,7 @@ app = FastAPI(title="Baseball Stats API", version="0.1.0", lifespan=lifespan)
 # stale one that Railway merely REPORTS as deployed. GET / echoes it; the boot log below
 # records it once at import. If the deployed marker is old, the container is serving old
 # code no matter what the dashboard says — which is a different bug from a logic error.
-_BUILD_MARKER = "2026-08-11-rate-israte-mk2"
+_BUILD_MARKER = "2026-08-11-expose-rates-mk3"
 log.info("BUILD_MARKER=%s", _BUILD_MARKER)
 
 
@@ -12319,6 +12319,13 @@ _ASK_SYSTEM = (
     "NEVER split a hitter by batter_side (he bats one way, so it is a degenerate "
     "one-row table). For a PITCHER, 'Kershaw by handedness' -> split_by:'batter_side' "
     "(what he allows to LHB and RHB); never split a pitcher by pitcher_hand.\n"
+    "- RATE STATS beyond AVG/OBP/SLG/OPS ARE supported for ONE player and must NOT "
+    "be declined: pitching ERA / WHIP / K9 / BB9 / HR9, batting BABIP / ISO / BB% / "
+    "K%, and a SINGLE-SEASON OPS+ / ERA+ / FIP. Route them like any rate -> "
+    "query_rates {player, ...}: 'Maddux's ERA', 'Judge's ISO', 'Bonds's walk rate', "
+    "'Pedro's ERA+ in 2000'. The code computes the value and declines honestly the "
+    "few it truly can't — a CAREER OPS+/ERA+/FIP (year-normalized, so name a season) "
+    "or wOBA (unreliable stored weights). Do NOT cannot_answer any of these.\n"
     "- Rank players by a rate -> query_rate_leaderboard. 'Best average with the "
     "bases loaded' -> {stat:'AVG', base_state:'loaded'}. 'Highest OPS with two "
     "strikes' -> {stat:'OPS', strikes:2}. 'Who hits lefties best?' -> "
@@ -12442,8 +12449,6 @@ _ASK_SYSTEM = (
     "- No-hitters and perfect games: still call query_game_achievement "
     "({stat:'no_hitter'} or 'perfect_game'); it will decline honestly.\n\n"
     "OUT OF SCOPE (call cannot_answer) — only when the QUERY SHAPE can't do it:\n"
-    "- ERA / WHIP / pitcher rate stats and other computed rates we don't support "
-    "(we do AVG/OBP/SLG/OPS for hitters).\n"
     "- Date ranges ('games missed', 'when did he play from-to') and 'in a row' "
     "conditions OTHER than the hitting/on-base/home-run/multi-hit streaks above. "
     "(An N-consecutive-GAME window IS in scope — that's query_span.)\n"
