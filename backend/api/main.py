@@ -1084,7 +1084,7 @@ app = FastAPI(title="Baseball Stats API", version="0.1.0", lifespan=lifespan)
 # stale one that Railway merely REPORTS as deployed. GET / echoes it; the boot log below
 # records it once at import. If the deployed marker is old, the container is serving old
 # code no matter what the dashboard says — which is a different bug from a logic error.
-_BUILD_MARKER = "2026-08-11-per9-mk4"
+_BUILD_MARKER = "2026-08-11-allrates-mk5"
 log.info("BUILD_MARKER=%s", _BUILD_MARKER)
 
 
@@ -13451,9 +13451,16 @@ def _asked_stat(question):
 # decline). Order matters: the more specific "... rate" must win over the bare count noun,
 # and these are checked before falling back to the tool_input's event/stat.
 _QUESTION_RATE = [
-    # PITCHER "/9" rates FIRST — the model mangles "/9" worst of all (drops it, or maps
-    # "BB/9" to the batting BB% or the BB count). A "per 9 / per nine / /9" phrasing is
-    # unambiguous in the question, so it decides. Must precede the "%"/"rate" patterns.
+    # The model drops or mis-maps ANY of the newly-exposed rates unpredictably (it dropped
+    # WHIP to a bare player; it maps BB/9 to the batting BB%), so the QUESTION decides for
+    # every rate query_rates can't serve itself. The '+' composites and the '/9' family go
+    # FIRST (most specific). NB: bare "ERA" is deliberately absent — "the modern era" would
+    # false-match; the acronym is left to the model (reliable) and "earned run average" here.
+    (r"\bera\s?\+|\bera plus\b|\badjusted era\b", "ERA_PLUS"),
+    (r"\bops\s?\+|\bops plus\b|\badjusted ops\b", "OPS_PLUS"),
+    (r"\bfip\b|\bfielding[- ]independent", "FIP"),
+    (r"\bwhip\b|\bwalks?\s+(?:and|plus)\s+hits\s+per\s+inning", "WHIP"),
+    (r"\bearned run average\b", "ERA"),
     (r"\bk\s?/\s?9\b|\bk9\b|\b(?:strikeouts?|k) per (?:9|nine)\b", "K9"),
     (r"\bbb\s?/\s?9\b|\bbb9\b|\b(?:walks?|bb|base[- ]on[- ]balls) per (?:9|nine)\b", "BB9"),
     (r"\bhr\s?/\s?9\b|\bhr9\b|\b(?:home runs?|hr) per (?:9|nine)\b", "HR9"),
