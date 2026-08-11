@@ -1080,9 +1080,17 @@ app = FastAPI(title="Baseball Stats API", version="0.1.0", lifespan=lifespan)
 # Player endpoints
 # ---------------------------------------------------------------------------
 
+# Build marker — bumped with THIS commit so a running container can be told apart from a
+# stale one that Railway merely REPORTS as deployed. GET / echoes it; the boot log below
+# records it once at import. If the deployed marker is old, the container is serving old
+# code no matter what the dashboard says — which is a different bug from a logic error.
+_BUILD_MARKER = "2026-08-11-rate-fallback-mk1"
+log.info("BUILD_MARKER=%s", _BUILD_MARKER)
+
+
 @app.get("/")
 def root():
-    return {"status": "ok", "version": "0.1.0"}
+    return {"status": "ok", "version": "0.1.0", "build": _BUILD_MARKER}
 
 
 @app.get("/players/search")
