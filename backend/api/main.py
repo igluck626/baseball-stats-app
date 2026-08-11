@@ -6124,11 +6124,19 @@ _SEASON_RATE_B = {
 _SEASON_RATE_C = {
     "OPS_PLUS": ("bat", '"OPS_plus"', "OPS+"),
     "ERA_PLUS": ("pit", '"ERA_plus"', "ERA+"),
-    "WOBA":     ("bat", '"wOBA"',     "wOBA"),
     "FIP":      ("pit", '"FIP"',      "FIP"),
 }
+# Recognized but NOT serveable -> DECLINE honestly (never a silent empty, never a wrong
+# number). wOBA's stored column is ~1.3x inflated (Bonds 2004: 0.846 vs the real ~0.537,
+# and every player is off by the same factor), and recomputing it needs year-specific
+# linear weights this database doesn't store — so we refuse rather than emit garbage.
+_SEASON_RATE_DECLINE = {
+    "WOBA": ("wOBA", "wOBA needs year-specific linear weights this database doesn't "
+                     "store, and the stored values are unreliable, so I can't give a "
+                     "trustworthy number."),
+}
 # Every rate token, for routing. A rate never sums, so it is never in _SEASON_COL.
-_SEASON_RATES = set(_SEASON_RATE_B) | set(_SEASON_RATE_C)
+_SEASON_RATES = set(_SEASON_RATE_B) | set(_SEASON_RATE_C) | set(_SEASON_RATE_DECLINE)
 
 # ---- RATE LEADERBOARD support (Gap 2): direction, qualifier floors, era gates. ----
 # DIRECTION is a PROPERTY of the stat, not a list to maintain per board: for these,
@@ -6587,6 +6595,17 @@ def _run_season_rate(player, role, canon, season, season_start, season_end, gt):
     if len({c["mlbam_id"] for c in cands}) > 1:
         return {"resolved": False, "ambiguous": True, "query": player, "candidates": cands[:25]}
     resolved = cands[0]; pid = resolved["mlbam_id"]; name = resolved["name"]
+    # RECOGNIZED-BUT-UNSERVEABLE (wOBA): decline honestly with the reason rather than
+    # serve the unreliable stored column. Never a silent empty.
+    if canon in _SEASON_RATE_DECLINE:
+        _lbl, _reason = _SEASON_RATE_DECLINE[canon]
+        return {"resolved": True, "is_rate": True, "declined": True,
+                "source": "season_stats", "stat_value": None,
+                "player": {"query": player, "name": name, "mlbam_id": pid, "role": role},
+                "filters": {"event": canon, "season": season, "season_start": season_start,
+                            "season_end": season_end, "game_type": gt},
+                "count": None, "game_coverage": {"complete": True}, "count_data": None,
+                "reason": _reason, "answer": _reason}
     table = "pitcher_seasons" if role == "pit" else "player_seasons"
     where = ["player_id = :pid"]; p: dict = {"pid": int(pid)}
     if season is not None:
@@ -14661,22 +14680,45 @@ def ask(request: Request,
                 if not kw.get("player"):
                     base["out_of_scope"] = True; base["reason"] = "No player identified."
                     base["answer"] = base["reason"]; return _finish()
-                # (a) A PLAIN regular-season rate (no situational filter) comes from
-                # the COMPLETE season tables — exact for every era 1871+ and the
-                # current season, not the 1910-floored, ~90%-coverage plays store.
-                # ANY split (vs LHP, RISP, count, base state, month, opponent,
-                # home/away) or postseason/all-star still needs the play-by-play.
-                _situ = any(kw.get(k) is not None for k in (
-                    "balls", "strikes", "outs", "inning", "base_state", "pitcher_hand",
-                    "batter_side", "home_away", "month", "opponent_codes"))
-                _pa = (kw.get("game_type") or "").strip().upper() in ("P", "A")
-                result = None
-                if not _situ and not _pa:
-                    result = _run_plain_rates(
-                        kw["player"], kw.get("role"), kw.get("season"),
-                        kw.get("season_start"), kw.get("season_end"), kw.get("game_type"))
-                if result is None:
-                    result = _run_rates(**kw)
+                # query_rates serves AVG/OBP/SLG/OPS. If the question names ANOTHER
+                # season-rate we compute elsewhere (BABIP/ISO/BB%/K%, single-season
+                # OPS+/ERA+/FIP, or wOBA which declines), the model still routes it here
+                # — so hand it to the season-rate runner instead of returning the
+                # four-stat card with the asked stat MISSING (the old silent empty:
+                # neither a number nor an explanation). Plain only; a SITUATIONAL split
+                # on such a rate can't come from the season tables, so decline honestly.
+                _asked_rate = _canon_event(tool_input.get("event") or tool_input.get("stat"))
+                if _asked_rate in _SEASON_RATES or _asked_rate in _SEASON_FLOAT:
+                    if any(tool_input.get(k) is not None for k in situ_keys):
+                        base["out_of_scope"] = True
+                        base["reason"] = (
+                            f"I can give {_TOTAL_ONLY_LABEL.get(_asked_rate, _asked_rate)} as a "
+                            "season or career figure, but not broken down by situation — that "
+                            "needs play-by-play data I don't have for it.")
+                        base["answer"] = base["reason"]; return _finish()
+                    _rrole = (_SEASON_RATE_B.get(_asked_rate) or _SEASON_RATE_C.get(_asked_rate)
+                              or (kw.get("role") or "bat",))[0]
+                    result = _run_season_rate(
+                        kw["player"], _rrole, _asked_rate, tool_input.get("season"),
+                        tool_input.get("season_start"), tool_input.get("season_end"),
+                        (tool_input.get("game_type") or "").strip().upper() or None)
+                else:
+                    # (a) A PLAIN regular-season rate (no situational filter) comes from
+                    # the COMPLETE season tables — exact for every era 1871+ and the
+                    # current season, not the 1910-floored, ~90%-coverage plays store.
+                    # ANY split (vs LHP, RISP, count, base state, month, opponent,
+                    # home/away) or postseason/all-star still needs the play-by-play.
+                    _situ = any(kw.get(k) is not None for k in (
+                        "balls", "strikes", "outs", "inning", "base_state", "pitcher_hand",
+                        "batter_side", "home_away", "month", "opponent_codes"))
+                    _pa = (kw.get("game_type") or "").strip().upper() in ("P", "A")
+                    result = None
+                    if not _situ and not _pa:
+                        result = _run_plain_rates(
+                            kw["player"], kw.get("role"), kw.get("season"),
+                            kw.get("season_start"), kw.get("season_end"), kw.get("game_type"))
+                    if result is None:
+                        result = _run_rates(**kw)
             elif tool_name == "query_splits":
                 # Phase 3: opponent_codes (injected by _guard_tool) reaches _run_splits,
                 # scoping every split row to the opponent. rate_leaderboard/leaderboard
