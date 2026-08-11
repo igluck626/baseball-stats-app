@@ -1084,7 +1084,7 @@ app = FastAPI(title="Baseball Stats API", version="0.1.0", lifespan=lifespan)
 # stale one that Railway merely REPORTS as deployed. GET / echoes it; the boot log below
 # records it once at import. If the deployed marker is old, the container is serving old
 # code no matter what the dashboard says — which is a different bug from a logic error.
-_BUILD_MARKER = "2026-08-11-expose-rates-mk3"
+_BUILD_MARKER = "2026-08-11-per9-mk4"
 log.info("BUILD_MARKER=%s", _BUILD_MARKER)
 
 
@@ -13451,6 +13451,12 @@ def _asked_stat(question):
 # decline). Order matters: the more specific "... rate" must win over the bare count noun,
 # and these are checked before falling back to the tool_input's event/stat.
 _QUESTION_RATE = [
+    # PITCHER "/9" rates FIRST — the model mangles "/9" worst of all (drops it, or maps
+    # "BB/9" to the batting BB% or the BB count). A "per 9 / per nine / /9" phrasing is
+    # unambiguous in the question, so it decides. Must precede the "%"/"rate" patterns.
+    (r"\bk\s?/\s?9\b|\bk9\b|\b(?:strikeouts?|k) per (?:9|nine)\b", "K9"),
+    (r"\bbb\s?/\s?9\b|\bbb9\b|\b(?:walks?|bb|base[- ]on[- ]balls) per (?:9|nine)\b", "BB9"),
+    (r"\bhr\s?/\s?9\b|\bhr9\b|\b(?:home runs?|hr) per (?:9|nine)\b", "HR9"),
     (r"\bbabip\b|\bbatting average on balls in play\b|\bballs? in play\b", "BABIP"),
     (r"\bisolated power\b|\biso\b", "ISO"),
     (r"\bwalk rate\b|\bwalk ?%|\bbb ?%|\bbase[- ]on[- ]balls rate\b", "BB_PCT"),
@@ -13461,8 +13467,9 @@ _QUESTION_RATE = [
 
 def _asked_season_rate(question):
     """A season-rate named in the QUESTION that query_rates can't serve itself
-    (BABIP/ISO/BB%/K%/wOBA), or None. Robust to the model dropping or mis-mapping
-    the stat — the runner delegates on this so nothing comes back silently empty."""
+    (K9/BB9/HR9/BABIP/ISO/BB%/K%/wOBA), or None. The model drops these or mis-maps
+    them (esp. the '/9' family), so the QUESTION is authoritative for them — the
+    runner delegates on this so nothing comes back silently empty or wrong."""
     import re
     ql = " " + (question or "").lower() + " "
     for pat, stat in _QUESTION_RATE:
@@ -14727,12 +14734,13 @@ def ask(request: Request,
                 # four-stat card with the asked stat MISSING (the old silent empty:
                 # neither a number nor an explanation). Plain only; a SITUATIONAL split
                 # on such a rate can't come from the season tables, so decline honestly.
-                _asked_rate = _canon_event(tool_input.get("event") or tool_input.get("stat"))
-                # The model passes these unreliably (drops ISO, maps "walk rate" to the
-                # BB count) — so if the tool_input didn't name a season-rate, read it off
-                # the QUESTION. Never a silent empty for a rate the question clearly names.
-                if _asked_rate not in _SEASON_RATES and _asked_rate not in _SEASON_FLOAT:
-                    _asked_rate = _asked_season_rate(q) or _asked_rate
+                # The model passes these unreliably — it DROPS ISO, maps "walk rate" to the
+                # BB count, and mangles the "/9" family (BB/9 -> the batting BB% or a bare
+                # count). So the QUESTION is AUTHORITATIVE for the rates it names; only when
+                # it names none of them do we trust the tool_input's event/stat. Never a
+                # silent empty — and never the wrong rate for a "/9" question.
+                _asked_rate = _asked_season_rate(q) or _canon_event(
+                    tool_input.get("event") or tool_input.get("stat"))
                 if _asked_rate in _SEASON_RATES or _asked_rate in _SEASON_FLOAT:
                     # A play-by-play SPLIT can't be computed from the season tables, so
                     # decline it. NB: season/role/game_type are NOT splits (a season or
