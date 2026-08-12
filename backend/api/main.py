@@ -1084,7 +1084,7 @@ app = FastAPI(title="Baseball Stats API", version="0.1.0", lifespan=lifespan)
 # stale one that Railway merely REPORTS as deployed. GET / echoes it; the boot log below
 # records it once at import. If the deployed marker is old, the container is serving old
 # code no matter what the dashboard says — which is a different bug from a logic error.
-_BUILD_MARKER = "2026-08-11-career-mk8"
+_BUILD_MARKER = "2026-08-11-season-min-mk9"
 log.info("BUILD_MARKER=%s", _BUILD_MARKER)
 
 
@@ -10324,6 +10324,14 @@ _SEASON_MAX_RE = re.compile(
     + r"|\bpersonal\s+best\b"
     + r"|\bmost\b(?:(?!\?).){0,40}?\bever\b(?:(?!\?).){0,25}?\b(?:in\s+a\s+)?(?:season|year)\b",
     re.I)
+# The MIN mirror: 'career low', 'career-low', 'career worst', 'single-season low', 'personal
+# worst', 'worst … season', and 'fewest/lowest/least/smallest … in a season' for a NAMED
+# player. Checked only when _SEASON_MAX_RE did NOT match, so 'high' always wins a tie.
+_SEASON_MIN_RE = re.compile(
+    r"\bcareer[\s-]low\b|\bcareer\s+worst\b|\bpersonal\s+worst\b"
+    + r"|\bworst\s+(?:\w+\s+){0,3}season\b|\bsingle[\s-]season\s+low\b"
+    + r"|\b(?:fewest|lowest|least|smallest)\b(?:(?!\?).){0,40}?\b(?:in\s+a\s+)?(?:season|year)\b",
+    re.I)
 
 # /ask event canon -> data_service.get_leaderboard stat key. Only stats the all_time
 # catalog (_LEADERBOARD_BATTING/PITCHING) can rank; an event not here (TB/XBH/GIDP/…)
@@ -10517,6 +10525,77 @@ def _run_player_season_max(player, event, role):
     res.update(count=val, season=year, highlighted_stat=hl,
                stat_value={"label": hl or label, "value": val, "display": str(val), "role": role},
                leaderboard_title=f"{name}'s single-season high in {label} — {year}",
+               answer=None)
+    res["pitching_line" if role == "pit" else "rates"] = line
+    return res
+
+
+def _run_player_season_min(player, event, role, ascending, sup):
+    """The MIN mirror of _run_player_season_max: a NAMED player's LOW/WORST single QUALIFYING
+    season — 'career low in strikeouts' (his FEWEST qualified season) and 'career worst ERA'
+    (his HIGHEST qualified ERA). `ascending` is the numeric direction the caller derives from
+    the word + the stat's _LOWER_IS_BETTER sense (low/fewest -> ASC; worst -> the stat's bad
+    end); `sup` is the caption word ('low' / 'worst'). Unlike the high/best path a FLOOR is
+    ESSENTIAL — else an injury-shortened season (Kershaw's 30-IP 2024) or a one-inning 0.00
+    ERA wins — so it uses the SAME softer named-player bar as _run_player_season_rate_best
+    (100 IP / 300 PA), stated in the caption. Handles counts and the six leaderboard rates;
+    composites/floats/other rates return None (fall through). Resolved/ambiguous/empty dict."""
+    role = (role or "bat").lower()
+    canon = _canon_event(event)
+    is_rate = canon in _SEASON_LB_RATE
+    is_count = (not is_rate) and canon not in _SEASON_RATES and canon not in _SEASON_FLOAT \
+        and _SEASON_COL.get((role, canon)) is not None
+    if not (is_rate or is_count):
+        return None                                      # composite/float/unsupported -> fall through
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    cands = [c for c in _resolve_retro_id(player, role) if c["mlbam_id"] is not None]
+    if not cands:
+        raise HTTPException(status_code=404, detail=f"No player matching '{player}'")
+    if len({c["mlbam_id"] for c in cands}) > 1:
+        return {"resolved": False, "ambiguous": True, "query": player, "candidates": cands[:25]}
+    resolved = cands[0]; pid = resolved["mlbam_id"]; name = resolved["name"]
+    table = "pitcher_seasons" if role == "pit" else "player_seasons"
+    qual_col = "IP" if role == "pit" else "PA"          # SOFT named floor (see _run_player_season_rate_best)
+    floor = _QUAL_IP_NAMED if role == "pit" else 300
+    order = "ASC" if ascending else "DESC"
+    label = _COMPARE_STAT_LABEL.get(canon or (event or "").upper()) or (event or "").lower()
+    res = {"resolved": True, "source": "season_stats",
+           "player": {"query": player, "name": name, "mlbam_id": pid, "role": role},
+           "game_coverage": {"complete": True}, "count_data": None}
+    if is_rate:
+        _r, rate_sql, digits = _SEASON_LB_RATE[canon]
+        sql = (f'SELECT s.year, ROUND(({rate_sql})::numeric, {digits}) AS v FROM {table} s '
+               f'WHERE s.player_id = :pid AND s."{qual_col}" >= {floor} '
+               f'GROUP BY s.year HAVING ({rate_sql}) IS NOT NULL '
+               f'ORDER BY v {order}, s.year LIMIT 1')
+    else:
+        col = _SEASON_COL[(role, canon)]
+        sql = (f'SELECT s.year, {col} AS v FROM {table} s '
+               f'WHERE s.player_id = :pid AND s."{qual_col}" >= {floor} AND {col} IS NOT NULL '
+               f'ORDER BY v {order}, s.year LIMIT 1')
+    with connection.get_session() as db:
+        row = db.execute(_sa_text(sql), {"pid": int(pid)}).fetchone()
+    if not row or row[1] is None:
+        res.update(count=None,
+                   answer=f"{name} doesn't have a qualifying season {label} on record.")
+        return res
+    year = int(row[0]); v = float(row[1])
+    hl = canon if is_rate else _EVENT_TO_STAT.get(canon)
+    if is_rate:
+        _r, _rs, digits = _SEASON_LB_RATE[canon]
+        disp = f"{{:.{digits}f}}".format(v); val_out = v
+    else:
+        disp = str(int(v)); val_out = int(v)
+    try:
+        line = (_pitcher_season_line(pid, year, None, None) if role == "pit"
+                else _season_rate_line(pid, "bat", year, None, None, None))
+    except Exception:  # noqa: BLE001 — the number stands without the line
+        line = None
+    res.update(count=(None if is_rate else val_out), season=year, highlighted_stat=hl,
+               stat_value={"label": hl or label, "value": val_out, "display": disp, "role": role},
+               leaderboard_title=(f"{name}'s single-season {sup} in {label} — {year} "
+                                  f"(among his qualified seasons)"),
                answer=None)
     res["pitching_line" if role == "pit" else "rates"] = line
     return res
@@ -14046,6 +14125,47 @@ def ask(request: Request,
             base["leaderboard_title"] = _sm.get("leaderboard_title")  # the YEAR caption
             base["game_coverage"]    = _sm.get("game_coverage")
             base["answer"]           = _sm.get("answer")  # None (card) or the empty-case note
+            return _finish()
+
+    # ---- NAMED-PLAYER SEASON-MIN (deterministic, GLOBAL). The MIN counterpart to the block
+    # above: 'career low in strikeouts' -> his FEWEST qualifying season (not the injury-year
+    # fluke), 'career worst ERA' -> his HIGHEST qualifying ERA. 'low/fewest/lowest' is a plain
+    # numeric MIN; 'worst' is the stat's BAD end (ERA/WHIP worst = highest; a count's worst =
+    # fewest). Only when the high/best family did NOT match, so 'high' wins any tie.
+    if (tool_input is not None and tool_input.get("player") and tool_input.get("event")
+            and _SEASON_MIN_RE.search(q) and not _SEASON_MAX_RE.search(q)):
+        _cev = _canon_event(tool_input.get("event"))
+        if re.search(r"\bworst\b", q, re.I):
+            _asc = _cev not in _LOWER_IS_BETTER; _sup = "worst"   # bad end: ERA worst = highest
+        else:
+            _asc = True; _sup = "low"                             # low/fewest = numeric minimum
+        try:
+            _sm = _run_player_season_min(tool_input.get("player"), tool_input.get("event"),
+                                         tool_input.get("role"), _asc, _sup)
+        except HTTPException as exc:
+            base["out_of_scope"] = True
+            base["reason"] = str(exc.detail)
+            base["answer"] = f"Couldn't answer that: {exc.detail}"
+            return _finish()
+        if _sm is not None:
+            base["understood_as"] = tool_input
+            if _sm.get("ambiguous"):
+                base["ambiguous"] = True
+                base["player_resolved"] = {"candidates": _sm.get("candidates", [])}
+                base["answer"] = (f'There are multiple players matching '
+                                  f'"{tool_input.get("player")}" — tap the one you mean.')
+                return _finish()
+            base["source"]           = _sm.get("source")
+            base["player_resolved"]  = _sm.get("player")
+            base["leaders"]          = None   # a CARD, not a board
+            base["count"]            = _sm.get("count")
+            base["rates"]            = _sm.get("rates")
+            base["pitching_line"]    = _sm.get("pitching_line")
+            base["highlighted_stat"] = _sm.get("highlighted_stat")
+            base["stat_value"]       = _sm.get("stat_value")
+            base["leaderboard_title"] = _sm.get("leaderboard_title")  # YEAR + qualified caption
+            base["game_coverage"]    = _sm.get("game_coverage")
+            base["answer"]           = _sm.get("answer")
             return _finish()
 
     # ---- NO-OP FILTER STRIP (deterministic, GLOBAL). Drop a model-volunteered
