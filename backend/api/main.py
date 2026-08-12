@@ -1084,7 +1084,7 @@ app = FastAPI(title="Baseball Stats API", version="0.1.0", lifespan=lifespan)
 # stale one that Railway merely REPORTS as deployed. GET / echoes it; the boot log below
 # records it once at import. If the deployed marker is old, the container is serving old
 # code no matter what the dashboard says — which is a different bug from a logic error.
-_BUILD_MARKER = "2026-08-11-season-min-mk9"
+_BUILD_MARKER = "2026-08-11-season-min-mk10"
 log.info("BUILD_MARKER=%s", _BUILD_MARKER)
 
 
@@ -10543,6 +10543,9 @@ def _run_player_season_min(player, event, role, ascending, sup):
     role = (role or "bat").lower()
     canon = _canon_event(event)
     is_rate = canon in _SEASON_LB_RATE
+    if is_rate:
+        role = _SEASON_LB_RATE[canon][0]                 # a rate's side comes from the STAT (ERA -> pit),
+    #                                                      not the caller (who may omit or misread role)
     is_count = (not is_rate) and canon not in _SEASON_RATES and canon not in _SEASON_FLOAT \
         and _SEASON_COL.get((role, canon)) is not None
     if not (is_rate or is_count):
@@ -14132,15 +14135,16 @@ def ask(request: Request,
     # fluke), 'career worst ERA' -> his HIGHEST qualifying ERA. 'low/fewest/lowest' is a plain
     # numeric MIN; 'worst' is the stat's BAD end (ERA/WHIP worst = highest; a count's worst =
     # fewest). Only when the high/best family did NOT match, so 'high' wins any tie.
-    if (tool_input is not None and tool_input.get("player") and tool_input.get("event")
+    _minev = (tool_input.get("event") or tool_input.get("stat")) if tool_input else None
+    if (tool_input is not None and tool_input.get("player") and _minev
             and _SEASON_MIN_RE.search(q) and not _SEASON_MAX_RE.search(q)):
-        _cev = _canon_event(tool_input.get("event"))
+        _cev = _canon_event(_minev)   # the model emits rates as `stat`, counts as `event`
         if re.search(r"\bworst\b", q, re.I):
             _asc = _cev not in _LOWER_IS_BETTER; _sup = "worst"   # bad end: ERA worst = highest
         else:
             _asc = True; _sup = "low"                             # low/fewest = numeric minimum
         try:
-            _sm = _run_player_season_min(tool_input.get("player"), tool_input.get("event"),
+            _sm = _run_player_season_min(tool_input.get("player"), _minev,
                                          tool_input.get("role"), _asc, _sup)
         except HTTPException as exc:
             base["out_of_scope"] = True
