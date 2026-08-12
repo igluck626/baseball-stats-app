@@ -1084,7 +1084,7 @@ app = FastAPI(title="Baseball Stats API", version="0.1.0", lifespan=lifespan)
 # stale one that Railway merely REPORTS as deployed. GET / echoes it; the boot log below
 # records it once at import. If the deployed marker is old, the container is serving old
 # code no matter what the dashboard says — which is a different bug from a logic error.
-_BUILD_MARKER = "2026-08-11-rate-season-mk7"
+_BUILD_MARKER = "2026-08-11-career-mk8"
 log.info("BUILD_MARKER=%s", _BUILD_MARKER)
 
 
@@ -13621,6 +13621,19 @@ def _ask_fast_path(q):
     """Whole, whitelisted, unambiguous question -> (tool_name, tool_input) IDENTICAL to the
     model's, or None. See the block comment for the safety contract."""
     q0 = re.sub(r"\s{2,}", " ", (q or "")).strip()
+    # 'career' / 'all-time' / 'lifetime' are NO-OPS for the single-player total/rate shape — the
+    # plain figure IS the career figure — so strip them ('career home runs', "X's career ERA",
+    # 'home runs in his career') and let the templates match. This is also a CORRECTNESS fix:
+    # "career ERA"/"career WHIP" otherwise reach the model, which mis-maps them to an ERA+ decline.
+    # KEEP the words (skip the strip) for "career high/best/low/worst" (a season-MAX question, a
+    # different tool -> must still fall through) and for any "most ..." (a leaderboard). 'career'
+    # also stays in _FP_STOP as a backstop: any career phrasing this strip doesn't catch still
+    # falls through rather than matching wrongly.
+    if not re.search(r"\bcareer[- ]?(?:high|best|low|worst)\b|\bmost\b", q0, re.I):
+        q0 = re.sub(r"\s+(?:in|over|across|throughout|for|during)\s+(?:(?:his|her|their)\s+)?career\b",
+                    "", q0, flags=re.I)
+        q0 = re.sub(r"\b(?:career|all[- ]time|lifetime)\s+", "", q0, flags=re.I)
+        q0 = re.sub(r"\s{2,}", " ", q0).strip()
     # ---- A season rate stat (AVG/OBP/SLG/OPS) -> query_rates{player} for a POSITION player
     # (served-answer-gated; see _FP_RATE). Fall through on any clause (against/by/highest/who):
     # the rate word is anchored to the END, so a clause can't reach it, and a stop-word in the
