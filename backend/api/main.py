@@ -1084,7 +1084,7 @@ app = FastAPI(title="Baseball Stats API", version="0.1.0", lifespan=lifespan)
 # stale one that Railway merely REPORTS as deployed. GET / echoes it; the boot log below
 # records it once at import. If the deployed marker is old, the container is serving old
 # code no matter what the dashboard says — which is a different bug from a logic error.
-_BUILD_MARKER = "2026-08-12-batting-rate-season-mk12"
+_BUILD_MARKER = "2026-08-12-hyphen-season-mk13"
 log.info("BUILD_MARKER=%s", _BUILD_MARKER)
 
 
@@ -10338,7 +10338,7 @@ _PER_SEASON_RE = re.compile(
 # board never needs. Reused only when a player is named (else the leaguewide board runs).
 _SEASON_MAX_RE = re.compile(
     _PER_SEASON_RE.pattern
-    + r"|\bcareer[\s-]high\b|\bbest\s+(?:\w+\s+){0,3}season\b|\bsingle[\s-]season\s+high\b"
+    + r"|\bcareer[\s-]high\b|\bbest\s+(?:[\w/-]+\s+){0,3}season\b|\bsingle[\s-]season\s+high\b"
     + r"|\bpersonal\s+best\b"
     + r"|\bmost\b(?:(?!\?).){0,40}?\bever\b(?:(?!\?).){0,25}?\b(?:in\s+a\s+)?(?:season|year)\b",
     re.I)
@@ -10347,7 +10347,7 @@ _SEASON_MAX_RE = re.compile(
 # player. Checked only when _SEASON_MAX_RE did NOT match, so 'high' always wins a tie.
 _SEASON_MIN_RE = re.compile(
     r"\bcareer[\s-]low\b|\bcareer\s+worst\b|\bpersonal\s+worst\b"
-    + r"|\bworst\s+(?:\w+\s+){0,3}season\b|\bsingle[\s-]season\s+low\b"
+    + r"|\bworst\s+(?:[\w/-]+\s+){0,3}season\b|\bsingle[\s-]season\s+low\b"
     + r"|\b(?:fewest|lowest|least|smallest)\b(?:(?!\?).){0,40}?\b(?:in\s+a\s+)?(?:season|year)\b",
     re.I)
 
