@@ -1084,7 +1084,7 @@ app = FastAPI(title="Baseball Stats API", version="0.1.0", lifespan=lifespan)
 # stale one that Railway merely REPORTS as deployed. GET / echoes it; the boot log below
 # records it once at import. If the deployed marker is old, the container is serving old
 # code no matter what the dashboard says — which is a different bug from a logic error.
-_BUILD_MARKER = "2026-08-12-lowend-eventrescue-mk15"
+_BUILD_MARKER = "2026-08-12-whatyear-signal-mk16"
 log.info("BUILD_MARKER=%s", _BUILD_MARKER)
 
 
@@ -14133,7 +14133,9 @@ def ask(request: Request,
     # extreme. SEAM: a plain 'HR by season' carries no extreme word -> the cue gate below fails
     # and it stays a real splits table (handled far below), never a season extreme.
     _by_season = bool(tool_input and tool_input.get("split_by") == "season")
-    if _maxev is None and _by_season:
+    # 'WHAT/WHICH YEAR (did X ...)' also asks for the SEASON of an extreme (see the signal below).
+    _yr_q = bool(re.search(r"\b(?:what|which)\s+(?:year|season)\b", q, re.I))
+    if _maxev is None and (_by_season or _yr_q):
         _maxev = _asked_stat(q)
     # DIRECTION CUE first: 'fewest/lowest/least/smallest/worst' (or a career-low idiom) means
     # the LOW end -> season-MIN below, never season-max. _SEASON_MAX_RE over-matches these via
@@ -14145,12 +14147,15 @@ def ask(request: Request,
     # named player always resolves to HIS OWN season extreme, and the cue picks the end.
     _min_cue = bool(_SEASON_MIN_RE.search(q)
                     or re.search(r"\b(?:fewest|lowest|least|smallest|worst)\b", q, re.I))
-    # EXTREME CUE: an explicit high-end word. Required for the split_by rescue so a plain
-    # 'HR by season' (no cue) stays a splits table while 'what year did X hit the MOST HR' routes.
+    # EXTREME CUE: an explicit high-end word. Required for the split_by / 'what year' rescues so a
+    # plain 'HR by season' (no cue) stays a splits table while 'what year did X hit the MOST HR' routes.
     _max_cue = bool(_SEASON_MAX_RE.search(q)
                     or re.search(r"\b(?:most|best|highest|greatest|career[\s-]high|top)\b", q, re.I))
+    # 'what/which year' (above) is a per-season signal from the QUESTION: the model keeps only
+    # {player, event} for 'what year did X hit the most HR' (Judge's 385 CAREER HR, not his 62 in
+    # 2022), so player+event resolve to his own extreme whatever tool shape the model chose.
     _season_signal = (bool(_SEASON_MAX_RE.search(q)) or bool(tool_input and tool_input.get("per_season"))
-                      or (_by_season and _max_cue))
+                      or ((_by_season or _yr_q) and _max_cue))
     if (tool_input is not None and tool_input.get("player") and _maxev
             and _season_signal and not _min_cue):
         try:
@@ -14192,7 +14197,7 @@ def ask(request: Request,
     # not his most) and the model's per_season flag ('...fewest in a single campaign').
     _minev = _maxev   # same event/stat, including the split_by event-drop rescue above
     _min_season_signal = (bool(_SEASON_MAX_RE.search(q)) or bool(_SEASON_MIN_RE.search(q))
-                          or bool(tool_input and tool_input.get("per_season")) or _by_season)
+                          or bool(tool_input and tool_input.get("per_season")) or _by_season or _yr_q)
     if (tool_input is not None and tool_input.get("player") and _minev
             and _min_cue and _min_season_signal):
         _cev = _canon_event(_minev)   # the model emits rates as `stat`, counts as `event`
