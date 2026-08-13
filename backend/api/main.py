@@ -1084,7 +1084,7 @@ app = FastAPI(title="Baseball Stats API", version="0.1.0", lifespan=lifespan)
 # stale one that Railway merely REPORTS as deployed. GET / echoes it; the boot log below
 # records it once at import. If the deployed marker is old, the container is serving old
 # code no matter what the dashboard says — which is a different bug from a logic error.
-_BUILD_MARKER = "2026-08-12-perseason-namedplayer-mk14"
+_BUILD_MARKER = "2026-08-12-lowend-eventrescue-mk15"
 log.info("BUILD_MARKER=%s", _BUILD_MARKER)
 
 
@@ -12297,6 +12297,14 @@ _ASK_SYSTEM = (
     "the player, and NEVER answer with the leaguewide record — the backend computes his "
     "own single-season maximum. It is ONLY the leaguewide record when NO player is named "
     "('the record for most HR in a season' -> {event:'HR'}, no player).\n"
+    "A NAMED PLAYER'S OWN WORST/LOWEST SEASON is the same, just the low end: 'Kershaw's "
+    "career-WORST ERA', 'Ryan's FEWEST strikeouts in a season', 'his CAREER LOW in HR', "
+    "'his SINGLE-SEASON low' — this is that ONE player's worst individual year, so ALWAYS "
+    "keep the player and the event/stat (e.g. {player:'Clayton Kershaw', stat:'ERA'} or "
+    "{player:'Nolan Ryan', event:'K'}). NEVER drop the player, and NEVER answer with the "
+    "leaguewide fewest/worst board — the backend computes his own single-season minimum. It "
+    "is ONLY the leaguewide fewest/worst board when NO player is named ('fewest walks in a "
+    "qualified season' -> {event:'BB'}, no player).\n"
     "- 'Who has the most career home runs in MLB history?' -> {event:'HR'}\n"
     "- 'Who has the most doubles in MLB history?' -> {event:'2B'}\n"
     "- 'Which pitcher has the most career strikeouts?' -> {event:'K', role:'pit'}\n"
@@ -14118,6 +14126,15 @@ def ask(request: Request,
     # player). Reroute whatever tool it picked. A specific-year filter ('in 2022') and a
     # plain career total carry none of these phrases and are untouched.
     _maxev = (tool_input.get("event") or tool_input.get("stat")) if tool_input else None
+    # (b) EVENT-DROP RESCUE: the model sometimes keeps the player but drops the event, choosing
+    # a per-season SPLIT ('what year did Judge hit the most HR' -> {player, split_by:'season'},
+    # no event). Recover it from the QUESTION (_asked_stat — the _asked_season_rate analog, for
+    # counts AND rates), so a per-season split PLUS an extreme cue resolves to his own season
+    # extreme. SEAM: a plain 'HR by season' carries no extreme word -> the cue gate below fails
+    # and it stays a real splits table (handled far below), never a season extreme.
+    _by_season = bool(tool_input and tool_input.get("split_by") == "season")
+    if _maxev is None and _by_season:
+        _maxev = _asked_stat(q)
     # DIRECTION CUE first: 'fewest/lowest/least/smallest/worst' (or a career-low idiom) means
     # the LOW end -> season-MIN below, never season-max. _SEASON_MAX_RE over-matches these via
     # its 'in a season' sub-pattern ('fewest K in a season' matched MAX -> returned his MOST),
@@ -14128,7 +14145,12 @@ def ask(request: Request,
     # named player always resolves to HIS OWN season extreme, and the cue picks the end.
     _min_cue = bool(_SEASON_MIN_RE.search(q)
                     or re.search(r"\b(?:fewest|lowest|least|smallest|worst)\b", q, re.I))
-    _season_signal = bool(_SEASON_MAX_RE.search(q)) or bool(tool_input and tool_input.get("per_season"))
+    # EXTREME CUE: an explicit high-end word. Required for the split_by rescue so a plain
+    # 'HR by season' (no cue) stays a splits table while 'what year did X hit the MOST HR' routes.
+    _max_cue = bool(_SEASON_MAX_RE.search(q)
+                    or re.search(r"\b(?:most|best|highest|greatest|career[\s-]high|top)\b", q, re.I))
+    _season_signal = (bool(_SEASON_MAX_RE.search(q)) or bool(tool_input and tool_input.get("per_season"))
+                      or (_by_season and _max_cue))
     if (tool_input is not None and tool_input.get("player") and _maxev
             and _season_signal and not _min_cue):
         try:
@@ -14168,9 +14190,9 @@ def ask(request: Request,
     # wins any tie. It fires on a MIN cue plus ANY per-season signal — including the same
     # 'in a season' regex the max block used to steal ('fewest K in a season' -> his fewest,
     # not his most) and the model's per_season flag ('...fewest in a single campaign').
-    _minev = (tool_input.get("event") or tool_input.get("stat")) if tool_input else None
+    _minev = _maxev   # same event/stat, including the split_by event-drop rescue above
     _min_season_signal = (bool(_SEASON_MAX_RE.search(q)) or bool(_SEASON_MIN_RE.search(q))
-                          or bool(tool_input and tool_input.get("per_season")))
+                          or bool(tool_input and tool_input.get("per_season")) or _by_season)
     if (tool_input is not None and tool_input.get("player") and _minev
             and _min_cue and _min_season_signal):
         _cev = _canon_event(_minev)   # the model emits rates as `stat`, counts as `event`
