@@ -22,6 +22,7 @@ import ast
 import copy
 import logging
 import os
+import re
 import sys
 
 logging.disable(logging.WARNING)   # silence the guard's inject telemetry during tests
@@ -268,6 +269,60 @@ for _q, _want in (
 ):
     check(f"[fast-path invariant: rate phrasing {_q!r} -> {_want} highlight from question]",
           _asked_stat(_q), _want)
+
+# ---- OPPONENT fast-path template: seam invariants ---------------------------
+# The opponent template emits the SAME plain {player,event}/{player} the model does and lets the
+# downstream guard resolve the club from the question. Its correctness rests entirely on the SHARED
+# resolver behaving as below — so pin those invariants here (they need no DB, only team_crosswalk).
+_detect_opponent = NS["_detect_opponent"]
+_resolve_opponent_codes = NS["_resolve_opponent_codes"]
+# (1) a nickname resolves; a single-club city resolves; the three multi-club cities are ambiguous.
+check("[opp: nickname 'the Red Sox' -> nick]",
+      _detect_opponent("home runs against the Red Sox"), ("nick", "red sox"))
+check("[opp: nick wins over bare city ('the Chicago Cubs')]",
+      _detect_opponent("home runs against the Chicago Cubs"), ("nick", "cubs"))
+check("[opp: single-club city 'Detroit' -> city_ok]",
+      _detect_opponent("home runs against Detroit"), ("city_ok", "detroit"))
+for _city in ("New York", "Chicago", "Washington"):
+    _r = _detect_opponent(f"home runs against {_city}")
+    check(f"[opp: ambiguous city {_city!r} -> ('city', ...) so the template FALLS THROUGH]",
+          (_r is not None and _r[0] == "city"), True)
+# (2) franchise span — the Dodgers fold Brooklyn (BRO) with both retro (LAN) and modern (LAD) codes.
+check("[opp: Dodgers franchise span folds BRO+LAD+LAN]",
+      {"BRO", "LAD", "LAN"}.issubset(set(_resolve_opponent_codes("dodgers"))), True)
+# (3) 'lefties' is NOT a club -> None -> the base keeps the 'against' clause and the model sets
+# batter_side (never mis-read as an opponent).
+check("[opp: 'against lefties' is not an opponent -> None]",
+      _detect_opponent("home runs against lefties"), None)
+
+# (4) the TAIL-CHECK + strip — the invariant that keeps composed filters out. Mirrors the mk17
+# block in _ask_fast_path exactly: fire only when a resolvable club sits at the very END; a filter
+# after the club ('at home') prevents the strip so the template falls through to the model.
+def _opp_gate(q):
+    """Returns (fires: bool, base_after_strip). Replica of the _ask_fast_path opponent block."""
+    q0 = re.sub(r"\s{2,}", " ", (q or "")).strip()
+    _o = _detect_opponent(q0)
+    if _o is None:
+        return (False, q0)                       # no opponent clause (normal path)
+    if _o[0] not in ("nick", "city_ok"):
+        return (False, q0)                       # ambiguous/unknown -> fall through
+    if not q0.lower().rstrip(" ?").endswith(_o[1].lower()):
+        return (False, q0)                       # club not at the tail -> fall through
+    base = re.sub(r"^(.*)\s+(?:against|versus|vs\.?|facing|off)\s+.*$", r"\1", q0, flags=re.I).strip()
+    return (True, base)
+
+_fires, _base = _opp_gate("How many home runs has Aaron Judge hit against the Red Sox?")
+check("[opp tail-check: pure 'against the Red Sox' FIRES]", _fires, True)
+check("[opp tail-check: strip leaves the bare count shape]",
+      _base, "How many home runs has Aaron Judge hit")
+check("[opp tail-check: 'against the Red Sox at home' does NOT fire (composed filter)]",
+      _opp_gate("How many home runs has Aaron Judge hit against the Red Sox at home?")[0], False)
+check("[opp tail-check: 'against the Red Sox in 2019' does NOT fire (composed filter)]",
+      _opp_gate("What is Aaron Judge's batting average against the Red Sox in 2019?")[0], False)
+check("[opp tail-check: bare New York does NOT fire (ambiguous)]",
+      _opp_gate("How many home runs has Aaron Judge hit against New York?")[0], False)
+check("[opp tail-check: 'as a Yankee' does NOT fire (team-scoped, no 'against')]",
+      _opp_gate("How many home runs has Aaron Judge hit as a Yankee?")[0], False)
 
 # ---- report -----------------------------------------------------------------
 print(f"ran {N} assertions across {len(SCOPED)} scoped + {len(ANSWERABLE)} answerable tools")

@@ -1084,7 +1084,7 @@ app = FastAPI(title="Baseball Stats API", version="0.1.0", lifespan=lifespan)
 # stale one that Railway merely REPORTS as deployed. GET / echoes it; the boot log below
 # records it once at import. If the deployed marker is old, the container is serving old
 # code no matter what the dashboard says — which is a different bug from a logic error.
-_BUILD_MARKER = "2026-08-12-whatyear-signal-mk16"
+_BUILD_MARKER = "2026-08-13-opponent-fastpath-mk17"
 log.info("BUILD_MARKER=%s", _BUILD_MARKER)
 
 
@@ -13742,6 +13742,32 @@ def _ask_fast_path(q):
                     "", q0, flags=re.I)
         q0 = re.sub(r"\b(?:career|all[- ]time|lifetime)\s+", "", q0, flags=re.I)
         q0 = re.sub(r"\s{2,}", " ", q0).strip()
+    # ---- OPPONENT ('... against the <club>') — REUSE the shared resolver, never reimplement it.
+    # Detect a trailing 'against/vs/facing/off <club>' clause; when it names a RESOLVABLE club at
+    # the very END of the question, STRIP it and let the templates below parse the base shape. We
+    # emit the SAME plain tool_input the model does ({player,event} / {player}) — NO opponent field
+    # — and the downstream guard (_guard_tool -> _question_opponent, reading the ORIGINAL question)
+    # injects opponent_codes exactly as it does for the model. Convergence by construction: the
+    # opponent resolution is the identical code path. FALL THROUGH (return None — never decline
+    # here) on anything else:
+    #   - ambiguous city ('against New York'/'Chicago') -> the model+guard emit the AMBIG_CITY
+    #     clarify, byte-identical to today (a nickname like 'the Chicago Cubs' still resolves —
+    #     _detect_opponent lets the nick win over the bare city);
+    #   - a non-club ('against lefties') -> _detect_opponent returns None, so the base keeps the
+    #     'against' clause, the name parse hits the stop-word, and the model sets batter_side;
+    #   - a club NOT at the tail ('against the Red Sox at home', '... in 2019') -> a composed
+    #     filter, rejected by the complete-parse rule.
+    # PITCHER shapes vs an opponent (W/ERA/… vs one club) are deferred below — not a proven-
+    # convergent plays query — so they fall through too.
+    has_opp = False
+    _opp = _detect_opponent(q0)
+    if _opp is not None:
+        if _opp[0] not in ("nick", "city_ok"):
+            return None                                  # ambiguous city / unknown -> model+guard, as today
+        if not q0.lower().rstrip(" ?").endswith(_opp[1].lower()):
+            return None                                  # club not at the tail -> an extra filter follows it
+        q0 = re.sub(r"^(.*)\s+(?:against|versus|vs\.?|facing|off)\s+.*$", r"\1", q0, flags=re.I).strip()
+        has_opp = True
     # ---- A season rate stat (AVG/OBP/SLG/OPS) -> query_rates{player} for a POSITION player
     # (served-answer-gated; see _FP_RATE). Fall through on any clause (against/by/highest/who):
     # the rate word is anchored to the END, so a clause can't reach it, and a stop-word in the
@@ -13753,6 +13779,8 @@ def _ask_fast_path(q):
         season = int(mr.group(3)) if mr.group(3) else None   # ONLY a bare 'in YYYY' after the rate
         if not (_FP_NAME_RE.fullmatch(name) and not any(t.lower() in _FP_STOP for t in name.split())):
             return None                                  # a rate question we could not fully parse
+        if has_opp and season is not None:
+            return None                                  # 'rate against <club> in YYYY' is composed -> model
         if word in _FP_RATE:                             # BATTING rate -> query_rates, position player
             cand = _fp_resolve(name, "bat")
             if cand and (cand.get("position") or "").upper() != "P":
@@ -13765,6 +13793,8 @@ def _ask_fast_path(q):
         # Mirrors the pitcher-count branch: fall through if unresolvable or if the name is also
         # a position player (two-way, e.g. Ohtani — the model's call). role:pit is force-set
         # downstream, and a fixed reading here overrides the model's ERA->ERA+ / dropped-WHIP.
+        if has_opp:
+            return None                                  # 'X's ERA against the <club>' deferred -> model
         stat = _FP_PITCH_RATE[word]
         pit = _fp_resolve(name, "pit")
         bat = _fp_resolve(name, "bat")
@@ -13783,6 +13813,11 @@ def _ask_fast_path(q):
         return None
     name, season = _fp_name_season(mc.group(2).strip())
     if name is None:
+        return None
+    if has_opp and (season is not None or stat in _FP_PITCH_ONLY or stat == "K"):
+        # vs an opponent: allow only a BARE BATTING count ('HR/H/… against the <club>'). A season
+        # is composed; pitcher counts (W/L/SV/ER) and strikeouts vs one club aren't proven-
+        # convergent plays queries -> the model handles those.
         return None
     if stat in _FP_PITCH_ONLY:
         # PITCHER counting decisions (W/L/SV/ER) -> {event, role:pit}, for a PURE pitcher only.
