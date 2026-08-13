@@ -1084,7 +1084,7 @@ app = FastAPI(title="Baseball Stats API", version="0.1.0", lifespan=lifespan)
 # stale one that Railway merely REPORTS as deployed. GET / echoes it; the boot log below
 # records it once at import. If the deployed marker is old, the container is serving old
 # code no matter what the dashboard says — which is a different bug from a logic error.
-_BUILD_MARKER = "2026-08-13-opponent-fastpath-mk17"
+_BUILD_MARKER = "2026-08-13-opponent-servable-events-mk18"
 log.info("BUILD_MARKER=%s", _BUILD_MARKER)
 
 
@@ -13814,10 +13814,13 @@ def _ask_fast_path(q):
     name, season = _fp_name_season(mc.group(2).strip())
     if name is None:
         return None
-    if has_opp and (season is not None or stat in _FP_PITCH_ONLY or stat == "K"):
-        # vs an opponent: allow only a BARE BATTING count ('HR/H/… against the <club>'). A season
-        # is composed; pitcher counts (W/L/SV/ER) and strikeouts vs one club aren't proven-
-        # convergent plays queries -> the model handles those.
+    if has_opp and (season is not None or stat in _TOTAL_ONLY_EVENTS
+                    or stat in _FP_PITCH_ONLY or stat == "K"):
+        # vs an opponent: allow only a BARE, situationally-splittable BATTING count (HR/2B/3B/1B/BB
+        # against the <club>). A season is composed. _TOTAL_ONLY_EVENTS (H/RBI/SB/TB/…) live only in
+        # season-stats and CANNOT be split by opponent — the runner declines them, so the fast path
+        # must NOT fire into that decline (same discipline as the ERA exclusion). Pitcher counts and
+        # strikeouts vs one club aren't proven-convergent plays queries -> the model handles those.
         return None
     if stat in _FP_PITCH_ONLY:
         # PITCHER counting decisions (W/L/SV/ER) -> {event, role:pit}, for a PURE pitcher only.

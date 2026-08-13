@@ -46,7 +46,7 @@ NEEDED = [
     # fast-path normalization invariants (the served-answer-gated /ask templates depend on
     # these to make the model's variant tool_inputs converge to one served answer)
     "_canon_event", "_CANON_EVENT", "_PITCHING_ONLY_EVENTS", "_BATTING_ONLY_FORCE",
-    "_asked_stat", "_RATE_STAT_NOUN", "_STAT_NOUN",
+    "_asked_stat", "_RATE_STAT_NOUN", "_STAT_NOUN", "_TOTAL_ONLY_EVENTS",
 ]
 
 
@@ -323,6 +323,18 @@ check("[opp tail-check: bare New York does NOT fire (ambiguous)]",
       _opp_gate("How many home runs has Aaron Judge hit against New York?")[0], False)
 check("[opp tail-check: 'as a Yankee' does NOT fire (team-scoped, no 'against')]",
       _opp_gate("How many home runs has Aaron Judge hit as a Yankee?")[0], False)
+
+# (5) EVENT gate — the opponent template must fire ONLY on situationally-splittable batting counts.
+# H/RBI/SB/TB live only in season-stats (_TOTAL_ONLY_EVENTS) and CANNOT be split by opponent — the
+# runner declines them, so the template excludes them (never fire into a decline). HR/2B/3B/1B/BB
+# ARE plays events and stay. This pins the exact set the exclusion depends on.
+_TOTAL_ONLY = NS["_TOTAL_ONLY_EVENTS"]
+for _ev in ("H", "RBI", "SB", "TB"):
+    check(f"[opp event-gate: {_ev} is total-only -> template excludes it (falls through)]",
+          _ev in _TOTAL_ONLY, True)
+for _ev in ("HR", "2B", "3B", "1B", "BB"):
+    check(f"[opp event-gate: {_ev} is a plays event -> template keeps it (serves by opponent)]",
+          _ev in _TOTAL_ONLY, False)
 
 # ---- report -----------------------------------------------------------------
 print(f"ran {N} assertions across {len(SCOPED)} scoped + {len(ANSWERABLE)} answerable tools")
