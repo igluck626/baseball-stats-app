@@ -1084,7 +1084,7 @@ app = FastAPI(title="Baseball Stats API", version="0.1.0", lifespan=lifespan)
 # stale one that Railway merely REPORTS as deployed. GET / echoes it; the boot log below
 # records it once at import. If the deployed marker is old, the container is serving old
 # code no matter what the dashboard says — which is a different bug from a logic error.
-_BUILD_MARKER = "2026-08-11-season-min-mk10"
+_BUILD_MARKER = "2026-08-12-caption-labels-mk11"
 log.info("BUILD_MARKER=%s", _BUILD_MARKER)
 
 
@@ -9078,7 +9078,16 @@ _COMPARE_STAT_LABEL = {
     "GIDP": "grounded-into-double-plays", "SF": "sacrifice flies",
     "SH": "sacrifice bunts", "IBB": "intentional walks", "CS": "caught stealing",
     "WP": "wild pitches", "BK": "balks", "CG": "complete games", "SHO": "shutouts",
-    "G": "games", "GS": "games started", "GF": "games finished", "BFP": "batters faced"}
+    "G": "games", "GS": "games started", "GF": "games finished", "BFP": "batters faced",
+    # RATES / composites / floats — without these, a caption falls back to the raw token
+    # ("in era" instead of "in ERA"). Acronyms stay upper-case; spelled stats read as phrases,
+    # matching the counts above. Feeds captions/leaderboard titles/comparison labels only —
+    # never a value or a route — so this is purely cosmetic.
+    "AVG": "batting average", "OBP": "on-base percentage", "SLG": "slugging percentage",
+    "OPS": "OPS", "ERA": "ERA", "WHIP": "WHIP", "K9": "K/9", "BB9": "BB/9", "HR9": "HR/9",
+    "BABIP": "BABIP", "ISO": "ISO", "BB_PCT": "walk rate", "K_PCT": "strikeout rate",
+    "OPS_PLUS": "OPS+", "ERA_PLUS": "ERA+", "WOBA": "wOBA", "FIP": "FIP",
+    "WAR": "WAR", "IP": "innings pitched"}
 
 
 def _run_comparison(params):
