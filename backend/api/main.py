@@ -1084,7 +1084,7 @@ app = FastAPI(title="Baseball Stats API", version="0.1.0", lifespan=lifespan)
 # stale one that Railway merely REPORTS as deployed. GET / echoes it; the boot log below
 # records it once at import. If the deployed marker is old, the container is serving old
 # code no matter what the dashboard says — which is a different bug from a logic error.
-_BUILD_MARKER = "2026-08-12-caption-labels-mk11"
+_BUILD_MARKER = "2026-08-12-batting-rate-season-mk12"
 log.info("BUILD_MARKER=%s", _BUILD_MARKER)
 
 
@@ -6063,6 +6063,15 @@ _CANON_EVENT = {
     "ERA+": "ERA_PLUS", "ERA_PLUS": "ERA_PLUS", "ERAPLUS": "ERA_PLUS", "ADJUSTED_ERA": "ERA_PLUS",
     "WOBA": "WOBA", "WEIGHTED_ON_BASE_AVERAGE": "WOBA",
     "FIP": "FIP", "FIELDING_INDEPENDENT_PITCHING": "FIP",
+    # Batting rates: registered here ONLY so the season-extreme runners can canonicalize
+    # them (they're already in _SEASON_LB_RATE — this was the missing link that made
+    # "best batting average season" return nothing). Deliberately absent from _SEASON_COL/
+    # _SEASON_RATES/_TOTAL_ONLY/_PLAYS_EVENT_CD etc., so every OTHER caller treats them
+    # exactly as it did when this returned None — no count/guard/leaderboard/route shifts.
+    "AVG": "AVG", "BATTING_AVERAGE": "AVG", "BA": "AVG",
+    "OBP": "OBP", "ON-BASE_PERCENTAGE": "OBP", "ON_BASE_PERCENTAGE": "OBP",
+    "SLG": "SLG", "SLUGGING": "SLG", "SLUGGING_PERCENTAGE": "SLG",
+    "OPS": "OPS",
 }
 
 # (role, canonical event) -> season-stats column expression. Combos NOT here
@@ -14108,11 +14117,12 @@ def ask(request: Request,
     # career-span range) nor the leaguewide board (query_leaderboard, ignoring the
     # player). Reroute whatever tool it picked. A specific-year filter ('in 2022') and a
     # plain career total carry none of these phrases and are untouched.
-    if (tool_input is not None and tool_input.get("player") and tool_input.get("event")
+    _maxev = (tool_input.get("event") or tool_input.get("stat")) if tool_input else None
+    if (tool_input is not None and tool_input.get("player") and _maxev
             and _SEASON_MAX_RE.search(q)):
         try:
             _sm = _run_player_season_max(tool_input.get("player"),
-                                         tool_input.get("event"), tool_input.get("role"))
+                                         _maxev, tool_input.get("role"))  # rates arrive as `stat`
         except HTTPException as exc:
             base["out_of_scope"] = True
             base["reason"] = str(exc.detail)
@@ -15012,13 +15022,21 @@ def ask(request: Request,
                         season_start=tool_input.get("season_start"),
                         season_end=tool_input.get("season_end"),
                         limit=tool_input.get("limit") or 10)
+                    timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
+                    # HARDEN: an empty board (no one clears the qualifier for that scope) must
+                    # DECLINE, not return a bare title with no rows — the silent-empty class.
+                    if not result.get("leaders"):
+                        base["out_of_scope"] = True
+                        base["reason"] = ("No player has a qualifying season for that "
+                                          "leaderboard, so there's nothing to rank.")
+                        base["answer"] = base["reason"]
+                        return _finish()
                     base["source"] = result.get("source")
                     base["stat"] = result.get("stat")
                     base["leaders"] = result.get("leaders")
                     base["leaderboard_title"] = result.get("leaderboard_title")
                     base["game_coverage"] = result.get("game_coverage")
                     base["answer"] = None
-                    timing["query"] = round((time.perf_counter() - t0) * 1000, 1)
                     return _finish()
                 if _rstat in _SEASON_LB_RATE and _rstat not in _RATE_STATS:
                     # a situational ERA/WHIP board — the plays store has no earned runs
