@@ -1084,7 +1084,7 @@ app = FastAPI(title="Baseball Stats API", version="0.1.0", lifespan=lifespan)
 # stale one that Railway merely REPORTS as deployed. GET / echoes it; the boot log below
 # records it once at import. If the deployed marker is old, the container is serving old
 # code no matter what the dashboard says — which is a different bug from a logic error.
-_BUILD_MARKER = "2026-08-12-hyphen-season-mk13"
+_BUILD_MARKER = "2026-08-12-perseason-namedplayer-mk14"
 log.info("BUILD_MARKER=%s", _BUILD_MARKER)
 
 
@@ -14118,8 +14118,19 @@ def ask(request: Request,
     # player). Reroute whatever tool it picked. A specific-year filter ('in 2022') and a
     # plain career total carry none of these phrases and are untouched.
     _maxev = (tool_input.get("event") or tool_input.get("stat")) if tool_input else None
+    # DIRECTION CUE first: 'fewest/lowest/least/smallest/worst' (or a career-low idiom) means
+    # the LOW end -> season-MIN below, never season-max. _SEASON_MAX_RE over-matches these via
+    # its 'in a season' sub-pattern ('fewest K in a season' matched MAX -> returned his MOST),
+    # so guard the whole season-max block against a MIN cue. SEASON SIGNAL: the model also
+    # volunteers per_season=True for phrasings the regex misses ('...in a single campaign',
+    # 'club the most round-trippers') -> a per_season leaderboard that IGNORES the named player
+    # (Bonds 73 answering a Thome question). Treat that flag as a per-season signal too, so a
+    # named player always resolves to HIS OWN season extreme, and the cue picks the end.
+    _min_cue = bool(_SEASON_MIN_RE.search(q)
+                    or re.search(r"\b(?:fewest|lowest|least|smallest|worst)\b", q, re.I))
+    _season_signal = bool(_SEASON_MAX_RE.search(q)) or bool(tool_input and tool_input.get("per_season"))
     if (tool_input is not None and tool_input.get("player") and _maxev
-            and _SEASON_MAX_RE.search(q)):
+            and _season_signal and not _min_cue):
         try:
             _sm = _run_player_season_max(tool_input.get("player"),
                                          _maxev, tool_input.get("role"))  # rates arrive as `stat`
@@ -14153,10 +14164,15 @@ def ask(request: Request,
     # above: 'career low in strikeouts' -> his FEWEST qualifying season (not the injury-year
     # fluke), 'career worst ERA' -> his HIGHEST qualifying ERA. 'low/fewest/lowest' is a plain
     # numeric MIN; 'worst' is the stat's BAD end (ERA/WHIP worst = highest; a count's worst =
-    # fewest). Only when the high/best family did NOT match, so 'high' wins any tie.
+    # fewest). Reached only when the season-max block did NOT fire (it returns), so 'high' still
+    # wins any tie. It fires on a MIN cue plus ANY per-season signal — including the same
+    # 'in a season' regex the max block used to steal ('fewest K in a season' -> his fewest,
+    # not his most) and the model's per_season flag ('...fewest in a single campaign').
     _minev = (tool_input.get("event") or tool_input.get("stat")) if tool_input else None
+    _min_season_signal = (bool(_SEASON_MAX_RE.search(q)) or bool(_SEASON_MIN_RE.search(q))
+                          or bool(tool_input and tool_input.get("per_season")))
     if (tool_input is not None and tool_input.get("player") and _minev
-            and _SEASON_MIN_RE.search(q) and not _SEASON_MAX_RE.search(q)):
+            and _min_cue and _min_season_signal):
         _cev = _canon_event(_minev)   # the model emits rates as `stat`, counts as `event`
         if re.search(r"\bworst\b", q, re.I):
             _asc = _cev not in _LOWER_IS_BETTER; _sup = "worst"   # bad end: ERA worst = highest
