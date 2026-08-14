@@ -47,6 +47,9 @@ NEEDED = [
     # these to make the model's variant tool_inputs converge to one served answer)
     "_canon_event", "_CANON_EVENT", "_PITCHING_ONLY_EVENTS", "_BATTING_ONLY_FORCE",
     "_asked_stat", "_RATE_STAT_NOUN", "_STAT_NOUN", "_TOTAL_ONLY_EVENTS",
+    # RBI-vs-runs-scored verb discriminator (the noun is 'run(s)' either way)
+    "_RBI_VERB", "_RBI_BOUND", "_SCORING_VERB", "_RISP_PHRASE",
+    "_asks_rbi_not_runs", "_fix_rbi_verb_event",
 ]
 
 
@@ -335,6 +338,66 @@ for _ev in ("H", "RBI", "SB", "TB"):
 for _ev in ("HR", "2B", "3B", "1B", "BB"):
     check(f"[opp event-gate: {_ev} is a plays event -> template keeps it (serves by opponent)]",
           _ev in _TOTAL_ONLY, False)
+
+# ---- RBI vs RUNS SCORED — the verb decides, not the noun ---------------------
+# Both stats are asked with the noun 'run(s)', so 'his 2000th run' alone is genuinely
+# ambiguous and the model resolved it to R in EVERY milestone phrasing (measured live
+# 2026-08-13), including the count form 'runs ... batted in' which served Aaron's 2174
+# RUNS as his 2297 RBI. The detector fires on the VERB only, so the seam holds by
+# construction: Henderson's 'scored his 2000th run' must stay R.
+_asks_rbi = NS["_asks_rbi_not_runs"]
+_fix_rbi = NS["_fix_rbi_verb_event"]
+
+for _q in ("When did Hank Aaron drive in his 2000th run?",
+           "When did Hank Aaron knock in his 2000th run?",
+           "When did Hank Aaron bat in his 2000th run?",
+           "How many runs has Hank Aaron batted in?",
+           "How many runs did Hank Aaron drive in in 1970?",
+           "How many runs has Aaron Judge driven in?",
+           "How many runs has Hank Aaron knocked in?",
+           "How many runs has Hank Aaron plated?",
+           "How many runs did Aaron knock in during 1971?",
+           # a drive-in verb still wins when the question ALSO scopes to RISP, whose
+           # 'scoring position' must not be read as the verb 'to score'
+           "How many runs has Judge driven in with runners in scoring position?"):
+    check(f"[rbi-verb: FIRES on {_q!r}]", _asks_rbi(_q), True)
+
+# THE SEAM — 'runs SCORED' keeps event R. Includes the trap where a scoring question
+# contains a lineup-position 'batting in ...', which must NOT read as 'batted in'.
+for _q in ("When did Rickey Henderson score his 2000th run?",
+           "When did Rickey Henderson reach his 2000th run?",
+           "How many runs has Rickey Henderson scored?",
+           "How many runs did Rickey Henderson score in 1990?",
+           "How many times has Rickey Henderson scored a run?",
+           "What are Rickey Henderson's career runs scored?",
+           "How many runs has Judge scored batting in the leadoff spot?",
+           "How many runs has Judge scored while batting in the 2 hole?",
+           "How many runs has Gerrit Cole allowed?",
+           "What is Aaron Judge's batting average?",
+           "How many home runs has Aaron Judge hit?",
+           "How many home runs has Gerrit Cole given up?",
+           "How many walks has Aaron Judge drawn?",
+           "When did Barry Bonds hit his 756th home run?"):
+    check(f"[rbi-verb: SILENT on {_q!r}]", _asks_rbi(_q), False)
+
+# The correction itself: only an R is rewritten, and only on a drive-in verb.
+_ti = {"player": "Hank Aaron", "event": "R", "n": 2000}
+check("[rbi-verb: corrects R -> RBI]",
+      (_fix_rbi("When did Hank Aaron drive in his 2000th run?", _ti), _ti["event"]),
+      (True, "RBI"))
+_ti = {"player": "Rickey Henderson", "event": "R", "n": 2000}
+check("[rbi-verb: leaves a scored-run R alone]",
+      (_fix_rbi("When did Rickey Henderson score his 2000th run?", _ti), _ti["event"]),
+      (False, "R"))
+_ti = {"player": "Hank Aaron", "event": "RBI", "n": 2000}
+check("[rbi-verb: no-op on an already-correct RBI]",
+      (_fix_rbi("When did Hank Aaron drive in his 2000th run?", _ti), _ti["event"]),
+      (False, "RBI"))
+_ti = {"player": "Aaron Judge", "event": "HR"}
+check("[rbi-verb: never rewrites a non-R event]",
+      (_fix_rbi("How many home runs has Aaron Judge driven in?", _ti), _ti["event"]),
+      (False, "HR"))
+check("[rbi-verb: tolerates an empty tool_input]", _fix_rbi("anything", None), False)
 
 # ---- report -----------------------------------------------------------------
 print(f"ran {N} assertions across {len(SCOPED)} scoped + {len(ANSWERABLE)} answerable tools")

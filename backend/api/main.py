@@ -1084,7 +1084,7 @@ app = FastAPI(title="Baseball Stats API", version="0.1.0", lifespan=lifespan)
 # stale one that Railway merely REPORTS as deployed. GET / echoes it; the boot log below
 # records it once at import. If the deployed marker is old, the container is serving old
 # code no matter what the dashboard says — which is a different bug from a logic error.
-_BUILD_MARKER = "2026-08-13-opponent-servable-events-mk18"
+_BUILD_MARKER = "2026-08-13-rbi-verb-discriminator-mk19"
 log.info("BUILD_MARKER=%s", _BUILD_MARKER)
 
 
@@ -13362,6 +13362,58 @@ _GUARD_ROUTED = frozenset(("query_situational", "query_rates", "query_splits",
                            "query_comparison", "query_team"))
 
 
+# RBI is 'runs BATTED IN'; R is 'runs SCORED'. BOTH are asked with the noun 'run(s)',
+# so the only discriminator is the VERB — and the model loses it in the MILESTONE form:
+# 'drive in his 2000th run' reads as {event:'R'} because the ordinal+noun dominates
+# ('2000th run'), while the same verb in a COUNT question ('how many runs has he driven
+# in') reads RBI correctly. Measured 2026-08-13: every milestone phrasing (drive/knock/
+# bat in his 2000th run) misreads, plus the count form 'runs ... batted in', which served
+# Aaron's 2174 RUNS as though they were his 2297 RBI — a WRONG ANSWER, not a decline.
+#
+# Deterministic repair, because the model is reliably wrong here rather than variable.
+# Two independent conditions must BOTH hold, which is what keeps the 'runs scored' seam
+# ('Henderson's 2000th run' -> R) intact by construction:
+#   (a) a drive-in verb BOUND TO A RUN (proximity, either word order — the noun may
+#       precede the verb: 'how many runs has Aaron batted in'), and
+#   (b) no scoring verb anywhere in the question.
+# Corrects ONLY an event the model read as 'R'; an already-correct RBI is left alone, and
+# no other event is ever rewritten.
+_RBI_VERB = r"(?:driv(?:e|es|en|ing)|drove|bat(?:s|ted|ting)?|knock(?:s|ed|ing)?)"
+_RBI_BOUND = re.compile(
+    # forward:  'drove in his 2000th run' / 'knocked in a run' / 'drive in 100 runs'
+    rf"{_RBI_VERB}\s+in\b(?:\s+\w+){{0,3}}\s+runs?\b"
+    # backward: 'runs batted in' / 'how many runs has Aaron driven in'
+    rf"|runs?\b(?:\s+\w+){{0,4}}\s+{_RBI_VERB}\s+in\b"
+    # plated:   'plated 100 runs' / 'runs ... plated'
+    rf"|plat(?:e|es|ed|ing)\b(?:\s+\w+){{0,3}}\s+runs?\b"
+    rf"|runs?\b(?:\s+\w+){{0,4}}\s+plat(?:e|es|ed|ing)\b",
+    re.I)
+_SCORING_VERB = re.compile(r"\bscor(?:e|es|ed|ing)\b", re.I)
+# 'runners in SCORING position' is a base-state filter, not the verb 'to score' — strip it
+# before the scoring-verb test, or every RISP-scoped RBI question is missed.
+_RISP_PHRASE = re.compile(r"\bscoring\s+position\b", re.I)
+
+
+def _asks_rbi_not_runs(question):
+    """True when the question's VERB makes RBI the only reading of its 'run(s)'."""
+    q = question or ""
+    if not _RBI_BOUND.search(q):
+        return False
+    return not _SCORING_VERB.search(_RISP_PHRASE.sub(" ", q))
+
+
+def _fix_rbi_verb_event(question, tool_input):
+    """Correct event R -> RBI where the verb says 'driven in'. Mutates tool_input;
+    returns True if it corrected. Runs on BOTH fresh and cached translations, so a
+    translation already poisoned in the cache self-corrects without an eviction."""
+    if not tool_input or tool_input.get("event") != "R":
+        return False
+    if not _asks_rbi_not_runs(question):
+        return False
+    tool_input["event"] = "RBI"
+    return True
+
+
 def _guard_tool(question, tool_name, tool_input):
     """UNIFIED constraint guard (Phase 0 — DEAD CODE, called by nothing yet).
 
@@ -14292,6 +14344,14 @@ def ask(request: Request,
         base["answer"] = _future
         base["understood_as"] = None
         return _finish()
+
+    # ---- RBI vs RUNS SCORED: the verb decides, not the noun ------------------
+    # Ahead of BOTH guard branches, because the misread spans them: the milestone form
+    # ('drive in his 2000th run') is a SCOPED tool and the count form ('runs ... batted
+    # in') is an ANSWERABLE one. Deliberately placed after the cache read, like the
+    # guards below, so a poisoned cached translation is repaired on replay.
+    if tool_input is not None and _fix_rbi_verb_event(q, tool_input):
+        log.warning("ask: corrected event R -> RBI (drive-in verb) for %r", q)
 
     # ---- deterministic constraint validation (LLM proposes, CODE disposes) --
     # Runs for any answerable tool, on BOTH the fresh and cached translation, so
