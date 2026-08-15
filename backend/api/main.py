@@ -1084,7 +1084,7 @@ app = FastAPI(title="Baseball Stats API", version="0.1.0", lifespan=lifespan)
 # stale one that Railway merely REPORTS as deployed. GET / echoes it; the boot log below
 # records it once at import. If the deployed marker is old, the container is serving old
 # code no matter what the dashboard says — which is a different bug from a logic error.
-_BUILD_MARKER = "2026-08-13-rbi-verb-discriminator-mk19"
+_BUILD_MARKER = "2026-08-14-stat-whitelist-widening-mk20"
 log.info("BUILD_MARKER=%s", _BUILD_MARKER)
 
 
@@ -13687,6 +13687,22 @@ _FP_COUNT = {
     "total base": "TB", "total bases": "TB",
     "win": "W", "wins": "W", "loss": "L", "losses": "L",
     "save": "SV", "saves": "SV", "earned run": "ER", "earned runs": "ER",
+    # 2026-08-14 whitelist pass. Every one of these was ALREADY served correctly by the
+    # model (measured live against mk19, each pinned in test_guard_tool.py) — the fast path
+    # was missing only the dictionary entry, so these are pure latency, not correctness.
+    # Role is safe on all of them: XBH force-sets role:bat (_BATTING_ONLY_FORCE) and
+    # IP/CG/SHO force-set role:pit (_PITCHING_ONLY_EVENTS), while R/AB/WAR/HBP are gated by
+    # the branch they land in — the plain batting branch resolves a POSITION PLAYER only, so
+    # a pitcher's runs-allowed or a two-way name falls through to the model as before.
+    "run": "R", "runs": "R",
+    "at-bat": "AB", "at-bats": "AB", "at bat": "AB", "at bats": "AB",
+    "extra-base hit": "XBH", "extra-base hits": "XBH",
+    "extra base hit": "XBH", "extra base hits": "XBH",
+    "war": "WAR", "wins above replacement": "WAR",
+    "hit by pitch": "HBP", "hit by pitches": "HBP",
+    "inning": "IP", "innings": "IP", "inning pitched": "IP", "innings pitched": "IP",
+    "complete game": "CG", "complete games": "CG",
+    "shutout": "SHO", "shutouts": "SHO",
 }
 # Batting-only counting events the guard force-sets to role:bat (_BATTING_ONLY_FORCE): RBI/SB/TB
 # join the plain batting-count branch below. The model emits them WITHOUT a role (uniform in
@@ -13701,7 +13717,10 @@ _FP_COUNT = {
 # pitching-only and its role is force-set to 'pit' downstream (pinned in test_guard_tool.py). And
 # "what is X's winning percentage" (a declining rate) is a DIFFERENT phrasing ("what is …", not
 # "how many … have"), so the count template never matches it — the entire W-decline edge.
-_FP_PITCH_ONLY = {"W", "L", "SV", "ER"}
+# IP/CG/SHO joined W/L/SV/ER in the 2026-08-14 pass: all three are in _PITCHING_ONLY_EVENTS,
+# so role:pit is force-set downstream and the emitted reading converges however the model
+# writes it (SHO was seen both with and without a role — the force-set collapses them).
+_FP_PITCH_ONLY = {"W", "L", "SV", "ER", "IP", "CG", "SHO"}
 _FP_TAIL_VERB = {"have", "has", "hit", "hits", "had", "drawn", "drew", "recorded",
                  "record", "stolen", "scored", "made"}
 # Words never part of a bare player name — their presence means an unparsed clause survived.
@@ -13724,8 +13743,15 @@ _FP_NAME_RE = re.compile(r"[A-Za-z.'\-]+(?: [A-Za-z.'\-]+){0,3}")
 # "by month", "highest", "who has") — which is a DIFFERENT tool — cannot reach that anchor and
 # falls through; a stop-word in the captured name is a second net. Every phrasing here is a whole
 # noun that _asked_stat also recognizes, so the emitted {player} and the highlight always agree.
+# The 2026-08-14 additions (BABIP/ISO/walk rate/strikeout rate) converge for a SECOND, stronger
+# reason than AVG/OBP/SLG/OPS do: query_rates cannot serve them itself, so the runner delegates on
+# _asked_season_rate — which reads the QUESTION, not the tool_input. The model's three variant
+# readings for these ({player} bare, {player,stat:ISO}, {player,event:BB}) therefore all resolve
+# through the same question-derived path to one card. LONGEST ALTERNATIVE FIRST: "isolated power"
+# precedes "iso" so the end-anchor never has to backtrack past it.
 _FP_RATE = ("batting average", "on-base percentage", "on base percentage",
-            "slugging percentage", "average", "slugging", "obp", "slg", "ops")
+            "slugging percentage", "average", "slugging", "obp", "slg", "ops",
+            "isolated power", "babip", "iso", "walk rate", "strikeout rate")
 # PITCHER rate stats -> query_situational{event,role:pit} for a PURE pitcher (the prompt now
 # exposes ERA/WHIP, so this no longer fights an out-of-scope decline). A CORRECTNESS template,
 # like OBP: the model is non-deterministic here — it mis-maps "career ERA" to the ERA+ composite
@@ -13734,7 +13760,16 @@ _FP_RATE = ("batting average", "on-base percentage", "on base percentage",
 # test_guard_tool.py. "ERA+"/"ERA plus" do NOT match — the '+' breaks the end-anchor — so the
 # composite still routes to the model. "earned run average" also falls through (its "average"
 # tail is a batting word), which is fine: the model reads that phrasing reliably.
-_FP_PITCH_RATE = {"era": "ERA", "whip": "WHIP"}
+# The per-nine family joined ERA/WHIP on 2026-08-14. _canon_event folds "K/9"->"K9" (and BB/9,
+# HR/9), so the slash spelling the model emits and the bare one converge. All three are in
+# _PITCHING_ONLY_EVENTS (role force-set) and all three serve a CAREER figure, unlike FIP.
+# FIP IS DELIBERATELY ABSENT and must stay absent: a career FIP DECLINES ("normalized to each
+# season's league and park, so there's no correct way to combine seasons") while a single-season
+# FIP serves. "What is X's FIP?" is the common phrasing, so a template here would be a
+# decline-fire. It could only be added gated on an explicit season. ERA+/OPS+/wOBA stay out too —
+# the '+' cannot reach the end-anchor, and wOBA declines even WITH a season.
+_FP_PITCH_RATE = {"era": "ERA", "whip": "WHIP",
+                  "k/9": "K9", "bb/9": "BB9", "hr/9": "HR9"}
 _FP_RATE_WORDS = _FP_RATE + tuple(_FP_PITCH_RATE)
 _FP_RATE_RE = re.compile(r"^\s*what(?:'s| is| was) (.+?)\s*(?:'s|’s|s')?\s+(" +
                          "|".join(_FP_RATE_WORDS) + r")(?:\s+in\s+((?:18|19|20)\d\d))?\s*\??\s*$",

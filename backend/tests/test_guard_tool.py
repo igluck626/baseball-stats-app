@@ -50,6 +50,10 @@ NEEDED = [
     # RBI-vs-runs-scored verb discriminator (the noun is 'run(s)' either way)
     "_RBI_VERB", "_RBI_BOUND", "_SCORING_VERB", "_RISP_PHRASE",
     "_asks_rbi_not_runs", "_fix_rbi_verb_event",
+    # fast-path stat whitelist (2026-08-14 widening pass)
+    "_FP_COUNT", "_FP_PITCH_ONLY", "_FP_RATE", "_FP_PITCH_RATE", "_FP_RATE_WORDS",
+    "_FP_RATE_RE", "_FP_COUNT_RE", "_fp_name_season", "_FP_NAME_RE", "_FP_STOP",
+    "_FP_TAIL_VERB", "_asked_season_rate", "_QUESTION_RATE",
 ]
 
 
@@ -398,6 +402,112 @@ check("[rbi-verb: never rewrites a non-R event]",
       (_fix_rbi("How many home runs has Aaron Judge driven in?", _ti), _ti["event"]),
       (False, "HR"))
 check("[rbi-verb: tolerates an empty tool_input]", _fix_rbi("anything", None), False)
+
+# ---- fast-path STAT WHITELIST (2026-08-14 widening) --------------------------
+# Each stat here was measured SERVED by the model against mk19 before being added, so the
+# template is pure latency. The blocked half is the mk18 rule restated: a fast-path match
+# must end in an answer, so a stat that DECLINES must never reach a template — and adding
+# neighbours to the whitelist is exactly how a blocked one sneaks in.
+_FPC = NS["_FP_COUNT"]
+_FPPO = NS["_FP_PITCH_ONLY"]
+_FPRR = NS["_FP_RATE_RE"]
+_FPCR = NS["_FP_COUNT_RE"]
+_FPPR = NS["_FP_PITCH_RATE"]
+_FPR = NS["_FP_RATE"]
+_PITCH_FORCE = NS["_PITCHING_ONLY_EVENTS"]
+_BAT_FORCE = NS["_BATTING_ONLY_FORCE"]
+
+for _noun, _ev in (("runs", "R"), ("run", "R"), ("at-bats", "AB"), ("at bats", "AB"),
+                   ("extra-base hits", "XBH"), ("extra base hits", "XBH"),
+                   ("wins above replacement", "WAR"), ("war", "WAR"),
+                   ("hit by pitch", "HBP"), ("innings pitched", "IP"), ("innings", "IP"),
+                   ("complete games", "CG"), ("shutouts", "SHO")):
+    check(f"[fp-stat: count noun {_noun!r} -> {_ev}]", _FPC.get(_noun), _ev)
+
+# The pre-existing nouns must not have shifted underneath the additions.
+for _noun, _ev in (("home runs", "HR"), ("hits", "H"), ("earned runs", "ER"),
+                   ("runs batted in", "RBI"), ("total bases", "TB"), ("walks", "BB")):
+    check(f"[fp-stat: existing noun {_noun!r} still -> {_ev}]", _FPC.get(_noun), _ev)
+
+# ROLE GATING. A stat is only safe to fast-path when its role is force-set downstream or the
+# branch it lands in resolves one side. IP/CG/SHO are pitcher-only; XBH is batter-only.
+for _ev in ("IP", "CG", "SHO", "W", "L", "SV", "ER"):
+    check(f"[fp-stat: {_ev} is pitcher-force + routed to the pitcher branch]",
+          (_ev in _PITCH_FORCE, _ev in _FPPO), (True, True))
+check("[fp-stat: XBH is batter-force]", "XBH" in _BAT_FORCE, True)
+# R/AB/WAR/HBP are NOT force-set — they rely on the plain batting branch resolving a POSITION
+# player, so this pins that they are NOT in the pitcher-branch set (which would emit role:pit).
+for _ev in ("R", "AB", "WAR", "HBP"):
+    check(f"[fp-stat: {_ev} not force-set, so it must NOT be in the pitcher branch]",
+          (_ev in _PITCH_FORCE, _ev in _BAT_FORCE, _ev in _FPPO), (False, False, False))
+
+# RATE FORM — each added rate word must be reachable at the end-anchor.
+for _q, _want in (("What is Wade Boggs's BABIP?", "babip"),
+                  ("What is Babe Ruth's ISO?", "iso"),
+                  ("What is Babe Ruth's isolated power?", "isolated power"),
+                  ("What is Barry Bonds's walk rate?", "walk rate"),
+                  ("What is Reggie Jackson's strikeout rate?", "strikeout rate"),
+                  ("What is Randy Johnson's K/9?", "k/9"),
+                  ("What is Greg Maddux's BB/9?", "bb/9"),
+                  ("What is Nolan Ryan's HR/9?", "hr/9"),
+                  ("What is Aaron Judge's OPS?", "ops")):
+    _m = _FPRR.match(_q)
+    check(f"[fp-stat: rate form reads {_want!r}]", _m and _m.group(2).strip().lower(), _want)
+# 'isolated power' must win over the shorter 'iso' (longest-alternative-first ordering).
+check("[fp-stat: 'isolated power' not truncated to 'iso']",
+      _FPR.index("isolated power") < _FPR.index("iso"), True)
+# The per-nine family routes to the PITCHER branch, not query_rates.
+for _w, _ev in (("k/9", "K9"), ("bb/9", "BB9"), ("hr/9", "HR9"), ("era", "ERA"), ("whip", "WHIP")):
+    check(f"[fp-stat: {_w!r} is a pitcher rate -> {_ev}]", _FPPR.get(_w), _ev)
+# _canon_event folds the slash spelling the model emits onto the same event.
+for _a, _b in (("K/9", "K9"), ("BB/9", "BB9"), ("HR/9", "HR9")):
+    check(f"[fp-stat: _canon_event folds {_a} -> {_b}]", NS["_canon_event"](_a), _b)
+
+# BLOCKED — these DECLINE or go out of scope, so no template may reach them.
+# FIP is the sharp one: a CAREER FIP declines ('normalized to each season's league and park')
+# while a single-season FIP serves, so the common phrasing would be a decline-fire.
+for _w in ("fip", "woba", "ops+", "era+", "winning percentage", "percentage",
+           "plate appearances", "extra bases", "sacrifice flies", "holds", "caught stealing"):
+    check(f"[fp-stat: {_w!r} is NOT a fast-path rate word]",
+          _w in set(NS["_FP_RATE_WORDS"]), False)
+for _noun in ("plate appearances", "extra bases", "sacrifice flies", "holds",
+              "caught stealing", "times", "fip", "woba"):
+    check(f"[fp-stat: {_noun!r} is NOT a fast-path count noun]", _noun in _FPC, False)
+for _q in ("What is Randy Johnson's FIP?", "What was Randy Johnson's FIP in 2001?",
+           "What was Barry Bonds's wOBA in 2004?", "What was Barry Bonds's OPS+ in 2002?",
+           "What is Barry Bonds's OPS plus?", "What was Pedro Martinez's ERA+ in 2000?",
+           "What is Greg Maddux's winning percentage?"):
+    check(f"[fp-stat: BLOCKED rate question does not match the template — {_q[:38]!r}]",
+          _FPRR.match(_q) is None, True)
+for _q in ("How many plate appearances does Barry Bonds have?",
+           "How many extra bases does Hank Aaron have?",
+           "How many sacrifice flies does Hank Aaron have?",
+           "How many holds does Josh Hader have?"):
+    _m = _FPCR.match(_q)
+    check(f"[fp-stat: BLOCKED count question hits no whitelist entry — {_q[:38]!r}]",
+          _m and _FPC.get(_m.group(1).strip().lower()), None)
+
+# RUNS is the special case: addable ONLY because the verb discriminator separates
+# runs-scored from runs-driven-in. Both directions must survive the whitelist entry.
+_m = _FPCR.match("How many runs has Rickey Henderson scored?")
+_nm, _sn = NS["_fp_name_season"](_m.group(2).strip())
+check("[fp-stat: 'runs ... scored' parses to the player, event R]",
+      (_FPC.get(_m.group(1).strip().lower()), _nm), ("R", "Rickey Henderson"))
+_ti = {"player": "Rickey Henderson", "event": "R"}
+check("[fp-stat: and the discriminator leaves that R alone]",
+      (_fix_rbi("How many runs has Rickey Henderson scored?", _ti), _ti["event"]), (False, "R"))
+# 'batted in' never reaches the template at all — 'in' is a stop-word in the name parse — and
+# even if it did, the discriminator corrects R -> RBI before the runner sees it.
+_m = _FPCR.match("How many runs has Hank Aaron batted in?")
+check("[fp-stat: 'runs ... batted in' fails the name parse (stop-word 'in')]",
+      NS["_fp_name_season"](_m.group(2).strip())[0], None)
+_ti = {"player": "Hank Aaron", "event": "R"}
+check("[fp-stat: belt and braces — discriminator still flips that R to RBI]",
+      (_fix_rbi("How many runs has Hank Aaron batted in?", _ti), _ti["event"]), (True, "RBI"))
+# A pitcher's runs-allowed must not reach the batting branch either.
+_m = _FPCR.match("How many runs has Gerrit Cole allowed?")
+check("[fp-stat: 'runs ... allowed' fails the name parse (stop-word 'allowed')]",
+      NS["_fp_name_season"](_m.group(2).strip())[0], None)
 
 # ---- report -----------------------------------------------------------------
 print(f"ran {N} assertions across {len(SCOPED)} scoped + {len(ANSWERABLE)} answerable tools")
