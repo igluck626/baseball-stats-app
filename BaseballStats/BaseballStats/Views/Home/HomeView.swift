@@ -532,28 +532,31 @@ private struct TeamHeroCard: View {
         }
     }
 
+    /// Team header. Carried an 88pt club mark on the left until the imagery
+    /// removal; the toolbar above still shows a 22pt mark beside the same
+    /// name, so a small mark in the chrome with none in the content is the
+    /// hierarchy we keep.
+    ///
+    /// With the mark gone the row has one child, so the HStack, its 16pt
+    /// spacing and the trailing Spacer all did nothing and went. The record is
+    /// promoted from .title2 to .largeTitle: it inherits ~106pt of reclaimed
+    /// width, and with the club's name already stated twice above it, the
+    /// standing is what this block is actually for.
     private var header: some View {
-        HStack(alignment: .center, spacing: 16) {
-            // No shadow: it traced the logo's silhouette when this was an
-            // image with transparency. Under a filled circle it reads as a
-            // grey puck that failed to load.
-            TeamLogoView(team: entry.teamInfo, size: 88)
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(entry.fullName)
-                    .font(.title3.weight(.bold))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.85)
-                Text(recordText)
-                    .font(.title2.weight(.semibold))
-                    .foregroundStyle(.primary)
-                    .monospacedDigit()
-                Text(divisionText)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 0)
+        VStack(alignment: .leading, spacing: 4) {
+            Text(entry.fullName)
+                .font(.title3.weight(.bold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+            Text(recordText)
+                .font(.largeTitle.weight(.bold))
+                .foregroundStyle(.primary)
+                .monospacedDigit()
+            Text(divisionText)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.secondary)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var hasL10OrStreak: Bool {
@@ -907,11 +910,13 @@ private struct CompactGameStripCard: View {
 
     var body: some View {
         VStack(spacing: 4) {
-            HStack(spacing: 3) {
+            // No team mark here: the abbreviation sits immediately beside it,
+            // so the badge was saying the same thing twice in the narrowest
+            // card in the app (110pt). The letters alone read "vs NYY".
+            HStack(spacing: 4) {
                 Text(isHomeGame ? "vs" : "@")
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(.secondary)
-                TeamLogoView(team: opponent.team, size: 24)
                 Text(opponent.team.abbreviation ?? String(opponent.team.name.prefix(3)).uppercased())
                     .font(.caption.weight(.semibold))
                     .lineLimit(1)
@@ -1506,10 +1511,14 @@ private struct FavoritePlayerTile: View {
 
     @Environment(\.colorScheme) private var colorScheme
 
+    // RECLAIMED — but this tile is the one place where deleting the frame is
+    // NOT enough on its own. Unlike the list rows and the shelf card, the tile
+    // is pinned to a fixed 132×156, so dropping the 50pt disc would leave the
+    // space behind as a hole rather than closing it. The frame comes down to
+    // match (see below), which keeps the carousel tight instead of airy.
     var body: some View {
         ZStack(alignment: .topLeading) {
             VStack(spacing: 6) {
-                headshot
                 Text(displayName)
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
@@ -1526,7 +1535,7 @@ private struct FavoritePlayerTile: View {
             }
             .padding(.vertical, 10)
             .padding(.horizontal, 8)
-            .frame(width: 132, height: 156)
+            .frame(width: 132, height: 104)
             // Solid tile + a VERY faint team wash, matching the game-strip
             // tiles — crisp white/dark with just a hint of team color.
             .background(
@@ -1552,37 +1561,22 @@ private struct FavoritePlayerTile: View {
     }
 
     static var placeholder: some View {
+        // Mirrors the live tile: the disc went with the portrait, and the
+        // height tracks it, so the skeleton-to-real swap stays invisible.
         VStack(spacing: 6) {
-            Circle().fill(Color(.systemGray5)).frame(width: 50, height: 50)
             RoundedRectangle(cornerRadius: 4).fill(Color(.systemGray5)).frame(width: 80, height: 12)
             RoundedRectangle(cornerRadius: 4).fill(Color(.systemGray5)).frame(width: 56, height: 10)
             RoundedRectangle(cornerRadius: 4).fill(Color(.systemGray5)).frame(width: 100, height: 10)
         }
         .padding(.vertical, 10)
         .padding(.horizontal, 8)
-        .frame(width: 132, height: 156)
+        .frame(width: 132, height: 104)
         // Solid tile — matches the live tile so the skeleton shape lines
         // up exactly while data is loading.
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(Color(.systemBackground))
         )
-    }
-
-    private var headshot: some View {
-        AsyncImage(url: fav.player.largeHeadshotURL) { phase in
-            switch phase {
-            case .success(let image): image.resizable().scaledToFill()
-            default:
-                Image(systemName: "person.crop.circle.fill")
-                    .resizable().scaledToFit()
-                    .foregroundStyle(.tertiary)
-            }
-        }
-        .frame(width: 50, height: 50)
-        .background(Circle().fill(.ultraThinMaterial))
-        .clipShape(Circle())
-        .overlay(Circle().strokeBorder(.quaternary, lineWidth: 0.5))
     }
 
     private var displayName: String {
@@ -1619,7 +1613,7 @@ private struct AddFavoriteTile: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.primary)
             }
-            .frame(width: 132, height: 156)
+            .frame(width: 132, height: 104)
             // Solid tile — matches the player tiles. The dashed accent
             // stroke on top is the unique signal.
             .background(

@@ -21,6 +21,7 @@ import calendar
 import datetime
 import logging
 import re
+import threading
 import time
 from typing import Optional
 
@@ -57,9 +58,40 @@ _POLITE_DELAY_SECONDS  = 0.3
 _RETENTION_DAYS        = 30
 _SUMMARY_MAX_CHARS     = 600
 
-# Article images were removed 2026-08-15. The raw-feed <item>/<link>/<image>
-# regexes that lived here existed ONLY to recover MLB.com's non-standard
-# per-item <image href>, so they went with the extractor.
+# Match each <item> block, its <link>, and the non-standard <image href>.
+_ITEM_RE  = re.compile(r"<item>(.*?)</item>", re.S)
+_LINK_RE  = re.compile(r"<link>(.*?)</link>", re.S)
+_IMAGE_RE = re.compile(r'<image\b[^>]*\bhref="([^"]+)"')
+
+# ---------------------------------------------------------------------------
+# Article images — IN MEMORY ONLY, never persisted
+# ---------------------------------------------------------------------------
+# Images were removed entirely on 2026-08-15 and restored on 2026-08-16 under a
+# deliberately different posture: the URL is harvested from the feed, held in
+# this process, attached to the response, and never written to Postgres. The
+# `news_articles.image_url` COLUMN still exists and is now neither read nor
+# written by any code path — it is inert and droppable once the old-code deploy
+# window has closed.
+#
+# The map is filled by the 20-minute crawl that already walks all 30 feeds, so
+# it costs no extra request to MLB and no request latency — we simply stop
+# discarding a value the crawl already parses.
+#
+# ⚠️ SINGLE-PROCESS ASSUMPTION. This is per-process state. The Procfile runs one
+# bare `uvicorn main:app` (no --workers) and railway.toml sets no replica count,
+# so today there is exactly one process and the crawl thread lives inside it.
+# If the app is ever scaled to multiple replicas or uvicorn workers, each gets
+# its OWN map: a given article would show an image on one replica and not on
+# another, depending on which process served the request and whether its crawl
+# had run. Fixing that means either a shared cache (Redis) or accepting the
+# inconsistency — it does NOT mean going back to the database column.
+_IMAGE_BY_URL: dict[str, str] = {}
+_image_lock = threading.Lock()
+# Team codes with a lazy fill in flight, and the last time each was attempted —
+# so a cold map can't spawn the same fetch repeatedly under concurrent requests.
+_image_fill_inflight: set[str] = set()
+_image_fill_attempted: dict[str, float] = {}
+_IMAGE_FILL_COOLDOWN_SECONDS = 300
 
 
 # ---------------------------------------------------------------------------
@@ -136,11 +168,98 @@ def _published_to_utc(entry) -> Optional[datetime.datetime]:
         return None
 
 
-# `_image_for()` and `_image_map_from_raw()` stood here until 2026-08-15. They
-# read the feed's media:content / media:thumbnail / enclosure chain and MLB.com's
-# per-item <image href> to find an article photograph. Nothing replaces them: the
-# app no longer shows article images, and both news views already render a
-# team-tinted block in their place.
+def _image_for(entry, image_by_link: dict[str, str]) -> Optional[str]:
+    """Image URL via the standard chain (media:content → media:thumbnail →
+    enclosure), then feedparser's <image>, then MLB.com's non-standard
+    item-level <image href> (looked up by link from the raw feed). None when
+    nothing is found — never fabricated."""
+    media = entry.get("media_content") or []
+    for m in media:
+        if m.get("url"):
+            return m["url"]
+    thumbs = entry.get("media_thumbnail") or []
+    for t in thumbs:
+        if t.get("url"):
+            return t["url"]
+    for link in entry.get("links", []):
+        if link.get("rel") == "enclosure" and (link.get("type") or "").startswith("image"):
+            if link.get("href"):
+                return link["href"]
+    img = entry.get("image")
+    if isinstance(img, dict) and img.get("href"):
+        return img["href"]
+    # MLB.com per-item <image href> (feedparser ignores it).
+    return image_by_link.get((entry.get("link") or "").strip())
+
+
+def _image_map_from_raw(raw: str) -> dict[str, str]:
+    """{link -> image href} built from the raw feed XML, for the MLB.com
+    <image href> element feedparser drops."""
+    out: dict[str, str] = {}
+    for block in _ITEM_RE.findall(raw):
+        link_m = _LINK_RE.search(block)
+        img_m  = _IMAGE_RE.search(block)
+        if link_m and img_m:
+            out[link_m.group(1).strip()] = img_m.group(1).strip()
+    return out
+
+
+def _harvest_images(team_code: str) -> dict[str, str]:
+    """Fetch one team's feed and return {article_url -> image_url}. Used by both
+    the crawl and the lazy fill. Raises on HTTP / parse failure."""
+    entries, image_by_link = _fetch_feed(team_code)
+    found: dict[str, str] = {}
+    for entry in entries:
+        url = (entry.get("link") or "").strip()
+        if not url:
+            continue
+        img = _image_for(entry, image_by_link)
+        if img:
+            found[url] = img
+    return found
+
+
+def _fill_images_worker(codes: list[str]) -> None:
+    """Walk `codes` sequentially — one thread, `_POLITE_DELAY_SECONDS` apart, so
+    a cold map can never turn into 30 simultaneous requests at MLB."""
+    for code in codes:
+        try:
+            found = _harvest_images(code)
+            with _image_lock:
+                _IMAGE_BY_URL.update(found)
+            log.info("news: lazy image fill %s -> %d", code, len(found))
+        except Exception as exc:   # noqa: BLE001 — cosmetic data, never raise
+            log.warning("news: lazy image fill failed for %s: %s", code, exc)
+        finally:
+            with _image_lock:
+                _image_fill_inflight.discard(code)
+        time.sleep(_POLITE_DELAY_SECONDS)
+
+
+def _ensure_images(team_codes) -> None:
+    """Kick a background fill for any of `team_codes` whose images we don't have.
+
+    Covers the cold-start window: the map lives in memory, so after a deploy it
+    is empty until the next 20-minute crawl. Rather than serve twenty minutes of
+    image-less news, the first request for a team warms that team's feed. The
+    cooldown stops a team whose feed genuinely carries no images from being
+    re-fetched on every request.
+    """
+    now = time.monotonic()
+    todo: list[str] = []
+    with _image_lock:
+        for code in team_codes:
+            if code not in _TEAM_SLUGS or code in _image_fill_inflight:
+                continue
+            last = _image_fill_attempted.get(code)
+            if last is not None and (now - last) < _IMAGE_FILL_COOLDOWN_SECONDS:
+                continue
+            _image_fill_attempted[code] = now
+            _image_fill_inflight.add(code)
+            todo.append(code)
+    if todo:
+        threading.Thread(target=_fill_images_worker, args=(todo,),
+                         daemon=True, name="news-image-fill").start()
 
 
 # ---------------------------------------------------------------------------
@@ -165,22 +284,20 @@ _UPSERT_SQL = text("""
 """)
 
 
-def _fetch_feed(team_code: str) -> list:
-    """Fetch + parse one team's feed. Returns the feedparser entries. Raises on
-    HTTP / parse failure so the caller can record the feed as failed.
-
-    Returned a `(entries, image_map)` tuple until 2026-08-15; the second element
-    existed only to carry article image URLs.
-    """
+def _fetch_feed(team_code: str) -> tuple[list, dict[str, str]]:
+    """Fetch + parse one team's feed. Returns (feedparser entries, image map).
+    Raises on HTTP / parse failure so the caller can record the feed as
+    failed."""
     url = _FEED_URL.format(slug=_TEAM_SLUGS[team_code])
     resp = requests.get(
         url, timeout=_FETCH_TIMEOUT_SECONDS, headers={"User-Agent": _USER_AGENT}
     )
     resp.raise_for_status()
-    parsed = feedparser.parse(resp.text.encode("utf-8"))
+    raw = resp.text
+    parsed = feedparser.parse(raw.encode("utf-8"))
     if parsed.bozo and not parsed.entries:
         raise ValueError(f"feed did not parse: {parsed.get('bozo_exception')}")
-    return parsed.entries
+    return parsed.entries, _image_map_from_raw(raw)
 
 
 def refresh_news() -> dict:
@@ -195,9 +312,14 @@ def refresh_news() -> dict:
     total_inserted = 0
     total_updated = 0
 
+    # Article images for THIS walk. Built alongside the upserts and swapped in
+    # at the end, which keeps the map bounded to what the feeds currently list
+    # instead of growing forever as articles come and go.
+    fresh_images: dict[str, str] = {}
+
     for team_code in _TEAM_SLUGS:
         try:
-            entries = _fetch_feed(team_code)
+            entries, image_by_link = _fetch_feed(team_code)
         except Exception as exc:   # network / HTTP / parse — record + continue
             log.warning("news: feed failed for %s: %s", team_code, exc)
             failed.append({"team": team_code, "error": str(exc)})
@@ -212,6 +334,10 @@ def refresh_news() -> dict:
                 title = (entry.get("title") or "").strip()
                 if not url or not title:
                     continue   # url is the dedupe key; title is required
+                # In-memory only — deliberately NOT part of the upsert below.
+                img = _image_for(entry, image_by_link)
+                if img:
+                    fresh_images[url] = img
                 row = db.execute(_UPSERT_SQL, {
                     "source":       _SOURCE,
                     "source_name":  _SOURCE_NAME,
@@ -247,6 +373,20 @@ def refresh_news() -> dict:
     except Exception as exc:
         log.warning("news: retention prune failed: %s", exc)
 
+    # Swap the image map in. On a clean walk this REPLACES the previous one, so
+    # entries for articles that have dropped out of every feed go with it. If
+    # any feed failed we merge instead, rather than blank that team's images on
+    # the strength of one bad fetch.
+    with _image_lock:
+        if failed:
+            _IMAGE_BY_URL.update(fresh_images)
+        else:
+            _IMAGE_BY_URL.clear()
+            _IMAGE_BY_URL.update(fresh_images)
+        _image_fill_attempted.clear()   # a full walk supersedes any lazy fill
+        held = len(_IMAGE_BY_URL)
+    log.info("news: image map now holds %d url(s), in memory only", held)
+
     return {
         "status":         "ok",
         "teams":          teams,
@@ -281,7 +421,12 @@ def get_news(team: Optional[str] = None, limit: int = 20) -> list[dict]:
     with connection.get_session() as db:
         rows = db.execute(text(sql), params).mappings().all()
 
-    return [
+    # Attach the image from memory. `.get` means an article the feed no longer
+    # lists simply has none — which is the intended behaviour, not a failure.
+    with _image_lock:
+        images = {r["url"]: _IMAGE_BY_URL.get(r["url"]) for r in rows}
+
+    out = [
         {
             "id":           r["id"],
             "source_name":  r["source_name"],
@@ -289,7 +434,18 @@ def get_news(team: Optional[str] = None, limit: int = 20) -> list[dict]:
             "title":        r["title"],
             "summary":      r["summary"],
             "url":          r["url"],
+            "image_url":    images.get(r["url"]),
             "published_at": r["published_at"].isoformat() if r["published_at"] else None,
         }
         for r in rows
     ]
+
+    # Cold-map warm-up. Only for teams that returned rows with no image at all —
+    # a warm map costs nothing here, and the fill is cooldown-guarded and runs
+    # on one sequential background thread.
+    missing = {row["team_code"] for row in out
+               if row["image_url"] is None and row["team_code"]}
+    if missing:
+        _ensure_images(missing)
+
+    return out

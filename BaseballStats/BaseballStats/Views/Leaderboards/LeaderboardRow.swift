@@ -48,7 +48,6 @@ struct LeaderboardRow: View {
     var body: some View {
         HStack(spacing: 10) {
             rankCell
-            headshot
 
             // Name + team stack flexes to fill the leftover row width.
             // The name's .frame(maxWidth: .infinity) is load-bearing —
@@ -105,29 +104,19 @@ struct LeaderboardRow: View {
             .font(.callout.weight(.semibold))
             .monospacedDigit()
             .foregroundStyle(.secondary)
-            // Fixed width keeps the headshot column aligned across
-            // single/double-digit ranks. Tightened from 24→22pt to
-            // give the name/team stack a few more points of slack.
+            // Fixed width keeps the NAME column aligned across single/
+            // double-digit ranks — it kept the headshot column aligned before
+            // that, which is where the 22pt came from.
             .frame(width: 22, alignment: .trailing)
     }
 
-    /// Plain portrait-rounded-rect headshot — no circular clip, no gray
-    /// material backdrop. Matches the player profile header card's
-    /// styling. MLB headshots ship as well-composed head-and-shoulders
-    /// portraits with their own backdrop; forcing them into a circle
-    /// over a frosted material was double-framing the image.
-    private var headshot: some View {
-        AsyncImage(url: entry.player.largeHeadshotURL) { image in
-            image
-                .resizable()
-                .scaledToFill()
-        } placeholder: {
-            RoundedRectangle(cornerRadius: 6)
-                .fill(Color(.secondarySystemFill))
-        }
-        .frame(width: 50, height: 60)
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-    }
+    // A 50×60 portrait sat between the rank and the name until the imagery
+    // removal. RECLAIMED, not filled: it was the tallest thing in the row, so
+    // dropping it takes the row from ~72pt to ~56pt — five rows now occupy
+    // what four did, and the name gets the width back (long ones no longer
+    // shrink). An initials monogram was the alternative; it would have kept
+    // the 72pt rhythm while repeating information the name beside it already
+    // carries, so the density won.
 
     /// Compact HOF capsule, identical to the one in
     /// PlayerSearchResultRow so the indicator reads the same on every

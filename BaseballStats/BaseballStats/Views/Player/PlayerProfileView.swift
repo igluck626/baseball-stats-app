@@ -365,29 +365,18 @@ struct PlayerProfileView: View {
 
     // MARK: - Header
 
-    /// Card-style header — headshot on the left, identity + bio on
-    /// the right. Sits in the same 16pt page padding as the cards
-    /// below so the left/right edges align. HStack alignment is
-    /// `.top` so the photo anchors to the upper-left of the card and
-    /// the bio rows flow down beside it (the right column ends up
-    /// taller than the photo).
+    /// Card-style header — identity + bio, full width. Sits in the same 16pt
+    /// page padding as the cards below so the left/right edges align.
+    ///
+    /// A 90×110 portrait occupied a left column until the imagery removal.
+    /// The space is RECLAIMED rather than filled: it returns ~106pt (the frame
+    /// plus its 16pt gutter) to the identity column, roughly 42% more width on
+    /// a 393pt screen, which is what stops the name shrinking through
+    /// `.minimumScaleFactor` on the long ones ("Vladimir Guerrero Jr."). Card
+    /// height is unchanged — it was always driven by the bio rows, which ran
+    /// taller than the photo did. With one child left, the enclosing HStack
+    /// and its 16pt gutter went too.
     private var header: some View {
-        HStack(alignment: .top, spacing: 16) {
-            // Rounded portrait rect (90×110) — MLB headshots ship with
-            // a built-in grey background, so scaledToFill on a portrait
-            // rect matches the source aspect ratio: face and hat fill
-            // the frame with no grey backdrop visible.
-            AsyncImage(url: player.largeHeadshotURL) { image in
-                image
-                    .resizable()
-                    .scaledToFill()
-            } placeholder: {
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color(.secondarySystemFill))
-            }
-            .frame(width: 90, height: 110)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-
             VStack(alignment: .leading, spacing: 4) {
                 Text(player.name)
                     .font(.title2.weight(.bold))
@@ -474,7 +463,6 @@ struct PlayerProfileView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-        }
         .padding(16)
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
         .padding(.horizontal, 16)

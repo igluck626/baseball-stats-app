@@ -511,9 +511,14 @@ private struct HeatPlayerCard: View {
 private struct BrowseCard: View {
     let player: PlayerSearchResult
 
+    // RECLAIMED, and the card shrinks with it — the width is pinned at 116pt
+    // but the height was only ever the sum of its parts, so losing the 64pt
+    // disc takes the card from ~136pt to ~64pt. The shelf becomes a row of
+    // name chips rather than a row of portraits. `placeholder` below mirrors
+    // this exactly; the two must stay in step or the skeleton-to-real swap
+    // stops being invisible.
     var body: some View {
         VStack(spacing: 8) {
-            headshot
             Text(player.name)
                 .font(.subheadline.weight(.semibold))
                 .lineLimit(1)
@@ -540,9 +545,6 @@ private struct BrowseCard: View {
     /// flight; the layout matches a real card so the swap is silent.
     static var placeholder: some View {
         VStack(spacing: 8) {
-            Circle()
-                .fill(Color(.systemGray5))
-                .frame(width: 64, height: 64)
             RoundedRectangle(cornerRadius: 4, style: .continuous)
                 .fill(Color(.systemGray5))
                 .frame(width: 80, height: 12)
@@ -558,31 +560,6 @@ private struct BrowseCard: View {
                 .fill(.ultraThinMaterial)
         )
         .shadow(color: .black.opacity(0.06), radius: 8, y: 3)
-    }
-
-    private var headshot: some View {
-        AsyncImage(url: player.largeHeadshotURL) { phase in
-            switch phase {
-            case .success(let image):
-                image
-                    .resizable()
-                    .scaledToFill()
-            case .empty, .failure:
-                Image(systemName: "person.crop.circle.fill")
-                    .resizable()
-                    .scaledToFit()
-                    .foregroundStyle(.tertiary)
-            @unknown default:
-                Image(systemName: "person.crop.circle.fill")
-                    .resizable()
-                    .scaledToFit()
-                    .foregroundStyle(.tertiary)
-            }
-        }
-        .frame(width: 64, height: 64)
-        .background(Circle().fill(.ultraThinMaterial))
-        .clipShape(Circle())
-        .overlay(Circle().strokeBorder(.quaternary, lineWidth: 0.5))
     }
 
     /// "OF · NYY" / "RF" / "Team" — same precedence the row uses

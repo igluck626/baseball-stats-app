@@ -13,9 +13,12 @@ struct PlayerSearchResultRow: View {
     let player: PlayerSearchResult
 
     var body: some View {
+        // RECLAIMED. This is the same shape as LeaderboardRow — a full-width
+        // list row whose height was set by the 60pt portrait — so it gets the
+        // same answer: drop the frame, the row shortens, the name takes the
+        // width. Keeping the two list surfaces consistent matters more than
+        // either choice in isolation.
         HStack(spacing: 14) {
-            headshot
-
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(player.name)
@@ -56,33 +59,10 @@ struct PlayerSearchResultRow: View {
 
     // MARK: - Subviews
 
-    private var headshot: some View {
-        AsyncImage(url: player.largeHeadshotURL) { phase in
-            switch phase {
-            case .success(let image):
-                image
-                    .resizable()
-                    .scaledToFill()
-            case .empty, .failure:
-                placeholderSilhouette
-            @unknown default:
-                placeholderSilhouette
-            }
-        }
-        .frame(width: 60, height: 60)
-        .background(Circle().fill(.ultraThinMaterial))
-        .clipShape(Circle())
-        .overlay(
-            Circle().strokeBorder(.quaternary, lineWidth: 0.5)
-        )
-    }
-
-    private var placeholderSilhouette: some View {
-        Image(systemName: "person.crop.circle.fill")
-            .resizable()
-            .scaledToFit()
-            .foregroundStyle(.tertiary)
-    }
+    // The 60pt portrait and its `person.crop.circle.fill` stand-in are gone.
+    // The SF Symbol was the worst of the options: a generic grey person
+    // repeated down a result list reads as an avatar that failed to load,
+    // where nothing at all reads as a list of names.
 
     private var hofBadge: some View {
         Text("HOF")
