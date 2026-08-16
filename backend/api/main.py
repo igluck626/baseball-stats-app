@@ -877,8 +877,8 @@ def _run_nightly_update() -> None:
         # Phase 5c — call-up discovery via BDL's active-roster walk.
         # Any BDL roster player without a matching MLBAM-keyed row in
         # `players` / `pitchers` gets resolved via MLB Stats API name
-        # search and inserted on the spot, so iOS sees a real bio +
-        # headshot the morning after a debut.
+        # search and inserted on the spot, so iOS sees a real bio the
+        # morning after a debut.
         log.info("[nightly] starting discover phase")
         dc: dict = {}
         try:
@@ -1498,19 +1498,6 @@ def player_batter_stats_at_date(
         "doubles":        doubles,
         "triples":        triples,
         "includes_today": includes_today,
-    }
-
-
-@app.get("/players/{player_id}/headshot")
-def player_headshot(player_id: int):
-    """Return MLB Stats API headshot URL plus a generic-silhouette fallback.
-    The primary URL automatically falls back server-side if MLB doesn't have
-    a portrait for this player_id, so the fallback is rarely needed in
-    practice — included for completeness."""
-    return {
-        "player_id":    player_id,
-        "headshot_url": data_service._headshot_url(player_id),
-        "fallback_url": data_service._HEADSHOT_FALLBACK_URL,
     }
 
 
@@ -2458,12 +2445,6 @@ def admin_add_historical_player(
     (e.g. R.A. Dickey, missing 19th-century players, etc.) so the
     awards / stats / search surfaces have a record to point at.
 
-    `headshot_url` is NOT a stored column — every API response derives
-    it from the row's `player_id` via
-    `data_service._headshot_url(...)`, so the headshot lights up
-    automatically once the bio is inserted. The derived URL is
-    returned in the response body for the caller's reference.
-
     After running this, call `/admin/backfill-player-history`
     (career stats) or `/admin/load-award-shares` (just vote rows)
     to populate the player's downstream tables.
@@ -2518,7 +2499,6 @@ def admin_add_historical_player(
         "birth_day":       birth_day,
         "throws":          throws,
         "bats":            bats,
-        "headshot_url":    data_service._headshot_url(mlbam_id),
     }
 
 
@@ -3684,8 +3664,8 @@ def admin_discover_new_players():
     their MLBAM id, fetches the BDL bio, and inserts a new row.
     Same-year stats backfill fires automatically after each insert.
 
-    Useful right after a notable rookie call-up so the new bio +
-    headshot land in iOS without waiting for the next nightly.
+    Useful right after a notable rookie call-up so the new bio lands
+    in iOS without waiting for the next nightly.
     Idempotent — players already in the DB are a no-op (their
     `bdl_id` and current-year team get reconciled along the way).
     Returns the same envelope as `/admin/sync-all-player-teams`,
@@ -17831,7 +17811,7 @@ def news(
 ):
     """Newest-first team news. Filters to one `team_code` when `team` is given,
     else returns league-wide newest. Each item carries id, source_name,
-    team_code, title, summary, url, image_url, published_at."""
+    team_code, title, summary, url, published_at."""
     if not connection.db_available():
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
     return {"articles": news_service.get_news(team=team, limit=limit)}

@@ -65,19 +65,13 @@ _BIO_COLUMNS = [
     "heat_score", "heat_tier", "heat_updated",
 ]
 
-# MLB Stats API headshot URL pattern. Same image space for batters & pitchers.
-_HEADSHOT_BASE = (
-    "https://img.mlbstatic.com/mlb-photos/image/upload/"
-    "d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people"
-)
-_HEADSHOT_FALLBACK_URL = f"{_HEADSHOT_BASE}/generic/headshot/67/current"
-
-
-def _headshot_url(player_id: int) -> str:
-    """MLB Stats API headshot URL for a given mlbam player_id. The URL pattern
-    redirects to a generic silhouette automatically if the player doesn't
-    have a portrait, so this never 404s in practice."""
-    return f"{_HEADSHOT_BASE}/{player_id}/headshot/67/current"
+# Player headshots were removed 2026-08-15. The API no longer emits a
+# `headshot_url` on any response, and the URL builder that pointed at MLB's
+# photo CDN is gone with it. Note the old template also carried MLB's generic
+# silhouette as a Cloudinary default, so a player with no portrait still
+# resolved to an MLB asset — removing the builder removes that too. iOS
+# tolerates the absent key: the field is an optional on every model that
+# decoded it, and each render site falls back to a placeholder.
 
 
 def _hof_summary(db, player_id: int) -> tuple[bool, Optional[int]]:
@@ -89,9 +83,9 @@ def _hof_summary(db, player_id: int) -> tuple[bool, Optional[int]]:
 
 
 def _bio_dict(row, db=None) -> dict:
-    """Pull bio fields off a Player/Pitcher ORM row, plus headshot URL and
-    (when a session is provided) HOF status. The session is required for
-    is_hof / hof_year — without it those fields are False / None.
+    """Pull bio fields off a Player/Pitcher ORM row, plus (when a session is
+    provided) HOF status. The session is required for is_hof / hof_year —
+    without it those fields are False / None.
 
     Callers always have a session in scope (search_player and the four
     get_*_stats functions all build the dict inside the with-block), so HOF
@@ -116,7 +110,6 @@ def _bio_dict(row, db=None) -> dict:
         )
     else:
         out["deathdate"] = None
-    out["headshot_url"] = _headshot_url(row.player_id)
     # `bdl_id` is the FK iOS uses to filter BDL `/stats?game_ids[]=`
     # responses to a single player. The column is stamped per-side
     # (so `_BIO_COLUMNS` skips it — those are bio fields shared
@@ -7886,7 +7879,6 @@ def _heat_entry(db, row, is_pitcher: bool) -> dict:
         # serializer side-agnostic.
         "heat_role":    getattr(row, "heat_role", None),
         "heat_updated": row.heat_updated,
-        "headshot_url": _headshot_url(row.player_id),
     }
 
 

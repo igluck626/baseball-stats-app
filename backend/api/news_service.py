@@ -57,10 +57,9 @@ _POLITE_DELAY_SECONDS  = 0.3
 _RETENTION_DAYS        = 30
 _SUMMARY_MAX_CHARS     = 600
 
-# Match each <item> block, its <link>, and the non-standard <image href>.
-_ITEM_RE  = re.compile(r"<item>(.*?)</item>", re.S)
-_LINK_RE  = re.compile(r"<link>(.*?)</link>", re.S)
-_IMAGE_RE = re.compile(r'<image\b[^>]*\bhref="([^"]+)"')
+# Article images were removed 2026-08-15. The raw-feed <item>/<link>/<image>
+# regexes that lived here existed ONLY to recover MLB.com's non-standard
+# per-item <image href>, so they went with the extractor.
 
 
 # ---------------------------------------------------------------------------
@@ -76,6 +75,12 @@ CREATE TABLE IF NOT EXISTS news_articles (
     title        TEXT NOT NULL,
     summary      TEXT,
     url          TEXT NOT NULL,
+    -- RETAINED, NEVER WRITTEN, NEVER READ (since 2026-08-15). Article images
+    -- were removed; the column stays because dropping it would open a window
+    -- during a rolling deploy where the previous revision still INSERTs into
+    -- it. Existing values are nulled by a one-off backfill run AFTER this code
+    -- deploys — running it before would let the old code repopulate them on
+    -- the next poll.
     image_url    TEXT,
     published_at TIMESTAMPTZ,
     fetched_at   TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -131,74 +136,51 @@ def _published_to_utc(entry) -> Optional[datetime.datetime]:
         return None
 
 
-def _image_for(entry, image_by_link: dict[str, str]) -> Optional[str]:
-    """Image URL via the standard chain (media:content → media:thumbnail →
-    enclosure), then feedparser's <image>, then MLB.com's non-standard
-    item-level <image href> (looked up by link from the raw feed). None when
-    nothing is found — never fabricated."""
-    media = entry.get("media_content") or []
-    for m in media:
-        if m.get("url"):
-            return m["url"]
-    thumbs = entry.get("media_thumbnail") or []
-    for t in thumbs:
-        if t.get("url"):
-            return t["url"]
-    for link in entry.get("links", []):
-        if link.get("rel") == "enclosure" and (link.get("type") or "").startswith("image"):
-            if link.get("href"):
-                return link["href"]
-    img = entry.get("image")
-    if isinstance(img, dict) and img.get("href"):
-        return img["href"]
-    # MLB.com per-item <image href> (feedparser ignores it).
-    return image_by_link.get((entry.get("link") or "").strip())
-
-
-def _image_map_from_raw(raw: str) -> dict[str, str]:
-    """{link -> image href} built from the raw feed XML, for the MLB.com
-    <image href> element feedparser drops."""
-    out: dict[str, str] = {}
-    for block in _ITEM_RE.findall(raw):
-        link_m = _LINK_RE.search(block)
-        img_m  = _IMAGE_RE.search(block)
-        if link_m and img_m:
-            out[link_m.group(1).strip()] = img_m.group(1).strip()
-    return out
+# `_image_for()` and `_image_map_from_raw()` stood here until 2026-08-15. They
+# read the feed's media:content / media:thumbnail / enclosure chain and MLB.com's
+# per-item <image href> to find an article photograph. Nothing replaces them: the
+# app no longer shows article images, and both news views already render a
+# team-tinted block in their place.
 
 
 # ---------------------------------------------------------------------------
 # Ingest
 # ---------------------------------------------------------------------------
 
+# `image_url` is deliberately absent from both the column list and the DO UPDATE
+# set. The COLUMN still exists (see _CREATE_TABLE_SQL) — dropping it would open a
+# window during a rolling deploy where the previous revision still writes to a
+# missing column. Omitting it here means new rows get NULL and, crucially, that
+# re-ingesting an existing article no longer refreshes a stored image URL.
 _UPSERT_SQL = text("""
     INSERT INTO news_articles
-        (source, source_name, team_code, title, summary, url, image_url, published_at, fetched_at)
+        (source, source_name, team_code, title, summary, url, published_at, fetched_at)
     VALUES
-        (:source, :source_name, :team_code, :title, :summary, :url, :image_url, :published_at, now())
+        (:source, :source_name, :team_code, :title, :summary, :url, :published_at, now())
     ON CONFLICT (url) DO UPDATE SET
         title      = EXCLUDED.title,
         summary    = EXCLUDED.summary,
-        image_url  = EXCLUDED.image_url,
         fetched_at = now()
     RETURNING (xmax = 0) AS inserted
 """)
 
 
-def _fetch_feed(team_code: str) -> tuple[list, dict[str, str]]:
-    """Fetch + parse one team's feed. Returns (feedparser entries, image map).
-    Raises on HTTP / parse failure so the caller can record the feed as
-    failed."""
+def _fetch_feed(team_code: str) -> list:
+    """Fetch + parse one team's feed. Returns the feedparser entries. Raises on
+    HTTP / parse failure so the caller can record the feed as failed.
+
+    Returned a `(entries, image_map)` tuple until 2026-08-15; the second element
+    existed only to carry article image URLs.
+    """
     url = _FEED_URL.format(slug=_TEAM_SLUGS[team_code])
     resp = requests.get(
         url, timeout=_FETCH_TIMEOUT_SECONDS, headers={"User-Agent": _USER_AGENT}
     )
     resp.raise_for_status()
-    raw = resp.text
-    parsed = feedparser.parse(raw.encode("utf-8"))
+    parsed = feedparser.parse(resp.text.encode("utf-8"))
     if parsed.bozo and not parsed.entries:
         raise ValueError(f"feed did not parse: {parsed.get('bozo_exception')}")
-    return parsed.entries, _image_map_from_raw(raw)
+    return parsed.entries
 
 
 def refresh_news() -> dict:
@@ -215,7 +197,7 @@ def refresh_news() -> dict:
 
     for team_code in _TEAM_SLUGS:
         try:
-            entries, image_by_link = _fetch_feed(team_code)
+            entries = _fetch_feed(team_code)
         except Exception as exc:   # network / HTTP / parse — record + continue
             log.warning("news: feed failed for %s: %s", team_code, exc)
             failed.append({"team": team_code, "error": str(exc)})
@@ -237,7 +219,6 @@ def refresh_news() -> dict:
                     "title":        title,
                     "summary":      _strip_html(entry.get("summary")),
                     "url":          url,
-                    "image_url":    _image_for(entry, image_by_link),
                     "published_at": _published_to_utc(entry),
                 }).first()
                 if row is not None and row.inserted:
@@ -285,7 +266,9 @@ def get_news(team: Optional[str] = None, limit: int = 20) -> list[dict]:
     is clamped to 1…50 by the caller. Returns the public article shape."""
     ensure_news_table()
     sql = (
-        "SELECT id, source_name, team_code, title, summary, url, image_url, published_at "
+        # image_url is intentionally NOT selected — the column survives for
+        # deploy-ordering safety but is never read back out.
+        "SELECT id, source_name, team_code, title, summary, url, published_at "
         "FROM news_articles "
     )
     params: dict = {"limit": limit}
@@ -306,7 +289,6 @@ def get_news(team: Optional[str] = None, limit: int = 20) -> list[dict]:
             "title":        r["title"],
             "summary":      r["summary"],
             "url":          r["url"],
-            "image_url":    r["image_url"],
             "published_at": r["published_at"].isoformat() if r["published_at"] else None,
         }
         for r in rows
