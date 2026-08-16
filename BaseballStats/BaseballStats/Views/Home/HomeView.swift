@@ -534,8 +534,10 @@ private struct TeamHeroCard: View {
 
     private var header: some View {
         HStack(alignment: .center, spacing: 16) {
+            // No shadow: it traced the logo's silhouette when this was an
+            // image with transparency. Under a filled circle it reads as a
+            // grey puck that failed to load.
             TeamLogoView(team: entry.teamInfo, size: 88)
-                .shadow(color: .black.opacity(0.1), radius: 4, y: 2)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(entry.fullName)

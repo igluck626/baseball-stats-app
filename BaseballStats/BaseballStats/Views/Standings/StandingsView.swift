@@ -882,16 +882,11 @@ private struct FrozenIdentityCell: View {
         .frame(height: StandingsLayout.rowHeight)
     }
 
+    /// Team mark. Was the club's logo off MLB's CDN until 2026-08-15; now the
+    /// abbreviation badge. `abbreviation` below already resolves an unknown or
+    /// empty code to an em dash, so the badge is never blank.
     private var teamLogo: some View {
-        AsyncImage(url: teamLogoURL(for: team.team_id)) { phase in
-            if case .success(let image) = phase {
-                image.resizable().scaledToFit()
-            } else {
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(Color(.tertiarySystemFill))
-            }
-        }
-        .frame(width: StandingsLayout.logoSize, height: StandingsLayout.logoSize)
+        TeamBadge(abbreviation: abbreviation, size: StandingsLayout.logoSize)
     }
 
     private var abbreviation: String {

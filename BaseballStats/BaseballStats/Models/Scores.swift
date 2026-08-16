@@ -99,11 +99,8 @@ struct TeamInfo: Codable, Hashable {
     let name: String
     let abbreviation: String?
 
-    /// Direct MLB logo URL — `midfield.mlbstatic.com` keys off the
-    /// Stats API team id, so no Lahman code mapping is needed here.
-    var logoURL: URL? {
-        URL(string: "https://midfield.mlbstatic.com/v1/team/\(id)/spots/120")
-    }
+    // Carried a `logoURL` off `midfield.mlbstatic.com` until 2026-08-15. Its
+    // only consumer was TeamLogoCache, which went at the same time.
 }
 
 struct TeamRecord: Codable, Hashable {

@@ -968,19 +968,12 @@ struct PlayerCompareView: View {
         }
     }
 
+    /// Team mark. Was the club's logo off MLB's CDN until 2026-08-15; now the
+    /// abbreviation badge. A player with no team code yields an em dash rather
+    /// than the old generic baseball glyph.
     private func teamLogo(_ player: ComparePlayer) -> some View {
-        AsyncImage(url: teamLogoURL(for: player.teamCode)) { phase in
-            if case .success(let image) = phase {
-                image.resizable().scaledToFit()
-            } else {
-                Image(systemName: "baseball")
-                    .resizable()
-                    .scaledToFit()
-                    .foregroundStyle(.quaternary)
-                    .padding(3)
-            }
-        }
-        .frame(width: CompareLayout.logoSize, height: CompareLayout.logoSize)
+        let code = player.teamCode.flatMap { $0.isEmpty ? nil : teamAbbreviation(for: $0) }
+        return TeamBadge(abbreviation: code ?? "—", size: CompareLayout.logoSize)
     }
 
     /// Muted, hierarchical close affordance with a generous tap target —

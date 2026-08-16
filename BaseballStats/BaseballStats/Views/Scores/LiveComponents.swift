@@ -58,108 +58,67 @@ struct BaseRunnerView: View {
 
 // MARK: - Team logo
 
-/// In-memory cache of successfully-loaded team logos, keyed by MLB
-/// team id. Lives at the app level so individual `TeamLogoView`
-/// instances can come and go (the Scores tab's 30s auto-refresh
-/// recreates the list views, which previously cancelled in-flight
-/// `AsyncImage` downloads with NSURLErrorCancelled / -999 and never
-/// completed). The cache's own `Task` owns the network call, so a
-/// view tear-down no longer interrupts the download.
+/// A club's identity mark: its abbreviation set in a tinted circle.
 ///
-/// Concurrent requests for the same team coalesce: the first view
-/// to ask kicks off the loader, every subsequent view becomes a
-/// no-op observer of the same `@Published` `images` dict.
-@MainActor
-final class TeamLogoCache: ObservableObject {
-    static let shared = TeamLogoCache()
+/// This is what stands in for the team logo from 2026-08-15 — the app is not
+/// licensed to display MLB's marks, so `TeamLogoCache` (an in-memory image
+/// store with its own download tasks) and every CDN request went with them.
+/// Nothing here touches the network, so there is no placeholder state and no
+/// failure state: the badge is correct the instant it is laid out.
+///
+/// Takes a plain string rather than a `TeamInfo` so the Standings and Compare
+/// screens — which hold a Lahman code, not a resolved team — can render the
+/// same mark. `TeamLogoView` wraps it for the `TeamInfo` callers.
+struct TeamBadge: View {
+    let abbreviation: String
+    var size: CGFloat = 28
 
-    /// Successfully-loaded logo images, keyed by MLB team id.
-    /// `@Published` so views re-render the moment a logo lands.
-    @Published private(set) var images: [Int: Image] = [:]
-    /// Team ids whose load failed. Surfaces the abbreviation
-    /// fallback without retrying the (likely-still-bad) URL on
-    /// every view rebuild.
-    @Published private(set) var failed: Set<Int> = []
+    var body: some View {
+        Circle()
+            .fill(Color(.secondarySystemFill))
+            .frame(width: size, height: size)
+            .overlay(
+                Text(text)
+                    .font(.system(size: max(8, size * 0.32), weight: weight))
+                    .foregroundStyle(label)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    // Keep 3-letter codes off the curve at every size.
+                    .padding(.horizontal, size * 0.08)
+            )
+            .accessibilityLabel(text == "—" ? "Team" : text)
+    }
 
-    /// Active loader tasks per team id. Owned by the cache (not
-    /// the views) so they survive view recreation. Keyed for
-    /// dedupe — if a load is already running, additional `ensure`
-    /// calls are no-ops.
-    private var loaders: [Int: Task<Void, Never>] = [:]
+    /// The two big marks — the 52/56pt tiles and the 88pt home header — are
+    /// the club's identity on the screen, not an annotation, so they take the
+    /// primary label at bold. A large low-contrast disc reads as an image
+    /// that failed to load; a solid one reads as a deliberate mark.
+    ///
+    /// The small marks stay secondary/semibold. At 22pt beside a standings
+    /// row the letters are a quiet identifier next to the name that already
+    /// says the team — promoting them there would make every row shout.
+    private var isLarge: Bool { size >= 52 }
+    private var weight: Font.Weight { isLarge ? .bold : .semibold }
+    private var label: Color { isLarge ? .primary : .secondary }
 
-    private init() {}
-
-    /// Kick off a logo fetch if not already cached or in flight.
-    /// Returns immediately — observers re-render via `images` once
-    /// the load completes.
-    func ensureLoaded(team: TeamInfo) {
-        if images[team.id] != nil { return }
-        if failed.contains(team.id) { return }
-        if loaders[team.id] != nil { return }
-        guard let url = team.logoURL else { return }
-
-        loaders[team.id] = Task { @MainActor [weak self] in
-            defer { self?.loaders[team.id] = nil }
-            do {
-                let (data, _) = try await URLSession.shared.data(from: url)
-                guard let uiImage = UIImage(data: data) else {
-                    self?.failed.insert(team.id)
-                    return
-                }
-                self?.images[team.id] = Image(uiImage: uiImage)
-            } catch {
-                let label = team.abbreviation ?? team.name
-                print("[team-logo] FAILED \(label) (id=\(team.id)) url=\(url) error=\(error)")
-                self?.failed.insert(team.id)
-            }
-        }
+    /// An em dash for an unknown or empty club, so the circle never renders
+    /// blank — a code the abbreviation table doesn't know still yields a mark.
+    private var text: String {
+        let trimmed = abbreviation.trimmingCharacters(in: .whitespaces)
+        return trimmed.isEmpty ? "—" : trimmed.uppercased()
     }
 }
 
-/// Logo cell used across every Scores-tab card. Reads from
-/// `TeamLogoCache.shared` so once a logo lands, every subsequent
-/// instance (across navigation, auto-refresh ticks, etc.) renders
-/// from memory instead of re-fetching. Falls back to a styled
-/// abbreviation circle when the CDN won't serve the team.
+/// Team mark used across the Scores-tab cards and the team sheets. Signature
+/// is unchanged from the logo era on purpose — all sixteen call sites keep
+/// their frames and their layout.
 struct TeamLogoView: View {
     let team: TeamInfo
     var size: CGFloat = 28
-    @ObservedObject private var cache = TeamLogoCache.shared
 
     var body: some View {
-        Group {
-            if let cached = cache.images[team.id] {
-                cached.resizable().scaledToFit()
-            } else if cache.failed.contains(team.id) {
-                fallback
-            } else {
-                placeholder.onAppear { cache.ensureLoaded(team: team) }
-            }
-        }
-        .frame(width: size, height: size)
-    }
-
-    /// In-flight placeholder — a plain muted circle, matching the
-    /// surface tone of the cards while the network round-trip is
-    /// outstanding.
-    private var placeholder: some View {
-        Circle().fill(Color(.secondarySystemFill))
-    }
-
-    /// Permanent fallback when the CDN never returns an image —
-    /// abbreviation centered in the same circle so the user still
-    /// sees a useful team identifier instead of an anonymous dot.
-    private var fallback: some View {
-        let abbr = team.abbreviation ?? String(team.name.prefix(3)).uppercased()
-        return Circle()
-            .fill(Color(.secondarySystemFill))
-            .overlay(
-                Text(abbr)
-                    .font(.system(size: max(8, size * 0.32), weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-            )
+        TeamBadge(abbreviation: team.abbreviation ?? String(team.name.prefix(3)),
+                  size: size)
     }
 }
 

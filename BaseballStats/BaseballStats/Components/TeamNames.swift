@@ -129,15 +129,17 @@ func teamAbbreviation(for code: String) -> String {
     mlbTeamAbbreviation[code] ?? code
 }
 
-/// Lahman team code → MLB Stats API numeric team id. The MLB CDN
-/// (`midfield.mlbstatic.com`) keys logos off this numeric id, so we
-/// invert here the same table the nightly standings refresh uses
-/// on the backend.
+/// Lahman team code → MLB Stats API numeric team id. Inverts the same table
+/// the nightly standings refresh uses on the backend.
+///
+/// This is a table of integers and nothing more. It was introduced to build
+/// logo URLs, but that was never its only job: `mlbTeamId(for:)` below reads
+/// it for schedule lookups and the balldontlie bridge, so it stays after the
+/// imagery removal.
 ///
 /// Modern-rebrand and bbref-style aliases (OAK → 133 Athletics,
 /// ANA → 108 Angels, FLO → 146 Marlins, MON → 120 Nationals) point
-/// at the current franchise's id — the logo CDN doesn't keep
-/// pre-rebrand SKUs, but the modern logo is the right call anyway.
+/// at the current franchise's id.
 private let mlbStatsApiTeamId: [String: Int] = [
     // Lahman canonical codes
     "ARI": 109, "ATL": 144, "BAL": 110, "BOS": 111,
@@ -163,26 +165,18 @@ private let mlbStatsApiTeamId: [String: Int] = [
     "MON": 120,   // Expos → Nationals lineage
 ]
 
-/// Build the MLB Stats API CDN URL for a team's PNG logo at 120px.
-/// Uses `midfield.mlbstatic.com/v1/team/{id}/spots/120` which serves
-/// PNG (1.7 KB), so `AsyncImage` can render it natively — the
-/// alternate `mlbstatic.com/team-logos/{id}.svg` endpoint also
-/// responds 200 but ships SVG, which iOS' AsyncImage doesn't decode.
-///
-/// Returns nil for empty / unmapped codes; callers (the Standings
-/// row's `teamLogo` AsyncImage placeholder) fall back to a tinted
-/// rectangle so the row layout stays solid.
-func teamLogoURL(for code: String?) -> URL? {
-    guard let code, !code.isEmpty,
-          let mlbId = mlbStatsApiTeamId[code.uppercased()] else { return nil }
-    return URL(string: "https://midfield.mlbstatic.com/v1/team/\(mlbId)/spots/120")
-}
+// `teamLogoURL(for:)` stood here until 2026-08-15. It built
+// `midfield.mlbstatic.com/v1/team/{id}/spots/120` — the club's mark on MLB's
+// CDN. Team logos are no longer displayed, so the builder is gone and every
+// former caller renders `TeamBadge` (the club's abbreviation) in its place.
+// After this, the app requests no image from any MLB host.
 
 /// Lahman team code → MLB Stats API numeric team id. Surfaced as a
 /// function rather than re-exposing the dictionary directly so the
 /// case-folding rule stays in one place. Used by the live-stats
 /// loader to call `/schedule?teamId={id}` for "does this team play
-/// today?" lookups without coupling that path to logo URLs.
+/// today?" lookups, and by `lahmanTeamIdToMLBId` for the balldontlie
+/// bridge.
 func mlbTeamId(for code: String?) -> Int? {
     guard let code, !code.isEmpty else { return nil }
     return mlbStatsApiTeamId[code.uppercased()]
