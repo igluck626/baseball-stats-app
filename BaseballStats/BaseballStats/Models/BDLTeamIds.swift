@@ -42,18 +42,17 @@ func mlbTeamId(forBDLId bdlId: Int) -> Int? {
     return lahmanTeamIdToMLBId(lahman)
 }
 
-/// Lahman code → MLB Stats API team id. Re-exports the dict that
-/// `teamLogoURL(for:)` uses internally so callers outside this
-/// file can look up MLB ids without going through the URL builder.
+/// Lahman code → MLB Stats API team id.
+///
+/// Reads `TeamNames.swift`'s id table through `mlbTeamId(for:)`. Until
+/// 2026-08-15 it took a stranger route: it called `teamLogoURL(for:)` and
+/// parsed the numeric id back out of the CDN URL's path, to avoid
+/// duplicating the table. That made a *data* lookup depend on an *image*
+/// URL builder — so removing team logos would have silently broken the
+/// favourite team, live games, and the whole Scores/Box Score BDL bridge.
+/// Repointed on its own, ahead of any imagery removal, for exactly that
+/// reason. `mlbTeamId(for:)` takes `String?` and applies the same
+/// case-folding, so the behaviour is unchanged.
 func lahmanTeamIdToMLBId(_ lahman: String) -> Int? {
-    // Pull from `TeamNames.swift`'s private dict via the public
-    // `teamLogoURL` URL — extract the trailing numeric id. Slow,
-    // but called rarely (only on box-score / scores tab opens), so
-    // not worth duplicating the table.
-    guard let url = teamLogoURL(for: lahman) else { return nil }
-    let parts = url.pathComponents          // ["/", "v1", "team", "{id}", "spots", "120"]
-    guard let idx = parts.firstIndex(of: "team"), idx + 1 < parts.count else {
-        return nil
-    }
-    return Int(parts[idx + 1])
+    mlbTeamId(for: lahman)
 }
