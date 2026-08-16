@@ -18,8 +18,8 @@ import Foundation
 
 /// One row from `GET /players/search?name=...` — a player matched by name.
 /// Carries the same bio block as the player-stats responses so a search
-/// result can render a rich row (headshot, position, debut year) without a
-/// follow-up call.
+/// result can render a rich row (position, debut year) without a follow-up
+/// call.
 struct PlayerSearchResult: Codable, Identifiable, Hashable {
     let player_id: Int
     let name: String
@@ -58,7 +58,6 @@ struct PlayerSearchResult: Codable, Identifiable, Hashable {
     let birthdate: String?      // ISO date, derived
     /// ISO "YYYY-MM-DD" (or "YYYY" year-only) when deceased; nil if living.
     let deathdate: String?
-    let headshot_url: String?
     let is_hof: Bool?
     let hof_year: Int?
     /// Hot/cold "heat": signed, tanh-compressed form vs season baseline
@@ -99,26 +98,13 @@ struct PlayerSearchResult: Codable, Identifiable, Hashable {
         case birth_year, birth_month, birth_day
         case death_year, death_month, death_day
         case birth_city, birth_state, birth_country
-        case debut, final_game, birthdate, deathdate, headshot_url, is_hof, hof_year
+        case debut, final_game, birthdate, deathdate, is_hof, hof_year
         case heat_score, heat_tier, heat_updated
         case is_pitcher, bdl_id
     }
 }
 
 extension PlayerSearchResult {
-    /// Higher-resolution headshot URL. The backend emits the URL with
-    /// width=213 (the MLB Stats API default for thumbnail use). Swap
-    /// in `w_640` for the player profile header — the source image
-    /// pipeline supports any width and the larger size renders much
-    /// sharper at retina densities. Returns nil for missing/empty
-    /// fields and falls back to the raw URL if the pattern isn't
-    /// found (defensive for future backend URL format changes).
-    var largeHeadshotURL: URL? {
-        guard let raw = headshot_url, !raw.isEmpty else { return nil }
-        let upgraded = raw.replacingOccurrences(of: "w_213", with: "w_640")
-        return URL(string: upgraded)
-    }
-
     /// A copy with `is_pitcher` forced to `value`. Used when the caller
     /// knows the side from tap context (box-score batting vs pitching
     /// table) so the profile defaults to the right role tab for two-way
@@ -149,7 +135,6 @@ struct HeatLeader: Codable, Identifiable, Hashable {
     /// before the role backfill). The Search shelves already split by list,
     /// so this is mostly informational on the card side.
     let heat_role: String?
-    let headshot_url: String?
 
     var id: Int { player_id }
 }
@@ -229,7 +214,6 @@ struct PlayerBio: Codable, Hashable {
     /// ISO "yyyy-MM-dd" (or "yyyy" year-only) when the player is deceased;
     /// nil for living players. Server-derived from death_year/month/day.
     let deathdate: String?
-    let headshot_url: String?
     let is_hof: Bool?
     let hof_year: Int?
     /// Per-side heat — see `PlayerSearchResult.heat_score`.
@@ -244,7 +228,7 @@ struct PlayerBio: Codable, Hashable {
         case birth_year, birth_month, birth_day
         case death_year, death_month, death_day
         case birth_city, birth_state, birth_country
-        case debut, final_game, birthdate, deathdate, headshot_url, is_hof, hof_year
+        case debut, final_game, birthdate, deathdate, is_hof, hof_year
         case heat_score, heat_tier, heat_updated
     }
 }

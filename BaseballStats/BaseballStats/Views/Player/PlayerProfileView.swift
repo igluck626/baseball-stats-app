@@ -4419,7 +4419,6 @@ final class CurrentSeasonRanksViewModel: ObservableObject {
             final_game: nil,
             birthdate: "1994-07-05",
             deathdate: nil,
-            headshot_url: "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/660271/headshot/67/current",
             is_hof: false,
             hof_year: nil,
             heat_score: 0.24, heat_tier: "red_hot", heat_updated: nil,

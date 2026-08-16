@@ -624,7 +624,6 @@ final class HomeViewModel: ObservableObject {
         // drop them.
         let resolved = try? await bdl.resolveBDLPlayerId(bp.id)
         let mlbamId = resolved?.player_id ?? 0
-        let headshot = resolved?.largeHeadshotURL
         let name = resolved?.name ?? bp.fullName
         guard mlbamId > 0 else {
             return RosterPlayer(
@@ -633,7 +632,6 @@ final class HomeViewModel: ObservableObject {
                 bdl_id:       bp.id,
                 position:     position,
                 jersey:       bp.jersey,
-                headshotURL:  headshot,
                 resolved:     nil,
                 currentStats: nil,
             )
@@ -666,7 +664,6 @@ final class HomeViewModel: ObservableObject {
             bdl_id:       bp.id,
             position:     position,
             jersey:       bp.jersey,
-            headshotURL:  headshot,
             resolved:     resolved,
             currentStats: stats,
         )
@@ -840,7 +837,6 @@ struct RosterPlayer: Identifiable, Hashable {
     /// Uniform number from BDL (`BDLPlayer.jersey`); nil/blank when BDL
     /// doesn't carry one. Rendered as the leading anchor on each row.
     let jersey: String?
-    let headshotURL: URL?
     /// The full `PlayerSearchResult` from `resolveBDLPlayerId` —
     /// needed to push the profile destination on tap (the existing
     /// nav route takes a `PlayerSearchResult`). nil when resolution
