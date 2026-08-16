@@ -261,9 +261,12 @@ private struct ScheduleRow: View {
             .frame(width: 22, alignment: .center)
     }
 
+    /// No team mark: the abbreviation is right beside it, so the badge was
+    /// saying the same thing twice. The mark in this sheet's toolbar stays —
+    /// that one names the club whose schedule this is, which the title
+    /// ("2026 Schedule") does not.
     private var opponentColumn: some View {
         HStack(spacing: 8) {
-            TeamLogoView(team: opponent.team, size: 28)
             Text(opponent.team.abbreviation
                  ?? String(opponent.team.name.prefix(3)).uppercased())
                 .font(.subheadline.weight(.semibold))
