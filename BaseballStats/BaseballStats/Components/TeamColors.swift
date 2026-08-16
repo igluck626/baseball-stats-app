@@ -2,15 +2,10 @@
 //  TeamColors.swift
 //  BaseballStats
 //
-//  Primary brand color per team — drives the team-tint backdrop on the
-//  player profile header card. One entry per franchise, plus aliases
-//  for the Lahman / Baseball Reference / historical code dialects the
-//  backend's `team_code` field may use.
-//
-//  Source: each franchise's official primary color. Values are the
-//  canonical hex codes published in MLB's brand guidelines (or
-//  team.com style guides when an org's primary is the darker of two
-//  brand colors).
+//  One color per team — drives the team tint on the player profile header,
+//  the news chips, the postseason bracket and the score swatches. One entry
+//  per franchise, plus aliases for the Lahman / Baseball Reference /
+//  historical code dialects the backend's `team_code` field may use.
 //
 
 import SwiftUI
@@ -26,6 +21,18 @@ enum TeamColors {
     static func color(for teamCode: String?) -> Color? {
         guard let teamCode, !teamCode.isEmpty else { return nil }
         return hexByCode[teamCode.uppercased()].flatMap(Color.init(hex:))
+    }
+
+    /// The club's color as used on a small solid mark — a bracket chip or a
+    /// score swatch — brightened in dark mode so a dark navy stays visible
+    /// against a dark surface, and neutral grey for a code we can't resolve.
+    ///
+    /// This is the single definition. `PostseasonBracketView` carried three
+    /// byte-identical private copies of it, one per view; three copies of a
+    /// rule is how the rule drifts.
+    static func chip(for teamCode: String?, dark: Bool) -> Color {
+        guard let base = color(for: teamCode) else { return Color(.systemGray3) }
+        return dark ? base.brightenedForDarkText() : base
     }
 
     /// Most-distinctive brand color per franchise, plus aliases. We

@@ -859,9 +859,16 @@ struct BoxScoreView: View {
             .flatMap { teamStandings[$0] }
             .map { $0.displayString }
         return VStack(spacing: 2) {
-            TeamLogoView(team: side.team, size: 56)
-            Text(side.team.abbreviation ?? String(side.team.name.prefix(3)).uppercased())
-                .font(.subheadline.weight(.bold))
+            // A 56pt circle used to head this column. The swatch does not
+            // simply take its place — a 5pt bar alone in a stack under a
+            // .title score reads as a stray tick — so it moves onto the
+            // abbreviation's line and leads it, as everywhere else. 16pt to
+            // match .subheadline.bold rather than the 18 used against larger text.
+            HStack(spacing: 5) {
+                TeamColorSwatch(team: side.team, height: 16)
+                Text(side.team.abbreviation ?? String(side.team.name.prefix(3)).uppercased())
+                    .font(.subheadline.weight(.bold))
+            }
             Text(score.map(String.init) ?? "—")
                 .font(.title.weight(.bold))
                 .monospacedDigit()
@@ -1031,7 +1038,8 @@ struct BoxScoreView: View {
         let team = side == .away ? bs.teams.away : bs.teams.home
         return VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
-                TeamLogoView(team: team.team, size: 28)
+                // Leads the club's full name, so 18pt against .headline.
+                TeamColorSwatch(team: team.team)
                 Text(team.team.name).font(.headline)
             }
             battingTable(team: team)

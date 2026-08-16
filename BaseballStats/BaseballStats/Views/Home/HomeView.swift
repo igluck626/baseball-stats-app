@@ -709,10 +709,16 @@ private struct TeamHeroCard: View {
         team: TeamInfo, score: Int?, isFavorite: Bool,
     ) -> some View {
         VStack(spacing: 4) {
-            TeamLogoView(team: team, size: 36)
-            Text(team.abbreviation ?? String(team.name.prefix(3)).uppercased())
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
+            // Same move as the box-score column: the swatch leads the
+            // abbreviation rather than standing alone above it. 13pt here —
+            // this label is .caption, and an 18pt bar beside 12pt letters
+            // reads as a rule rather than a mark.
+            HStack(spacing: 4) {
+                TeamColorSwatch(team: team, height: 13)
+                Text(team.abbreviation ?? String(team.name.prefix(3)).uppercased())
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
             Text("\(score ?? 0)")
                 .font(.title.bold())
                 .monospacedDigit()

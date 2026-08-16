@@ -109,6 +109,42 @@ struct TeamBadge: View {
     }
 }
 
+/// A club's color as a slim vertical bar, set immediately before its letters.
+///
+/// This is the mark on the score surfaces: where a row already prints the
+/// abbreviation, a circle repeating those same letters said nothing twice, so
+/// the color carries the identity and the text carries the name. Copied in
+/// shape from the postseason bracket, which has read this way for a while.
+///
+/// The height is a parameter because the bar should match the line it leads,
+/// not a fixed idea of a row: the bracket itself already uses 18 in its main
+/// tree and 16 in its two compact lists.
+struct TeamColorSwatch: View {
+    let lahmanCode: String?
+    var height: CGFloat = 18
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    init(code: String?, height: CGFloat = 18) {
+        self.lahmanCode = code
+        self.height = height
+    }
+
+    /// For callers holding a `TeamInfo` and nothing else — resolves the club
+    /// from the MLBAM id it carries.
+    init(team: TeamInfo, height: CGFloat = 18) {
+        self.lahmanCode = MLBTeamCatalog.lahmanCode(forMLBAMId: team.id)
+        self.height = height
+    }
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 2.5, style: .continuous)
+            .fill(TeamColors.chip(for: lahmanCode, dark: colorScheme == .dark))
+            .frame(width: 5, height: height)
+            .accessibilityHidden(true)   // the abbreviation beside it is the label
+    }
+}
+
 /// Team mark used across the Scores-tab cards and the team sheets. Signature
 /// is unchanged from the logo era on purpose — all sixteen call sites keep
 /// their frames and their layout.

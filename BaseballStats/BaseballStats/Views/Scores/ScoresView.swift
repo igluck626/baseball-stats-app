@@ -650,7 +650,9 @@ private struct GameCard: View {
 
     private func teamRow(side: GameTeam, winner: Bool, bdlTeamId: Int?) -> some View {
         HStack(spacing: 10) {
-            TeamLogoView(team: side.team, size: 28)
+            // Colour, not a circle of letters: the abbreviation is the very
+            // next thing in the row. 18pt matches the .subheadline line it leads.
+            TeamColorSwatch(code: bdlTeamId.flatMap { bdlToLahmanTeamId[$0] })
 
             Text(side.team.abbreviation ?? abbreviate(side.team.name))
                 .font(.subheadline.weight(winner ? .bold : .semibold))
@@ -1035,7 +1037,9 @@ private struct FinalGameCard: View {
         let isWinner = side.isWinner == true
         let dimmed = !isWinner
         return HStack(spacing: 10) {
-            TeamLogoView(team: side.team, size: 28)
+            // Colour, not a circle of letters: the abbreviation is the very
+            // next thing in the row. 18pt matches the .subheadline line it leads.
+            TeamColorSwatch(code: bdlTeamId.flatMap { bdlToLahmanTeamId[$0] })
 
             Text(side.team.abbreviation ?? String(side.team.name.prefix(3)).uppercased())
                 .font(.subheadline.weight(isWinner ? .bold : .semibold))
@@ -1461,7 +1465,9 @@ private struct LiveGameCard: View {
             .flatMap { standings[$0] }
             .map { $0.displayString }
         return HStack(spacing: 10) {
-            TeamLogoView(team: side.team, size: 28)
+            // Colour, not a circle of letters: the abbreviation is the very
+            // next thing in the row. 18pt matches the .subheadline line it leads.
+            TeamColorSwatch(code: bdlTeamId.flatMap { bdlToLahmanTeamId[$0] })
 
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 6) {

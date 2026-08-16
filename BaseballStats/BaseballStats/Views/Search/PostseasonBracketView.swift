@@ -558,9 +558,7 @@ private struct SeriesBox: View {
 
     private func teamRow(code: String, games: Int, isWinner: Bool) -> some View {
         HStack(spacing: 6) {
-            RoundedRectangle(cornerRadius: 2.5, style: .continuous)
-                .fill(chipColor(for: code))
-                .frame(width: 5, height: 18)
+            TeamColorSwatch(code: code, height: 18)
             Text(teamAbbreviation(for: code))
                 .font(.subheadline.weight(isWinner ? .bold : .regular))
                 .foregroundStyle(isWinner ? .primary : .secondary)
@@ -573,12 +571,6 @@ private struct SeriesBox: View {
         }
     }
 
-    /// Team color via the shared source, brightened for legibility on dark
-    /// surfaces (matches the rest of the app); neutral fallback for unknowns.
-    private func chipColor(for code: String) -> Color {
-        guard let base = TeamColors.color(for: code) else { return Color(.systemGray3) }
-        return colorScheme == .dark ? base.brightenedForDarkText() : base
-    }
 }
 
 // MARK: - Classic (pre-1969) single World Series
@@ -659,9 +651,7 @@ private struct PostseasonListRow: View {
 
     private func teamLabel(code: String, games: Int, isWinner: Bool) -> some View {
         HStack(spacing: 5) {
-            RoundedRectangle(cornerRadius: 2.5, style: .continuous)
-                .fill(chipColor(for: code))
-                .frame(width: 5, height: 16)
+            TeamColorSwatch(code: code, height: 16)
             Text(teamAbbreviation(for: code))
                 .font(.subheadline.weight(isWinner ? .bold : .regular))
                 .foregroundStyle(isWinner ? .primary : .secondary)
@@ -672,10 +662,6 @@ private struct PostseasonListRow: View {
         }
     }
 
-    private func chipColor(for code: String) -> Color {
-        guard let base = TeamColors.color(for: code) else { return Color(.systemGray3) }
-        return colorScheme == .dark ? base.brightenedForDarkText() : base
-    }
 }
 
 // MARK: - Champions list (List mode)
@@ -733,9 +719,7 @@ private struct ChampionRow: View {
 
     private func teamLabel(code: String, isWinner: Bool) -> some View {
         HStack(spacing: 5) {
-            RoundedRectangle(cornerRadius: 2.5, style: .continuous)
-                .fill(chipColor(for: code))
-                .frame(width: 5, height: 16)
+            TeamColorSwatch(code: code, height: 16)
             Text(teamAbbreviation(for: code))
                 .font(.subheadline.weight(isWinner ? .bold : .regular))
                 .foregroundStyle(isWinner ? .primary : .secondary)
@@ -743,10 +727,6 @@ private struct ChampionRow: View {
         }
     }
 
-    private func chipColor(for code: String) -> Color {
-        guard let base = TeamColors.color(for: code) else { return Color(.systemGray3) }
-        return colorScheme == .dark ? base.brightenedForDarkText() : base
-    }
 }
 
 #Preview {

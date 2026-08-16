@@ -617,7 +617,9 @@ private enum CompareLayout {
     static let columnWidth:  CGFloat = 118
     static let headerHeight: CGFloat = 92
     static let rowHeight:    CGFloat = 36
-    static let logoSize:     CGFloat = 26
+    // `logoSize` (26) sized the club logo, then the badge that replaced it.
+    // Nothing sizes a mark in this header any more — the colour is carried by
+    // the wash and the rule, and the club is named in text.
 }
 
 // MARK: - Main view
@@ -943,8 +945,12 @@ struct PlayerCompareView: View {
         let tint = TeamColors.color(for: player.teamCode) ?? .accentColor
         return ZStack(alignment: .topTrailing) {
             NavigationLink(value: player.result) {
+                // No team mark. This header already states the club's colour
+                // twice — as the wash behind it and the rule beneath it — and
+                // `teamLabel` below prints the same abbreviation a circle
+                // would have held. A swatch here would be a third statement of
+                // one colour; the letters in a circle were the redundant part.
                 VStack(spacing: 4) {
-                    teamLogo(player)
                     Text(player.name)
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
@@ -966,14 +972,6 @@ struct PlayerCompareView: View {
 
             removeButton(player)
         }
-    }
-
-    /// Team mark. Was the club's logo off MLB's CDN until 2026-08-15; now the
-    /// abbreviation badge. A player with no team code yields an em dash rather
-    /// than the old generic baseball glyph.
-    private func teamLogo(_ player: ComparePlayer) -> some View {
-        let code = player.teamCode.flatMap { $0.isEmpty ? nil : teamAbbreviation(for: $0) }
-        return TeamBadge(abbreviation: code ?? "—", size: CompareLayout.logoSize)
     }
 
     /// Muted, hierarchical close affordance with a generous tap target —

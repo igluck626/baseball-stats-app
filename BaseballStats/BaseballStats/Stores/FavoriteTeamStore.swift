@@ -84,4 +84,17 @@ struct MLBTeamCatalog {
     static func entry(forBDLId bdlId: Int) -> Entry? {
         all.first { $0.bdlTeamId == bdlId }
     }
+
+    /// Lookup by MLBAM id — the id `TeamInfo` carries. Needed because the
+    /// score columns and the box-score section header hold a `TeamInfo` and
+    /// nothing else, but `TeamColors` is keyed on the Lahman code.
+    static func entry(forMLBAMId mlbamId: Int) -> Entry? {
+        all.first { $0.mlbamId == mlbamId }
+    }
+
+    /// Lahman code for an MLBAM id, or nil when the club isn't one of the 30
+    /// (historical opponents in old box scores, mostly).
+    static func lahmanCode(forMLBAMId mlbamId: Int) -> String? {
+        entry(forMLBAMId: mlbamId)?.lahmanCode
+    }
 }

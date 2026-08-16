@@ -470,7 +470,9 @@ private struct DivisionCard: View {
 /// pulls in via horizontal swipe.
 private enum StandingsLayout {
     static let identityWidth:     CGFloat = 130
-    static let logoSize:          CGFloat = 22
+    // `logoSize` (22) lived here for the club logo, then its replacement
+    // badge. The swatch is a bar, not a disc, and takes its height from the
+    // line it leads, so there is nothing left for the constant to set.
     static let cell:              CGFloat = 38   // W, L
     static let pct:               CGFloat = 46   // ".571"
     static let gb:                CGFloat = 46   // "12.5"
@@ -882,11 +884,15 @@ private struct FrozenIdentityCell: View {
         .frame(height: StandingsLayout.rowHeight)
     }
 
-    /// Team mark. Was the club's logo off MLB's CDN until 2026-08-15; now the
-    /// abbreviation badge. `abbreviation` below already resolves an unknown or
-    /// empty code to an em dash, so the badge is never blank.
+    /// Team mark. The club's logo until 2026-08-15, then a circle of the
+    /// club's letters — which sat directly beside the same letters in the very
+    /// next column, so it said everything twice. Now the colour, leading them.
+    ///
+    /// `team.team_id` is already a Lahman code, which is what `TeamColors` is
+    /// keyed on, so nothing needs resolving here. 18pt against the
+    /// .subheadline abbreviation, inside a 40pt row.
     private var teamLogo: some View {
-        TeamBadge(abbreviation: abbreviation, size: StandingsLayout.logoSize)
+        TeamColorSwatch(code: team.team_id)
     }
 
     private var abbreviation: String {
