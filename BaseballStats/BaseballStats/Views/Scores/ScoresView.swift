@@ -54,6 +54,9 @@ final class ScoresViewModel: ObservableObject {
     @Published var selectedDate: Date = Calendar.current.startOfDay(for: Date())
     @Published var games: [Game] = []
     @Published var isLoading: Bool = false
+    /// In-flight `finalize` retry chain, so a second game ending replaces the
+    /// first chase rather than running two slate refreshes against each other.
+    private var finalizeTask: Task<Void, Never>?
     @Published var error: String?
     /// Set true once a load completes (success or empty); used so the
     /// view can distinguish "still loading" from "no games today".
@@ -94,11 +97,48 @@ final class ScoresViewModel: ObservableObject {
 
         let ended = wereLive.subtracting(liveById.keys)
         if !ended.isEmpty {
-            await load(date: date)   // a game finished — refresh finals/records
+            finalize(ended, date: date)   // a game finished — chase its final state
         }
     }
 
-    func load(date: Date) async {
+    /// Delays between attempts to pick up a just-ended game's final state.
+    /// Front-loaded because the slate usually flips within a few seconds, then
+    /// spaced out because if it hasn't by a minute it is the provider lagging,
+    /// not us. Five attempts over ~two minutes.
+    private static let finalizeDelays: [UInt64] = [0, 3, 10, 30, 75]
+
+    /// Re-read the slate until the just-ended games are no longer `.live`.
+    ///
+    /// Replaces a single `await load(date:)`. That was wrong twice over. It was
+    /// EDGE-TRIGGERED — `applyLiveList` only runs when `liveList` changes, and
+    /// once a finished game drops out the list settles and never fires again, so
+    /// there was exactly one attempt. And that one attempt read
+    /// `getGames(date:)`, whose 30-second cache had just been filled by the
+    /// live-polling that was running moments earlier, so it usually returned the
+    /// pre-final slate. One shot, spent on a stale read: the game stayed `.live`
+    /// until the app was relaunched.
+    ///
+    /// So both halves are fixed here — every attempt bypasses the cache, and
+    /// there are several, spaced out, to outlast the provider taking its time to
+    /// mark the game final. The loop stops as soon as no game in `ended` is still
+    /// live, so the normal case is one call.
+    private func finalize(_ ended: Set<Int>, date: Date) {
+        finalizeTask?.cancel()
+        finalizeTask = Task { @MainActor [weak self] in
+            for delay in Self.finalizeDelays {
+                if delay > 0 {
+                    try? await Task.sleep(nanoseconds: delay * 1_000_000_000)
+                }
+                guard !Task.isCancelled, let self else { return }
+                await self.load(date: date, bypassCache: true)
+                guard !Task.isCancelled else { return }
+                let stillLive = Set(self.games.filter { $0.phase == .live }.map(\.gamePk))
+                if ended.isDisjoint(with: stillLive) { return }   // all resolved
+            }
+        }
+    }
+
+    func load(date: Date, bypassCache: Bool = false) async {
         isLoading = true
         error = nil
         // Year-of-the-selected-date is the right key for standings —
@@ -107,7 +147,8 @@ final class ScoresViewModel: ObservableObject {
         let year = Calendar.current.component(.year, from: date)
         async let standingsTask: [BDLStandingsEntry]? = try? bdl.getStandings(season: year)
         do {
-            let bdlGames = try await bdl.getGames(date: ScoresViewModel.iso(date))
+            let bdlGames = try await bdl.getGames(date: ScoresViewModel.iso(date),
+                                                   bypassCache: bypassCache)
             self.games = bdlGames
                 .map { $0.toGame() }
                 .sorted { ($0.startDate ?? .distantFuture) < ($1.startDate ?? .distantFuture) }

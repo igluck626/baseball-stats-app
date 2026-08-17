@@ -33,6 +33,9 @@ final class HomeViewModel: ObservableObject {
     @Published var teamLastTenW: Int?
     @Published var teamLastTenL: Int?
     @Published var isLoading: Bool = false
+    /// In-flight `finalize` retry chain — a later game ending supersedes an
+    /// earlier chase instead of running two refreshes at once.
+    private var finalizeTask: Task<Void, Never>?
     @Published var didLoad: Bool = false
     @Published var error: String?
 
@@ -141,7 +144,9 @@ final class HomeViewModel: ObservableObject {
 
     /// Full reload: ±5 days of team games + standings. Cheap on
     /// repeat calls — BDL responses are cached for 30s per date.
-    func load(bdlTeamId: Int) async {
+    /// `bypassCache` is set only by `finalize` — see there. Every other
+    /// caller wants the shared 30s slate cache.
+    func load(bdlTeamId: Int, bypassCache: Bool = false) async {
         isLoading = true
         error = nil
         let today = Date()
@@ -164,7 +169,8 @@ final class HomeViewModel: ObservableObject {
         await withTaskGroup(of: [BDLGame].self) { group in
             for d in dates {
                 group.addTask { [bdl] in
-                    (try? await bdl.getTeamGames(date: d, teamId: bdlTeamId)) ?? []
+                    (try? await bdl.getTeamGames(date: d, teamId: bdlTeamId,
+                                                 bypassCache: bypassCache)) ?? []
                 }
             }
             for await items in group {
@@ -286,7 +292,37 @@ final class HomeViewModel: ObservableObject {
 
         let ended = wereLive.subtracting(liveById.keys)
         if !ended.isEmpty {
-            await load(bdlTeamId: bdlTeamId)   // a game finished — refresh finals/records
+            finalize(ended, bdlTeamId: bdlTeamId)   // a game finished — chase its final state
+        }
+    }
+
+    /// Delays between attempts to pick up a just-ended game's final state.
+    /// Mirrors `ScoresViewModel.finalizeDelays` — see `finalize` there for the
+    /// full reasoning; the same two defects applied to this strip.
+    private static let finalizeDelays: [UInt64] = [0, 3, 10, 30, 75]
+
+    /// Re-read the team's games until the just-ended ones are no longer `.live`.
+    ///
+    /// Was a single `await load(bdlTeamId:)`, which had two problems. It ran on
+    /// the one tick where the game left `liveList` and never again (the list then
+    /// settles, so `.onChange` stops firing), and it read `getGames(date:)`
+    /// through a 30-second cache that live-polling had just filled with the
+    /// pre-final slate. One attempt, usually against stale data — the hero card
+    /// then showed the last live inning until relaunch.
+    private func finalize(_ ended: Set<Int>, bdlTeamId: Int) {
+        finalizeTask?.cancel()
+        finalizeTask = Task { @MainActor [weak self] in
+            for delay in Self.finalizeDelays {
+                if delay > 0 {
+                    try? await Task.sleep(nanoseconds: delay * 1_000_000_000)
+                }
+                guard !Task.isCancelled, let self else { return }
+                await self.load(bdlTeamId: bdlTeamId, bypassCache: true)
+                guard !Task.isCancelled else { return }
+                let stillLive = Set(self.recentAndUpcoming
+                    .filter { $0.phase == .live }.map(\.gamePk))
+                if ended.isDisjoint(with: stillLive) { return }   // all resolved
+            }
         }
     }
 

@@ -298,7 +298,16 @@ private func liveEraString(_ v: Double?) -> String? {
     return String(format: "%.2f", v)
 }
 
-private func inningOrdinal(_ inning: Int?, half: String?) -> String? {
+/// CONTRACT: `currentInningOrdinal` is the inning ALONE — "9th", never
+/// "Bot 9th". The half belongs to `inningState` / `isTopInning`, and every
+/// caller pairs the two itself: ScoresView's status line prepends "TOP"/"BOT",
+/// its card and the box score prepend "▲"/"▼", and Home writes "Inning 9th".
+///
+/// This function used to fold the half word in, so those callers each produced
+/// it twice — "BOT Bot 9th" on the status line, "▼ Bot 9th" elsewhere. The
+/// half is deliberately NOT a parameter now: there is nowhere to put it that
+/// doesn't duplicate a caller. Do not add it back at this end.
+private func inningOrdinal(_ inning: Int?) -> String? {
     guard let inning else { return nil }
     let suffix: String
     switch inning % 10 {
@@ -307,15 +316,7 @@ private func inningOrdinal(_ inning: Int?, half: String?) -> String? {
     case 3 where inning % 100 != 13: suffix = "rd"
     default:                          suffix = "th"
     }
-    let halfWord: String
-    switch (half ?? "").lowercased() {
-    case "top":    halfWord = "Top "
-    case "bottom": halfWord = "Bot "
-    case "middle": halfWord = "Mid "
-    case "end":    halfWord = "End "
-    default:       halfWord = ""
-    }
-    return "\(halfWord)\(inning)\(suffix)"
+    return "\(inning)\(suffix)"
 }
 
 // MARK: - Adapters → existing view-facing types
@@ -393,7 +394,7 @@ extension LiveGameDetail {
         let inningStateCap = half.map { $0.prefix(1).uppercased() + $0.dropFirst() }
         let liveLine = LiveLinescore(
             currentInning:        summary.inning,
-            currentInningOrdinal: inningOrdinal(summary.inning, half: half),
+            currentInningOrdinal: inningOrdinal(summary.inning),
             inningHalf:           inningStateCap,
             inningState:          status == "final" ? "Final" : inningStateCap,
             isTopInning:          (half ?? "").lowercased() == "top",
@@ -554,7 +555,7 @@ extension Game {
         let half = live.inningHalf
         let newLine = Linescore(
             currentInning:        live.inning ?? linescore?.currentInning,
-            currentInningOrdinal: inningOrdinal(live.inning, half: half) ?? linescore?.currentInningOrdinal,
+            currentInningOrdinal: inningOrdinal(live.inning) ?? linescore?.currentInningOrdinal,
             inningState:          half.map { $0.prefix(1).uppercased() + $0.dropFirst() } ?? linescore?.inningState,
             innings:              linescore?.innings,
             teams:                linescore?.teams,

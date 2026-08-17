@@ -106,9 +106,14 @@ final class BallDontLieClient: @unchecked Sendable {
     /// Wednesday). To return the MLB "Tuesday slate" we have to
     /// query THREE UTC buckets and filter client-side by Eastern
     /// local date (MLB schedules off ET).
-    func getGames(date: String) async throws -> [BDLGame] {
+    /// `bypassCache` skips the 30s TTL read (the write still happens, so the
+    /// fresh slate serves everyone after). Pass it when a stale answer is worse
+    /// than an extra call — specifically the live→final transition, where the
+    /// slate we cached seconds ago still says "in progress" and reading it
+    /// would leave the game stuck live. Ordinary loads should NOT set it.
+    func getGames(date: String, bypassCache: Bool = false) async throws -> [BDLGame] {
         let key = "games:\(date)"
-        if let cached: [BDLGame] = cachedValue(key) { return cached }
+        if !bypassCache, let cached: [BDLGame] = cachedValue(key) { return cached }
 
         // Compute the ±1-day envelope around the requested date.
         // We over-fetch by two UTC days so no edge case (early
@@ -181,9 +186,11 @@ final class BallDontLieClient: @unchecked Sendable {
     /// Team-scoped schedule for one date. Used by the player-profile
     /// live-stats overlay — answers "does my team play today?"
     /// without pulling the full 15-game daily slate.
-    func getTeamGames(date: String, teamId: Int) async throws -> [BDLGame] {
+    /// `bypassCache` as in `getGames(date:)` — skip the 30s TTL read on the
+    /// live→final transition, where the cached slate still says "in progress".
+    func getTeamGames(date: String, teamId: Int, bypassCache: Bool = false) async throws -> [BDLGame] {
         let key = "team_games:\(date):\(teamId)"
-        if let cached: [BDLGame] = cachedValue(key) { return cached }
+        if !bypassCache, let cached: [BDLGame] = cachedValue(key) { return cached }
 
         // Same ±1 day + ET-filter pattern as `getGames(date:)`. BDL
         // buckets games by UTC start time, so a 7pm PT start

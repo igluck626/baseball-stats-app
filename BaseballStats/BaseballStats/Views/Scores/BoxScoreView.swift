@@ -562,11 +562,25 @@ struct BoxScoreView: View {
     /// initial `game.phase`. Drives the live subscription so a game opened
     /// pre-game that flips to live starts streaming (Option (b) of the fix).
     private var isLive: Bool {
-        // `liveList` membership is the backend's live definition; the
-        // `game.phase == .live` fallback covers a game opened while live before
-        // the local `liveList` populated. On end, `beginFinalize` sets
-        // `game.phase = .final`, so this resolves false — no re-subscribe.
-        liveStore.liveList[vm.game.gamePk] != nil || vm.game.phase == .live
+        // Membership in `liveList` is the backend's definition of live, and it
+        // is authoritative in BOTH directions — but only once the store has
+        // actually answered.
+        //
+        // This used to be `liveList[pk] != nil || game.phase == .live`. The `||`
+        // exists for a real case (a box score opened while the game is live but
+        // before the store's first fetch lands), yet it also let a STALE phase
+        // outvote a correct `liveList`: a game that had ended still read as live,
+        // so the view subscribed to `/live/games/{id}`, got a 404, and never
+        // loaded. The old comment claimed `beginFinalize` prevented that, but
+        // that only runs for a box score already open when the game ends — not
+        // one opened afterwards, which is the case that broke.
+        //
+        // Splitting on `listLoaded` keeps the pre-live case and drops the stale
+        // one: before the first answer, trust the phase we were handed; after
+        // it, trust the store and nothing else.
+        if liveStore.liveList[vm.game.gamePk] != nil { return true }
+        if liveStore.listLoaded { return false }
+        return vm.game.phase == .live
     }
 
     /// Subscribe to the shared detail loop only while live AND this tab is

@@ -57,6 +57,16 @@ final class LiveGameStore: ObservableObject {
     /// Transient failures keep the last `liveList` rather than blanking it.
     @Published private(set) var listError: String?
 
+    /// True once `/live/games` has answered at least once this launch.
+    ///
+    /// Without this, an EMPTY `liveList` is ambiguous: it means either "the
+    /// store hasn't fetched yet" or "nothing is live". Callers that need to
+    /// decide whether a specific game is live have to tell those apart — before
+    /// the first answer they must fall back to whatever status they were handed,
+    /// and after it the store is authoritative. Never reset: a later fetch
+    /// failure keeps the previous answer rather than reverting to "unknown".
+    @Published private(set) var listLoaded = false
+
     // MARK: - Internals
 
     private let api: APIClient
@@ -158,6 +168,7 @@ final class LiveGameStore: ObservableObject {
             var map: [Int: LiveGameSummary] = [:]
             for g in resp.games { map[g.gameId] = g }
             liveList = map
+            listLoaded = true      // the store now has an opinion; see `listLoaded`
             listError = nil
         } catch {
             // Transient — keep the last snapshot (like every existing live loop)
@@ -230,12 +241,21 @@ final class LiveGameStore: ObservableObject {
     }
 
     private func fetchDetail(_ gameId: Int) async {
-        // nil = 404 (game not live/over); throw = transient. Either way keep the
-        // last snapshot so a hiccup doesn't blank the UI. The loop runs until the
-        // last subscriber leaves (invariant), so we don't self-terminate here —
-        // surfaces unsubscribe via their lifecycle wiring.
-        if let d = try? await api.getLiveGame(id: gameId) {
-            detail[gameId] = d
+        // The two failure modes are NOT the same and must not be treated alike:
+        //
+        //   nil (404) — the game is not live any more. This is an ANSWER, and the
+        //     snapshot must be CLEARED. Keeping it is what froze a finished game
+        //     on its last live state ("Bot 9th", "3 outs") until relaunch.
+        //   throw     — transient (network, decode). Keep the last snapshot so a
+        //     hiccup doesn't blank a live game mid-inning.
+        //
+        // The loop runs until the last subscriber leaves (invariant), so we don't
+        // self-terminate here — surfaces unsubscribe via their lifecycle wiring.
+        do {
+            // Assigning nil REMOVES the key, which is exactly what a 404 means.
+            detail[gameId] = try await api.getLiveGame(id: gameId)
+        } catch {
+            // Transient — leave the previous snapshot in place.
         }
     }
 }
