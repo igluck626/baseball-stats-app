@@ -73,10 +73,23 @@ final class ScoresViewModel: ObservableObject {
 
     private let bdl: BallDontLieClient
     private let api: APIClient
+    /// JUST the slate reads. Everything else still goes through `bdl` — this is
+    /// a seam for testing the live→final transition, not an abstraction over the
+    /// client. See LiveSeams.swift.
+    private let slate: SlateProviding
 
-    init(bdl: BallDontLieClient = .shared, api: APIClient = .shared) {
+    private let finalizeDelays: [UInt64]
+
+    init(
+        bdl: BallDontLieClient = .shared,
+        api: APIClient = .shared,
+        slate: SlateProviding? = nil,
+        finalizeDelays: [UInt64] = LiveFinalize.defaultDelays,
+    ) {
         self.bdl = bdl
         self.api = api
+        self.slate = slate ?? bdl
+        self.finalizeDelays = finalizeDelays
     }
 
     /// Fold the shared `LiveGameStore`'s live-games list into `games` — the SAME
@@ -101,12 +114,6 @@ final class ScoresViewModel: ObservableObject {
         }
     }
 
-    /// Delays between attempts to pick up a just-ended game's final state.
-    /// Front-loaded because the slate usually flips within a few seconds, then
-    /// spaced out because if it hasn't by a minute it is the provider lagging,
-    /// not us. Five attempts over ~two minutes.
-    private static let finalizeDelays: [UInt64] = [0, 3, 10, 30, 75]
-
     /// Re-read the slate until the just-ended games are no longer `.live`.
     ///
     /// Replaces a single `await load(date:)`. That was wrong twice over. It was
@@ -125,7 +132,7 @@ final class ScoresViewModel: ObservableObject {
     private func finalize(_ ended: Set<Int>, date: Date) {
         finalizeTask?.cancel()
         finalizeTask = Task { @MainActor [weak self] in
-            for delay in Self.finalizeDelays {
+            for delay in finalizeDelays {
                 if delay > 0 {
                     try? await Task.sleep(nanoseconds: delay * 1_000_000_000)
                 }
@@ -147,8 +154,8 @@ final class ScoresViewModel: ObservableObject {
         let year = Calendar.current.component(.year, from: date)
         async let standingsTask: [BDLStandingsEntry]? = try? bdl.getStandings(season: year)
         do {
-            let bdlGames = try await bdl.getGames(date: ScoresViewModel.iso(date),
-                                                   bypassCache: bypassCache)
+            let bdlGames = try await slate.getGames(date: ScoresViewModel.iso(date),
+                                                     bypassCache: bypassCache)
             self.games = bdlGames
                 .map { $0.toGame() }
                 .sorted { ($0.startDate ?? .distantFuture) < ($1.startDate ?? .distantFuture) }

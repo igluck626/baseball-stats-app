@@ -577,10 +577,13 @@ struct BoxScoreView: View {
         //
         // Splitting on `listLoaded` keeps the pre-live case and drops the stale
         // one: before the first answer, trust the phase we were handed; after
-        // it, trust the store and nothing else.
-        if liveStore.liveList[vm.game.gamePk] != nil { return true }
-        if liveStore.listLoaded { return false }
-        return vm.game.phase == .live
+        // it, trust the store and nothing else. The rule itself lives in
+        // `LiveStatus` so it can be tested without standing up a view.
+        LiveStatus.isLive(
+            inLiveList:  liveStore.liveList[vm.game.gamePk] != nil,
+            listLoaded:  liveStore.listLoaded,
+            phaseIsLive: vm.game.phase == .live,
+        )
     }
 
     /// Subscribe to the shared detail loop only while live AND this tab is

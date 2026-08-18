@@ -69,7 +69,9 @@ final class LiveGameStore: ObservableObject {
 
     // MARK: - Internals
 
-    private let api: APIClient
+    /// Narrowed to `LiveFeedProviding` (not the concrete client) so a test can
+    /// hand back a 404 or a throw on demand — see LiveSeams.swift.
+    private let api: LiveFeedProviding
     private var listTask: Task<Void, Never>?
     /// A grace-delayed stop for the list loop. On a 1→0 owner transition we don't
     /// stop immediately; we schedule this. A re-subscribe within the window
@@ -88,13 +90,20 @@ final class LiveGameStore: ObservableObject {
     private var detailOwners: [Int: Set<SubscriberID>] = [:]
 
     /// Matches every other live loop's cadence (Scores/Home/box score = 15s).
-    private static let refreshIntervalNanos: UInt64 = 15 * 1_000_000_000
+    /// Injectable ONLY so tests don't have to wait a real poll interval to
+    /// observe a second fetch — production always uses the default.
+    static let defaultRefreshIntervalNanos: UInt64 = 15 * 1_000_000_000
+    private let refreshIntervalNanos: UInt64
     /// How long the list loop lingers after its last owner leaves, so a brief
     /// tab-switch flap doesn't tear it down and restart it.
     private static let listStopGraceNanos: UInt64 = 1_500_000_000  // 1.5s
 
-    init(api: APIClient = .shared) {
+    init(
+        api: LiveFeedProviding = APIClient.shared,
+        refreshIntervalNanos: UInt64 = LiveGameStore.defaultRefreshIntervalNanos,
+    ) {
         self.api = api
+        self.refreshIntervalNanos = refreshIntervalNanos
     }
 
     // MARK: - List loop (shared by Home card + Scores list)
@@ -150,7 +159,7 @@ final class LiveGameStore: ObservableObject {
         listTask = Task { @MainActor [weak self] in
             await self?.fetchList()             // leading fetch — always, on every loop start
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: Self.refreshIntervalNanos)
+                try? await Task.sleep(nanoseconds: refreshIntervalNanos)
                 guard !Task.isCancelled, let self else { return }
                 await self.fetchList()
             }
@@ -233,7 +242,7 @@ final class LiveGameStore: ObservableObject {
         detailTasks[gameId] = Task { @MainActor [weak self] in
             await self?.fetchDetail(gameId)         // leading fetch — always, on every loop start
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: Self.refreshIntervalNanos)
+                try? await Task.sleep(nanoseconds: refreshIntervalNanos)
                 guard !Task.isCancelled, let self else { return }
                 await self.fetchDetail(gameId)
             }

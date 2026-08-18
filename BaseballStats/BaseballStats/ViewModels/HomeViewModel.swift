@@ -136,10 +136,22 @@ final class HomeViewModel: ObservableObject {
 
     private let bdl: BallDontLieClient
     private let api: APIClient
+    /// JUST the slate reads — see the note in `ScoresViewModel` and
+    /// LiveSeams.swift. Everything else still goes through `bdl`.
+    private let slate: SlateProviding
 
-    init(bdl: BallDontLieClient = .shared, api: APIClient = .shared) {
+    private let finalizeDelays: [UInt64]
+
+    init(
+        bdl: BallDontLieClient = .shared,
+        api: APIClient = .shared,
+        slate: SlateProviding? = nil,
+        finalizeDelays: [UInt64] = LiveFinalize.defaultDelays,
+    ) {
         self.bdl = bdl
         self.api = api
+        self.slate = slate ?? bdl
+        self.finalizeDelays = finalizeDelays
     }
 
     /// Full reload: ±5 days of team games + standings. Cheap on
@@ -168,9 +180,9 @@ final class HomeViewModel: ObservableObject {
         var seen: Set<Int> = []
         await withTaskGroup(of: [BDLGame].self) { group in
             for d in dates {
-                group.addTask { [bdl] in
-                    (try? await bdl.getTeamGames(date: d, teamId: bdlTeamId,
-                                                 bypassCache: bypassCache)) ?? []
+                group.addTask { [slate] in
+                    (try? await slate.getTeamGames(date: d, teamId: bdlTeamId,
+                                                   bypassCache: bypassCache)) ?? []
                 }
             }
             for await items in group {
@@ -296,11 +308,6 @@ final class HomeViewModel: ObservableObject {
         }
     }
 
-    /// Delays between attempts to pick up a just-ended game's final state.
-    /// Mirrors `ScoresViewModel.finalizeDelays` — see `finalize` there for the
-    /// full reasoning; the same two defects applied to this strip.
-    private static let finalizeDelays: [UInt64] = [0, 3, 10, 30, 75]
-
     /// Re-read the team's games until the just-ended ones are no longer `.live`.
     ///
     /// Was a single `await load(bdlTeamId:)`, which had two problems. It ran on
@@ -312,7 +319,7 @@ final class HomeViewModel: ObservableObject {
     private func finalize(_ ended: Set<Int>, bdlTeamId: Int) {
         finalizeTask?.cancel()
         finalizeTask = Task { @MainActor [weak self] in
-            for delay in Self.finalizeDelays {
+            for delay in finalizeDelays {
                 if delay > 0 {
                     try? await Task.sleep(nanoseconds: delay * 1_000_000_000)
                 }
