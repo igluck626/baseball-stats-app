@@ -40,6 +40,11 @@ final class BoxScoreViewModel: ObservableObject {
     /// after the box score lands and the notable batters can be
     /// identified.
     @Published var batterStatsAtDate: [Int: BatterStatsAtDate] = [:]
+    /// BDL ids already asked about, so a live game only resolves batters who
+    /// have NEWLY become notable rather than re-fetching the whole set each
+    /// snapshot. Holds ids whose lookup failed too — a miss is not worth
+    /// retrying every 15 seconds for the life of a game.
+    private var batterStatsRequested: Set<Int> = []
     /// Live situation snapshot. For LIVE games `applyLiveDetail` sets this from
     /// the shared `LiveGameStore`'s `LiveGameDetail` (Phase 2, step 5); for
     /// final / pre-game it stays nil and the view falls back to `game`.
@@ -150,14 +155,19 @@ final class BoxScoreViewModel: ObservableObject {
         boxScore  = detail.toBoxScoreResponse()
         error     = nil
         isLoading = false
-        // Load derived point-in-time stats once, on the FIRST live snapshot —
-        // tracked by a flag (not `boxScore == nil`) so a game that transitioned
-        // from pre-game (where `load()` already set a boxScore) still gets them.
+        // Pitcher records once, on the FIRST live snapshot — tracked by a flag
+        // (not `boxScore == nil`) so a game that transitioned from pre-game
+        // (where `load()` already set a boxScore) still gets them.
         if !didLoadLiveDerived {
             didLoadLiveDerived = true
             Task { await self.loadPitcherRecords() }
-            Task { await self.loadBatterStatsAtDate() }
         }
+        // Batter totals on EVERY snapshot, because which batters need one
+        // changes as the game goes on: a double in the 7th makes that batter
+        // notable for the first time. `loadBatterStatsAtDate` skips anyone it
+        // has already asked about, so the usual tick resolves to a set
+        // difference and no network call at all.
+        Task { await self.loadBatterStatsAtDate() }
     }
 
     /// SYNCHRONOUS first half of the end-transition. Folds the last live
@@ -284,11 +294,21 @@ final class BoxScoreViewModel: ObservableObject {
                 }
             }
         }
-        guard !notableBdlIds.isEmpty else { return }
+        // Fetch only players we haven't already resolved. This used to run ONCE,
+        // on the first live snapshot, which was survivable while home runs were
+        // the only thing on this line and mostly wrong even then: a batter who
+        // homered in the 7th was never fetched, so his total rendered bare. Now
+        // that doubles and triples reach the line too, the notable set grows
+        // through the game, and a once-only fetch would leave most of them
+        // without a total. Re-running per snapshot is cheap because this
+        // difference is almost always empty.
+        let unfetched = notableBdlIds.subtracting(batterStatsRequested)
+        guard !unfetched.isEmpty else { return }
+        batterStatsRequested.formUnion(unfetched)
         let pairs = await withTaskGroup(
             of: (Int, BatterStatsAtDate)?.self,
         ) { group in
-            for bdlId in notableBdlIds {
+            for bdlId in unfetched {
                 group.addTask { [bdl, api] in
                     guard let player = try? await bdl.resolveBDLPlayerId(bdlId)
                     else { return nil }
@@ -305,9 +325,9 @@ final class BoxScoreViewModel: ObservableObject {
             }
             return out
         }
-        var dict: [Int: BatterStatsAtDate] = [:]
-        for (bdlId, stats) in pairs { dict[bdlId] = stats }
-        self.batterStatsAtDate = dict
+        // MERGE, not replace — each pass now carries only the newly-notable
+        // players, so overwriting would drop everyone resolved earlier.
+        for (bdlId, stats) in pairs { self.batterStatsAtDate[bdlId] = stats }
     }
 
     /// ET-anchored `yyyy-MM-dd` for the pitcher-record endpoint's

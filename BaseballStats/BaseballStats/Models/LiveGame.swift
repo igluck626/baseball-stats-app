@@ -225,6 +225,35 @@ struct LiveBatterRow: Codable, Hashable {
     let avg: Double?
     let obp: Double?
     let slg: Double?
+    /// Added 2026-08-17. `hr` used to be the only extra-base hit here, which is
+    /// why a live box score listed home runs and silently dropped doubles and
+    /// triples — the backend row didn't carry them, so the adapter had nothing
+    /// to read and passed nil.
+    ///
+    /// ⚠️ These need explicit `CodingKeys` below. This decoder does NOT apply
+    /// `.convertFromSnakeCase` (see `APIClient.init`), so `stolenBases` would
+    /// quietly decode as nil against a `stolen_bases` key — the same silent-nil
+    /// failure being fixed here, wearing a fix.
+    let doubles: Int?
+    let triples: Int?
+    let stolenBases: Int?
+    let caughtStealing: Int?
+    let hitByPitch: Int?
+    let sacFlies: Int?
+    let sacBunts: Int?
+    let gidp: Int?
+    let plateAppearances: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, position, ab, r, h, rbi, hr, bb, k, avg, obp, slg
+        case doubles, triples, gidp
+        case stolenBases      = "stolen_bases"
+        case caughtStealing   = "caught_stealing"
+        case hitByPitch       = "hit_by_pitch"
+        case sacFlies         = "sac_flies"
+        case sacBunts         = "sac_bunts"
+        case plateAppearances = "plate_appearances"
+    }
 }
 
 struct LivePitcherRow: Codable, Hashable {
@@ -446,11 +475,17 @@ extension LiveGameDetail {
 
         for b in batters {
             guard let pid = b.id else { continue }
+            // Every field here now comes from the live row. It used to read
+            // `doubles: nil, triples: nil` beside `homeRuns: b.hr`, which is
+            // precisely why a live box score showed home runs and nothing else
+            // on the extra-base-hits line.
             let batting = BoxBatting(
-                atBats: b.ab, runs: b.r, hits: b.h, doubles: nil, triples: nil,
+                atBats: b.ab, runs: b.r, hits: b.h,
+                doubles: b.doubles, triples: b.triples,
                 homeRuns: b.hr, rbi: b.rbi, baseOnBalls: b.bb, strikeOuts: b.k,
-                stolenBases: nil, caughtStealing: nil, hitByPitch: nil,
-                sacFlies: nil, sacBunts: nil, groundIntoDoublePlay: nil,
+                stolenBases: b.stolenBases, caughtStealing: b.caughtStealing,
+                hitByPitch: b.hitByPitch, sacFlies: b.sacFlies,
+                sacBunts: b.sacBunts, groundIntoDoublePlay: b.gidp,
                 avg: liveRateString(b.avg), ops: nil,
             )
             // Season AVG / OPS live in `seasonStats` — the slot the box-score

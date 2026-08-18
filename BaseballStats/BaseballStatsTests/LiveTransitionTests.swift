@@ -318,6 +318,97 @@ struct InningOrdinalTests {
     }
 }
 
+// MARK: - Live batting line carries every counting stat
+
+/// A live box score showed home runs but not doubles or triples, because the
+/// live batting row carried `hr` and nothing else of the kind. These decode a
+/// row shaped exactly like the backend's and assert it survives the trip into
+/// `BoxBatting`, which is what the box score's "2B / 3B / HR" line reads.
+///
+/// Decoding from JSON is the point. The keys are snake_case and this decoder
+/// applies NO `.convertFromSnakeCase`, so a missing `CodingKeys` entry yields
+/// nil — indistinguishable from "the batter didn't do it", which is the bug
+/// itself. A hand-built `LiveBatterRow` would not catch that.
+struct LiveBattingLineTests {
+
+    /// Field-for-field the shape `live_service._bat_row` emits, with values
+    /// taken from a real balldontlie row (Randy Arozarena: a double AND a home
+    /// run — the exact combination that used to show one and hide the other).
+    private static let payload = """
+    {"game_id": 5059646, "fetched_at": "2026-08-17T01:00:00Z",
+     "status": "in_progress", "season": 2026, "season_type": "regular",
+     "summary": {"away": {"runs": 2}, "home": {"runs": 3}, "inning": 9,
+                 "inning_half": "bottom", "outs": 3, "balls": 0, "strikes": 0,
+                 "is_live": true},
+     "linescore": {"innings": []},
+     "situation": {"on_first": false, "on_second": false, "on_third": false},
+     "plays": [], "scoring_plays": [],
+     "batting": {"away": [], "home": [
+        {"id": 694497, "name": "Randy Arozarena", "position": "LF",
+         "ab": 5, "r": 1, "h": 2, "rbi": 2, "hr": 1, "bb": 0, "k": 1,
+         "avg": 0.251, "obp": 0.34, "slg": 0.44,
+         "doubles": 1, "triples": 0, "stolen_bases": 0, "caught_stealing": 1,
+         "hit_by_pitch": 0, "sac_flies": 0, "sac_bunts": 0, "gidp": 0,
+         "plate_appearances": 5}
+     ]},
+     "pitching": {"away": [], "home": []}}
+    """
+
+    private static func batting() throws -> BoxBatting {
+        let detail = try JSONDecoder().decode(
+            LiveGameDetail.self, from: Data(payload.utf8))
+        let box = detail.toBoxScoreResponse()
+        let player = try #require(box.teams.home.players["ID694497"])
+        return try #require(player.stats?.batting)
+    }
+
+    /// The reported symptom: the double must arrive, not just the home run.
+    @Test func doublesAndTriplesReachTheBoxScore() throws {
+        let b = try Self.batting()
+        #expect(b.doubles == 1, "the double was dropped — this is the bug")
+        #expect(b.triples == 0)
+        #expect(b.homeRuns == 1, "home runs must still work")
+    }
+
+    /// The five that nothing renders yet. They were nil for the same reason and
+    /// would have failed the same way; testing them now means whoever displays
+    /// one later finds it already working.
+    @Test func theLatentCountingStatsAlsoArrive() throws {
+        let b = try Self.batting()
+        #expect(b.stolenBases == 0)
+        #expect(b.caughtStealing == 1)      // non-zero: proves the key maps
+        #expect(b.hitByPitch == 0)
+        #expect(b.sacFlies == 0)
+        #expect(b.sacBunts == 0)
+        #expect(b.groundIntoDoublePlay == 0)
+    }
+
+    /// The line that always worked must keep working.
+    @Test func theConventionalBattingLineIsUnchanged() throws {
+        let b = try Self.batting()
+        #expect(b.atBats == 5)
+        #expect(b.runs == 1)
+        #expect(b.hits == 2)
+        #expect(b.rbi == 2)
+        #expect(b.baseOnBalls == 0)
+        #expect(b.strikeOuts == 1)
+    }
+
+    /// A snake_case key decoding as nil is the failure mode this whole fix is
+    /// about, so assert the distinction directly: absent means nil, present
+    /// means the value — never silently nil when the field was sent.
+    @Test func anAbsentFieldIsNilRatherThanZero() throws {
+        let stripped = Self.payload.replacingOccurrences(
+            of: #""doubles": 1, "triples": 0, "#, with: "")
+        let detail = try JSONDecoder().decode(
+            LiveGameDetail.self, from: Data(stripped.utf8))
+        let b = try #require(
+            detail.toBoxScoreResponse().teams.home.players["ID694497"]?.stats?.batting)
+        #expect(b.doubles == nil)
+        #expect(b.caughtStealing == 1, "the other keys still decode")
+    }
+}
+
 // MARK: - Helpers
 
 /// Poll until `condition` holds. The code under test is time-based (a retry

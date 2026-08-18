@@ -309,6 +309,28 @@ def _bat_row(stat: dict) -> Optional[dict]:
         "avg": stat.get("avg"),
         "obp": stat.get("obp"),
         "slg": stat.get("slg"),
+        # Everything below was omitted until 2026-08-17, and the omission was
+        # visible: the box score's "2B / 3B / HR" line showed only home runs
+        # during a live game, because HR was the one extra-base hit this row
+        # carried. There was no reason for the asymmetry — the fields above are
+        # simply the conventional newspaper batting line, and HR belongs to it
+        # while doubles and triples do not. balldontlie ships all of these on
+        # the SAME /stats row we already fetch (verified against a real game:
+        # every one present and non-null on all 20 batters), so none of this
+        # costs an extra call.
+        #
+        # Key names are balldontlie's own, deliberately: a mismatch here fails
+        # silently as a null, which is indistinguishable from "the player didn't
+        # do it". Mirroring the source makes drift obvious instead.
+        "doubles":           stat.get("doubles"),
+        "triples":           stat.get("triples"),
+        "stolen_bases":      stat.get("stolen_bases"),
+        "caught_stealing":   stat.get("caught_stealing"),
+        "hit_by_pitch":      stat.get("hit_by_pitch"),
+        "sac_flies":         stat.get("sac_flies"),
+        "sac_bunts":         stat.get("sac_bunts"),
+        "gidp":              stat.get("gidp"),
+        "plate_appearances": stat.get("plate_appearances"),
     }
 
 
