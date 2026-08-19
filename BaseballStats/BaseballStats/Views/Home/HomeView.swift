@@ -443,6 +443,45 @@ private struct TeamHeroCard: View {
     /// keeps animating between 1.0 and 0.4 from there.
     @State private var livePulse = false
 
+    /// Point size of the record in `header`. 25pt is deliberately NOT a stock
+    /// text style, so it must be scaled by hand — and it must be `@ScaledMetric`
+    /// rather than a bare `.system(size: 25)`.
+    ///
+    /// DO NOT "simplify" this to `.font(.system(size: 25, weight: .bold))`.
+    /// A literal system size does not respond to Dynamic Type at all: the
+    /// record would look correct at the default size and then stay frozen at
+    /// 25pt while every other line grew, which at AX5 leaves the card's anchor
+    /// smaller than the division beneath it. This header's whole reason for
+    /// being a single left-aligned column is that it survives AX1–AX5 without
+    /// a fallback layout; a frozen record forfeits exactly that.
+    ///
+    /// `relativeTo: .title` is also load-bearing, not decorative. The live
+    /// score columns use `.title.bold()` (see `liveTeamColumn`), and the
+    /// record is deliberately sized BELOW them so that during a live game the
+    /// score — not the season record — is the largest number in the card.
+    /// Scaling relative to `.title` keeps that 25:28 ratio fixed at every
+    /// Dynamic Type size, so the inversion holds all the way up rather than
+    /// only at the default size.
+    ///
+    /// KNOWN AND ACCEPTED: the record's lead over the division line narrows as
+    /// the text size grows, and at AX5 the two are the same size. Measured off
+    /// the simulator, the record's ink height runs 18.3pt against the
+    /// division's 11.3pt at the default size (1.62x) but 36.3pt against
+    /// 35.7pt at AX5 (1.02x). This is a property of the type scale, not a bug:
+    /// `.subheadline` grows roughly 3.2x from default to AX5 while `.title`
+    /// grows roughly 2.0x, so the smaller style closes the gap on its own.
+    ///
+    /// Do not "fix" it by moving this to `relativeTo: .subheadline`. That
+    /// would hold the record-to-division ratio constant, but the record would
+    /// then outgrow the live score — which is the one thing this 25pt exists
+    /// to prevent. The alternatives are equally lossy: enlarging the record
+    /// re-creates the imbalance it was reduced to solve, and slowing the
+    /// division returns it to the faint grey line the treatment promoted it
+    /// out of. A reader at AX5 has three lines in front of them, in order,
+    /// distinguished by weight and colour; the size difference is what gets
+    /// spent, deliberately.
+    @ScaledMetric(relativeTo: .title) private var recordPointSize: CGFloat = 25
+
     /// Home tab tree, so the root-injected coordinators are reliably present.
     @EnvironmentObject private var navigation: AppNavigation
     @EnvironmentObject private var liveStore: LiveGameStore
@@ -537,24 +576,54 @@ private struct TeamHeroCard: View {
     /// name, so a small mark in the chrome with none in the content is the
     /// hierarchy we keep.
     ///
-    /// With the mark gone the row has one child, so the HStack, its 16pt
-    /// spacing and the trailing Spacer all did nothing and went. The record is
-    /// promoted from .title2 to .largeTitle: it inherits ~106pt of reclaimed
-    /// width, and with the club's name already stated twice above it, the
-    /// standing is what this block is actually for.
+    /// The mark's removal left a left-aligned column with 48–73% of its width
+    /// empty — the record used 105pt of 329, the division 88pt — which read as
+    /// residue rather than composition. Rather than spend that width on a
+    /// second column (which cannot survive Dynamic Type: at AX1 a two-column
+    /// header overflows for every club), the column is kept and the type
+    /// re-set, so the emptiness is deliberate and the block still grows
+    /// downward at accessibility sizes without a fallback layout.
+    ///
+    /// Three moves: the club name drops to an uppercase eyebrow — the toolbar
+    /// states it twice already, so at .title3 here it was the third statement
+    /// of the least load-bearing fact; the division comes out of .secondary to
+    /// 15pt semibold .primary, since a small grey string under a 34pt numeral
+    /// was the element that most read as unfinished; and the spacing closes to
+    /// 0/2 so the three lines bind into one unit instead of floating apart.
+    ///
+    /// The record then came DOWN, from .largeTitle (34pt) to 25pt. The 34pt was
+    /// set when the division was faint 15pt secondary and the record had to
+    /// carry the block alone; once the division became 15pt semibold primary
+    /// the record was oversized for a composition that had gained a second real
+    /// element. At 25pt it still leads (1.7x the division) without dominating,
+    /// and it sits below the live score so a game in progress reads first.
+    /// Net: the card is ~27pt shorter than it was.
     private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(entry.fullName)
-                .font(.title3.weight(.bold))
+        VStack(alignment: .leading, spacing: 0) {
+            // `minimumScaleFactor` is LOAD-BEARING here, not a guard. The
+            // longest club name fits comfortably through AX3, but at AX5
+            // "ARIZONA DIAMONDBACKS" exceeds the 329pt content width even
+            // after scaling and truncates to "ARIZONA DIAMON…". That is
+            // accepted rather than fixed: the toolbar directly above still
+            // renders the full name at AX5, so the eyebrow is the third
+            // statement of a fact already twice on screen, and shrinking it
+            // further would cost legibility for the users who chose AX5.
+            // Do not drop this modifier — without it the name truncates
+            // earlier and harder.
+            Text(entry.fullName.uppercased())
+                .font(.caption2.weight(.bold))
+                .tracking(0.6)
+                .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.85)
             Text(recordText)
-                .font(.largeTitle.weight(.bold))
+                .font(.system(size: recordPointSize, weight: .bold))
                 .foregroundStyle(.primary)
                 .monospacedDigit()
             Text(divisionText)
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(.secondary)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.primary)
+                .padding(.top, 2)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
