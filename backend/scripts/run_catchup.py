@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
 """Trigger the catch-up update via HTTP and wait for it to finish.
 
-Designed to run as a Railway cron service at 21:00 UTC (≈2pm PT), a
-few hours after the morning nightly. The catch-up refreshes season
-stats for players whose late West Coast games slipped past BDL's
-data-lag window when the morning nightly ran.
+Designed to run as a Railway cron service a few hours after the morning
+nightly. The catch-up refreshes season stats for players whose late West
+Coast games slipped past BDL's data-lag window when the morning nightly
+ran.
+
+The schedule itself lives in the Railway dashboard, not in this repo, so
+treat this note as observation rather than definition: the service named
+"catchup-update-cron-12PM PT" was seen firing at 19:01 UTC. Railway crons
+are UTC, so that is noon Pacific only while daylight time is in effect —
+the same UTC hour is 11am Pacific in winter. Check the dashboard before
+relying on the local time in the service name.
 
 Reads the API base URL from BASEBALL_API_URL. POSTs to
 `/admin/catchup-update` to spawn the background worker, then polls
