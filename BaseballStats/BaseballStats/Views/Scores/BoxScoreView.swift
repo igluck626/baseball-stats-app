@@ -34,6 +34,12 @@ final class BoxScoreViewModel: ObservableObject {
     /// and would otherwise need to walk the bdl→mlbam mapping per
     /// render.
     @Published var pitcherRecordsByBDL: [Int: PitcherRecord] = [:]
+    /// BDL ids already asked about, so a live game only resolves pitchers who
+    /// have NEWLY earned a decision rather than re-fetching the whole set each
+    /// snapshot. Holds ids whose lookup failed too — a miss is not worth
+    /// retrying every 15 seconds for the life of a game. Sister to
+    /// `batterStatsRequested`.
+    private var pitcherRecordsRequested: Set<Int> = []
     /// Point-in-time HR / 2B / 3B totals for every batter with a
     /// notable hit in this game, keyed by BDL player id. Mirrors
     /// the pitcher-record dict; populated by `loadBatterStatsAtDate`
@@ -58,8 +64,6 @@ final class BoxScoreViewModel: ObservableObject {
 
     private let bdl: BallDontLieClient
     private let api: APIClient
-    /// Guards the one-time derived-stats load on the first live snapshot.
-    private var didLoadLiveDerived = false
 
     init(game: Game, bdl: BallDontLieClient = .shared, api: APIClient = .shared) {
         self.game = game
@@ -135,7 +139,7 @@ final class BoxScoreViewModel: ObservableObject {
         // Pitcher records + batter point-in-time totals both depend on the box
         // score (need decisions / notable hits) and are independent of each
         // other, so fan them out in parallel.
-        async let pitcherRecordsTask = loadPitcherRecords()
+        async let pitcherRecordsTask = loadPitcherRecords(force: true)
         async let batterStatsTask    = loadBatterStatsAtDate()
         _ = await pitcherRecordsTask
         _ = await batterStatsTask
@@ -155,13 +159,14 @@ final class BoxScoreViewModel: ObservableObject {
         boxScore  = detail.toBoxScoreResponse()
         error     = nil
         isLoading = false
-        // Pitcher records once, on the FIRST live snapshot — tracked by a flag
-        // (not `boxScore == nil`) so a game that transitioned from pre-game
-        // (where `load()` already set a boxScore) still gets them.
-        if !didLoadLiveDerived {
-            didLoadLiveDerived = true
-            Task { await self.loadPitcherRecords() }
-        }
+        // Pitcher records on EVERY snapshot, for the same reason as the batters
+        // below: decisions are ASSIGNED as the game unfolds. This used to run
+        // once, on the first live snapshot, where the decision set is normally
+        // still empty — `loadPitcherRecords` early-returned on it and the flag
+        // meant it never ran again, so a live game showed no records at all.
+        // `loadPitcherRecords` skips anyone it has already asked about, so the
+        // usual tick resolves to a set difference and no network call.
+        Task { await self.loadPitcherRecords() }
         // Batter totals on EVERY snapshot, because which batters need one
         // changes as the game goes on: a double in the 7th makes that batter
         // notable for the first time. `loadBatterStatsAtDate` skips anyone it
@@ -209,7 +214,7 @@ final class BoxScoreViewModel: ObservableObject {
                 linescore: game.linescore,   // grid stays on the near-final snapshot
             )
         }
-        async let pitcherRecordsTask = loadPitcherRecords()
+        async let pitcherRecordsTask = loadPitcherRecords(force: true)
         async let batterStatsTask    = loadBatterStatsAtDate()
         _ = await pitcherRecordsTask
         _ = await batterStatsTask
@@ -231,7 +236,12 @@ final class BoxScoreViewModel: ObservableObject {
     /// has on hand without walking the resolution map per render.
     /// Failures degrade silently to the placeholder + isGameToday
     /// fallback (the previous behavior).
-    func loadPitcherRecords() async {
+    /// - Parameter force: re-resolve every decision pitcher and REPLACE the
+    ///   dicts, rather than fetching only the newly-decided ones and merging.
+    ///   The non-live paths (`load`, `completeFinalize`) pass true so their
+    ///   behaviour is exactly what it was before the live path became
+    ///   incremental; live snapshots pass false.
+    func loadPitcherRecords(force: Bool = false) async {
         guard let bs = boxScore else { return }
         guard let gameDate = Self.etDateString(from: game.startDate) else { return }
         var decisionBdlIds: Set<Int> = []
@@ -244,10 +254,14 @@ final class BoxScoreViewModel: ObservableObject {
             }
         }
         guard !decisionBdlIds.isEmpty else { return }
+        if force { pitcherRecordsRequested.removeAll() }
+        let unfetched = decisionBdlIds.subtracting(pitcherRecordsRequested)
+        guard !unfetched.isEmpty else { return }
+        pitcherRecordsRequested.formUnion(unfetched)
         let triples = await withTaskGroup(
             of: (bdlId: Int, mlbam: Int, record: PitcherRecord)?.self,
         ) { group in
-            for bdlId in decisionBdlIds {
+            for bdlId in unfetched {
                 group.addTask { [bdl, api] in
                     guard let player = try? await bdl.resolveBDLPlayerId(bdlId)
                     else { return nil }
@@ -265,14 +279,20 @@ final class BoxScoreViewModel: ObservableObject {
             }
             return out
         }
-        var byMlbam: [Int: PitcherRecord] = [:]
-        var byBdl:   [Int: PitcherRecord] = [:]
-        for (bdlId, mlbam, record) in triples {
-            byMlbam[mlbam] = record
-            byBdl[bdlId]   = record
+        // Merge, never replace: on a live tick `triples` holds only the pitchers
+        // who just earned a decision, and the ones fetched earlier must survive.
+        // A pitcher who LOSES his decision (a blown save reassigns the win) is
+        // left in the dict harmlessly — `pitcherDecisionTag` gates on the live
+        // box score's W/L/SV, so a record with no decision behind it renders
+        // nothing. `force` starts from empty, reproducing the old replace.
+        if force {
+            self.pitcherRecords      = [:]
+            self.pitcherRecordsByBDL = [:]
         }
-        self.pitcherRecords      = byMlbam
-        self.pitcherRecordsByBDL = byBdl
+        for (bdlId, mlbam, record) in triples {
+            self.pitcherRecords[mlbam]    = record
+            self.pitcherRecordsByBDL[bdlId] = record
+        }
     }
 
     /// Sister to `loadPitcherRecords` — picks every batter with
