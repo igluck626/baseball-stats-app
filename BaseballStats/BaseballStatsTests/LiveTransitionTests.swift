@@ -433,3 +433,77 @@ private extension NSLock {
         return body()
     }
 }
+
+// MARK: - Periodic refresh
+
+/// The loop behind `.periodicRefresh`. Extracted from the ViewModifier
+/// precisely so these can run without a view: the failure this guards against
+/// (a tab that quietly stops refreshing, or one that refreshes while hidden)
+/// is invisible until someone leaves the app open for an hour.
+@MainActor
+struct PeriodicRefreshTests {
+
+    /// Counts calls across the loop's lifetime.
+    final class Counter: @unchecked Sendable {
+        private(set) var count = 0
+        func bump() { count += 1 }
+    }
+
+    @Test func leadsWithAnImmediateRunRatherThanSleepingFirst() async throws {
+        let hits = Counter()
+        let task = Task {
+            await PeriodicRefreshLoop.run(
+                interval: .seconds(60), isActive: true, action: { hits.bump() },
+            )
+        }
+        // Far shorter than the interval: anything counted here can only be the
+        // leading call. A loop that slept first would still be at zero.
+        try await Task.sleep(for: .milliseconds(120))
+        task.cancel()
+        #expect(hits.count == 1)
+    }
+
+    @Test func repeatsOnTheInterval() async throws {
+        let hits = Counter()
+        let task = Task {
+            await PeriodicRefreshLoop.run(
+                interval: .milliseconds(50), isActive: true, action: { hits.bump() },
+            )
+        }
+        try await Task.sleep(for: .milliseconds(260))
+        task.cancel()
+        // 1 leading + ~4 ticks. Asserted as a range because timing on CI is not
+        // a promise; the point is that it kept going, not that it hit exactly N.
+        #expect(hits.count >= 3)
+        #expect(hits.count <= 7)
+    }
+
+    @Test func doesNothingWhileInactive() async throws {
+        let hits = Counter()
+        let task = Task {
+            await PeriodicRefreshLoop.run(
+                interval: .milliseconds(20), isActive: false, action: { hits.bump() },
+            )
+        }
+        try await Task.sleep(for: .milliseconds(150))
+        task.cancel()
+        // A backgrounded or switched-away tab must not spend a single request.
+        #expect(hits.count == 0)
+    }
+
+    @Test func stopsPromptlyOnCancellation() async throws {
+        let hits = Counter()
+        let task = Task {
+            await PeriodicRefreshLoop.run(
+                interval: .milliseconds(30), isActive: true, action: { hits.bump() },
+            )
+        }
+        try await Task.sleep(for: .milliseconds(100))
+        task.cancel()
+        let atCancel = hits.count
+        try await Task.sleep(for: .milliseconds(150))
+        // Nothing after cancellation — this is what makes `.task(id:)` teardown
+        // on tab-switch actually stop the traffic.
+        #expect(hits.count == atCancel)
+    }
+}

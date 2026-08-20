@@ -114,6 +114,16 @@ final class ScoresViewModel: ObservableObject {
         }
     }
 
+    /// FAST PATH for a game the app watched end. No longer the remedy — the
+    /// periodic slate refresh (see `periodicRefresh` in the view body) is what
+    /// guarantees a finished game stops rendering as live, and it covers every
+    /// game rather than only those observed live. This chain survives because it
+    /// is much faster where it applies: it fires the instant a game leaves the
+    /// live list and bypasses the 30s cache, so the last out reads FINAL in a
+    /// few seconds instead of up to 90. If it is ever deleted, the refresh still
+    /// converges — the user just waits longer at the one moment they are
+    /// watching.
+    ///
     /// Re-read the slate until the just-ended games are no longer `.live`.
     ///
     /// Replaces a single `await load(date:)`. That was wrong twice over. It was
@@ -179,11 +189,22 @@ final class ScoresViewModel: ObservableObject {
     /// keeps the existing game list visible instead of replacing it
     /// with an error screen. The user just sees the spinner stop —
     /// the next normal `load()` will surface persistent failures.
-    /// Drops every entry in the BDL in-process cache first so a
-    /// deliberate pull-to-refresh bypasses any in-window cached
-    /// values from earlier in the session.
-    func refresh() async {
-        bdl.clearCache()
+    ///
+    /// - Parameter clearingCache: drop every entry in the BDL in-process cache
+    ///   first. TRUE for a deliberate pull-to-refresh, where the user is asking
+    ///   for the freshest possible answer and an in-window cached value would
+    ///   read as the gesture having done nothing. FALSE for the periodic
+    ///   background refresh: that fires every 90s against a 30s cache, so it
+    ///   misses the cache on its own merits, and clearing the WHOLE cache on a
+    ///   timer would evict standings, rosters and lineups that no one asked to
+    ///   re-fetch.
+    ///
+    /// Non-destructive by design — this is what the periodic refresh needs, and
+    /// why it reuses this rather than `load`: `load` sets `isLoading` (a spinner
+    /// every 90s) and empties `games` on failure (a blank screen on one dropped
+    /// request).
+    func refresh(clearingCache: Bool = true) async {
+        if clearingCache { bdl.clearCache() }
         let year = Calendar.current.component(.year, from: selectedDate)
         async let standingsTask: [BDLStandingsEntry]? = try? bdl.getStandings(season: year)
         do {
@@ -362,6 +383,19 @@ struct ScoresView: View {
             }
         }
         .task { await vm.load(date: vm.selectedDate) }
+        // Re-read the slate while the tab is visible. This — not `finalize` — is
+        // what makes a finished game show as finished. `finalize` only fires for
+        // games the app already had as `.live`, so a game that went live AND
+        // ended while this tab sat idle was never touched by anything: it kept
+        // rendering its start time hours later. Cache-respecting (`clearingCache:
+        // false`) and quiet, so a tick costs one 30s-cache miss and can never
+        // blank the list.
+        .periodicRefresh(
+            every: RefreshCadence.slate,
+            isActive: navigation.shouldPoll(on: .scores),
+        ) {
+            await vm.refresh(clearingCache: false)
+        }
         // Drive the SHARED LiveGameStore list loop from the Scores tab's
         // lifecycle, gated exactly like the old per-VM loop was (Phase 2, step 2).
         .task {

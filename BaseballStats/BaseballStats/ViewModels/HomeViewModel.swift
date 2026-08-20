@@ -158,9 +158,18 @@ final class HomeViewModel: ObservableObject {
     /// repeat calls — BDL responses are cached for 30s per date.
     /// `bypassCache` is set only by `finalize` — see there. Every other
     /// caller wants the shared 30s slate cache.
-    func load(bdlTeamId: Int, bypassCache: Bool = false) async {
-        isLoading = true
-        error = nil
+    /// - Parameter quiet: run as a background refresh — no loading spinner, and
+    ///   a fetch that comes back empty leaves the previous games on screen
+    ///   instead of blanking the hero card. The per-day fetches below swallow
+    ///   their errors with `try?`, so a total network failure is indistinguishable
+    ///   from "this team has no games", and assigning that would wipe the card on
+    ///   a single dropped request. Set by `periodicRefresh`; never by a user
+    ///   action, where an empty result IS the answer.
+    func load(bdlTeamId: Int, bypassCache: Bool = false, quiet: Bool = false) async {
+        if !quiet {
+            isLoading = true
+            error = nil
+        }
         let today = Date()
         let cal = Calendar.current
         let year = cal.component(.year, from: today)
@@ -196,6 +205,13 @@ final class HomeViewModel: ObservableObject {
             ($0.startDate ?? .distantFuture) < ($1.startDate ?? .distantFuture)
         }
 
+        // A quiet tick that fetched nothing is a failed tick, not an empty
+        // schedule — keep what is on screen. A user-initiated load still
+        // assigns, because for them an empty result is a real answer.
+        if quiet && sorted.isEmpty {
+            isLoading = false
+            return
+        }
         let finals = sorted.filter { $0.phase == .final }
         let liveOrPreview = sorted.filter { $0.phase != .final }
         self.lastGame = finals.last
@@ -308,6 +324,13 @@ final class HomeViewModel: ObservableObject {
         }
     }
 
+    /// FAST PATH for a game the app watched end — see the twin comment on
+    /// `ScoresViewModel.finalize`. The periodic refresh wired in `HomeView` is
+    /// what actually guarantees convergence now, and unlike this it also covers
+    /// a game that went live and finished while Home sat idle. This stays for
+    /// latency: the favourite's last out reads final in seconds rather than up
+    /// to 90.
+    ///
     /// Re-read the team's games until the just-ended ones are no longer `.live`.
     ///
     /// Was a single `await load(bdlTeamId:)`, which had two problems. It ran on

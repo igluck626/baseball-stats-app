@@ -158,6 +158,19 @@ struct HomeView: View {
         .task {
             if navigation.shouldPoll(on: .home) { liveStore.subscribeList(owner: listSubscriberID) }
         }
+        // Re-read the favourite's games while Home is visible. NOT behind
+        // `hasLiveGame` — `applyLiveList` is, and that is exactly why the hero
+        // card could freeze: once the view model stopped believing a game was
+        // live, the only path that updated it stopped running. This one keeps
+        // going regardless, which is the point.
+        .periodicRefresh(
+            every: RefreshCadence.slate,
+            isActive: navigation.shouldPoll(on: .home),
+        ) {
+            if let bdlId = store.bdlTeamId {
+                await vm.load(bdlTeamId: bdlId, quiet: true)
+            }
+        }
         // Fold each fresh /live/games snapshot from the store into the hero strip
         // (score / inning) — the merge the deleted refreshLive loop used to do,
         // now sourced from the store's shared list instead of a self-fetch.
