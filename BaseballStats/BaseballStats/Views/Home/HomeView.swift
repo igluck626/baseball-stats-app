@@ -645,19 +645,49 @@ private struct TeamHeroCard: View {
         streakCode != nil || (lastTenW != nil && lastTenL != nil)
     }
 
+    /// Form pills, side by side while they fit and stacked when they don't.
+    ///
+    /// Side by side they overflow at the largest accessibility sizes, and a
+    /// `Text` given less width than it wants WRAPS. "STREAK" is one word wider
+    /// than the space it was being offered, and a single word with no break
+    /// opportunity wraps mid-word — hence "STRE / AK" and "4- / 6", with the
+    /// capsule growing around the two lines into a blob. Nothing here is
+    /// clipped or truncated; it is ordinary wrapping in a space too narrow for
+    /// the word.
+    ///
+    /// `ViewThatFits` takes the row when the row fits and the column when it
+    /// does not, so nothing changes below AX5 — verified in the simulator at
+    /// real Dynamic Type, where AX3 is byte-identical to today. Stacking is
+    /// preferred over the alternatives because it is the only one that keeps
+    /// BOTH labels and BOTH values: dropping the labels to fit one line loses
+    /// what the numbers mean, and dropping the capsule fixes nothing at all —
+    /// the constraint is the row's width, not the capsule's shape, so plain
+    /// text wraps mid-word exactly the same way.
     private var streakLine: some View {
-        HStack(spacing: 12) {
-            if let w = lastTenW, let l = lastTenL {
-                pill(label: "L10", value: "\(w)-\(l)")
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) {
+                streakPills
+                Spacer(minLength: 0)
             }
-            if let code = streakCode, !code.isEmpty {
-                pill(
-                    label: "STREAK",
-                    value: code,
-                    tint: code.hasPrefix("W") ? .green : .red,
-                )
+            VStack(alignment: .leading, spacing: 8) {
+                streakPills
             }
-            Spacer(minLength: 0)
+        }
+    }
+
+    /// The pills themselves, shared by both arms of `ViewThatFits` so the two
+    /// layouts cannot drift apart.
+    @ViewBuilder
+    private var streakPills: some View {
+        if let w = lastTenW, let l = lastTenL {
+            pill(label: "L10", value: "\(w)-\(l)")
+        }
+        if let code = streakCode, !code.isEmpty {
+            pill(
+                label: "STREAK",
+                value: code,
+                tint: code.hasPrefix("W") ? .green : .red,
+            )
         }
     }
 
@@ -873,6 +903,13 @@ private struct TeamHeroCard: View {
                 Text(HomeGameUtils.shortRelativeDate(game: last))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    // A different failure from the pills above, needing a
+                    // different fix. This trailing date is the flexible end of
+                    // the row, so at AX5 it is squeezed until "Yesterday"
+                    // hyphenates to "Yester- / day". Given its natural width it
+                    // stays whole and the matchup line — which has real word
+                    // breaks — wraps instead, which is legible.
+                    .fixedSize(horizontal: true, vertical: false)
             }
         } else {
             Text("No recent games")
