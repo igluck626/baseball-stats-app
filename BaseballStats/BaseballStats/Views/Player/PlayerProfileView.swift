@@ -1527,13 +1527,30 @@ private struct StatBlock: View {
 // = 114pt
 //
 private let careerFrozenPaneWidth: CGFloat = 114
-/// Width of the per-season awards-chiplets cell — lives at the far
-/// right of the scrollable section now (after IBB on batting, after
-/// the optional pitching columns), so a wider cell is fine. Fits
-/// the worst-case multi-trophy year like a Triple-Crown MVP season
-/// (AS + GG + SS + MVP-1, ~130pt) without truncation; quieter
-/// seasons just leave trailing whitespace.
-private let careerAwardsCellWidth: CGFloat = 150
+/// Width of the per-season awards-chiplets cell — lives at the far right of
+/// the scrollable section (after IBB on batting, after the optional pitching
+/// columns), so widening it costs horizontal scroll and nothing else: no stat
+/// column narrows, the table simply ends 65pt later.
+///
+/// Sized for the widest chip row that can be CONSTRUCTED, not the widest that
+/// has occurred. Measured at the real chip font (`.system(size: 10, weight:
+/// .semibold)`, monospaced digits) with " · " separators and the row's 8pt
+/// horizontal padding:
+///
+///   AS · GG · SS · MVP-1 · ROY-1            153.4pt   (Ichiro 2001, real)
+///   AS · SS · MVP-5 · CY-1 · ROY-1          163.2pt   (Valenzuela 1981, real — the widest ever)
+///   AS · GG · SS · MVP-10 · CY-10 · ROY-10  207.6pt   (six chips, two-digit — constructible)
+///
+/// 150 fitted four chips and clipped at five: the previous value was set when
+/// ROY rendered only for winners, so five-chip seasons did not exist. Adding
+/// ROY vote finishes created the first two — and they are Ichiro and
+/// Valenzuela, two of the most-viewed rows in the app.
+///
+/// Six has never happened (it needs a rookie pitcher who also wins a Gold
+/// Glove) but it is reachable, and the point of sizing to the constructible
+/// maximum is that the next award added to `chipItems` does not silently clip
+/// the way this one did.
+private let careerAwardsCellWidth: CGFloat = 215
 
 // Column widths for the full Baseball Reference batting layout —
 // 28 columns totaling ~902pt. Wider than the screen, so the table
@@ -1864,6 +1881,13 @@ private struct CareerAwardChipsCell: View {
                     .monospacedDigit()
                     .foregroundStyle(item.color)
                     .underline()
+                    // The row is height-constrained (28pt), so a chip that
+                    // wraps loses its second line WITHOUT any visual sign —
+                    // "ROY-1" renders as "ROY-" and the rank silently vanishes.
+                    // Holding one line converts that into an ellipsis, which is
+                    // at least legible as truncation. Belt-and-braces: the cell
+                    // is sized so this should never fire.
+                    .lineLimit(1)
             }
             .buttonStyle(.plain)
         } else {
@@ -4461,4 +4485,5 @@ final class CurrentSeasonRanksViewModel: ObservableObject {
         ))
     }
 }
+
 
