@@ -1830,9 +1830,22 @@ private struct CareerAwardChipsCell: View {
                                 color: rankColor(rank),
                                 destination: dest))
         }
-        if chips.royWinner, let dest = destination("ROY") {
-            out.append(ChipItem(text: "ROY",
-                                color: .accentColor,
+        // ROY draws exactly like MVP and CY: the rank, gold at first place.
+        // The ranked branch comes FIRST and the two are mutually exclusive — a
+        // winner also carries a rank-1 row in `votes`, so an unguarded pair
+        // would draw both "ROY-1" and the fallback on the same season.
+        if let rank = chips.royRank, let dest = destination("ROY") {
+            out.append(ChipItem(text: "ROY-\(rank)",
+                                color: rankColor(rank),
+                                destination: dest))
+        } else if chips.royWinner, let dest = destination("ROY") {
+            // A win recorded before its ballot rows land — an award announced
+            // ahead of the share file being republished. No such rows exist
+            // today (checked: zero winners lack a ballot), so this is purely a
+            // guard against a data-timing gap showing nothing where a trophy
+            // belongs. A winner is rank 1 by definition, hence the same text.
+            out.append(ChipItem(text: "ROY-1",
+                                color: rankColor(1),
                                 destination: dest))
         }
         return out
@@ -2021,6 +2034,9 @@ struct AwardChips {
     let royWinner: Bool
     let mvpRank: Int?
     let cyRank: Int?
+    /// A ROY finish that was NOT a win. Winners keep `royWinner` and render as
+    /// "ROY"; this carries 2nd through 10th so a runner-up is not invisible.
+    let royRank: Int?
 
     init(_ y: PlayerAwardYear?) {
         guard let y else {
@@ -2030,24 +2046,42 @@ struct AwardChips {
             self.royWinner = false
             self.mvpRank = nil
             self.cyRank = nil
+            self.royRank = nil
             return
         }
         self.allstar       = y.allstar
         self.goldGlove     = y.awards.contains { $0.award_name == "Gold Glove" }
         self.silverSlugger = y.awards.contains { $0.award_name == "Silver Slugger" }
         self.royWinner     = y.awards.contains { $0.award_name == "Rookie of the Year" }
-        // Only surface top-10 MVP/CY finishes — beyond that the
-        // single-row "27th in MVP voting" chiclet is more noise
-        // than signal in the tight career-table cell.
+        // Only surface top-10 finishes — beyond that the single-row
+        // "27th in MVP voting" chiclet is more noise than signal in the tight
+        // career-table cell.
+        //
+        // All three awards read `votes` (the ballot), NOT `awards` (winners).
+        // ROY did not, which is why a runner-up showed nothing at all: the
+        // payload carried the finish, the row simply never looked at it. That
+        // hid 821 player-seasons — Puig's 2013 NL ROY-2 among them, and 300
+        // top-three finishes in all. `royWinner` above still reads the winners
+        // table, but only as a fallback for a win whose ballot rows have not
+        // landed yet — see `chipItems`, which prefers the ranked form so a
+        // winner draws "ROY-1" in the same gold as "MVP-1" and "CY-1".
+        //
+        // The cap does different work per award: MVP has 5,454 non-winning
+        // finishes of which only 1,915 are top-10, so it prunes hard. ROY's
+        // ballot is short — 809 of its 821 are already top-10 — so it prunes
+        // almost nothing there. Kept uniform anyway; a rule that varies by
+        // award is harder to explain than the handful of rows it saves.
         let mvpVote = y.votes.first { $0.award_id == "MVP" }
         self.mvpRank = mvpVote.flatMap { $0.rank }.flatMap { $0 <= 10 ? $0 : nil }
         let cyVote  = y.votes.first { $0.award_id == "CY Young" }
         self.cyRank  = cyVote.flatMap { $0.rank }.flatMap { $0 <= 10 ? $0 : nil }
+        let royVote = y.votes.first { $0.award_id == "ROY" }
+        self.royRank = royVote.flatMap { $0.rank }.flatMap { $0 <= 10 ? $0 : nil }
     }
 
     var isEmpty: Bool {
         !allstar && !goldGlove && !silverSlugger && !royWinner
-            && mvpRank == nil && cyRank == nil
+            && mvpRank == nil && cyRank == nil && royRank == nil
     }
 }
 
@@ -4427,3 +4461,4 @@ final class CurrentSeasonRanksViewModel: ObservableObject {
         ))
     }
 }
+
