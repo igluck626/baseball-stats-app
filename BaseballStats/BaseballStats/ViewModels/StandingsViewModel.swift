@@ -84,20 +84,34 @@ final class StandingsViewModel: ObservableObject {
         return nil
     }
 
-    func loadStandings() async {
-        isLoading = true
-        error = nil
+    /// - Parameter quiet: run as a background refresh — no spinner, and a failed
+    ///   fetch leaves the table on screen instead of emptying it. Standings are
+    ///   the third screen to need this (after the Scores slate and the Home hero
+    ///   card) for the same reason each time: the user-initiated `load` is
+    ///   written for someone who asked and is watching, so it announces itself
+    ///   and treats a failure as a result. On a 90-second clock that is a
+    ///   spinner flash and a table that empties on one dropped request — both
+    ///   worse than the staleness the refresh exists to fix.
+    func loadStandings(quiet: Bool = false) async {
+        if !quiet {
+            isLoading = true
+            error = nil
+        }
         do {
             let response = try await api.getStandings(year: selectedYear)
             partition(response)
             lastUpdated = response?.last_updated
         } catch {
-            self.error = error.localizedDescription
-            alStandings = [:]
-            nlStandings = [:]
-            lastUpdated = nil
+            // A quiet tick keeps what is on screen; only a load the user asked
+            // for is allowed to replace the table with an error.
+            if !quiet {
+                self.error = error.localizedDescription
+                alStandings = [:]
+                nlStandings = [:]
+                lastUpdated = nil
+            }
         }
-        isLoading = false
+        if !quiet { isLoading = false }
         // Overlay today's not-yet-official results once the standings
         // (and their `last_updated` cutoff) have landed.
         await loadTodayAdjustments()

@@ -26,6 +26,10 @@ typealias AdjustedStandingColumns = (
 
 struct StandingsView: View {
     @StateObject private var viewModel = StandingsViewModel()
+    /// Injected at the root (see `ContentView`). Needed only for the visibility
+    /// gate on `periodicRefresh` — the same signal the live loops use, so
+    /// refreshing and polling stop together when the app backgrounds.
+    @EnvironmentObject private var navigation: AppNavigation
     @State private var selectedTab: TabSelection = .al
     /// Guards the one-time "open on the favorite team's league" jump so
     /// it fires only on first appearance — once the user taps a tab
@@ -72,6 +76,27 @@ struct StandingsView: View {
         .task {
             await viewModel.loadStandings()
             applyFavoriteLeagueIfNeeded()
+        }
+        // Second adopter of the shared mechanism (after Scores and Home). This
+        // screen had the same defect and no repair path at all: records change
+        // with every game that ends, and a Standings tab left open showed the
+        // table it fetched on appear until the app was relaunched.
+        //
+        // COST, before shortening this interval: every tick here is a REAL
+        // request. The Scores tab shares the same cadence but is cushioned —
+        // `BallDontLieClient.getGames` caches for 30s, so a fast switch away and
+        // back costs nothing. Nothing cushions this one: `loadStandings` calls
+        // `APIClient.getStandings`, and `APIClient` holds no cache of any kind,
+        // so 90s means ~40 requests an hour to our own service for as long as
+        // the tab is open. Cheap — it is our backend, not a metered third party
+        // — but not free, and it scales linearly if this number comes down.
+        // (`BallDontLieClient.getStandings` does cache, at ttl 300, but this
+        // screen never calls it; do not read that TTL as protection here.)
+        .periodicRefresh(
+            every: RefreshCadence.slate,
+            isActive: navigation.shouldPoll(on: .standings),
+        ) {
+            await viewModel.loadStandings(quiet: true)
         }
         .onChange(of: viewModel.selectedYear) { _, _ in
             Task { await viewModel.loadStandings() }
