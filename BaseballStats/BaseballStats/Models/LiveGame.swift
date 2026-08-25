@@ -593,6 +593,19 @@ extension Game {
             currentInningOrdinal: inningOrdinal(live.inning) ?? linescore?.currentInningOrdinal,
             inningState:          half.map { $0.prefix(1).uppercased() + $0.dropFirst() } ?? linescore?.inningState,
             innings:              linescore?.innings,
+            // KNOWN STALE, AND DELIBERATELY SO. This is the R/H/E totals block,
+            // and a live summary cannot fill it: `LiveTeamLite` carries only
+            // `runs`, while `InningTotals` needs runs, hits, errors AND
+            // leftOnBase. Building one from the summary would put a live run
+            // total beside three nils and REPLACE whatever real R/H/E the slate
+            // supplied — the sole consumer is `FinalGameCard`'s expanded
+            // linescore grid, which renders exactly those columns.
+            //
+            // So a merged Game deliberately carries a FRESH `teams[].score`
+            // (written above from `live.*.runs`) and a STALE `linescore.teams`.
+            // If you want a live score, read `teams[].score` or the store's
+            // `liveList[gamePk]`, never this. See `LiveGameCard.scoreboardRow`,
+            // which reads the store for precisely this reason.
             teams:                linescore?.teams,
             scheduledInnings:     linescore?.scheduledInnings ?? 9,
             isTopInning:          (half ?? "").lowercased() == "top",

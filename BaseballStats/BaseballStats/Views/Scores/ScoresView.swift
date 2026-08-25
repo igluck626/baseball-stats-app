@@ -1525,10 +1525,30 @@ private struct LiveGameCard: View {
     // MARK: Top — team rows + inning + LIVE badge
 
     private var scoreboardRow: some View {
-        HStack(alignment: .center, spacing: 14) {
+        // The score comes from the SAME store entry that decides this card
+        // exists at all, not from the merged `Game`.
+        //
+        // The card used to read `game.teams.*.score`, which is only refreshed
+        // when `applyLiveList` merges — while the panel below it read the store
+        // directly. So the inning, outs and bases advanced every poll and the
+        // score did not, and a card sat at 0-0 while its own box score showed
+        // 1-0. Two halves of one card, two sources, one of them live.
+        //
+        // `liveList[gamePk]` is non-nil by construction here: `GameRowCard`
+        // renders this view only when `liveStore.liveList[game.gamePk] != nil`.
+        // The merged game stays as the fallback so nothing renders blank if the
+        // entry is ever missing.
+        //
+        // NOT the detail snapshot, which is what `BoxScoreView` uses: its
+        // `linescore.teams` came back null on a sampled live game, so copying
+        // that expression here would trade a stale number for no number.
+        let summary = liveStore.liveList[game.gamePk]
+        return HStack(alignment: .center, spacing: 14) {
             VStack(spacing: 8) {
-                teamRow(side: game.teams.away, bdlTeamId: game.bdlAwayTeamId)
-                teamRow(side: game.teams.home, bdlTeamId: game.bdlHomeTeamId)
+                teamRow(side: game.teams.away, bdlTeamId: game.bdlAwayTeamId,
+                        liveScore: summary?.away.runs)
+                teamRow(side: game.teams.home, bdlTeamId: game.bdlHomeTeamId,
+                        liveScore: summary?.home.runs)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -1542,7 +1562,7 @@ private struct LiveGameCard: View {
         }
     }
 
-    private func teamRow(side: GameTeam, bdlTeamId: Int?) -> some View {
+    private func teamRow(side: GameTeam, bdlTeamId: Int?, liveScore: Int?) -> some View {
         let standingText: String? = bdlTeamId
             .flatMap { standings[$0] }
             .map { $0.displayString }
@@ -1574,7 +1594,7 @@ private struct LiveGameCard: View {
 
             Spacer()
 
-            Text(side.score.map(String.init) ?? "")
+            Text((liveScore ?? side.score).map(String.init) ?? "")
                 .font(.title3.weight(.semibold))
                 .monospacedDigit()
         }
