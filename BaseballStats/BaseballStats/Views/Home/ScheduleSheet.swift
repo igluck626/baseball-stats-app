@@ -45,6 +45,11 @@ struct ScheduleSheet: View {
         NavigationStack(path: $path) {
             content
             .navigationBarTitleDisplayMode(.inline)
+            // Without this the bar is fully transparent and rows scroll visibly
+            // behind it — and because the month header pins BELOW the bar, an
+            // August row would render above its own "AUGUST" header. Same
+            // modifier the other five toolbar-bearing screens use.
+            .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     HStack(spacing: 8) {
@@ -109,6 +114,7 @@ struct ScheduleSheet: View {
                         Section(header: monthHeader(bucket.month)) {
                             ForEach(bucket.games) { game in
                                 ScheduleRow(
+                                    recordAfter:   vm.recordAfter[game.gamePk],
                                     game:          game,
                                     favoriteBDLId: favorite.bdlTeamId,
                                     teamColor:     teamColor,
@@ -182,6 +188,9 @@ struct ScheduleSheet: View {
 // MARK: - Schedule Row
 
 private struct ScheduleRow: View {
+    /// "W-L after this game", for completed games only — nil for anything
+    /// unplayed, which is what keeps upcoming rows unchanged.
+    var recordAfter: String? = nil
     let game: Game
     let favoriteBDLId: Int
     let teamColor: Color
@@ -293,6 +302,17 @@ private struct ScheduleRow: View {
                     .font(.subheadline.weight(didWin ? .bold : .semibold))
                     .foregroundStyle(didWin ? .primary : .secondary)
                     .monospacedDigit()
+                // Inside the trailing stack rather than a fifth column, so it
+                // stays grouped with the result it belongs to and the date /
+                // indicator / opponent columns keep their widths. Fixed width
+                // so the scores above it stay aligned down the list.
+                if let recordAfter {
+                    Text(recordAfter)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.tertiary)
+                        .monospacedDigit()
+                        .frame(width: 46, alignment: .trailing)
+                }
             }
         case .live:
             let (f, o) = HomeGameUtils.scores(
