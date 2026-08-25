@@ -382,6 +382,17 @@ struct LeaderboardsView: View {
                         .opacity(0)
                     LeaderboardRow(entry: entry, format: rowFormat, showHeat: showHeat)
                 }
+                // Reclaims the vertical half of `.insetGrouped`'s default row
+                // inset: 6 rows fit before, 8 after, with the row itself
+                // untouched at 56pt — no font, padding or line count changes.
+                //
+                // The horizontal 16 is NOT arbitrary and must not be dropped:
+                // `listRowInsets` replaces ALL FOUR edges, so specifying only
+                // the vertical would zero the sides and shove the rows against
+                // the card edge. 16 is the measured default — content sits
+                // 65.0pt from the screen edge with no modifier, and 16 keeps it
+                // there (20 pushed it to 68.7pt, which is how this was caught).
+                .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
                 .listRowSeparatorTint(Color(.systemGray4))
             }
             if viewModel.canLoadMore {
