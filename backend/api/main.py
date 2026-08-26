@@ -57,6 +57,7 @@ import nightly_update                                       # noqa: E402
 import reset_db                                             # noqa: E402
 import retrosheet_ingest                                    # noqa: E402
 import retrosheet_gamelogs                                  # noqa: E402
+import gamelog_recon                                        # noqa: E402
 
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8000"))
@@ -553,6 +554,7 @@ _nightly_state: dict = {
     "error":                    None,
     "last_run":                 None,   # ISO-8601 UTC timestamp of last completed run
     "last_started":             None,   # ISO-8601 UTC timestamp of when current run began
+    "recon":                    None,   # last reconciliation summary (also persisted)
 }
 _nightly_lock = threading.Lock()
 
@@ -1003,6 +1005,31 @@ def _run_nightly_update() -> None:
             )
         except Exception as exc:
             log.error(f"[nightly] team-stints phase FAILED (non-fatal): {exc}")
+
+        # Phase 8 — game-log reconciliation. LAST, because it asserts against
+        # the settled state every phase above produced. Compares each player's
+        # game-log H sum to their season row, splits the disagreements by
+        # whether a BDL re-pull could ever fix them, and attributes each
+        # reachable one to the game it came from. See gamelog_recon.py.
+        #
+        # `run_reconciliation` never raises — it catches internally and stamps
+        # the failure on the run row — but the try/except stays for symmetry
+        # with every sibling phase and to cover an import-time surprise. A
+        # check that can break the nightly is worse than no check.
+        log.info("[nightly] starting reconciliation phase")
+        try:
+            recon = gamelog_recon.run_reconciliation(current_year)
+            with _nightly_lock:
+                _nightly_state["recon"] = recon
+            log.info(
+                "[nightly] reconciliation phase done: disagreeing=%s "
+                "(reachable=%s unreachable=%s confirmed=%s) attributed=%s",
+                recon.get("disagreeing"), recon.get("disagreeing_reachable"),
+                recon.get("disagreeing_unreachable"), recon.get("confirmed"),
+                recon.get("tier2_attributed"),
+            )
+        except Exception as exc:
+            log.error(f"[nightly] reconciliation phase FAILED (non-fatal): {exc}")
     except Exception as exc:
         # Log the full traceback so silent thread crashes are visible in
         # Railway's log stream. The previous handler stored only str(exc),
@@ -2196,6 +2223,77 @@ def admin_recalculate_pitching_counting(
         "mode":            "overwrite" if season >= data_service._current_year() else "fill-nulls",
         "fields":          list(data_service._PITCHING_COUNTING_FIELDS),
         "seasons_updated": int(seasons_updated),
+    }
+
+
+@app.post("/admin/reconciliation")
+def admin_run_reconciliation(
+    season: int | None = Query(None, description="Defaults to the current season."),
+):
+    """Run the game-log reconciliation on demand. The nightly runs this as its
+    last phase; this is for checking a repair immediately after a re-pull
+    rather than waiting for the next run.
+
+    Note the two-run rule: a finding is `confirmed` only when the previous run
+    saw it too, so an on-demand run right after a nightly will confirm what the
+    nightly found. Persists a run row either way."""
+    return gamelog_recon.run_reconciliation(season)
+
+
+@app.get("/admin/reconciliation")
+def admin_get_reconciliation(
+    season: int | None = Query(None, description="Defaults to the current season."),
+):
+    """Latest reconciliation run for `season`, with its per-player findings
+    ordered worst-gap first. `reachable=false` findings are the ones no BDL
+    re-pull can repair — see `gamelog_recon` for why they're counted apart."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    from database.models import GamelogReconFinding as _F, GamelogReconRun as _R
+    if season is None:
+        season = data_service._current_year()
+    with connection.get_session() as db:
+        run = (db.query(_R).filter(_R.season == season)
+                 .order_by(_R.id.desc()).first())
+        if run is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No reconciliation run recorded for season {season}",
+            )
+        findings = (db.query(_F).filter(_F.run_id == run.id)
+                      .order_by(_F.reachable.desc(), _F.gap.desc()).all())
+        return {
+            "run": {c.key: getattr(run, c.key) for c in run.__table__.columns},
+            "findings": [
+                {c.key: getattr(f, c.key) for c in f.__table__.columns}
+                for f in findings
+            ],
+        }
+
+
+@app.get("/admin/reconciliation/history")
+def admin_reconciliation_history(
+    season: int | None = Query(None, description="Defaults to the current season."),
+    limit:  int = Query(30, ge=1, le=365, description="How many runs back."),
+):
+    """Run-level history, newest first. This is what sizes the re-pull window:
+    `median_age_days` and `oldest_attributed` say how stale a scorer revision
+    typically is when we catch it, and a re-pull window shorter than that is
+    a window that misses them. `unreachable_games` climbing over time is the
+    separate gamePk drift path getting worse."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    from database.models import GamelogReconRun as _R
+    if season is None:
+        season = data_service._current_year()
+    with connection.get_session() as db:
+        runs = (db.query(_R).filter(_R.season == season)
+                  .order_by(_R.id.desc()).limit(limit).all())
+    return {
+        "season": season,
+        "runs": [
+            {c.key: getattr(r, c.key) for c in r.__table__.columns} for r in runs
+        ],
     }
 
 

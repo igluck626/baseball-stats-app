@@ -768,3 +768,99 @@ class LeaderboardJob(Base):
     error         = Column(Text)
     started_at    = Column(DateTime)
     updated_at    = Column(DateTime)
+
+
+# ---------------------------------------------------------------------------
+# Game-log reconciliation — the nightly assertion that the per-game rows and
+# the season row still agree. Written by `gamelog_recon.run_reconciliation`.
+#
+# Why this exists: `player_seasons.H` comes from BDL's season_stats and
+# `batting_gamelogs` comes from BDL's per-game /stats. Nothing forced them to
+# agree once H left `_BATTING_COUNTING_FIELDS`, and a silent disagreement is
+# exactly the Brice Turang 8/6 defect — a hit BDL revised after we ingested it,
+# invisible until someone divided a batting average back out by hand.
+#
+# Persisted rather than held on `_nightly_state` for three reasons: that dict
+# is in-memory and lies after a restart, the two-run rule needs the previous
+# run to compare against, and sizing the re-pull window wants a HISTORY of
+# revision ages, not one night's snapshot.
+# ---------------------------------------------------------------------------
+
+class GamelogReconRun(Base):
+    __tablename__ = "gamelog_recon_runs"
+
+    id                = Column(Integer, primary_key=True, autoincrement=True)
+    run_at            = Column(DateTime)
+    season            = Column(Integer)
+    players_checked   = Column(Integer)
+    # Every player whose game-log H sum differs from the season row.
+    disagreeing       = Column(Integer)
+    # Split of the above by whether a BDL re-pull could ever fix it.
+    disagreeing_reachable   = Column(Integer)
+    disagreeing_unreachable = Column(Integer)
+    # Disagreements that ALSO appeared in the previous run — the two-run rule.
+    # A live game at run time makes the season row (which BDL updates during
+    # play) briefly outrun the logs (finals only); such a gap closes by the
+    # next run, so only a persisting one is real.
+    confirmed         = Column(Integer)
+    # JSON {gap: player_count}, e.g. {"-1": 5, "1": 9, "3": 1}. Signed, so
+    # "our logs have too many hits" and "too few" stay distinguishable.
+    magnitude_json    = Column(Text)
+    max_abs_gap       = Column(Integer)
+    # League-wide, INDEPENDENT of whether anyone disagrees: how many distinct
+    # games sit under ids BDL has never heard of. Its own number because a
+    # RISE means the MLB-gamePk drift path is getting worse.
+    unreachable_games = Column(Integer)
+    unreachable_rows  = Column(Integer)
+    bdl_game_ids_seen = Column(Integer)
+    # Tier 2 — per-game attribution.
+    tier2_players     = Column(Integer)
+    tier2_attributed  = Column(Integer)
+    # A gap has two possible causes and they need DIFFERENT fixes, so they are
+    # never summed. VALUE gaps are games we both hold where the hit totals
+    # differ — a scorer revision, repaired by re-pulling that date, and the
+    # only kind whose age should size the re-pull window. COVERAGE gaps are
+    # games one side has and the other doesn't; a re-pull will not touch them.
+    value_gap_players    = Column(Integer)
+    coverage_gap_players = Column(Integer)
+    tier2_requests    = Column(Integer)
+    oldest_attributed = Column(Date)
+    median_age_days   = Column(Float)
+    duration_seconds  = Column(Float)
+    # Non-fatal: a failure is recorded here, never raised into the nightly.
+    error             = Column(Text)
+
+
+class GamelogReconFinding(Base):
+    __tablename__ = "gamelog_recon_findings"
+    __table_args__ = (
+        Index("ix_gamelog_recon_findings_run",    "run_id"),
+        Index("ix_gamelog_recon_findings_player", "player_id", "season"),
+    )
+
+    run_id            = Column(Integer, primary_key=True)
+    player_id         = Column(Integer, primary_key=True)
+    season            = Column(Integer)
+    log_sum_h         = Column(Integer)
+    season_h          = Column(Integer)
+    gap               = Column(Integer)   # log_sum_h - season_h, signed
+    reachable         = Column(Boolean)
+    non_bdl_rows      = Column(Integer)
+    confirmed         = Column(Boolean)
+    # How the gap decomposes. `value_gap` is the signed sum of (ours - BDL)
+    # over games we BOTH hold; `coverage_gap` is the remainder, which means
+    # the two sides disagree about which games exist. `gap_explained` is true
+    # only when the value side accounts for the whole gap — when it is false,
+    # the attributed game below is a PARTIAL story and re-pulling that date
+    # will not close the row.
+    diff_games        = Column(Integer)
+    value_gap         = Column(Integer)
+    coverage_gap      = Column(Integer)
+    gap_explained     = Column(Boolean)
+    # Tier 2 attribution — the single game the gap traces to, when it traces
+    # to exactly one. Null when tier 2 found none or more than one.
+    game_id           = Column(String)
+    game_date         = Column(Date)
+    revision_age_days = Column(Integer)
+    ours_h            = Column(Integer)
+    bdl_h             = Column(Integer)
