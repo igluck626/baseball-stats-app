@@ -158,17 +158,25 @@ final class StandingsViewModel: ObservableObject {
             }
         }
 
+        // `.unanchored` is CORRECT here, unlike on Home. This view model's base
+        // and its `lastUpdated` come from the same `api.getStandings` response,
+        // so the cutoff genuinely describes the base it is applied to. Home's
+        // did not, which is the whole reason `Absorption` exists.
         todayAdjustments = TodayRecordAdjustments.deltas(
-            from: games, lastUpdated: lastUpdated,
+            from: games, lastUpdated: lastUpdated, absorption: .unanchored,
         )
         // Recompute GB / WCGB off the adjusted records so those columns
         // stay in step with the bumped W-L. The flat team list is the
         // union of the division buckets (every team sits in one).
         let allTeams = alStandings.values.flatMap { $0 }
             + nlStandings.values.flatMap { $0 }
+        // `.unanchored` again, matching the `deltas` call above — same response,
+        // same cutoff, so nothing is dropped and this is behaviourally identical
+        // to before the parameter existed.
         adjustedGB = TodayRecordAdjustments.recalculateGB(
             standings: allTeams, games: games,
             adjustments: todayAdjustments, lastUpdated: lastUpdated,
+            absorption: .unanchored,
         )
     }
 

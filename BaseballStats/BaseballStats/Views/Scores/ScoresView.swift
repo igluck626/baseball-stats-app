@@ -300,11 +300,20 @@ final class ScoresViewModel: ObservableObject {
 
     /// Fold today's ET final games (from the already-loaded `games`)
     /// into `teamRecords` so the score cards' "(W-L)" matches the
-    /// Standings tab. BDL standings carry no `last_updated`, so the
-    /// cutoff is nil — every today-ET final in the loaded slate is
-    /// applied. Silent (no "†") per the Scores/Home design.
+    /// Standings tab. Silent (no "†") per the Scores/Home design.
+    ///
+    /// KNOWN GAP, deliberately left as it was. This is `.unanchored` with a nil
+    /// cutoff, so every today-ET final in the slate is applied — including any
+    /// BDL has already absorbed into the base, which double-counts exactly the
+    /// way Home's did. Home could be fixed because it already fetches our
+    /// backend's standings and so has a games-played count anchored to a known
+    /// time; this view model fetches BDL only, so the anchor does not exist
+    /// here without adding a request. Fixing it means giving this view model
+    /// that fetch — its own change, not a rider on Home's.
     private func applyTodayAdjustments() {
-        let deltas = TodayRecordAdjustments.deltas(from: games, lastUpdated: nil)
+        let deltas = TodayRecordAdjustments.deltas(
+            from: games, lastUpdated: nil, absorption: .unanchored,
+        )
         teamRecords = TodayRecordAdjustments.apply(deltas, to: teamRecords)
     }
 

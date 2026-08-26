@@ -278,13 +278,35 @@ final class HomeViewModel: ObservableObject {
             }
         }
 
-        // Fold today's not-yet-official finals into the record so the
-        // hero card matches the Standings tab. Uses the ±5-day team
-        // window already in `recentAndUpcoming`; gated by the backend
-        // standings' `last_updated` so already-absorbed games don't
-        // double-count.
+        // Fold today's not-yet-official finals into the record so the hero card
+        // matches the Standings tab. Uses the ±5-day team window already in
+        // `recentAndUpcoming`.
+        //
+        // ANCHORED, and it must be. The base here is BDL's standings, which
+        // carry no timestamp; `standingsLastUpdated` belongs to our backend.
+        // Gating one service's numbers on another's clock is what made the
+        // record climb by one on every return to Home: once BDL absorbed a
+        // final its base already held the win, but the backend's clock still
+        // said the game was new. The anchor replaces that inference with a
+        // count — the backend's own `G` at its own `last_updated` — so
+        // "already absorbed" is measured rather than guessed.
+        let anchorGamesPlayed: [Int: Int] = standingsRows.reduce(into: [:]) { acc, row in
+            guard let code = row.team_id, let g = row.G,
+                  let bdlId = lahmanToBDLTeamId[code] else { return }
+            acc[bdlId] = g
+        }
+        // Captured BEFORE `apply` mutates `teamRecords`. Both `deltas` and
+        // `recalculateGB` must measure absorption against the SAME records —
+        // hand the streak the post-apply dict and it would count this tick's
+        // own additions as already absorbed and drop them, leaving the pill a
+        // game behind the record beside it.
+        let absorption = TodayRecordAdjustments.Absorption.anchored(
+            gamesPlayed: anchorGamesPlayed, current: self.teamRecords,
+        )
         let deltas = TodayRecordAdjustments.deltas(
-            from: recentAndUpcoming, lastUpdated: standingsLastUpdated,
+            from: recentAndUpcoming,
+            lastUpdated: standingsLastUpdated,
+            absorption: absorption,
         )
         if !deltas.isEmpty {
             self.teamRecords = TodayRecordAdjustments.apply(deltas, to: self.teamRecords)
@@ -300,6 +322,7 @@ final class HomeViewModel: ObservableObject {
                 games: recentAndUpcoming,
                 adjustments: deltas,
                 lastUpdated: standingsLastUpdated,
+                absorption: absorption,
             )
             if let code = favLahmanCode,
                let favEntry = adjusted[code],

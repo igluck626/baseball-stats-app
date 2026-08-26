@@ -191,22 +191,110 @@ enum TodayRecordAdjustments {
         return out.sorted { $0.start < $1.start }
     }
 
+    /// How much of today the BASE RECORD has already absorbed.
+    ///
+    /// This exists because the base and the cutoff used to come from different
+    /// services. The base is BDL's standings, which carry no timestamp; the
+    /// cutoff was our backend's `last_updated`. So the adjustment asked "has
+    /// OUR BACKEND absorbed this game?" and applied the answer to BDL's
+    /// numbers. Once BDL absorbed a final, its base already contained the win
+    /// and the delta added it a second time — the favourite's record climbed by
+    /// one every time Home was re-entered.
+    ///
+    /// The fix is to stop asking a clock and start counting. A standings row's
+    /// games played is `W + L` — verified against all 30 teams, exactly, with
+    /// no ties anywhere — so it is not a second quantity that can drift from
+    /// the record; it IS the record. Given a games-played count anchored to a
+    /// known time, "how many of today's finals does this base already contain?"
+    /// is arithmetic rather than inference.
+    enum Absorption {
+        /// No anchor available: apply every post-cutoff final. Correct only
+        /// where the cutoff itself is trustworthy — i.e. where the base and the
+        /// `lastUpdated` come from the SAME response.
+        case unanchored
+
+        /// `gamesPlayed` is each team's `W + L` at a known instant (our
+        /// backend's standings row, whose `last_updated` is the `lastUpdated`
+        /// passed alongside). `current` is what is displayed NOW — BDL's base
+        /// on a good tick, or the previously-adjusted values if the fetch
+        /// failed. Both keyed by BDL team id.
+        case anchored(gamesPlayed: [Int: Int], current: [Int: TeamRecord])
+    }
+
+    /// Games of `team`'s post-cutoff finals that the base already reflects.
+    ///
+    /// `current - anchor` is how far the displayed record has already moved
+    /// past the anchored count, whether that movement came from BDL catching up
+    /// or from an earlier run of this very adjustment. That is what makes the
+    /// whole thing idempotent: applying it twice cannot add twice, because the
+    /// first application is visible to the second.
+    static func absorbedCount(_ absorption: Absorption, teamId: Int) -> Int? {
+        switch absorption {
+        case .unanchored:
+            return 0
+        case let .anchored(gamesPlayed, current):
+            // No anchor for this team means we cannot tell absorbed from
+            // unabsorbed. Adding blind is what produced an unbounded climb, so
+            // the answer is nil and the caller adds nothing.
+            guard let anchor = gamesPlayed[teamId],
+                  let rec = current[teamId],
+                  let w = rec.wins, let l = rec.losses else { return nil }
+            return max(0, (w + l) - anchor)
+        }
+    }
+
+    /// Today's post-cutoff finals per BDL team id, chronological, with the ones
+    /// the base ALREADY reflects dropped.
+    ///
+    /// THE single filtered set. `deltas` and `recalculateGB` both work from it
+    /// and must never disagree about which games count — a record corrected for
+    /// a game while the streak beside it rolls that same game forward again is
+    /// the same class of fault as the record double-counting in the first
+    /// place, just one field over.
+    ///
+    /// Chronological because a doubleheader's two games are absorbed in the
+    /// order they were played, and the streak walks them in that order.
+    static func unabsorbedResultsByTeam(
+        from games: [Game],
+        lastUpdated: String?,
+        absorption: Absorption,
+        now: Date = Date(),
+    ) -> [Int: [FinalResult]] {
+        let results = qualifyingResults(from: games, lastUpdated: lastUpdated, now: now)
+        guard !results.isEmpty else { return [:] }
+
+        var byTeam: [Int: [FinalResult]] = [:]
+        for r in results {
+            byTeam[r.homeId, default: []].append(r)
+            byTeam[r.awayId, default: []].append(r)
+        }
+
+        var out: [Int: [FinalResult]] = [:]
+        for (teamId, teamResults) in byTeam {
+            guard let absorbed = absorbedCount(absorption, teamId: teamId),
+                  absorbed < teamResults.count else { continue }
+            out[teamId] = Array(teamResults.dropFirst(absorbed))
+        }
+        return out
+    }
+
     /// Per-team `(wDelta, lDelta)` keyed by **BDL team id**.
     static func deltas(
         from games: [Game],
         lastUpdated: String?,
+        absorption: Absorption,
         now: Date = Date(),
     ) -> [Int: (wDelta: Int, lDelta: Int)] {
         var out: [Int: (wDelta: Int, lDelta: Int)] = [:]
-        for r in qualifyingResults(from: games, lastUpdated: lastUpdated, now: now) {
-            let winnerId = r.homeWon ? r.homeId : r.awayId
-            let loserId  = r.homeWon ? r.awayId : r.homeId
-            var win  = out[winnerId] ?? (wDelta: 0, lDelta: 0)
-            win.wDelta += 1
-            out[winnerId] = win
-            var lose = out[loserId] ?? (wDelta: 0, lDelta: 0)
-            lose.lDelta += 1
-            out[loserId] = lose
+        for (teamId, teamResults) in unabsorbedResultsByTeam(
+            from: games, lastUpdated: lastUpdated, absorption: absorption, now: now,
+        ) {
+            var delta = (wDelta: 0, lDelta: 0)
+            for r in teamResults {
+                let won = (r.homeId == teamId) ? r.homeWon : !r.homeWon
+                if won { delta.wDelta += 1 } else { delta.lDelta += 1 }
+            }
+            if delta.wDelta != 0 || delta.lDelta != 0 { out[teamId] = delta }
         }
         return out
     }
@@ -275,11 +363,16 @@ enum TodayRecordAdjustments {
     /// adjustments (callers then keep the backend / leader-derived
     /// values). GB / WCGB are recomputed for EVERY team — one win
     /// shifts the whole division's / league's gaps, not just its row.
+    /// `absorption` MUST be the same value passed to `deltas` for the same
+    /// tick. The two derive their game set from `unabsorbedResultsByTeam`
+    /// together; hand them different absorptions and the record and the streak
+    /// will describe different evenings.
     static func recalculateGB(
         standings: [TeamStanding],
         games: [Game],
         adjustments: [Int: (wDelta: Int, lDelta: Int)],
         lastUpdated: String?,
+        absorption: Absorption,
         now: Date = Date(),
     ) -> [String: (gb: String, wcgb: String, pct: Double?, strk: String?, homeW: Int?, homeL: Int?, awayW: Int?, awayL: Int?, runsScored: Int?, runsAllowed: Int?)] {
         guard !adjustments.isEmpty else { return [:] }
@@ -317,13 +410,23 @@ enum TodayRecordAdjustments {
         // Today's decided games per BDL team id (chronological), so we
         // can roll the streak forward and tally home/away splits + runs
         // off the same qualifying set the W/L deltas came from.
-        let results = qualifyingResults(from: games, lastUpdated: lastUpdated, now: now)
+        // Same filtered set the W/L deltas came from — see
+        // `unabsorbedResultsByTeam`. Under `.unanchored` nothing is dropped, so
+        // this is exactly the previous behaviour.
+        let byTeam = unabsorbedResultsByTeam(
+            from: games, lastUpdated: lastUpdated, absorption: absorption, now: now,
+        )
         var todayByBDL: [Int: [(won: Bool, isHome: Bool, scored: Int, allowed: Int)]] = [:]
-        for r in results {
-            todayByBDL[r.homeId, default: []].append(
-                (won: r.homeWon, isHome: true, scored: r.homeScore, allowed: r.awayScore))
-            todayByBDL[r.awayId, default: []].append(
-                (won: !r.homeWon, isHome: false, scored: r.awayScore, allowed: r.homeScore))
+        for (teamId, teamResults) in byTeam {
+            for r in teamResults {
+                let isHome = (r.homeId == teamId)
+                todayByBDL[teamId, default: []].append((
+                    won:     isHome ? r.homeWon : !r.homeWon,
+                    isHome:  isHome,
+                    scored:  isHome ? r.homeScore : r.awayScore,
+                    allowed: isHome ? r.awayScore : r.homeScore,
+                ))
+            }
         }
         // Base rows keyed by Lahman team_id, for the STRK / split / run
         // baselines the deltas fold into.
