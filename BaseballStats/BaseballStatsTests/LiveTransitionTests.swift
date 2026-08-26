@@ -223,6 +223,57 @@ struct FinalizeTests {
         try await Task.sleep(nanoseconds: 300_000_000)
         #expect(slate.callCount == 1, "no recovery read for a game that was never live")
     }
+
+    /// THE STALE CARD, as a test. The provider never flips the game to final —
+    /// which is the real-world case that produced a card reading "BOT 9th" long
+    /// after the last out, because `phase` stayed `.live` and the game was
+    /// therefore neither live (absent from `liveList`) nor final.
+    ///
+    /// The invariant: leaving `liveList` having been in it IS the game ending.
+    /// Nothing downstream may wait for the provider to agree.
+    @Test func gameLeavingLiveListIsOverEvenWhileProviderSaysLive() async throws {
+        let gameId = 5059646
+        // Every read still says in-progress — the provider never catches up.
+        let slate = FakeSlate(gameId: gameId, statusSequence: [
+            "STATUS_IN_PROGRESS", "STATUS_IN_PROGRESS", "STATUS_IN_PROGRESS",
+            "STATUS_IN_PROGRESS", "STATUS_IN_PROGRESS", "STATUS_IN_PROGRESS",
+        ])
+        let vm = ScoresViewModel(slate: slate, finalizeDelays: Self.noDelays)
+        await vm.load(date: Date())
+        // It must be IN the list before it can leave it — that transition, not
+        // mere absence, is the ending.
+        await vm.applyLiveList([gameId: makeSummary(gameId: gameId)], date: Date())
+
+        let before = try #require(vm.games.first)
+        #expect(before.phase == .live, "precondition: the slate calls it live")
+        #expect(vm.isOver(before) == false, "precondition: not over while it is live")
+
+        await vm.applyLiveList([:], date: Date())          // the last out
+        try await Task.sleep(nanoseconds: 300_000_000)     // let the chase exhaust
+
+        let after = try #require(vm.games.first)
+        #expect(after.phase == .live,
+                "the provider still says live — that is the condition under test")
+        #expect(vm.isOver(after),
+                "left liveList having been live: it is over regardless of phase")
+        #expect(vm.endedLocally.contains(gameId))
+    }
+
+    /// The other direction, so the fix cannot be "call everything over". A game
+    /// that was never in the live list — one about to START, where the slate has
+    /// flipped but the store has not polled yet — must NOT read as finished.
+    @Test func gameThatWasNeverLiveIsNotTreatedAsOver() async throws {
+        let slate = FakeSlate(gameId: 1, statusSequence: ["STATUS_IN_PROGRESS"])
+        let vm = ScoresViewModel(slate: slate, finalizeDelays: Self.noDelays)
+        await vm.load(date: Date())
+        await vm.applyLiveList([:], date: Date())          // never was in the list
+        try await Task.sleep(nanoseconds: 300_000_000)
+
+        let game = try #require(vm.games.first)
+        #expect(vm.isOver(game) == false,
+                "absence from liveList alone is not an ending — it must have LEFT it")
+        #expect(vm.endedLocally.isEmpty)
+    }
 }
 
 // MARK: - 3. fetchDetail: 404 clears, throw keeps

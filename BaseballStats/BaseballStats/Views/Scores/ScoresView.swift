@@ -71,6 +71,40 @@ final class ScoresViewModel: ObservableObject {
     /// bucket sorted by wins desc then losses asc.
     @Published var teamStandings: [Int: TeamStandingInfo] = [:]
 
+    /// Games this view WATCHED leave `liveList`. That transition is the only
+    /// authoritative "it's over" signal we get: `/live/games` publishes
+    /// in-progress games and drops one when it ends, while the BDL slate — the
+    /// source of `Game.phase` — can keep saying `.live` for many minutes after
+    /// the last out. `finalize` chases the slate for ~2 minutes and
+    /// `periodicRefresh` re-reads every 90s, but neither can make a lagging
+    /// provider agree, so until it does, `phase` is simply wrong.
+    ///
+    /// THIS IS WHAT THE STALE CARD WAS. A game that left `liveList` with
+    /// `phase` still `.live` is not `.final`, so the old bucketing dropped it
+    /// into UPCOMING, where `GameCard.statusLine` took its `.live` branch and
+    /// printed "BOT 9th" off a linescore frozen at the last out. It rendered as
+    /// its own final inning for as long as the provider lagged.
+    ///
+    /// Membership-based, not time-based, so it cannot mistake a game that is
+    /// STARTING for one that has ended: a game only enters this set by having
+    /// been in `liveList` and then leaving it.
+    @Published private(set) var endedLocally: Set<Int> = []
+
+    /// Membership from the PREVIOUS tick, so "left the list" means it was
+    /// actually in the list. Deliberately NOT derived from `phase` the way
+    /// `finalize`'s trigger below is: a game whose slate has flipped to live
+    /// before the store's next poll has never been in the list, and treating
+    /// its absence as an ending would render a game that is STARTING as FINAL.
+    /// A false chase costs one slate read; a false ending is a wrong card.
+    private var previouslyInLiveList: Set<Int> = []
+
+    /// THE one question every render path must ask, so bucketing and status
+    /// text cannot disagree. Do not re-derive "is it over" from `phase` alone
+    /// at a call site — that is the bug this replaces.
+    func isOver(_ game: Game) -> Bool {
+        game.phase == .final || endedLocally.contains(game.gamePk)
+    }
+
     private let bdl: BallDontLieClient
     private let api: APIClient
     /// JUST the slate reads. Everything else still goes through `bdl` — this is
@@ -108,6 +142,19 @@ final class ScoresViewModel: ObservableObject {
             liveById[g.gamePk].map { g.merging(live: $0) } ?? g
         }
 
+        // Rendering authority: only games we actually SAW in the list and then
+        // saw leave it. Recorded BEFORE the chase, because `finalize` may take
+        // two minutes to make the slate agree, or never — the card must read
+        // FINAL from this instant regardless.
+        let leftTheList = previouslyInLiveList.subtracting(liveById.keys)
+        if !leftTheList.isEmpty {
+            endedLocally.formUnion(leftTheList)
+        }
+        previouslyInLiveList = Set(liveById.keys)
+
+        // The chase trigger stays phase-based. It is a cheap, self-limiting
+        // slate re-read, so a spurious one is harmless — and narrowing it to
+        // list membership would lose the case where the app opened mid-game.
         let ended = wereLive.subtracting(liveById.keys)
         if !ended.isEmpty {
             finalize(ended, date: date)   // a game finished — chase its final state
@@ -173,6 +220,10 @@ final class ScoresViewModel: ObservableObject {
             self.error = Self.message(for: error)
             self.games = []
         }
+        // Keep only ids still on the slate — switching to another date must not
+        // inherit today's ended games. A pk that is now genuinely `.final` can
+        // stay; `isOver` would answer true either way.
+        self.endedLocally.formIntersection(Set(self.games.map(\.gamePk)))
         // Awaited AFTER the games await so a slow standings fetch
         // can't block the score cards from rendering. nil-coalesces
         // to an empty dict when standings fail or BDL ships an
@@ -573,12 +624,23 @@ struct ScoresView: View {
         // store update instead of staying stuck in Upcoming. Non-live games fall
         // back to their schedule status: Final if completed, else Upcoming.
         let liveIds = Set(liveStore.liveList.keys)
+        // `LiveStatus` rather than a bare membership test: it is the tested
+        // invariant (see LiveSeams.swift) and it holds the one case a bare test
+        // gets wrong — before the store has answered at all, `listLoaded` is
+        // false and the schedule's phase is the best we have. BoxScoreView has
+        // used it since the live/final transition bugs; this view had its own
+        // copy of the rule and drifted.
+        let isLiveNow: (Game) -> Bool = { g in
+            LiveStatus.isLive(inLiveList:  liveIds.contains(g.gamePk),
+                              listLoaded:  liveStore.listLoaded,
+                              phaseIsLive: g.phase == .live)
+        }
         let live = vm.games
-            .filter { liveIds.contains($0.gamePk) }
+            .filter(isLiveNow)
             .sorted { ($0.linescore?.currentInning ?? 0) > ($1.linescore?.currentInning ?? 0) }
-        let notLive = vm.games.filter { !liveIds.contains($0.gamePk) }
+        let notLive = vm.games.filter { !isLiveNow($0) }
         let upcoming = notLive
-            .filter { $0.phase != .final }
+            .filter { !vm.isOver($0) }
             // On-time games first (earliest start), then postponed games
             // sink to the bottom — they're not happening today, so they
             // shouldn't crowd out the games that are.
@@ -588,8 +650,14 @@ struct ScoresView: View {
                 if aPpd != bPpd { return !aPpd }
                 return (a.startDate ?? .distantFuture) < (b.startDate ?? .distantFuture)
             }
+        // `isOver`, not `phase == .final` — a game that left `liveList` belongs
+        // here the moment it does, not whenever the provider catches up. This
+        // is also what makes the card REDRAW: moving between sections gives the
+        // row a new view identity, so a FinalGameCard is constructed and its
+        // body evaluated. Recomputing a value inside a card that never
+        // re-renders would have left the same stale pixels on screen.
         let completed = notLive
-            .filter { $0.phase == .final }
+            .filter { vm.isOver($0) }
             .sorted { ($0.startDate ?? .distantPast) > ($1.startDate ?? .distantPast) }
 
         return ScrollView {
@@ -602,6 +670,7 @@ struct ScoresView: View {
                                 game:      game,
                                 records:   vm.teamRecords,
                                 standings: vm.teamStandings,
+                                isOver:    vm.isOver(game),
                             )
                         }
                         .buttonStyle(.plain)
@@ -615,6 +684,7 @@ struct ScoresView: View {
                                 game:      game,
                                 records:   vm.teamRecords,
                                 standings: vm.teamStandings,
+                                isOver:    vm.isOver(game),
                             )
                         }
                         .buttonStyle(.plain)
@@ -683,6 +753,11 @@ struct ScoresView: View {
 private struct GameCard: View {
     let game: Game
     let records: [Int: TeamRecord]
+    /// From `ScoresViewModel.isOver`. Belt-and-braces: with the bucketing fixed
+    /// a finished game renders as `FinalGameCard` and never reaches here, but
+    /// this card is the ONLY thing in the app that can print "BOT 9th", so it
+    /// refuses to do so for a game known to be over no matter who calls it.
+    var isOver: Bool = false
 
     var body: some View {
         HStack(alignment: .center, spacing: 14) {
@@ -781,6 +856,11 @@ private struct GameCard: View {
     /// "FINAL" / "Top 7th" / "7:05 PM" / "PPD" / "DELAYED" / detailed-
     /// state pass-through.
     private var statusLine: String {
+        // Checked BEFORE the switch: `phase` is the provider's opinion and it
+        // lags the last out by minutes. `isOver` already folds in the one
+        // authoritative signal (the game left `liveList`), so trusting `phase`
+        // first is what printed a frozen inning on a finished game.
+        if isOver { return "FINAL" }
         switch game.phase {
         case .final:
             return "FINAL"
@@ -1445,6 +1525,10 @@ private struct GameRowCard: View {
     let game: Game
     let records: [Int: TeamRecord]
     let standings: [Int: TeamStandingInfo]
+    /// Answered once by `ScoresViewModel.isOver` and threaded down, rather than
+    /// re-derived here. Two independent copies of "is it over" is precisely how
+    /// the stale card happened.
+    let isOver: Bool
     @EnvironmentObject private var navigation: AppNavigation
     @EnvironmentObject private var liveStore: LiveGameStore
     /// Stable per-row token for the store's refcounted detail loop (moved here
@@ -1455,7 +1539,11 @@ private struct GameRowCard: View {
     /// The backend's live definition (present in `liveList`) — reactive, so this
     /// recomputes on every store publish. Drives BOTH the layout choice and the
     /// subscription.
-    private var isLive: Bool { liveStore.liveList[game.gamePk] != nil }
+    private var isLive: Bool {
+        LiveStatus.isLive(inLiveList:  liveStore.liveList[game.gamePk] != nil,
+                          listLoaded:  liveStore.listLoaded,
+                          phaseIsLive: game.phase == .live)
+    }
 
     /// Subscribe only while live AND the Scores tab is visible / app active.
     private var shouldSubscribeLive: Bool {
@@ -1469,7 +1557,7 @@ private struct GameRowCard: View {
                 // `detail` snapshot can't show live content after a game ends.
                 LiveGameCard(game: game, records: records, standings: standings)
             } else {
-                GameCard(game: game, records: records)
+                GameCard(game: game, records: records, isOver: isOver)
             }
         }
         // Reactive subscribe: fires on the Upcoming→Live transition because this
