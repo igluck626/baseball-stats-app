@@ -804,8 +804,10 @@ def _run_nightly_update() -> None:
         # Phase 4b — batting counting aggregation. Runs after game logs
         # AND dedup so it sums the freshest, duplicate-free per-game rows.
         # Overwrites the current-season counting fields the BDL batter
-        # phase doesn't write (PA/H/HBP/SF/CS/IBB/GIDP/SH) and refreshes
-        # stale bref-seed values like GIDP. Non-fatal.
+        # phase doesn't write (PA/HBP/SF/CS/IBB/GIDP/SH) and refreshes
+        # stale bref-seed values like GIDP. H is NOT among them — BDL
+        # ships `batting_h` and summing it here split the season row
+        # against its own rate stats. Non-fatal.
         log.info("[nightly] starting batting-counting aggregation phase")
         try:
             with connection.get_session() as db:
@@ -2100,8 +2102,12 @@ def admin_recalculate_batting_counting(
     ),
 ):
     """Fill the batting counting stats that BDL's season-stats payload
-    omits — PA, H, HBP, SF, CS, IBB, GIDP, SH — by summing them from
+    omits — PA, HBP, SF, CS, IBB, GIDP, SH — by summing them from
     `batting_gamelogs` into the matching `player_seasons` row.
+
+    H is excluded on purpose: BDL DOES ship `batting_h`, and summing it
+    from the logs left the season row's H contradicting its own BA / OPS.
+    See `_BATTING_COUNTING_FIELDS` for the full account.
 
     Motivating cases: (a) a batter whose current-season row was created
     fresh from BDL (`/admin/backfill-player-history` / swap-repair) lands

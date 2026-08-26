@@ -4882,7 +4882,23 @@ def _resolve_side(stat: dict, ctx: dict) -> Optional[str]:
 
 # Batting counting stats that BDL's season_stats payload omits but the
 # per-game logs carry — summed from batting_gamelogs into player_seasons.
-_BATTING_COUNTING_FIELDS = ("PA", "H", "HBP", "SF", "CS", "IBB", "GIDP", "SH")
+#
+# H IS DELIBERATELY NOT HERE. It was, and it was the one member of this
+# list BDL actually ships (`batting_h`) — the same set `_parse_bdl_batter_row`
+# already documents as absent. Summing it from the logs overwrote BDL's
+# value while BA / OBP / SLG / OPS / TB / RBI stayed at BDL's, so the season
+# row contradicted itself: Brice Turang's 2026 row read H=124 beside
+# BA=.2568, which is 123/479. 34 of 637 rows with an AB carried that split
+# (7% of players with AB>=200), and Game Logs — which sums the same rows and
+# recomputes rates — reported a different OPS from Overview and Career.
+#
+# The gap is real but it belongs to the LOGS, not to this rollup: a game-log
+# row is written once and never re-read, so an official-scorer reversal
+# (AB unchanged, H and RBI flip by one) is baked in permanently. Fixing it
+# here only spread the stale value onto the season row. Do NOT re-add H to
+# close a logs-vs-BDL gap — re-pull the affected date instead
+# (`/admin/backfill-bdl-gamelogs`, which overwrites via `db.merge`).
+_BATTING_COUNTING_FIELDS = ("PA", "HBP", "SF", "CS", "IBB", "GIDP", "SH")
 
 
 def _apply_counting_aggregation(
@@ -4960,8 +4976,10 @@ def recalculate_batting_counting(
     db, season: int, player_id: Optional[int] = None,
 ) -> int:
     """Aggregate the per-game batting counting stats BDL's season_stats
-    omits — PA / H / HBP / SF / CS / IBB / GIDP / SH — from
-    `batting_gamelogs` into the matching `player_seasons` row. Returns the
+    omits — PA / HBP / SF / CS / IBB / GIDP / SH — from
+    `batting_gamelogs` into the matching `player_seasons` row. H is NOT
+    among them: BDL ships `batting_h`, so it stays BDL's (see
+    `_BATTING_COUNTING_FIELDS`). Returns the
     number of season rows updated. Caller owns the session/commit.
 
     Overwrite vs. fill, scoped by season:
