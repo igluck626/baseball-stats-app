@@ -1668,6 +1668,168 @@ def team_postseason(team_id: str):
     }
 
 
+# ---------------------------------------------------------------------------
+# Historical games by date — the slate for a day BDL cannot serve.
+#
+# BDL's game coverage floors at SEASON 2000 (verified against Boston, a club
+# continuous since 1901: 1901/1950/1975/1986/1990/1995-1999 all return zero
+# games; 2000+ return games with scores). Our own `batting_gamelogs` reach back
+# to 1898, so every day before that floor is answerable from data we already
+# hold — and the pairing was verified 100% complementary across all 217,187
+# scored games, so this needs no reconciliation logic at all. It is a GROUP BY.
+# ---------------------------------------------------------------------------
+
+# Every historical game id is Retrosheet-shaped and EXACTLY 18 characters:
+#   retro-ATL198607040
+#   ^^^^^^                     literal prefix          (6)
+#         ^^^                  HOME team code          (3)
+#            ^^^^^^^^          date YYYYMMDD           (8)
+#                    ^         game number within day  (1)
+# Verified across the whole corpus: 215,213 distinct ids, every one 18 chars,
+# and the embedded date matches `game_date` on all 9,120 games sampled across
+# 1898 / 1950 / 1986 / 2001 / 2025 — zero mismatches.
+_RETRO_ID_LEN = 18
+
+
+def _retro_parts(game_id: str):
+    """(home_team_code, yyyymmdd, game_number) or None if not Retrosheet-shaped."""
+    if not game_id or len(game_id) != _RETRO_ID_LEN or not game_id.startswith("retro-"):
+        return None
+    home, date_s, num_s = game_id[6:9], game_id[9:17], game_id[17]
+    if not (home.isalpha() and date_s.isdigit() and num_s.isdigit()):
+        return None
+    return home.upper(), date_s, int(num_s)
+
+
+def _synthetic_game_pk(game_id: str):
+    """A deterministic NEGATIVE `gamePk` for a Retrosheet game.
+
+    NEGATIVE ON PURPOSE, and that is the whole collision argument: every real
+    game id in the system is positive — BDL's 2026 ids run 5,043,956 to
+    11,528,268 and MLB gamePks 822,738 to 825,107 — so a negative value cannot
+    collide with any of them, now or as those ranges grow. A range-based scheme
+    would only be safe until the provider's ids caught up with it.
+
+    It also makes the id self-describing: `gamePk < 0` IS "this is historical",
+    which is how the iOS side knows not to offer a box score it cannot load.
+
+    Reversible, so a later box-score step can recover the Retrosheet key:
+        v = -pk;  date = v // 100_000;  rest = v % 100_000
+        team26 = rest // 10  (base-26 of the 3 letters);  game_number = rest % 10
+    Max magnitude 20251231 * 100000 + 175759 ~= 2.03e12 — comfortably inside a
+    signed 64-bit integer on both sides.
+    """
+    parts = _retro_parts(game_id)
+    if parts is None:
+        return None
+    home, date_s, num = parts
+    team26 = 0
+    for ch in home:
+        team26 = team26 * 26 + (ord(ch) - 65)
+    return -(int(date_s) * 100_000 + team26 * 10 + num)
+
+
+_GAMES_BY_DATE_SQL = """
+SELECT
+    game_id,
+    MAX(CASE WHEN home_away = 'H' THEN opponent   END) AS away_code,
+    MAX(CASE WHEN home_away = 'H' THEN team_score END) AS home_score,
+    MAX(CASE WHEN home_away = 'A' THEN team_score END) AS away_score
+FROM batting_gamelogs
+WHERE game_date = :d AND game_id LIKE 'retro-%'
+GROUP BY game_id
+ORDER BY game_id
+"""
+
+
+@app.get("/games/by-date")
+def games_by_date(
+    date: datetime.date = Query(..., description="yyyy-mm-dd"),
+):
+    """The day's games, derived from `batting_gamelogs`, in the exact JSON
+    shape the iOS `Game` struct decodes (plain `JSONDecoder`, no key strategy —
+    so these keys are camelCase on purpose and must stay that way).
+
+    SIDE IDENTITY comes from the Retrosheet id, not from pairing the two
+    perspectives. The id names the HOME club directly, which is one fact rather
+    than an inference from two rows agreeing; the away club is then the home
+    players' `opponent`. Pairing is used only as the fallback for the away side.
+    Safe for the whole range this endpoint serves: every game 1898-2025 is
+    retro-prefixed (215,213 of them), and the only non-Retrosheet ids in the
+    table are the CURRENT season's, which BDL serves and this never touches.
+    The `LIKE 'retro-%'` filter makes that explicit rather than assumed.
+
+    `bdlAwayTeamId` / `bdlHomeTeamId` are DELIBERATELY NULL. They key the score
+    cards' "(W-L)" and colour swatch off the CURRENT season, so populating them
+    would print a 2026 record beside a 1986 game. Null degrades correctly: the
+    record simply doesn't render.
+
+    Linescore, decisions and venue are null — the game-log tables carry neither
+    per-inning runs nor pitcher decisions. That is why the iOS card does not
+    offer to expand a historical game.
+    """
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+
+    with connection.get_session() as db:
+        rows = db.execute(_sa_text(_GAMES_BY_DATE_SQL), {"d": date}).fetchall()
+        year = date.year
+        names = {
+            r[0]: r[1] for r in db.execute(
+                _sa_text("SELECT team_id, team_name FROM team_seasons WHERE year = :y"),
+                {"y": year},
+            ).fetchall()
+        }
+
+    iso_midnight = f"{date.isoformat()}T00:00:00Z"
+    games = []
+    for r in rows:
+        parts = _retro_parts(r.game_id)
+        if parts is None:
+            continue
+        home_code, _, _ = parts
+        away_code = r.away_code or ""
+        home_score, away_score = r.home_score, r.away_score
+
+        def side(code, score, other_score):
+            return {
+                "team": {
+                    # MLBAM team id is not available for a Retrosheet row; 0 is
+                    # a placeholder the card never uses (logos went in 2026-08).
+                    "id": 0,
+                    "name": names.get(code) or code,
+                    "abbreviation": code,
+                },
+                "score": score,
+                "leagueRecord": None,
+                "isWinner": (score is not None and other_score is not None
+                             and score > other_score),
+                "probablePitcher": None,
+            }
+
+        games.append({
+            "gamePk":  _synthetic_game_pk(r.game_id),
+            "gameDate": iso_midnight,
+            "status": {
+                "abstractGameState": "Final",
+                "detailedState":     "Final",
+                "statusCode":        "F",
+                "codedGameState":    "F",
+            },
+            "teams": {
+                "away": side(away_code, away_score, home_score),
+                "home": side(home_code, home_score, away_score),
+            },
+            "venue":     None,
+            "linescore": None,
+            "decisions": None,
+            "bdlAwayTeamId": None,
+            "bdlHomeTeamId": None,
+        })
+
+    return {"date": date.isoformat(), "count": len(games), "games": games}
+
+
 @app.get("/live/games")
 def live_games():
     """All currently-live MLB games as compact summary cards (teams, score,

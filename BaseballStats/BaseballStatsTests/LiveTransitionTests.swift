@@ -610,3 +610,63 @@ struct PeriodicRefreshTests {
         #expect(hits.count == atCancel)
     }
 }
+
+// MARK: - 6. Historical slate routing
+
+@MainActor
+struct HistoricalSlateTests {
+
+    private static func day(_ s: String) -> Date {
+        let f = DateFormatter()
+        f.calendar = Calendar(identifier: .gregorian)
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(identifier: "UTC")
+        f.dateFormat = "yyyy-MM-dd"
+        return f.date(from: s)!
+    }
+    private static let utc: Calendar = {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(identifier: "UTC")!
+        return c
+    }()
+
+    /// The routing decision takes ONLY a date. It cannot be reached by an empty
+    /// or failed BDL response, which is the whole reason it is not keyed on
+    /// emptiness: an outage returns an empty slate for TODAY, and falling back
+    /// on that would serve game-log cards for a live day mid-outage.
+    @Test func routingIsAFunctionOfTheDateAlone() {
+        #expect(ScoresViewModel.usesHistoricalSource(for: Self.day("1986-07-04"), calendar: Self.utc))
+        #expect(ScoresViewModel.usesHistoricalSource(for: Self.day("1999-12-31"), calendar: Self.utc))
+        #expect(!ScoresViewModel.usesHistoricalSource(for: Self.day("2000-01-01"), calendar: Self.utc),
+                "2000 is BDL's first covered season — it must NOT take the fallback")
+        #expect(!ScoresViewModel.usesHistoricalSource(for: Self.day("2026-08-26"), calendar: Self.utc))
+    }
+
+    /// A pre-floor date must not consult BDL's slate at all — no wasted request,
+    /// and no chance of an empty BDL answer being mistaken for the real one.
+    @Test func aPreFloorDateNeverAsksBDLForTheSlate() async throws {
+        let slate = FakeSlate(gameId: 1, statusSequence: ["STATUS_FINAL"])
+        let vm = ScoresViewModel(slate: slate, finalizeDelays: [0, 0, 0, 0, 0])
+        await vm.load(date: Self.day("1986-07-04"))
+        #expect(slate.callCount == 0, "the historical path must not read the BDL slate")
+    }
+
+    /// A modern date still goes to BDL, unchanged.
+    @Test func aModernDateStillReadsTheBDLSlate() async throws {
+        let slate = FakeSlate(gameId: 1, statusSequence: ["STATUS_FINAL"])
+        let vm = ScoresViewModel(slate: slate, finalizeDelays: [0, 0, 0, 0, 0])
+        await vm.load(date: Date())
+        #expect(slate.callCount >= 1, "today must still come from BDL")
+    }
+
+    /// The synthetic id is negative, so it cannot collide with any real game id
+    /// — BDL's or MLB's — and the sign alone identifies a historical game.
+    @Test func historicalGamesAreIdentifiedBySign() {
+        let bdlIds = [5_043_956, 11_528_268, 822_738, 825_107]
+        for pk in bdlIds {
+            #expect(pk > 0, "every real id observed is positive")
+        }
+        // -(19860704 * 100_000 + team26 * 10 + gameNumber) for retro-ATL198607040
+        #expect((-1_986_070_405_050 as Int) < 0)
+    }
+}

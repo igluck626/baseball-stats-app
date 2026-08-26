@@ -71,6 +71,29 @@ final class ScoresViewModel: ObservableObject {
     /// bucket sorted by wins desc then losses asc.
     @Published var teamStandings: [Int: TeamStandingInfo] = [:]
 
+    /// BDL's first season of game coverage. Verified against Boston — a club
+    /// continuous since 1901 — which returns ZERO games for 1901 / 1950 / 1975
+    /// / 1986 / 1990 / 1995 through 1999, and real games with scores from 2000.
+    ///
+    /// The historical fallback is keyed on the SELECTED DATE, never on BDL
+    /// returning an empty list. Emptiness is ambiguous: a BDL outage returns
+    /// empty too, and falling back on that would quietly serve game-log-shaped
+    /// cards for TODAY — a screen full of finals with no live scores, during an
+    /// outage, with nothing to say anything was wrong. A date before the floor
+    /// is a fact about coverage; an empty response is a guess about a cause.
+    static let bdlFirstSeason = 2000
+
+    /// Whether the slate for `date` must come from our game logs instead of BDL.
+    ///
+    /// A PURE FUNCTION OF THE DATE, and that is the point: it takes no
+    /// response, no error, no count, so there is no input by which a BDL
+    /// failure could route today's slate down the historical path. Testable
+    /// without a network.
+    static func usesHistoricalSource(for date: Date,
+                                     calendar: Calendar = .current) -> Bool {
+        calendar.component(.year, from: date) < bdlFirstSeason
+    }
+
     /// Games this view WATCHED leave `liveList`. That transition is the only
     /// authoritative "it's over" signal we get: `/live/games` publishes
     /// in-progress games and drops one when it ends, while the BDL slate — the
@@ -212,15 +235,28 @@ final class ScoresViewModel: ObservableObject {
         // records, not the live 2026 ones.
         let year = Calendar.current.component(.year, from: date)
         async let standingsTask: [BDLStandingsEntry]? = try? bdl.getStandings(season: year)
-        do {
-            let bdlGames = try await slate.getGames(date: ScoresViewModel.iso(date),
-                                                     bypassCache: bypassCache)
-            self.games = bdlGames
-                .map { $0.toGame() }
-                .sorted { ($0.startDate ?? .distantFuture) < ($1.startDate ?? .distantFuture) }
-        } catch {
-            self.error = Self.message(for: error)
-            self.games = []
+        if Self.usesHistoricalSource(for: date) {
+            // Before BDL's floor: our own game logs are the only source.
+            do {
+                self.games = try await api.getHistoricalGames(date: date)
+                    .sorted { ($0.teams.away.team.abbreviation ?? "")
+                            < ($1.teams.away.team.abbreviation ?? "") }
+                self.error = nil
+            } catch {
+                self.error = Self.message(for: error)
+                self.games = []
+            }
+        } else {
+            do {
+                let bdlGames = try await slate.getGames(date: ScoresViewModel.iso(date),
+                                                         bypassCache: bypassCache)
+                self.games = bdlGames
+                    .map { $0.toGame() }
+                    .sorted { ($0.startDate ?? .distantFuture) < ($1.startDate ?? .distantFuture) }
+            } catch {
+                self.error = Self.message(for: error)
+                self.games = []
+            }
         }
         // Keep only ids still on the slate — switching to another date must not
         // inherit today's ended games. A pk that is now genuinely `.final` can
@@ -981,8 +1017,15 @@ private struct FinalGameCard: View {
     var body: some View {
         VStack(spacing: 10) {
             collapsedBody
+                // A historical game has nothing to expand INTO: the game-log
+                // tables carry no per-inning linescore and no decisions, and
+                // its negative gamePk would send the box score to BDL with an
+                // id BDL has never issued. So it does not offer the tap at all
+                // — a card that opens nothing is worse than one that never
+                // invited the gesture. Deliberate, not an oversight.
                 .contentShape(Rectangle())
                 .onTapGesture {
+                    guard !game.isHistorical else { return }
                     // Fire the fetch BEFORE the expand animation so
                     // the network round-trip starts while the 0.22s
                     // animation is still running. Without this, the

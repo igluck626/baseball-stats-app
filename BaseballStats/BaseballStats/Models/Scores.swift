@@ -46,6 +46,19 @@ struct Game: Codable, Identifiable, Hashable {
 
     var id: Int { gamePk }
 
+    /// True for a game served by `/games/by-date` rather than by BDL.
+    ///
+    /// The backend mints a NEGATIVE `gamePk` for those (see
+    /// `_synthetic_game_pk`), which is what makes this a property rather than a
+    /// flag threaded through every view: every real id — BDL's and MLB's alike
+    /// — is positive, so the sign alone is a reliable, self-describing test
+    /// that cannot collide as the provider's id ranges grow.
+    ///
+    /// Consumers use it to NOT offer what the data cannot support: these games
+    /// have no per-inning linescore and no pitcher decisions, because the
+    /// game-log tables carry neither.
+    var isHistorical: Bool { gamePk < 0 }
+
     /// Bucketed game phase so the UI can branch on intent rather
     /// than the raw API state strings.
     enum Phase {

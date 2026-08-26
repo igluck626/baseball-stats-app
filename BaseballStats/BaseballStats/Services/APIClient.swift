@@ -199,6 +199,33 @@ final class APIClient {
         return try await getOptional(url)
     }
 
+    /// `GET /games/by-date?date=yyyy-MM-dd` — the slate for a day BDL cannot
+    /// serve, derived from our own game logs.
+    ///
+    /// BDL's game coverage floors at season 2000; our `batting_gamelogs` reach
+    /// 1898. The payload is deliberately in `Game`'s own shape so it decodes
+    /// with the plain `JSONDecoder` this client already uses — no parallel
+    /// model, no mapping layer to drift.
+    func getHistoricalGames(date: Date) async throws -> [Game] {
+        let url = try buildURL(
+            path: "/games/by-date",
+            query: [URLQueryItem(name: "date", value: Self.ymd.string(from: date))]
+        )
+        struct Envelope: Codable { let games: [Game] }
+        let envelope: Envelope? = try await getOptional(url)
+        return envelope?.games ?? []
+    }
+
+    /// yyyy-MM-dd in UTC — the endpoint takes a calendar day, not an instant.
+    private static let ymd: DateFormatter = {
+        let f = DateFormatter()
+        f.calendar   = Calendar(identifier: .gregorian)
+        f.locale     = Locale(identifier: "en_US_POSIX")
+        f.timeZone   = TimeZone(identifier: "UTC")
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
+
     /// `GET /players/{id}/gamelogs/batting?season=...`. Returns nil on
     /// 404 (no batting logs cached for that season). The backend
     /// auto-fetches from the MLB Stats API on cache miss, so the first
