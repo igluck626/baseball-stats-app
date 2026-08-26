@@ -309,6 +309,7 @@ struct HomeView: View {
                     nextGame:     vm.nextGame,
                     liveGame:     vm.liveGame,
                     stripGames:   vm.recentAndUpcoming,
+                    endedGames:   vm.endedLocally,
                     onSchedule:   { showingSchedule = true },
                     onTapStripGame: { game in navigationPath.append(game) },
                 )
@@ -448,6 +449,10 @@ private struct TeamHeroCard: View {
     /// (away logo + score · LIVE + inning · home logo + score).
     let liveGame: Game?
     let stripGames: [Game]
+    /// Games this session watched leave the live list — see
+    /// `HomeViewModel.endedLocally`. Passed as a value rather than a closure so
+    /// SwiftUI can diff it and actually redraw when a game ends.
+    let endedGames: Set<Int>
     let onSchedule: () -> Void
     let onTapStripGame: (Game) -> Void
 
@@ -922,16 +927,23 @@ private struct TeamHeroCard: View {
     private var nextGameRow: some View {
         if let next = nextGame {
             HStack(spacing: 10) {
-                Image(systemName: next.phase == .live ? "dot.radiowaves.left.and.right" : "calendar")
+                // `phase == .live` alone kept the red live treatment — and the
+                // frozen inning beside it — on a game that had already ended.
+                let nextIsLive = next.phase == .live
+                    && !LiveStatus.isOver(phaseIsFinal: false,
+                                          gamePk: next.gamePk,
+                                          endedLocally: endedGames)
+                Image(systemName: nextIsLive ? "dot.radiowaves.left.and.right" : "calendar")
                     .font(.body.weight(.semibold))
-                    .foregroundStyle(next.phase == .live ? .red : teamColor)
+                    .foregroundStyle(nextIsLive ? .red : teamColor)
                     .frame(width: 26, height: 26)
                     .background(
                         Circle().fill(
-                            (next.phase == .live ? Color.red : teamColor).opacity(0.12)
+                            (nextIsLive ? Color.red : teamColor).opacity(0.12)
                         )
                     )
-                Text(HomeGameUtils.nextGameLine(game: next, favoriteBDLId: entry.bdlTeamId))
+                Text(HomeGameUtils.nextGameLine(game: next, favoriteBDLId: entry.bdlTeamId,
+                                                isOver: !nextIsLive && next.phase == .live))
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
@@ -959,6 +971,10 @@ private struct TeamHeroCard: View {
                                 game:          game,
                                 favoriteBDLId: entry.bdlTeamId,
                                 tint:          teamColor,
+                                isOver:        LiveStatus.isOver(
+                                    phaseIsFinal: game.phase == .final,
+                                    gamePk:       game.gamePk,
+                                    endedLocally: endedGames),
                             )
                         }
                         .buttonStyle(.plain)
@@ -1019,6 +1035,9 @@ private struct CompactGameStripCard: View {
     let game: Game
     let favoriteBDLId: Int
     let tint: Color
+    /// From `LiveStatus.isOver`. A finished game must stop drawing live content
+    /// and lose the red ring even while the slate still calls it live.
+    var isOver: Bool = false
 
     @Environment(\.colorScheme) private var colorScheme
 
@@ -1062,7 +1081,7 @@ private struct CompactGameStripCard: View {
         .overlay {
             // Live games keep a red accent ring; everything else
             // relies on the material itself for separation.
-            if game.phase == .live {
+            if game.phase == .live && !isOver {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .strokeBorder(Color.red.opacity(0.55), lineWidth: 1.2)
             }
@@ -1071,10 +1090,16 @@ private struct CompactGameStripCard: View {
 
     @ViewBuilder
     private var bodyByPhase: some View {
-        switch game.phase {
-        case .final:    finalContent
-        case .live:     liveContent
-        case .preview, .other, .postponed: upcomingContent
+        // `isOver` first: a game that left the live list draws its final score,
+        // not the inning it stopped in, however long the slate takes to agree.
+        if isOver {
+            finalContent
+        } else {
+            switch game.phase {
+            case .final:    finalContent
+            case .live:     liveContent
+            case .preview, .other, .postponed: upcomingContent
+            }
         }
     }
 
@@ -1195,9 +1220,13 @@ enum HomeGameUtils {
         return "\(fav ?? 0)-\(opp ?? 0) \(prefix) \(opponentAbbr(game: game, favoriteBDLId: favoriteBDLId))"
     }
 
-    static func nextGameLine(game: Game, favoriteBDLId: Int) -> String {
+    /// `isOver` is the caller's answer from `LiveStatus.isOver`. Without it this
+    /// printed `inningLine` — the inning off a linescore frozen at the last out
+    /// — for as long as the provider went on calling the game live.
+    static func nextGameLine(game: Game, favoriteBDLId: Int, isOver: Bool = false) -> String {
         let venue  = (game.bdlHomeTeamId == favoriteBDLId) ? "vs" : "@"
         let opp    = opponentAbbr(game: game, favoriteBDLId: favoriteBDLId)
+        if isOver { return "Recent · \(venue) \(opp)" }
         switch game.phase {
         case .live:
             return "\(venue) \(opp) · \(inningLine(game: game))"

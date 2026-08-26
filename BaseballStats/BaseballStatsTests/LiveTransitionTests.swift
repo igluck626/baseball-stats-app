@@ -276,6 +276,58 @@ struct FinalizeTests {
     }
 }
 
+// MARK: - 2b. Home carries the same rule
+
+@MainActor
+struct HomeEndedGameTests {
+
+    private static let noDelays: [UInt64] = [0, 0, 0, 0, 0]
+
+    /// The hero line and the strip card read the same stale `phase` the Scores
+    /// list did, off the same frozen linescore. Home tracks endings the same
+    /// way, so `nextGameLine` stops printing an inning for a finished game.
+    @Test func favouriteLeavingLiveListIsOverEvenWhileProviderSaysLive() async throws {
+        let gameId = 5059646
+        let slate = FakeSlate(gameId: gameId, statusSequence: [
+            "STATUS_IN_PROGRESS", "STATUS_IN_PROGRESS", "STATUS_IN_PROGRESS",
+            "STATUS_IN_PROGRESS", "STATUS_IN_PROGRESS", "STATUS_IN_PROGRESS",
+        ])
+        let vm = HomeViewModel(slate: slate, finalizeDelays: Self.noDelays)
+        await vm.load(bdlTeamId: 1)
+
+        let live = try #require(vm.recentAndUpcoming.first { $0.phase == .live })
+        #expect(vm.isOver(live) == false, "precondition: live means not over")
+
+        await vm.applyLiveList([gameId: makeSummary(gameId: gameId)], bdlTeamId: 1)
+        await vm.applyLiveList([:], bdlTeamId: 1)          // the last out
+        try await Task.sleep(nanoseconds: 300_000_000)
+
+        let after = try #require(vm.recentAndUpcoming.first { $0.gamePk == gameId })
+        #expect(after.phase == .live, "the provider still says live — the condition under test")
+        #expect(vm.isOver(after), "left liveList having been live: it is over")
+
+        let line = HomeGameUtils.nextGameLine(
+            game: after, favoriteBDLId: 1, isOver: vm.isOver(after))
+        #expect(!line.contains("Bot") && !line.contains("Top"),
+                "the hero line must not print a frozen inning: got \(line)")
+    }
+
+    /// The guard, same as Scores: absence alone is not an ending.
+    @Test func favouriteNeverInTheListIsNotOver() async throws {
+        let gameId = 5059646
+        let slate = FakeSlate(gameId: gameId, statusSequence: ["STATUS_IN_PROGRESS"])
+        let vm = HomeViewModel(slate: slate, finalizeDelays: Self.noDelays)
+        await vm.load(bdlTeamId: 1)
+        await vm.applyLiveList([:], bdlTeamId: 1)
+        try await Task.sleep(nanoseconds: 300_000_000)
+
+        let game = try #require(vm.recentAndUpcoming.first { $0.gamePk == gameId })
+        #expect(vm.isOver(game) == false,
+                "never in the list, so nothing left it — a starting game is not finished")
+        #expect(vm.endedLocally.isEmpty)
+    }
+}
+
 // MARK: - 3. fetchDetail: 404 clears, throw keeps
 
 @MainActor

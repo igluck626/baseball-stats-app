@@ -134,6 +134,27 @@ final class HomeViewModel: ObservableObject {
         liveGame != nil
     }
 
+    /// The favourite's games this session watched LEAVE `liveList`. Same
+    /// mechanism, same reason, as `ScoresViewModel.endedLocally` — the BDL
+    /// slate that supplies `Game.phase` keeps calling a game live for minutes
+    /// after the last out, so the hero line and the strip card were drawing an
+    /// inning off a linescore frozen at the final pitch.
+    @Published private(set) var endedLocally: Set<Int> = []
+
+    /// Membership from the previous tick. NOT derived from `phase`, unlike the
+    /// `wereLive` that triggers the chase below: a game whose slate turns live
+    /// a moment before the list does has never been in the list, and calling
+    /// its absence an ending would show a starting game as finished.
+    private var previouslyInLiveList: Set<Int> = []
+
+    /// The one question the Home views ask. Shared with Scores via
+    /// `LiveStatus` so the two screens cannot drift the way they just did.
+    func isOver(_ game: Game) -> Bool {
+        LiveStatus.isOver(phaseIsFinal: game.phase == .final,
+                          gamePk:       game.gamePk,
+                          endedLocally: endedLocally)
+    }
+
     private let bdl: BallDontLieClient
     private let api: APIClient
     /// JUST the slate reads — see the note in `ScoresViewModel` and
@@ -222,6 +243,9 @@ final class HomeViewModel: ObservableObject {
         self.recentAndUpcoming = Self.buildStrip(
             finals: finals, liveOrPreview: liveOrPreview,
         )
+        // Drop ids no longer on the strip — a favourite-team switch or a day
+        // rollover must not carry yesterday's endings across.
+        self.endedLocally.formIntersection(Set(self.recentAndUpcoming.map(\.gamePk)))
 
         if let standings = await standingsTask {
             self.teamRecords   = Self.recordsByBDLTeamId(standings)
@@ -318,6 +342,16 @@ final class HomeViewModel: ObservableObject {
             nextGame = ng.merging(live: live)
         }
 
+        // Rendering authority — recorded before the chase, which may never make
+        // the slate agree. Only a game seen IN the list can leave it.
+        let leftTheList = previouslyInLiveList.subtracting(liveById.keys)
+        if !leftTheList.isEmpty {
+            endedLocally.formUnion(leftTheList)
+        }
+        previouslyInLiveList = Set(liveById.keys)
+
+        // The chase trigger stays phase-based: a spurious re-read is cheap and
+        // self-limiting, and narrowing it would lose the app-opened-mid-game case.
         let ended = wereLive.subtracting(liveById.keys)
         if !ended.isEmpty {
             finalize(ended, bdlTeamId: bdlTeamId)   // a game finished — chase its final state

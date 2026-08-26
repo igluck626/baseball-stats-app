@@ -77,4 +77,21 @@ enum LiveStatus {
         if listLoaded { return false }    // authoritative no — a stale phase must NOT override
         return phaseIsLive                // store has no opinion yet
     }
+
+    /// Whether a game is FINISHED, which is a different question from whether
+    /// it is live and has a different answer while the provider lags.
+    ///
+    /// `phaseIsFinal` is the slate's opinion, and the slate can go on calling a
+    /// game live for many minutes after the last out. `endedLocally` holds the
+    /// games this session watched LEAVE the live list, which is the only signal
+    /// that arrives on time — nothing ever publishes a game as over, it just
+    /// stops being published as in progress.
+    ///
+    /// Lives here, beside `isLive`, because the Scores list and the Home hero
+    /// card both need it and the last two bugs in this area were each a screen
+    /// keeping its own worded copy of a rule that already existed. There should
+    /// be one place to change when this is wrong again.
+    static func isOver(phaseIsFinal: Bool, gamePk: Int, endedLocally: Set<Int>) -> Bool {
+        phaseIsFinal || endedLocally.contains(gamePk)
+    }
 }

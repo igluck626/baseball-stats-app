@@ -102,7 +102,9 @@ final class ScoresViewModel: ObservableObject {
     /// text cannot disagree. Do not re-derive "is it over" from `phase` alone
     /// at a call site — that is the bug this replaces.
     func isOver(_ game: Game) -> Bool {
-        game.phase == .final || endedLocally.contains(game.gamePk)
+        LiveStatus.isOver(phaseIsFinal: game.phase == .final,
+                          gamePk:       game.gamePk,
+                          endedLocally: endedLocally)
     }
 
     private let bdl: BallDontLieClient
