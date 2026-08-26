@@ -793,8 +793,15 @@ class GamelogReconRun(Base):
     run_at            = Column(DateTime)
     season            = Column(Integer)
     players_checked   = Column(Integer)
-    # Every player whose game-log H sum differs from the season row.
+    # Distinct (player, side, stat) disagreements across BOTH sides. Batting
+    # reconciles one field (H); pitching reconciles five (H/ER/BB/SO/HR), and
+    # they do NOT move together — a scorer ruling a hit an error moves H and
+    # ER while leaving BB/SO/HR alone. Per-field counts live in `by_stat_json`.
     disagreeing       = Column(Integer)
+    bat_disagreeing   = Column(Integer)
+    pit_disagreeing   = Column(Integer)
+    # JSON {"bat:H": {"n":…, "reachable":…, "value":…, "coverage":…}, …}
+    by_stat_json      = Column(Text)
     # Split of the above by whether a BDL re-pull could ever fix it.
     disagreeing_reachable   = Column(Integer)
     disagreeing_unreachable = Column(Integer)
@@ -810,8 +817,16 @@ class GamelogReconRun(Base):
     # League-wide, INDEPENDENT of whether anyone disagrees: how many distinct
     # games sit under ids BDL has never heard of. Its own number because a
     # RISE means the MLB-gamePk drift path is getting worse.
-    unreachable_games = Column(Integer)
+    # Counted per log table — the two are filled by different backfills and
+    # their coverage genuinely differs (2026: batting 379 games/586 rows,
+    # pitching 714/5,915), so a single combined number would hide a move in
+    # either one.
+    unreachable_games = Column(Integer)   # batting + pitching, distinct games
     unreachable_rows  = Column(Integer)
+    unreachable_games_bat = Column(Integer)
+    unreachable_rows_bat  = Column(Integer)
+    unreachable_games_pit = Column(Integer)
+    unreachable_rows_pit  = Column(Integer)
     bdl_game_ids_seen = Column(Integer)
     # Tier 2 — per-game attribution.
     tier2_players     = Column(Integer)
@@ -836,14 +851,20 @@ class GamelogReconFinding(Base):
     __table_args__ = (
         Index("ix_gamelog_recon_findings_run",    "run_id"),
         Index("ix_gamelog_recon_findings_player", "player_id", "season"),
+        Index("ix_gamelog_recon_findings_stat",   "run_id", "side", "stat"),
     )
 
     run_id            = Column(Integer, primary_key=True)
     player_id         = Column(Integer, primary_key=True)
+    # 'bat' | 'pit'. A two-way player reconciles on both sides independently.
+    side              = Column(String,  primary_key=True)
+    # 'H' for batting; 'H' | 'ER' | 'BB' | 'SO' | 'HR' for pitching. Part of
+    # the key because one pitcher can disagree on several at once.
+    stat              = Column(String,  primary_key=True)
     season            = Column(Integer)
-    log_sum_h         = Column(Integer)
-    season_h          = Column(Integer)
-    gap               = Column(Integer)   # log_sum_h - season_h, signed
+    log_sum           = Column(Integer)
+    season_value      = Column(Integer)
+    gap               = Column(Integer)   # log_sum - season_value, signed
     reachable         = Column(Boolean)
     non_bdl_rows      = Column(Integer)
     confirmed         = Column(Boolean)
@@ -862,5 +883,5 @@ class GamelogReconFinding(Base):
     game_id           = Column(String)
     game_date         = Column(Date)
     revision_age_days = Column(Integer)
-    ours_h            = Column(Integer)
-    bdl_h             = Column(Integer)
+    ours_value        = Column(Integer)
+    bdl_value         = Column(Integer)

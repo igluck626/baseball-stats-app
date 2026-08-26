@@ -2244,9 +2244,11 @@ def admin_run_reconciliation(
 def admin_get_reconciliation(
     season: int | None = Query(None, description="Defaults to the current season."),
 ):
-    """Latest reconciliation run for `season`, with its per-player findings
-    ordered worst-gap first. `reachable=false` findings are the ones no BDL
-    re-pull can repair — see `gamelog_recon` for why they're counted apart."""
+    """Latest reconciliation run for `season`, with its findings grouped by
+    side then stat, worst gap first. One row per (player, side, stat) — a
+    pitcher can disagree on several of H/ER/BB/SO/HR at once and they do not
+    move together. `reachable=false` findings are the ones no BDL re-pull can
+    repair — see `gamelog_recon` for why they're counted apart."""
     if not connection.db_available():
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
     from database.models import GamelogReconFinding as _F, GamelogReconRun as _R
@@ -2261,7 +2263,8 @@ def admin_get_reconciliation(
                 detail=f"No reconciliation run recorded for season {season}",
             )
         findings = (db.query(_F).filter(_F.run_id == run.id)
-                      .order_by(_F.reachable.desc(), _F.gap.desc()).all())
+                      .order_by(_F.reachable.desc(), _F.side, _F.stat,
+                                _F.gap.desc()).all())
         return {
             "run": {c.key: getattr(run, c.key) for c in run.__table__.columns},
             "findings": [
