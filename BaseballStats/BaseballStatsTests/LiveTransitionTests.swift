@@ -637,6 +637,64 @@ struct FinishedRowSubscriptionTests {
     }
 }
 
+// MARK: - 5c. A load that finishes late must not overwrite a newer date
+
+@MainActor
+struct StaleLoadTests {
+
+    private static func day(_ s: String) -> Date {
+        let f = DateFormatter()
+        f.calendar = Calendar(identifier: .gregorian)
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = .current
+        f.dateFormat = "yyyy-MM-dd"
+        return f.date(from: s)!
+    }
+
+    /// A fetch started for one day, landing after the user has moved to
+    /// another, must be discarded. Six callers start loads and none of them
+    /// coordinated: whichever FINISHED last used to win, rather than whichever
+    /// was requested last — so a fast double-tap on the arrows could leave
+    /// `games` describing one day while `selectedDate` said another.
+    @Test func aLoadForAnAbandonedDateDoesNotLand() async throws {
+        let slate = FakeSlate(gameId: 1, statusSequence: ["STATUS_FINAL"])
+        let vm = ScoresViewModel(slate: slate, finalizeDelays: [0, 0, 0, 0, 0])
+
+        // Simulate the race directly: begin a load for an old date, move the
+        // selection on, and let the old load finish.
+        let oldDate = Self.day("2026-08-20")
+        vm.selectedDate = Self.day("2026-08-25")          // user has moved on
+        await vm.load(date: oldDate)                       // late arrival
+
+        #expect(vm.games.isEmpty,
+                "a result for an abandoned date must not be assigned")
+        #expect(vm.selectedDate == Self.day("2026-08-25"),
+                "and it must not move the selection back")
+    }
+
+    /// The ordinary case still works — a load for the CURRENT date assigns.
+    @Test func aLoadForTheCurrentDateStillLands() async throws {
+        let slate = FakeSlate(gameId: 1, statusSequence: ["STATUS_FINAL"])
+        let vm = ScoresViewModel(slate: slate, finalizeDelays: [0, 0, 0, 0, 0])
+        let date = Self.day("2026-08-25")
+        vm.selectedDate = date
+        await vm.load(date: date)
+        #expect(!vm.games.isEmpty, "the current date's games must land")
+    }
+
+    /// `selectDate` moves the selection SYNCHRONOUSLY, so a periodic refresh
+    /// that begins afterwards already targets the new day — the tick cannot
+    /// resurrect the old one.
+    @Test func selectDateMovesTheSelectionBeforeAnyAwait() async throws {
+        let slate = FakeSlate(gameId: 1, statusSequence: ["STATUS_FINAL"])
+        let vm = ScoresViewModel(slate: slate, finalizeDelays: [0, 0, 0, 0, 0])
+        let target = Self.day("2026-08-20")
+        vm.selectDate(target)
+        #expect(vm.selectedDate == target,
+                "the selection must be current the instant the tap is handled")
+    }
+}
+
 // MARK: - 6. Historical slate routing
 
 @MainActor

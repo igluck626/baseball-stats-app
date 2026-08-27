@@ -57,6 +57,20 @@ final class ScoresViewModel: ObservableObject {
     /// In-flight `finalize` retry chain, so a second game ending replaces the
     /// first chase rather than running two slate refreshes against each other.
     private var finalizeTask: Task<Void, Never>?
+    /// Cancels the PREVIOUS user-initiated date change only.
+    ///
+    /// ONE SLOT IS NOT RIGHT FOR EVERY CALLER, which is why this is narrow.
+    /// Six things load: the on-appear `.task`, `jumpTo`, "Try Again",
+    /// `finalize`'s chase, the 90s `periodicRefresh`, and pull-to-refresh. A
+    /// shared slot would let the 90s tick cancel a load the user just asked
+    /// for, and would let a date change abort the finalize chase mid-way —
+    /// each caller has a different urgency and a different owner.
+    ///
+    /// So only the user-date-change path takes this slot: tapping ◀ ◀ quickly
+    /// abandons the first fetch instead of leaving it running. It is an
+    /// OPTIMISATION, not the correctness mechanism — `isStillCurrent` is what
+    /// guarantees a stale result never lands, whoever started it.
+    private var dateChangeTask: Task<Void, Never>?
     @Published var error: String?
     /// Set true once a load completes (success or empty); used so the
     /// view can distinguish "still loading" from "no games today".
@@ -235,17 +249,51 @@ final class ScoresViewModel: ObservableObject {
     /// which went to BDL unconditionally and got nothing. The screen read "No
     /// games" for a date the endpoint answers with thirteen. One routine, both
     /// callers.
-    private func loadGames(for date: Date, bypassCache: Bool) async throws {
+    private func loadGames(for date: Date, bypassCache: Bool) async throws -> [Game] {
         if Self.usesHistoricalSource(for: date) {
-            self.games = try await api.getHistoricalGames(date: date)
+            return try await api.getHistoricalGames(date: date)
                 .sorted { ($0.teams.away.team.abbreviation ?? "")
                         < ($1.teams.away.team.abbreviation ?? "") }
         } else {
-            self.games = try await slate.getGames(date: ScoresViewModel.iso(date),
-                                                  bypassCache: bypassCache)
+            return try await slate.getGames(date: ScoresViewModel.iso(date),
+                                            bypassCache: bypassCache)
                 .map { $0.toGame() }
                 .sorted { ($0.startDate ?? .distantFuture) < ($1.startDate ?? .distantFuture) }
         }
+    }
+
+    /// Whether a fetch that was started for `date` may still write to the
+    /// published state.
+    ///
+    /// THE RACE THIS CLOSES: six things start a load — the on-appear `.task`,
+    /// `jumpTo` (the date pill and both arrows), "Try Again", `finalize`'s
+    /// chase, the 90s `periodicRefresh`, and pull-to-refresh. None of them
+    /// coordinated, and none was cancelled, so two fetches for different dates
+    /// could be in flight together and the one that FINISHED last won — not the
+    /// one requested last. A fast double-tap on ◀ could leave `games`
+    /// describing one day while `selectedDate` said another.
+    ///
+    /// Correctness lives here rather than in cancellation, deliberately. A
+    /// stale result is discarded whoever asked for it and in whatever order
+    /// things land, which is a property that survives a seventh caller being
+    /// added later. Cancellation is a separate, narrower optimisation — see
+    /// `dateChangeTask`.
+    /// Compared by CALENDAR DAY, not by instant. The question is "is this still
+    /// the day on screen", and callers legitimately hold either a midnight
+    /// (`selectedDate`) or a moment within the day (`Date()`); an exact-equality
+    /// test would silently discard the latter, which is a trap rather than a
+    /// guard.
+    private func isStillCurrent(_ date: Date) -> Bool {
+        Calendar.current.isDate(date, inSameDayAs: selectedDate)
+    }
+
+    /// A user picking a different day: cancel any previous pick still in flight,
+    /// then load. Distinct from `load` so the shared slot cannot be taken by a
+    /// background refresh.
+    func selectDate(_ date: Date) {
+        dateChangeTask?.cancel()
+        selectedDate = date
+        dateChangeTask = Task { [weak self] in await self?.load(date: date) }
     }
 
     func load(date: Date, bypassCache: Bool = false) async {
@@ -257,9 +305,14 @@ final class ScoresViewModel: ObservableObject {
         let year = Calendar.current.component(.year, from: date)
         async let standingsTask: [BDLStandingsEntry]? = try? bdl.getStandings(season: year)
         do {
-            try await loadGames(for: date, bypassCache: bypassCache)
+            let fetched = try await loadGames(for: date, bypassCache: bypassCache)
+            // The date moved while this was in flight — drop the whole result
+            // rather than paint one day's games under another day's heading.
+            guard isStillCurrent(date) else { return }
+            self.games = fetched
             self.error = nil
         } catch {
+            guard isStillCurrent(date) else { return }
             self.error = Self.message(for: error)
             self.games = []
         }
@@ -272,6 +325,10 @@ final class ScoresViewModel: ObservableObject {
         // to an empty dict when standings fail or BDL ships an
         // empty payload — records just won't render that tick.
         let standings = (await standingsTask) ?? []
+        // Checked AGAIN: standings are awaited after the games, so the date can
+        // have moved during THIS await even if it hadn't during the last one.
+        // The records are year-scoped, so a stale set is the wrong season.
+        guard isStillCurrent(date) else { return }
         self.teamRecords   = Self.recordsByBDLTeamId(standings)
         self.teamStandings = Self.standingsByBDLTeamId(standings)
         applyTodayAdjustments()
@@ -299,18 +356,25 @@ final class ScoresViewModel: ObservableObject {
     /// request).
     func refresh(clearingCache: Bool = true) async {
         if clearingCache { bdl.clearCache() }
-        let year = Calendar.current.component(.year, from: selectedDate)
+        // Pinned ONCE, at entry. Both the 90s tick and pull-to-refresh read
+        // `selectedDate`, and re-reading it after an await would let a refresh
+        // that began on one date finish by writing that date's games onto a
+        // heading the user has since changed.
+        let date = selectedDate
+        let year = Calendar.current.component(.year, from: date)
         async let standingsTask: [BDLStandingsEntry]? = try? bdl.getStandings(season: year)
         do {
             // Same routine `load` uses — a pre-2000 date must not be re-fetched
             // from BDL here, or the periodic tick wipes what `load` just got.
-            try await loadGames(for: selectedDate, bypassCache: false)
+            let fetched = try await loadGames(for: date, bypassCache: false)
+            guard isStillCurrent(date) else { return }
+            self.games = fetched
             self.error = nil
         } catch {
             // Silent — keep stale games visible rather than wiping
             // the screen on a transient pull-to-refresh hiccup.
         }
-        if let standings = await standingsTask {
+        if let standings = await standingsTask, isStillCurrent(date) {
             self.teamRecords   = Self.recordsByBDLTeamId(standings)
             self.teamStandings = Self.standingsByBDLTeamId(standings)
             applyTodayAdjustments()
@@ -457,6 +521,9 @@ struct ScoresView: View {
     @State private var listSubscriberID = LiveGameStore.SubscriberID()
     @State private var navigationPath = NavigationPath()
     @State private var showingDatePicker = false
+    /// What the picker is currently showing, BEFORE the user commits it.
+    /// Seeded from `vm.selectedDate` each time the sheet opens.
+    @State private var draftDate = Date()
 
     var body: some View {
         NavigationStack(path: $navigationPath) {
@@ -572,7 +639,10 @@ struct ScoresView: View {
     }
 
     private var datePill: some View {
-        Button { showingDatePicker = true } label: {
+        Button {
+            draftDate = vm.selectedDate      // seed the draft, then open
+            showingDatePicker = true
+        } label: {
             Text(relativeDateLabel(vm.selectedDate))
                 .font(.subheadline.weight(.bold))
                 .monospacedDigit()
@@ -589,16 +659,19 @@ struct ScoresView: View {
     /// date and the user might want deep history or schedule peeks.
     private var datePickerSheet: some View {
         NavigationStack {
+            // Bound to LOCAL DRAFT STATE, not to the view model.
+            //
+            // This used to write straight through a custom Binding whose setter
+            // called `jumpTo` and closed the sheet — so every value the picker
+            // reported was a committed date AND a fetch. Opening the month/year
+            // wheel and moving it made each value it settled on the selected
+            // day, and dismissed the sheet from under the user's finger. On a
+            // graphical picker that wheel is how you reach another year, so
+            // reaching 1986 meant committing, loading, being dismissed, and
+            // reopening, over and over.
             DatePicker(
                 "Date",
-                selection: Binding(
-                    get: { vm.selectedDate },
-                    set: { newDate in
-                        let day = Calendar.current.startOfDay(for: newDate)
-                        jumpTo(date: day)
-                        showingDatePicker = false
-                    }
-                ),
+                selection: $draftDate,
                 displayedComponents: [.date]
             )
             .datePickerStyle(.graphical)
@@ -606,8 +679,23 @@ struct ScoresView: View {
             .navigationTitle("Pick a date")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    // Cancel genuinely has nothing to undo, and that is the
+                    // point rather than an omission: with the commit moved out
+                    // of the picker's setter, scrolling the wheel touches only
+                    // `draftDate`. `vm.selectedDate` is untouched until Done,
+                    // so there is no fetch to abandon and no date to restore —
+                    // dismissing IS cancelling. Do not "fix" this by adding a
+                    // revert; if one is ever needed, the commit has leaked back
+                    // into the binding.
+                    Button("Cancel") { showingDatePicker = false }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { showingDatePicker = false }
+                    Button("Done") {
+                        showingDatePicker = false
+                        jumpTo(date: Calendar.current.startOfDay(for: draftDate))
+                    }
+                    .fontWeight(.semibold)
                 }
             }
         }
@@ -619,8 +707,10 @@ struct ScoresView: View {
         // driven by shouldPoll(.scores), and applyLiveList is today-gated, so a
         // date change just reloads the slate; the next store tick folds live
         // scores back in when the date is today.
-        vm.selectedDate = date
-        Task { await vm.load(date: date) }
+        //
+        // Goes through `selectDate` so a rapid second tap cancels the first
+        // fetch rather than racing it.
+        vm.selectDate(date)
     }
 
     /// "Today" / "Yesterday" / "Tomorrow" / "Mon, May 12". Anchored on
