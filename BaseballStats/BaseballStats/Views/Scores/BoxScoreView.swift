@@ -1492,6 +1492,19 @@ struct BoxScoreView: View {
         }
         return VStack(alignment: .leading, spacing: 4) {
             Text("PITCHING").font(.caption.weight(.bold)).foregroundStyle(.secondary)
+            if rows.isEmpty {
+                // SAY IT, don't just stop. A few hundred games before 1910
+                // record only one side's pitching, and rendering the column
+                // headers over nothing reads as a failed load rather than as a
+                // gap in the record — which is the blank-instead-of-absent
+                // mistake this screen avoids everywhere else. Seen on
+                // 1898-09-25 PIT @ CHN, where the home side has no pitching
+                // line at all.
+                Text("Not recorded for this game.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
             ScrollView(.horizontal, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 2) {
                     pitchingHeader
@@ -1499,11 +1512,10 @@ struct BoxScoreView: View {
                     ForEach(rows, id: \.person.id) { player in
                         pitchingRow(player)
                     }
-                    if !rows.isEmpty {
-                        Divider().opacity(0.6)
-                        pitchingTotalsRow(rows: rows)
-                    }
+                    Divider().opacity(0.6)
+                    pitchingTotalsRow(rows: rows)
                 }
+            }
             }
         }
     }
