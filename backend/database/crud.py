@@ -479,9 +479,35 @@ def bulk_upsert_gamelog_lineup(db: Session, model, rows: list[dict]) -> int:
     and useless for a re-ingest: every historical row already exists, so a
     re-run through it writes exactly zero. This is the narrow counterpart —
     new rows insert whole, existing rows have three columns filled in and
-    everything else left exactly as it stands."""
+    everything else left exactly as it stands.
+
+    ONE ROW PER (player_id, game_id), enforced here rather than assumed.
+    Postgres refuses an ON CONFLICT DO UPDATE that would touch the same row
+    twice in one statement, and the caller's dedupe key is
+    (person, game, slot, seq) — so a man who occupied two lineup slots in one
+    game arrives as two rows.
+
+    Per year that is one to five pairs out of ~25,000 rows, and it took out SIX
+    of the first eighteen years measured: 1899, 1908, 1909, 1911, 1913, 1915.
+    The failure hides in the worst way — the offending BATCH aborts, so the year
+    lands at a round multiple of the batch size (6,000 of 17,267 in 1899), the
+    exception is swallowed per-year, and the run reports success and moves on.
+    Only a per-year count of rows actually carrying a slot makes it visible.
+    `bulk_insert_gamelogs` never had to care: DO NOTHING tolerates the repeat.
+
+    The kept row is his FIRST appearance — lowest `seq`, then lowest `slot` —
+    because that is the slot he entered the game in, which is what a box score
+    records. Billy Hill starting at 9 and moving to 1 is recorded at 9."""
     if not rows:
         return 0
+    seen: dict = {}
+    for r in rows:
+        k = (r["player_id"], r["game_id"])
+        prior = seen.get(k)
+        if prior is None or (r.get("seq") or 0, r.get("slot") or 0) < \
+                            (prior.get("seq") or 0, prior.get("slot") or 0):
+            seen[k] = r
+    rows = list(seen.values())
     dialect = db.bind.dialect.name if db.bind is not None else ""
     if dialect == "postgresql":
         stmt = pg_insert(model).values(rows)
