@@ -475,6 +475,19 @@ class BattingGameLog(Base):
     GIDP        = Column(Integer)
     SH          = Column(Integer)   # sacrifice bunts
     LOB         = Column(Integer)
+    # Lineup slot 1-9 and the appearance sequence within it, from Retrosheet
+    # daybyday's `slot` / `seq`. SLOT 0 MEANS "NOT IN THE BATTING ORDER" — in
+    # 2024 that is 20,994 rows, every one a DH-era pitcher — so 0 is not slot
+    # one and must never sort as if it were. Pre-DH the pitcher bats and slot
+    # is 9. `seq` is 1 for the man who started in that slot, 2+ for whoever
+    # replaced him, which is what orders a slot's occupants correctly.
+    slot        = Column(Integer, nullable=True)
+    seq         = Column(Integer, nullable=True)
+    # Fielding position(s) for this game — "SS", "LF-CF", or the derived
+    # "DH" / "PH" / "PR" for an appearance with no position at all. NULL only
+    # when the player neither fielded, batted nor ran (~0.45% of rows), where
+    # anything else would be a guess.
+    pos         = Column(String, nullable=True)
 
 
 class PitchingGameLog(Base):
@@ -546,6 +559,13 @@ class StagingBattingGameLog(Base):
     GIDP        = Column(Integer)
     SH          = Column(Integer)
     LOB         = Column(Integer)
+    # Mirrors BattingGameLog — the retro ingest can be pointed at this table
+    # (`/admin/stage-retrosheet-gamelogs`) and builds one row dict for either
+    # target, so a column missing here is a hard failure on that path, not a
+    # missing value.
+    slot        = Column(Integer, nullable=True)
+    seq         = Column(Integer, nullable=True)
+    pos         = Column(String, nullable=True)
 
 
 class StagingPitchingGameLog(Base):

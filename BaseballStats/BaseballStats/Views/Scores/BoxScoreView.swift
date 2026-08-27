@@ -717,7 +717,11 @@ struct BoxScoreView: View {
                         if !vm.game.isHistorical {
                             linescoreCard
                         }
-                        if let ordering = vm.batterOrdering {
+                        // Only when the order is NOT the real one. "lineup"
+                        // means the slots came through, and a note explaining
+                        // how to read the rows would then be a disclaimer over
+                        // data that needs none.
+                        if let ordering = vm.batterOrdering, ordering != "lineup" {
                             historicalOrderingNote(ordering)
                         }
                         teamPicker(bs: bs)
@@ -1040,7 +1044,7 @@ struct BoxScoreView: View {
         HStack(spacing: 6) {
             Image(systemName: "info.circle")
             Text(ordering == "alphabetical"
-                 ? "Batters listed alphabetically — batting order and fielding positions weren't recorded for this era."
+                 ? "Batters listed alphabetically — the batting order for this game hasn't been loaded yet."
                  : "Batters listed by \(ordering).")
         }
         .font(.caption)

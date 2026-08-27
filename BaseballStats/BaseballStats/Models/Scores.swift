@@ -710,10 +710,11 @@ struct BoxPitching: Codable, Hashable {
 /// provider's coverage. `BoxScoreResponse` plus what only this path knows.
 struct HistoricalBoxScore: Codable {
     let gameId: String
-    /// How `BoxScoreTeam.batters` is sorted — "alphabetical" today. NOT a
-    /// lineup: the game logs carry no batting order and no fielding position,
-    /// so any order that LOOKED like a lineup would be wrong through the
-    /// middle of it. Surfaced so the view can say so.
+    /// How `BoxScoreTeam.batters` is sorted, PER GAME — "lineup" once that
+    /// game's Retrosheet slots are loaded, "alphabetical" until then. The
+    /// distinction is the point: an alphabetical list that looked like a
+    /// lineup would be wrong through the middle of the order, so the view
+    /// shows a note for one value and nothing for the other.
     let batterOrdering: String?
     let teams: BoxScoreTeams
 

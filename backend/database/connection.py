@@ -136,6 +136,14 @@ _BATTING_GAMELOGS_NEW_COLUMNS: list[tuple[str, str]] = [
     # them per game lets the season-row aggregation recover them.
     ("GIDP", "INTEGER"),
     ("SH",   "INTEGER"),
+    # Lineup slot, appearance sequence within the slot, and the game's fielding
+    # position — from Retrosheet daybyday. Added here and not only on the model
+    # because `create_all` does not touch a table that already exists: without
+    # these three lines the deploy would leave prod's batting_gamelogs without
+    # the columns and every box-score read would 500 on the first SELECT.
+    ("slot", "INTEGER"),
+    ("seq",  "INTEGER"),
+    ("pos",  "VARCHAR"),
 ]
 
 # prompt_version added to ask_log so the translation cache can be keyed by the
@@ -370,6 +378,10 @@ def init_db() -> dict:
         ("player_seasons",    _PLAYER_SEASONS_NEW_COLUMNS),
         ("pitcher_seasons",   _PITCHER_SEASONS_NEW_COLUMNS),
         ("batting_gamelogs",  _BATTING_GAMELOGS_NEW_COLUMNS),
+        # The staging twin takes the same ALTER: if the table already exists in
+        # prod, `create_all` skips it and the retro ingest pointed at staging
+        # would insert columns that aren't there.
+        ("staging_batting_gamelogs", _BATTING_GAMELOGS_NEW_COLUMNS),
         ("ask_log",           _ASK_LOG_NEW_COLUMNS),
         # game_unit_leaderboard.role tags bat vs pit rows; ADD COLUMN … DEFAULT
         # 'bat' backfills existing (batting-only) rows to 'bat'.

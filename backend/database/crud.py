@@ -464,6 +464,42 @@ def bulk_insert_gamelogs(db: Session, model, rows: list[dict]) -> int:
     return len(rows)
 
 
+# Columns the lineup re-ingest is allowed to touch. Deliberately NOT the stat
+# columns: those already carry the `/admin/repair-attributed` corrections and
+# the 2000+ BDL/MLB values, and a re-run of a source that disagrees with a
+# scorer's later revision would silently undo the repair.
+_LINEUP_COLS = ("slot", "seq", "pos")
+
+
+def bulk_upsert_gamelog_lineup(db: Session, model, rows: list[dict]) -> int:
+    """Batched INSERT ... ON CONFLICT (player_id, game_id) DO UPDATE, updating
+    ONLY slot / seq / pos.
+
+    `bulk_insert_gamelogs` above is DO NOTHING, which is right for a backfill
+    and useless for a re-ingest: every historical row already exists, so a
+    re-run through it writes exactly zero. This is the narrow counterpart —
+    new rows insert whole, existing rows have three columns filled in and
+    everything else left exactly as it stands."""
+    if not rows:
+        return 0
+    dialect = db.bind.dialect.name if db.bind is not None else ""
+    if dialect == "postgresql":
+        stmt = pg_insert(model).values(rows)
+        db.execute(stmt.on_conflict_do_update(
+            index_elements=["player_id", "game_id"],
+            set_={c: getattr(stmt.excluded, c) for c in _LINEUP_COLS},
+        ))
+    else:
+        for r in rows:
+            existing = db.get(model, (r["player_id"], r["game_id"]))
+            if existing is None:
+                db.merge(model(**r))
+            else:
+                for c in _LINEUP_COLS:
+                    setattr(existing, c, r.get(c))
+    return len(rows)
+
+
 # ---------------------------------------------------------------------------
 # Team standings
 # ---------------------------------------------------------------------------

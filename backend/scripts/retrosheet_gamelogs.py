@@ -49,6 +49,46 @@ _BAT_SIGNAL = ["B_PA", "B_AB", "B_R", "B_H", "B_2B", "B_3B", "B_HR", "B_RBI",
                "B_BB", "B_SO", "B_SB", "B_CS", "B_HP", "B_SH", "B_SF", "B_GDP",
                "B_IBB"]
 
+# Defensive-position order, which is also the order a box score prints a
+# multi-position line in ("SS-3B", never "3B-SS"). Every F_*_POS value in the
+# file is the flag "1" — they carry no sequence — so this fixed order is the
+# only defensible one.
+_POS_COLS = (("P", "F_P_POS"), ("C", "F_C_POS"), ("1B", "F_1B_POS"),
+             ("2B", "F_2B_POS"), ("3B", "F_3B_POS"), ("SS", "F_SS_POS"),
+             ("LF", "F_LF_POS"), ("CF", "F_CF_POS"), ("RF", "F_RF_POS"))
+# F_OF_POS IS DELIBERATELY ABSENT. It is redundant with LF/CF/RF, not an
+# alternative to them: across 1898/1910/1950/2000/2024, the number of rows
+# carrying F_OF_POS with no specific outfield column is ZERO. Including it
+# would print "LF-OF" for every outfielder in the file.
+
+# The DH exists from 1973 (AL) and is universal from 2022. Before 1973 a
+# starter with plate appearances and no fielding position is not a designated
+# hitter — he is a data oddity (7 such rows in 1910), and "PH" is the far more
+# likely truth than a position that had not been invented.
+_DH_FROM = 1973
+
+
+def _position(r: dict, year: int) -> Optional[str]:
+    """This game's fielding position(s), or the batting-only role.
+
+    A player with no F_*_POS at all is NOT missing data in most cases — he is
+    a designated hitter, a pinch hitter or a pinch runner, and a box score says
+    so. Leaving those blank would put unlabelled names beside positioned
+    team-mates in the same game, which reads as broken rather than as thin.
+    Only a man who neither fielded, batted nor scored gets NULL."""
+    played = [name for name, col in _POS_COLS
+              if (r.get(col) or "").strip() not in ("", "0")]
+    if played:
+        return "-".join(played)
+    if _i(r.get("B_PA")) > 0:
+        # `seq` 1 is the man who STARTED in this slot: in the DH era that is
+        # the designated hitter, otherwise anyone later in the slot is a
+        # pinch hitter.
+        return "DH" if (year >= _DH_FROM and _i(r.get("seq")) == 1) else "PH"
+    if _i(r.get("B_R")) > 0:
+        return "PR"
+    return None
+
 
 def _i(v) -> int:
     if v in (None, ""):
@@ -165,7 +205,8 @@ def _parse_date(s: str):
 
 def _ingest_year(year: int, bridge: dict, state, lock,
                  bat_model=BattingGameLog, pit_model=PitchingGameLog,
-                 appearance_gate: bool = False) -> dict:
+                 appearance_gate: bool = False,
+                 refresh_lineup: bool = False) -> dict:
     playing = _download_csv(_PLAYING_URL.format(year=year))
     if not playing:
         log.warning("year %d: playing file missing/unreachable — skipped", year)
@@ -232,6 +273,12 @@ def _ingest_year(year: int, bridge: dict, state, lock,
                 "SO": _i(r.get("B_SO")), "SB": _i(r.get("B_SB")), "CS": _i(r.get("B_CS")),
                 "HBP": _i(r.get("B_HP")), "SF": _i(r.get("B_SF")), "GIDP": _i(r.get("B_GDP")),
                 "SH": _i(r.get("B_SH")), "LOB": None,   # per-player LOB not in daybyday
+                # slot 0 is kept AS 0, not coerced to NULL or 1: it is the
+                # positive fact "this man was not in the batting order", which
+                # is how a DH-era pitcher appears. The reader of this column
+                # must treat 0 as "not a batter" (see `models.BattingGameLog`).
+                "slot": _i(r.get("slot")), "seq": _i(r.get("seq")),
+                "pos": _position(r, year),
             })
         if _i(r.get("P_G")) > 0 or _i(r.get("P_OUT")) > 0:
             # result on a PITCHING row is the pitcher's DECISION (not the team
@@ -247,28 +294,40 @@ def _ingest_year(year: int, bridge: dict, state, lock,
                 "pitches": _io(r.get("P_PITCH")), "strikes": _io(r.get("P_STRIKE")),
             })
 
-    bw = _write(bat_model, bat_rows)
-    pw = _write(pit_model, pit_rows)
+    # A lineup refresh writes ONLY the batting side, and only through the
+    # narrow upsert: pitching_gamelogs gained no columns, so re-running it
+    # would be several million rows of no-op.
+    bw = _write(bat_model, bat_rows, refresh_lineup=refresh_lineup)
+    pw = 0 if refresh_lineup else _write(pit_model, pit_rows)
     _set_state(state, lock, current_year=year)
     log.info("year %d: batting %d, pitching %d, unmapped %d", year, bw, pw, len(unmapped))
     return {"year": year, "status": "ok", "batting": bw, "pitching": pw, "unmapped": len(unmapped)}
 
 
-def _write(model, rows: list[dict]) -> int:
+def _write(model, rows: list[dict], refresh_lineup: bool = False) -> int:
+    # THE DEFAULT PATH IS DO NOTHING, AND THAT IS WHY A RE-RUN NEEDS THE FLAG.
+    # Every historical row already exists, so re-ingesting through
+    # `bulk_insert_gamelogs` writes exactly zero and reports success. The
+    # refresh path updates slot / seq / pos and nothing else, so the
+    # `/admin/repair-attributed` corrections and the 2000+ provider values
+    # survive untouched.
+    fn = crud.bulk_upsert_gamelog_lineup if refresh_lineup else crud.bulk_insert_gamelogs
     written = 0
     for i in range(0, len(rows), _BATCH):
         with connection.get_session() as db:
-            written += crud.bulk_insert_gamelogs(db, model, rows[i:i + _BATCH])
+            written += fn(db, model, rows[i:i + _BATCH])
     return written
 
 
 def run(year_from: int = 1898, year_to: int = 1999, state=None, lock=None,
         bat_model=BattingGameLog, pit_model=PitchingGameLog,
-        appearance_gate: bool = False) -> dict:
+        appearance_gate: bool = False, refresh_lineup: bool = False) -> dict:
     connection.init_db()
     log.info("=" * 52)
-    log.info("Retrosheet gamelog backfill — %d..%d (target=%s, appearance_gate=%s)",
-             year_from, year_to, bat_model.__tablename__, appearance_gate)
+    log.info("Retrosheet gamelog backfill — %d..%d (target=%s, appearance_gate=%s, "
+             "refresh_lineup=%s)",
+             year_from, year_to, bat_model.__tablename__, appearance_gate,
+             refresh_lineup)
     log.info("=" * 52)
     bridge = _load_bridge()
 
@@ -279,7 +338,8 @@ def run(year_from: int = 1898, year_to: int = 1999, state=None, lock=None,
         try:
             res = _ingest_year(year, bridge, state, lock,
                                bat_model=bat_model, pit_model=pit_model,
-                               appearance_gate=appearance_gate)
+                               appearance_gate=appearance_gate,
+                               refresh_lineup=refresh_lineup)
         except Exception as exc:  # noqa: BLE001 - one bad year shouldn't kill the run
             log.exception("year %d FAILED: %s", year, exc)
             res = {"year": year, "status": "error", "error": str(exc),

@@ -150,10 +150,16 @@ _retro_gl_state: dict = {
 _retro_gl_lock = threading.Lock()
 
 
-def _run_retrosheet_gamelogs(year_from: int, year_to: int) -> None:
+def _run_retrosheet_gamelogs(year_from: int, year_to: int,
+                             refresh_lineup: bool = False,
+                             appearance_gate: bool = False) -> None:
     """Background thread: download Retrosheet daybyday per year and write
     historical gamelog rows. Clears the cache at the end like the season
-    ingest / nightly so post-backfill reads aren't stale."""
+    ingest / nightly so post-backfill reads aren't stale.
+
+    `refresh_lineup` re-reads years already ingested to fill slot / seq / pos,
+    updating those three columns and nothing else. Without it the run is a
+    no-op on existing rows — the ordinary write is ON CONFLICT DO NOTHING."""
     with _retro_gl_lock:
         _retro_gl_state.update(
             running=True, phase=None, year_from=year_from, year_to=year_to,
@@ -162,7 +168,9 @@ def _run_retrosheet_gamelogs(year_from: int, year_to: int) -> None:
         )
     try:
         retrosheet_gamelogs.run(year_from=year_from, year_to=year_to,
-                                state=_retro_gl_state, lock=_retro_gl_lock)
+                                state=_retro_gl_state, lock=_retro_gl_lock,
+                                refresh_lineup=refresh_lineup,
+                                appearance_gate=appearance_gate)
     except Exception as exc:
         with _retro_gl_lock:
             _retro_gl_state["error"] = str(exc)
@@ -1779,14 +1787,21 @@ def _decimal_ip_to_baseball(ip) -> str:
     return f"{whole}.{outs}"
 
 
+# ORDER BY puts the real lineup first and falls back to the name, per game.
+# `slot` 0 means "not in the batting order" (a DH-era pitcher), so it sorts to
+# the END rather than ahead of the leadoff man — `NULLIF(b.slot, 0)` with NULLS
+# LAST does that. A game with no lineup data at all has every key NULL and the
+# whole thing collapses to the alphabetical order this used to have, which is
+# what keeps the ordering note honest for the years the refresh hasn't reached.
 _BOX_BAT_SQL = """
 SELECT b.player_id, b.home_away, p.name,
        b."AB", b."R", b."H", b.doubles, b.triples, b."HR", b."RBI",
-       b."BB", b."SO", b."SB", b."CS", b."HBP", b."SF", b."SH", b."GIDP"
+       b."BB", b."SO", b."SB", b."CS", b."HBP", b."SF", b."SH", b."GIDP",
+       b.slot, b.seq, b.pos
 FROM batting_gamelogs b
 LEFT JOIN players p ON p.player_id = b.player_id
 WHERE b.game_id = :gid
-ORDER BY p.name
+ORDER BY NULLIF(b.slot, 0) NULLS LAST, b.seq NULLS LAST, p.name
 """
 
 # Season-to-date ENTERING the game, summed from our own logs — the same
@@ -1866,13 +1881,16 @@ def historical_boxscore(game_pk: int):
       • THE LINESCORE GRID. Neither game-log table carries per-inning runs.
         Derivable from plays.duckdb, but that floors at 1910 and this floors
         at 1898.
-      • BATTING ORDER and FIELDING POSITION. Not recorded here at all. The
-        batters are therefore returned ALPHABETICALLY and the iOS side says so.
-        Sorting by plate appearances would approximate a lineup and be wrong in
-        the middle of it — a fake order is a lie a reader checking against
-        Baseball-Reference catches at once, and this app's readers do exactly
-        that. Pitchers ARE ordered, by innings descending, which reliably puts
-        the starter first.
+      • BATTING ORDER and FIELDING POSITION, but ONLY for a game the lineup
+        refresh has not reached yet. Both are real columns now — Retrosheet's
+        daybyday publishes `slot`, `seq` and the F_*_POS flags, and the earlier
+        note here that they were "not recorded at all" was a claim about our
+        ingest, not about the source. Where the columns are still NULL the
+        batters come back alphabetically and `batterOrdering` says so, per
+        game, so the iOS disclaimer appears exactly where it is still true.
+        Pitchers remain ordered by innings descending: `seq` counts appearances
+        within a BATTING slot and says nothing about who took the mound first,
+        whereas innings reliably put the starter at the top.
 
     DECISIONS AND SEASON-TO-DATE ARE PRESENT. `pitching_gamelogs.result` holds
     the PITCHER'S decision — W / L / S / ND, from Retrosheet's own P_W / P_L /
@@ -1986,10 +2004,18 @@ def historical_boxscore(game_pk: int):
         key = f"ID{r.player_id}"
         ab = r.AB or 0
         h = r.H or 0
+        slot = getattr(r, "slot", None) or 0
         side["players"][key] = {
             "person": {"id": r.player_id, "fullName": r.name or str(r.player_id)},
-            "position": None,                     # not recorded — view omits it
-            "battingOrder": None,                 # not recorded
+            # `pos` is the game's fielding position, or DH / PH / PR for an
+            # appearance without one. None only where the man neither fielded,
+            # batted nor ran, and the view then simply omits the label.
+            "position": {"abbreviation": r.pos} if getattr(r, "pos", None) else None,
+            # MLB's own convention: slot * 100 + (seq - 1), so the starter in
+            # the third slot is "300" and his replacement "301". Absent for a
+            # man who was not in the order at all.
+            "battingOrder": (str(slot * 100 + max((r.seq or 1) - 1, 0))
+                             if slot else None),
             "seasonStats": bat_season_stats(r.player_id),
             "stats": {"batting": {
                 "atBats": r.AB, "runs": r.R, "hits": r.H,
@@ -2042,8 +2068,18 @@ def historical_boxscore(game_pk: int):
                                     "pitching": season["pitching"]}
         side["pitchers"].append(r.player_id)
 
+    # Per-game, not a constant: the refresh runs year by year, so until it has
+    # covered everything some games have an order and some do not. Saying
+    # "lineup" for a game whose rows are still NULL would be the exact lie the
+    # note exists to prevent, and saying "alphabetical" once the slots are there
+    # would leave a disclaimer standing over real data.
+    #
+    # EVERY row, not any: a game whose row set has drifted could come back part
+    # filled, and claiming "lineup" then would drop the disclaimer over the
+    # batters who still have none. The test errs toward keeping it.
+    has_lineup = bool(bat) and all(getattr(r, "slot", None) is not None for r in bat)
     return {"gameId": game_id,
-            "batterOrdering": "alphabetical",   # NOT a lineup; see the docstring
+            "batterOrdering": "lineup" if has_lineup else "alphabetical",
             "teams": {"away": teams["away"], "home": teams["home"]}}
 
 
@@ -5488,10 +5524,21 @@ def ingest_retrosheet_status():
 def start_ingest_retrosheet_gamelogs(
     year_from: int = Query(default=1898),
     year_to: int = Query(default=1999),
+    refresh_lineup: bool = Query(default=False),
+    appearance_gate: bool = Query(default=False),
 ):
     """Backfill historical game logs from Retrosheet daybyday (runtime download).
     Defaults to the full 1898-1999 range; narrow with ?year_from=&year_to= for
-    a single-year/decade dry run."""
+    a single-year/decade dry run.
+
+    `?refresh_lineup=true` re-reads years that are ALREADY ingested and fills
+    in slot / seq / pos on the rows that exist, leaving every stat column as it
+    stands. Use it for the one-time lineup backfill; the pitching side is
+    skipped, since it gained no columns.
+
+    For 2000+ pass `appearance_gate=true` as well — those years were ingested
+    under the appearance gate, and refreshing them under the leaner outcome
+    gate would simply miss the empty-appearance rows rather than fill them."""
     with _retro_gl_lock:
         if _retro_gl_state["running"]:
             return {"status": "already_running", **_retro_gl_state}
@@ -5500,10 +5547,12 @@ def start_ingest_retrosheet_gamelogs(
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
 
     t = threading.Thread(
-        target=_run_retrosheet_gamelogs, args=(year_from, year_to), daemon=True,
+        target=_run_retrosheet_gamelogs,
+        args=(year_from, year_to, refresh_lineup, appearance_gate), daemon=True,
     )
     t.start()
-    return {"status": "started", "year_from": year_from, "year_to": year_to}
+    return {"status": "started", "year_from": year_from, "year_to": year_to,
+            "refresh_lineup": refresh_lineup, "appearance_gate": appearance_gate}
 
 
 @app.get("/admin/ingest-retrosheet-gamelogs/status")
