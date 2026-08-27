@@ -2454,12 +2454,18 @@ def admin_reconciliation_history(
     with connection.get_session() as db:
         runs = (db.query(_R).filter(_R.season == season)
                   .order_by(_R.id.desc()).limit(limit).all())
-    return {
-        "season": season,
-        "runs": [
-            {c.key: getattr(r, c.key) for c in r.__table__.columns} for r in runs
-        ],
-    }
+        # Serialised INSIDE the session, deliberately. `get_session` expires its
+        # instances on close, so reading a column off one afterwards triggers a
+        # refresh against a dead session — a 500 with a
+        # `_load_expired` traceback, which is exactly what this endpoint did
+        # until its `return` was one indentation level too far out. The sibling
+        # `/admin/reconciliation` was always correct for the same reason.
+        return {
+            "season": season,
+            "runs": [
+                {c.key: getattr(r, c.key) for c in r.__table__.columns} for r in runs
+            ],
+        }
 
 
 @app.post("/admin/backfill-season-source")
