@@ -227,6 +227,27 @@ final class ScoresViewModel: ObservableObject {
         }
     }
 
+    /// Fetch the day's games from whichever source covers `date`, and assign.
+    ///
+    /// EXTRACTED because it was duplicated and then wasn't: the historical
+    /// fallback was added to `load` and not to `refresh`, so a pre-2000 date
+    /// loaded correctly and was then wiped by the very next periodic tick,
+    /// which went to BDL unconditionally and got nothing. The screen read "No
+    /// games" for a date the endpoint answers with thirteen. One routine, both
+    /// callers.
+    private func loadGames(for date: Date, bypassCache: Bool) async throws {
+        if Self.usesHistoricalSource(for: date) {
+            self.games = try await api.getHistoricalGames(date: date)
+                .sorted { ($0.teams.away.team.abbreviation ?? "")
+                        < ($1.teams.away.team.abbreviation ?? "") }
+        } else {
+            self.games = try await slate.getGames(date: ScoresViewModel.iso(date),
+                                                  bypassCache: bypassCache)
+                .map { $0.toGame() }
+                .sorted { ($0.startDate ?? .distantFuture) < ($1.startDate ?? .distantFuture) }
+        }
+    }
+
     func load(date: Date, bypassCache: Bool = false) async {
         isLoading = true
         error = nil
@@ -235,28 +256,12 @@ final class ScoresViewModel: ObservableObject {
         // records, not the live 2026 ones.
         let year = Calendar.current.component(.year, from: date)
         async let standingsTask: [BDLStandingsEntry]? = try? bdl.getStandings(season: year)
-        if Self.usesHistoricalSource(for: date) {
-            // Before BDL's floor: our own game logs are the only source.
-            do {
-                self.games = try await api.getHistoricalGames(date: date)
-                    .sorted { ($0.teams.away.team.abbreviation ?? "")
-                            < ($1.teams.away.team.abbreviation ?? "") }
-                self.error = nil
-            } catch {
-                self.error = Self.message(for: error)
-                self.games = []
-            }
-        } else {
-            do {
-                let bdlGames = try await slate.getGames(date: ScoresViewModel.iso(date),
-                                                         bypassCache: bypassCache)
-                self.games = bdlGames
-                    .map { $0.toGame() }
-                    .sorted { ($0.startDate ?? .distantFuture) < ($1.startDate ?? .distantFuture) }
-            } catch {
-                self.error = Self.message(for: error)
-                self.games = []
-            }
+        do {
+            try await loadGames(for: date, bypassCache: bypassCache)
+            self.error = nil
+        } catch {
+            self.error = Self.message(for: error)
+            self.games = []
         }
         // Keep only ids still on the slate — switching to another date must not
         // inherit today's ended games. A pk that is now genuinely `.final` can
@@ -297,10 +302,9 @@ final class ScoresViewModel: ObservableObject {
         let year = Calendar.current.component(.year, from: selectedDate)
         async let standingsTask: [BDLStandingsEntry]? = try? bdl.getStandings(season: year)
         do {
-            let bdlGames = try await bdl.getGames(date: ScoresViewModel.iso(selectedDate))
-            self.games = bdlGames
-                .map { $0.toGame() }
-                .sorted { ($0.startDate ?? .distantFuture) < ($1.startDate ?? .distantFuture) }
+            // Same routine `load` uses — a pre-2000 date must not be re-fetched
+            // from BDL here, or the periodic tick wipes what `load` just got.
+            try await loadGames(for: selectedDate, bypassCache: false)
             self.error = nil
         } catch {
             // Silent — keep stale games visible rather than wiping

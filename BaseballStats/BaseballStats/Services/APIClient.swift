@@ -216,12 +216,21 @@ final class APIClient {
         return envelope?.games ?? []
     }
 
-    /// yyyy-MM-dd in UTC — the endpoint takes a calendar day, not an instant.
+    /// `yyyy-MM-dd` in the LOCAL timezone, matching
+    /// `ScoresViewModel.scheduleDateFormatter` — because `selectedDate` is a
+    /// LOCAL midnight and the whole date strip keys on local days.
+    ///
+    /// This read UTC when the historical slate first shipped, which was right
+    /// only by accident: west of Greenwich, local midnight falls on the same
+    /// UTC day, so a US user saw the right games. East of it the same instant
+    /// is the PREVIOUS UTC day, so every historical date would have been
+    /// fetched one day early. Caught by asking for 1986-07-04 in the simulator
+    /// and being shown July 3.
     private static let ymd: DateFormatter = {
         let f = DateFormatter()
         f.calendar   = Calendar(identifier: .gregorian)
         f.locale     = Locale(identifier: "en_US_POSIX")
-        f.timeZone   = TimeZone(identifier: "UTC")
+        f.timeZone   = .current
         f.dateFormat = "yyyy-MM-dd"
         return f
     }()
