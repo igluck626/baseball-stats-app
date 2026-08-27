@@ -2468,6 +2468,150 @@ def admin_reconciliation_history(
         }
 
 
+@app.post("/admin/repair-attributed")
+def admin_repair_attributed(
+    run_id: int | None = Query(
+        None, description="Reconciliation run to repair from. Defaults to the LATEST."),
+    player_id: int | None = Query(
+        None, description="Instead of a run: re-pull every date this player appears on. "
+                          "For a finding whose gap spans several games, so tier 2 could "
+                          "name no single date."),
+    season: int | None = Query(None, description="Defaults to the current season."),
+    confirm: bool = Query(
+        False, description="FALSE (default) reports the plan without fetching anything."),
+):
+    """Re-pull the specific dates the reconciliation blamed, rather than a
+    rolling window of the calendar.
+
+    A game-log row is written once and never re-read, so an official scorer's
+    later reversal is permanent. The check already knows WHICH games those are —
+    this acts on that list instead of guessing a window. On the run that
+    motivated it: nine attributed findings across SEVEN dates, about 117 BDL
+    requests, once. A ten-day rolling window would have cost ~134 extra requests
+    EVERY night and still missed four of the nine, because they were already
+    older than ten days.
+
+    WHAT IT DELIBERATELY SKIPS, and says so rather than silently:
+      • findings with no attributed date (the gap spans several games) — use
+        `player_id` for those;
+      • `reachable = false` findings — those rows sit under MLB gamePks that
+        BDL has never issued, so re-pulling a date cannot reach them;
+      • coverage-only gaps — a missing or extra row is not a revision, and a
+        re-pull will not reconcile it.
+
+    STALE RUNS ARE ALLOWED BUT ANNOUNCED. Repairing from an old run is not
+    harmful — `save_bdl_gamelogs_for_date` upserts through `db.merge`, so
+    re-pulling an already-correct date rewrites it with the same values. The
+    real cost is INCOMPLETENESS: an old run misses findings discovered since.
+    Refusing outright would block legitimate before/after comparisons, so the
+    response instead carries `run_is_latest` and `latest_run_id`, and a warning
+    when they differ.
+
+    IDEMPOTENT. Every write goes through the same merge-based upsert, so running
+    this twice on one run_id produces the same rows the first pass produced.
+    """
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    if season is None:
+        season = data_service._current_year()
+    if run_id is not None and player_id is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="Pass run_id OR player_id, not both — they select different work.")
+
+    from database.models import GamelogReconFinding as _F, GamelogReconRun as _R
+
+    plan: dict = {
+        "mode": "player" if player_id else "run",
+        "season": season, "confirm": confirm,
+        "dates": [], "declined": [], "warnings": [],
+    }
+
+    with connection.get_session() as db:
+        if player_id is not None:
+            rows = db.execute(_sa_text(
+                "SELECT DISTINCT game_date FROM batting_gamelogs "
+                "WHERE player_id = :pid AND season = :yr "
+                "UNION "
+                "SELECT DISTINCT game_date FROM pitching_gamelogs "
+                "WHERE player_id = :pid AND season = :yr "
+                "ORDER BY 1"), {"pid": player_id, "yr": season}).fetchall()
+            plan["player_id"] = player_id
+            plan["dates"] = [r[0].isoformat() for r in rows if r[0]]
+        else:
+            latest = (db.query(_R).filter(_R.season == season)
+                        .order_by(_R.id.desc()).first())
+            if latest is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No reconciliation run recorded for season {season}")
+            chosen = run_id if run_id is not None else latest.id
+            plan["run_id"] = chosen
+            plan["latest_run_id"] = latest.id
+            plan["run_is_latest"] = (chosen == latest.id)
+            if not plan["run_is_latest"]:
+                plan["warnings"].append(
+                    f"run {chosen} is not the latest ({latest.id}) — this repairs what "
+                    f"THAT run found and will miss anything discovered since. Harmless "
+                    f"but incomplete.")
+            findings = db.query(_F).filter(_F.run_id == chosen).all()
+            if not findings:
+                raise HTTPException(
+                    status_code=404, detail=f"Run {chosen} has no findings")
+            dates: set = set()
+            for f in findings:
+                if f.game_id and f.game_date and f.reachable:
+                    dates.add(f.game_date)
+                elif not f.reachable:
+                    plan["declined"].append({
+                        "player_id": f.player_id, "side": f.side, "stat": f.stat,
+                        "reason": "unreachable — rows sit under ids BDL never issued"})
+                elif (f.value_gap or 0) != 0:
+                    plan["declined"].append({
+                        "player_id": f.player_id, "side": f.side, "stat": f.stat,
+                        "reason": "value gap spans several games, no single date to "
+                                  "re-pull — retry with player_id"})
+                else:
+                    plan["declined"].append({
+                        "player_id": f.player_id, "side": f.side, "stat": f.stat,
+                        "reason": "coverage-only gap — a re-pull cannot reconcile it"})
+            plan["dates"] = sorted(d.isoformat() for d in dates)
+
+    plan["date_count"] = len(plan["dates"])
+    plan["declined_count"] = len(plan["declined"])
+    if not confirm:
+        plan["status"] = "dry_run"
+        plan["note"] = ("Nothing fetched or written. Re-send with confirm=true to act. "
+                        f"Would re-pull {plan['date_count']} date(s).")
+        return plan
+
+    per_date = []
+    total_bat = total_pit = total_games = 0
+    for d in plan["dates"]:
+        try:
+            r = data_service.save_bdl_gamelogs_for_date(d)
+        except Exception as exc:                       # one bad date must not stop the rest
+            per_date.append({"date": d, "status": "error", "error": str(exc)})
+            continue
+        per_date.append({"date": d, "status": r.get("status"),
+                         "games": r.get("games"),
+                         "bat_rows": r.get("bat_rows"),
+                         "pit_rows": r.get("pit_rows")})
+        total_games += int(r.get("games") or 0)
+        total_bat   += int(r.get("bat_rows") or 0)
+        total_pit   += int(r.get("pit_rows") or 0)
+
+    plan["status"] = "ok"
+    plan["per_date"] = per_date
+    plan["games_refetched"] = total_games
+    plan["batting_rows_written"] = total_bat
+    plan["pitching_rows_written"] = total_pit
+    plan["next_step"] = ("The next nightly's reconciliation re-checks these. A finding "
+                         "present in this run and absent from the next is a CONFIRMED "
+                         "repair; one still present is a confirmed failure.")
+    return plan
+
+
 @app.post("/admin/backfill-season-source")
 def admin_backfill_season_source():
     """One-time, idempotent labeling of PRE-INGEST row provenance on
