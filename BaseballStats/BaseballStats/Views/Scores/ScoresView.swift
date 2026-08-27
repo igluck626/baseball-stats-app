@@ -1138,22 +1138,26 @@ private struct FinalGameCard: View {
                     }
                 }
             if isExpanded {
-                // A historical game expands STRAIGHT to the box score. The
-                // linescore grid and the decision line are omitted rather than
-                // rendered empty: the game-log tables carry no per-inning runs,
-                // and no pitcher decision either — `result` is the TEAM's W/L.
-                // Deriving a winning pitcher needs play-by-play AND a scorer's
-                // judgement the data cannot supply, and a wrong one is worse
-                // than none.
+                // Only the LINESCORE is absent for a historical game: neither
+                // game-log table carries per-inning runs, so the grid would be
+                // empty columns under real headers.
+                //
+                // Decisions and the HR line ARE rendered. They used to sit
+                // inside this same suppression on the claim that a pitcher's
+                // decision could not be known — but `pitching_gamelogs.result`
+                // holds it outright, from Retrosheet's own P_W / P_L / P_SV,
+                // and 505,690 rows carry it with no misassignment anywhere in
+                // the corpus. The scorer's judgement had already been made and
+                // written down; the claim was about our query, not the record.
                 if !game.isHistorical {
                     Divider()
                     linescore
-                    if hasAnyDecision {
-                        Divider()
-                        decisions
-                    }
-                    hrSummary
                 }
+                if hasAnyDecision {
+                    Divider()
+                    decisions
+                }
+                hrSummary
                 boxScoreButton
             }
         }
@@ -1168,6 +1172,17 @@ private struct FinalGameCard: View {
         guard !isLoadingBoxScore else { return }
         isLoadingBoxScore = true
         defer { isLoadingBoxScore = false }
+
+        // HISTORICAL: one call to our own service, and none of the BDL assembly
+        // below applies — these players have no BDL ids to key a game, a lineup
+        // or a season snapshot on. The response already carries the decision
+        // flags and the pre-game season line, which is everything the decisions
+        // and HR sections read. Same shape `BoxScoreViewModel` takes.
+        if game.isHistorical {
+            boxScore = try? await APIClient.shared
+                .getHistoricalBoxScore(gamePk: game.gamePk)?.asBoxScore
+            return
+        }
 
         let bdl = BallDontLieClient.shared
         // Run the same shape as `BoxScoreView.loadBoxScore`: stats +
@@ -1529,6 +1544,24 @@ private struct FinalGameCard: View {
         // as `hrSegments` — the flash of a wrong intermediate
         // value is worse than a brief dash. Animated below.
         let recordText: String? = {
+            // Historical: the contextual endpoint is never called for these
+            // games (it resolves through BDL ids they never had), so waiting on
+            // `pitcherRecordsByBDL` would leave "(—)" on screen for good —
+            // exactly the empty-container shape the box-score tables were fixed
+            // for. The record comes off `seasonStats` instead, which our own
+            // service sums to the moment BEFORE this game; the `+ 1` below adds
+            // the decision being rendered, the same arithmetic
+            // `BoxScoreView.pitcherDecisionTag` does on its own fallback.
+            if game.isHistorical {
+                guard let s = pitcher.seasonStats?.pitching,
+                      let w = s.wins, let l = s.losses else { return nil }
+                switch tag {
+                case "W":  return "(\(w + 1)-\(l))"
+                case "L":  return "(\(w)-\(l + 1))"
+                case "SV": return s.saves.map { "(\($0 + 1))" }
+                default:   return nil
+                }
+            }
             guard let rec = pitcherRecordsByBDL[pitcher.person.id] else {
                 return "(—)"
             }
@@ -1617,6 +1650,17 @@ private struct FinalGameCard: View {
                 if let stats = batterStatsAtDateByBDL[p.person.id] {
                     let bump = !stats.includesToday ? hr : 0
                     out.append("\(prefix) (\(stats.homeRuns + bump))")
+                } else if game.isHistorical {
+                    // Never-lands case, so a dash here would be permanent. The
+                    // season line our own service ships is pre-game, so this
+                    // game's own homers are added; when the player has no
+                    // earlier game that year there is no line at all and the
+                    // name stands alone rather than claiming a total.
+                    if let prior = p.seasonStats?.batting?.homeRuns {
+                        out.append("\(prefix) (\(prior + hr))")
+                    } else {
+                        out.append(prefix)
+                    }
                 } else {
                     out.append("\(prefix) (—)")
                 }

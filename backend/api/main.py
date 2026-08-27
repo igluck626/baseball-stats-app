@@ -1789,9 +1789,62 @@ WHERE b.game_id = :gid
 ORDER BY p.name
 """
 
+# Season-to-date ENTERING the game, summed from our own logs — the same
+# pre-game cumulative the modern path gets from BDL's season_stats at box-score
+# open, and what the AVG / OPS / ERA columns and the decision record mean.
+#
+# The cutoff is NOT simply `game_date <`. 16,214 of the 215,213 historical games
+# are the SECOND game of a doubleheader, and a plain date cutoff would drop the
+# player's own earlier game that same afternoon — his line in the nightcap would
+# silently omit the opener. `game_id <` breaks the tie: within one doubleheader
+# both halves share a home code and date and differ only in the trailing game
+# number, so the ids sort in playing order.
+_BOX_BAT_SEASON_SQL = """
+SELECT player_id,
+       SUM(COALESCE("AB",0))      AS ab,
+       SUM(COALESCE("H",0))       AS h,
+       SUM(COALESCE("BB",0))      AS bb,
+       SUM(COALESCE("HBP",0))     AS hbp,
+       SUM(COALESCE("SF",0))      AS sf,
+       SUM(COALESCE(doubles,0))   AS d2,
+       SUM(COALESCE(triples,0))   AS d3,
+       SUM(COALESCE("HR",0))      AS hr
+FROM batting_gamelogs
+WHERE season = :yr AND player_id = ANY(:pids)
+  AND (game_date < :gdate OR (game_date = :gdate AND game_id < :gid))
+GROUP BY player_id
+"""
+
+_BOX_PIT_SEASON_SQL = """
+SELECT player_id,
+       -- Sum OUTS, never the decimal IP. "IP" stores thirds as .333/.667, so
+       -- SUM() of thirty appearances drifts by a tenth of an inning and the
+       -- ERA drifts with it. Recovering outs first makes the total exact.
+       SUM(FLOOR(COALESCE("IP",0))*3
+           + ROUND((COALESCE("IP",0) - FLOOR(COALESCE("IP",0))) * 3)) AS outs,
+       SUM(COALESCE("ER",0))  AS er,
+       COUNT(*) FILTER (WHERE result = 'W') AS w,
+       COUNT(*) FILTER (WHERE result = 'L') AS l,
+       COUNT(*) FILTER (WHERE result = 'S') AS sv
+FROM pitching_gamelogs
+WHERE season = :yr AND player_id = ANY(:pids)
+  AND (game_date < :gdate OR (game_date = :gdate AND game_id < :gid))
+GROUP BY player_id
+"""
+
+# `result` is the PITCHER'S DECISION on a Retrosheet row — W / L / S / ND —
+# NOT the team's win-loss. It comes straight from Retrosheet's own P_W / P_L /
+# P_SV flags via `_pitcher_decision` in the daybyday ingest, so it is a RECORDED
+# fact, not something derived. 214,193 wins and 214,206 losses sit in the table.
+#
+# This endpoint shipped without reading it, on my written claim that "`result`
+# is the TEAM's W/L" and that a winning pitcher would have to be derived from
+# play-by-play plus a scorer's judgement. Both were wrong, and the second is the
+# instructive one: the judgement HAD been made, by the official scorer, and
+# Retrosheet wrote it down.
 _BOX_PIT_SQL = """
 SELECT g.player_id, g.home_away, COALESCE(p.name, pl.name) AS name,
-       g."IP", g."H", g."R", g."ER", g."BB", g."SO", g."HR", g.pitches
+       g."IP", g."H", g."R", g."ER", g."BB", g."SO", g."HR", g.pitches, g.result
 FROM pitching_gamelogs g
 LEFT JOIN pitchers p ON p.player_id = g.player_id
 LEFT JOIN players  pl ON pl.player_id = g.player_id
@@ -1810,12 +1863,6 @@ def historical_boxscore(game_pk: int):
     view was always reusable; only its view model was BDL-bound.
 
     WHAT IS ABSENT, AND WHY IT IS ABSENT RATHER THAN EMPTY:
-      • DECISIONS (W/L/SV). `pitching_gamelogs` has no decision column —
-        `result` is the TEAM's W/L, not the pitcher's. Deriving them needs
-        play-by-play AND a scorer's judgement the data cannot supply (when a
-        starter goes under five innings the win is awarded to whichever
-        reliever the official scorer judges most effective). A wrong winning
-        pitcher is worse than none.
       • THE LINESCORE GRID. Neither game-log table carries per-inning runs.
         Derivable from plays.duckdb, but that floors at 1910 and this floors
         at 1898.
@@ -1826,6 +1873,15 @@ def historical_boxscore(game_pk: int):
         Baseball-Reference catches at once, and this app's readers do exactly
         that. Pitchers ARE ordered, by innings descending, which reliably puts
         the starter first.
+
+    DECISIONS AND SEASON-TO-DATE ARE PRESENT. `pitching_gamelogs.result` holds
+    the PITCHER'S decision — W / L / S / ND, from Retrosheet's own P_W / P_L /
+    P_SV flags — so the winner, loser and saver are READ, not derived, and the
+    scorer's judgement is already baked in. Season lines beside each row are
+    summed from our own logs strictly BEFORE this game's date, which is the
+    same pre-game cumulative the modern path gets from BDL at box-score open.
+    Both were previously emitted as null on a scoping claim that the data did
+    not exist; it did.
 
     A caveat worth knowing when reading old games: a zero here can mean "the
     statistic did not exist yet" rather than "it did not happen" — GIDP was not
@@ -1865,6 +1921,57 @@ def historical_boxscore(game_pk: int):
         names = {r[0]: r[1] for r in db.execute(
             _sa_text("SELECT team_id, team_name FROM team_seasons WHERE year = :y"),
             {"y": year}).fetchall()}
+        gdate = datetime.date(int(date_s[:4]), int(date_s[4:6]), int(date_s[6:8]))
+        bat_ids = sorted({r.player_id for r in bat})
+        pit_ids = sorted({r.player_id for r in pit})
+        bat_season = {r.player_id: r for r in db.execute(
+            _sa_text(_BOX_BAT_SEASON_SQL),
+            {"yr": year, "gdate": gdate, "gid": game_id, "pids": bat_ids}).fetchall()} if bat_ids else {}
+        pit_season = {r.player_id: r for r in db.execute(
+            _sa_text(_BOX_PIT_SEASON_SQL),
+            {"yr": year, "gdate": gdate, "gid": game_id, "pids": pit_ids}).fetchall()} if pit_ids else {}
+
+    def bat_season_stats(pid):
+        """Rate stats entering the game. A player in his first game of the year
+        has no prior rows at all, so this is None rather than a fabricated
+        .000 — the columns then read "—", which is true."""
+        r = bat_season.get(pid)
+        if r is None:
+            return None
+        ab, h, bb, hbp, sf = int(r.ab or 0), int(r.h or 0), int(r.bb or 0), int(r.hbp or 0), int(r.sf or 0)
+        d2, d3, hr = int(r.d2 or 0), int(r.d3 or 0), int(r.hr or 0)
+        tb = h + d2 + 2 * d3 + 3 * hr
+        obp_den = ab + bb + hbp + sf
+        if not ab:
+            return None
+        avg = f"{h/ab:.3f}".lstrip("0")
+        ops_v = ((h + bb + hbp) / obp_den if obp_den else 0.0) + tb / ab
+        # `homeRuns` is what the card's HR line reads; `hits` rides along
+        # because it is free and the same shape BDL ships.
+        return {"batting": {"avg": avg, "ops": f"{ops_v:.3f}".lstrip("0"),
+                            "hits": h, "homeRuns": hr},
+                "pitching": None}
+
+    def pit_season_stats(pid):
+        """Season W-L-SV and ERA ENTERING the game — deliberately NOT bumped by
+        this game's own decision.
+
+        `BoxScoreView.pitcherDecisionTag`'s season fallback adds the `+1`
+        itself (`let bump = 1`), because a pre-game season line is exactly what
+        it expects there. Bumping here too would print the winner a game ahead
+        of himself. The pre-game figure is also the honest one for the ERA
+        column, which wants the mark he carried to the mound.
+        """
+        r = pit_season.get(pid)
+        if r is None:
+            return {"batting": None,
+                    "pitching": {"wins": 0, "losses": 0, "saves": 0, "era": None}}
+        outs = int(r.outs or 0)
+        er = int(r.er or 0)
+        return {"batting": None,
+                "pitching": {"wins": int(r.w or 0), "losses": int(r.l or 0),
+                             "saves": int(r.sv or 0),
+                             "era": (f"{er*27/outs:.2f}" if outs else None)}}
 
     def blank_team(code):
         return {"team": {"id": 0, "name": names.get(code) or code, "abbreviation": code},
@@ -1883,7 +1990,7 @@ def historical_boxscore(game_pk: int):
             "person": {"id": r.player_id, "fullName": r.name or str(r.player_id)},
             "position": None,                     # not recorded — view omits it
             "battingOrder": None,                 # not recorded
-            "seasonStats": None,
+            "seasonStats": bat_season_stats(r.player_id),
             "stats": {"batting": {
                 "atBats": r.AB, "runs": r.R, "hits": r.H,
                 "doubles": r.doubles, "triples": r.triples, "homeRuns": r.HR,
@@ -1903,22 +2010,36 @@ def historical_boxscore(game_pk: int):
         ip = r.IP or 0.0
         er = r.ER or 0
         entry = side["players"].get(key)
+        # The GAME-side wins/losses/saves are what the decision line reads —
+        # `FinalGameCard.decisionPitchers` scans `stats.pitching.wins > 0`, and
+        # `BoxScoreView` does the same. So emitting 1 here lights the whole
+        # existing decisions UI with no client change.
+        dec = (r.result or "").strip().upper()
         pitching = {
             "inningsPitched": _decimal_ip_to_baseball(r.IP),
             "hits": r.H, "runs": r.R, "earnedRuns": r.ER,
             "baseOnBalls": r.BB, "strikeOuts": r.SO, "homeRuns": r.HR,
             "era": (f"{er*9/ip:.2f}" if ip else "-.--"),
-            "wins": None, "losses": None, "saves": None,   # decisions not recorded
+            "wins": 1 if dec == "W" else 0,
+            "losses": 1 if dec == "L" else 0,
+            "saves": 1 if dec == "S" else 0,
             "pitchCount": r.pitches,
         }
+        season = pit_season_stats(r.player_id)
         if entry is None:
             side["players"][key] = {
                 "person": {"id": r.player_id, "fullName": r.name or str(r.player_id)},
-                "position": None, "battingOrder": None, "seasonStats": None,
+                "position": None, "battingOrder": None, "seasonStats": season,
                 "stats": {"batting": None, "pitching": pitching},
             }
         else:
             entry["stats"]["pitching"] = pitching
+            # A two-way row already carries the batting season line; merge
+            # rather than overwrite, or the AVG column goes dark for pitchers
+            # who also hit — which in this era is most of them.
+            prior = entry.get("seasonStats") or {}
+            entry["seasonStats"] = {"batting": prior.get("batting"),
+                                    "pitching": season["pitching"]}
         side["pitchers"].append(r.player_id)
 
     return {"gameId": game_id,

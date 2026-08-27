@@ -134,9 +134,13 @@ final class BoxScoreViewModel: ObservableObject {
         guard game.phase != .live else { return }
 
         // HISTORICAL: one fetch, and none of the rest applies. Plays come from
-        // BDL, which floors at season 2000; decision records and point-in-time
-        // season stats resolve through BDL player ids these players never had.
-        // Asking for them would be several guaranteed misses per open.
+        // BDL, which floors at season 2000, and both point-in-time helpers
+        // resolve through BDL player ids these players never had — asking would
+        // be several guaranteed misses per open. Nothing is lost by skipping
+        // them: the historical response already carries the decision flags and
+        // the pre-game season line, so `pitcherDecisionTag` falls through to
+        // its `seasonStats` branch and reads exactly what those calls would
+        // have fetched.
         if game.isHistorical {
             await loadHistoricalBoxScore()
             isLoading = false
@@ -391,7 +395,9 @@ final class BoxScoreViewModel: ObservableObject {
 
     /// The historical path: our own game logs, shaped server-side into exactly
     /// what `BoxScoreView` already renders. No lineup, no positions, no
-    /// decisions, no linescore — the tables and nothing else.
+    /// linescore. Decisions and season-to-date lines DO come through, on the
+    /// same `stats.pitching.wins` / `seasonStats` slots the modern path uses,
+    /// so the W-L-SV tags and the AVG / OPS / ERA columns need no branch here.
     private func loadHistoricalBoxScore() async {
         do {
             guard let hist = try await api.getHistoricalBoxScore(gamePk: game.gamePk) else {
