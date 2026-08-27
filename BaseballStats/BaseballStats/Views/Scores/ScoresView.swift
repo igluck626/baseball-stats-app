@@ -709,45 +709,46 @@ struct ScoresView: View {
 
         return ScrollView {
             LazyVStack(spacing: 12) {
+                // EVERY section builds the SAME view type. That is the fix for
+                // a finished game drawing its last inning under the Completed
+                // header: a row keeps one identity across a section move (so
+                // the move can animate), and a stable identity whose type
+                // changed leaves SwiftUI holding the old rendering. The
+                // branching — including whether a NavigationLink wraps the card
+                // at all — lives inside `GameRowCard`.
                 if !live.isEmpty {
                     sectionHeader("Live")
                     ForEach(live) { game in
-                        NavigationLink(value: game) {
-                            GameRowCard(
-                                game:      game,
-                                records:   vm.teamRecords,
-                                standings: vm.teamStandings,
-                                isOver:    vm.isOver(game),
-                            )
-                        }
-                        .buttonStyle(.plain)
+                        GameRowCard(
+                            game:      game,
+                            records:   vm.teamRecords,
+                            standings: vm.teamStandings,
+                            isOver:    vm.isOver(game),
+                            path:      $navigationPath,
+                        )
                     }
                 }
                 if !upcoming.isEmpty {
                     sectionHeader("Upcoming")
                     ForEach(upcoming) { game in
-                        NavigationLink(value: game) {
-                            GameRowCard(
-                                game:      game,
-                                records:   vm.teamRecords,
-                                standings: vm.teamStandings,
-                                isOver:    vm.isOver(game),
-                            )
-                        }
-                        .buttonStyle(.plain)
+                        GameRowCard(
+                            game:      game,
+                            records:   vm.teamRecords,
+                            standings: vm.teamStandings,
+                            isOver:    vm.isOver(game),
+                            path:      $navigationPath,
+                        )
                     }
                 }
                 if !completed.isEmpty {
                     sectionHeader("Completed")
                     ForEach(completed) { game in
-                        // Final games are expand-on-tap; box-score
-                        // nav happens via the embedded "Box Score →"
-                        // button inside the expanded view, so the
-                        // outer cell doesn't wrap a NavigationLink.
-                        FinalGameCard(
-                            game:    game,
-                            records: vm.teamRecords,
-                            path:    $navigationPath,
+                        GameRowCard(
+                            game:      game,
+                            records:   vm.teamRecords,
+                            standings: vm.teamStandings,
+                            isOver:    vm.isOver(game),
+                            path:      $navigationPath,
                         )
                     }
                 }
@@ -1583,6 +1584,12 @@ private struct GameRowCard: View {
     /// re-derived here. Two independent copies of "is it over" is precisely how
     /// the stale card happened.
     let isOver: Bool
+    /// Needed because a FINISHED game renders `FinalGameCard`, which owns its
+    /// own tap-to-expand and pushes the box score from a button inside the
+    /// expanded body — so it must NOT sit inside a NavigationLink. Threaded
+    /// here rather than left at the call site, because unifying the row type
+    /// is the entire point (see `body`).
+    @Binding var path: NavigationPath
     @EnvironmentObject private var navigation: AppNavigation
     @EnvironmentObject private var liveStore: LiveGameStore
     /// Stable per-row token for the store's refcounted detail loop (moved here
@@ -1609,15 +1616,46 @@ private struct GameRowCard: View {
             if isLive {
                 // Live block renders ONLY while in `liveList`, so a stale
                 // `detail` snapshot can't show live content after a game ends.
-                LiveGameCard(game: game, records: records, standings: standings)
+                // Checked FIRST: membership in the live list outranks anything
+                // else, so a game the store still calls live can never draw as
+                // finished.
+                NavigationLink(value: game) {
+                    LiveGameCard(game: game, records: records, standings: standings)
+                }
+                .buttonStyle(.plain)
+            } else if isOver {
+                // NO NavigationLink, deliberately. `FinalGameCard` is
+                // expand-on-tap and pushes the box score from a button inside
+                // its expanded body; wrapping it in a link would make the whole
+                // card a push target and swallow the expand gesture.
+                FinalGameCard(game: game, records: records, path: $path)
             } else {
-                GameCard(game: game, records: records, isOver: isOver)
+                NavigationLink(value: game) {
+                    GameCard(game: game, records: records, isOver: isOver)
+                }
+                .buttonStyle(.plain)
             }
         }
         // Reactive subscribe: fires on the Upcoming→Live transition because this
         // outer card persists across the section move (stable identity, one type),
         // unlike the old GameCard→LiveGameCard type swap. Composes shouldPoll:
         // subscribe iff live AND tab-visible/active.
+        //
+        // THE SINGLE TYPE IS LOAD-BEARING, and not only for the subscription.
+        // Every section builds THIS view, and the branching happens inside it.
+        // A game keeps one identity (`Game.id` == gamePk) as it moves between
+        // sections — deliberately, so the move animates — and SwiftUI resolves
+        // a stable identity whose VIEW TYPE changed by keeping the old
+        // rendering: a finished game went on drawing "BOT 9th · 3 outs" under
+        // the Completed header while the data underneath was correct and the
+        // new card was being constructed. Reproduced in a simulator harness and
+        // fixed by exactly this unification. Do NOT hoist a branch back out to
+        // the call site.
+        //
+        // The subscription gate needs no extra guard for the finished case:
+        // `isLive` is `LiveStatus.isLive`, which returns false for a game
+        // absent from a loaded list, so `shouldSubscribeLive` is already false
+        // for anything rendering `FinalGameCard`.
         .task {
             if shouldSubscribeLive { liveStore.subscribeDetail(game.gamePk, owner: subscriberID) }
         }

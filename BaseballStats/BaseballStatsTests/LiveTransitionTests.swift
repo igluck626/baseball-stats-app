@@ -611,6 +611,32 @@ struct PeriodicRefreshTests {
     }
 }
 
+// MARK: - 5b. The finished row must not subscribe to live detail
+
+@MainActor
+struct FinishedRowSubscriptionTests {
+
+    /// `GameRowCard` now renders every section, so a FINISHED game runs through
+    /// the same view that owns the live-detail subscription. Asserted rather
+    /// than assumed: the gate is `shouldSubscribeLive = isLive && shouldPoll`,
+    /// and `isLive` must be false for anything that draws `FinalGameCard`.
+    @Test func aFinishedGameIsNeverLiveSoNeverSubscribes() {
+        // Absent from a LOADED list — the ordinary finished case.
+        #expect(!LiveStatus.isLive(inLiveList: false, listLoaded: true, phaseIsLive: false))
+        // Absent, list NOT yet loaded, slate says final — still not live.
+        #expect(!LiveStatus.isLive(inLiveList: false, listLoaded: false, phaseIsLive: false))
+        // The one case that IS live: still in the list. It must outrank
+        // everything, which is why `body` checks `isLive` before `isOver`.
+        #expect(LiveStatus.isLive(inLiveList: true, listLoaded: true, phaseIsLive: false))
+    }
+
+    /// A game absent from a loaded list with a STALE `.live` phase — the case
+    /// a7471bd was about — must also not subscribe.
+    @Test func aStalePhaseDoesNotResurrectTheSubscription() {
+        #expect(!LiveStatus.isLive(inLiveList: false, listLoaded: true, phaseIsLive: true))
+    }
+}
+
 // MARK: - 6. Historical slate routing
 
 @MainActor
