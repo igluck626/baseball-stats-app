@@ -2580,20 +2580,55 @@ def admin_repair_attributed(
     plan["date_count"] = len(plan["dates"])
     plan["declined_count"] = len(plan["declined"])
     if not confirm:
+        buckets = sorted({b for d in plan["dates"]
+                          for b in (d, (datetime.date.fromisoformat(d)
+                                        + datetime.timedelta(days=1)).isoformat())})
+        plan["utc_buckets_to_fetch"] = buckets
+        plan["utc_bucket_count"] = len(buckets)
         plan["status"] = "dry_run"
         plan["note"] = ("Nothing fetched or written. Re-send with confirm=true to act. "
-                        f"Would re-pull {plan['date_count']} date(s).")
+                        f"Would re-pull {plan['date_count']} ET date(s) via "
+                        f"{len(buckets)} UTC bucket(s) — see `utc_buckets_to_fetch`.")
         return plan
+
+    # ET DATE vs UTC BUCKET — the trap that has now caught two implementations.
+    #
+    # `game_date` on the gamelog tables is the ET CALENDAR day. BDL buckets a
+    # game by its UTC START TIME. ET is UTC-4/-5, so an evening game crosses
+    # midnight UTC and lands in the NEXT bucket: Troy Melton's 2026-08-21 start
+    # against KC begins 00:10Z on 08-22, and asking BDL for 08-21 does not
+    # return it. The first version of this endpoint fetched one date and
+    # silently missed him — the very row it had been asked to repair.
+    #
+    # `_update_gamelogs` in nightly_update.py has always queried BOTH dates for
+    # exactly this reason; its comment is the precedent. Measured across 2026:
+    # 477 of 2,004 games (24%) sit in the d+1 bucket, and ZERO in d-1 — ET to
+    # UTC only ever moves forward, so d and d+1 is complete and d-1 is not
+    # needed.
+    #
+    # NOT FILTERED back to the requested ET date, deliberately. Fetching a
+    # bucket refreshes the adjacent day's games too, which is extra work but
+    # never wrong — it rewrites them with the provider's current values, the
+    # same thing a repair does. Filtering would mean reimplementing the save
+    # path to drop rows, which is more risk than the writes it would avoid. The
+    # response lists the buckets actually fetched so the wider reach is stated
+    # rather than hidden. Overlap between adjacent requests is deduplicated,
+    # and any true duplicate is a no-op upsert on the (player_id, game_id) PK.
+    buckets = sorted({b for d in plan["dates"]
+                      for b in (d, (datetime.date.fromisoformat(d)
+                                    + datetime.timedelta(days=1)).isoformat())})
+    plan["utc_buckets_fetched"] = buckets
+    plan["utc_bucket_count"] = len(buckets)
 
     per_date = []
     total_bat = total_pit = total_games = 0
-    for d in plan["dates"]:
+    for d in buckets:
         try:
             r = data_service.save_bdl_gamelogs_for_date(d)
         except Exception as exc:                       # one bad date must not stop the rest
-            per_date.append({"date": d, "status": "error", "error": str(exc)})
+            per_date.append({"utc_bucket": d, "status": "error", "error": str(exc)})
             continue
-        per_date.append({"date": d, "status": r.get("status"),
+        per_date.append({"utc_bucket": d, "status": r.get("status"),
                          "games": r.get("games"),
                          "bat_rows": r.get("bat_rows"),
                          "pit_rows": r.get("pit_rows")})
