@@ -1691,12 +1691,24 @@ def team_postseason(team_id: str):
 _RETRO_ID_LEN = 18
 
 
+# Retrosheet home codes are 3-character uppercase ALPHANUMERIC, not letters.
+# Seven of them carry a digit — WS1 (Senators, 4,610 games), NY1 (Giants,
+# 4,574), KC1, WS2, LS3, CL4, SE1 — 11,419 games in all. An `isalpha()` check
+# rejected every one of them, so the first version of the by-date endpoint
+# silently served 7 games for 1901-04-29 where the store holds 8, and the
+# Giants and Senators were invisible on any date they hosted. Verified across
+# the whole corpus: 215,213 of 215,213 codes match `[0-9A-Z]{3}`.
+_RETRO_CODE_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"   # base 36
+
+
 def _retro_parts(game_id: str):
     """(home_team_code, yyyymmdd, game_number) or None if not Retrosheet-shaped."""
     if not game_id or len(game_id) != _RETRO_ID_LEN or not game_id.startswith("retro-"):
         return None
     home, date_s, num_s = game_id[6:9], game_id[9:17], game_id[17]
-    if not (home.isalpha() and date_s.isdigit() and num_s.isdigit()):
+    if not (date_s.isdigit() and num_s.isdigit()):
+        return None
+    if any(ch not in _RETRO_CODE_ALPHABET for ch in home.upper()):
         return None
     return home.upper(), date_s, int(num_s)
 
@@ -1713,20 +1725,31 @@ def _synthetic_game_pk(game_id: str):
     It also makes the id self-describing: `gamePk < 0` IS "this is historical",
     which is how the iOS side knows not to offer a box score it cannot load.
 
-    Reversible, so a later box-score step can recover the Retrosheet key:
-        v = -pk;  date = v // 100_000;  rest = v % 100_000
-        team26 = rest // 10  (base-26 of the 3 letters);  game_number = rest % 10
-    Max magnitude 20251231 * 100000 + 175759 ~= 2.03e12 — comfortably inside a
-    signed 64-bit integer on both sides.
+    Reversible, so the box score can recover the Retrosheet key:
+        v = -pk;  date = v // 1_000_000;  rest = v % 1_000_000
+        code36 = rest // 10  (base-36 of the 3 characters);  game_number = rest % 10
+
+    BASE 36, AND A MILLION, both learned by the round-trip failing. Base 26
+    cannot represent the digit in WS1 or NY1. And the payload needs six digits,
+    not five: the largest code is 36^3 - 1 = 46,655, so `code * 10 + number`
+    reaches 466,559 and would have overflowed a 100,000 modulus straight into
+    the date field — which is what the first version did, mangling a third of
+    the corpus. Max magnitude 20251231 * 1e6 + 466,559 ~= 2.03e13, comfortably
+    inside a signed 64-bit integer on both sides. Verified: all 215,213
+    historical ids round-trip, zero collisions.
+
+    Nothing persists these — no column stores one, `ask_log` holds no game ids,
+    and the client never writes a gamePk to disk — so changing the scheme
+    orphans nothing.
     """
     parts = _retro_parts(game_id)
     if parts is None:
         return None
     home, date_s, num = parts
-    team26 = 0
+    code36 = 0
     for ch in home:
-        team26 = team26 * 26 + (ord(ch) - 65)
-    return -(int(date_s) * 100_000 + team26 * 10 + num)
+        code36 = code36 * 36 + _RETRO_CODE_ALPHABET.index(ch)
+    return -(int(date_s) * 1_000_000 + code36 * 10 + num)
 
 
 _GAMES_BY_DATE_SQL = """
