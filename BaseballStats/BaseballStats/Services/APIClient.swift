@@ -216,6 +216,19 @@ final class APIClient {
         return envelope?.games ?? []
     }
 
+    /// `GET /games/{pk}/historical-boxscore` — batting and pitching lines for a
+    /// game older than BDL's coverage, assembled from our own game logs.
+    ///
+    /// Returns `BoxScoreResponse`'s exact shape plus two fields the live path
+    /// has no need of: the Retrosheet key it decoded, and `batterOrdering`.
+    /// That last one exists so the CLIENT can say how the batters are sorted
+    /// rather than let a reader assume a lineup — the game logs record no
+    /// batting order at all, so they come back alphabetically.
+    func getHistoricalBoxScore(gamePk: Int) async throws -> HistoricalBoxScore? {
+        let url = try buildURL(path: "/games/\(gamePk)/historical-boxscore")
+        return try await getOptional(url)
+    }
+
     /// `yyyy-MM-dd` in the LOCAL timezone, matching
     /// `ScoresViewModel.scheduleDateFormatter` — because `selectedDate` is a
     /// LOCAL midnight and the whole date strip keys on local days.

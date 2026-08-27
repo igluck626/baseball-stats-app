@@ -59,6 +59,9 @@ final class BoxScoreViewModel: ObservableObject {
     /// "All" modes. For LIVE games `applyLiveDetail` writes it from the store's
     /// snapshot; for final games `loadPlays` does a one-shot fetch.
     @Published var plays: [BDLPlay] = []
+    /// Set only for a historical game — how its batters are sorted. The view
+    /// shows it rather than letting a reader read a lineup into the order.
+    @Published var batterOrdering: String?
     @Published var isLoading = false
     @Published var error: String?
 
@@ -129,6 +132,16 @@ final class BoxScoreViewModel: ObservableObject {
         // and clears `isLoading`. So there's nothing to fetch here for a live
         // game — leaving `isLoading` true until the first snapshot lands.
         guard game.phase != .live else { return }
+
+        // HISTORICAL: one fetch, and none of the rest applies. Plays come from
+        // BDL, which floors at season 2000; decision records and point-in-time
+        // season stats resolve through BDL player ids these players never had.
+        // Asking for them would be several guaranteed misses per open.
+        if game.isHistorical {
+            await loadHistoricalBoxScore()
+            isLoading = false
+            return
+        }
 
         // Final / preview: stats + plays are independent fetches — run them in
         // parallel so the box score + plays section land together.
@@ -373,6 +386,25 @@ final class BoxScoreViewModel: ObservableObject {
     private func loadPlays() async {
         if let p = try? await bdl.getPlays(gameId: game.gamePk) {
             self.plays = p
+        }
+    }
+
+    /// The historical path: our own game logs, shaped server-side into exactly
+    /// what `BoxScoreView` already renders. No lineup, no positions, no
+    /// decisions, no linescore — the tables and nothing else.
+    private func loadHistoricalBoxScore() async {
+        do {
+            guard let hist = try await api.getHistoricalBoxScore(gamePk: game.gamePk) else {
+                error = "No game logs for this game."
+                boxScore = nil
+                return
+            }
+            boxScore = hist.asBoxScore
+            batterOrdering = hist.batterOrdering
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
+            boxScore = nil
         }
     }
 
@@ -670,7 +702,18 @@ struct BoxScoreView: View {
                     if vm.game.phase == .postponed {
                         postponedNotice
                     } else if let bs = vm.boxScore {
-                        linescoreCard
+                        // ABSENT, not blank, for a historical game: neither
+                        // game-log table carries per-inning runs, so the grid
+                        // would render as empty columns under real headers —
+                        // which reads as data missing rather than data that was
+                        // never recorded. Same principle as the card that
+                        // declines to open when there is nothing behind it.
+                        if !vm.game.isHistorical {
+                            linescoreCard
+                        }
+                        if let ordering = vm.batterOrdering {
+                            historicalOrderingNote(ordering)
+                        }
                         teamPicker(bs: bs)
                         teamSection(side: currentSide, bs: bs)
                     } else if vm.isLoading {
@@ -982,6 +1025,24 @@ struct BoxScoreView: View {
 
     // MARK: - Linescore
 
+    /// Says how the batters are sorted, because for a historical game it is NOT
+    /// the batting order and a reader would otherwise assume it was. The game
+    /// logs record no lineup slot; sorting by plate appearances would look like
+    /// one and be wrong through the middle of the order, which is the kind of
+    /// small lie a reader checking against Baseball-Reference catches at once.
+    private func historicalOrderingNote(_ ordering: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "info.circle")
+            Text(ordering == "alphabetical"
+                 ? "Batters listed alphabetically — batting order and fielding positions weren't recorded for this era."
+                 : "Batters listed by \(ordering).")
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 14)
+    }
+
     private var linescoreCard: some View {
         let innings = vm.displayLinescore?.innings ?? []
         let totals = vm.displayLinescore?.teams
@@ -1024,7 +1085,10 @@ struct BoxScoreView: View {
             // above this one; final / preview games get it here so it's always
             // reachable. Keyed off `isLiveNow` (an applied snapshot), so a game
             // that transitioned to live doesn't render the plays list twice.
-            if !isLiveNow {
+            // Play-by-play is a BDL feed that floors at season 2000, so for a
+            // historical game there is nothing behind this — absent rather than
+            // an empty list under a divider.
+            if !isLiveNow && !vm.game.isHistorical {
                 Divider().opacity(0.4)
                 PlaysView(
                     plays:               vm.plays,

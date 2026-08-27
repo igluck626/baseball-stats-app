@@ -1112,15 +1112,16 @@ private struct FinalGameCard: View {
     var body: some View {
         VStack(spacing: 10) {
             collapsedBody
-                // A historical game has nothing to expand INTO: the game-log
-                // tables carry no per-inning linescore and no decisions, and
-                // its negative gamePk would send the box score to BDL with an
-                // id BDL has never issued. So it does not offer the tap at all
-                // — a card that opens nothing is worse than one that never
-                // invited the gesture. Deliberate, not an oversight.
+                // The historical guard that used to sit here is GONE, and
+                // deliberately. It existed because there was no box score
+                // behind a pre-2000 card — the negative gamePk would have been
+                // sent to BDL, which never issued it. There is one now, served
+                // from our own game logs, so the card opens like any other and
+                // refusing the tap would be the contradiction. What it opens to
+                // is narrower (no linescore, no decisions) and the box score
+                // omits those rather than drawing them empty.
                 .contentShape(Rectangle())
                 .onTapGesture {
-                    guard !game.isHistorical else { return }
                     // Fire the fetch BEFORE the expand animation so
                     // the network round-trip starts while the 0.22s
                     // animation is still running. Without this, the
@@ -1137,13 +1138,22 @@ private struct FinalGameCard: View {
                     }
                 }
             if isExpanded {
-                Divider()
-                linescore
-                if hasAnyDecision {
+                // A historical game expands STRAIGHT to the box score. The
+                // linescore grid and the decision line are omitted rather than
+                // rendered empty: the game-log tables carry no per-inning runs,
+                // and no pitcher decision either — `result` is the TEAM's W/L.
+                // Deriving a winning pitcher needs play-by-play AND a scorer's
+                // judgement the data cannot supply, and a wrong one is worse
+                // than none.
+                if !game.isHistorical {
                     Divider()
-                    decisions
+                    linescore
+                    if hasAnyDecision {
+                        Divider()
+                        decisions
+                    }
+                    hrSummary
                 }
-                hrSummary
                 boxScoreButton
             }
         }

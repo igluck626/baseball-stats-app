@@ -706,6 +706,20 @@ struct BoxPitching: Codable, Hashable {
     let pitchCount: Int?
 }
 
+/// A box score assembled from our own game logs, for a game older than the
+/// provider's coverage. `BoxScoreResponse` plus what only this path knows.
+struct HistoricalBoxScore: Codable {
+    let gameId: String
+    /// How `BoxScoreTeam.batters` is sorted — "alphabetical" today. NOT a
+    /// lineup: the game logs carry no batting order and no fielding position,
+    /// so any order that LOOKED like a lineup would be wrong through the
+    /// middle of it. Surfaced so the view can say so.
+    let batterOrdering: String?
+    let teams: BoxScoreTeams
+
+    var asBoxScore: BoxScoreResponse { BoxScoreResponse(teams: teams) }
+}
+
 // MARK: - Live feed (/api/v1.1/game/{pk}/feed/live)
 
 /// Full-game live snapshot — `LiveGameCard` polls this every 30s to

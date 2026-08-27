@@ -1765,6 +1765,167 @@ ORDER BY game_id
 """
 
 
+def _decimal_ip_to_baseball(ip) -> str:
+    """0.333 -> "0.1", 5.667 -> "5.2" — MLB's thirds-of-an-inning notation, which
+    is what `BoxPitching.inningsPitched` is typed as (a String) because that is
+    how every box score in the app already renders it."""
+    if ip is None:
+        return "0.0"
+    whole = int(ip)
+    outs = int(round((float(ip) - whole) * 3))
+    if outs >= 3:                       # 5.999 style float noise
+        whole += 1
+        outs = 0
+    return f"{whole}.{outs}"
+
+
+_BOX_BAT_SQL = """
+SELECT b.player_id, b.home_away, p.name,
+       b."AB", b."R", b."H", b.doubles, b.triples, b."HR", b."RBI",
+       b."BB", b."SO", b."SB", b."CS", b."HBP", b."SF", b."SH", b."GIDP"
+FROM batting_gamelogs b
+LEFT JOIN players p ON p.player_id = b.player_id
+WHERE b.game_id = :gid
+ORDER BY p.name
+"""
+
+_BOX_PIT_SQL = """
+SELECT g.player_id, g.home_away, COALESCE(p.name, pl.name) AS name,
+       g."IP", g."H", g."R", g."ER", g."BB", g."SO", g."HR", g.pitches
+FROM pitching_gamelogs g
+LEFT JOIN pitchers p ON p.player_id = g.player_id
+LEFT JOIN players  pl ON pl.player_id = g.player_id
+WHERE g.game_id = :gid
+ORDER BY g."IP" DESC NULLS LAST, name
+"""
+
+
+@app.get("/games/{game_pk}/historical-boxscore")
+def historical_boxscore(game_pk: int):
+    """A box score for a game older than BDL's coverage, assembled from our own
+    per-game logs — batting and pitching lines only.
+
+    Emitted in the EXACT shape `BoxScoreResponse` decodes (plain `JSONDecoder`,
+    no key strategy), so the shipped `BoxScoreView` renders it unchanged. The
+    view was always reusable; only its view model was BDL-bound.
+
+    WHAT IS ABSENT, AND WHY IT IS ABSENT RATHER THAN EMPTY:
+      • DECISIONS (W/L/SV). `pitching_gamelogs` has no decision column —
+        `result` is the TEAM's W/L, not the pitcher's. Deriving them needs
+        play-by-play AND a scorer's judgement the data cannot supply (when a
+        starter goes under five innings the win is awarded to whichever
+        reliever the official scorer judges most effective). A wrong winning
+        pitcher is worse than none.
+      • THE LINESCORE GRID. Neither game-log table carries per-inning runs.
+        Derivable from plays.duckdb, but that floors at 1910 and this floors
+        at 1898.
+      • BATTING ORDER and FIELDING POSITION. Not recorded here at all. The
+        batters are therefore returned ALPHABETICALLY and the iOS side says so.
+        Sorting by plate appearances would approximate a lineup and be wrong in
+        the middle of it — a fake order is a lie a reader checking against
+        Baseball-Reference catches at once, and this app's readers do exactly
+        that. Pitchers ARE ordered, by innings descending, which reliably puts
+        the starter first.
+
+    A caveat worth knowing when reading old games: a zero here can mean "the
+    statistic did not exist yet" rather than "it did not happen" — GIDP was not
+    official until the 1930s, sacrifice flies came and went. Those render as 0,
+    indistinguishable from a real zero. Marking them needs a per-stat, per-
+    league era table; not built.
+    """
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    if game_pk >= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Not a historical game id — those are negative by construction "
+                   "(see `_synthetic_game_pk`). Use the live box score for this one.")
+
+    v = -game_pk
+    date_i, rest = divmod(v, 1_000_000)
+    code36, num = divmod(rest, 10)
+    chars = ""
+    for _ in range(3):
+        code36, r = divmod(code36, 36)
+        chars = _RETRO_CODE_ALPHABET[r] + chars
+    home_code = chars
+    date_s = str(date_i)
+    game_id = f"retro-{home_code}{date_s}{num}"
+
+    with connection.get_session() as db:
+        bat = db.execute(_sa_text(_BOX_BAT_SQL), {"gid": game_id}).fetchall()
+        pit = db.execute(_sa_text(_BOX_PIT_SQL), {"gid": game_id}).fetchall()
+        if not bat and not pit:
+            raise HTTPException(status_code=404, detail=f"No game logs for {game_id}")
+        year = int(date_s[:4])
+        away_code = next((r.opponent for r in db.execute(
+            _sa_text("SELECT DISTINCT opponent FROM batting_gamelogs "
+                     "WHERE game_id = :gid AND home_away = 'H'"),
+            {"gid": game_id}).fetchall()), "")
+        names = {r[0]: r[1] for r in db.execute(
+            _sa_text("SELECT team_id, team_name FROM team_seasons WHERE year = :y"),
+            {"y": year}).fetchall()}
+
+    def blank_team(code):
+        return {"team": {"id": 0, "name": names.get(code) or code, "abbreviation": code},
+                "players": {}, "batters": [], "pitchers": []}
+    teams = {"home": blank_team(home_code), "away": blank_team(away_code)}
+
+    def side_of(home_away):     # the row's own club
+        return "home" if home_away == "H" else "away"
+
+    for r in bat:
+        side = teams[side_of(r.home_away)]
+        key = f"ID{r.player_id}"
+        ab = r.AB or 0
+        h = r.H or 0
+        side["players"][key] = {
+            "person": {"id": r.player_id, "fullName": r.name or str(r.player_id)},
+            "position": None,                     # not recorded — view omits it
+            "battingOrder": None,                 # not recorded
+            "seasonStats": None,
+            "stats": {"batting": {
+                "atBats": r.AB, "runs": r.R, "hits": r.H,
+                "doubles": r.doubles, "triples": r.triples, "homeRuns": r.HR,
+                "rbi": r.RBI, "baseOnBalls": r.BB, "strikeOuts": r.SO,
+                "stolenBases": r.SB, "caughtStealing": r.CS,
+                "hitByPitch": r.HBP, "sacFlies": r.SF, "sacBunts": r.SH,
+                "groundIntoDoublePlay": r.GIDP,
+                "avg": (f"{h/ab:.3f}".lstrip("0") if ab else "---"),
+                "ops": None,
+            }, "pitching": None},
+        }
+        side["batters"].append(r.player_id)
+
+    for r in pit:
+        side = teams[side_of(r.home_away)]
+        key = f"ID{r.player_id}"
+        ip = r.IP or 0.0
+        er = r.ER or 0
+        entry = side["players"].get(key)
+        pitching = {
+            "inningsPitched": _decimal_ip_to_baseball(r.IP),
+            "hits": r.H, "runs": r.R, "earnedRuns": r.ER,
+            "baseOnBalls": r.BB, "strikeOuts": r.SO, "homeRuns": r.HR,
+            "era": (f"{er*9/ip:.2f}" if ip else "-.--"),
+            "wins": None, "losses": None, "saves": None,   # decisions not recorded
+            "pitchCount": r.pitches,
+        }
+        if entry is None:
+            side["players"][key] = {
+                "person": {"id": r.player_id, "fullName": r.name or str(r.player_id)},
+                "position": None, "battingOrder": None, "seasonStats": None,
+                "stats": {"batting": None, "pitching": pitching},
+            }
+        else:
+            entry["stats"]["pitching"] = pitching
+        side["pitchers"].append(r.player_id)
+
+    return {"gameId": game_id,
+            "batterOrdering": "alphabetical",   # NOT a lineup; see the docstring
+            "teams": {"away": teams["away"], "home": teams["home"]}}
+
+
 @app.get("/games/by-date")
 def games_by_date(
     date: datetime.date = Query(..., description="yyyy-mm-dd"),
