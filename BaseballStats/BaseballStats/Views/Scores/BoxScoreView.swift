@@ -1173,6 +1173,7 @@ struct BoxScoreView: View {
         .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 3)
     }
 
+    @ViewBuilder
     private func battingTable(team: BoxScoreTeam) -> some View {
         let rows = team.batters.compactMap { id -> BoxPlayer? in
             team.players["ID\(id)"]
@@ -1186,7 +1187,32 @@ struct BoxScoreView: View {
         // (non-highlighted) branch.
         let currentBatterId = vm.live?.liveData.linescore?.offense?.batter?.id
 
-        return VStack(alignment: .leading, spacing: 4) {
+        // ASK AT THE TOP WHETHER TO DRAW THIS AT ALL.
+        //
+        // THE PATTERN, three times this week: a container is committed on the
+        // assumption that its collection is non-empty, and the emptiness is
+        // then handled one level too deep. A heading and a row of column names
+        // over nothing does not read as "never recorded" — it reads as a screen
+        // that failed to load. The same fault produced a silently empty rate, a
+        // clipped awards chip, and the pitching table's bare header on a
+        // pre-1910 game.
+        //
+        // The tell is visible in what this code used to be: the guard sat on
+        // the TOTALS row at the foot. The author already knew `rows` could be
+        // empty and asked the question a level below where the answer mattered.
+        //
+        // THE RIGHT SHAPE IS `notableBlock`, a few screens down: it guards the
+        // whole block AND each line inside it, so a side with a double and no
+        // triple prints one line and not an empty second. Read it beside this.
+        if rows.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("BATTING").font(.caption.weight(.bold)).foregroundStyle(.secondary)
+                Text("Not recorded for this game.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } else {
+        VStack(alignment: .leading, spacing: 4) {
             Text("BATTING").font(.caption.weight(.bold)).foregroundStyle(.secondary)
             ScrollView(.horizontal, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 2) {
@@ -1197,13 +1223,12 @@ struct BoxScoreView: View {
                             player, tint: tint, currentBatterId: currentBatterId,
                         )
                     }
-                    if !rows.isEmpty {
-                        Divider().opacity(0.6)
-                        battingTotalsRow(rows: rows)
-                    }
+                    Divider().opacity(0.6)
+                    battingTotalsRow(rows: rows)
                 }
             }
             notableBlock(rows: rows)
+        }
         }
     }
 
