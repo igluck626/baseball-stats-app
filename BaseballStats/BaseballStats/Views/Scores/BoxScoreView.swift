@@ -708,13 +708,20 @@ struct BoxScoreView: View {
                     if vm.game.phase == .postponed {
                         postponedNotice
                     } else if let bs = vm.boxScore {
-                        // ABSENT, not blank, for a historical game: neither
-                        // game-log table carries per-inning runs, so the grid
-                        // would render as empty columns under real headers —
-                        // which reads as data missing rather than data that was
-                        // never recorded. Same principle as the card that
-                        // declines to open when there is nothing behind it.
-                        if !vm.game.isHistorical {
+                        // The historical suppression is GONE, deliberately.
+                        // It existed because neither game-log table carries
+                        // per-inning runs, so the grid would have drawn empty
+                        // columns under real headers. That was true of the
+                        // daybyday files and never true of Retrosheet's GAME
+                        // LOGS, which publish the linescore back to 1871 and
+                        // now fill `game.linescore` for these games.
+                        //
+                        // No era check replaces it: the guard that matters is
+                        // the data's own presence, and `linescoreCard` is only
+                        // reached when `vm.boxScore` exists while the card
+                        // itself reads a linescore that is null for any game
+                        // the ingest has not covered.
+                        if vm.displayLinescore != nil {
                             linescoreCard
                         }
                         // Only when the order is NOT the real one. "lineup"

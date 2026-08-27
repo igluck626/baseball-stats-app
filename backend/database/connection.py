@@ -146,6 +146,14 @@ _BATTING_GAMELOGS_NEW_COLUMNS: list[tuple[str, str]] = [
     ("pos",  "VARCHAR"),
 ]
 
+# Columns added to retro_game_info AFTER its first deploy. Empty today because
+# the table is new — `create_all` builds it complete, attendance and umpires
+# included. The list exists so the next column added has an obvious home:
+# `create_all` never alters a table that already exists, so a column added to
+# the model alone reaches dev and not prod.
+_RETRO_GAME_INFO_NEW_COLUMNS: list[tuple[str, str]] = [
+]
+
 # prompt_version added to ask_log so the translation cache can be keyed by the
 # prompt that produced each row (a prompt change invalidates older translations).
 _ASK_LOG_NEW_COLUMNS: list[tuple[str, str]] = [
@@ -382,6 +390,7 @@ def init_db() -> dict:
         # prod, `create_all` skips it and the retro ingest pointed at staging
         # would insert columns that aren't there.
         ("staging_batting_gamelogs", _BATTING_GAMELOGS_NEW_COLUMNS),
+        ("retro_game_info",   _RETRO_GAME_INFO_NEW_COLUMNS),
         ("ask_log",           _ASK_LOG_NEW_COLUMNS),
         # game_unit_leaderboard.role tags bat vs pit rows; ADD COLUMN … DEFAULT
         # 'bat' backfills existing (batting-only) rows to 'bat'.

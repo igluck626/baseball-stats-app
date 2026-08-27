@@ -1138,9 +1138,12 @@ private struct FinalGameCard: View {
                     }
                 }
             if isExpanded {
-                // Only the LINESCORE is absent for a historical game: neither
-                // game-log table carries per-inning runs, so the grid would be
-                // empty columns under real headers.
+                // The linescore is no longer suppressed by era. It was, on the
+                // grounds that no game-log table carries per-inning runs —
+                // true of the daybyday files, never true of Retrosheet's GAME
+                // LOGS, which publish it back to 1871. The test is now whether
+                // THIS game has one, which is the guard that stays correct
+                // while the ingest is still working through the years.
                 //
                 // Decisions and the HR line ARE rendered. They used to sit
                 // inside this same suppression on the claim that a pitcher's
@@ -1149,7 +1152,7 @@ private struct FinalGameCard: View {
                 // and 505,690 rows carry it with no misassignment anywhere in
                 // the corpus. The scorer's judgement had already been made and
                 // written down; the claim was about our query, not the record.
-                if !game.isHistorical {
+                if game.linescore != nil {
                     Divider()
                     linescore
                 }

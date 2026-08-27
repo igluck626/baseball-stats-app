@@ -57,6 +57,7 @@ import nightly_update                                       # noqa: E402
 import reset_db                                             # noqa: E402
 import retrosheet_ingest                                    # noqa: E402
 import retrosheet_gamelogs                                  # noqa: E402
+import retrosheet_gameinfo                                  # noqa: E402
 import gamelog_recon                                        # noqa: E402
 
 HOST = os.getenv("HOST", "0.0.0.0")
@@ -1760,17 +1761,91 @@ def _synthetic_game_pk(game_id: str):
     return -(int(date_s) * 1_000_000 + code36 * 10 + num)
 
 
+# LEFT JOIN, never INNER: the slate must still list a game whose game-log row
+# is missing or whose year the ingest has not reached. Those come back with a
+# null linescore and venue, which is exactly how the day looked before.
 _GAMES_BY_DATE_SQL = """
-SELECT
-    game_id,
-    MAX(CASE WHEN home_away = 'H' THEN opponent   END) AS away_code,
-    MAX(CASE WHEN home_away = 'H' THEN team_score END) AS home_score,
-    MAX(CASE WHEN home_away = 'A' THEN team_score END) AS away_score
-FROM batting_gamelogs
-WHERE game_date = :d AND game_id LIKE 'retro-%'
-GROUP BY game_id
-ORDER BY game_id
+WITH g AS (
+    SELECT
+        game_id,
+        MAX(CASE WHEN home_away = 'H' THEN opponent   END) AS away_code,
+        MAX(CASE WHEN home_away = 'H' THEN team_score END) AS home_score,
+        MAX(CASE WHEN home_away = 'A' THEN team_score END) AS away_score
+    FROM batting_gamelogs
+    WHERE game_date = :d AND game_id LIKE 'retro-%'
+    GROUP BY game_id
+)
+SELECT g.*, i.park_name, i.away_line, i.home_line,
+       i.away_hits, i.home_hits, i.away_errors, i.home_errors,
+       i.away_lob, i.home_lob
+FROM g LEFT JOIN retro_game_info i ON i.game_id = g.game_id
+ORDER BY g.game_id
 """
+
+
+def _parse_retro_linescore(s):
+    """Per-inning runs from Retrosheet's string form. Mirrors
+    `retrosheet_gameinfo.parse_linescore`; the trailing "x" adds no inning,
+    because a home side that did not bat in the ninth played eight
+    half-innings and a fabricated 0 would print a zero where the box score
+    shows nothing."""
+    out = []
+    i = 0
+    while i < len(s or ""):
+        ch = s[i]
+        if ch == "(":
+            j = s.find(")", i)
+            if j < 0:
+                break
+            try:
+                out.append(int(s[i + 1:j]))
+            except ValueError:
+                pass
+            i = j + 1
+        elif ch.isdigit():
+            out.append(int(ch))
+            i += 1
+        else:
+            i += 1
+    return out
+
+
+def _linescore_payload(r):
+    """`Linescore`'s exact shape, or None when this game has no stored line.
+
+    None rather than an empty grid on purpose: `BoxScoreView` guards on the
+    whole card, so a null simply omits it, whereas an innings array of zeroes
+    would draw a real-looking linescore for a game we know nothing about."""
+    away_line = getattr(r, "away_line", None)
+    home_line = getattr(r, "home_line", None)
+    if not away_line and not home_line:
+        return None
+    away = _parse_retro_linescore(away_line)
+    home = _parse_retro_linescore(home_line)
+    innings = []
+    for n in range(max(len(away), len(home))):
+        innings.append({
+            "num":  n + 1,
+            "away": {"runs": away[n]} if n < len(away) else None,
+            "home": {"runs": home[n]} if n < len(home) else None,
+        })
+
+    def totals(runs, hits, errors, lob):
+        return {"runs": runs, "hits": hits, "errors": errors, "leftOnBase": lob}
+
+    return {
+        "currentInning": None, "currentInningOrdinal": None, "inningState": None,
+        "innings": innings,
+        "teams": {
+            "away": totals(r.away_score, r.away_hits, r.away_errors, r.away_lob),
+            "home": totals(r.home_score, r.home_hits, r.home_errors, r.home_lob),
+        },
+        # 9, not len(innings): the view takes max(innings.count, this), so a
+        # 12-inning game still shows 12 columns while a game called after 5
+        # keeps the usual nine and shows the short ones as blank.
+        "scheduledInnings": 9,
+        "isTopInning": None, "balls": None, "strikes": None, "outs": None,
+    }
 
 
 def _decimal_ip_to_baseball(ip) -> str:
@@ -2105,9 +2180,15 @@ def games_by_date(
     would print a 2026 record beside a 1986 game. Null degrades correctly: the
     record simply doesn't render.
 
-    Linescore, decisions and venue are null — the game-log tables carry neither
-    per-inning runs nor pitcher decisions. That is why the iOS card does not
-    offer to expand a historical game.
+    LINESCORE AND VENUE come from `retro_game_info`, joined in — Retrosheet's
+    GAME LOGS carry both, and the earlier note here that the data did not exist
+    was about the daybyday files, which are a different source. `decisions`
+    stays null on this payload only because the card reads its W/L from the box
+    score it fetches on expand, not from here.
+
+    Both degrade to null for a game the game-info ingest has not covered, and
+    the iOS side guards on the whole linescore card, so such a game renders
+    exactly as it did before rather than showing an empty grid.
     """
     if not connection.db_available():
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
@@ -2161,8 +2242,13 @@ def games_by_date(
                 "away": side(away_code, away_score, home_score),
                 "home": side(home_code, home_score, away_score),
             },
-            "venue":     None,
-            "linescore": None,
+            # `venue` is a name or nothing: Retrosheet's park file lags the
+            # schedule (BIR01, MEX02 and SEO01 all appear in 2024 logs and not
+            # in the lookup), and printing the raw code would be worse than the
+            # view's existing `if let` simply omitting the line.
+            "venue":     ({"name": r.park_name} if getattr(r, "park_name", None)
+                          else None),
+            "linescore": _linescore_payload(r),
             "decisions": None,
             "bdlAwayTeamId": None,
             "bdlHomeTeamId": None,
@@ -5553,6 +5639,72 @@ def start_ingest_retrosheet_gamelogs(
     t.start()
     return {"status": "started", "year_from": year_from, "year_to": year_to,
             "refresh_lineup": refresh_lineup, "appearance_gate": appearance_gate}
+
+
+_gameinfo_state: dict = {
+    "running": False, "phase": None, "current_year": None,
+    "years_done": 0, "games_written": 0, "summary": None, "error": None,
+    "last_run": None,
+}
+_gameinfo_lock = threading.Lock()
+
+
+def _run_gameinfo(year_from: int, year_to: int) -> None:
+    with _gameinfo_lock:
+        _gameinfo_state.update(running=True, phase="ingesting", current_year=None,
+                               years_done=0, games_written=0, summary=None, error=None)
+    try:
+        retrosheet_gameinfo.run(year_from=year_from, year_to=year_to,
+                                state=_gameinfo_state, lock=_gameinfo_lock)
+    except Exception as exc:  # noqa: BLE001
+        with _gameinfo_lock:
+            _gameinfo_state["error"] = str(exc)
+    finally:
+        _cache.clear()
+        with _gameinfo_lock:
+            _gameinfo_state["running"] = False
+            _gameinfo_state["last_run"] = datetime.datetime.utcnow().isoformat() + "Z"
+
+
+@app.post("/admin/ingest-retrosheet-gameinfo")
+def start_ingest_gameinfo(
+    year_from: int = Query(default=1898),
+    year_to: int = Query(default=2025),
+):
+    """Per-game linescore + ballpark from Retrosheet's game logs.
+
+    Idempotent: the write is ON CONFLICT DO UPDATE on `game_id`, so a re-run
+    genuinely re-writes rather than reporting success and changing nothing."""
+    with _gameinfo_lock:
+        if _gameinfo_state["running"]:
+            return {"status": "already_running", **_gameinfo_state}
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    threading.Thread(target=_run_gameinfo, args=(year_from, year_to),
+                     daemon=True).start()
+    return {"status": "started", "year_from": year_from, "year_to": year_to}
+
+
+@app.get("/admin/ingest-retrosheet-gameinfo/status")
+def gameinfo_status():
+    counts: dict = {}
+    if connection.db_available():
+        try:
+            with connection.get_session() as db:
+                counts = {
+                    "rows": db.execute(_sa_text(
+                        "SELECT COUNT(*) FROM retro_game_info")).scalar() or 0,
+                    "with_linescore": db.execute(_sa_text(
+                        "SELECT COUNT(*) FROM retro_game_info "
+                        "WHERE away_line IS NOT NULL")).scalar() or 0,
+                    "with_park": db.execute(_sa_text(
+                        "SELECT COUNT(*) FROM retro_game_info "
+                        "WHERE park_name IS NOT NULL")).scalar() or 0,
+                }
+        except Exception as exc:  # noqa: BLE001
+            counts = {"error": str(exc)}
+    with _gameinfo_lock:
+        return {**_gameinfo_state, "counts": counts}
 
 
 @app.get("/admin/ingest-retrosheet-gamelogs/status")

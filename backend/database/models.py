@@ -568,6 +568,77 @@ class StagingBattingGameLog(Base):
     pos         = Column(String, nullable=True)
 
 
+class RetroGameInfo(Base):
+    """One row per historical game, from Retrosheet's GAME LOGS (`gl{year}.zip`).
+
+    A different source from the daybyday files that fill the gamelog tables:
+    those are per-player-per-game, these are per-GAME, which is why this is its
+    own table rather than more columns on `batting_gamelogs`.
+
+    ⚠️ SCHEMA WIRING. `create_all` will CREATE this table because it does not
+    exist yet — but it will NOT alter it afterwards. Any column added here
+    later must ALSO be listed in `connection._RETRO_GAME_INFO_NEW_COLUMNS`, or
+    the deploy leaves prod without it and every read 500s on the first SELECT.
+    That is not hypothetical: the same omission was caught in review on the
+    batting_gamelogs slot/seq/pos change one commit ago.
+
+    ⚠️ ATTENDANCE, TIME OF GAME AND THE UMPIRES ARE DELIBERATELY UNREAD.
+    Nothing in the app surfaces them today: no payload field, no view, no
+    query. They are stored anyway because this is a ONE-TIME 128-year ingest
+    and the same source row is already being parsed — capturing them now costs
+    nothing, and not capturing them would mean re-reading every year again when
+    the UI for them is designed. **Do not delete them as dead weight.** They
+    are paid-for data waiting on a surface.
+    """
+    __tablename__ = "retro_game_info"
+
+    # `game_id` alone is the key — one row per game. It already carries the
+    # doubleheader number ("retro-BOS190706241" vs "...0"), so the two halves
+    # of a doubleheader are distinct rows and cannot collapse into one.
+    game_id      = Column(String, primary_key=True)
+    game_date    = Column(Date)
+    season       = Column(Integer, index=True)
+    park_id      = Column(String)     # Retrosheet park code, e.g. "BAL11"
+    park_name    = Column(String)     # resolved from the committed parks file
+    # Per-inning runs as Retrosheet writes them: one character per inning, with
+    # double-digit innings parenthesised ("102(10)250x") and a trailing "x"
+    # where the home side did not need to bat. Stored RAW rather than exploded
+    # into columns because the inning count is not fixed — extra innings run to
+    # 26 in one 1920 game — and the string is the source of truth a reader can
+    # check against Retrosheet directly.
+    away_line    = Column(String)
+    home_line    = Column(String)
+    away_runs    = Column(Integer)
+    home_runs    = Column(Integer)
+    away_hits    = Column(Integer)
+    home_hits    = Column(Integer)
+    away_errors  = Column(Integer)
+    home_errors  = Column(Integer)
+    away_lob     = Column(Integer)
+    home_lob     = Column(Integer)
+
+    # --- captured, not surfaced (see the warning above) ---------------------
+    # NULL where unrecorded, never 0. Retrosheet writes both "" and "0" for an
+    # unknown gate — 720 games across a nine-year sample, concentrated in the
+    # deadball era (143 in 1912, 188 in 1950, down to ~12 a year by 2000) — and
+    # "nobody recorded it" is a different fact from "nobody came". No real zero
+    # is lost to this: the one game famously played to an empty park,
+    # Baltimore on 2015-04-29, carries a BLANK attendance rather than a zero.
+    attendance       = Column(Integer, nullable=True)
+    time_of_game_min = Column(Integer, nullable=True)
+    # Umpire NAMES, not ids — a name is what any future surface would print.
+    # Absence in the source is the literal string "(none)", not an empty field,
+    # so it is mapped to NULL on the way in; stored raw it would render as a
+    # man called "(none)" standing at third base. LF and RF are normally empty
+    # in the regular season and populated for the postseason's six-man crews.
+    ump_hp           = Column(String, nullable=True)
+    ump_1b           = Column(String, nullable=True)
+    ump_2b           = Column(String, nullable=True)
+    ump_3b           = Column(String, nullable=True)
+    ump_lf           = Column(String, nullable=True)
+    ump_rf           = Column(String, nullable=True)
+
+
 class StagingPitchingGameLog(Base):
     __tablename__ = "staging_pitching_gamelogs"
     __table_args__ = (
