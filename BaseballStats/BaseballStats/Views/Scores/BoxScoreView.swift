@@ -133,16 +133,21 @@ final class BoxScoreViewModel: ObservableObject {
         // game — leaving `isLoading` true until the first snapshot lands.
         guard game.phase != .live else { return }
 
-        // HISTORICAL: one fetch, and none of the rest applies. Plays come from
-        // BDL, which floors at season 2000, and both point-in-time helpers
-        // resolve through BDL player ids these players never had — asking would
-        // be several guaranteed misses per open. Nothing is lost by skipping
-        // them: the historical response already carries the decision flags and
-        // the pre-game season line, so `pitcherDecisionTag` falls through to
-        // its `seasonStats` branch and reads exactly what those calls would
-        // have fetched.
-        if game.isHistorical {
+        // RETROSHEET BOX SCORE — every season through 2025, not merely the
+        // pre-2000 ones. Both point-in-time helpers resolve through BDL player
+        // ids and are skipped: the response already carries the decision flags
+        // and the pre-game season line, so `pitcherDecisionTag` falls through
+        // to its `seasonStats` branch and reads what those calls would have
+        // fetched.
+        //
+        // PLAYS ARE NOT SKIPPED WITH THEM. They are BDL's, they reach back to
+        // 2002, and they are addressed by `bdlGameId` — attached at slate load
+        // — rather than by `gamePk`. So a 2005 game is boxed from our tables
+        // and still gets its play-by-play; only a game before 2002, or one the
+        // slate could not match, goes without.
+        if game.usesRetrosheetBoxScore {
             await loadHistoricalBoxScore()
+            if game.providerHasPlays { await loadPlays() }
             isLoading = false
             return
         }
@@ -388,7 +393,12 @@ final class BoxScoreViewModel: ObservableObject {
     /// One-shot plays fetch for non-live games. Final games don't
     /// poll; the play stream is frozen, so a single call covers it.
     private func loadPlays() async {
-        if let p = try? await bdl.getPlays(gameId: game.gamePk) {
+        // `bdlGameId`, NOT `gamePk`. For a Retrosheet-served game the pk is a
+        // synthetic negative id that BDL has never heard of; the provider id
+        // is the one the slate attached by matching the two lists. For a
+        // BDL-served game the two are the same number.
+        guard let providerId = game.bdlGameId else { return }
+        if let p = try? await bdl.getPlays(gameId: providerId) {
             self.plays = p
         }
     }
@@ -1105,7 +1115,10 @@ struct BoxScoreView: View {
             // Play-by-play is a BDL feed that floors at season 2000, so for a
             // historical game there is nothing behind this — absent rather than
             // an empty list under a divider.
-            if !isLiveNow && !vm.game.isHistorical {
+            // `providerHasPlays` rather than an era test: it is true for any
+            // season from 2002 that the slate managed to match, whichever
+            // source built the box score above.
+            if !isLiveNow && vm.game.providerHasPlays {
                 Divider().opacity(0.4)
                 PlaysView(
                     plays:               vm.plays,

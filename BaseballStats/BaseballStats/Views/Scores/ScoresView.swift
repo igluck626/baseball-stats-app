@@ -97,15 +97,28 @@ final class ScoresViewModel: ObservableObject {
     /// is a fact about coverage; an empty response is a guess about a cause.
     static let bdlFirstSeason = 2000
 
-    /// Whether the slate for `date` must come from our game logs instead of BDL.
+    /// Whether the slate for `date` comes from our Retrosheet tables instead
+    /// of BDL.
     ///
     /// A PURE FUNCTION OF THE DATE, and that is the point: it takes no
     /// response, no error, no count, so there is no input by which a BDL
-    /// failure could route today's slate down the historical path. Testable
+    /// failure could route today's slate down the Retrosheet path. Testable
     /// without a network.
+    ///
+    /// ⚠️ THE BOUNDARY MOVED FROM 2000 TO 2025, and it is a quality boundary
+    /// rather than a coverage one. BDL SERVES games from 2000, so the old line
+    /// was drawn where its data began — but its `/lineups` endpoint returns
+    /// ZERO rows for every season through 2025 and is populated only for 2026.
+    /// Without a lineup its box score has no batting order and falls back to
+    /// each player's career position, spelled out and unrelated to where he
+    /// played that day. For those 26 seasons we hold the real lineup, the
+    /// game's positions, the decisions and the pitch counts.
+    ///
+    /// The season, not "is it finished": our rows stop at 2025-09-28 and 2026
+    /// holds none, so there is no lag window to straddle.
     static func usesHistoricalSource(for date: Date,
                                      calendar: Calendar = .current) -> Bool {
-        calendar.component(.year, from: date) < bdlFirstSeason
+        calendar.component(.year, from: date) <= Game.retrosheetLastSeason
     }
 
     /// Games this view WATCHED leave `liveList`. That transition is the only
@@ -251,9 +264,40 @@ final class ScoresViewModel: ObservableObject {
     /// callers.
     private func loadGames(for date: Date, bypassCache: Bool) async throws -> [Game] {
         if Self.usesHistoricalSource(for: date) {
-            return try await api.getHistoricalGames(date: date)
-                .sorted { ($0.teams.away.team.abbreviation ?? "")
-                        < ($1.teams.away.team.abbreviation ?? "") }
+            let ours = try await api.getHistoricalGames(date: date)
+            // BDL's list for the same day, ONLY to attach its game ids so the
+            // plays list has something to address. Best-effort by design: a
+            // failure here must cost plays and the colour swatch and nothing
+            // else, so it is `try?` and the unmatched games pass through whole.
+            // Skipped entirely before 2002, where BDL has no games at all and
+            // the request would be a guaranteed miss on every historical load.
+            let year = Calendar.current.component(.year, from: date)
+            // BOTH DAYS, then windowed. BDL buckets by UTC, so this date's
+            // west-coast night games sit in tomorrow's bucket and yesterday's
+            // sit in this one — `baseballDay` keeps only the games actually
+            // played on `date`.
+            var theirs: [BDLGame] = []
+            if year >= Game.bdlFirstPlaysSeason {
+                let next = Calendar.current.date(byAdding: .day, value: 1, to: date) ?? date
+                async let a = try? slate.getGames(date: ScoresViewModel.iso(date),
+                                                  bypassCache: bypassCache)
+                async let b = try? slate.getGames(date: ScoresViewModel.iso(next),
+                                                  bypassCache: bypassCache)
+                theirs = BDLRetroMatch.baseballDay(((await a) ?? []) + ((await b) ?? []),
+                                                   localDate: date)
+            }
+            let matched = BDLRetroMatch.match(
+                retroGames: ours, bdlGames: theirs,
+                onDiscrepancy: { d in
+                    // Reported, never swallowed: start-time order and the
+                    // scoreboard disagreeing means one of the two assumptions
+                    // behind the pairing is wrong.
+                    print("[BDLRetroMatch] pk=\(d.retroGamePk) bdl=\(d.bdlGameId) "
+                          + "ours \(d.retroScore.away ?? -1)-\(d.retroScore.home ?? -1) "
+                          + "theirs \(d.bdlScore.away ?? -1)-\(d.bdlScore.home ?? -1)")
+                })
+            return matched.sorted { ($0.teams.away.team.abbreviation ?? "")
+                                  < ($1.teams.away.team.abbreviation ?? "") }
         } else {
             return try await slate.getGames(date: ScoresViewModel.iso(date),
                                             bypassCache: bypassCache)
@@ -1181,7 +1225,7 @@ private struct FinalGameCard: View {
         // or a season snapshot on. The response already carries the decision
         // flags and the pre-game season line, which is everything the decisions
         // and HR sections read. Same shape `BoxScoreViewModel` takes.
-        if game.isHistorical {
+        if game.usesRetrosheetBoxScore {
             boxScore = try? await APIClient.shared
                 .getHistoricalBoxScore(gamePk: game.gamePk)?.asBoxScore
             return
@@ -1555,7 +1599,7 @@ private struct FinalGameCard: View {
             // service sums to the moment BEFORE this game; the `+ 1` below adds
             // the decision being rendered, the same arithmetic
             // `BoxScoreView.pitcherDecisionTag` does on its own fallback.
-            if game.isHistorical {
+            if game.usesRetrosheetBoxScore {
                 guard let s = pitcher.seasonStats?.pitching,
                       let w = s.wins, let l = s.losses else { return nil }
                 switch tag {
@@ -1653,7 +1697,7 @@ private struct FinalGameCard: View {
                 if let stats = batterStatsAtDateByBDL[p.person.id] {
                     let bump = !stats.includesToday ? hr : 0
                     out.append("\(prefix) (\(stats.homeRuns + bump))")
-                } else if game.isHistorical {
+                } else if game.usesRetrosheetBoxScore {
                     // Never-lands case, so a dash here would be permanent. The
                     // season line our own service ships is pre-game, so this
                     // game's own homers are added; when the player has no

@@ -224,3 +224,178 @@ struct RecordAdjustmentTests {
         #expect(gb.isEmpty)
     }
 }
+
+// MARK: - BDL ↔ Retrosheet matching
+
+/// The pairing that lets a Retrosheet-boxed game still show BDL's plays.
+/// Its one hard job is doubleheaders: two games, same day, same clubs.
+@Suite struct BDLRetroMatchTests {
+
+    private func retro(pk: Int, away: String, home: String,
+                       awayScore: Int?, homeScore: Int?) -> Game {
+        func side(_ abbr: String, _ score: Int?) -> GameTeam {
+            GameTeam(team: TeamInfo(id: 0, name: abbr, abbreviation: abbr),
+                     score: score, leagueRecord: nil,
+                     isWinner: nil, probablePitcher: nil)
+        }
+        return Game(
+            gamePk: pk, gameDate: "2021-04-13T00:00:00Z",
+            status: GameStatus(abstractGameState: "Final", detailedState: "Final",
+                               statusCode: "F", codedGameState: "F"),
+            teams: GameTeams(away: side(away, awayScore), home: side(home, homeScore)),
+            venue: nil, linescore: nil, decisions: nil,
+            bdlAwayTeamId: nil, bdlHomeTeamId: nil, bdlGameId: nil)
+    }
+
+    private func bdl(id: Int, away: String, home: String,
+                     date: String, awayRuns: Int?, homeRuns: Int?) -> BDLGame {
+        func team(_ tid: Int, _ abbr: String) -> BDLTeam {
+            BDLTeam(id: tid, slug: nil, abbreviation: abbr, displayName: abbr,
+                    shortDisplayName: nil, name: abbr, location: abbr,
+                    league: nil, division: nil)
+        }
+        return BDLGame(
+            id: id,
+            homeTeam: team(100, home),
+            awayTeam: team(200, away),
+            homeTeamData: BDLTeamData(hits: nil, runs: homeRuns, errors: nil,
+                                      inningScores: nil),
+            awayTeamData: BDLTeamData(hits: nil, runs: awayRuns, errors: nil,
+                                      inningScores: nil),
+            date: date, status: "STATUS_FINAL", venue: nil, period: 9,
+            displayClock: nil, scoringSummary: nil, season: 2021,
+            seasonType: "regular", postseason: false,
+            homeTeamName: home, awayTeamName: away)
+    }
+
+    /// The Retrosheet code set and BDL's differ for twelve clubs; the other
+    /// eighteen must pass through untouched rather than needing an entry.
+    @Test func onlyTheTwelveDifferingCodesAreTranslated() {
+        #expect(BDLRetroMatch.bdlAbbreviation(forRetro: "KCA") == "KC")
+        #expect(BDLRetroMatch.bdlAbbreviation(forRetro: "WAS") == "WSH")
+        #expect(BDLRetroMatch.bdlAbbreviation(forRetro: "CHN") == "CHC")
+        #expect(BDLRetroMatch.bdlAbbreviation(forRetro: "CHA") == "CHW")
+        #expect(BDLRetroMatch.bdlAbbreviation(forRetro: "BOS") == "BOS")
+        #expect(BDLRetroMatch.bdlAbbreviation(forRetro: "ARI") == "ARI")
+        #expect(BDLRetroMatch.retroToBDL.count == 15)
+    }
+
+    /// START TIME orders a doubleheader, so the opener takes the earlier BDL
+    /// id and the nightcap the later one — even though the two arrive in
+    /// whatever order the provider listed them.
+    @Test func doubleheaderHalvesTakeDistinctIdsInStartTimeOrder() {
+        let ours = [retro(pk: -1, away: "SEA", home: "BAL", awayScore: 4, homeScore: 3),
+                    retro(pk: -2, away: "SEA", home: "BAL", awayScore: 6, homeScore: 7)]
+        // Deliberately reversed: the nightcap first.
+        let theirs = [bdl(id: 3906, away: "SEA", home: "BAL",
+                          date: "2021-04-13T23:15:00.000Z", awayRuns: 6, homeRuns: 7),
+                      bdl(id: 3901, away: "SEA", home: "BAL",
+                          date: "2021-04-13T20:05:00.000Z", awayRuns: 4, homeRuns: 3)]
+        var flagged: [BDLRetroMatch.Discrepancy] = []
+        let out = BDLRetroMatch.match(retroGames: ours, bdlGames: theirs,
+                                      onDiscrepancy: { flagged.append($0) })
+        #expect(out[0].bdlGameId == 3901)
+        #expect(out[1].bdlGameId == 3906)
+        #expect(out[0].bdlGameId != out[1].bdlGameId, "no BDL game may serve both halves")
+        #expect(flagged.isEmpty, "scores agree, so nothing to report")
+    }
+
+    /// The score is a cross-check, not the key: a pairing the clock says is
+    /// right but the scoreboard disagrees with is REPORTED, and still made,
+    /// because start time is the identity.
+    @Test func aScoreDisagreementIsReportedRatherThanSwallowed() {
+        let ours = [retro(pk: -1, away: "SEA", home: "BAL", awayScore: 9, homeScore: 9)]
+        let theirs = [bdl(id: 3901, away: "SEA", home: "BAL",
+                          date: "2021-04-13T20:05:00.000Z", awayRuns: 4, homeRuns: 3)]
+        var flagged: [BDLRetroMatch.Discrepancy] = []
+        let out = BDLRetroMatch.match(retroGames: ours, bdlGames: theirs,
+                                      onDiscrepancy: { flagged.append($0) })
+        #expect(out[0].bdlGameId == 3901)
+        #expect(flagged.count == 1)
+        #expect(flagged[0].retroGamePk == -1)
+    }
+
+    /// THE SAFE FAILURE. With nothing to match against, every game comes back
+    /// whole — same count, same scores — and simply carries no provider id.
+    @Test func anUnmatchedGameKeepsEverythingButTheProviderId() {
+        let ours = [retro(pk: -1, away: "SEA", home: "BAL", awayScore: 4, homeScore: 3)]
+        let out = BDLRetroMatch.match(retroGames: ours, bdlGames: [])
+        #expect(out.count == 1)
+        #expect(out[0].bdlGameId == nil)
+        #expect(out[0].teams.away.score == 4)
+        #expect(out[0].teams.home.score == 3)
+        #expect(out[0].usesRetrosheetBoxScore, "the box score still comes from our tables")
+        #expect(!out[0].providerHasPlays, "and only the plays are lost")
+    }
+
+    /// A club with no counterpart that day passes through rather than stealing
+    /// another matchup's id.
+    @Test func aGameWithNoCounterpartIsLeftAlone() {
+        let ours = [retro(pk: -1, away: "SEA", home: "BAL", awayScore: 4, homeScore: 3),
+                    retro(pk: -2, away: "NYN", home: "PHI", awayScore: 1, homeScore: 2)]
+        let theirs = [bdl(id: 3901, away: "SEA", home: "BAL",
+                          date: "2021-04-13T20:05:00.000Z", awayRuns: 4, homeRuns: 3)]
+        let out = BDLRetroMatch.match(retroGames: ours, bdlGames: theirs)
+        #expect(out[0].bdlGameId == 3901)
+        #expect(out[1].bdlGameId == nil)
+    }
+
+    /// BDL SOMETIMES LISTS THE SAME GAME TWICE. SD@CHC on 2005-04-13 appears
+    /// as two rows with one timestamp and one score, beside the real nightcap.
+    /// In pure start-time order our second half takes the copy and shows the
+    /// opener's plays; the score tiebreak steps over it.
+    @Test func aDuplicateProviderRowIsSteppedOverRatherThanConsumed() {
+        let ours = [retro(pk: -1, away: "SD", home: "CHN", awayScore: 8, homeScore: 3),
+                    retro(pk: -2, away: "SD", home: "CHN", awayScore: 3, homeScore: 8)]
+        let theirs = [bdl(id: 3527, away: "SD", home: "CHC",
+                          date: "2005-04-13T17:05:00.000Z", awayRuns: 8, homeRuns: 3),
+                      bdl(id: 3528, away: "SD", home: "CHC",
+                          date: "2005-04-13T17:05:00.000Z", awayRuns: 8, homeRuns: 3),
+                      bdl(id: 3532, away: "SD", home: "CHC",
+                          date: "2005-04-13T20:35:00.000Z", awayRuns: 3, homeRuns: 8)]
+        var flagged: [BDLRetroMatch.Discrepancy] = []
+        let out = BDLRetroMatch.match(retroGames: ours, bdlGames: theirs,
+                                      onDiscrepancy: { flagged.append($0) })
+        #expect(out[0].bdlGameId == 3527)
+        #expect(out[1].bdlGameId == 3532, "the nightcap, not the duplicated opener")
+        #expect(flagged.isEmpty)
+    }
+
+    /// The baseball-day window keeps one local day of games out of BDL's
+    /// UTC buckets: a west-coast night game belongs to the day it was played,
+    /// not the following morning it started in UTC.
+    @Test func theBaseballDayWindowKeepsOneLocalDay() {
+        let cal = Calendar(identifier: .gregorian)
+        var c = DateComponents(); c.year = 2005; c.month = 7; c.day = 3
+        c.timeZone = TimeZone(identifier: "UTC")
+        let day = cal.date(from: c)!
+        let games = [
+            bdl(id: 1, away: "CHW", home: "OAK",          // 2 July local, 3 July UTC
+                date: "2005-07-03T01:05:00.000Z", awayRuns: 1, homeRuns: 0),
+            bdl(id: 2, away: "NYY", home: "DET",          // 3 July, day game
+                date: "2005-07-03T17:05:00.000Z", awayRuns: 2, homeRuns: 1),
+            bdl(id: 3, away: "SF", home: "SD",            // 3 July local, 4 July UTC
+                date: "2005-07-04T02:05:00.000Z", awayRuns: 3, homeRuns: 2),
+            bdl(id: 4, away: "BOS", home: "NYY",          // 4 July, day game
+                date: "2005-07-04T17:05:00.000Z", awayRuns: 4, homeRuns: 3),
+        ]
+        let kept = Set(BDLRetroMatch.baseballDay(games, localDate: day).map(\.id))
+        #expect(kept == [2, 3], "the previous evening's west-coast game and the next day's are both excluded")
+    }
+
+    /// The code map must cover FRANCHISE HISTORY, not just current clubs:
+    /// Retrosheet writes the code of the day, BDL writes today's identity.
+    @Test func franchiseHistoryCodesAreMapped() {
+        #expect(BDLRetroMatch.bdlAbbreviation(forRetro: "FLO") == "MIA")
+        #expect(BDLRetroMatch.bdlAbbreviation(forRetro: "MON") == "WSH")
+        #expect(BDLRetroMatch.bdlAbbreviation(forRetro: "ATH") == "OAK")
+        #expect(BDLRetroMatch.retroToBDL.count == 15)
+    }
+
+    /// The season decides the box score, and the id's sign no longer does.
+    @Test func theSeasonDecidesTheBoxScoreNotTheId() {
+        let g2021 = retro(pk: -1, away: "SEA", home: "BAL", awayScore: 4, homeScore: 3)
+        #expect(g2021.seasonYear == 2021)
+        #expect(g2021.usesRetrosheetBoxScore)
+    }
+}

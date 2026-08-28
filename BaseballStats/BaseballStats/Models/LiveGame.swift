@@ -623,6 +623,7 @@ extension Game {
             decisions:     decisions,
             bdlAwayTeamId: bdlAwayTeamId,
             bdlHomeTeamId: bdlHomeTeamId,
+            bdlGameId:     bdlGameId,
         )
     }
 
@@ -669,6 +670,7 @@ extension Game {
             decisions:     decisions,
             bdlAwayTeamId: bdlAwayTeamId,
             bdlHomeTeamId: bdlHomeTeamId,
+            bdlGameId:     bdlGameId,
         )
     }
 }

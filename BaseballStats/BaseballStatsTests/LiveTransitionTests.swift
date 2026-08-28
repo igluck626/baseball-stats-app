@@ -721,9 +721,23 @@ struct HistoricalSlateTests {
     @Test func routingIsAFunctionOfTheDateAlone() {
         #expect(ScoresViewModel.usesHistoricalSource(for: Self.day("1986-07-04"), calendar: Self.utc))
         #expect(ScoresViewModel.usesHistoricalSource(for: Self.day("1999-12-31"), calendar: Self.utc))
-        #expect(!ScoresViewModel.usesHistoricalSource(for: Self.day("2000-01-01"), calendar: Self.utc),
-                "2000 is BDL's first covered season — it must NOT take the fallback")
+        // The boundary moved from 2000 to 2025. BDL SERVES 2000-2025 but has
+        // no lineup for any of it, so those seasons are ours now.
+        #expect(ScoresViewModel.usesHistoricalSource(for: Self.day("2000-01-01"), calendar: Self.utc),
+                "2000 has no BDL lineup — it must take the Retrosheet path")
+        #expect(ScoresViewModel.usesHistoricalSource(for: Self.day("2021-07-03"), calendar: Self.utc))
+        #expect(ScoresViewModel.usesHistoricalSource(for: Self.day("2025-09-28"), calendar: Self.utc),
+                "the last day Retrosheet publishes is still ours")
+        #expect(!ScoresViewModel.usesHistoricalSource(for: Self.day("2026-03-25"), calendar: Self.utc),
+                "2026 is the first season BDL has lineups for — it must go to BDL")
         #expect(!ScoresViewModel.usesHistoricalSource(for: Self.day("2026-08-26"), calendar: Self.utc))
+    }
+
+    /// The seam has no gap and no overlap: consecutive days either side of the
+    /// boundary route to different sources and nothing falls between them.
+    @Test func theSeamIsExactlyOneDayWide() {
+        #expect(ScoresViewModel.usesHistoricalSource(for: Self.day("2025-12-31"), calendar: Self.utc))
+        #expect(!ScoresViewModel.usesHistoricalSource(for: Self.day("2026-01-01"), calendar: Self.utc))
     }
 
     /// A pre-floor date must not consult BDL's slate at all — no wasted request,
@@ -733,6 +747,17 @@ struct HistoricalSlateTests {
         let vm = ScoresViewModel(slate: slate, finalizeDelays: [0, 0, 0, 0, 0])
         await vm.load(date: Self.day("1986-07-04"))
         #expect(slate.callCount == 0, "the historical path must not read the BDL slate")
+    }
+
+    /// A date inside the Retrosheet window STILL reads the BDL slate — not for
+    /// the games, which come from our tables, but to attach the provider ids
+    /// the plays list needs. The distinction matters: an empty or failing BDL
+    /// answer here must not empty the slate.
+    @Test func aMatchableDateReadsBDLOnlyForItsIds() async throws {
+        let slate = FakeSlate(gameId: 1, statusSequence: ["STATUS_FINAL"])
+        let vm = ScoresViewModel(slate: slate, finalizeDelays: [0, 0, 0, 0, 0])
+        await vm.load(date: Self.day("2021-07-03"))
+        #expect(slate.callCount >= 1, "2002+ must ask BDL for ids")
     }
 
     /// A modern date still goes to BDL, unchanged.

@@ -43,20 +43,71 @@ struct Game: Codable, Identifiable, Hashable {
     // payloads that didn't include them.
     let bdlAwayTeamId: Int?
     let bdlHomeTeamId: Int?
+    /// The provider's id for this game, when one is known.
+    ///
+    /// Present for a BDL-served game (where it equals `gamePk`) and, for a
+    /// Retrosheet-served game, attached at slate load by matching against
+    /// BDL's list for the same day — see `BDLRetroMatch`. It exists for ONE
+    /// reason: play-by-play is BDL's alone, and a Retrosheet game's negative
+    /// `gamePk` cannot address it. nil means the match found nothing, which
+    /// costs the plays list and nothing else.
+    let bdlGameId: Int?
 
     var id: Int { gamePk }
 
+    /// The SEASON this game belongs to, from its own date.
+    ///
+    /// Every source-routing question below is a question about the season, and
+    /// the date is the one field every payload carries whatever served it —
+    /// which is why these are derived here rather than from the id.
+    var seasonYear: Int? {
+        guard let d = startDate else { return Int(gameDate.prefix(4)) }
+        return Calendar(identifier: .gregorian).component(.year, from: d)
+    }
+
+    /// Whether this game's BOX SCORE should be built from our Retrosheet
+    /// tables rather than fetched from BDL.
+    ///
+    /// 2025 and earlier. Not a statement about age but about quality: BDL's
+    /// `/lineups` returns ZERO rows for every season through 2025 and is
+    /// populated only for 2026, so before then its box score has no batting
+    /// order and falls back to each player's CAREER position, spelled out
+    /// ("Third Baseman") and unrelated to where he actually played that day.
+    /// Our tables carry the real lineup slot, the game's own position, the
+    /// decisions, the pre-game season line and the pitch count.
+    ///
+    /// The boundary is the SEASON, not "is it finished": Retrosheet publishes
+    /// complete through 2025 and our rows stop dead at 2025-09-28, so there is
+    /// no lag window and no in-progress edge to handle.
+    var usesRetrosheetBoxScore: Bool { (seasonYear ?? 0) <= Self.retrosheetLastSeason }
+
+    /// Whether the PROVIDER has play-by-play for this game. Independent of
+    /// where the box score comes from: BDL's plays reach back to 2002, so a
+    /// 2005 game is boxed from our tables and still gets its plays.
+    var providerHasPlays: Bool {
+        guard let y = seasonYear else { return false }
+        return y >= Self.bdlFirstPlaysSeason && bdlGameId != nil
+    }
+
+    /// Last season Retrosheet publishes, and the last our tables hold.
+    static let retrosheetLastSeason = 2025
+    /// First season BDL serves play-by-play. Measured, not assumed: 2000 and
+    /// 2001 return no games at all, 2002 onward return a full play list.
+    static let bdlFirstPlaysSeason = 2002
+
     /// True for a game served by `/games/by-date` rather than by BDL.
     ///
-    /// The backend mints a NEGATIVE `gamePk` for those (see
-    /// `_synthetic_game_pk`), which is what makes this a property rather than a
-    /// flag threaded through every view: every real id — BDL's and MLB's alike
-    /// — is positive, so the sign alone is a reliable, self-describing test
-    /// that cannot collide as the provider's id ranges grow.
+    /// ⚠️ NARROWED. This used to be THE source-routing signal, and it answered
+    /// four different questions at once: which box score to build, whether
+    /// plays existed, whether a linescore existed, and what the card should
+    /// offer. That worked only while "served by us" and "pre-2000" and "has no
+    /// linescore" were the same fact. They are not: we now hold better data
+    /// than BDL for 2000-2025, and those games have linescores and plays.
     ///
-    /// Consumers use it to NOT offer what the data cannot support: these games
-    /// have no per-inning linescore and no pitcher decisions, because the
-    /// game-log tables carry neither.
+    /// It now means EXACTLY what it says — this `Game` came from our endpoint,
+    /// so its `gamePk` is synthetic and negative. Use `usesRetrosheetBoxScore`
+    /// for the box score, `providerHasPlays` for plays, and `linescore != nil`
+    /// for the grid.
     var isHistorical: Bool { gamePk < 0 }
 
     /// Bucketed game phase so the UI can branch on intent rather
@@ -1507,6 +1558,8 @@ extension BDLGame {
             decisions:     nil,
             bdlAwayTeamId: awayTeam.id,
             bdlHomeTeamId: homeTeam.id,
+            // A BDL game IS its own provider id, so plays address it directly.
+            bdlGameId:     id,
         )
     }
 

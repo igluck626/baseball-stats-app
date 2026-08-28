@@ -1876,6 +1876,24 @@ SELECT b.player_id, b.home_away, p.name,
 FROM batting_gamelogs b
 LEFT JOIN players p ON p.player_id = b.player_id
 WHERE b.game_id = :gid
+  -- A MAN WHO NEVER BATTED AND WAS NOT IN THE ORDER IS NOT A BATTER.
+  -- The 2000-2025 rows were ingested under the appearance gate, which keeps a
+  -- row for a reliever who never came to the plate; the pre-2000 rows were
+  -- not. Left in, a Royals box score grows five 0-for-0 pitchers under the
+  -- batting header, which is how the modern seasons looked the moment they
+  -- started being served from here. They are 194,724 rows and every one is a
+  -- pitcher.
+  --
+  -- The test is deliberately NOT "is a pitcher": a pitcher who batted ninth
+  -- before the DH belongs in the order, and 201,703 rows carry a lineup slot
+  -- with no plate appearance — a starter lifted before his turn — who is part
+  -- of the order and stays. Only a row with NO slot and no offensive event of
+  -- any kind is dropped. Every one of them still appears in the pitching table.
+  AND NOT (COALESCE(b.slot, 0) = 0
+           AND COALESCE(b."PA", 0) = 0 AND COALESCE(b."AB", 0) = 0
+           AND COALESCE(b."BB", 0) = 0 AND COALESCE(b."R", 0) = 0
+           AND COALESCE(b."HBP", 0) = 0 AND COALESCE(b."SF", 0) = 0
+           AND COALESCE(b."SH", 0) = 0)
 ORDER BY NULLIF(b.slot, 0) NULLS LAST, b.seq NULLS LAST, p.name
 """
 
@@ -2158,6 +2176,34 @@ def historical_boxscore(game_pk: int):
             "teams": {"away": teams["away"], "home": teams["home"]}}
 
 
+# Retrosheet game-id code -> the id `team_seasons` files that club under.
+#
+# Retrosheet keeps the code a club used when the game was played; our season
+# table follows the club's renames. They agree everywhere except the Angels,
+# who are ANA in every Retrosheet id from 1997 to today while `team_seasons`
+# switches to LAA in 2005 — so without this the slate labels twenty-one
+# seasons of Angels games with the bare code "ANA".
+#
+# Three other codes have no name in some season — MIL before 1998, MLN
+# (1953-65) and WSN (1898-99) — and are deliberately NOT aliased here: they
+# are gaps in `team_seasons` itself rather than a rename, they are all before
+# 2000, and they rendered as bare codes on the historical path long before the
+# boundary moved. Inventing a mapping for them would be guessing at which club
+# the table means.
+_RETRO_TEAM_ID_ALIASES = {"ANA": "LAA"}
+
+
+def _named_with_aliases(names: dict) -> dict:
+    """Add the aliased codes to a year's team-name map, without overwriting a
+    real entry for that year — ANA is genuinely named 1997-2004 and must keep
+    "Anaheim Angels" there rather than borrowing the later name."""
+    out = dict(names)
+    for retro_code, seasons_id in _RETRO_TEAM_ID_ALIASES.items():
+        if retro_code not in out and seasons_id in out:
+            out[retro_code] = out[seasons_id]
+    return out
+
+
 @app.get("/games/by-date")
 def games_by_date(
     date: datetime.date = Query(..., description="yyyy-mm-dd"),
@@ -2202,6 +2248,7 @@ def games_by_date(
                 {"y": year},
             ).fetchall()
         }
+        names = _named_with_aliases(names)
 
     iso_midnight = f"{date.isoformat()}T00:00:00Z"
     games = []
