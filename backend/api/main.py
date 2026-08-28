@@ -1961,6 +1961,20 @@ ORDER BY g."IP" DESC NULLS LAST, name
 """
 
 
+_RETRO_TEAM_ID_ALIASES = {"ANA": "LAA"}
+
+
+def _named_with_aliases(names: dict) -> dict:
+    """Add the aliased codes to a year's team-name map, without overwriting a
+    real entry for that year — ANA is genuinely named 1997-2004 and must keep
+    "Anaheim Angels" there rather than borrowing the later name."""
+    out = dict(names)
+    for retro_code, seasons_id in _RETRO_TEAM_ID_ALIASES.items():
+        if retro_code not in out and seasons_id in out:
+            out[retro_code] = out[seasons_id]
+    return out
+
+
 @app.get("/games/{game_pk}/historical-boxscore")
 def historical_boxscore(game_pk: int):
     """A box score for a game older than BDL's coverage, assembled from our own
@@ -2029,9 +2043,13 @@ def historical_boxscore(game_pk: int):
             _sa_text("SELECT DISTINCT opponent FROM batting_gamelogs "
                      "WHERE game_id = :gid AND home_away = 'H'"),
             {"gid": game_id}).fetchall()), "")
-        names = {r[0]: r[1] for r in db.execute(
+        # Aliased for the same reason as the slate: the box score builds its
+        # OWN name map, and the team picker reads THIS one rather than the
+        # Game's — so fixing only `/games/by-date` left the picker reading
+        # "ANA" while the card above it said "Los Angeles Angels of Anaheim".
+        names = _named_with_aliases({r[0]: r[1] for r in db.execute(
             _sa_text("SELECT team_id, team_name FROM team_seasons WHERE year = :y"),
-            {"y": year}).fetchall()}
+            {"y": year}).fetchall()})
         gdate = datetime.date(int(date_s[:4]), int(date_s[4:6]), int(date_s[6:8]))
         bat_ids = sorted({r.player_id for r in bat})
         pit_ids = sorted({r.player_id for r in pit})
@@ -2190,20 +2208,6 @@ def historical_boxscore(game_pk: int):
 # 2000, and they rendered as bare codes on the historical path long before the
 # boundary moved. Inventing a mapping for them would be guessing at which club
 # the table means.
-_RETRO_TEAM_ID_ALIASES = {"ANA": "LAA"}
-
-
-def _named_with_aliases(names: dict) -> dict:
-    """Add the aliased codes to a year's team-name map, without overwriting a
-    real entry for that year — ANA is genuinely named 1997-2004 and must keep
-    "Anaheim Angels" there rather than borrowing the later name."""
-    out = dict(names)
-    for retro_code, seasons_id in _RETRO_TEAM_ID_ALIASES.items():
-        if retro_code not in out and seasons_id in out:
-            out[retro_code] = out[seasons_id]
-    return out
-
-
 @app.get("/games/by-date")
 def games_by_date(
     date: datetime.date = Query(..., description="yyyy-mm-dd"),
