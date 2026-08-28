@@ -214,6 +214,12 @@ struct PlaysView: View {
     /// the standalone glass-card wrapper. The caller is responsible
     /// for providing the container (live situation / linescore card).
     var isEmbedded: Bool = false
+    /// The game's final score, from the BOX SCORE rather than from these
+    /// plays. Used only to reconcile the derived scoring list — see
+    /// `reconciliation`. nil for a game still in progress, where there is no
+    /// final to check against and the list is simply shown as it stands.
+    var finalAwayScore: Int? = nil
+    var finalHomeScore: Int? = nil
 
     @State private var isExpanded = false
     @State private var playsMode: PlaysMode = .scoring
@@ -332,7 +338,7 @@ struct PlaysView: View {
     // MARK: Scoring mode
 
     private var scoringPlaysList: some View {
-        let rows = scoringRowsWithDelta()
+        let rows = derivedScoringRows()
         return Group {
             if rows.isEmpty {
                 Text("No scoring plays yet")
@@ -344,15 +350,27 @@ struct PlaysView: View {
                     ForEach(rows) { row in
                         scoringPlayRow(row)
                     }
+                    // SAY IT RATHER THAN SWALLOW IT. A list one run short of
+                    // the game's own score is worse than one that admits the
+                    // gap: the reader can see three runs listed under a 4-0
+                    // final and would otherwise conclude the app had lost one.
+                    // Shown only when the two genuinely disagree.
+                    if let r = reconciliation, !r.matches {
+                        Text("Showing \(r.shown) of \(r.expected) runs — "
+                             + "the provider's play list is incomplete for this game.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.top, 2)
+                    }
                 }
             }
         }
     }
 
     private func scoringPlayRow(_ row: ScoringRow) -> some View {
-        let p = row.play
-        let arrow = (p.inningType ?? "").hasPrefix("Top") ? "▲" : "▼"
-        let ord = Self.ordinalInning(p.inning)
+        let arrow = (row.inningType ?? "").hasPrefix("Top") ? "▲" : "▼"
+        let ord = Self.ordinalInning(row.inning)
         // Pick the scoring team's abbreviation. Both-sides scoring
         // is rare (a single play that scores for both teams) but
         // possible on extremely weird sequences — fall back to a
@@ -382,13 +400,16 @@ struct PlaysView: View {
                             )
                         )
                 }
-                Text(p.text ?? "")
+                // A run with no sentence within reach still gets a row: the
+                // run is a fact even where the words are missing, and an
+                // omitted row would put the list out against the final score.
+                Text(row.text ?? "Run scored")
                     .font(.caption)
                     .foregroundStyle(.primary)
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Text(scoreLineText(awayScore: p.awayScore, homeScore: p.homeScore))
+            Text(scoreLineText(awayScore: row.awayScore, homeScore: row.homeScore))
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .padding(.leading, 46)
@@ -396,80 +417,133 @@ struct PlaysView: View {
         }
     }
 
-    /// Two-pass scorer attribution.
+    /// The scoring plays, DERIVED FROM THE SCORE rather than read off a flag.
     ///
-    /// Pass 1 builds a MONOTONIC score-increase timeline. BDL
-    /// ships intermediate plays with peek-then-revert scores
-    /// (a "Start Batter/Pitcher" play often previews the AB's
-    /// eventual score, then mid-AB pitches dip back to the
-    /// pre-AB score, then the result play matches the peek).
-    /// The `max(...)` filter drops the noise — we only record a
-    /// timeline entry when either side's score actually exceeds
-    /// the running max.
+    /// ⚠️ WHY NOT `scoringPlay`. The provider sets that flag, and it means a
+    /// different thing in every era: on a 2026 game it marks three plays, each
+    /// carrying a proper sentence; on a 2021 game it marks thirty-six,
+    /// most of them individual pitches ("Pitch 1 : Strike 1 Looking"); on a
+    /// 2005 game it marks nine rows that have no text at all. A flag whose
+    /// meaning changes with the season is not a signal, and trusting it put
+    /// pitch-by-pitch noise, a duplicated sentence and a backwards-running
+    /// score on the tab a reader lands on first.
     ///
-    /// Pass 2 matches each `scoringPlay` to the LATEST timeline
-    /// entry at-or-BEFORE this scoring play's index. BDL
-    /// typically lands the score increment on the
-    /// "Start Batter/Pitcher" play preceding the at-bat-result
-    /// play that gets the scoring flag, so the right match is
-    /// the most recent backward change. Forward fallback covers
-    /// the rare case where BDL delays the score update; the
-    /// scoring play's own score is the final fallback.
-    private func scoringRowsWithDelta() -> [ScoringRow] {
-        guard !plays.isEmpty else { return [] }
+    /// A RUN CROSSING THE PLATE IS ERA-INDEPENDENT. Every row of every era
+    /// carries the running score, so the rows where it rises are the scoring
+    /// plays by definition — and a list built that way cannot double-count or
+    /// run backwards, because it is monotonic by construction.
+    ///
+    /// TWO WRINKLES, both measured rather than assumed:
+    ///
+    /// 1. The score is peeked and reverted. A row mid-at-bat can report a
+    ///    lower score than one already seen (five such rows in a 2026 game,
+    ///    four in 2021, one in 2005), so the walk tracks a running MAX and
+    ///    only records an increase against it.
+    /// 2. THE ROW WHERE THE SCORE MOVES IS NEVER THE ROW THAT DESCRIBES IT.
+    ///    In 2026 the increase lands on "Melton pitches to DeLuca" and the
+    ///    sentence is two rows later; in 2021 on "Pitch 7 : Ball In Play" with
+    ///    the sentence next; in 2005 on a blank row with the sentence three
+    ///    later. So the row is found by the score and the words are taken from
+    ///    the rows that follow it.
+    private func derivedScoringRows() -> [ScoringRow] { Self.scoringRows(from: plays) }
 
-        // Pass 1: monotonic score-increase timeline.
-        var scoreChanges: [(index: Int, home: Int, away: Int)] = []
+    /// Pure, and deliberately so: the reconciliation test drives THIS with
+    /// real play lists from several games in each era, which is the only way
+    /// the denylist's staleness can be caught before a reader meets it.
+    static func scoringRows(from plays: [BDLPlay]) -> [ScoringRow] {
+        guard !plays.isEmpty else { return [] }
+        var rows: [ScoringRow] = []
         var maxHome = 0
         var maxAway = 0
         for (i, play) in plays.enumerated() {
             let newHome = max(maxHome, play.homeScore)
             let newAway = max(maxAway, play.awayScore)
-            if newHome > maxHome || newAway > maxAway {
-                scoreChanges.append((i, newHome, newAway))
-                maxHome = newHome
-                maxAway = newAway
-            }
-        }
-
-        // Pass 2: prefer backward, then forward, then scoring
-        // play's own score.
-        var rows: [ScoringRow] = []
-        var prevHome = 0
-        var prevAway = 0
-        for (idx, play) in plays.enumerated() where play.scoringPlay {
-            let backward = scoreChanges.last(where: { $0.index <= idx })
-            let forward = scoreChanges.first(where: { $0.index > idx })
-
-            let resolvedHome: Int
-            let resolvedAway: Int
-            if let b = backward, b.home > prevHome || b.away > prevAway {
-                resolvedHome = b.home
-                resolvedAway = b.away
-            } else if let f = forward, f.home > prevHome || f.away > prevAway {
-                resolvedHome = f.home
-                resolvedAway = f.away
-            } else {
-                resolvedHome = max(prevHome, play.homeScore)
-                resolvedAway = max(prevAway, play.awayScore)
-            }
-            let scoredHome = resolvedHome > prevHome
-            let scoredAway = resolvedAway > prevAway
+            guard newHome > maxHome || newAway > maxAway else { continue }
+            let scoredHome = newHome > maxHome
+            let scoredAway = newAway > maxAway
+            maxHome = newHome
+            maxAway = newAway
             rows.append(ScoringRow(
                 id:         play.order,
-                play:       play,
+                inning:     play.inning,
+                inningType: play.inningType,
+                text:       Self.descriptionFollowing(plays, from: i),
+                awayScore:  newAway,
+                homeScore:  newHome,
                 scoredHome: scoredHome,
                 scoredAway: scoredAway,
             ))
-            prevHome = resolvedHome
-            prevAway = resolvedAway
         }
         return rows
     }
 
-    private struct ScoringRow: Identifiable, Hashable {
+    /// The first sentence at or after `index` that describes a play rather
+    /// than narrating the count.
+    ///
+    /// ⚠️ THIS IS A DENYLIST AND DENYLISTS GO STALE. If the provider invents a
+    /// new noise format, it will be mistaken for a description and a scoring
+    /// row will read "Pitch 3 : Ball 2". That is exactly why the list is
+    /// RECONCILED against the final score — see `reconciliation`. The
+    /// arithmetic is the guard; this is only the heuristic it protects.
+    private static func descriptionFollowing(_ plays: [BDLPlay], from index: Int) -> String? {
+        let window = min(plays.count, index + 8)
+        for j in index..<window {
+            guard let raw = plays[j].text?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !raw.isEmpty else { continue }
+            if isNarration(raw) { continue }
+            return raw
+        }
+        return nil
+    }
+
+    /// True for a row that narrates rather than describes: a pitch count, an
+    /// at-bat announcement, an inning header, a lineup change.
+    static func isNarration(_ text: String) -> Bool {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.isEmpty { return true }
+        let lower = t.lowercased()
+        if lower.hasPrefix("pitch ") { return true }          // "Pitch 1 : Ball 1"
+        if lower.contains(" pitches to ") { return true }     // "X pitches to Y"
+        if lower == "lineup change" { return true }
+        if lower.hasPrefix("top of the") || lower.hasPrefix("bottom of the")
+            || lower.hasPrefix("end of the") || lower.hasPrefix("middle of the") { return true }
+        if lower.hasSuffix(" batting") { return true }         // "C Figgins batting"
+        return false
+    }
+
+    /// Whether the derived list accounts for every run the game finished with.
+    ///
+    /// THE ARITHMETIC IS THE REAL GUARD, and it catches both directions at
+    /// once: a sentence the denylist wrongly discarded leaves the list short,
+    /// and a noise row promoted to a scoring play leaves it long. Neither
+    /// depends on the denylist being complete, which is the point — a list
+    /// that does not add up to the game's own score says so instead of
+    /// quietly being one run out.
+    ///
+    /// Compared against the BOX SCORE's final, not the plays feed's own last
+    /// row, so it is a genuine cross-source check rather than a tautology.
+    private var reconciliation: (matches: Bool, shown: Int, expected: Int)? {
+        guard let a = finalAwayScore, let h = finalHomeScore else { return nil }
+        return Self.reconcile(plays: plays, finalAway: a, finalHome: h)
+    }
+
+    /// Runs accounted for by the derived list, against the box score's final.
+    static func reconcile(plays: [BDLPlay], finalAway: Int,
+                          finalHome: Int) -> (matches: Bool, shown: Int, expected: Int) {
+        let rows = scoringRows(from: plays)
+        let shown = (rows.last?.awayScore ?? 0) + (rows.last?.homeScore ?? 0)
+        return (shown == finalAway + finalHome, shown, finalAway + finalHome)
+    }
+
+    struct ScoringRow: Identifiable, Hashable {
         let id: Int          // BDLPlay.order — unique within a game
-        let play: BDLPlay
+        let inning: Int
+        let inningType: String?
+        /// Taken from a LATER row than the one that moved the score; nil when
+        /// no describable row follows within the window.
+        let text: String?
+        let awayScore: Int
+        let homeScore: Int
         let scoredHome: Bool
         let scoredAway: Bool
     }

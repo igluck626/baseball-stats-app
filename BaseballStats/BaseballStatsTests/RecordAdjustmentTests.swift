@@ -399,3 +399,173 @@ struct RecordAdjustmentTests {
         #expect(g2021.usesRetrosheetBoxScore)
     }
 }
+
+// MARK: - Date picker bounds
+
+@MainActor
+@Suite struct SelectableDateRangeTests {
+    private static let utc: Calendar = {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(identifier: "UTC")!
+        return c
+    }()
+    private func day(_ s: String) -> Date {
+        let f = DateFormatter()
+        f.calendar = Calendar(identifier: .gregorian)
+        f.timeZone = TimeZone(identifier: "UTC")
+        f.locale = .init(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd"
+        return f.date(from: s)!
+    }
+
+    /// The floor is the first game in our tables, not a rounded year.
+    @Test func theFloorIsTheFirstGameWeHold() {
+        let r = ScoresViewModel.selectableDateRange
+        #expect(!r.contains(day("1898-04-14")), "the day before our first game is out")
+        #expect(r.contains(day("1898-04-16")), "the day after is in")
+    }
+
+    /// A future date has no games by definition and must not be offerable.
+    @Test func theFutureIsNotSelectable() {
+        let r = ScoresViewModel.selectableDateRange
+        let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: Date())!
+        let nextDecade = Calendar.current.date(byAdding: .year, value: 10, to: Date())!
+        #expect(!r.contains(tomorrow))
+        #expect(!r.contains(nextDecade))
+        #expect(r.contains(Calendar.current.startOfDay(for: Date())), "today is selectable")
+    }
+
+    /// The range must be well-formed — a crossed ClosedRange traps at runtime.
+    @Test func theRangeIsNeverInverted() {
+        let r = ScoresViewModel.selectableDateRange
+        #expect(r.lowerBound <= r.upperBound)
+    }
+}
+
+// MARK: - Scoring plays derived from the score
+
+/// The Scoring tab is built by walking the running score, not by trusting the
+/// provider's `scoring_play` flag — which marks 3 plays in 2026, 36 in 2021 and
+/// 9 textless ones in 2005. These exercise the shipped
+/// `PlaysView.scoringRows(from:)` on sequences taken from real games.
+@Suite struct DerivedScoringTests {
+
+    private func play(_ order: Int, inning: Int, top: Bool,
+                      away: Int, home: Int, _ text: String?) -> BDLPlay {
+        BDLPlay(gameId: 1, order: order, type: nil, text: text,
+                homeScore: home, awayScore: away, inning: inning,
+                inningType: top ? "Top" : "Bottom", scoringPlay: false,
+                scoreValue: nil, outs: nil, balls: nil, strikes: nil,
+                batterId: nil, pitcherId: nil, pitchType: nil,
+                pitchVelocity: nil, trajectory: nil)
+    }
+
+    /// 2026's shape: the score moves on the at-bat's OPENING row and the
+    /// sentence arrives two rows later. Taking the text off the row that moved
+    /// would print "Melton pitches to DeLuca" as the scoring play.
+    @Test func theSentenceIsTakenFromTheRowsAfterTheScoreMoves() {
+        let plays = [
+            play(1, inning: 2, top: true, away: 0, home: 0, "Top of the 2nd inning"),
+            play(2, inning: 2, top: true, away: 1, home: 0, "Troy Melton pitches to Jonny DeLuca"),
+            play(3, inning: 2, top: true, away: 1, home: 0, "Pitch 1 : Ball In Play"),
+            play(4, inning: 2, top: true, away: 1, home: 0, "DeLuca doubled to left, Simpson scored."),
+        ]
+        let rows = PlaysView.scoringRows(from: plays)
+        #expect(rows.count == 1)
+        #expect(rows[0].text == "DeLuca doubled to left, Simpson scored.")
+        #expect(rows[0].awayScore == 1)
+    }
+
+    /// 2005's shape: the row that moves the score is BLANK and the sentence is
+    /// three rows on, with the score dipping back in between.
+    @Test func aBlankScoringRowStillFindsItsSentence() {
+        let plays = [
+            play(1, inning: 2, top: true, away: 0, home: 0, "Pitch 4: in play"),
+            play(2, inning: 2, top: true, away: 1, home: 0, nil),
+            play(3, inning: 2, top: true, away: 1, home: 0, nil),
+            play(4, inning: 2, top: true, away: 0, home: 0,
+                 "B Molina grounded into double play, J DaVanon scored."),
+        ]
+        let rows = PlaysView.scoringRows(from: plays)
+        #expect(rows.count == 1, "the dip back to 0-0 must not create a second row")
+        #expect(rows[0].text == "B Molina grounded into double play, J DaVanon scored.")
+    }
+
+    /// A GRAND SLAM moves the score by four in one row. The sentence names all
+    /// four men itself, so no delta needs rendering — taken from a real 2025
+    /// play list.
+    @Test func aGrandSlamIsOneRowNamingEveryScorer() {
+        let plays = [
+            play(1, inning: 4, top: true, away: 0, home: 0, "Pitch 2 : Ball In Play"),
+            play(2, inning: 4, top: true, away: 4, home: 0, nil),
+            play(3, inning: 4, top: true, away: 4, home: 0,
+                 "Cruz homered to center (451 feet), McCutchen scored, Reynolds scored and N. Gonzales scored."),
+        ]
+        let rows = PlaysView.scoringRows(from: plays)
+        #expect(rows.count == 1, "four runs on one play is ONE row")
+        #expect(rows[0].awayScore == 4)
+        #expect(rows[0].text?.contains("N. Gonzales scored") == true)
+    }
+
+    /// The peek-then-revert the provider ships must never produce a row whose
+    /// score is lower than the one before it — the bug a reader saw as
+    /// "AWY 2, HOM 0" followed by "AWY 1, HOM 0".
+    @Test func theListIsMonotonicEvenWhenTheFeedIsNot() {
+        let plays = [
+            play(1, inning: 1, top: true, away: 0, home: 0, "Pitch 1 : Ball 1"),
+            play(2, inning: 1, top: true, away: 2, home: 0, "Polanco doubled, two scored."),
+            play(3, inning: 1, top: true, away: 1, home: 0, "Pitch 2 : Ball 2"),
+            play(4, inning: 1, top: true, away: 2, home: 0, "Pitch 3 : Strike 1"),
+            play(5, inning: 3, top: false, away: 2, home: 1, "Perez singled, Soler scored."),
+        ]
+        let rows = PlaysView.scoringRows(from: plays)
+        #expect(rows.count == 2)
+        for (a, b) in zip(rows, rows.dropFirst()) {
+            #expect(b.awayScore >= a.awayScore && b.homeScore >= a.homeScore)
+        }
+    }
+
+    /// A pitch line must never be promoted to a scoring play, in any of the
+    /// forms the three eras write it.
+    @Test func narrationIsNeverMistakenForADescription() {
+        for t in ["Pitch 1 : Ball 1", "Pitch 2: strike 2 (looking)",
+                  "Danny Duffy pitches to Luis Arraez", "Top of the 1st inning",
+                  "Lineup Change", "C Figgins batting", "   "] {
+            #expect(PlaysView.isNarration(t), "\(t) should be narration")
+        }
+        for t in ["DeLuca doubled to left, Simpson scored.",
+                  "Larnach homered to right (394 feet)."] {
+            #expect(!PlaysView.isNarration(t), "\(t) should be a description")
+        }
+    }
+
+    /// THE REAL GUARD. Reconciliation catches a list that is short (a sentence
+    /// the denylist wrongly discarded) and one that is long (noise promoted to
+    /// a scoring play), without depending on that denylist being complete.
+    @Test func reconciliationCatchesBothDirections() {
+        let good = [
+            play(1, inning: 1, top: true, away: 1, home: 0, "A singled, B scored."),
+            play(2, inning: 5, top: false, away: 1, home: 2, "C doubled, D and E scored."),
+        ]
+        let r = PlaysView.reconcile(plays: good, finalAway: 1, finalHome: 2)
+        #expect(r.matches)
+        #expect(r.shown == 3 && r.expected == 3)
+
+        // The same list against a game the box score says finished 1-3: one run
+        // is unaccounted for and the view must say so rather than imply three.
+        let short = PlaysView.reconcile(plays: good, finalAway: 1, finalHome: 3)
+        #expect(!short.matches)
+        #expect(short.shown == 3 && short.expected == 4)
+    }
+
+    /// A shutout reconciles like any other game — zero on one side is not a
+    /// missing side.
+    @Test func aShutoutReconciles() {
+        let plays = [
+            play(1, inning: 3, top: true, away: 1, home: 0, "A homered."),
+            play(2, inning: 7, top: true, away: 2, home: 0, "B singled, A scored."),
+        ]
+        let r = PlaysView.reconcile(plays: plays, finalAway: 2, finalHome: 0)
+        #expect(r.matches)
+    }
+}

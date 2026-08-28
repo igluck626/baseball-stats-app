@@ -1964,15 +1964,40 @@ ORDER BY g."IP" DESC NULLS LAST, name
 _RETRO_TEAM_ID_ALIASES = {"ANA": "LAA"}
 
 
+# Names to simplify wherever they appear, in any season.
+#
+# ⚠️ THIS IS NOT "USE THE CURRENT FRANCHISE NAME". `team_seasons` is already
+# era-correct for every other club that renamed or moved — MON is "Montreal
+# Expos", FLO is "Florida Marlins", TBA is "Tampa Bay Devil Rays" before it is
+# "Tampa Bay Rays" — and those stay exactly as they are. Renaming history would
+# put the 2004 Expos in Washington, a city they had not moved to, which is
+# worse than the problem it solves.
+#
+# What this fixes is narrower: an awkward legal name the club itself has since
+# dropped. "Los Angeles Angels of Anaheim" and "Los Angeles Angels" are the
+# same name for the same club in the same city; carrying the suffix meant a
+# reader moving between 2015 and 2026 saw two names and had to wonder whether
+# they were two clubs. Nothing here changes WHICH city or WHICH nickname a
+# season shows.
+_TEAM_NAME_SIMPLIFICATIONS = {
+    "Los Angeles Angels of Anaheim": "Los Angeles Angels",
+}
+
+
 def _named_with_aliases(names: dict) -> dict:
-    """Add the aliased codes to a year's team-name map, without overwriting a
-    real entry for that year — ANA is genuinely named 1997-2004 and must keep
-    "Anaheim Angels" there rather than borrowing the later name."""
+    """A year's team-name map, with the aliased codes filled in and the
+    simplifications applied.
+
+    The alias never overwrites a real entry for that year: ANA is genuinely
+    named 1997-2004 and keeps "Anaheim Angels" there rather than borrowing the
+    later name. Only the seasons where the code has no row of its own — the
+    Angels from 2005, whom `team_seasons` files under LAA — take the borrowed
+    one."""
     out = dict(names)
     for retro_code, seasons_id in _RETRO_TEAM_ID_ALIASES.items():
         if retro_code not in out and seasons_id in out:
             out[retro_code] = out[seasons_id]
-    return out
+    return {k: _TEAM_NAME_SIMPLIFICATIONS.get(v, v) for k, v in out.items()}
 
 
 @app.get("/games/{game_pk}/historical-boxscore")

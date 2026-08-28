@@ -575,6 +575,22 @@ final class BoxScoreViewModel: ObservableObject {
     func playerProfile(bdlId: Int) async -> PlayerSearchResult? {
         (try? await bdl.resolveBDLPlayerId(bdlId)) ?? nil
     }
+
+    /// Resolve a tapped player when the box score came from our own tables.
+    ///
+    /// A Retrosheet box score names players by their MLBAM id — the ingest
+    /// mapped them through the Chadwick bridge — so the BDL hop the modern
+    /// path uses is not merely unnecessary here, it is impossible: NO player
+    /// before 2000 has a `bdl_id` at all, and only 4,712 of 17,767 historical
+    /// players have one in any era. That hop is why these names were not
+    /// tappable.
+    ///
+    /// The profile itself was never the obstacle. Every historical batter has
+    /// a season row — 297 of 297 in 1898, 572 of 572 in 1912 — so an 1898
+    /// batter opens to a real profile, not an empty one.
+    func playerProfile(mlbId: Int) async -> PlayerSearchResult? {
+        (try? await api.getPlayerByMlbId(mlbId)) ?? nil
+    }
 }
 
 struct BoxScoreView: View {
@@ -1126,6 +1142,10 @@ struct BoxScoreView: View {
                     homeAbbr:            teamAbbr(vm.game.teams.home.team),
                     autoExpandOnScoring: false,
                     isEmbedded:          true,
+                    // From the box score, so the reconciliation compares two
+                    // SOURCES rather than the play list against itself.
+                    finalAwayScore:      vm.game.teams.away.score,
+                    finalHomeScore:      vm.game.teams.home.score,
                 )
             }
         }
@@ -1820,16 +1840,24 @@ struct BoxScoreView: View {
     // MARK: - Navigation
 
     private func tapPlayer(id: Int, name: String, isPitcher: Bool) {
-        // `id` is a BDL player id (BoxScoreResponse synthesized
-        // from BDL keys players by BDL id, not MLBAM). The resolve
-        // call hops through our backend's `/players/by-bdl-id/{id}`
-        // to land on an MLBAM-keyed PlayerSearchResult that the
-        // existing profile destination can consume.
+        // WHICH ID `id` IS DEPENDS ON WHO BUILT THE BOX SCORE, and that is the
+        // whole of this branch. A BDL-synthesized `BoxScoreResponse` keys
+        // players by BDL id, so it hops through `/players/by-bdl-id/{id}`. A
+        // Retrosheet one keys them by MLBAM id, which the profile destination
+        // wants anyway — so it goes straight to `/players/by-mlb-id/{id}` and
+        // skips the hop.
+        //
+        // Sending a Retrosheet id down the BDL hop is what made these names
+        // untappable: it either 404s or, worse, resolves whichever unrelated
+        // player happens to hold that number in BDL's own id space.
         guard pendingPlayerLookup == nil else { return }
         pendingPlayerLookup = id
         navigationError = nil
+        let fromOurTables = vm.game.usesRetrosheetBoxScore
         Task { @MainActor in
-            let player = await vm.playerProfile(bdlId: id)
+            let player = fromOurTables
+                ? await vm.playerProfile(mlbId: id)
+                : await vm.playerProfile(bdlId: id)
             pendingPlayerLookup = nil
             if let player {
                 // Force the profile's default role to the table the

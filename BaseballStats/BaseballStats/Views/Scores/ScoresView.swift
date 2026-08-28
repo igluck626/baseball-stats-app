@@ -97,6 +97,24 @@ final class ScoresViewModel: ObservableObject {
     /// is a fact about coverage; an empty response is a guess about a cause.
     static let bdlFirstSeason = 2000
 
+    /// Dates the date picker will offer.
+    ///
+    /// Lower bound is the earliest game we hold, 15 April 1898 — the first day
+    /// of Retrosheet's coverage in our tables, not a rounded year. Upper bound
+    /// is today: a future date has no games by definition, and the schedule
+    /// this app shows is a record rather than a fixture list.
+    static var selectableDateRange: ClosedRange<Date> {
+        var c = DateComponents()
+        c.year = 1898; c.month = 4; c.day = 15
+        let cal = Calendar(identifier: .gregorian)
+        let floor = cal.date(from: c) ?? Date(timeIntervalSince1970: 0)
+        let today = Calendar.current.startOfDay(for: Date())
+        // Guard the degenerate case rather than trapping: `ClosedRange`
+        // crashes if the bounds cross, and a device clock set before 1898
+        // should not take the app down.
+        return floor <= today ? floor...today : floor...floor
+    }
+
     /// Whether the slate for `date` comes from our Retrosheet tables instead
     /// of BDL.
     ///
@@ -713,9 +731,15 @@ struct ScoresView: View {
             // graphical picker that wheel is how you reach another year, so
             // reaching 1986 meant committing, loading, being dismissed, and
             // reopening, over and over.
+            // BOUNDED TO WHAT WE HOLD. The picker used to accept any date at
+            // all, so a user could reach 2035 or 1850 and be shown an empty
+            // slate with nothing to say why. The floor is the first game in
+            // our tables (1898-04-15) and the ceiling is today; both are facts
+            // about the data rather than round numbers.
             DatePicker(
                 "Date",
                 selection: $draftDate,
+                in: ScoresViewModel.selectableDateRange,
                 displayedComponents: [.date]
             )
             .datePickerStyle(.graphical)
