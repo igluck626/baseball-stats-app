@@ -135,8 +135,9 @@ final class ScoresViewModel: ObservableObject {
     /// The season, not "is it finished": our rows stop at 2025-09-28 and 2026
     /// holds none, so there is no lag window to straddle.
     static func usesHistoricalSource(for date: Date,
-                                     calendar: Calendar = .current) -> Bool {
-        calendar.component(.year, from: date) <= Game.retrosheetLastSeason
+                                     calendar: Calendar = .current,
+                                     lastSeason: Int = RetrosheetCoverage.lastSeason) -> Bool {
+        calendar.component(.year, from: date) <= lastSeason
     }
 
     /// Games this view WATCHED leave `liveList`. That transition is the only
@@ -281,6 +282,10 @@ final class ScoresViewModel: ObservableObject {
     /// games" for a date the endpoint answers with thirteen. One routine, both
     /// callers.
     private func loadGames(for date: Date, bypassCache: Bool) async throws -> [Game] {
+        // Read the boundary before routing on it. A no-op after the first call
+        // — including after a failed one — so this costs one request per
+        // session and nothing thereafter.
+        await RetrosheetCoverage.ensureLoaded(api: api)
         if Self.usesHistoricalSource(for: date) {
             let ours = try await api.getHistoricalGames(date: date)
             // BDL's list for the same day, ONLY to attach its game ids so the

@@ -569,3 +569,68 @@ struct RecordAdjustmentTests {
         #expect(r.matches)
     }
 }
+
+// MARK: - The derived Retrosheet boundary
+
+/// The boundary between our tables and the provider is "the newest season
+/// Retrosheet has published and we have ingested", not "last year". These
+/// pin the behaviour a constant could not give.
+@MainActor
+@Suite struct RetrosheetCoverageTests {
+    private static let utc: Calendar = {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(identifier: "UTC")!
+        return c
+    }()
+    private func day(_ s: String) -> Date {
+        let f = DateFormatter()
+        f.calendar = Calendar(identifier: .gregorian)
+        f.timeZone = TimeZone(identifier: "UTC")
+        f.locale = .init(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd"
+        return f.date(from: s)!
+    }
+
+    /// A failed or unmade request leaves the boundary exactly where the old
+    /// constant put it, so an outage degrades to the previous behaviour.
+    @Test func theFallbackIsTheShippedConstant() {
+        RetrosheetCoverage.resetForTesting()
+        #expect(RetrosheetCoverage.lastSeason == 2025)
+        #expect(Game.retrosheetLastSeason == 2025)
+    }
+
+    /// THE ROLLOVER. Once the service reports 2026, a 2026 date must route to
+    /// our tables — the thing a hardcoded 2025 could never do.
+    @Test func theBoundaryMovesWhenTheServiceSaysSo() {
+        RetrosheetCoverage.resetForTesting(to: 2026)
+        #expect(ScoresViewModel.usesHistoricalSource(
+            for: day("2026-05-01"), calendar: Self.utc,
+            lastSeason: RetrosheetCoverage.lastSeason))
+        #expect(!ScoresViewModel.usesHistoricalSource(
+            for: day("2027-05-01"), calendar: Self.utc,
+            lastSeason: RetrosheetCoverage.lastSeason))
+        RetrosheetCoverage.resetForTesting()
+    }
+
+    /// And with the boundary still at 2025, 2026 stays on the provider.
+    @Test func theCurrentSeasonStaysWithTheProviderUntilItIsPublished() {
+        RetrosheetCoverage.resetForTesting(to: 2025)
+        #expect(!ScoresViewModel.usesHistoricalSource(
+            for: day("2026-05-01"), calendar: Self.utc,
+            lastSeason: RetrosheetCoverage.lastSeason))
+        #expect(ScoresViewModel.usesHistoricalSource(
+            for: day("2025-09-28"), calendar: Self.utc,
+            lastSeason: RetrosheetCoverage.lastSeason))
+        RetrosheetCoverage.resetForTesting()
+    }
+
+    /// Routing stays a pure function of (date, boundary) — no response, no
+    /// error, no count — so a provider failure can never reroute a slate.
+    @Test func routingRemainsAPureFunctionOfDateAndBoundary() {
+        for season in [1998, 2015, 2025, 2026] {
+            let inRange = ScoresViewModel.usesHistoricalSource(
+                for: day("2020-06-01"), calendar: Self.utc, lastSeason: season)
+            #expect(inRange == (2020 <= season))
+        }
+    }
+}

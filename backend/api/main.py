@@ -2213,6 +2213,19 @@ def historical_boxscore(game_pk: int):
     # EVERY row, not any: a game whose row set has drifted could come back part
     # filled, and claiming "lineup" then would drop the disclaimer over the
     # batters who still have none. The test errs toward keeping it.
+    #
+    # ⚠️ THIS IS WHY 151 GAMES STILL SHOW THE NOTE, and the count is not a
+    # mystery. 152 rows across the whole corpus carry no slot: one per game in
+    # 151 games, EVERY one of them a single plate appearance (AB 1, PA 1), and
+    # every one in a game where the other rows DID get slots. They are rows our
+    # table holds that Retrosheet's daybyday does not emit for that game — the
+    # same disagreement that leaves Al Orth batting in a 1907 game the source
+    # says he did not appear in. 152 of 4.95M rows is 0.003%, they are spread
+    # thinly across seasons (never more than eight in a year), and the refresh
+    # cannot fix them because there is nothing on the source side to match.
+    # The effect is that those 151 games keep the alphabetical disclaimer even
+    # though the order is known for everyone else in them, which is the
+    # conservative direction and the reason the test is `all` rather than `any`.
     has_lineup = bool(bat) and all(getattr(r, "slot", None) is not None for r in bat)
     return {"gameId": game_id,
             "batterOrdering": "lineup" if has_lineup else "alphabetical",
@@ -2233,6 +2246,78 @@ def historical_boxscore(game_pk: int):
 # 2000, and they rendered as bare codes on the historical path long before the
 # boundary moved. Inventing a mapping for them would be guessing at which club
 # the table means.
+_COVERAGE_FALLBACK_SEASON = 2025
+
+
+@app.get("/meta/coverage")
+def meta_coverage():
+    """How far our own record runs — the boundary between the seasons we serve
+    from Retrosheet and the season the provider serves.
+
+    ⚠️ THE CONCEPT IS NOT "LAST YEAR". It is "the newest season Retrosheet has
+    published and we have finished ingesting", which is a different thing and
+    the reason this is computed rather than hardcoded. A constant encodes the
+    first as a proxy for the second, and the proxy fails on the first rollover:
+    once Retrosheet publishes 2026 and we load it, a client pinned to 2025
+    keeps reading 2026 from the provider forever, silently, on the worse
+    source. Every subsequent season inherits the same fault.
+
+    TWO GATES, both required, because a MAX alone would flip the boundary the
+    moment a January ingest wrote its first game of a new season and route the
+    rest of that season to tables that do not yet hold it:
+
+      1. THE SEASON MUST BE OVER. Retrosheet publishes a season after it ends,
+         so a season at or after the current calendar year is never eligible
+         however many games have landed.
+      2. IT MUST BE AS BIG AS ITS NEIGHBOURS — at least 90% of the median game
+         count of the three seasons before it. A half-loaded year fails this;
+         a finished one passes with room to spare (recent seasons hold ~2,430
+         and the floor lands near 2,187).
+
+    THE 90% IS DELIBERATELY GENEROUS IN ONE DIRECTION. A genuinely SHORTENED
+    season — 1981 and 1994 were struck, 2020 was cut to 898 games — would fail
+    the second gate and hold the boundary back a year. That errs toward the
+    provider, which is the safe direction: the provider covers recent seasons
+    well, so the cost is one season rendered from slightly thinner data until
+    someone notices, against the alternative of promoting a half-ingested year
+    and serving box scores from tables with holes in them.
+    """
+    if not connection.db_available():
+        return {"retrosheet_last_season": _COVERAGE_FALLBACK_SEASON,
+                "source": "fallback", "reason": "no database"}
+    try:
+        with connection.get_session() as db:
+            rows = db.execute(_sa_text(
+                "SELECT season, COUNT(*) AS games FROM retro_game_info "
+                "GROUP BY season ORDER BY season"
+            )).fetchall()
+    except Exception as exc:  # noqa: BLE001
+        return {"retrosheet_last_season": _COVERAGE_FALLBACK_SEASON,
+                "source": "fallback", "reason": str(exc)[:120]}
+
+    counts = {int(r[0]): int(r[1]) for r in rows if r[0] is not None}
+    if not counts:
+        return {"retrosheet_last_season": _COVERAGE_FALLBACK_SEASON,
+                "source": "fallback", "reason": "retro_game_info is empty"}
+
+    this_year = datetime.date.today().year
+    seasons = sorted(s for s in counts if s < this_year)
+    for season in reversed(seasons):
+        prior = [counts[s] for s in seasons if s < season][-3:]
+        if not prior:
+            continue
+        prior.sort()
+        median = prior[len(prior) // 2]
+        floor = int(median * 0.9)
+        if counts[season] >= floor:
+            return {"retrosheet_last_season": season, "source": "retro_game_info",
+                    "games": counts[season], "floor": floor,
+                    "checked_against": prior}
+    # Nothing cleared the floor — say so rather than guessing a boundary.
+    return {"retrosheet_last_season": _COVERAGE_FALLBACK_SEASON,
+            "source": "fallback", "reason": "no season cleared the completeness floor"}
+
+
 @app.get("/games/by-date")
 def games_by_date(
     date: datetime.date = Query(..., description="yyyy-mm-dd"),

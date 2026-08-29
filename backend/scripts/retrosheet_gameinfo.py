@@ -9,6 +9,11 @@ daybyday, which is why the box score has been drawing no linescore at all.
 Runtime download on Railway, same as the gamelog backfill: nothing committed
 but the park-code lookup, which is small and static.
 
+⚠️ RUN THIS ONCE A YEAR — see docs/annual_retrosheet_runbook.md. The boundary
+between our record and the provider derives itself from this table, so the
+ingest is the only step left that a person has to remember, which makes
+forgetting it the only remaining way the boundary silently stops advancing.
+
 THE POSITIONAL READ IS THE RISK. 161 unnamed fields mean an off-by-one silently
 returns passed balls where errors were wanted, and nothing complains. The guard
 is arithmetic, not care: every parsed linescore must sum to the final score in

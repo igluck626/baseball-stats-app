@@ -79,7 +79,7 @@ struct Game: Codable, Identifiable, Hashable {
     /// The boundary is the SEASON, not "is it finished": Retrosheet publishes
     /// complete through 2025 and our rows stop dead at 2025-09-28, so there is
     /// no lag window and no in-progress edge to handle.
-    var usesRetrosheetBoxScore: Bool { (seasonYear ?? 0) <= Self.retrosheetLastSeason }
+    var usesRetrosheetBoxScore: Bool { (seasonYear ?? 0) <= RetrosheetCoverage.lastSeason }
 
     /// Whether the PROVIDER has play-by-play for this game. Independent of
     /// where the box score comes from: BDL's plays reach back to 2002, so a
@@ -90,7 +90,13 @@ struct Game: Codable, Identifiable, Hashable {
     }
 
     /// Last season Retrosheet publishes, and the last our tables hold.
-    static let retrosheetLastSeason = 2025
+    ///
+    /// ⚠️ NO LONGER THE SOURCE OF TRUTH — see `RetrosheetCoverage`, which reads
+    /// it from the service so it moves on its own when a season is published
+    /// and ingested. This remains only as the value that ships in the binary
+    /// and the value a failed request falls back to, and the two must stay in
+    /// step, so it forwards rather than holding its own copy.
+    static var retrosheetLastSeason: Int { RetrosheetCoverage.fallbackLastSeason }
     /// First season BDL serves play-by-play. Measured, not assumed: 2000 and
     /// 2001 return no games at all, 2002 onward return a full play list.
     static let bdlFirstPlaysSeason = 2002

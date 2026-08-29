@@ -111,6 +111,17 @@ final class APIClient {
         return response.articles
     }
 
+    /// `GET /meta/coverage`. The newest season our own tables serve, so the
+    /// client does not have to carry that boundary as a constant someone must
+    /// remember to move. Returns nil on any failure; the caller keeps its
+    /// fallback.
+    func getRetrosheetLastSeason() async throws -> Int? {
+        struct Coverage: Codable { let retrosheet_last_season: Int? }
+        let url = try buildURL(path: "/meta/coverage")
+        let payload: Coverage? = try await getOptional(url)
+        return payload?.retrosheet_last_season
+    }
+
     /// `GET /players/by-mlb-id/{id}`. Direct lookup by MLB Stats API id.
     /// Returns nil on 404 (no player by that id in our DB). Used by the
     /// Scores tab when the user taps a player in a box score — the
