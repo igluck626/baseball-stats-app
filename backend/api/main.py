@@ -1961,6 +1961,79 @@ ORDER BY g."IP" DESC NULLS LAST, name
 """
 
 
+# Retrosheet game-id code -> the abbreviation to SHOW.
+#
+# ⚠️ THIS IS NOT THE JOIN MAP, AND MUST NOT BE MERGED WITH IT. iOS carries
+# `BDLRetroMatch.retroToBDL`, which maps a Retrosheet code to the abbreviation
+# BDL files that club under so two slates can be paired. That map is correct
+# for JOINING and wrong for DISPLAY, because BDL applies a club's CURRENT
+# identity to every season it serves: it calls the 1975 Montreal Expos
+# "Washington Nationals". Pairing on that is right; printing it is not.
+#
+# MON IS THE CASE THAT PROVES THEY DIFFER. Join: MON -> WSH. Display: MON
+# stays MON, because the Expos played in Montreal and no reader wants a 1975
+# game labelled for a club that did not exist for another thirty years.
+#
+# ERA-AWARENESS IS FREE, because Retrosheet's codes already encode it. Every
+# relocation gets a new code with NO overlap — BRO 1898-1957 then LAN 1958-,
+# NY1 then SFN, MLN then ATL, WS1 then MIN, MON then WAS, FLO then MIA, CAL
+# then ANA. So a flat map cannot mislabel an era: LAN -> LAD can never fire on
+# a Brooklyn game because Brooklyn games are BRO.
+#
+# Codes absent from this map are shown as Retrosheet writes them. That covers
+# the eighteen that already agree with the modern abbreviation (ARI, ATL, BAL,
+# BOS, CIN, CLE, COL, DET, HOU, MIA, MIL, MIN, OAK, PHI, PIT, SEA, TEX, TOR)
+# and every club for which no conventional abbreviation exists — the 1914-15
+# Federal League among them. Nobody writes the Buffalo Blues a different way,
+# so BUF stays BUF.
+_RETRO_DISPLAY_ABBR = {
+    # --- clubs still playing, where the modern abbreviation is the one a
+    # --- reader knows. Safe for every season the code covers, per the
+    # --- no-overlap property above.
+    "ANA": "LAA",   # Angels, 1997-       (CAL before it, and it stays CAL)
+    "CHA": "CHW",   # White Sox
+    "CHN": "CHC",   # Cubs
+    "KCA": "KC",    # Royals, 1969-       (KC1 is the Athletics and stays KC1)
+    "LAN": "LAD",   # Dodgers, 1958-      (BRO before it, and it stays BRO)
+    "NYA": "NYY",   # Yankees
+    "NYN": "NYM",   # Mets
+    "SDN": "SD",    # Padres
+    "SFN": "SF",    # Giants, 1958-       (NY1 before it -> NYG below)
+    "SLN": "STL",   # Cardinals
+    "TBA": "TB",    # Rays
+    "WAS": "WSH",   # Nationals, 2005-
+    # --- defunct or pre-relocation clubs with a genuinely conventional
+    # --- abbreviation. The rest keep their Retrosheet code.
+    "NY1": "NYG",   # New York Giants, 1883-1957
+    "SLA": "SLB",   # St. Louis Browns, 1902-1953
+    "CL4": "CLV",   # Cleveland Spiders, -1899
+    "LS3": "LOU",   # Louisville Colonels, -1899
+    # ⚠️ BOTH WASHINGTON SENATORS CLUBS SHARE WSH, DELIBERATELY. They are
+    # different franchises — WS1 became the Twins, WS2 became the Rangers —
+    # and neither is the modern Nationals. Sharing an abbreviation is safe
+    # because NO SEASON CONTAINS MORE THAN ONE Washington code (checked across
+    # the whole corpus: WS1 ends 1960, WS2 runs 1961-1971, WAS starts 2005),
+    # so the three can never appear on one screen, and the club's full name is
+    # shown beside the abbreviation in the picker and the section header.
+    "WS1": "WSH",   # Washington Senators, 1901-1960 -> Twins
+    "WS2": "WSH",   # Washington Senators, 1961-1971 -> Rangers
+    # ⚠️ FLO IS FLA, NOT MIA — a deviation, see the report. BDL's join map says
+    # MIA because BDL renames history; for display that is the MON mistake
+    # wearing a different hat. The club was the Florida Marlins and was
+    # abbreviated FLA throughout. MIA remains correct for 2012 onward, where
+    # Retrosheet uses the MIA code anyway.
+    "FLO": "FLA",   # Florida Marlins, 1993-2011
+    # DELIBERATELY ABSENT: MON (Expos played in Montreal) and ATH (the 2025-26
+    # club is named "Athletics" with no city in our own team_seasons, so OAK
+    # would place a Sacramento season in Oakland).
+}
+
+
+def _display_abbr(code: str) -> str:
+    """The abbreviation to print for a Retrosheet club code."""
+    return _RETRO_DISPLAY_ABBR.get((code or "").upper(), code)
+
+
 _RETRO_TEAM_ID_ALIASES = {"ANA": "LAA"}
 
 
@@ -2128,7 +2201,12 @@ def historical_boxscore(game_pk: int):
                              "era": (f"{er*27/outs:.2f}" if outs else None)}}
 
     def blank_team(code):
-        return {"team": {"id": 0, "name": names.get(code) or code, "abbreviation": code},
+        # ⚠️ THE SAME MAPPING MUST BE APPLIED IN `games_by_date`. iOS resolves a
+        # team's colour by comparing THIS abbreviation against the one on the
+        # slate's `Game`; map one endpoint and not the other and the sides stop
+        # matching, so every historical game silently loses its team colour.
+        return {"team": {"id": 0, "name": names.get(code) or code,
+                         "abbreviation": _display_abbr(code)},
                 "players": {}, "batters": [], "pitchers": []}
     teams = {"home": blank_team(home_code), "away": blank_team(away_code)}
 
@@ -2381,7 +2459,9 @@ def games_by_date(
                     # a placeholder the card never uses (logos went in 2026-08).
                     "id": 0,
                     "name": names.get(code) or code,
-                    "abbreviation": code,
+                    # Mapped here AND in `historical_boxscore.blank_team` — the
+                    # colour resolution compares the two, so they move together.
+                    "abbreviation": _display_abbr(code),
                 },
                 "score": score,
                 "leagueRecord": None,
