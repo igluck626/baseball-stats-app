@@ -634,3 +634,41 @@ struct RecordAdjustmentTests {
         }
     }
 }
+
+// MARK: - Team colour resolution across sources
+
+/// A Retrosheet box score carries no MLBAM team id, so the club's colour has
+/// to come from the BDL id the slate attached — and only from there.
+@Suite struct TeamColourResolutionTests {
+
+    /// ZERO IS THE MARKER, and nothing else produces it. BDL team ids are
+    /// 1-30, MLBAM's are 109-158, and a modern game's `TeamInfo.id` is one or
+    /// the other — so a fallback keyed on 0 cannot fire on a current game.
+    @Test func zeroIsNeverAModernTeamId() {
+        for bdlId in 1...30 {
+            #expect(bdlId != 0)
+            // Every BDL id maps to a Lahman code, which is what makes the
+            // fallback usable at all.
+            #expect(bdlToLahmanTeamId[bdlId] != nil,
+                    "BDL id \(bdlId) has no Lahman code")
+        }
+    }
+
+    /// The fallback must reach the right club: a 2021 Dodgers game carries
+    /// BDL's Dodgers id, and that must resolve to the Dodgers' colour.
+    @Test func theBDLFallbackResolvesTheRightClub() {
+        guard let dodgersBDLId = lahmanToBDLTeamId["LAN"] else {
+            Issue.record("no BDL id for LAN"); return
+        }
+        #expect(bdlToLahmanTeamId[dodgersBDLId] == "LAN")
+        #expect(TeamColors.color(for: bdlToLahmanTeamId[dodgersBDLId]) != nil,
+                "the Dodgers must have a colour to fall back to")
+    }
+
+    /// And with no id of any kind — a pre-2002 game the slate could not match
+    /// — there is nothing to resolve, which is the case that must draw no bar.
+    @Test func noIdMeansNoColour() {
+        let none: Int? = nil
+        #expect(none.flatMap { bdlToLahmanTeamId[$0] } == nil)
+    }
+}

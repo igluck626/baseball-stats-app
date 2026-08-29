@@ -987,6 +987,28 @@ struct BoxScoreView: View {
         return play?.playEvents?.compactMap(\.details?.description).last
     }
 
+    /// The club whose colour to draw, for a box-score team.
+    ///
+    /// ⚠️ ZERO IS A MARKER, NOT A MISSING NUMBER. `TeamInfo.id` carries the
+    /// MLBAM team id, and our Retrosheet endpoints set it to 0 because a
+    /// Retrosheet club code does not resolve to one. Nothing else in the app
+    /// ever produces 0: BDL team ids run 1-30 and MLBAM's run 109-158, and a
+    /// modern game's id is one or the other (`BDLTeam.mlbStatsApiTeamId` is
+    /// `mlbTeamId(forBDLId:) ?? id`). So testing for 0 cannot misfire on a
+    /// current-season game.
+    ///
+    /// For a Retrosheet game the BDL team id is the second chance: the slate
+    /// attaches it when it matches our game to the provider's, which happens
+    /// from 2002. Before that there is no id of any kind, no colour can be
+    /// known, and this returns nil — see the call sites, which then draw no
+    /// bar at all rather than a grey one.
+    private func lahmanCode(for team: TeamInfo, bdlTeamId: Int?) -> String? {
+        if team.id != 0, let code = MLBTeamCatalog.lahmanCode(forMLBAMId: team.id) {
+            return code
+        }
+        return bdlTeamId.flatMap { bdlToLahmanTeamId[$0] }
+    }
+
     private func teamHeader(side: GameTeam, score: Int?, bdlTeamId: Int?) -> some View {
         // Two stacked sub-lines under the score:
         //   line 1: "(21-27)"  — current-season W-L
@@ -1008,7 +1030,14 @@ struct BoxScoreView: View {
             // abbreviation's line and leads it, as everywhere else. 16pt to
             // match .subheadline.bold rather than the 18 used against larger text.
             HStack(spacing: 5) {
-                TeamColorSwatch(team: side.team, height: 16)
+                // ABSENT, NOT GREY. A club we hold no colour for used to draw
+                // the same grey bar the app shows when a modern club fails to
+                // resolve, so a 1912 card read as "the colours didn't load"
+                // rather than "there is no colour for this club". Same
+                // principle as the linescore that declines to draw itself.
+                if let code = lahmanCode(for: side.team, bdlTeamId: bdlTeamId) {
+                    TeamColorSwatch(code: code, height: 16)
+                }
                 Text(side.team.abbreviation ?? String(side.team.name.prefix(3)).uppercased())
                     .font(.subheadline.weight(.bold))
             }
@@ -1210,7 +1239,12 @@ struct BoxScoreView: View {
         return VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 // Leads the club's full name, so 18pt against .headline.
-                TeamColorSwatch(team: team.team)
+                // Omitted rather than greyed, for the reason in `teamHeader`.
+                if let code = lahmanCode(
+                    for: team.team,
+                    bdlTeamId: side == .away ? vm.game.bdlAwayTeamId : vm.game.bdlHomeTeamId) {
+                    TeamColorSwatch(code: code)
+                }
                 Text(team.team.name).font(.headline)
             }
             battingTable(team: team)
