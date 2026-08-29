@@ -2315,10 +2315,21 @@ def historical_boxscore(game_pk: int):
     # ALL, not ANY, for the same reason `batterOrdering` uses `all`: a side
     # ordered by seq for the pitchers that have one and by innings for the rest
     # is not appearance order, but it looks like it.
+    # ⚠️ AND THE NUMBERS MUST BE DISTINCT, which is not the same as present.
+    # `seq` counts appearances WITHIN A BATTING SLOT, not within the pitching
+    # staff. A pitcher who is in the batting order — a double switch, or a
+    # position player mopping up — carries his slot's sequence, which collides
+    # with the slot-0 pitchers'. Houston at Anaheim on 2023-07-15 has Maton at
+    # slot 9 seq 3 and Abreu at slot 0 seq 3: both "third", neither comparable.
+    # Sorting on that puts two men in an order the data never expressed, which
+    # is the failure this whole rule exists to avoid. 129 of 4,860 team-sides
+    # in 2023 are like this, and they take the innings fallback with everyone
+    # else on their side.
     for ha, side_key in (("H", "home"), ("A", "away")):
         seqs = pitcher_seq.get(ha, {})
         ids = teams[side_key]["pitchers"]
-        if ids and all(seqs.get(pid) is not None for pid in ids):
+        vals = [seqs.get(pid) for pid in ids]
+        if ids and all(v is not None for v in vals) and len(set(vals)) == len(vals):
             teams[side_key]["pitchers"] = sorted(ids, key=lambda pid: seqs[pid])
 
     # Per-game, not a constant: the refresh runs year by year, so until it has
