@@ -206,7 +206,8 @@ def _parse_date(s: str):
 def _ingest_year(year: int, bridge: dict, state, lock,
                  bat_model=BattingGameLog, pit_model=PitchingGameLog,
                  appearance_gate: bool = False,
-                 refresh_lineup: bool = False) -> dict:
+                 refresh_lineup: bool = False,
+                 refresh_pitching: bool = False) -> dict:
     playing = _download_csv(_PLAYING_URL.format(year=year))
     if not playing:
         log.warning("year %d: playing file missing/unreachable — skipped", year)
@@ -292,36 +293,55 @@ def _ingest_year(year: int, bridge: dict, state, lock,
                 "SO": _i(r.get("P_SO")), "HR": _i(r.get("P_HR")), "HBP": _i(r.get("P_HP")),
                 "WP": _i(r.get("P_WP")),
                 "pitches": _io(r.get("P_PITCH")), "strikes": _io(r.get("P_STRIKE")),
+                # Stored on the PITCHING row as well as the batting one. `seq`
+                # orders a staff by appearance, and the batting side cannot be
+                # relied on for it: from 2022 the appearance gate above drops a
+                # pitcher's empty batting row, so reading `seq` from there
+                # collapses from 100% coverage in 2021 to 0.57% in 2022.
+                "slot": _i(r.get("slot")), "seq": _i(r.get("seq")),
             })
 
-    # A lineup refresh writes ONLY the batting side, and only through the
-    # narrow upsert: pitching_gamelogs gained no columns, so re-running it
-    # would be several million rows of no-op.
-    bw = _write(bat_model, bat_rows, refresh_lineup=refresh_lineup)
-    pw = 0 if refresh_lineup else _write(pit_model, pit_rows)
+    # `refresh_lineup` fills slot/seq/pos on the BATTING side; `refresh_pitching`
+    # fills slot/seq on the PITCHING side. Separate flags because they were
+    # separate runs — the batting backfill deliberately skipped pitching when
+    # pitching had no columns to fill, and reusing that flag now would make one
+    # switch mean two things.
+    bw = (_write(bat_model, bat_rows, refresh_lineup=refresh_lineup)
+          if not refresh_pitching else 0)
+    if refresh_pitching:
+        pw = _write(pit_model, pit_rows, refresh_lineup=True,
+                    columns=crud._PITCHING_LINEUP_COLS)
+    else:
+        pw = 0 if refresh_lineup else _write(pit_model, pit_rows)
     _set_state(state, lock, current_year=year)
     log.info("year %d: batting %d, pitching %d, unmapped %d", year, bw, pw, len(unmapped))
     return {"year": year, "status": "ok", "batting": bw, "pitching": pw, "unmapped": len(unmapped)}
 
 
-def _write(model, rows: list[dict], refresh_lineup: bool = False) -> int:
+def _write(model, rows: list[dict], refresh_lineup: bool = False,
+           columns: tuple = crud._LINEUP_COLS) -> int:
     # THE DEFAULT PATH IS DO NOTHING, AND THAT IS WHY A RE-RUN NEEDS THE FLAG.
     # Every historical row already exists, so re-ingesting through
     # `bulk_insert_gamelogs` writes exactly zero and reports success. The
     # refresh path updates slot / seq / pos and nothing else, so the
     # `/admin/repair-attributed` corrections and the 2000+ provider values
     # survive untouched.
-    fn = crud.bulk_upsert_gamelog_lineup if refresh_lineup else crud.bulk_insert_gamelogs
     written = 0
     for i in range(0, len(rows), _BATCH):
+        chunk = rows[i:i + _BATCH]
         with connection.get_session() as db:
-            written += fn(db, model, rows[i:i + _BATCH])
+            if refresh_lineup:
+                written += crud.bulk_upsert_gamelog_lineup(db, model, chunk,
+                                                           columns=columns)
+            else:
+                written += crud.bulk_insert_gamelogs(db, model, chunk)
     return written
 
 
 def run(year_from: int = 1898, year_to: int = 1999, state=None, lock=None,
         bat_model=BattingGameLog, pit_model=PitchingGameLog,
-        appearance_gate: bool = False, refresh_lineup: bool = False) -> dict:
+        appearance_gate: bool = False, refresh_lineup: bool = False,
+        refresh_pitching: bool = False) -> dict:
     connection.init_db()
     log.info("=" * 52)
     log.info("Retrosheet gamelog backfill — %d..%d (target=%s, appearance_gate=%s, "
@@ -339,7 +359,8 @@ def run(year_from: int = 1898, year_to: int = 1999, state=None, lock=None,
             res = _ingest_year(year, bridge, state, lock,
                                bat_model=bat_model, pit_model=pit_model,
                                appearance_gate=appearance_gate,
-                               refresh_lineup=refresh_lineup)
+                               refresh_lineup=refresh_lineup,
+                               refresh_pitching=refresh_pitching)
         except Exception as exc:  # noqa: BLE001 - one bad year shouldn't kill the run
             log.exception("year %d FAILED: %s", year, exc)
             res = {"year": year, "status": "error", "error": str(exc),

@@ -1629,13 +1629,17 @@ private struct FinalGameCard: View {
             // the decision being rendered, the same arithmetic
             // `BoxScoreView.pitcherDecisionTag` does on its own fallback.
             if game.usesRetrosheetBoxScore {
+                // NO `+ 1`. Our own service now sums the season THROUGH this
+                // game, so the decision being rendered is already in the
+                // figure; adding one printed the winner a game ahead of
+                // himself. The modern branch below still bumps, because the
+                // contextual endpoint it reads is genuinely pre-game.
                 guard let s = pitcher.seasonStats?.pitching,
                       let w = s.wins, let l = s.losses else { return nil }
                 switch tag {
-                case "W":  return "(\(w + 1)-\(l))"
-                case "L":  return "(\(w)-\(l + 1))"
-                case "SV": return s.saves.map { "(\($0 + 1))" }
-                default:   return nil
+                case "W", "L": return "(\(w)-\(l))"
+                case "SV":     return s.saves.map { "(\($0))" }
+                default:       return nil
                 }
             }
             guard let rec = pitcherRecordsByBDL[pitcher.person.id] else {
@@ -1728,12 +1732,11 @@ private struct FinalGameCard: View {
                     out.append("\(prefix) (\(stats.homeRuns + bump))")
                 } else if game.usesRetrosheetBoxScore {
                     // Never-lands case, so a dash here would be permanent. The
-                    // season line our own service ships is pre-game, so this
-                    // game's own homers are added; when the player has no
-                    // earlier game that year there is no line at all and the
-                    // name stands alone rather than claiming a total.
-                    if let prior = p.seasonStats?.batting?.homeRuns {
-                        out.append("\(prefix) (\(prior + hr))")
+                    // season line our own service ships now runs THROUGH this
+                    // game, so it already counts tonight's homers — adding
+                    // them again would say 22 for a man who has hit 21.
+                    if let total = p.seasonStats?.batting?.homeRuns {
+                        out.append("\(prefix) (\(total))")
                     } else {
                         out.append(prefix)
                     }

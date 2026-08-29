@@ -153,7 +153,8 @@ _retro_gl_lock = threading.Lock()
 
 def _run_retrosheet_gamelogs(year_from: int, year_to: int,
                              refresh_lineup: bool = False,
-                             appearance_gate: bool = False) -> None:
+                             appearance_gate: bool = False,
+                             refresh_pitching: bool = False) -> None:
     """Background thread: download Retrosheet daybyday per year and write
     historical gamelog rows. Clears the cache at the end like the season
     ingest / nightly so post-backfill reads aren't stale.
@@ -171,7 +172,8 @@ def _run_retrosheet_gamelogs(year_from: int, year_to: int,
         retrosheet_gamelogs.run(year_from=year_from, year_to=year_to,
                                 state=_retro_gl_state, lock=_retro_gl_lock,
                                 refresh_lineup=refresh_lineup,
-                                appearance_gate=appearance_gate)
+                                appearance_gate=appearance_gate,
+                                refresh_pitching=refresh_pitching)
     except Exception as exc:
         with _retro_gl_lock:
             _retro_gl_state["error"] = str(exc)
@@ -1901,12 +1903,22 @@ ORDER BY NULLIF(b.slot, 0) NULLS LAST, b.seq NULLS LAST, p.name
 # pre-game cumulative the modern path gets from BDL's season_stats at box-score
 # open, and what the AVG / OPS / ERA columns and the decision record mean.
 #
-# The cutoff is NOT simply `game_date <`. 16,214 of the 215,213 historical games
-# are the SECOND game of a doubleheader, and a plain date cutoff would drop the
-# player's own earlier game that same afternoon — his line in the nightcap would
-# silently omit the opener. `game_id <` breaks the tie: within one doubleheader
-# both halves share a home code and date and differ only in the trailing game
-# number, so the ids sort in playing order.
+# ⚠️ THE LINE INCLUDES THIS GAME. It did not at first — it summed to the moment
+# BEFORE the game, on the reasoning that a box-score line should show what a
+# player carried to the plate. That was the wrong convention twice over:
+# Baseball-Reference's box scores show the season line THROUGH the game, and
+# our own modern path already does the same (a 2026 card shows .274/.808, the
+# post-game figure, not the .270/.796 pre-game one). So a reader crossing the
+# 2025/2026 boundary saw the same column computed two different ways.
+#
+# It was also inconsistent with itself: the decision line rendered a POST-game
+# record beside a PRE-game ERA, because the record got a manual `+ 1` for the
+# game's own decision and the ERA got nothing. Kershaw on 2023-08-29 showed
+# 12-4 (right) next to 2.52 (his ERA before the start; it was 2.48 after).
+#
+# `game_id <=` rather than `game_date <=` for the doubleheader case: both
+# halves share a date, so the id's trailing game number is what puts the opener
+# before the nightcap and includes the nightcap in its own line.
 _BOX_BAT_SEASON_SQL = """
 SELECT player_id,
        SUM(COALESCE("AB",0))      AS ab,
@@ -1919,7 +1931,7 @@ SELECT player_id,
        SUM(COALESCE("HR",0))      AS hr
 FROM batting_gamelogs
 WHERE season = :yr AND player_id = ANY(:pids)
-  AND (game_date < :gdate OR (game_date = :gdate AND game_id < :gid))
+  AND (game_date < :gdate OR (game_date = :gdate AND game_id <= :gid))
 GROUP BY player_id
 """
 
@@ -1936,7 +1948,7 @@ SELECT player_id,
        COUNT(*) FILTER (WHERE result = 'S') AS sv
 FROM pitching_gamelogs
 WHERE season = :yr AND player_id = ANY(:pids)
-  AND (game_date < :gdate OR (game_date = :gdate AND game_id < :gid))
+  AND (game_date < :gdate OR (game_date = :gdate AND game_id <= :gid))
 GROUP BY player_id
 """
 
@@ -1952,7 +1964,8 @@ GROUP BY player_id
 # Retrosheet wrote it down.
 _BOX_PIT_SQL = """
 SELECT g.player_id, g.home_away, COALESCE(p.name, pl.name) AS name,
-       g."IP", g."H", g."R", g."ER", g."BB", g."SO", g."HR", g.pitches, g.result
+       g."IP", g."H", g."R", g."ER", g."BB", g."SO", g."HR", g.pitches, g.result,
+       g.seq
 FROM pitching_gamelogs g
 LEFT JOIN pitchers p ON p.player_id = g.player_id
 LEFT JOIN players  pl ON pl.player_id = g.player_id
@@ -2093,9 +2106,11 @@ def historical_boxscore(game_pk: int):
         ingest, not about the source. Where the columns are still NULL the
         batters come back alphabetically and `batterOrdering` says so, per
         game, so the iOS disclaimer appears exactly where it is still true.
-        Pitchers remain ordered by innings descending: `seq` counts appearances
-        within a BATTING slot and says nothing about who took the mound first,
-        whereas innings reliably put the starter at the top.
+        PITCHERS ARE ORDERED BY APPEARANCE where the whole side carries the
+        signal, and by innings descending where it does not — never a mix
+        within one side. `seq` is the appearance order, and it is now stored on
+        the pitching row rather than read off the batting one, because from
+        2022 the universal DH means a pitcher usually has no batting row at all.
 
     DECISIONS AND SEASON-TO-DATE ARE PRESENT. `pitching_gamelogs.result` holds
     the PITCHER'S decision — W / L / S / ND, from Retrosheet's own P_W / P_L /
@@ -2159,9 +2174,13 @@ def historical_boxscore(game_pk: int):
             {"yr": year, "gdate": gdate, "gid": game_id, "pids": pit_ids}).fetchall()} if pit_ids else {}
 
     def bat_season_stats(pid):
-        """Rate stats entering the game. A player in his first game of the year
-        has no prior rows at all, so this is None rather than a fabricated
-        .000 — the columns then read "—", which is true."""
+        """Season rate stats THROUGH this game — see the note on the SQL.
+
+        A player whose first game of the year this is now has exactly one game
+        in the sum rather than none, so his line reads that game's own figures
+        instead of a dash. That is the same thing every other box score shows
+        for a debut and is why the `ab == 0` guard below now fires only for a
+        man who reached base without a time at bat."""
         r = bat_season.get(pid)
         if r is None:
             return None
@@ -2180,15 +2199,13 @@ def historical_boxscore(game_pk: int):
                 "pitching": None}
 
     def pit_season_stats(pid):
-        """Season W-L-SV and ERA ENTERING the game — deliberately NOT bumped by
-        this game's own decision.
+        """Season W-L-SV and ERA THROUGH this game, this game included.
 
-        `BoxScoreView.pitcherDecisionTag`'s season fallback adds the `+1`
-        itself (`let bump = 1`), because a pre-game season line is exactly what
-        it expects there. Bumping here too would print the winner a game ahead
-        of himself. The pre-game figure is also the honest one for the ERA
-        column, which wants the mark he carried to the mound.
-        """
+        ⚠️ THE CLIENT MUST NOT ADD ONE. Two call sites used to — the decision
+        line on the card and `pitcherDecisionTag`'s season fallback — because
+        this returned a pre-game figure. Both bumps are gone; leaving either
+        would print the winner a game ahead of himself, 13-4 where the record
+        is 12-4."""
         r = pit_season.get(pid)
         if r is None:
             return {"batting": None,
@@ -2244,6 +2261,7 @@ def historical_boxscore(game_pk: int):
         }
         side["batters"].append(r.player_id)
 
+    pitcher_seq: dict = {}
     for r in pit:
         side = teams[side_of(r.home_away)]
         key = f"ID{r.player_id}"
@@ -2281,6 +2299,27 @@ def historical_boxscore(game_pk: int):
             entry["seasonStats"] = {"batting": prior.get("batting"),
                                     "pitching": season["pitching"]}
         side["pitchers"].append(r.player_id)
+        pitcher_seq.setdefault(r.home_away, {})[r.player_id] = getattr(r, "seq", None)
+
+    # ⚠️ APPEARANCE ORDER WHEN THE WHOLE SIDE HAS IT, IP-DESCENDING OTHERWISE,
+    # AND NEVER A MIX. Baseball-Reference and MLB.com list a staff in the order
+    # it took the mound — starter, then each reliever as he entered — and `seq`
+    # is exactly that. Innings-descending gets the starter right and then puts
+    # five relievers who each threw an inning in whatever order the rows
+    # arrived.
+    #
+    # PER SIDE, not per game: one club's staff being fully covered says nothing
+    # about the other's, and ordering one correctly while the other stays
+    # arbitrary would be indistinguishable on screen from ordering both.
+    #
+    # ALL, not ANY, for the same reason `batterOrdering` uses `all`: a side
+    # ordered by seq for the pitchers that have one and by innings for the rest
+    # is not appearance order, but it looks like it.
+    for ha, side_key in (("H", "home"), ("A", "away")):
+        seqs = pitcher_seq.get(ha, {})
+        ids = teams[side_key]["pitchers"]
+        if ids and all(seqs.get(pid) is not None for pid in ids):
+            teams[side_key]["pitchers"] = sorted(ids, key=lambda pid: seqs[pid])
 
     # Per-game, not a constant: the refresh runs year by year, so until it has
     # covered everything some games have an order and some do not. Saying
@@ -5853,6 +5892,7 @@ def start_ingest_retrosheet_gamelogs(
     year_to: int = Query(default=1999),
     refresh_lineup: bool = Query(default=False),
     appearance_gate: bool = Query(default=False),
+    refresh_pitching: bool = Query(default=False),
 ):
     """Backfill historical game logs from Retrosheet daybyday (runtime download).
     Defaults to the full 1898-1999 range; narrow with ?year_from=&year_to= for
@@ -5875,11 +5915,13 @@ def start_ingest_retrosheet_gamelogs(
 
     t = threading.Thread(
         target=_run_retrosheet_gamelogs,
-        args=(year_from, year_to, refresh_lineup, appearance_gate), daemon=True,
+        args=(year_from, year_to, refresh_lineup, appearance_gate,
+              refresh_pitching), daemon=True,
     )
     t.start()
     return {"status": "started", "year_from": year_from, "year_to": year_to,
-            "refresh_lineup": refresh_lineup, "appearance_gate": appearance_gate}
+            "refresh_lineup": refresh_lineup, "appearance_gate": appearance_gate,
+            "refresh_pitching": refresh_pitching}
 
 
 _gameinfo_state: dict = {

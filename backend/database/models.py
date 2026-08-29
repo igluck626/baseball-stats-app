@@ -516,6 +516,20 @@ class PitchingGameLog(Base):
     WP          = Column(Integer)
     pitches     = Column(Integer)
     strikes     = Column(Integer)
+    # Lineup slot and appearance sequence, from Retrosheet daybyday — the same
+    # pair `BattingGameLog` carries, stored HERE TOO because that is the only
+    # place a pitcher is guaranteed a row.
+    #
+    # ⚠️ THIS IS NOT DUPLICATION FOR ITS OWN SAKE. `seq` is what orders a
+    # pitching staff by appearance — starter, then each reliever as he entered
+    # — and reading it off the batting side works only while the pitcher has a
+    # batting row. From 2022 the universal DH means he usually does not: the
+    # ingest's appearance gate drops empty pitcher batting rows for 2022+, and
+    # coverage falls off a cliff at exactly that year, from 100% in 2021 to
+    # 0.57% in 2022. Pre-2000 it fails differently, as relief pitching grew and
+    # the outcome gate dropped relievers who never came to the plate.
+    slot        = Column(Integer, nullable=True)
+    seq         = Column(Integer, nullable=True)
 
 
 # ---------------------------------------------------------------------------
@@ -664,6 +678,20 @@ class StagingPitchingGameLog(Base):
     WP          = Column(Integer)
     pitches     = Column(Integer)
     strikes     = Column(Integer)
+    # Lineup slot and appearance sequence, from Retrosheet daybyday — the same
+    # pair `BattingGameLog` carries, stored HERE TOO because that is the only
+    # place a pitcher is guaranteed a row.
+    #
+    # ⚠️ THIS IS NOT DUPLICATION FOR ITS OWN SAKE. `seq` is what orders a
+    # pitching staff by appearance — starter, then each reliever as he entered
+    # — and reading it off the batting side works only while the pitcher has a
+    # batting row. From 2022 the universal DH means he usually does not: the
+    # ingest's appearance gate drops empty pitcher batting rows for 2022+, and
+    # coverage falls off a cliff at exactly that year, from 100% in 2021 to
+    # 0.57% in 2022. Pre-2000 it fails differently, as relief pitching grew and
+    # the outcome gate dropped relievers who never came to the plate.
+    slot        = Column(Integer, nullable=True)
+    seq         = Column(Integer, nullable=True)
 
 
 class PlayerHof(Base):

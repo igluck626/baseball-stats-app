@@ -116,6 +116,19 @@ _BATTING_GAMELOGS_QUALITY_COLUMNS: list[str] = [
     "AB", "R", "H", "doubles", "triples", "HR", "RBI", "BB", "IBB",
     "SO", "SB", "CS", "HBP", "SF", "LOB", "team_score", "opp_score",
 ]
+# Columns added to pitching_gamelogs after its initial creation.
+#
+# ⚠️ NOT THE SAME THING AS `_PITCHING_GAMELOGS_QUALITY_COLUMNS` BELOW, which is
+# a plain list of names used to rank duplicate rows during the dedupe pass.
+# `_add_missing_columns` wants (name, sql_type) TUPLES, and pitching_gamelogs
+# was not in that loop at all — so adding a column to the model and trusting
+# the existing entry would have altered nothing and said nothing, leaving prod
+# without the column and every read failing on the first SELECT.
+_PITCHING_GAMELOGS_NEW_COLUMNS: list[tuple[str, str]] = [
+    ("slot", "INTEGER"),
+    ("seq",  "INTEGER"),
+]
+
 _PITCHING_GAMELOGS_QUALITY_COLUMNS: list[str] = [
     "IP", "H", "R", "ER", "BB", "SO", "HR", "HBP", "WP", "pitches", "strikes",
 ]
@@ -390,6 +403,8 @@ def init_db() -> dict:
         # prod, `create_all` skips it and the retro ingest pointed at staging
         # would insert columns that aren't there.
         ("staging_batting_gamelogs", _BATTING_GAMELOGS_NEW_COLUMNS),
+        ("pitching_gamelogs", _PITCHING_GAMELOGS_NEW_COLUMNS),
+        ("staging_pitching_gamelogs", _PITCHING_GAMELOGS_NEW_COLUMNS),
         ("retro_game_info",   _RETRO_GAME_INFO_NEW_COLUMNS),
         ("ask_log",           _ASK_LOG_NEW_COLUMNS),
         # game_unit_leaderboard.role tags bat vs pit rows; ADD COLUMN … DEFAULT

@@ -468,10 +468,17 @@ def bulk_insert_gamelogs(db: Session, model, rows: list[dict]) -> int:
 # columns: those already carry the `/admin/repair-attributed` corrections and
 # the 2000+ BDL/MLB values, and a re-run of a source that disagrees with a
 # scorer's later revision would silently undo the repair.
+#
+# ⚠️ PER TARGET, NOT ONE SHARED CONSTANT. batting_gamelogs has `pos` and
+# pitching_gamelogs does not, so a single list naming all three would compile a
+# statement referencing a column that is not there and fail every batch of the
+# pitching run.
 _LINEUP_COLS = ("slot", "seq", "pos")
+_PITCHING_LINEUP_COLS = ("slot", "seq")
 
 
-def bulk_upsert_gamelog_lineup(db: Session, model, rows: list[dict]) -> int:
+def bulk_upsert_gamelog_lineup(db: Session, model, rows: list[dict],
+                               columns: tuple = _LINEUP_COLS) -> int:
     """Batched INSERT ... ON CONFLICT (player_id, game_id) DO UPDATE, updating
     ONLY slot / seq / pos.
 
@@ -513,7 +520,7 @@ def bulk_upsert_gamelog_lineup(db: Session, model, rows: list[dict]) -> int:
         stmt = pg_insert(model).values(rows)
         db.execute(stmt.on_conflict_do_update(
             index_elements=["player_id", "game_id"],
-            set_={c: getattr(stmt.excluded, c) for c in _LINEUP_COLS},
+            set_={c: getattr(stmt.excluded, c) for c in columns},
         ))
     else:
         for r in rows:
@@ -521,7 +528,7 @@ def bulk_upsert_gamelog_lineup(db: Session, model, rows: list[dict]) -> int:
             if existing is None:
                 db.merge(model(**r))
             else:
-                for c in _LINEUP_COLS:
+                for c in columns:
                     setattr(existing, c, r.get(c))
     return len(rows)
 

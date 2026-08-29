@@ -1436,6 +1436,7 @@ struct BoxScoreView: View {
                             .foregroundStyle(tint)
                     }
                     playerLabel(p, isPitcher: false)
+                        .padding(.leading, Self.substitutionDepth(p) > 0 ? 12 : 0)
                 }
                 .frame(width: BattingCol.name, alignment: .leading)
                 cell(b?.atBats,      width: BattingCol.ab)
@@ -1741,23 +1742,29 @@ struct BoxScoreView: View {
             }
             return nil
         }
+        // NO BUMP. This branch reads `seasonStats`, and BOTH sources of it
+        // already include the game being rendered: our own service sums
+        // through it, and BDL's per-game season line is post-game too (a 2026
+        // card shows .274/.808 — the figure through that date, not the
+        // .270/.796 before it). Adding one printed the winner 13-4 where the
+        // record was 12-4. The `pitcherRecordsByBDL` branch above still bumps,
+        // because that endpoint is genuinely as-of-the-morning.
         let season = p.seasonStats?.pitching
-        let bump = 1
         if (game?.wins ?? 0) > 0 {
             if let w = season?.wins, let l = season?.losses {
-                return "(W \(w + bump)-\(l))"
+                return "(W \(w)-\(l))"
             }
             return "(W)"
         }
         if (game?.losses ?? 0) > 0 {
             if let w = season?.wins, let l = season?.losses {
-                return "(L \(w)-\(l + bump))"
+                return "(L \(w)-\(l))"
             }
             return "(L)"
         }
         if (game?.saves ?? 0) > 0 {
             if let sv = season?.saves {
-                return "(SV \(sv + bump))"
+                return "(SV \(sv))"
             }
             return "(SV)"
         }
@@ -1835,6 +1842,22 @@ struct BoxScoreView: View {
         let outs = Int(((d - Double(whole)) * 3).rounded())
         if outs >= 3 { return "\(whole + 1).0" }
         return "\(whole).\(outs)"
+    }
+
+    /// How deep in a batting slot's chain of substitutes this player sits —
+    /// 0 for the man who started there, 1 for whoever replaced him, and so on.
+    ///
+    /// Read straight off `battingOrder`, which the service already ships in
+    /// MLB's own form: slot * 100 + (seq - 1). So "300" is the third slot's
+    /// starter and "301" the pinch hitter who batted for him. No new field and
+    /// no schema change — the number was already there.
+    ///
+    /// This is the traditional box score's indent: a substitute is set in under
+    /// the player he replaced rather than listed as a tenth and eleventh
+    /// batter, so the nine slots stay readable as nine.
+    static func substitutionDepth(_ p: BoxPlayer) -> Int {
+        guard let raw = p.stats_battingOrder, let n = Int(raw), n > 0 else { return 0 }
+        return n % 100
     }
 
     private func playerLabel(_ p: BoxPlayer, isPitcher: Bool) -> some View {
