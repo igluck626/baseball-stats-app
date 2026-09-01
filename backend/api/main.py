@@ -2192,10 +2192,19 @@ def historical_boxscore(game_pk: int):
             return None
         avg = f"{h/ab:.3f}".lstrip("0")
         ops_v = ((h + bb + hbp) / obp_den if obp_den else 0.0) + tb / ab
-        # `homeRuns` is what the card's HR line reads; `hits` rides along
-        # because it is free and the same shape BDL ships.
+        # `homeRuns` is what the card's HR line reads; `doubles` / `triples`
+        # are what the box score's 2B / 3B notable lines read. All three were
+        # already being summed for `tb` above and then thrown away, so the
+        # extra-base lines rendered a bare name where the HR line rendered a
+        # total. `hits` rides along because it is free and the same shape BDL
+        # ships.
+        #
+        # ⚠️ THESE ARE THROUGH-THIS-GAME, like every other figure here. The
+        # client must not add the game's own count to them — see the note on
+        # `pit_season_stats`; `notableLine` was the fourth site doing it.
         return {"batting": {"avg": avg, "ops": f"{ops_v:.3f}".lstrip("0"),
-                            "hits": h, "homeRuns": hr},
+                            "hits": h, "doubles": d2, "triples": d3,
+                            "homeRuns": hr},
                 "pitching": None}
 
     def pit_season_stats(pid):

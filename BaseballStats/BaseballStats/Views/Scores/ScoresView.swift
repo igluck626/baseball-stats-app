@@ -1703,19 +1703,14 @@ private struct FinalGameCard: View {
     /// the line surfaces every HR in the game, not just the
     /// winners'.
     private func hrSegments(from bs: BoxScoreResponse) -> [String] {
-        // `seasonStats.batting.homeRuns` is the PRE-game cumulative
-        // loaded once from BDL's `/season_stats` at box-score open
-        // — it freezes there for the life of the response. For
-        // today's slate the displayed total has to fold this game's
-        // HRs in so a HR that just left the yard moves the parenthetical
-        // from "(20)" → "(21)" immediately. For historical games
-        // we trust the placeholder as already post-game on BDL's
-        // side and don't double-count.
+        // Per-game `stats.batting.homeRuns` is this game's count and
+        // is NOT added to any season figure below. The three
+        // branches are mirrored by `BoxScoreView.notableLine`, which
+        // renders the same fact on the 2B / 3B / HR lines.
         //
         // The per-game count also serves as a multi-occurrence prefix
         // ("Alvarez 2 (21)") so a 2-HR night stays visible at a glance.
         let teams = [bs.teams.away, bs.teams.home]
-        let isToday = isGameToday
         var out: [String] = []
         for team in teams {
             for id in team.batters {

@@ -256,8 +256,8 @@ final class BoxScoreViewModel: ObservableObject {
     /// the game's date. Stores both an MLBAM-keyed and a BDL-keyed
     /// view of the same records — the BDL key is what the view layer
     /// has on hand without walking the resolution map per render.
-    /// Failures degrade silently to the placeholder + isGameToday
-    /// fallback (the previous behavior).
+    /// Failures degrade silently to the `seasonStats` fallback in
+    /// `pitcherDecisionTag`, which adds nothing to what it reads.
     /// - Parameter force: re-resolve every decision pitcher and REPLACE the
     ///   dicts, rather than fetching only the newly-decided ones and merging.
     ///   The non-live paths (`load`, `completeFinalize`) pass true so their
@@ -1507,19 +1507,14 @@ struct BoxScoreView: View {
         players: [BoxPlayer],
         totalKey: KeyPath<BoxBatting, Int?>,
     ) -> some View {
-        // `seasonStats.batting.{homeRuns,doubles,triples}` is the
-        // PRE-game cumulative loaded once from BDL's `/season_stats`
-        // at box-score open. Per-game `stats.batting.{…}` is just
-        // this game's count. When the game is today's slate the
-        // box-score header should read the LIVE post-game total
-        // (pre-game season + this-game count); the placeholder
-        // value alone goes stale the instant the player connects.
-        // For historical games we trust the pre-game value as
-        // already post-game on BDL's side and don't double-count.
+        // Per-game `stats.batting.{…}` is just this game's count. It
+        // doubles as a multi-occurrence prefix when > 1 ("Alvarez 2
+        // (21)") so a 2-HR night stays visible at a glance — and it
+        // is NOT added to any season figure below.
         //
-        // The per-game count also doubles as a multi-occurrence
-        // prefix when > 1 ("Alvarez 2 (21)") so a 2-HR night stays
-        // visible at a glance.
+        // The three branches mirror `ScoresView.hrSegments` exactly,
+        // because the two lines render the same fact and disagreeing
+        // is worse than either being briefly blank.
         let pieces: [String] = players.map { bp in
             let last = lastName(bp.person.fullName)
             let gameCount = bp.stats?.batting?[keyPath: totalKey] ?? 0
@@ -1538,11 +1533,28 @@ struct BoxScoreView: View {
                 let bump = !stats.includesToday ? gameCount : 0
                 return "\(prefix) (\(atDate + bump))"
             }
-            let liveIncrement = gameCount
-            guard let season = bp.seasonStats?.batting?[keyPath: totalKey] else {
-                return prefix
+            // Historical: the contextual endpoint is never called for
+            // these games — it resolves through BDL ids they never
+            // had — so this branch is not a fallback here, it is the
+            // only branch, and a dash would be permanent. The season
+            // line our own service ships runs THROUGH this game, so
+            // it already counts tonight's extra-base hits. Adding
+            // them again said 22 for a man who had hit 21; that was
+            // the fourth site making this mistake, and until the
+            // service started shipping season `doubles` / `triples`
+            // it only misread the HR line.
+            if vm.game.usesRetrosheetBoxScore {
+                guard let season = bp.seasonStats?.batting?[keyPath: totalKey] else {
+                    return prefix
+                }
+                return "\(prefix) (\(season))"
             }
-            return "\(prefix) (\(season + liveIncrement))"
+            // Modern: `batterStatsAtDate` is fetched and will land.
+            // Show a dash rather than BDL's `/season_stats`
+            // placeholder, which is a whole-season snapshot of
+            // unknown cutoff — the flash of a wrong intermediate
+            // value is worse than a brief dash.
+            return "\(prefix) (—)"
         }
         return (Text("\(label): ").font(.caption2.weight(.bold))
                 + Text(pieces.joined(separator: ", ")).font(.caption2))
@@ -1550,26 +1562,6 @@ struct BoxScoreView: View {
             .lineLimit(2)
             .fixedSize(horizontal: false, vertical: true)
     }
-
-    /// True iff `vm.game.startDate` falls on today's ET-local
-    /// calendar day. MLB schedules its slate off Eastern, so the
-    /// gate has to anchor there — comparing against the device's
-    /// local timezone would put a 10pm PT first-pitch on the wrong
-    /// day half the time.
-    private var isGameToday: Bool {
-        guard let start = vm.game.startDate else { return false }
-        let f = Self.etDateFormatter
-        return f.string(from: start) == f.string(from: Date())
-    }
-
-    private static let etDateFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.calendar = .init(identifier: .gregorian)
-        f.timeZone = TimeZone(identifier: "America/New_York") ?? .current
-        f.locale   = .init(identifier: "en_US_POSIX")
-        f.dateFormat = "yyyy-MM-dd"
-        return f
-    }()
 
     /// "Acuña Jr." — keep the last token of a hyphenated/multi-word
     /// surname (handles Vladimir Guerrero Jr., Ronald Acuña Jr.,
@@ -1708,13 +1700,12 @@ struct BoxScoreView: View {
     /// today's decision; nil otherwise. Per-game decision flags
     /// (`stats.pitching.wins/losses/saves`) ship as 0/1 from BDL.
     ///
-    /// `seasonStats.pitching` is the PRE-game W-L-SV pulled once from
-    /// BDL's `/season_stats` at box-score open. For today's slate
-    /// the displayed line has to fold today's decision in — a W
-    /// reads as "(W 9-3)" within seconds of the final out instead
-    /// of staying at "(W 8-3)" until BDL re-publishes. Historical
-    /// games trust the placeholder as already post-game and don't
-    /// double-count.
+    /// `seasonStats.pitching` already includes this game's decision
+    /// on both paths — our own service sums through the game, and
+    /// BDL's per-game season line is post-game too — so the
+    /// fallback below adds nothing to it. Only the contextual
+    /// `pitcher-record-at-date` branch bumps, and only when that
+    /// endpoint's scan has not yet absorbed today.
     private func pitcherDecisionTag(for p: BoxPlayer) -> String? {
         let game = p.stats?.pitching
         // Prefer the contextual record from
@@ -1723,7 +1714,7 @@ struct BoxScoreView: View {
         // so it always reflects the player's true post-game W-L-SV
         // regardless of whether BDL has absorbed today into its
         // season-stats snapshot. Falls through to the placeholder
-        // + isGameToday bump when the resolve/fetch hasn't landed.
+        // when the resolve/fetch hasn't landed, which adds nothing.
         if let rec = vm.pitcherRecordsByBDL[p.person.id] {
             // Bump only when the game is today AND our log scan
             // didn't already absorb today's row. `includesToday`
