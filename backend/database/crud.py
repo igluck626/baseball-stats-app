@@ -1,6 +1,7 @@
 import datetime
 
 from sqlalchemy import or_
+from sqlalchemy import text as _sa_text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -531,6 +532,84 @@ def bulk_upsert_gamelog_lineup(db: Session, model, rows: list[dict],
                 for c in columns:
                     setattr(existing, c, r.get(c))
     return len(rows)
+
+
+def bulk_update_pitch_counts(db: Session, rows: list[dict]) -> tuple[int, int, int]:
+    """Set `pitching_gamelogs.pitches` on rows that ALREADY EXIST. Returns
+    (offered, matched, changed).
+
+    The one column it writes is named in the statement rather than passed as a
+    `columns` tuple. `_LINEUP_COLS` / `_PITCHING_LINEUP_COLS` mean "what the
+    lineup re-ingest may write"; making this share one of them, or take its own
+    parameter, would let a caller point a pitch-count pass at a stat column.
+
+    ⚠️ THIS NEVER INSERTS, AND THAT IS THE WHOLE DIFFERENCE FROM
+    `bulk_upsert_gamelog_lineup`. That one is INSERT ... ON CONFLICT DO UPDATE,
+    which is right for a column being FILLED IN across rows the same ingest
+    created. This pass recomputes an EXISTING column from a different source —
+    Retrosheet's event files rather than the Chadwick daybyday — and the two
+    sources do not agree on which appearances exist. An event file carries
+    pitchers the daybyday appearance gate dropped, so an upsert here would
+    manufacture a `pitching_gamelogs` row holding a pitch count and NULL for
+    innings, decision, opponent and every other column: a phantom appearance
+    that no box score can render and no aggregate can be trusted over. A plain
+    UPDATE simply matches nothing, and the caller reports the gap.
+
+    THE OPPOSITE GAP IS ALSO LEFT ALONE. Rows we hold that the event files have
+    no pitch data for — a game whose `info,pitches` says `none`, every season
+    before 1988 — are never offered by the caller, so they keep whatever they
+    carry. `pitches` is nullable and an unrecorded count must stay NULL rather
+    than becoming a very confident 0.
+
+    `matched` and `changed` are counted separately on purpose. A batch that
+    matches everything and changes nothing is a healthy season; a batch that
+    matches nothing at all is a broken join, and the two are indistinguishable
+    from a single write count.
+
+    ONE ROW PER (player_id, game_id), enforced rather than assumed — the same
+    rule `bulk_upsert_gamelog_lineup` learned the hard way, for a different
+    reason. There the repeat aborted the batch; here an `UPDATE ... FROM` with
+    a duplicate key applies both values in an unspecified order and reports
+    success, which is worse. The caller dedupes and counts collisions so they
+    are reported rather than resolved silently."""
+    if not rows:
+        return 0, 0, 0
+    offered = len(rows)
+    dialect = db.bind.dialect.name if db.bind is not None else ""
+    if dialect == "postgresql":
+        params = {
+            "pids": [r["player_id"] for r in rows],
+            "gids": [r["game_id"] for r in rows],
+            "pcs":  [r["pitches"] for r in rows],
+        }
+        src = ("SELECT unnest(CAST(:pids AS integer[])) AS player_id, "
+               "       unnest(CAST(:gids AS text[]))    AS game_id, "
+               "       unnest(CAST(:pcs  AS integer[])) AS pitches")
+        matched, changed = db.execute(_sa_text(
+            f"WITH v AS ({src}) "
+            "SELECT count(*), "
+            "       count(*) FILTER (WHERE g.pitches IS DISTINCT FROM v.pitches) "
+            "FROM v JOIN pitching_gamelogs g "
+            "  ON g.player_id = v.player_id AND g.game_id = v.game_id"
+        ), params).one()
+        db.execute(_sa_text(
+            f"WITH v AS ({src}) "
+            "UPDATE pitching_gamelogs g SET pitches = v.pitches "
+            "FROM v "
+            "WHERE g.player_id = v.player_id AND g.game_id = v.game_id "
+            "  AND g.pitches IS DISTINCT FROM v.pitches"
+        ), params)
+        return offered, int(matched), int(changed)
+    matched = changed = 0
+    for r in rows:
+        existing = db.get(PitchingGameLog, (r["player_id"], r["game_id"]))
+        if existing is None:
+            continue
+        matched += 1
+        if existing.pitches != r["pitches"]:
+            existing.pitches = r["pitches"]
+            changed += 1
+    return offered, matched, changed
 
 
 # ---------------------------------------------------------------------------
