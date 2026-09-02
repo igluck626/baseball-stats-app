@@ -600,6 +600,25 @@ struct ScoresView: View {
             }
             .navigationTitle("Scores")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                // ⚠️ IN THE NAV BAR, NOT IN `dateBar`. That row is
+                // `◀ Spacer pill Spacer ▶` and its symmetry is the reason the
+                // pill reads as centred; putting a chip in either Spacer pulls
+                // the pill off-centre by the chip's width. The trailing nav-bar
+                // slot is empty, so this costs no layout at all.
+                //
+                // CONDITIONAL SO IT COSTS NOTHING IN THE COMMON CASE. On today
+                // — where the tab opens and where it spends most of its life —
+                // there is no chip and the bar is exactly what it was.
+                if !Calendar.current.isDateInToday(vm.selectedDate) {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Today") {
+                            jumpTo(date: Calendar.current.startOfDay(for: Date()))
+                        }
+                        .fontWeight(.semibold)
+                    }
+                }
+            }
             .navigationDestination(for: Game.self) { game in
                 BoxScoreView(
                     game:           game,
@@ -713,6 +732,15 @@ struct ScoresView: View {
             Text(relativeDateLabel(vm.selectedDate))
                 .font(.subheadline.weight(.bold))
                 .monospacedDigit()
+                // ⚠️ THE CAPSULE DOES NOT GROW WITH THE TEXT. `glassEffect` is
+                // drawn behind the label, so an unconstrained multi-line label
+                // spills outside the shape it is supposed to sit in. At AX5
+                // this was already happening BEFORE the year was added —
+                // "Tue, May 12" wrapped to two lines and overflowed on both
+                // sides — so scaling to one line fixes an existing fault
+                // rather than paying for the year.
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
                 .foregroundStyle(.primary)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 7)
@@ -795,7 +823,23 @@ struct ScoresView: View {
         if cal.isDateInToday(date)     { return "Today" }
         if cal.isDateInYesterday(date) { return "Yesterday" }
         if cal.isDateInTomorrow(date)  { return "Tomorrow" }
-        return Self.absoluteDateFormatter.string(from: date)
+        // THE YEAR APPEARS WHEN THE SEASON DIFFERS, not when the date isn't
+        // today: Sep 2 of this year needs no year, Sep 2 of 2023 does. Season
+        // is the calendar year, which is already this app's definition —
+        // `StandingsViewModel.currentYear` and `LeaderboardsViewModel.
+        // currentYear` are both exactly this expression.
+        //
+        // ANCHORED ON `Date()`, AND THAT IS NOT `relativeDateLabel`'s ODDITY.
+        // "Today" becoming "Yesterday" overnight is a label changing while the
+        // thing it describes did not. Here the referent genuinely changes: on
+        // 1 January the previous season really has become a past one. And the
+        // boundary falls in dead time — the postseason ends in early November,
+        // spring training starts in late February — so no date carrying a game
+        // can flip its annotation while its season is being played.
+        let sameSeason = cal.component(.year, from: date)
+            == cal.component(.year, from: Date())
+        return (sameSeason ? Self.absoluteDateFormatter
+                           : Self.absoluteDateWithYearFormatter).string(from: date)
     }
 
     @ViewBuilder
@@ -946,12 +990,21 @@ struct ScoresView: View {
 
     // MARK: - Formatters
 
-    /// "Mon, May 12" — used when the selected date isn't ±1 from
-    /// today. Year is omitted to keep the pill compact; the calendar
-    /// sheet lets the user verify the year if they care.
+    /// "Mon, May 12" — a date in the CURRENT season that isn't ±1 from today.
+    /// The year is omitted because it is the one the reader is already in.
     private static let absoluteDateFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "EEE, MMM d"
+        return f
+    }()
+
+    /// "Fri, May 12, 2023" — a date in any other season. The year used to be
+    /// omitted here too, on the grounds that the calendar sheet could confirm
+    /// it; that made a browsed past season indistinguishable from this one
+    /// without opening a sheet to check.
+    private static let absoluteDateWithYearFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "EEE, MMM d, yyyy"
         return f
     }()
 
