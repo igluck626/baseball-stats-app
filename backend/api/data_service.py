@@ -17,6 +17,7 @@ import logging
 import math
 import os
 import sys
+import threading
 import time
 import unicodedata
 import urllib.error
@@ -247,6 +248,26 @@ def _load_chadwick_mlbam_to_retro() -> dict[int, str]:
     return bridge
 
 
+# Per-key locks for the single-flight guard in `_cached`. `_inflight_registry`
+# guards the dict itself and is held only long enough to look a lock up — never
+# across a fetch — so a miss on one key cannot block a hit on another.
+#
+# The dict grows one entry per distinct cache key and is never pruned. A
+# `threading.Lock` is tens of bytes and the key space here is bounded by real
+# usage (players, seasons, one form baseline a day), so this is deliberate
+# rather than overlooked; if the key space ever becomes unbounded, evict here.
+_inflight_registry = threading.Lock()
+_inflight: dict[str, threading.Lock] = {}
+
+
+def _key_lock(key: str) -> threading.Lock:
+    with _inflight_registry:
+        lock = _inflight.get(key)
+        if lock is None:
+            lock = _inflight[key] = threading.Lock()
+        return lock
+
+
 def _cached(
     key: str,
     fn,
@@ -268,19 +289,50 @@ def _cached(
     entry = _store.get(key)
     if entry and (time.monotonic() - entry["ts"]) < ttl:
         return entry["value"]
-    try:
-        result = fn()
-    except Exception as exc:
-        if fall_back_to_stale_on_error and entry is not None:
-            age_s = time.monotonic() - entry["ts"]
-            log.warning(
-                "fetch failed for cache key %r — returning previous cached value "
-                "(age %.0fs): %s", key, age_s, exc,
-            )
+
+    # ⚠️ SINGLE-FLIGHT. Without this, N simultaneous misses on one key each run
+    # `fn()`. For the form baseline that is N × 30 sequential BDL pages, fired
+    # at exactly the moment the upstream may already be the reason for the
+    # miss — the failure mode multiplies the load precisely when it is least
+    # affordable.
+    lock = _key_lock(key)
+
+    # ⚠️ STALE BEATS BLOCKED, WHEN THERE IS SOMETHING STALE TO SERVE. If a
+    # rebuild is already in flight and we hold a previous value, return it
+    # rather than queue behind a walk that can take 17 seconds. The value is
+    # expired, not wrong — one TTL out of date is a far better answer than a
+    # request that outlives the client's 30-second timeout.
+    #
+    # `locked()` is a racy snapshot and that is acceptable here: the two ways
+    # it can be wrong are serving a stale value the holder had just replaced,
+    # and blocking where we could have served stale. Both are benign.
+    if entry is not None and lock.locked():
+        return entry["value"]
+
+    # No previous value — the boot case — so blocking is right: there is
+    # nothing to serve, and the alternative is every waiter starting its own
+    # walk. One thread fetches; the rest wait and take its result.
+    with lock:
+        # ⚠️ THE WAITER TAKES THE HOLDER'S RESULT RATHER THAN RE-FETCHING. This
+        # re-read is what makes the lock single-flight instead of merely
+        # serialising two identical walks back to back, which would be no
+        # better than no lock at all.
+        entry = _store.get(key)
+        if entry and (time.monotonic() - entry["ts"]) < ttl:
             return entry["value"]
-        raise
-    _store[key] = {"value": result, "ts": time.monotonic()}
-    return result
+        try:
+            result = fn()
+        except Exception as exc:
+            if fall_back_to_stale_on_error and entry is not None:
+                age_s = time.monotonic() - entry["ts"]
+                log.warning(
+                    "fetch failed for cache key %r — returning previous cached value "
+                    "(age %.0fs): %s", key, age_s, exc,
+                )
+                return entry["value"]
+            raise
+        _store[key] = {"value": result, "ts": time.monotonic()}
+        return result
 
 
 def _fetch_with_retry(fn, retries: int = 2, delay: float = 3.0):
