@@ -183,7 +183,8 @@ struct RecordAdjustmentTests {
             from: games, lastUpdated: kAnchorStamp, absorption: .unanchored, now: kNow)
         #expect(unanchored[kHome]?.count == 2, "both of the day's finals survive")
         #expect(unanchored[kAway]?.count == 2)
-        #expect(TodayRecordAdjustments.absorbedCount(.unanchored, teamId: kHome) == 0)
+        #expect(TodayRecordAdjustments.absorbedCount(
+            .unanchored, teamId: kHome, resultCount: 2) == 0)
 
         // And it equals the anchored set when the base has absorbed nothing —
         // the two paths only diverge once the base actually moves.
@@ -222,6 +223,130 @@ struct RecordAdjustmentTests {
             standings: [], games: Self.oneFinal, adjustments: deltas,
             lastUpdated: kAnchorStamp, absorption: absorbedBase, now: kNow)
         #expect(gb.isEmpty)
+    }
+
+    // MARK: - `.counted` — absorption measured against the live game feed
+
+    /// THE CASE THE WHOLE THING EXISTS FOR. The base is a game behind what has
+    /// actually been played, so that game must survive as unabsorbed — no
+    /// matter what the clock says.
+    @Test func countedKeepsTheGameTheBaseIsMissing() {
+        let games = [
+            finalGame(id: 1, homeId: kHome, awayId: kAway,
+                      homeRuns: 5, awayRuns: 2, iso: kGameISO),
+        ]
+        // Feed says 133 played; the displayed record totals 132. One missing.
+        let counted = TodayRecordAdjustments.unabsorbedResultsByTeam(
+            from: games, lastUpdated: kAnchorStamp,
+            absorption: .counted(feedGamesPlayed: [kHome: 133, kAway: 133],
+                                 current: [kHome: record(78, 54),
+                                           kAway: record(62, 70)]),
+            now: kNow)
+        #expect(counted[kHome]?.count == 1)
+        #expect(counted[kAway]?.count == 1)
+    }
+
+    /// And the converse: when the base already contains it, it must NOT be
+    /// added again. This is the double-count 04f5915 fixed, re-asserted for
+    /// the new case.
+    @Test func countedDropsTheGameTheBaseAlreadyHas() {
+        let games = [
+            finalGame(id: 1, homeId: kHome, awayId: kAway,
+                      homeRuns: 5, awayRuns: 2, iso: kGameISO),
+        ]
+        // Feed and base agree at 132: nothing outstanding.
+        let counted = TodayRecordAdjustments.unabsorbedResultsByTeam(
+            from: games, lastUpdated: kAnchorStamp,
+            absorption: .counted(feedGamesPlayed: [kHome: 132, kAway: 132],
+                                 current: [kHome: record(78, 54),
+                                           kAway: record(62, 70)]),
+            now: kNow)
+        #expect(counted[kHome] == nil, "already absorbed — nothing to add")
+        #expect(counted[kAway] == nil)
+    }
+
+    /// ⚠️ THE REVERSION, AS A TEST. A game that started BEFORE our last fetch
+    /// is dropped by the `lastUpdated` cutoff, which is the fault: the upstream
+    /// trails a final by hours, so "started before we fetched" does not mean
+    /// "the base contains it". `.counted` ignores the cutoff and keeps it.
+    @Test func countedIgnoresTheCutoffThatCausedTheMorningReversion() {
+        // The game starts a full hour BEFORE the stamp, so the cutoff would
+        // discard it outright.
+        let beforeStamp = "2026-08-26T18:00:00.000Z"
+        let games = [
+            finalGame(id: 1, homeId: kHome, awayId: kAway,
+                      homeRuns: 5, awayRuns: 2, iso: beforeStamp),
+        ]
+        let cutoffStamp = "2026-08-26T19:00:00.000000Z"
+
+        let unanchored = TodayRecordAdjustments.unabsorbedResultsByTeam(
+            from: games, lastUpdated: cutoffStamp, absorption: .unanchored,
+            now: kNow)
+        #expect(unanchored[kHome] == nil, "the cutoff drops it — today's bug")
+
+        // Same inputs, but the feed says the base is a game short.
+        let counted = TodayRecordAdjustments.unabsorbedResultsByTeam(
+            from: games, lastUpdated: cutoffStamp,
+            absorption: .counted(feedGamesPlayed: [kHome: 133, kAway: 133],
+                                 current: [kHome: record(78, 54),
+                                           kAway: record(62, 70)]),
+            now: kNow)
+        #expect(counted[kHome]?.count == 1, "counted keeps it — the fix")
+    }
+
+    /// A team the feed does not cover must add NOTHING, rather than adding
+    /// blind. Same rule `.anchored` follows: no measurement, no adjustment.
+    @Test func countedAddsNothingForATeamMissingFromTheFeed() {
+        let games = [
+            finalGame(id: 1, homeId: kHome, awayId: kAway,
+                      homeRuns: 5, awayRuns: 2, iso: kGameISO),
+        ]
+        let counted = TodayRecordAdjustments.unabsorbedResultsByTeam(
+            from: games, lastUpdated: kAnchorStamp,
+            absorption: .counted(feedGamesPlayed: [:],
+                                 current: [kHome: record(78, 54)]),
+            now: kNow)
+        #expect(counted[kHome] == nil)
+        #expect(counted[kAway] == nil)
+    }
+
+    /// A base somehow AHEAD of the feed must not produce a negative count or
+    /// resurrect games. Clamped at both ends.
+    @Test func countedClampsWhenTheBaseIsAheadOfTheFeed() {
+        let games = [
+            finalGame(id: 1, homeId: kHome, awayId: kAway,
+                      homeRuns: 5, awayRuns: 2, iso: kGameISO),
+        ]
+        #expect(TodayRecordAdjustments.absorbedCount(
+            .counted(feedGamesPlayed: [kHome: 130],
+                     current: [kHome: record(78, 54)]),
+            teamId: kHome, resultCount: 1) == 1, "absorbs everything, never negative")
+
+        // And a base further behind than today's slate cannot un-absorb games
+        // played before it: absorbed floors at 0, never below.
+        #expect(TodayRecordAdjustments.absorbedCount(
+            .counted(feedGamesPlayed: [kHome: 140],
+                     current: [kHome: record(78, 54)]),
+            teamId: kHome, resultCount: 1) == 0)
+    }
+
+    /// The record and the streak must read the same evening — `recalculateGB`
+    /// takes the same absorption as `deltas`, so a game counted by one is
+    /// counted by the other. Asserted on the SET both derive from, which is
+    /// where they could diverge; the streak's own arithmetic is covered by
+    /// `streakWalksTheSameGamesTheRecordDoes` above.
+    @Test func countedFeedsTheStreakTheSameGamesAsTheRecord() {
+        let absorption = TodayRecordAdjustments.Absorption.counted(
+            feedGamesPlayed: [kHome: 133, kAway: 133],
+            current: [kHome: record(78, 54), kAway: record(62, 70)])
+        let deltas = TodayRecordAdjustments.deltas(
+            from: Self.oneFinal, lastUpdated: kAnchorStamp,
+            absorption: absorption, now: kNow)
+        #expect(deltas[kHome]?.wDelta == 1, "the record counts the win")
+        let set = TodayRecordAdjustments.unabsorbedResultsByTeam(
+            from: Self.oneFinal, lastUpdated: kAnchorStamp,
+            absorption: absorption, now: kNow)
+        #expect(set[kHome]?.count == 1, "and the streak walks the same game")
     }
 }
 

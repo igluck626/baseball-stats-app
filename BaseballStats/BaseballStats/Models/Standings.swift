@@ -19,6 +19,54 @@ struct StandingsResponse: Codable {
     /// years where rows were never re-saved.
     let last_updated: String?
     let standings: [TeamStanding]?
+    /// Live game counts and L10, computed per request from BDL's game feed
+    /// rather than read from the daily standings table. nil for any season
+    /// but the current one, and nil when the feed was unavailable — the
+    /// standings are the payload and this is an overlay.
+    let recent_form: RecentForm?
+}
+
+/// Per-team form counted from the game feed at request time.
+///
+/// WHY IT MATTERS: everything else on this response comes from a table the
+/// nightly writes once a day, and BDL's own numbers trail a game ending by
+/// about nine hours on top of that. `games_played` here is what the feed says
+/// RIGHT NOW, which is what lets the today-adjustment measure absorption by
+/// counting instead of by comparing a game's start time against when we last
+/// fetched.
+struct RecentForm: Codable {
+    struct Window: Codable {
+        let from: String
+        let to: String
+        let days: Int
+    }
+    struct Team: Codable {
+        /// Regular-season finals the feed has for this club, now.
+        let games_played: Int
+        let last_ten_w: Int
+        let last_ten_l: Int
+        /// ⚠️ THE DENOMINATOR, WHICH IS NOT ALWAYS TEN. Early in a season a
+        /// club has played fewer, and the honest render is the partial record
+        /// over the games actually played. Padding to ten invents results.
+        let last_ten_games: Int
+        let window_games: Int
+    }
+    let as_of: String
+    let window: Window
+    /// ⚠️ KEYED BY BDL TEAM ID AS A STRING, because JSON object keys are
+    /// strings. `Int(key)` is the round trip. Deliberately not abbreviations:
+    /// this app already carries four team maps and every consumer of this
+    /// data already holds a BDL id.
+    let teams: [String: Team]
+
+    /// `[BDL team id: games played]` — the shape the adjustment consumes.
+    var gamesPlayedByBDLId: [Int: Int] {
+        var out: [Int: Int] = [:]
+        for (key, team) in teams {
+            if let id = Int(key) { out[id] = team.games_played }
+        }
+        return out
+    }
 }
 
 /// One team's record for a single season. Maps to the `team_seasons`

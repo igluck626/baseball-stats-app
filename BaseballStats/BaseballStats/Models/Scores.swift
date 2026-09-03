@@ -289,6 +289,38 @@ enum TodayRecordAdjustments {
         /// on a good tick, or the previously-adjusted values if the fetch
         /// failed. Both keyed by BDL team id.
         case anchored(gamesPlayed: [Int: Int], current: [Int: TeamRecord])
+
+        /// `feedGamesPlayed` is what BDL's GAME FEED says each club has
+        /// actually played, right now (`recent_form.games_played`), and
+        /// `current` is the record being displayed. Both keyed by BDL team id.
+        ///
+        /// ⚠️ THIS IS THE ONE THAT NEEDS NO CLOCK. `.anchored` measures how far
+        /// the displayed record has moved past a snapshot we took, which is
+        /// honest but bounded by how fresh that snapshot is. This measures how
+        /// far the displayed record is BEHIND the games that have actually been
+        /// played — an independent live count against the base, so "does the
+        /// base contain this game?" stops being an inference and becomes
+        /// subtraction.
+        ///
+        /// ⚠️ AND IT MAKES THE `lastUpdated` CUTOFF UNNECESSARY, WHICH IS THE
+        /// POINT. That cutoff drops any game starting before our last fetch, on
+        /// the reasoning that we must therefore already have it. The reasoning
+        /// is false while the upstream lags: BDL trails a final by ~9.4h, so a
+        /// game can start before our fetch and still be absent from the base.
+        /// That gap is what made the record correct all evening and wrong the
+        /// next morning. Under this case the cutoff is not applied at all.
+        case counted(feedGamesPlayed: [Int: Int], current: [Int: TeamRecord])
+
+        /// Whether the `lastUpdated` cutoff should filter the candidate set.
+        ///
+        /// It must NOT under `.counted`: the cutoff would remove games from the
+        /// set before absorption is measured, and absorption is exactly what
+        /// this case computes properly. Removing them first would re-introduce
+        /// the fault by the back door.
+        var appliesLastUpdatedCutoff: Bool {
+            if case .counted = self { return false }
+            return true
+        }
     }
 
     /// Games of `team`'s post-cutoff finals that the base already reflects.
@@ -298,10 +330,40 @@ enum TodayRecordAdjustments {
     /// or from an earlier run of this very adjustment. That is what makes the
     /// whole thing idempotent: applying it twice cannot add twice, because the
     /// first application is visible to the second.
-    static func absorbedCount(_ absorption: Absorption, teamId: Int) -> Int? {
+    static func absorbedCount(
+        _ absorption: Absorption,
+        teamId: Int,
+        resultCount: Int,
+    ) -> Int? {
         switch absorption {
         case .unanchored:
             return 0
+        case let .counted(feedGamesPlayed, current):
+            // How many games the base is BEHIND the feed. Everything the feed
+            // has that the base does not is unabsorbed; the rest of today's
+            // results are already in it.
+            guard let played = feedGamesPlayed[teamId],
+                  let rec = current[teamId],
+                  let w = rec.wins, let l = rec.losses else { return nil }
+            let missing = max(0, played - (w + l))
+            // Clamped at both ends. A base somehow AHEAD of the feed absorbs
+            // everything rather than yielding a negative count.
+            //
+            // ⚠️ AND THE LOWER CLAMP MARKS A REAL LIMIT, NOT AN ARBITRARY ONE.
+            // When `missing` exceeds today's slate — the nightly skipped a day,
+            // say, so the base is short two games while only one was played
+            // today — absorbed floors at 0 and every one of today's games is
+            // applied. That is right, and it is also all this can do: a
+            // TODAY-adjustment can only add games it can see, and yesterday's
+            // missing game is not in today's set to add. The record stays a
+            // game light until the standings themselves catch up.
+            //
+            // So do not reach for a bigger window here to "recover" it. The
+            // fix for a base that has fallen multiple days behind is refreshing
+            // the standings more often; this overlay exists to cover the hours
+            // between a game ending and the next refresh, not to substitute for
+            // one that never ran.
+            return min(resultCount, max(0, resultCount - missing))
         case let .anchored(gamesPlayed, current):
             // No anchor for this team means we cannot tell absorbed from
             // unabsorbed. Adding blind is what produced an unbounded climb, so
@@ -330,7 +392,15 @@ enum TodayRecordAdjustments {
         absorption: Absorption,
         now: Date = Date(),
     ) -> [Int: [FinalResult]] {
-        let results = qualifyingResults(from: games, lastUpdated: lastUpdated, now: now)
+        let results = qualifyingResults(
+            from: games,
+            // See `Absorption.appliesLastUpdatedCutoff`: under `.counted` the
+            // cutoff is dropped, because absorption is measured rather than
+            // inferred and filtering first would discard the very games the
+            // measurement exists to catch.
+            lastUpdated: absorption.appliesLastUpdatedCutoff ? lastUpdated : nil,
+            now: now,
+        )
         guard !results.isEmpty else { return [:] }
 
         var byTeam: [Int: [FinalResult]] = [:]
@@ -341,7 +411,8 @@ enum TodayRecordAdjustments {
 
         var out: [Int: [FinalResult]] = [:]
         for (teamId, teamResults) in byTeam {
-            guard let absorbed = absorbedCount(absorption, teamId: teamId),
+            guard let absorbed = absorbedCount(absorption, teamId: teamId,
+                                               resultCount: teamResults.count),
                   absorbed < teamResults.count else { continue }
             out[teamId] = Array(teamResults.dropFirst(absorbed))
         }

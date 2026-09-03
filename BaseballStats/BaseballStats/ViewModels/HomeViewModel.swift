@@ -260,6 +260,7 @@ final class HomeViewModel: ObservableObject {
         // line. Fired AFTER the primary state lands so the card can
         // paint everything else without waiting on this.
         var standingsLastUpdated: String?
+        var recentForm: RecentForm?
         // Hoisted out of the fetch block below so the streak overlay
         // (which needs the full league rows + the favorite's Lahman
         // code) can reuse them after the `deltas` are computed.
@@ -270,6 +271,7 @@ final class HomeViewModel: ObservableObject {
             if let resp = (try? await api.getStandings(year: year)) ?? nil {
                 standingsLastUpdated = resp.last_updated
                 standingsRows = resp.standings ?? []
+                recentForm    = resp.recent_form
                 if let row = resp.standings?.first(where: { $0.team_id == lahmanCode }) {
                     self.teamStreakCode = row.streak_code
                     self.teamLastTenW   = row.last_ten_w
@@ -300,9 +302,23 @@ final class HomeViewModel: ObservableObject {
         // hand the streak the post-apply dict and it would count this tick's
         // own additions as already absorbed and drop them, leaving the pill a
         // game behind the record beside it.
-        let absorption = TodayRecordAdjustments.Absorption.anchored(
-            gamesPlayed: anchorGamesPlayed, current: self.teamRecords,
-        )
+        // ⚠️ `.counted` WHEN THE FEED IS THERE, `.anchored` WHEN IT IS NOT.
+        // The anchor below is our own stored `G`, written by the nightly — an
+        // honest snapshot, but only as fresh as the last run, which measurement
+        // put at once a day. `recent_form.games_played` is what BDL's game feed
+        // says has actually been played right now, so the same subtraction gets
+        // a live left-hand side instead of a daily one.
+        //
+        // Both tabs must agree on this. Home reading the feed while Standings
+        // reads a clock would put the same club's record in two states
+        // depending on which tab you opened.
+        let absorption: TodayRecordAdjustments.Absorption = {
+            if let feed = recentForm?.gamesPlayedByBDLId, !feed.isEmpty {
+                return .counted(feedGamesPlayed: feed, current: self.teamRecords)
+            }
+            return .anchored(gamesPlayed: anchorGamesPlayed,
+                             current: self.teamRecords)
+        }()
         let deltas = TodayRecordAdjustments.deltas(
             from: recentAndUpcoming,
             lastUpdated: standingsLastUpdated,

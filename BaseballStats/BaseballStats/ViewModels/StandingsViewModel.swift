@@ -39,6 +39,12 @@ final class StandingsViewModel: ObservableObject {
     /// then keep the backend / leader-derived values).
     @Published var adjustedGB: [String: (gb: String, wcgb: String, pct: Double?, strk: String?, homeW: Int?, homeL: Int?, awayW: Int?, awayL: Int?, runsScored: Int?, runsAllowed: Int?)] = [:]
 
+    /// The live game-feed overlay from `/teams/standings`, when the response
+    /// carried one. Current season only; nil for historical years and when the
+    /// feed was unavailable, in which case the adjustment falls back to the
+    /// behaviour that shipped before it existed.
+    private var recentForm: RecentForm?
+
     private let api: APIClient
     private let bdl: BallDontLieClient
     private let favorites: FavoriteTeamStore
@@ -101,6 +107,7 @@ final class StandingsViewModel: ObservableObject {
             let response = try await api.getStandings(year: selectedYear)
             partition(response)
             lastUpdated = response?.last_updated
+            recentForm  = response?.recent_form
         } catch {
             // A quiet tick keeps what is on screen; only a load the user asked
             // for is allowed to replace the table with an error.
@@ -109,6 +116,7 @@ final class StandingsViewModel: ObservableObject {
                 alStandings = [:]
                 nlStandings = [:]
                 lastUpdated = nil
+                recentForm  = nil
             }
         }
         if !quiet { isLoading = false }
@@ -158,25 +166,55 @@ final class StandingsViewModel: ObservableObject {
             }
         }
 
-        // `.unanchored` is CORRECT here, unlike on Home. This view model's base
-        // and its `lastUpdated` come from the same `api.getStandings` response,
-        // so the cutoff genuinely describes the base it is applied to. Home's
-        // did not, which is the whole reason `Absorption` exists.
-        todayAdjustments = TodayRecordAdjustments.deltas(
-            from: games, lastUpdated: lastUpdated, absorption: .unanchored,
-        )
-        // Recompute GB / WCGB off the adjusted records so those columns
-        // stay in step with the bumped W-L. The flat team list is the
-        // union of the division buckets (every team sits in one).
+        // ⚠️ `.counted` REPLACES `.unanchored`, AND THE OLD COMMENT HERE WAS
+        // WRONG ABOUT WHY THAT WAS SAFE. It argued the cutoff was trustworthy
+        // because the base and `lastUpdated` came from the same response — true,
+        // but beside the point. `lastUpdated` records when WE fetched, not what
+        // the fetch contained, and BDL trails a final by ~9.4h. So a game could
+        // start before our refresh, be dropped by the cutoff as "already
+        // counted", and still be missing from the base. That is the reversion:
+        // right all evening, wrong from 06:00 ET until BDL catches up.
+        //
+        // The feed's `games_played` is an independent live count of what each
+        // club has actually played, which is the second source this tab never
+        // had — its base and its cutoff were the same daily table talking to
+        // itself. Falls back to `.unanchored` when the overlay is absent
+        // (historical seasons, or a BDL outage), which is exactly today's
+        // behaviour rather than a new failure mode.
+        // The flat team list is the union of the division buckets (every team
+        // sits in one). Needed by both the absorption below and `recalculateGB`.
         let allTeams = alStandings.values.flatMap { $0 }
             + nlStandings.values.flatMap { $0 }
-        // `.unanchored` again, matching the `deltas` call above — same response,
-        // same cutoff, so nothing is dropped and this is behaviourally identical
-        // to before the parameter existed.
+
+        let absorption: TodayRecordAdjustments.Absorption = {
+            guard let feed = recentForm?.gamesPlayedByBDLId, !feed.isEmpty else {
+                return .unanchored
+            }
+            // The displayed record, keyed by BDL id — the standings rows this
+            // view renders, bridged through the map the tab already holds.
+            var current: [Int: TeamRecord] = [:]
+            for row in allTeams {
+                guard let code = row.team_id, let bdlId = lahmanToBDLTeamId[code],
+                      let w = row.W, let l = row.L else { continue }
+                // `pct` is a display String on TeamRecord and is unused by the
+                // absorption, which reads only wins + losses.
+                current[bdlId] = TeamRecord(wins: w, losses: l, pct: nil)
+            }
+            return .counted(feedGamesPlayed: feed, current: current)
+        }()
+
+        todayAdjustments = TodayRecordAdjustments.deltas(
+            from: games, lastUpdated: lastUpdated, absorption: absorption,
+        )
+        // The SAME absorption the deltas used. These two derive their game set
+        // from `unabsorbedResultsByTeam` together, and handing them different
+        // absorptions would put a record and the streak beside it on different
+        // evenings — the same class of fault as the record double-counting,
+        // one field over.
         adjustedGB = TodayRecordAdjustments.recalculateGB(
             standings: allTeams, games: games,
             adjustments: todayAdjustments, lastUpdated: lastUpdated,
-            absorption: .unanchored,
+            absorption: absorption,
         )
     }
 
