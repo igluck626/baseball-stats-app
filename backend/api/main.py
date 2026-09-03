@@ -1057,7 +1057,21 @@ def _run_nightly_update() -> None:
         # for individual TTLs to expire. Cheap (clears a dict);
         # only meaningful for the API worker that ran the nightly
         # (other workers — if scaled out — clear via TTL).
+        #
+        # ⚠️ THIS CLEARS `cache.TTLCache` ONLY — NOT `data_service._store`.
+        # They are two different caches and the nightly deliberately touches
+        # one: the payload cache holds endpoint responses built from rows that
+        # just changed, while `_store` holds upstream fetch results, including
+        # `recent_team_form`'s 30-request season baseline. Clearing that here
+        # would discard it to rebuild an identical number. See the comment on
+        # `_store` in data_service.py.
         _cache.clear()
+        # The standings payload just became a cache miss, and the next request
+        # for it rebuilds the form overlay. Warm it here rather than making
+        # that request wait — the nightly is exactly when a user is most
+        # likely to open the app looking for last night's results.
+        threading.Thread(target=_warm_form_baseline, args=("post-nightly",),
+                         name="form-warmup-nightly", daemon=True).start()
         with _nightly_lock:
             _nightly_state["running"]  = False
             _nightly_state["phase"]    = None
@@ -1111,8 +1125,63 @@ async def lifespan(app: FastAPI):
     # every other endpoint serves immediately while it warms.
     threading.Thread(target=_plays_warmup_worker, name="plays-warmup",
                      daemon=True).start()
+    # Same pattern, same reason: a 30-request season walk must not be paid for
+    # by whoever happens to open the Standings tab first after a restart.
+    threading.Thread(target=_form_warmup_worker, name="form-warmup",
+                     daemon=True).start()
     yield
     live_service.stop_live_loop()
+
+
+def _warm_form_baseline(reason: str) -> None:
+    """Build `recent_team_form`'s season baseline off the request path.
+
+    ⚠️ WITHOUT THIS THE FIRST UNLUCKY USER PAYS FOR IT. The baseline counts
+    every regular-season final before the recent window, which needs the whole
+    season — 30 sequential BDL pages because /games caps per_page at 100, ~17s
+    with the rate-limit pacing. Warm it costs nobody anything; cold it lands on
+    whoever opens the Standings tab first, and the iOS client gives up at 30s.
+    """
+    try:
+        t0 = time.time()
+        form = data_service.recent_team_form(datetime.datetime.utcnow().year)
+        log.info("form warmup (%s): ready in %.1fs, %d teams, window %s..%s",
+                 reason, time.time() - t0, len(form.get("teams") or {}),
+                 form["window"]["from"], form["window"]["to"])
+    except Exception as exc:
+        # Non-fatal exactly like the endpoint's own guard: a cold miss is slow,
+        # not broken, and the standings serve without the overlay either way.
+        log.warning("form warmup (%s) failed — the next request pays for it: %s",
+                    reason, exc)
+
+
+def _form_warmup_worker() -> None:
+    """Warm the baseline at boot, then again shortly after each UTC midnight.
+
+    ⚠️ THE MIDNIGHT RE-WARM IS NOT BELT-AND-BRACES. The baseline is cached
+    under a key containing the window's boundary DATE, so the key changes the
+    moment UTC rolls over and the entry built yesterday can never be read
+    again. 00:00 UTC is 20:00 ET — the middle of the evening slate, which is
+    the single worst moment in the day to hand somebody a 17-second standings
+    response.
+
+    ⚠️ AND IT IS THE SAME MOVING PART, NOT ANOTHER ONE. This thread already
+    exists to warm at boot; it now declines to exit. That is deliberately
+    cheaper than a scheduled job: no cron to configure in a dashboard nobody
+    can see from the repo, no endpoint to authenticate, and it cannot drift out
+    of sync with the boundary because it derives its wake-up from the same
+    clock the cache key uses.
+    """
+    _warm_form_baseline("startup")
+    while True:
+        now = datetime.datetime.utcnow()
+        tomorrow = (now + datetime.timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0)
+        # A minute past the roll, so the new boundary date is unambiguous
+        # rather than racing the clock at exactly 00:00:00.
+        delay = (tomorrow - now).total_seconds() + 60
+        time.sleep(max(delay, 60))
+        _warm_form_baseline("utc-midnight")
 
 
 app = FastAPI(title="Baseball Stats API", version="0.1.0", lifespan=lifespan)

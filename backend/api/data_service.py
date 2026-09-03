@@ -167,6 +167,24 @@ _CHADWICK_RETRO_CSV = os.path.join(
 # Simple in-memory TTL cache (used only by the fetch_and_save_* helpers).
 # ---------------------------------------------------------------------------
 
+# ⚠️ THIS IS NOT THE SAME CACHE AS `main.py`'s `_cache`, AND THE DIFFERENCE
+# MATTERS. There are two: `cache.TTLCache`, which `main.py` uses for whole
+# endpoint payloads and which the nightly CLEARS at the end of every run so iOS
+# sees new numbers immediately; and this one, a plain dict behind `_cached()`,
+# which holds upstream fetch results inside this module. The nightly's
+# `cache.clear()` does NOT touch this store.
+#
+# That asymmetry is currently correct, by accident rather than design, and this
+# comment exists so the next person does not have to rediscover it. The
+# `form_baseline:*` entry here is a count of games played BEFORE the recent
+# window — it changes only when the window boundary moves, i.e. once a day —
+# so the nightly clearing it would throw away a 30-request fetch to rebuild an
+# identical number. The payload cache SHOULD be cleared by the nightly, because
+# the standings rows underneath it really did just change.
+#
+# If a future change needs this store cleared too, clear it deliberately and
+# say why — do not widen `cache.clear()` to cover both on the assumption they
+# are the same thing.
 _store: dict = {}
 
 # Cached Chadwick mlbam → bbref reverse map; populated on first access
@@ -8018,11 +8036,20 @@ def _bdl_games_page_all(params: dict, *, cap: int = 60) -> list[dict]:
     that never terminates cannot spin forever."""
     out: list[dict] = []
     cursor = None
-    for _ in range(cap):
+    for i in range(cap):
         page = dict(params)
         page["per_page"] = 100          # /games rejects anything larger
         if cursor is not None:
             page["cursor"] = cursor
+        # ⚠️ PACED, LIKE EVERY OTHER BATCH FETCH HERE. A whole season is 30
+        # sequential pages; unpaced, that is 30 calls as fast as the network
+        # allows, and this was the only multi-page walk in the file without
+        # the sleep `_bdl_batch_season_stats` already uses between chunks. The
+        # asymmetry is the bug — one 429 mid-walk truncates the baseline
+        # silently, and a short baseline reads as "these teams have played
+        # fewer games", which is exactly the absorption count this feeds.
+        if i:
+            time.sleep(_BDL_RATE_LIMIT_SLEEP)
         data = _bdl_get_json("games", page)
         out.extend(data.get("data") or [])
         cursor = (data.get("meta") or {}).get("next_cursor")
@@ -8032,13 +8059,27 @@ def _bdl_games_page_all(params: dict, *, cap: int = 60) -> list[dict]:
 
 
 def _decided_regular_finals(games: list[dict]) -> list[dict]:
-    """Finished, decided, regular-season games, normalized.
+    """Finished, decided, regular-season games, normalized and keyed by BDL
+    TEAM ID.
 
-    ⚠️ `season_type` MUST BE FILTERED, and it is the trap in this payload. A
-    season fetch returns spring training too — 451 of 2,909 games for 2026 —
-    which inflates every team's game count by about thirty and introduces a
-    31st "team". Counting those against the standings' `games_played` produced
-    differences of 27-33 games; filtering to `regular` collapsed them to 0 or 1.
+    ⚠️ BDL TEAM ID, NOT ABBREVIATION, AND THAT IS THE WHOLE POINT. This app
+    already carries four team maps for four different reasons (see
+    `BDLRetroMatch.retroToBDL` on the client for why they cannot be merged),
+    and every consumer of this data already holds a BDL id: the today-
+    adjustment keys by it throughout, and the Standings tab has
+    `lahmanToBDLTeamId` to reach it. Emitting abbreviations would have meant a
+    fifth map, written here, to translate back to what callers already had.
+
+    ⚠️ `season_type` MUST BE FILTERED. A season fetch returns spring training
+    too — 451 of 2,909 games for 2026 — which inflates every team's game count
+    by about thirty. Counting those against the standings' `games_played`
+    produced differences of 27-33 games; filtering to `regular` collapsed them
+    to 0 or 1.
+
+    ⚠️ AND THE ALL-STAR GAME IS FILED AS `regular` WITH NO TEAMS. BDL ships
+    2026-07-15 as "Unknown @ Unknown", STATUS_FINAL, 4-0, with team **id -1** on
+    both sides. The id is the robust signal — a name check would depend on the
+    string "UNK" — so any non-positive id is dropped.
     """
     out = []
     for g in games:
@@ -8046,24 +8087,21 @@ def _decided_regular_finals(games: list[dict]) -> list[dict]:
             continue
         if g.get("season_type") != "regular":
             continue
-        home = (g.get("home_team") or {}).get("abbreviation")
-        away = (g.get("away_team") or {}).get("abbreviation")
+        home_id = (g.get("home_team") or {}).get("id")
+        away_id = (g.get("away_team") or {}).get("id")
         hr = (g.get("home_team_data") or {}).get("runs")
         ar = (g.get("away_team_data") or {}).get("runs")
-        if not home or not away or hr is None or ar is None or hr == ar:
+        if not isinstance(home_id, int) or not isinstance(away_id, int):
             continue
-        # ⚠️ THE ALL-STAR GAME IS FILED AS `regular` AND HAS NO TEAMS. BDL
-        # ships 2026-07-15 as "UNK (Unknown) @ UNK (Unknown)", season_type
-        # `regular`, STATUS_FINAL, 4-0. It touches no real club's count, but
-        # left in it invents a 31st team in the output, which reads as a
-        # mapping bug to the next person. One game in a season; dropped here.
-        if home == away or "UNK" in (home, away):
+        if home_id <= 0 or away_id <= 0 or home_id == away_id:
+            continue
+        if hr is None or ar is None or hr == ar:
             continue
         out.append({
             # Full timestamp, not a date: it is what orders a doubleheader's
             # two games correctly, and the tail of that order is L10.
             "date": g.get("date"),
-            "home": home, "away": away,
+            "home_id": home_id, "away_id": away_id,
             "home_runs": int(hr), "away_runs": int(ar),
         })
     out.sort(key=lambda r: r["date"] or "")
@@ -8103,8 +8141,8 @@ def recent_team_form(season: int, today: Optional[datetime.date] = None) -> dict
         for r in _decided_regular_finals(season_games):
             if (r["date"] or "")[:10] >= boundary:
                 continue
-            out[r["home"]] = out.get(r["home"], 0) + 1
-            out[r["away"]] = out.get(r["away"], 0) + 1
+            out[r["home_id"]] = out.get(r["home_id"], 0) + 1
+            out[r["away_id"]] = out.get(r["away_id"], 0) + 1
         return out
 
     # Keyed on the boundary date, so the day's roll invalidates it naturally
@@ -8129,21 +8167,23 @@ def recent_team_form(season: int, today: Optional[datetime.date] = None) -> dict
             f"e.g. {sorted(unexpected)[:3]}")
 
     results = _decided_regular_finals(window_games)
-    per: dict[str, list[bool]] = {}
+    per: dict[int, list[bool]] = {}
     for r in results:
-        per.setdefault(r["home"], []).append(r["home_runs"] > r["away_runs"])
-        per.setdefault(r["away"], []).append(r["away_runs"] > r["home_runs"])
+        per.setdefault(r["home_id"], []).append(r["home_runs"] > r["away_runs"])
+        per.setdefault(r["away_id"], []).append(r["away_runs"] > r["home_runs"])
 
     teams: dict[str, dict] = {}
-    for abbr in set(per) | set(baseline):
-        seq = per.get(abbr, [])
+    for team_id in set(per) | set(baseline):
+        seq = per.get(team_id, [])
         last = seq[-_LAST_N:]
         wins = sum(1 for w in last if w)
-        teams[abbr] = {
+        # JSON object keys are strings; the value is a BDL team id and every
+        # consumer already holds one, so `int(key)` is the round trip.
+        teams[str(team_id)] = {
             # The count the absorption compares against the standings row's
             # `games_played`. Their difference is how many games the base is
             # missing — a count, not an inference from a clock.
-            "games_played":   baseline.get(abbr, 0) + len(seq),
+            "games_played":   baseline.get(team_id, 0) + len(seq),
             "last_ten_w":     wins,
             "last_ten_l":     len(last) - wins,
             # ⚠️ THE DENOMINATOR, because it is not always ten. Early in a
