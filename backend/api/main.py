@@ -1623,7 +1623,36 @@ def team_standings(year: int = Query(..., description="Season year, e.g. 2024"))
     timestamps = [r.get("last_updated") for r in rows if r.get("last_updated") is not None]
     last_updated = max(timestamps).isoformat() + "Z" if timestamps else None
 
-    payload = {"year": year, "last_updated": last_updated, "standings": rows}
+    # ⚠️ `recent_form` RESOLVES THE STALENESS THAT `last_updated` MEASURES.
+    # The standings TABLE is written once a day by the nightly, so every field
+    # read out of it — the record, the streak, L10 — is up to 24 hours behind,
+    # and BDL's own numbers are ~9.4 hours behind a game ending on top of that.
+    # But this ENDPOINT is assembled per request behind a 300-second cache, so
+    # a field computed HERE rather than stored in `team_seasons` carries
+    # request-time freshness. That is the whole reason it hangs off the
+    # standings response instead of becoming a column: a column would be as
+    # stale as the thing it exists to correct.
+    #
+    # It counts rather than infers. `recent_form.teams[ABBR].games_played` is
+    # the team's regular-season finals as BDL's game feed sees them right now;
+    # the standings row's own `G` is what the base contains; the difference is
+    # exactly how many games the base is missing. No timestamps, so none of the
+    # "did we fetch after first pitch?" reasoning that the today-adjustment's
+    # cutoff currently does.
+    #
+    # ⚠️ NON-FATAL BY CONSTRUCTION. The standings are the payload; the form is
+    # an overlay. A BDL outage or a shape change must degrade this to `null`
+    # and still serve the standings, not 500 the tab.
+    recent_form = None
+    if year == datetime.datetime.utcnow().year:
+        try:
+            recent_form = data_service.recent_team_form(year)
+        except Exception as exc:
+            log.warning("recent_team_form failed for %s (serving standings "
+                        "without it): %s", year, exc)
+
+    payload = {"year": year, "last_updated": last_updated,
+               "recent_form": recent_form, "standings": rows}
     _cache.set(key, payload, ttl_seconds=300)
     return payload
 
@@ -19418,11 +19447,14 @@ def reset_nightly_update():
 
 @app.post("/admin/catchup-update")
 def start_catchup_update():
-    """Spawn the lightweight catch-up update in a background
-    thread. Recommended Railway cron: 21:00 UTC daily — see the
-    docstring on `nightly_update.run_catchup_update` for the full
-    rationale (BDL catches up late-PT games a few hours after they
-    finish, the morning nightly often runs before that).
+    """Spawn the lightweight catch-up update in a background thread.
+
+    ⚠️ NO CRON CALLS THIS TODAY. A 24-hour sample of `/teams/standings`'
+    `last_updated` found exactly one refresh a day, at ~15:05 UTC; the
+    21:00 UTC catch-up this was written for does not exist. RECOMMENDED
+    remains 21:00 UTC daily — see `nightly_update.run_catchup_update` for
+    why (BDL catches late-PT games up a few hours after they finish, and a
+    single morning run lands before that).
 
     Idempotent in the no-work case: if no players from yesterday's
     games are behind, returns `updated=0`. Stale running-flag

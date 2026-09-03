@@ -7975,3 +7975,189 @@ def get_heat_leaders(tier: Optional[str] = None, limit: int = 10) -> dict:
 def init_db() -> None:
     """Create database tables if they don't exist. Called once on startup."""
     connection.init_db()
+
+
+# ---------------------------------------------------------------------------
+# Recent team form — the live game feed
+# ---------------------------------------------------------------------------
+#
+# WHY THIS EXISTS. Three fields on the standings — the W-L record, the streak,
+# and L10 — all come from BDL's `/standings`, which runs roughly 9.4 hours
+# behind a game ending. The client papers over the record and the streak with a
+# today-adjustment, but that adjustment decides "has the base already absorbed
+# this game?" by comparing the game's start time against when we last fetched.
+# That is a clock standing in for a count, and it is wrong in both directions:
+# it drops games the base does not contain, and before it was fixed it added
+# games the base already had.
+#
+# `/games` answers the same question by counting. A team's regular-season
+# finals in the feed IS its games played; the standings row's `games_played` is
+# what the base reflects; the difference is exactly how many games the base is
+# missing. No timestamps involved. Measured 2026-09-03 against all 30 teams:
+# 24 teams differed by 0 and 6 by 1, which is the one-game lag and nothing else.
+#
+# It also yields L10 for free, from the tail of the same sequence — validated
+# 30/30 against BDL's own published `last_ten_games`, where 20 teams matched
+# exactly and the other 10 matched one game back, i.e. the same absorption lag.
+
+# The rolling window for L10. 20 days rather than the 14 that merely fits:
+# pagination is per 100 games, so 16, 18 and 20 days all cost the same three
+# requests, and 20 buys a margin of six games over the ten needed where 14 buys
+# zero. A single rained-out week breaks a 14-day window; it does not break this.
+_FORM_WINDOW_DAYS = 20
+
+# The L10 denominator. Fewer than this many games is reported as the partial
+# record over the games actually played — never padded out to ten, which would
+# be a fabricated result and would be wrong for every team at once in the first
+# fortnight of a season.
+_LAST_N = 10
+
+
+def _bdl_games_page_all(params: dict, *, cap: int = 60) -> list[dict]:
+    """Every page of `/games` for `params`. `cap` bounds the walk so a cursor
+    that never terminates cannot spin forever."""
+    out: list[dict] = []
+    cursor = None
+    for _ in range(cap):
+        page = dict(params)
+        page["per_page"] = 100          # /games rejects anything larger
+        if cursor is not None:
+            page["cursor"] = cursor
+        data = _bdl_get_json("games", page)
+        out.extend(data.get("data") or [])
+        cursor = (data.get("meta") or {}).get("next_cursor")
+        if not cursor:
+            break
+    return out
+
+
+def _decided_regular_finals(games: list[dict]) -> list[dict]:
+    """Finished, decided, regular-season games, normalized.
+
+    ⚠️ `season_type` MUST BE FILTERED, and it is the trap in this payload. A
+    season fetch returns spring training too — 451 of 2,909 games for 2026 —
+    which inflates every team's game count by about thirty and introduces a
+    31st "team". Counting those against the standings' `games_played` produced
+    differences of 27-33 games; filtering to `regular` collapsed them to 0 or 1.
+    """
+    out = []
+    for g in games:
+        if g.get("status") != "STATUS_FINAL":
+            continue
+        if g.get("season_type") != "regular":
+            continue
+        home = (g.get("home_team") or {}).get("abbreviation")
+        away = (g.get("away_team") or {}).get("abbreviation")
+        hr = (g.get("home_team_data") or {}).get("runs")
+        ar = (g.get("away_team_data") or {}).get("runs")
+        if not home or not away or hr is None or ar is None or hr == ar:
+            continue
+        # ⚠️ THE ALL-STAR GAME IS FILED AS `regular` AND HAS NO TEAMS. BDL
+        # ships 2026-07-15 as "UNK (Unknown) @ UNK (Unknown)", season_type
+        # `regular`, STATUS_FINAL, 4-0. It touches no real club's count, but
+        # left in it invents a 31st team in the output, which reads as a
+        # mapping bug to the next person. One game in a season; dropped here.
+        if home == away or "UNK" in (home, away):
+            continue
+        out.append({
+            # Full timestamp, not a date: it is what orders a doubleheader's
+            # two games correctly, and the tail of that order is L10.
+            "date": g.get("date"),
+            "home": home, "away": away,
+            "home_runs": int(hr), "away_runs": int(ar),
+        })
+    out.sort(key=lambda r: r["date"] or "")
+    return out
+
+
+def _form_window_dates(today: datetime.date) -> list[str]:
+    return [(today - datetime.timedelta(days=i)).isoformat()
+            for i in range(_FORM_WINDOW_DAYS)]
+
+
+def recent_team_form(season: int, today: Optional[datetime.date] = None) -> dict:
+    """Per-team games played and last-ten record, counted from `/games`.
+
+    Returns `{"as_of", "window", "teams": {ABBR: {...}}, "requests"}`.
+
+    THE FETCH IS SPLIT, AND THAT IS A COST DECISION. `games_played` needs the
+    whole season (30 requests, ~9s at 100 games a page — /games rejects a larger
+    per_page). L10 needs only the recent window (3 requests). Fetching the
+    season on every cache miss would cost thousands of BDL requests a day for a
+    number that changes only when a game ends.
+
+    So the season is split at the window boundary: everything BEFORE the window
+    is a baseline that cannot change once the boundary has passed it, cached for
+    a day and keyed on the boundary date; everything INSIDE the window is
+    re-fetched live. `games_played` is the sum, so it stays exact while the
+    per-request cost is three calls rather than thirty.
+    """
+    today = today or datetime.datetime.utcnow().date()
+    window = _form_window_dates(today)
+    boundary = window[-1]                       # oldest date in the window
+
+    # --- baseline: decided regular finals strictly before the window ---
+    def _build_baseline() -> dict:
+        season_games = _bdl_games_page_all({"seasons[]": season})
+        out: dict[str, int] = {}
+        for r in _decided_regular_finals(season_games):
+            if (r["date"] or "")[:10] >= boundary:
+                continue
+            out[r["home"]] = out.get(r["home"], 0) + 1
+            out[r["away"]] = out.get(r["away"], 0) + 1
+        return out
+
+    # Keyed on the boundary date, so the day's roll invalidates it naturally
+    # rather than on a timer that could straddle two boundaries.
+    baseline = _cached(f"form_baseline:{season}:{boundary}",
+                       _build_baseline, ttl=_TTL_HISTORICAL)
+
+    # --- the live window ---
+    window_games = _bdl_games_page_all({"dates[]": window})
+
+    # ⚠️ ASSERT ON THE RANGE THAT CAME BACK, NOT THE ONE WE ASKED FOR. /games
+    # accepts `team_ids[]`, `start_date` and `end_date`, returns 200, and
+    # ignores them — a filter to three teams yields all thirty, and an August
+    # range yields games from 2002. `dates[]` is the parameter it honours, and
+    # this check is what would catch it silently ceasing to.
+    returned = {(g.get("date") or "")[:10] for g in window_games if g.get("date")}
+    unexpected = returned - set(window)
+    if unexpected:
+        raise ValueError(
+            "BDL /games ignored dates[]: asked for "
+            f"{window[-1]}..{window[0]} and got {len(unexpected)} other date(s), "
+            f"e.g. {sorted(unexpected)[:3]}")
+
+    results = _decided_regular_finals(window_games)
+    per: dict[str, list[bool]] = {}
+    for r in results:
+        per.setdefault(r["home"], []).append(r["home_runs"] > r["away_runs"])
+        per.setdefault(r["away"], []).append(r["away_runs"] > r["home_runs"])
+
+    teams: dict[str, dict] = {}
+    for abbr in set(per) | set(baseline):
+        seq = per.get(abbr, [])
+        last = seq[-_LAST_N:]
+        wins = sum(1 for w in last if w)
+        teams[abbr] = {
+            # The count the absorption compares against the standings row's
+            # `games_played`. Their difference is how many games the base is
+            # missing — a count, not an inference from a clock.
+            "games_played":   baseline.get(abbr, 0) + len(seq),
+            "last_ten_w":     wins,
+            "last_ten_l":     len(last) - wins,
+            # ⚠️ THE DENOMINATOR, because it is not always ten. Early in a
+            # season a team has played fewer, and the honest answer is the
+            # partial record over the games it actually played. A consumer that
+            # renders "6-3" without noticing this reads as though a game is
+            # missing; one that pads to ten invents a result.
+            "last_ten_games": len(last),
+            "window_games":   len(seq),
+        }
+
+    return {
+        "as_of":   datetime.datetime.utcnow().isoformat() + "Z",
+        "window":  {"from": window[-1], "to": window[0], "days": _FORM_WINDOW_DAYS},
+        "teams":   teams,
+        "window_requests": max(1, (len(window_games) + 99) // 100),
+    }

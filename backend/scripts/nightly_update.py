@@ -855,12 +855,25 @@ def _update_gamelogs(current_year: int) -> dict:
 # Catch-up update
 # ---------------------------------------------------------------------------
 #
-# A second Railway cron job should call `POST /admin/catchup-update` daily at
-# **21:00 UTC (≈2 PM PT)** — after the morning + early-afternoon games have
-# finished and BDL has had several hours to absorb their season totals, but
-# before the evening slate first-pitches. The morning nightly at 02:00 UTC
-# can miss BDL data for late West Coast finals; this lightweight pass picks
-# up those lagging rows without the cost of a full re-run.
+# ⚠️ THE SCHEDULE BELOW IS WHAT WAS INTENDED, NOT WHAT RUNS. Measured by
+# sampling `/teams/standings`' `last_updated` every 15 minutes for 24 hours
+# (2026-09-02 to 09-03): there is exactly ONE refresh a day, landing between
+# 14:42 and 15:12 UTC, and the two observed stamps were 23h57m apart. No run
+# at 02:00 UTC and none at 21:00 UTC.
+#
+# That mattered: the earlier wording sent an investigation looking for an
+# evening job that would have closed the today-adjustment's cutoff hours
+# before it actually closes, and cost a round of work to disprove. The
+# schedule lives in Railway's dashboard, outside this repo, so a comment here
+# can only ever be a claim about it — treat `docs/standings-freshness.log`,
+# which records observed refreshes, as the source of truth.
+#
+# WHAT WAS INTENDED: a second Railway cron job calling
+# `POST /admin/catchup-update` daily at 21:00 UTC (≈2 PM PT) — after the
+# morning and early-afternoon games have finished and BDL has had several
+# hours to absorb their season totals, but before the evening slate
+# first-pitches, since a single morning nightly misses late West Coast finals.
+# The endpoint exists and works; only the cron is absent.
 
 def run_catchup_update() -> dict:
     """Lightweight refresh: refetch BDL season stats for every
