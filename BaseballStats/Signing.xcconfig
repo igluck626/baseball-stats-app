@@ -1,0 +1,34 @@
+// Signing.xcconfig — the code-signing team, in one place.
+//
+// WHY THIS FILE EXISTS. `DEVELOPMENT_TEAM` lived in project.pbxproj, once per
+// build configuration, and flipped between two values four times in four
+// months (2c73261, 2a9e8e1, e792446, 4d00217). Both values are real teams
+// belonging to Isaac, and they carry names for the same person — "YITZCHAK
+// ISAAC GLUCK" and "Isaac Gluck" — so Xcode's dropdown shows two entries that
+// look identical while the file stores an id. Switching between them is
+// invisible in the UI and silent in review.
+//
+// 449A45Z9N4 is the team that OWNS the app: it holds both the Development and
+// the Store provisioning profile for com.IsaacGluck.baseballstats.BaseballStats.
+// Its certificate is "Apple Development: YITZCHAK ISAAC GLUCK (M9326TT2DR)" —
+// note that M9326TT2DR is the CERTIFICATE id; the team id is the certificate's
+// OU field, which is why the id on the profile matches neither value that used
+// to appear here.
+//
+// ⚠️ SETTING THE TEAM IN XCODE'S UI DEFEATS THIS FILE. Signing & Capabilities
+// writes DEVELOPMENT_TEAM back into project.pbxproj at TARGET level, and a
+// target-level setting overrides an xcconfig. That is not a reason to avoid the
+// GUI — it is the reason this file is worth having: a DEVELOPMENT_TEAM line
+// reappearing in the pbxproj is now a visible signal that someone touched the
+// dropdown, where before it was just another line in a file nobody reads.
+//
+// ⚠️ SO THE INVARIANT IS: project.pbxproj contains ZERO occurrences of
+// DEVELOPMENT_TEAM. If `grep -c DEVELOPMENT_TEAM` on it returns anything but 0,
+// this file has been silently overridden.
+//
+// TRACKED, DELIBERATELY. A team id is not a secret — it ships in the bundle of
+// every released app. Gitignoring it would leave a fresh clone with no team, at
+// which point automatic signing writes one INTO the pbxproj and the whole
+// problem returns, with a clone that cannot sign on top.
+
+DEVELOPMENT_TEAM = 449A45Z9N4
