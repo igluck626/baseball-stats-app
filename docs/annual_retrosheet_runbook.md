@@ -1,5 +1,19 @@
 # Annual Retrosheet ingest — the one manual step
 
+> **⚠️ Every `/admin` route now requires a token.** Send `X-Admin-Token:
+> $ADMIN_TOKEN` on every curl below, or the request answers **404** — the guard
+> returns "not found" rather than "unauthorized" so an unauthenticated caller
+> cannot tell a real route from a typo. Export it first:
+>
+> ```
+> export ADMIN_TOKEN='...'   # the value set in Railway
+> ```
+> and add `-H "X-Admin-Token: $ADMIN_TOKEN"` to each `curl` that targets
+> `/admin/...`. Reads that are not under `/admin/` (`/players/...`, etc.) are
+> unaffected.
+
+
+
 The boundary between our own record and the provider is **self-managing**: the
 client reads it from `GET /meta/coverage`, which derives it from
 `retro_game_info` rather than from a constant anyone has to remember to move.

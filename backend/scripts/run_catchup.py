@@ -40,6 +40,21 @@ _POLL_INTERVAL_SECONDS = 30
 _MAX_POLL_SECONDS = 15 * 60
 
 
+def _admin_headers() -> dict:
+    """The admin token, read from the SAME environment this script runs in.
+
+    ⚠️ EXITS RATHER THAN CALLING WITHOUT IT. The endpoint answers 404 to an
+    unauthenticated caller, so a missing token would surface as "route not
+    found" — which reads like a deploy problem and would send the next person
+    looking in the wrong place entirely.
+    """
+    token = os.getenv("ADMIN_TOKEN", "").strip()
+    if not token:
+        print("ERROR: ADMIN_TOKEN is not set", file=sys.stderr)
+        raise SystemExit(1)
+    return {"X-Admin-Token": token}
+
+
 def main() -> int:
     api_url = os.getenv("BASEBALL_API_URL", "").strip().rstrip("/")
     if not api_url:
@@ -51,7 +66,7 @@ def main() -> int:
 
     print(f"POST {start_endpoint}")
     try:
-        r = requests.post(start_endpoint, timeout=30)
+        r = requests.post(start_endpoint, headers=_admin_headers(), timeout=30)
     except requests.RequestException as exc:
         print(f"ERROR: start request failed: {exc}", file=sys.stderr)
         return 1
@@ -66,7 +81,7 @@ def main() -> int:
         time.sleep(_POLL_INTERVAL_SECONDS)
         elapsed += _POLL_INTERVAL_SECONDS
         try:
-            s = requests.get(status_endpoint, timeout=30)
+            s = requests.get(status_endpoint, headers=_admin_headers(), timeout=30)
         except requests.RequestException as exc:
             # Transient — keep polling. A persistent failure will
             # eventually trip the wall-clock cap below.

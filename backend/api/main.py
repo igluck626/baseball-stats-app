@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import threading
 import time
 import traceback
@@ -17,6 +18,7 @@ import pandas as pd
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import Body, FastAPI, Header, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from sqlalchemy import (
     bindparam as _sa_bindparam,
     func as _sa_func,
@@ -1114,6 +1116,54 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Baseball Stats API", version="0.1.0", lifespan=lifespan)
+
+
+# ---------------------------------------------------------------------------
+# Admin authentication
+# ---------------------------------------------------------------------------
+#
+# ⚠️ EVERY `/admin` ROUTE WAS PUBLIC. 66 POSTs and 36 GETs on a public URL with
+# no token, no dependency and no middleware — among them `/admin/reset-db`,
+# which calls `reset_db.clear_all()` and deletes every row from four stats
+# tables, and `/admin/question-log`, which returns users' raw questions and
+# answers to anyone who asks for it.
+#
+# ⚠️ THIS IS A PATH GUARD, NOT A ROUTER, AND THAT IS DELIBERATE. A router
+# protects the routes someone remembers to register on it; the next
+# `@app.post("/admin/...")` written against `app` would be unguarded again,
+# which is exactly the omission the guard exists to prevent. Matching on the
+# path covers every admin route that exists and every one that will be added,
+# with no per-route discipline required.
+#
+# ⚠️ IT FAILS CLOSED. An unset or empty `ADMIN_TOKEN` rejects everything rather
+# than waving it through — a missing environment variable must not silently
+# restore the state this replaces. That means the token has to exist in the
+# environment BEFORE this deploys, or the nightly stops running.
+#
+# 404 RATHER THAN 401, because a 401 confirms the route is there. An
+# unauthenticated caller should not be able to tell `/admin/reset-db` from a
+# typo.
+_ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "").strip()
+if not _ADMIN_TOKEN:
+    log.warning(
+        "ADMIN_TOKEN is not set — every /admin route will return 404. "
+        "Set it in the environment before expecting the nightly to run.")
+
+
+@app.middleware("http")
+async def _require_admin_token(request: Request, call_next):
+    path = request.url.path
+    # `== "/admin"` as well as the prefix, so a bare /admin cannot slip past;
+    # `/admin/` rather than `/admin` for the prefix so a future `/administer`
+    # route is not accidentally swept in.
+    if path == "/admin" or path.startswith("/admin/"):
+        supplied = request.headers.get("x-admin-token", "")
+        # compare_digest so a wrong token cannot be narrowed by timing.
+        if not _ADMIN_TOKEN or not secrets.compare_digest(supplied, _ADMIN_TOKEN):
+            log.warning("rejected unauthenticated admin request: %s %s", request.method, path)
+            return JSONResponse(status_code=404, content={"detail": "Not Found"})
+    return await call_next(request)
+
 
 
 # ---------------------------------------------------------------------------

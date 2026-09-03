@@ -1,5 +1,19 @@
 # Cade Smith pitcher fix — plan (Part A: targeted, Part B: systemic)
 
+> **⚠️ Every `/admin` route now requires a token.** Send `X-Admin-Token:
+> $ADMIN_TOKEN` on every curl below, or the request answers **404** — the guard
+> returns "not found" rather than "unauthorized" so an unauthenticated caller
+> cannot tell a real route from a typo. Export it first:
+>
+> ```
+> export ADMIN_TOKEN='...'   # the value set in Railway
+> ```
+> and add `-H "X-Admin-Token: $ADMIN_TOKEN"` to each `curl` that targets
+> `/admin/...`. Reads that are not under `/admin/` (`/players/...`, etc.) are
+> unaffected.
+
+
+
 **Status:** design only. No code changed. Review **Part A** first; execute + verify
 it for Cade Smith; then review **Part B** as its own step.
 
