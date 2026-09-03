@@ -1,0 +1,106 @@
+# Is the standings update chain still running?
+#
+# WHY THIS EXISTS. `/teams/standings` carries a `last_updated` stamped by
+# `crud.save_team_seasons` on every row of every refresh. That field is the only
+# honest freshness signal we have: the nightly's own `last_run` is held in
+# process memory and reports "never" after any restart, which is
+# indistinguishable from a job that has genuinely stopped.
+#
+# It also answers a question that has now blocked work twice — how many
+# standings refreshes land per day, and at what hours — because the whole
+# today-adjustment on Scores, Home and Standings is gated on this timestamp.
+name: Standings freshness
+
+on:
+  schedule:
+    # Every three hours, off the hour: scheduled runs cluster on the hour and
+    # get queued.
+    - cron: '17 */3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  # ⚠️ THE ONE PLACE THIS NUMBER LIVES. Change it here and nowhere else.
+  #
+  # ⚠️ 26 IS A PLACEHOLDER, NOT A MEASUREMENT. It was chosen to tolerate exactly
+  # one missed daily nightly, on the assumption of a single run per day — an
+  # assumption nothing has yet verified. A 24h sample of this same field is
+  # running; once it reports how many refreshes land and when, set this from the
+  # observed interval plus one missed run, and delete this paragraph.
+  MAX_AGE_HOURS: '26'
+  STANDINGS_URL: 'https://baseball-stats-app-production-0ef1.up.railway.app/teams/standings?year=2026'
+  # Refresh EVENTS, one line per observed change. Appending only on change is
+  # what keeps this a readable history of the update chain rather than a commit
+  # every three hours saying nothing happened.
+  LOG_FILE: 'docs/standings-freshness.log'
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read last_updated and measure its age
+        id: check
+        run: |
+          set -euo pipefail
+          # To a file, not a shell variable: the payload is all 30 rows and
+          # passing it through argv invites quoting failures for no benefit.
+          curl -sS --max-time 30 --retry 3 --retry-delay 5 "$STANDINGS_URL" -o standings.json
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import datetime, json, os
+          payload = json.load(open("standings.json"))
+          raw = payload.get("last_updated")
+          if not raw:
+              print("status=missing"); print("age_hours=-1"); print("stamp=none")
+              raise SystemExit(0)
+          # Python's isoformat() emits 6-digit microseconds and the API appends
+          # a literal Z; fromisoformat wants +00:00.
+          stamp = datetime.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+          age = (datetime.datetime.now(datetime.timezone.utc) - stamp).total_seconds() / 3600
+          limit = float(os.environ["MAX_AGE_HOURS"])
+          print(f"stamp={raw}")
+          print(f"age_hours={age:.2f}")
+          print("status=" + ("stale" if age > limit else "ok"))
+          PY
+
+      - name: Record the refresh, if this stamp is new
+        run: |
+          set -euo pipefail
+          stamp='${{ steps.check.outputs.stamp }}'
+          [ "$stamp" = "none" ] && exit 0
+          mkdir -p "$(dirname "$LOG_FILE")"
+          touch "$LOG_FILE"
+          # Only a CHANGED stamp is an event worth recording.
+          if [ "$(tail -n 1 "$LOG_FILE" | cut -d, -f2)" = "$stamp" ]; then
+            echo "unchanged since the last observation — nothing to record"
+            exit 0
+          fi
+          echo "$(date -u +%Y-%m-%dT%H:%M:%SZ),$stamp" >> "$LOG_FILE"
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$LOG_FILE"
+          git commit -m "Record a standings refresh at $stamp [skip ci]"
+          git push
+
+      - name: Report
+        run: |
+          {
+            echo "### Standings freshness"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| last_updated | \`${{ steps.check.outputs.stamp }}\` |"
+            echo "| age | ${{ steps.check.outputs.age_hours }} h |"
+            echo "| threshold | ${MAX_AGE_HOURS} h |"
+            echo "| status | **${{ steps.check.outputs.status }}** |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail when the chain has stalled
+        if: steps.check.outputs.status != 'ok'
+        run: |
+          echo "::error::standings last_updated is ${{ steps.check.outputs.age_hours }}h old (limit ${MAX_AGE_HOURS}h, stamp ${{ steps.check.outputs.stamp }})"
+          echo "A failed scheduled run is the alert: GitHub emails the repository owner."
+          exit 1
