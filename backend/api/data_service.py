@@ -1890,6 +1890,24 @@ def _bdl_get_json(path: str, params: Optional[dict] = None) -> dict:
     API rejects `seasons[]=` and `game_ids[]=`; expects singular
     `season=` / `game_id=`). Callers must use the singular form on
     those routes — this helper doesn't disguise the difference.
+
+    ⚠️ AND ON /games, THE WRONG PARAM NAME IS NOT REJECTED — IT IS IGNORED.
+    That is the worse failure and it has to be checked for by hand, because
+    the response is a normal 200 with a plausible body. Measured 2026-09-02:
+
+      * `team_ids[]=19,2,5` returned games for all 30 teams.
+      * `start_date=2026-08-10&end_date=2026-09-02` returned a game from
+        APRIL 2002.
+
+    Neither raised, neither warned. A query that looks filtered and is not
+    reads as "the data is wrong" rather than "the filter did nothing", and
+    sends the next person to audit the wrong thing entirely.
+
+    **`dates[]`, repeated once per date, is the filter /games honours** — it
+    accepts many in one call (20 dates, 273 games, 3 requests at per_page=100).
+    `seasons[]` works there too. Anything else: verify against a known-narrow
+    window before trusting it, by asserting on the range that comes BACK rather
+    than the range you asked for.
     """
     qs  = urllib.parse.urlencode(params or {}, doseq=True)
     url = f"{_BDL_API_BASE}/{path.lstrip('/')}"
