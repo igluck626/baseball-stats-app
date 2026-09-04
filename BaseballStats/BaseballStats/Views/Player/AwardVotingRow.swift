@@ -11,7 +11,14 @@
 //
 //  The list's per-row `NavigationLink(value: entry.player)` resolves against
 //  whatever NavigationStack hosts it (the sheet's own stack, or Search's stack)
-//  — both declare `.navigationDestination(for: PlayerSearchResult.self)`.
+//  — both register the player destination, nowadays via the shared
+//  `.stackDestinations(...)` modifier (see `Navigation/StackDestinations.swift`).
+//
+//  ⚠️ THIS ROW DELIBERATELY DECLARES NO DESTINATION OF ITS OWN, and that is
+//  correct rather than an omission: a row is not a stack, and registering a
+//  destination here would put it on whichever stack happened to host the row —
+//  which is the host's business, not the row's. If a push from here ever does
+//  nothing, the fix is that the HOST stack has not applied the modifier.
 //
 
 import SwiftUI

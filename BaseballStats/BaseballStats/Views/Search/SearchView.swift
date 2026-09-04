@@ -17,6 +17,11 @@ struct SearchView: View {
     @State private var showingCompare = false
     /// Programmatic nav stack — heat cards resolve to a profile and push
     /// onto this; the existing value-based NavigationLinks push here too.
+    /// Available here because Search is a real tab, inside the TabView that
+    /// `ContentView` publishes both objects to. The SHEETS cannot rely on this
+    /// — see `StackDestinations`.
+    @EnvironmentObject private var navigation: AppNavigation
+    @EnvironmentObject private var liveStore: LiveGameStore
     @State private var path = NavigationPath()
     /// player_id being resolved from a heat-card tap (drives the card's
     /// inline spinner and guards against double-taps).
@@ -30,9 +35,12 @@ struct SearchView: View {
             }
             .navigationTitle("Search")
             .navigationBarTitleDisplayMode(.inline)
-            .navigationDestination(for: PlayerSearchResult.self) { player in
-                PlayerProfileView(player: player)
-            }
+            .stackDestinations(
+                path: $path,
+                owningTab: .search,
+                navigation: navigation,
+                liveStore: liveStore,
+            )
             .navigationDestination(for: AwardVotingBrowserDestination.self) { _ in
                 AwardVotingBrowserView()
             }

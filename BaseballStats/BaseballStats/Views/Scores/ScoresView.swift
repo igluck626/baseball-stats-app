@@ -619,20 +619,14 @@ struct ScoresView: View {
                     }
                 }
             }
-            .navigationDestination(for: Game.self) { game in
-                BoxScoreView(
-                    game:           game,
-                    teamStandings:  vm.teamStandings,
-                    teamRecords:    vm.teamRecords,
-                    path:           $navigationPath,
-                    owningTab:      .scores,
-                    navigation:     navigation,
-                    liveStore:      liveStore,
-                )
-            }
-            .navigationDestination(for: PlayerSearchResult.self) { player in
-                PlayerProfileView(player: player)
-            }
+            .stackDestinations(
+                path: $navigationPath,
+                owningTab: .scores,
+                navigation: navigation,
+                liveStore: liveStore,
+                teamStandings: vm.teamStandings,
+                teamRecords: vm.teamRecords,
+            )
             .sheet(isPresented: $showingDatePicker) {
                 datePickerSheet
             }

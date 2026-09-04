@@ -27,6 +27,12 @@ struct TeamHistorySheet: View {
     let postseasonByYear: [Int: [TeamPostseasonSeries]]
     let isLoading: Bool
 
+    /// Passed in explicitly (not via `@EnvironmentObject`) because environment
+    /// objects don't reliably cross the `.sheet` boundary — the same reason
+    /// `ScheduleSheet` takes them. Forwarded to the pushed BoxScoreView so its
+    /// live polling still gates on lifecycle/tab.
+    @ObservedObject var navigation: AppNavigation
+    @ObservedObject var liveStore: LiveGameStore
     @Environment(\.dismiss) private var dismiss
 
     /// The two top-level sections selected by the segmented picker.
@@ -103,9 +109,14 @@ struct TeamHistorySheet: View {
                 }
             }
             // The Awards section pushes the tapped winner's profile here.
-            .navigationDestination(for: PlayerSearchResult.self) { player in
-                PlayerProfileView(player: player)
-            }
+            .stackDestinations(
+                path: $path,
+                owningTab: .home,
+                navigation: navigation,
+                liveStore: liveStore,
+                teamStandings: vm.teamStandings,
+                teamRecords: vm.teamRecords,
+            )
         }
         // Glass sheet — matches the app-wide sheet treatment.
         .presentationBackground(.ultraThinMaterial)

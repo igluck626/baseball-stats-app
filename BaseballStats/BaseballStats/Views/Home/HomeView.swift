@@ -43,20 +43,14 @@ struct HomeView: View {
             }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbarContent }
-            .navigationDestination(for: Game.self) { game in
-                BoxScoreView(
-                    game:           game,
-                    teamStandings:  vm.teamStandings,
-                    teamRecords:    vm.teamRecords,
-                    path:           $navigationPath,
-                    owningTab:      .home,
-                    navigation:     navigation,
-                    liveStore:      liveStore,
-                )
-            }
-            .navigationDestination(for: PlayerSearchResult.self) { player in
-                PlayerProfileView(player: player)
-            }
+            .stackDestinations(
+                path: $navigationPath,
+                owningTab: .home,
+                navigation: navigation,
+                liveStore: liveStore,
+                teamStandings: vm.teamStandings,
+                teamRecords: vm.teamRecords,
+            )
             .navigationDestination(for: TeamNewsDestination.self) { dest in
                 TeamNewsListView(
                     scope:      dest.scope,
@@ -103,19 +97,7 @@ struct HomeView: View {
                     .presentationDetents([.large])
                 }
             }
-            .sheet(isPresented: $showingHistorySheet) {
-                if let bdlId = store.bdlTeamId,
-                   let entry = MLBTeamCatalog.entry(forBDLId: bdlId) {
-                    TeamHistorySheet(
-                        entry:            entry,
-                        vm:               vm,
-                        history:          vm.teamHistory,
-                        postseasonByYear: vm.postseasonByYear,
-                        isLoading:        vm.isLoadingHistory,
-                    )
-                    .presentationDetents([.large])
-                }
-            }
+            .sheet(isPresented: $showingHistorySheet) { historySheet }
             .sheet(isPresented: $showingInjurySheet) {
                 if let bdlId = store.bdlTeamId,
                    let entry = MLBTeamCatalog.entry(forBDLId: bdlId) {
@@ -232,6 +214,29 @@ struct HomeView: View {
     /// shows through below the fade — so the lower half of the tab
     /// reads as plain system surface (and the glass cards on top look
     /// like genuine glass against it).
+    /// Extracted from the `.sheet` chain: adding a sixth argument to the
+    /// destinations modifier pushed `body` past the compiler's type-checking
+    /// budget ("unable to type-check this expression in reasonable time"). A
+    /// SwiftUI view builder is one expression, so every modifier added to it
+    /// costs inference time for the whole chain — pulling a branch into its own
+    /// property is the standard remedy and changes nothing at runtime.
+    @ViewBuilder
+    private var historySheet: some View {
+        if let bdlId = store.bdlTeamId,
+           let entry = MLBTeamCatalog.entry(forBDLId: bdlId) {
+            TeamHistorySheet(
+                entry:            entry,
+                vm:               vm,
+                history:          vm.teamHistory,
+                postseasonByYear: vm.postseasonByYear,
+                isLoading:        vm.isLoadingHistory,
+                navigation:       navigation,
+                liveStore:        liveStore,
+            )
+            .presentationDetents([.large])
+        }
+    }
+
     private var backgroundGradient: some View {
         ZStack {
             // Grouped background so the solid white/dark cards float with

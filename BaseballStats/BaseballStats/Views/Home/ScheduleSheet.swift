@@ -62,20 +62,14 @@ struct ScheduleSheet: View {
                     Button("Close") { dismiss() }
                 }
             }
-            .navigationDestination(for: Game.self) { game in
-                BoxScoreView(
-                    game:           game,
-                    teamStandings:  teamStandings,
-                    teamRecords:    teamRecords,
-                    path:           $path,
-                    owningTab:      .home,
-                    navigation:     navigation,
-                    liveStore:      liveStore,
-                )
-            }
-            .navigationDestination(for: PlayerSearchResult.self) { player in
-                PlayerProfileView(player: player)
-            }
+            .stackDestinations(
+                path: $path,
+                owningTab: .home,
+                navigation: navigation,
+                liveStore: liveStore,
+                teamStandings: teamStandings,
+                teamRecords: teamRecords,
+            )
         }
         .task { await vm.load(bdlTeamId: favorite.bdlTeamId) }
         .presentationDetents([.large])
