@@ -330,6 +330,109 @@ struct RecordAdjustmentTests {
             teamId: kHome, resultCount: 1) == 0)
     }
 
+    /// ⚠️ THE 08:00 ET REGRESSION, WITH THE HOUR WRITTEN DOWN. Isaac checked
+    /// before 8am ET and last night's game had vanished from both the record
+    /// and the streak. The cause was not absorption — it was scoping: a game
+    /// played last night carries YESTERDAY's ET date, and the window admitted
+    /// yesterday only before 6 AM, so by 08:00 the game was not a candidate at
+    /// all and `.counted` never got to measure it.
+    ///
+    /// The hour is explicit here rather than derived, because the bug lives in
+    /// a specific two-to-four-hour band — after the old window closed at 06:00
+    /// and before BDL absorbs at roughly 07:30-10:30 — and a test that picked
+    /// its own "now" could drift out of that band and pass while broken.
+    @Test func countedStillSeesLastNightsGameAtEightInTheMorning() {
+        // 2026-08-26, 19:10 ET first pitch — last night, from the check's view.
+        let lastNight = "2026-08-26T23:10:00.000Z"
+        // 2026-08-27, 08:00 ET = 12:00Z. Past the old 6 AM cutoff, before BDL
+        // has absorbed.
+        let eightAM = ISO8601DateFormatter().date(from: "2026-08-27T12:00:00Z")!
+        let games = [
+            finalGame(id: 1, homeId: kHome, awayId: kAway,
+                      homeRuns: 5, awayRuns: 2, iso: lastNight),
+        ]
+
+        // The old behaviour, still correct for the cases that need it: with no
+        // absorption signal the narrow window is the only guard, so yesterday
+        // is out of scope by 08:00.
+        let narrow = TodayRecordAdjustments.unabsorbedResultsByTeam(
+            from: games, lastUpdated: kAnchorStamp, absorption: .unanchored,
+            now: eightAM)
+        #expect(narrow[kHome] == nil,
+                "unanchored keeps the 6 AM window — its only double-count guard")
+
+        // `.counted`: the feed says the base is a game short, so the game is
+        // still a candidate and still unabsorbed.
+        let counted = TodayRecordAdjustments.unabsorbedResultsByTeam(
+            from: games, lastUpdated: kAnchorStamp,
+            absorption: .counted(feedGamesPlayed: [kHome: 133, kAway: 133],
+                                 current: [kHome: record(78, 54),
+                                           kAway: record(62, 70)]),
+            now: eightAM)
+        #expect(counted[kHome]?.count == 1,
+                "counted still sees last night's game at 08:00 ET")
+
+        // And the record moves with it — the symptom Isaac reported.
+        let deltas = TodayRecordAdjustments.deltas(
+            from: games, lastUpdated: kAnchorStamp,
+            absorption: .counted(feedGamesPlayed: [kHome: 133, kAway: 133],
+                                 current: [kHome: record(78, 54),
+                                           kAway: record(62, 70)]),
+            now: eightAM)
+        #expect(deltas[kHome]?.wDelta == 1)
+    }
+
+    /// The widened window must not become a second way to double-count: once
+    /// the base HAS absorbed last night's game, 08:00 ET must add nothing even
+    /// though the game is now in scope.
+    @Test func theWiderWindowStillDropsWhatTheBaseAlreadyHas() {
+        let lastNight = "2026-08-26T23:10:00.000Z"
+        let eightAM = ISO8601DateFormatter().date(from: "2026-08-27T12:00:00Z")!
+        let games = [
+            finalGame(id: 1, homeId: kHome, awayId: kAway,
+                      homeRuns: 5, awayRuns: 2, iso: lastNight),
+        ]
+        let counted = TodayRecordAdjustments.unabsorbedResultsByTeam(
+            from: games, lastUpdated: kAnchorStamp,
+            // Feed and base agree — absorbed.
+            absorption: .counted(feedGamesPlayed: [kHome: 132, kAway: 132],
+                                 current: [kHome: record(78, 54),
+                                           kAway: record(62, 70)]),
+            now: eightAM)
+        #expect(counted[kHome] == nil, "in scope, but measured as already counted")
+    }
+
+    /// With two days in scope at once, the OLDEST games must be the ones
+    /// retired — `dropFirst(absorbed)` over a chronological list. A base that
+    /// has absorbed last night but not this afternoon must keep exactly the
+    /// afternoon game.
+    @Test func theWiderWindowRetiresTheOlderGameFirst() {
+        let lastNight = "2026-08-26T23:10:00.000Z"
+        let thisAfternoon = "2026-08-27T17:10:00.000Z"      // 13:10 ET same day
+        let evening = ISO8601DateFormatter().date(from: "2026-08-27T23:00:00Z")!
+        let games = [
+            finalGame(id: 2, homeId: kAway, awayId: kHome,
+                      homeRuns: 1, awayRuns: 4, iso: thisAfternoon),
+            finalGame(id: 1, homeId: kHome, awayId: kAway,
+                      homeRuns: 5, awayRuns: 2, iso: lastNight),
+        ]
+        let counted = TodayRecordAdjustments.unabsorbedResultsByTeam(
+            from: games, lastUpdated: kAnchorStamp,
+            // Two candidates, base short by one → the newer survives.
+            absorption: .counted(feedGamesPlayed: [kHome: 134, kAway: 134],
+                                 current: [kHome: record(79, 54),
+                                           kAway: record(62, 71)]),
+            now: evening)
+        #expect(counted[kHome]?.count == 1)
+        // Identified by which side the favourite was on rather than by parsing
+        // the timestamp back: `ISO8601DateFormatter()` without
+        // `.withFractionalSeconds` returns nil for these ".000Z" strings, so a
+        // date comparison here silently compares against nil and passes for
+        // the wrong reason. The afternoon game is the one where kHome is AWAY.
+        #expect(counted[kHome]?.first?.awayId == kHome,
+                "the already-absorbed older game is the one dropped")
+    }
+
     /// The record and the streak must read the same evening — `recalculateGB`
     /// takes the same absorption as `deltas`, so a game counted by one is
     /// counted by the other. Asserted on the SET both derive from, which is

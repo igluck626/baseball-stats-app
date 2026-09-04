@@ -216,6 +216,7 @@ enum TodayRecordAdjustments {
         from games: [Game],
         lastUpdated: String?,
         now: Date = Date(),
+        alwaysAdmitPriorDay: Bool = false,
     ) -> [FinalResult] {
         let etFormatter = DateFormatter()
         etFormatter.timeZone = TimeZone(identifier: "America/New_York")
@@ -228,11 +229,36 @@ enum TodayRecordAdjustments {
         let todayET = etFormatter.string(from: now)
         let currentETHour = Int(etHourFormatter.string(from: now)) ?? 12
 
-        // Midnight-ET edge: a late West Coast game can end after
-        // midnight ET, so before 6 AM ET also accept yesterday's ET
-        // date (otherwise those finals would fall outside "today").
+        // Yesterday's ET date is admitted too — always under
+        // `alwaysAdmitPriorDay`, and otherwise only before 6 AM ET.
+        //
+        // THE NARROW FORM EXISTS TO STOP DOUBLE-COUNTING, and it was the only
+        // protection there was: with no way to tell an absorbed game from an
+        // unabsorbed one, dropping yesterday at 6 AM was a proxy for "by now
+        // the base surely has it". The proxy is wrong in both directions, and
+        // the direction that hurt was early — BDL trails a final by ~9.4h, so
+        // a game ending at 22:00 ET is absorbed around 07:24 ET, and between
+        // 06:00 and then the adjustment had already stopped counting it while
+        // the base still lacked it. That hour-and-a-half to four-and-a-half
+        // hour hole is the morning reversion, and it is why an 08:00 ET check
+        // saw last night's game vanish from the record and the streak.
+        //
+        // ⚠️ `.counted` MAKES THE PROXY REDUNDANT, WHICH IS WHY IT MAY WIDEN.
+        // It retires a game by MEASURING that the base contains it, so a game
+        // the base has absorbed is dropped whatever its date. Keeping the
+        // narrow window under `.counted` means protecting against
+        // double-counting twice, with the cruder guard firing first and
+        // deciding the outcome.
+        //
+        // ⚠️ AND IT WIDENS PER-CASE, NOT GLOBALLY. `.unanchored` and
+        // `.anchored` still get the 6 AM form, because they still need it:
+        // `.unanchored` has no absorption signal at all, so an always-on prior
+        // day would re-add every one of yesterday's games to a base that
+        // already contains them. The caller passes
+        // `Absorption.admitsPriorDayAllDay`, so the window can never be wider
+        // than the absorption that has to police it.
         var validETDates: Set<String> = [todayET]
-        if currentETHour < 6,
+        if alwaysAdmitPriorDay || currentETHour < 6,
            let yesterday = Calendar.current.date(byAdding: .day, value: -1, to: now) {
             validETDates.insert(etFormatter.string(from: yesterday))
         }
@@ -321,6 +347,19 @@ enum TodayRecordAdjustments {
             if case .counted = self { return false }
             return true
         }
+
+        /// Whether yesterday's ET date stays in scope ALL DAY rather than only
+        /// before 6 AM.
+        ///
+        /// True only for `.counted`, and for the same reason as the cutoff: a
+        /// game is retired here by measuring that the base contains it, so the
+        /// date window no longer has to guess. Under the other two cases the
+        /// narrow window is the only double-count protection there is and must
+        /// stay — see the note in `qualifyingResults`.
+        var admitsPriorDayAllDay: Bool {
+            if case .counted = self { return true }
+            return false
+        }
     }
 
     /// Games of `team`'s post-cutoff finals that the base already reflects.
@@ -400,6 +439,7 @@ enum TodayRecordAdjustments {
             // measurement exists to catch.
             lastUpdated: absorption.appliesLastUpdatedCutoff ? lastUpdated : nil,
             now: now,
+            alwaysAdmitPriorDay: absorption.admitsPriorDayAllDay,
         )
         guard !results.isEmpty else { return [:] }
 
