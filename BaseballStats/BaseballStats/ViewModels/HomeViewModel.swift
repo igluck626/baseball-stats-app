@@ -277,6 +277,22 @@ final class HomeViewModel: ObservableObject {
                     self.teamLastTenW   = row.last_ten_w
                     self.teamLastTenL   = row.last_ten_l
                 }
+                // ⚠️ THE FEED'S L10 WINS WHERE IT EXISTS. The row above comes
+                // from a table the nightly writes once a day, so its L10 lags
+                // by up to that long — and it looks correct roughly half the
+                // time by luck, because L10 only moves when the game leaving
+                // the window differs in result from the one entering. The feed
+                // counted it from the games themselves.
+                //
+                // Nothing adjusts L10 the way the record and the streak are
+                // adjusted; there is no delta to apply, because a rolling
+                // window needs the game LEAVING it as well as the one joining,
+                // and only the feed has that sequence.
+                if let f = resp.recent_form?.teams[String(bdlTeamId)],
+                   f.last_ten_games > 0 {
+                    self.teamLastTenW = f.last_ten_w
+                    self.teamLastTenL = f.last_ten_l
+                }
             }
         }
 

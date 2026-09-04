@@ -43,7 +43,11 @@ final class StandingsViewModel: ObservableObject {
     /// carried one. Current season only; nil for historical years and when the
     /// feed was unavailable, in which case the adjustment falls back to the
     /// behaviour that shipped before it existed.
-    private var recentForm: RecentForm?
+    /// Read by the view for the L10 override — see `lastTen(for:)` in
+    /// `StandingsView`. Internal rather than private because the cell reads it
+    /// DIRECTLY rather than having it threaded through `recalculateGB`'s
+    /// return tuple, which is already ten fields wide.
+    @Published private(set) var recentForm: RecentForm?
 
     /// The win percentage each row is ORDERED by, keyed by Lahman code.
     ///

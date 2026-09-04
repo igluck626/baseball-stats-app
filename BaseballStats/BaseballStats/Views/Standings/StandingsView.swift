@@ -202,6 +202,7 @@ struct StandingsView: View {
                             isHistorical: isHistoricalView,
                             adjustments: viewModel.todayAdjustments,
                             adjustedGB: viewModel.adjustedGB,
+                            recentForm: viewModel.recentForm,
                             wildcardContenders: viewModel.alWildcard,
                             favoriteCode: viewModel.favoriteLahmanCode,
                             favoriteDivision: favoriteDivision(inLeague: "AL")
@@ -213,6 +214,7 @@ struct StandingsView: View {
                             isHistorical: isHistoricalView,
                             adjustments: viewModel.todayAdjustments,
                             adjustedGB: viewModel.adjustedGB,
+                            recentForm: viewModel.recentForm,
                             wildcardContenders: viewModel.nlWildcard,
                             favoriteCode: viewModel.favoriteLahmanCode,
                             favoriteDivision: favoriteDivision(inLeague: "NL")
@@ -301,6 +303,7 @@ struct StandingsView: View {
                     isHistorical: isHistoricalView,
                     adjustments: viewModel.todayAdjustments,
                     adjustedGB: viewModel.adjustedGB,
+                    recentForm: viewModel.recentForm,
                     wildcardContenders: viewModel.alWildcard,
                     favoriteCode: viewModel.favoriteLahmanCode
                 )
@@ -313,6 +316,7 @@ struct StandingsView: View {
                     isHistorical: isHistoricalView,
                     adjustments: viewModel.todayAdjustments,
                     adjustedGB: viewModel.adjustedGB,
+                    recentForm: viewModel.recentForm,
                     wildcardContenders: viewModel.nlWildcard,
                     favoriteCode: viewModel.favoriteLahmanCode
                 )
@@ -388,6 +392,9 @@ private struct DivisionCard: View {
     let adjustments: [Int: (wDelta: Int, lDelta: Int)]
     /// Recomputed columns keyed by Lahman team_id (empty → use base).
     let adjustedGB: [String: AdjustedStandingColumns]
+    /// Live game-feed form, for the L10 column. Read at the cell rather than
+    /// threaded through `recalculateGB` — see `lastTen(for:)`.
+    var recentForm: RecentForm? = nil
     /// This league's non-division-leaders sorted best→worst — the
     /// ranking the WCGB reformatter anchors on.
     let wildcardContenders: [TeamStanding]
@@ -404,6 +411,20 @@ private struct DivisionCard: View {
 
     private func gbOverride(for team: TeamStanding) -> AdjustedStandingColumns? {
         team.team_id.flatMap { adjustedGB[$0] }
+    }
+
+    /// L10 counted from the live game feed, when it is available.
+    ///
+    /// ⚠️ READ HERE RATHER THAN THREADED THROUGH `recalculateGB`. That
+    /// function's return tuple is already ten fields wide and every addition
+    /// has to be carried by both call sites and destructured at the cell;
+    /// rank avoided it by being restamped from position, and L10 avoids it by
+    /// being a straight lookup that needs no adjusted record to compute. The
+    /// feed already counted it — this is wiring, not derivation.
+    private func lastTen(for team: TeamStanding) -> RecentForm.Team? {
+        guard let code = team.team_id,
+              let bdlId = lahmanToBDLTeamId[code] else { return nil }
+        return recentForm?.teams[String(bdlId)]
     }
 
     var body: some View {
@@ -474,6 +495,7 @@ private struct DivisionCard: View {
                     isHistorical: isHistorical,
                     adjustment: adjustment(for: team),
                     gbOverride: gbOverride(for: team),
+                    lastTenOverride: lastTen(for: team),
                     wildcardContenders: wildcardContenders,
                 )
                 .background(rowBackground(
@@ -682,6 +704,9 @@ private struct LeagueTable: View {
     let adjustments: [Int: (wDelta: Int, lDelta: Int)]
     /// Recomputed columns keyed by Lahman team_id (empty → use base).
     let adjustedGB: [String: AdjustedStandingColumns]
+    /// Live game-feed form, for the L10 column. Read at the cell rather than
+    /// threaded through `recalculateGB` — see `lastTen(for:)`.
+    var recentForm: RecentForm? = nil
     /// This league's non-division-leaders sorted best→worst — the
     /// ranking the WCGB reformatter anchors on.
     let wildcardContenders: [TeamStanding]
@@ -702,6 +727,20 @@ private struct LeagueTable: View {
 
     private func gbOverride(for team: TeamStanding) -> AdjustedStandingColumns? {
         team.team_id.flatMap { adjustedGB[$0] }
+    }
+
+    /// L10 counted from the live game feed, when it is available.
+    ///
+    /// ⚠️ READ HERE RATHER THAN THREADED THROUGH `recalculateGB`. That
+    /// function's return tuple is already ten fields wide and every addition
+    /// has to be carried by both call sites and destructured at the cell;
+    /// rank avoided it by being restamped from position, and L10 avoids it by
+    /// being a straight lookup that needs no adjusted record to compute. The
+    /// feed already counted it — this is wiring, not derivation.
+    private func lastTen(for team: TeamStanding) -> RecentForm.Team? {
+        guard let code = team.team_id,
+              let bdlId = lahmanToBDLTeamId[code] else { return nil }
+        return recentForm?.teams[String(bdlId)]
     }
 
     private func isFavorite(_ team: TeamStanding) -> Bool {
@@ -799,6 +838,7 @@ private struct LeagueTable: View {
                         isHistorical: isHistorical,
                         adjustment: adjustment(for: team),
                         gbOverride: gbOverride(for: team),
+                        lastTenOverride: lastTen(for: team),
                         wildcardContenders: wildcardContenders
                     )
                     if tIdx != group.teams.indices.last {
@@ -997,6 +1037,8 @@ private struct ScrollableStatsRow: View {
     /// Recomputed columns for this team when today's results shift the
     /// standings; nil → keep the backend / leader-derived values.
     var gbOverride: AdjustedStandingColumns? = nil
+    /// L10 counted from the live game feed. nil → the daily table's value.
+    var lastTenOverride: RecentForm.Team? = nil
     /// League's non-division-leaders sorted best→worst, for converting
     /// the backend's first-WC-anchored WCGB to the display convention.
     var wildcardContenders: [TeamStanding] = []
@@ -1027,6 +1069,20 @@ private struct ScrollableStatsRow: View {
                                     l: gbOverride?.homeL ?? team.home_l)
         let awayText = formatRecord(w: gbOverride?.awayW ?? team.away_w,
                                     l: gbOverride?.awayL ?? team.away_l)
+        // L10: the feed's count when we have it, else the daily table's.
+        //
+        // ⚠️ THE DENOMINATOR IS NOT ALWAYS TEN, and padding it would invent
+        // results. Early in a season a club has played fewer than ten games,
+        // and the honest render is the partial record over the games actually
+        // played — "6-3" across nine, never "6-4" to force a ten. The feed
+        // reports `last_ten_games` for exactly this reason; when it is short
+        // the column shows the real record and the count stays truthful.
+        let lastTenText: String = {
+            if let f = lastTenOverride, f.last_ten_games > 0 {
+                return "\(f.last_ten_w)-\(f.last_ten_l)"
+            }
+            return formatRecord(w: team.last_ten_w, l: team.last_ten_l)
+        }()
         let rs = gbOverride?.runsScored  ?? team.runs_scored
         let ra = gbOverride?.runsAllowed ?? team.runs_allowed
         let diff: Int? = (rs != nil || ra != nil) ? ((rs ?? 0) - (ra ?? 0)) : nil
@@ -1037,8 +1093,7 @@ private struct ScrollableStatsRow: View {
             statCell(gbText, width: StandingsLayout.gb, dim: gbText == "—")
             if !isHistorical {
                 statCell(wcgbText, width: StandingsLayout.gb, dim: true)
-                statCell(formatRecord(w: team.last_ten_w, l: team.last_ten_l),
-                         width: StandingsLayout.record)
+                statCell(lastTenText, width: StandingsLayout.record)
                 statCell(strkText, width: StandingsLayout.streak)
                 statCell(homeText, width: StandingsLayout.record)
                 statCell(awayText, width: StandingsLayout.record)
