@@ -370,8 +370,66 @@ final class PlayerViewModel: ObservableObject {
     /// stacked applications). The LIVE badge fires only when at
     /// least one folded game is actually live; pure final overlays
     /// fill stats silently.
+    /// ⚠️ TEMPORARY DIAGNOSTIC — REMOVE ONCE THE MORNING QUESTION IS SETTLED.
+    ///
+    /// Two late games had not updated on the profile one morning while earlier
+    /// ones had. The season line reaches the screen by three different routes
+    /// depending on how our stored games-played compares with BDL's, and at
+    /// ~08:00 ET an early game and a late game take DIFFERENT routes — early
+    /// ones through `bdl-direct` (BDL has absorbed, ours has not), late ones
+    /// through `overlay` (neither has). Both routes should produce a correct
+    /// number, which is why reading the code has not settled it: the fault is
+    /// in one branch and the branch taken is invisible from the outside.
+    ///
+    /// So this prints which branch ran, the three inputs that chose it, and
+    /// what EACH branch would have produced — so a wrong number on screen
+    /// names its own branch instead of leaving us to infer it.
+    private func logStatPath(
+        _ branch: String,
+        db: (bat: Int?, pit: Int?),
+        bdlGP: (bat: Int?, pit: Int?),
+        includesToday: (bat: Bool, pit: Bool),
+        finalDateET: String?,
+        eligible: [(gameId: Int, isLive: Bool)],
+        retriedYesterday: Bool,
+        overlayWouldGive: String,
+        bdlDirectWouldGive: String,
+    ) {
+        let games = eligible
+            .map { "\($0.gameId)\($0.isLive ? "L" : "F")" }
+            .joined(separator: ",")
+        print("""
+        [STATPATH] \(Self.diagMarker)
+          player=\(player.name) bdlId=\(player.bdl_id.map(String.init) ?? "nil")
+          BRANCH=\(branch)
+          db.G      bat=\(db.bat.map(String.init) ?? "nil") pit=\(db.pit.map(String.init) ?? "nil")
+          bdl.GP    bat=\(bdlGP.bat.map(String.init) ?? "nil") pit=\(bdlGP.pit.map(String.init) ?? "nil")
+          includesToday bat=\(includesToday.bat) pit=\(includesToday.pit)  finalDateET=\(finalDateET ?? "nil")
+          eligible=[\(games)]  retriedYesterday=\(retriedYesterday)
+          overlayWouldGive=\(overlayWouldGive)
+          bdlDirectWouldGive=\(bdlDirectWouldGive)
+        """)
+    }
+
+    /// The exits that happen BEFORE the branch is chosen. ⚠️ These matter most:
+    /// "no eligible games" is exactly what the late-game hypothesis predicts,
+    /// and without a line here the diagnostic would be SILENT in the one state
+    /// it exists to catch — which reads as "the build isn't installed".
+    private func logStatExit(_ why: String, eligible: Int = -1,
+                             retriedYesterday: Bool = false) {
+        print("[STATPATH] \(Self.diagMarker)\n  player=\(player.name) "
+              + "BRANCH=early-exit(\(why)) eligible=\(eligible) "
+              + "retriedYesterday=\(retriedYesterday)")
+    }
+
+    /// Bumped by hand with each diagnostic build, so a console line can be told
+    /// apart from one produced by an older install. The same marker trick the
+    /// backend uses for `_BUILD_MARKER`, and the one thing that has reliably
+    /// distinguished "the fix is not deployed" from "the fix does not work".
+    static let diagMarker = "2026-09-04-statpath-1"
+
     func loadRecentGameStats() async {
-        guard !isRetired else { return }
+        guard !isRetired else { logStatExit("retired"); return }
         // Reset the BDL-direct flag at the top of every call —
         // it's recomputed below per the games-played comparison.
         usesBDLDirectStats = false
@@ -380,7 +438,10 @@ final class PlayerViewModel: ObservableObject {
         // isn't in the BDL map (extreme edge case — rebranded
         // teams whose code we haven't added yet).
         guard let teamCode = player.teamCode,
-              let bdlTeamId = lahmanToBDLTeamId[teamCode] else { return }
+              let bdlTeamId = lahmanToBDLTeamId[teamCode] else {
+            logStatExit("no team code / not in the BDL map")
+            return
+        }
         let bdl = BallDontLieClient.shared
         let today = Self.dateOnly.string(from: Date())
 
@@ -429,7 +490,9 @@ final class PlayerViewModel: ObservableObject {
         // That comparison is GP-truthful and timing-independent —
         // it works for an afternoon yesterday-game just as well as
         // for a late-night carry-over.
+        var retriedYesterday = false
         if eligible.isEmpty {
+            retriedYesterday = true
             var etCal = Calendar(identifier: .gregorian)
             etCal.timeZone = TimeZone(identifier: "America/New_York")
                 ?? TimeZone.current
@@ -470,12 +533,23 @@ final class PlayerViewModel: ObservableObject {
         // before the fallback executed.
         teamHasLiveGame = liveOnSchedule
 
-        guard !eligible.isEmpty else { return }
+        guard !eligible.isEmpty else {
+            // ⚠️ THE STATE THE LATE-GAME HYPOTHESIS PREDICTS: neither today's
+            // nor yesterday's ET date produced a game for this club, so nothing
+            // is overlaid and the season line is whatever the base says.
+            logStatExit("no eligible games", eligible: 0,
+                        retriedYesterday: retriedYesterday)
+            return
+        }
         // BDL player id is the join key on the stats response. If
         // we don't have one (mapping bootstrap hasn't reached this
         // player yet), we can't filter — bail out and leave the
         // overnight totals as-is.
-        guard let bdlPlayerId = player.bdl_id else { return }
+        guard let bdlPlayerId = player.bdl_id else {
+            logStatExit("no bdl_id", eligible: eligible.count,
+                        retriedYesterday: retriedYesterday)
+            return
+        }
 
         // Games-played gate for Final games. Three resolutions:
         //
@@ -496,6 +570,14 @@ final class PlayerViewModel: ObservableObject {
         var totalPit = BoxPitchingLine()
         var sawBat = false
         var sawPit = false
+
+        // Diagnostic capture — see `logStatPath`. Nil/false when `hasFinal` is
+        // false, which is itself the answer in the live-only case.
+        var diagDB: (Int?, Int?) = (nil, nil)
+        var diagBDLGP: (Int?, Int?) = (nil, nil)
+        var diagIncludesToday = (false, false)
+        var diagFinalDateET: String? = nil
+        var diagBDLDirect = "not fetched"
 
         if hasFinal {
             let season = Calendar.current.component(.year, from: Date())
@@ -583,6 +665,16 @@ final class PlayerViewModel: ObservableObject {
                 return db == bdl && !pitcherIncludesToday
             }()
             let shouldOverlayFinals = battingGate && pitchingGate
+            // Captured for the diagnostic below — the three inputs that choose
+            // the branch, plus what the OTHER branch would have produced.
+            diagDB            = (dbBattingG, dbPitchingG)
+            diagBDLGP         = (bdlBattingG, bdlPitchingG)
+            diagIncludesToday = (batterIncludesToday, pitcherIncludesToday)
+            diagFinalDateET   = finalGameDateET
+            diagBDLDirect     = bdlSeason.map {
+                "G=\($0.battingGp.map(String.init) ?? "nil") "
+                + "H=\($0.battingH.map(String.init) ?? "nil")"
+            } ?? "no bdl season row"
             // `shouldUseBDLDirect` follows the same nil-aware
             // pattern: if EITHER side has BDL ahead of DB, BDL has
             // absorbed a final our nightly hasn't, and the overlay
@@ -635,6 +727,14 @@ final class PlayerViewModel: ObservableObject {
                     // No live games remain. Publish whatever
                     // BDL-direct totals we computed (or do nothing
                     // when neither side qualified).
+                    logStatPath(
+                        sawBat || sawPit ? "bdl-direct" : "neither",
+                        db: diagDB, bdlGP: diagBDLGP,
+                        includesToday: diagIncludesToday,
+                        finalDateET: diagFinalDateET,
+                        eligible: eligible, retriedYesterday: retriedYesterday,
+                        overlayWouldGive: "not taken (gate failed)",
+                        bdlDirectWouldGive: diagBDLDirect)
                     if sawBat || sawPit {
                         recentBatting    = sawBat ? totalBat : nil
                         recentPitching   = sawPit ? totalPit : nil
@@ -694,6 +794,17 @@ final class PlayerViewModel: ObservableObject {
             if entry.isLive { anyLive = true }
         }
 
+        let overlaySummary = sawBat
+            ? "G=+\(totalBat.games) AB=+\(totalBat.AB) H=+\(totalBat.H)"
+            : (sawPit ? "pitching only" : "nothing matched the player")
+        logStatPath(
+            (sawBat || sawPit) ? "overlay" : "overlay-empty",
+            db: diagDB, bdlGP: diagBDLGP,
+            includesToday: diagIncludesToday,
+            finalDateET: diagFinalDateET,
+            eligible: eligible, retriedYesterday: retriedYesterday,
+            overlayWouldGive: overlaySummary,
+            bdlDirectWouldGive: diagBDLDirect)
         guard sawBat || sawPit else { return }
         recentBatting    = sawBat ? totalBat : nil
         recentPitching   = sawPit ? totalPit : nil

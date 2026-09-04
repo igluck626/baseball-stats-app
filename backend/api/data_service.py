@@ -1961,23 +1961,32 @@ def _bdl_get_json(path: str, params: Optional[dict] = None) -> dict:
     `season=` / `game_id=`). Callers must use the singular form on
     those routes — this helper doesn't disguise the difference.
 
-    ⚠️ AND ON /games, THE WRONG PARAM NAME IS NOT REJECTED — IT IS IGNORED.
-    That is the worse failure and it has to be checked for by hand, because
-    the response is a normal 200 with a plausible body. Measured 2026-09-02:
+    ⚠️ AND ON /games, AN UNSUPPORTED PARAM IS NOT REJECTED — IT IS IGNORED.
+    That is the worse failure and it has to be checked for by hand, because the
+    response is a normal 200 with a plausible body. Measured 2026-09-04:
 
-      * `team_ids[]=19,2,5` returned games for all 30 teams.
-      * `start_date=2026-08-10&end_date=2026-09-02` returned a game from
-        APRIL 2002.
+      param combination                        | result
+      -----------------------------------------|--------------------------------
+      `dates[]` + `team_ids[]`                  | BOTH honoured
+      `dates[]` alone                           | honoured
+      `seasons[]` alone                         | honoured
+      `seasons[]` + `team_ids[]`                | season honoured, TEAM IGNORED
+      `team_ids[]` alone                        | IGNORED (games from 2000-2002)
+      `start_date` / `end_date`, with or        | IGNORED, and they poison the
+        without `team_ids[]`                    |   whole query with them
 
-    Neither raised, neither warned. A query that looks filtered and is not
-    reads as "the data is wrong" rather than "the filter did nothing", and
-    sends the next person to audit the wrong thing entirely.
+    So `team_ids[]` works ONLY alongside `dates[]`. `getTeamGames` on the client
+    sends exactly that pair and is correct; do not "fix" it by adding a
+    client-side team filter.
 
-    **`dates[]`, repeated once per date, is the filter /games honours** — it
-    accepts many in one call (20 dates, 273 games, 3 requests at per_page=100).
-    `seasons[]` works there too. Anything else: verify against a known-narrow
-    window before trusting it, by asserting on the range that comes BACK rather
-    than the range you asked for.
+    ⚠️ THE FIRST VERSION OF THIS NOTE SAID FLATLY THAT `team_ids[]` IS IGNORED,
+    AND THAT WAS WRONG. The probe that produced it paired `team_ids[]` with
+    `start_date`/`end_date`, so the ignored date params degenerated the query
+    and the blame landed on the team filter — which works. **Pairing a param
+    under test with a silently-ignored one attributes the failure to whichever
+    param you were suspicious of.** Vary one at a time against a known-narrow
+    expectation, and assert on what comes BACK rather than on what was asked
+    for.
     """
     qs  = urllib.parse.urlencode(params or {}, doseq=True)
     url = f"{_BDL_API_BASE}/{path.lstrip('/')}"
