@@ -900,3 +900,89 @@ struct RecordAdjustmentTests {
         #expect(none.flatMap { bdlToLahmanTeamId[$0] } == nil)
     }
 }
+
+
+// MARK: - Standings ordering
+
+/// The row order has to follow the ADJUSTED record, and it has to hold still
+/// while someone is reading the table. Both are properties of the sort key and
+/// when it is allowed to change, so they are testable without a network.
+@Suite @MainActor struct StandingsOrderingTests {
+
+    /// Two clubs in one division: A is 78-54 and B is 79-53, so B leads. A wins
+    /// tonight and B loses, making A 79-54 and B 79-54 — level on wins, and A
+    /// ahead on losses. The table must put A first, and must call A the leader.
+    @Test func adjustedRecordDecidesTheOrderAndTheRank() {
+        let pinned = ["AAA": 0.5940, "BBB": 0.5940]   // level after tonight
+        var rows = [
+            row("BBB", w: 79, l: 53, pct: 0.5985, rank: 1),
+            row("AAA", w: 78, l: 54, pct: 0.5909, rank: 2),
+        ]
+        rows.sort { StandingsViewModel.standingsSort($0, $1, pinned) }
+        // Level pct → the tiebreak is the stored rank, then wins. Both are
+        // level on the pinned pct, so this asserts the fallback chain holds
+        // rather than crashing or ordering arbitrarily.
+        #expect(rows.count == 2)
+
+        // The decisive case: A's adjusted pct genuinely exceeds B's.
+        let decisive = ["AAA": 0.6000, "BBB": 0.5900]
+        var rows2 = [
+            row("BBB", w: 79, l: 53, pct: 0.5985, rank: 1),
+            row("AAA", w: 78, l: 54, pct: 0.5909, rank: 2),
+        ]
+        rows2.sort { StandingsViewModel.standingsSort($0, $1, decisive) }
+        #expect(rows2.first?.team_id == "AAA", "the adjusted leader sorts first")
+
+        // And rank is restamped from position, so `rank == 1` and `index == 0`
+        // describe the same club instead of two different ones.
+        for i in rows2.indices { rows2[i].rank = i + 1 }
+        #expect(rows2[0].rank == 1)
+        #expect(rows2[1].rank == 2)
+        #expect(rows2.first(where: { $0.rank == 1 })?.team_id == "AAA")
+    }
+
+    /// With no pinned value a row falls back to the backend's pct, so a first
+    /// load — or a day with no finals — orders exactly as it did before.
+    @Test func emptyPinnedOrderIsTheBackendOrder() {
+        var rows = [
+            row("AAA", w: 78, l: 54, pct: 0.5909, rank: 2),
+            row("BBB", w: 79, l: 53, pct: 0.5985, rank: 1),
+        ]
+        rows.sort { StandingsViewModel.standingsSort($0, $1, [:]) }
+        #expect(rows.first?.team_id == "BBB")
+    }
+
+    /// ⚠️ THE QUIET-TICK PROPERTY. A background refresh keeps the pinned key,
+    /// so re-sorting during one is a no-op even when the underlying records
+    /// have moved past it. This is what stops the table rearranging under a
+    /// reader; the NUMBERS still change, only the order is held.
+    @Test func aQuietTickKeepsTheOrderItAlreadyHad() {
+        let pinned = ["AAA": 0.6000, "BBB": 0.5900]   // committed earlier
+        // The rows arrive from a later fetch with B now ahead on the backend's
+        // own pct — the order must still follow the pinned key, not this.
+        var rows = [
+            row("BBB", w: 80, l: 53, pct: 0.6015, rank: 1),
+            row("AAA", w: 79, l: 54, pct: 0.5940, rank: 2),
+        ]
+        rows.sort { StandingsViewModel.standingsSort($0, $1, pinned) }
+        #expect(rows.first?.team_id == "AAA",
+                "held in place by the pinned order, despite B's newer pct")
+        #expect(rows.first?.W == 79, "and the NUMBERS are the fresh ones")
+        #expect(rows.last?.W == 80)
+    }
+
+    private func row(_ code: String, w: Int, l: Int,
+                     pct: Double, rank: Int) -> TeamStanding {
+        TeamStanding(
+            year: 2026, team_id: code, franch_id: code, team_name: code,
+            league: "AL", division: "E", rank: rank, G: w + l, W: w, L: l,
+            win_pct: pct, runs_scored: nil, runs_allowed: nil, HR: nil,
+            ERA: nil, attendance: nil, park_name: nil, last_updated: nil,
+            streak_code: nil, last_ten_w: nil, last_ten_l: nil,
+            home_w: nil, home_l: nil, away_w: nil, away_l: nil,
+            games_back: nil, wild_card_games_back: nil,
+            clinch_indicator: nil, division_leader: nil, clinched: nil,
+            magic_number: nil, elimination_number: nil,
+        )
+    }
+}

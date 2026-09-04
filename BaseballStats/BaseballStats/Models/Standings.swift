@@ -81,7 +81,16 @@ struct TeamStanding: Codable, Identifiable, Hashable {
     /// Single-letter division code from the Lahman archive: "E", "C",
     /// "W". Nil for pre-divisional years.
     let division: String?
-    let rank: Int?
+    /// Division rank, 1 = leader.
+    ///
+    /// ⚠️ `var`, NOT `let`, BECAUSE THE TAB RESTAMPS IT. The backend's value is
+    /// computed from the nightly's records, so once today's finals are folded
+    /// in it can contradict the row's own W-L — a team shown at 79-54 while
+    /// still ranked below a rival at 78-54. `StandingsViewModel` re-sorts by
+    /// the adjusted record and rewrites this to the new position, so every
+    /// consumer of `rank` (leader styling, the row highlight, wild-card
+    /// contention) follows from one number instead of each deriving its own.
+    var rank: Int?
     let G: Int?
     let W: Int?
     let L: Int?

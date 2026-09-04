@@ -327,6 +327,17 @@ final class HomeViewModel: ObservableObject {
         if !deltas.isEmpty {
             self.teamRecords = TodayRecordAdjustments.apply(deltas, to: self.teamRecords)
             self.teamRecord  = self.teamRecords[bdlTeamId]
+            // Re-derive the division rank from the ADJUSTED records, so the
+            // position beside the record cannot contradict it. Recomputed from
+            // the original BDL entries rather than the already-bumped dict —
+            // `apply` returns records, not standings entries, and re-sorting a
+            // partially-adjusted set would rank some clubs on today and others
+            // on yesterday.
+            if let entries = await standingsTask {
+                self.teamStandings = Self.standingsByBDLTeamId(
+                    entries, adjustments: deltas)
+                self.teamStanding = self.teamStandings[bdlTeamId]
+            }
 
             // Also adjust the streak to match the standings overlay so
             // the STREAK pill doesn't lag the W/L record beside it.
@@ -441,8 +452,20 @@ final class HomeViewModel: ObservableObject {
         return dict
     }
 
+    /// Division rank per BDL team id.
+    ///
+    /// ⚠️ `adjustments` MATTERS AND IS EASY TO MISS. This rank is not read from
+    /// a field — it is derived by sorting each division and taking the
+    /// position, so it is only as correct as the records it sorts on. Sorting
+    /// BDL's raw wins/losses while the card beside it shows a record with
+    /// today's finals folded in puts the two out of step: the hero card can
+    /// read "79-54, 2nd in AL East" while 79-54 is the best record in the
+    /// division. Standings has the same bug in a different shape — a STORED
+    /// rank contradicting an adjusted row — and both are the two-sources
+    /// pattern this app keeps meeting.
     private static func standingsByBDLTeamId(
         _ standings: [BDLStandingsEntry],
+        adjustments: [Int: (wDelta: Int, lDelta: Int)] = [:],
     ) -> [Int: TeamStandingInfo] {
         var buckets: [String: [BDLStandingsEntry]] = [:]
         for s in standings {
@@ -452,9 +475,17 @@ final class HomeViewModel: ObservableObject {
         }
         var out: [Int: TeamStandingInfo] = [:]
         for (divisionLabel, entries) in buckets {
+            // Sort on the ADJUSTED record, falling back to the raw one for
+            // any club without a delta — which is most of them on any given
+            // evening.
+            func adjusted(_ e: BDLStandingsEntry) -> (w: Int, l: Int) {
+                let d = adjustments[e.team.id]
+                return (e.wins + (d?.wDelta ?? 0), e.losses + (d?.lDelta ?? 0))
+            }
             let sorted = entries.sorted {
-                if $0.wins != $1.wins { return $0.wins > $1.wins }
-                return $0.losses < $1.losses
+                let a = adjusted($0), b = adjusted($1)
+                if a.w != b.w { return a.w > b.w }
+                return a.l < b.l
             }
             for (i, e) in sorted.enumerated() {
                 out[e.team.id] = TeamStandingInfo(

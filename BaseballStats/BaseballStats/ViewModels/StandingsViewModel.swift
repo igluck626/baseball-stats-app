@@ -45,6 +45,23 @@ final class StandingsViewModel: ObservableObject {
     /// behaviour that shipped before it existed.
     private var recentForm: RecentForm?
 
+    /// The win percentage each row is ORDERED by, keyed by Lahman code.
+    ///
+    /// ⚠️ THIS IS A PINNED ORDER, NOT A LIVE ONE, AND THAT IS THE POINT. It is
+    /// recomputed only on a load the user asked for — opening the tab, pulling
+    /// to refresh, changing the year. The 90-second background tick updates
+    /// every NUMBER on screen and leaves this alone, so a table someone is
+    /// reading does not rearrange under them.
+    ///
+    /// Rows still sort by it on every pass, including quiet ones. Without that
+    /// a quiet tick would re-partition from the response and silently revert
+    /// to the backend's unadjusted order — suppressing the re-sort has to mean
+    /// "keep the order you have", never "fall back to the old one".
+    ///
+    /// Empty on first load, where every row falls back to `win_pct` and the
+    /// order is exactly what shipped before.
+    private var orderingPct: [String: Double] = [:]
+
     private let api: APIClient
     private let bdl: BallDontLieClient
     private let favorites: FavoriteTeamStore
@@ -122,7 +139,13 @@ final class StandingsViewModel: ObservableObject {
         if !quiet { isLoading = false }
         // Overlay today's not-yet-official results once the standings
         // (and their `last_updated` cutoff) have landed.
-        await loadTodayAdjustments()
+        //
+        // ⚠️ `quiet` IS EXACTLY THE USER-INITIATED TEST, which is why the order
+        // hangs off it rather than a second flag that could drift out of step.
+        // `quiet: false` is every load a person caused — the `.task` on tab
+        // entry, pull to refresh, and a year change; `quiet: true` is only the
+        // 90-second `periodicRefresh` tick.
+        await loadTodayAdjustments(commitOrder: !quiet)
     }
 
     /// Fold today's already-final games into a per-team W/L delta keyed
@@ -133,7 +156,19 @@ final class StandingsViewModel: ObservableObject {
     /// standings' `last_updated` (approximated by its start time, which
     /// is strictly before its end) so already-absorbed games aren't
     /// double-counted.
-    func loadTodayAdjustments() async {
+    /// - Parameter commitOrder: whether this pass is allowed to REORDER the
+    ///   table. True for a load the user asked for — tab entry, pull to
+    ///   refresh, a year change — and false for the 90-second background tick.
+    ///
+    ///   ⚠️ FALSE DOES NOT MEAN "SKIP THE REFRESH". Every number still updates
+    ///   on a quiet tick: the records, the streak, GB, the splits. Only the
+    ///   row ORDER is held, so the table cannot rearrange under someone who is
+    ///   reading it. The cost is bounded and visible — between a quiet tick
+    ///   and the next real load a club can show a record that its position
+    ///   contradicts, which is the same 79-54-above-78-54 shape the reorder
+    ///   exists to fix, except temporary. The dagger on an adjusted row is
+    ///   what marks those numbers as provisional while that is true.
+    func loadTodayAdjustments(commitOrder: Bool = true) async {
         guard selectedYear == Self.currentYear else {
             todayAdjustments = [:]
             adjustedGB = [:]
@@ -216,6 +251,42 @@ final class StandingsViewModel: ObservableObject {
             adjustments: todayAdjustments, lastUpdated: lastUpdated,
             absorption: absorption,
         )
+
+        // Pin the new order and re-sort into it. Only now — the adjusted pcts
+        // do not exist until `recalculateGB` has run, so the sort in
+        // `partition` above necessarily used the PREVIOUS pinned values.
+        guard commitOrder else { return }
+        var pinned: [String: Double] = [:]
+        for (code, cols) in adjustedGB {
+            if let pct = cols.pct { pinned[code] = pct }
+        }
+        // Unchanged when nothing was adjusted, so a day with no finals yet
+        // sorts exactly as the backend ordered it.
+        guard pinned != orderingPct else { return }
+        orderingPct = pinned
+        resortIntoPinnedOrder()
+    }
+
+    /// Re-sort the already-partitioned buckets into `orderingPct` and restamp
+    /// `rank` from the new positions. Separate from `partition` because the
+    /// order can only be settled AFTER the adjustment, and re-partitioning
+    /// from the response to achieve that would mean holding two sort orders
+    /// at once — the shape that invites someone to collapse it back.
+    private func resortIntoPinnedOrder() {
+        let pinned = orderingPct
+        func fix(_ bucket: inout [String: [TeamStanding]]) {
+            for key in bucket.keys {
+                bucket[key]?.sort { Self.standingsSort($0, $1, pinned) }
+                for i in bucket[key]!.indices { bucket[key]![i].rank = i + 1 }
+            }
+        }
+        fix(&alStandings)
+        fix(&nlStandings)
+        // Contention follows the restamped ranks, same rule as `partition`.
+        alWildcard = alStandings.values.flatMap { $0 }.filter { $0.rank != 1 }
+            .sorted { Self.standingsSort($0, $1, pinned) }
+        nlWildcard = nlStandings.values.flatMap { $0 }.filter { $0.rank != 1 }
+            .sorted { Self.standingsSort($0, $1, pinned) }
     }
 
     /// Split the flat array into AL/NL × division buckets and sort each
@@ -227,40 +298,61 @@ final class StandingsViewModel: ObservableObject {
         let teams = response?.standings ?? []
         var al: [String: [TeamStanding]] = [:]
         var nl: [String: [TeamStanding]] = [:]
-        var alWC: [TeamStanding] = []
-        var nlWC: [TeamStanding] = []
         for team in teams {
             guard let div = team.division else { continue }
             switch team.league {
-            case "AL":
-                al[div, default: []].append(team)
-                if team.rank != 1 { alWC.append(team) }
-            case "NL":
-                nl[div, default: []].append(team)
-                if team.rank != 1 { nlWC.append(team) }
-            default:
-                continue
+            case "AL": al[div, default: []].append(team)
+            case "NL": nl[div, default: []].append(team)
+            default:   continue
             }
         }
-        for key in al.keys { al[key]?.sort(by: Self.standingsSort) }
-        for key in nl.keys { nl[key]?.sort(by: Self.standingsSort) }
+        let pinned = orderingPct
+        for key in al.keys {
+            al[key]?.sort { Self.standingsSort($0, $1, pinned) }
+            // ⚠️ RANK IS RESTAMPED FROM POSITION, and this is where the two
+            // notions of "leader" stop being able to disagree. The view had
+            // both `team.rank == 1` (a stored field) and `index == 0` (list
+            // position) driving different parts of the same row; after a
+            // re-sort those are the same fact, so it is derived once here.
+            for i in al[key]!.indices { al[key]![i].rank = i + 1 }
+        }
+        for key in nl.keys {
+            nl[key]?.sort { Self.standingsSort($0, $1, pinned) }
+            for i in nl[key]!.indices { nl[key]![i].rank = i + 1 }
+        }
         alStandings = al
         nlStandings = nl
-        // Contenders are every team not ranked first in its division
-        // (rank == 1 is the authoritative division-leader indicator;
-        // a missing rank keeps the team in the contender pool). If
-        // rank is absent across the board both arrays come back empty
-        // — the view falls back to hiding the tab in that case.
-        alWildcard = alWC.sorted(by: Self.standingsSort)
-        nlWildcard = nlWC.sorted(by: Self.standingsSort)
+        // Contenders are every team not ranked first in its division.
+        //
+        // ⚠️ REBUILT FROM THE RESTAMPED ROWS, not from the pre-sort copies
+        // collected above. Contention is "not first in its division", so a
+        // club whose adjusted record moved it into first has to leave this
+        // list and one it displaced has to enter it. Reading the stale copies
+        // would leave the wild-card race describing yesterday's division.
+        let alRestamped = al.values.flatMap { $0 }.filter { $0.rank != 1 }
+        let nlRestamped = nl.values.flatMap { $0 }.filter { $0.rank != 1 }
+        alWildcard = alRestamped.sorted { Self.standingsSort($0, $1, pinned) }
+        nlWildcard = nlRestamped.sorted { Self.standingsSort($0, $1, pinned) }
     }
 
     /// Best record first. win_pct is the primary key; if two teams are
     /// tied (rare exact decimal collision), fall back to the backend's
     /// `rank` field, then to wins.
-    private static func standingsSort(_ a: TeamStanding, _ b: TeamStanding) -> Bool {
-        let aPct = a.win_pct ?? 0
-        let bPct = b.win_pct ?? 0
+    /// The pct a row sorts on: the pinned adjusted value when there is one,
+    /// else the backend's. Free function rather than a closure capture so the
+    /// division buckets and the wild-card lists cannot drift apart.
+    static func orderingValue(_ t: TeamStanding,
+                                      _ pinned: [String: Double]) -> Double {
+        if let code = t.team_id, let p = pinned[code] { return p }
+        return t.win_pct ?? 0
+    }
+
+    /// Internal rather than private so the ordering rules can be tested
+    /// without standing up a view model and a network.
+    static func standingsSort(_ a: TeamStanding, _ b: TeamStanding,
+                                      _ pinned: [String: Double] = [:]) -> Bool {
+        let aPct = orderingValue(a, pinned)
+        let bPct = orderingValue(b, pinned)
         if aPct != bPct { return aPct > bPct }
         let aRank = a.rank ?? Int.max
         let bRank = b.rank ?? Int.max
