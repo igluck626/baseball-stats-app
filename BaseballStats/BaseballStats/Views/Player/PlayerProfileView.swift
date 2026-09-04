@@ -27,6 +27,16 @@ fileprivate var currentOverviewSeason: Int {
 
 struct PlayerProfileView: View {
     let player: PlayerSearchResult
+    /// The host stack's path, when that stack can push a box score.
+    ///
+    /// ⚠️ NIL IS THE CAPABILITY TEST, not an omission. Only
+    /// `StackDestinations` passes this, and it is the only thing that
+    /// registers the `Game` destination — so a non-nil binding means BOTH "I
+    /// have somewhere to push" and "something will catch it". Deriving the
+    /// capability from the binding rather than carrying a separate Bool makes
+    /// the two impossible to get out of step; a flag could say yes on a stack
+    /// with no destination, and the tap would silently do nothing.
+    var boxScorePath: Binding<NavigationPath>?
     @StateObject private var viewModel: PlayerViewModel
     /// Current-season rank lookups for the Overview grid. One VM per
     /// role so two-way players (Ohtani) get independent loads when
@@ -115,8 +125,10 @@ struct PlayerProfileView: View {
         var id: String { rawValue }
     }
 
-    init(player: PlayerSearchResult) {
+    init(player: PlayerSearchResult,
+         boxScorePath: Binding<NavigationPath>? = nil) {
         self.player = player
+        self.boxScorePath = boxScorePath
         let vm = PlayerViewModel(player: player)
         _viewModel = StateObject(wrappedValue: vm)
         let season = currentOverviewSeason

@@ -81,7 +81,10 @@ struct StackDestinations: ViewModifier {
     func body(content: Content) -> some View {
         content
             .navigationDestination(for: PlayerSearchResult.self) { player in
-                PlayerProfileView(player: player)
+                // The path goes WITH the destination, so a profile can only be
+                // told it may push a box score by the same thing that
+                // registers where the box score goes.
+                PlayerProfileView(player: player, boxScorePath: $path)
             }
             .navigationDestination(for: Game.self) { game in
                 BoxScoreView(
