@@ -26,8 +26,6 @@ import Foundation
 import Testing
 @testable import BaseballStats
 
-private final class FixtureAnchor {}
-
 private struct BoxOrderFixture: Decodable {
     let gameId: Int
     let away: BDLTeam
@@ -35,14 +33,31 @@ private struct BoxOrderFixture: Decodable {
     let lineups: [BDLGameLineup]
     let stats: [BDLPlayerStat]
     let pas: [BDLPlateAppearance]
+    let isFinal: Bool
+    /// The codes BOTH implementations are expected to produce.
+    let expected: [String: [ExpectedCode]]
+
+    struct ExpectedCode: Decodable {
+        let id: Int
+        let name: String
+        let code: Int
+    }
 }
 
+/// Read from `testdata/` at the repo root, NOT from the test bundle.
+///
+/// ⚠️ THE PATH IS THE POINT. This rule exists twice — here and in
+/// `backend/api/slot_codes.py` — and the expectations must belong to
+/// neither. A fixture living under `BaseballStatsTests/` would make Swift
+/// its owner and Python a guest, which is the arrangement this is meant to
+/// remove. Resolved from `#filePath` so no bundle-resource step is needed
+/// and the file can sit outside either language's tree.
 private func fixture(_ name: String) throws -> BoxOrderFixture {
-    let bundle = Bundle(for: FixtureAnchor.self)
-    let url = try #require(
-        bundle.url(forResource: "BoxScoreOrderFixtures", withExtension: "json"),
-        "fixture JSON missing from the test bundle",
-    )
+    let url = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()   // BaseballStatsTests
+        .deletingLastPathComponent()   // BaseballStats
+        .deletingLastPathComponent()   // repo root
+        .appendingPathComponent("testdata/box-score-order.json")
     let decoder = JSONDecoder()
     decoder.keyDecodingStrategy = .convertFromSnakeCase
     let all = try decoder.decode([String: BoxOrderFixture].self, from: Data(contentsOf: url))
@@ -440,4 +455,52 @@ private func liveDetail(awayRows: String) throws -> LiveGameDetail {
       {"id": 1, "name": "Someone", "position": "LF", "ab": 1, "batting_order": 601}
     """)
     #expect(detail.batting.away.first?.battingOrder == 601)
+}
+
+
+// MARK: - The shared expectations
+
+@Test func swiftAgreesWithTheSharedFixture() throws {
+    // ⚠️ THE DRIFT GUARD. `backend/api/slot_codes.py` runs this same rule for
+    // a game in progress and is checked against the SAME expectations by
+    // `backend/tests/test_slot_codes.py`. Neither suite owns the file and
+    // neither imports the other, so whichever side drifts fails here or there
+    // — and says which it was.
+    // ⚠️ FINISHED GAMES ONLY, and the omission is the contract rather than a
+    // gap in it. This copy serves a game the app fetched itself, which is
+    // always final; a game in progress is assembled by the backend and its
+    // codes arrive ready-made, so `substituteBattingOrders` declines one
+    // outright. The fixture's `liveGame` entry therefore has expectations
+    // that only the Python side can meet — Swift producing NOTHING for it is
+    // the correct answer, and `liveGameDerivesNothing` above pins that.
+    // `backend/tests/test_slot_codes.py` checks all five.
+    var checked = 0
+    var substitutes = 0
+    for name in ["pinchHitters", "noSubstitutes", "countMismatch",
+                 "missingPARow"] {
+        let fx = try fixture(name)
+        #expect(fx.isFinal, "\(name) is not a finished game — see the note above")
+        let bs = boxScore(fx, isFinal: fx.isFinal)
+        for (side, team) in [("away", bs.teams.away), ("home", bs.teams.home)] {
+            let expected = try #require(fx.expected[side])
+            var got: [Int: Int] = [:]
+            for (_, p) in team.players {
+                if let raw = p.stats_battingOrder, let code = Int(raw) {
+                    got[p.person.id] = code
+                }
+            }
+            let want = Dictionary(uniqueKeysWithValues: expected.map { ($0.id, $0.code) })
+            checked += want.count
+            substitutes += expected.filter { $0.code % 100 != 0 }.count
+            #expect(got == want, """
+                SWIFT SIDE DIVERGED from testdata/box-score-order.json.
+                If substituteBattingOrders changed on purpose, backend/api/slot_codes.py                 needs the same change and the fixture needs regenerating for BOTH.
+                  fixture: \(name) / \(side)
+                  expected: \(expected.filter { got[$0.id] != $0.code }.map { "\($0.name)=\($0.code)" })
+                  got:      \(expected.filter { got[$0.id] != $0.code }.map { "\($0.name)=\(got[$0.id].map(String.init) ?? "nil")" })
+                """)
+        }
+    }
+    #expect(checked == 83, "the finished-game corpus changed size — regenerate both sides")
+    #expect(substitutes >= 8, "a corpus of only starters would pass while proving nothing")
 }

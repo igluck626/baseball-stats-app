@@ -1,0 +1,77 @@
+# Do the two copies of the substitute rule still agree?
+#
+# WHY THIS EXISTS. Where a pinch hitter belongs in the batting order is derived
+# twice: `substituteBattingOrders` in BaseballStats/Models/Scores.swift for a
+# finished game the app fetches itself, and `backend/api/slot_codes.py` for a
+# game in progress, whose box score the backend assembles and ships ready-made.
+# Both fill ONE field that ONE view reads (`stats_battingOrder`, read by
+# `BoxScoreView.substitutionDepth`). Nothing in either language stops them
+# drifting apart, and this project has produced four separate bugs from two
+# copies of one rule.
+#
+# The expectations live in testdata/box-score-order.json — real captured
+# payloads plus the codes both sides must produce — and neither suite owns it.
+#
+# ⚠️ THIS GUARDS THE PYTHON SIDE ONLY, AND THAT ASYMMETRY IS DELIBERATE.
+# Running the Swift suite needs a macOS runner with Xcode and a booted
+# simulator: minutes bill at 10x Linux on private repos, and a single
+# `xcodebuild test` takes several minutes against ~2s for this job. So Swift
+# drift is caught when someone runs the suite locally, and Python drift is
+# caught here. If that trade stops being worth it, add a `macos-latest` job
+# running the same `xcodebuild test` — the fixture already serves both, so it
+# is a job definition and no change to the tests.
+name: Box-score order
+
+on:
+  push:
+    paths:
+      - 'backend/api/slot_codes.py'
+      - 'backend/tests/test_slot_codes.py'
+      - 'testdata/box-score-order.json'
+      - '.github/workflows/box-score-order.yml'
+  pull_request:
+    paths:
+      - 'backend/api/slot_codes.py'
+      - 'backend/tests/test_slot_codes.py'
+      - 'testdata/box-score-order.json'
+  workflow_dispatch:
+
+jobs:
+  agree:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # `slot_codes` is pure stdlib on purpose, so any modern Python will
+          # do and no dependencies are installed. Matches the Dockerfile.
+          python-version: '3.11'
+
+      - name: Python slot codes match the shared fixture
+        run: python3 backend/tests/test_slot_codes.py
+
+      # Not about substitutes, but it is the other standalone backend test and
+      # it costs nothing to keep honest while a runner is already warm.
+      - name: Guard-tool parity
+        run: python3 backend/tests/test_guard_tool.py
+
+      - name: What to do when this fails
+        if: failure()
+        run: |
+          echo "::error title=Substitute rule drifted::The Python copy no longer"
+          echo "::error::produces the codes in testdata/box-score-order.json."
+          echo ""
+          echo "The failure above names the fixture, the side, and every code"
+          echo "that differs. If backend/api/slot_codes.py changed on purpose:"
+          echo ""
+          echo "  1. Make the SAME change to substituteBattingOrders in"
+          echo "     BaseballStats/Models/Scores.swift."
+          echo "  2. Regenerate testdata/box-score-order.json's expectations."
+          echo "  3. Run BOTH suites: python3 backend/tests/test_slot_codes.py"
+          echo "     and the Swift BoxScoreOrderTests."
+          echo ""
+          echo "If it did NOT change on purpose, the fixture is telling you the"
+          echo "live box score is about to place substitutes differently from"
+          echo "the finished one."
+          exit 1
