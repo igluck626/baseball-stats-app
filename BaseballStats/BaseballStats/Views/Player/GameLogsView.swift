@@ -108,6 +108,11 @@ struct GameLogsView: View {
     let isPitcher: Bool
     let mlbDebut: Int?
     let mlbLastSeason: Int?
+    /// Non-nil when the host stack can open a box score — threaded to the
+    /// frozen rows, which become tappable only then.
+    var onTapGame: ((GameLog) -> Void)? = nil
+    /// The `game_id` currently being resolved, for the row spinner.
+    var pendingGameId: String? = nil
 
     @StateObject private var vm: GameLogsViewModel
     @State private var selectedRow: SplitRow = .season
@@ -130,11 +135,16 @@ struct GameLogsView: View {
     }
 
     init(playerId: Int, isPitcher: Bool, mlbDebut: Int? = nil,
-         mlbLastSeason: Int? = nil, year: Binding<Int>) {
+         mlbLastSeason: Int? = nil,
+         onTapGame: ((GameLog) -> Void)? = nil,
+         pendingGameId: String? = nil,
+         year: Binding<Int>) {
         self.playerId = playerId
         self.isPitcher = isPitcher
         self.mlbDebut = mlbDebut
         self.mlbLastSeason = mlbLastSeason
+        self.onTapGame = onTapGame
+        self.pendingGameId = pendingGameId
         self._year = year
         _vm = StateObject(wrappedValue: GameLogsViewModel(
             playerId: playerId, isPitcher: isPitcher,
@@ -500,14 +510,18 @@ struct GameLogsView: View {
                 rows: games.enumerated().map { index, game in
                     GameWithCumulative(game: game, battingRates: .empty, cumulativeERA: nil)
                 },
-                groups: nil
+                groups: nil,
+                onTapGame: onTapGame,
+                pendingGameId: pendingGameId
             )
         } else {
             BattingGameLogTable(
                 rows: games.enumerated().map { index, game in
                     GameWithCumulative(game: game, battingRates: .empty, cumulativeERA: nil)
                 },
-                groups: nil
+                groups: nil,
+                onTapGame: onTapGame,
+                pendingGameId: pendingGameId
             )
         }
     }
@@ -516,9 +530,11 @@ struct GameLogsView: View {
     private func monthGroupedTable(allGames: [GameLog]) -> some View {
         let groups = monthGroups(allGames: allGames)
         if isPitcher {
-            PitchingGameLogTable(rows: nil, groups: groups)
+            PitchingGameLogTable(rows: nil, groups: groups,
+                                 onTapGame: onTapGame, pendingGameId: pendingGameId)
         } else {
-            BattingGameLogTable(rows: nil, groups: groups)
+            BattingGameLogTable(rows: nil, groups: groups,
+                                 onTapGame: onTapGame, pendingGameId: pendingGameId)
         }
     }
 
@@ -959,6 +975,8 @@ private func decisionColor(_ result: String?) -> Color {
 private struct BattingGameLogTable: View {
     let rows: [GameWithCumulative]?
     let groups: [MonthGroup]?
+    var onTapGame: ((GameLog) -> Void)? = nil
+    var pendingGameId: String? = nil
 
     var body: some View {
         HStack(spacing: 0) {
@@ -971,7 +989,9 @@ private struct BattingGameLogTable: View {
                         BattingFrozenHeader()
                         Divider()
                         ForEach(Array(group.games.enumerated()), id: \.offset) { idx, gc in
-                            BattingFrozenGameRow(game: gc.game, alternate: !idx.isMultiple(of: 2))
+                            BattingFrozenGameRow(game: gc.game, alternate: !idx.isMultiple(of: 2),
+                                      onTap: onTapGame,
+                                      isPending: pendingGameId == gc.game.game_id)
                             if idx != group.games.indices.last { Divider().opacity(0.25) }
                         }
                         BattingFrozenMonthTotalsRow(group: group)
@@ -981,7 +1001,9 @@ private struct BattingGameLogTable: View {
                     BattingFrozenHeader()
                     Divider()
                     ForEach(Array(rows.enumerated()), id: \.offset) { idx, gc in
-                        BattingFrozenGameRow(game: gc.game, alternate: !idx.isMultiple(of: 2))
+                        BattingFrozenGameRow(game: gc.game, alternate: !idx.isMultiple(of: 2),
+                                      onTap: onTapGame,
+                                      isPending: pendingGameId == gc.game.game_id)
                         if idx != rows.indices.last { Divider().opacity(0.25) }
                     }
                 }
@@ -1074,9 +1096,52 @@ private struct BattingScrollableHeader: View {
 private struct BattingFrozenGameRow: View {
     let game: GameLog
     let alternate: Bool
+    /// Non-nil when this stack can open a box score.
+    var onTap: ((GameLog) -> Void)? = nil
+    /// True while this row's game is being resolved.
+    var isPending: Bool = false
+
     var body: some View {
-        HStack(spacing: 0) {
+        // NO VISUAL AFFORDANCE, AND THAT IS THE HOUSE PATTERN RATHER THAN AN
+        // OVERSIGHT. Box-score player names are a Button with
+        // `.buttonStyle(.plain)` and no tint or underline; RosterSheet wraps a
+        // row in `NavigationLink` and renders the NON-tappable branch
+        // identically. Nothing in this app signals tappability, so a game-log
+        // row that underlined itself would read as a different kind of thing.
+        //
+        // AND THERE IS NO ROOM FOR A CHEVRON ANYWAY. The frozen pane is exactly
+        // 100pt - 12 lead + 38 date + 50 opp - and `opp` was already widened
+        // 44 to 50 to stop "vs CWS" truncating. An affordance here costs either
+        // that fix or 12pt of the scrollable side, on both tables.
+        Group {
+            if let onTap {
+                Button { onTap(game) } label: { content }
+                    .buttonStyle(.plain)
+            } else {
+                content
+            }
+        }
+    }
+
+    /// The date, or a spinner while this row's game is being resolved.
+    ///
+    /// The spinner is NOT an affordance — it is feedback that a tap landed,
+    /// which no existing pattern in the app covers because every other
+    /// tappable row pushes instantly and this one fetches first. It sits
+    /// INSIDE the date's existing frame, so the pane width and the row height
+    /// are untouched and the frozen and scrollable panes stay aligned.
+    @ViewBuilder
+    private var dateCell: some View {
+        if isPending {
+            ProgressView().controlSize(.mini)
+        } else {
             Text(formatGameDate(game.game_date))
+        }
+    }
+
+    private var content: some View {
+        HStack(spacing: 0) {
+            dateCell
                 .frame(width: BattingGameColumn.date, alignment: .leading)
                 .monospacedDigit()
             opponentLabel(game)
@@ -1086,6 +1151,7 @@ private struct BattingFrozenGameRow: View {
         .padding(.leading, 12)
         .padding(.vertical, 7)
         .frame(height: 30)
+        .contentShape(Rectangle())
         // No zebra striping — the hairline dividers between rows carry
         // the separation, matching the career tables. `alternate` is
         // kept in the row signature so call sites stay stable.
@@ -1183,6 +1249,8 @@ private struct BattingScrollableMonthTotalsRow: View {
 private struct PitchingGameLogTable: View {
     let rows: [GameWithCumulative]?
     let groups: [MonthGroup]?
+    var onTapGame: ((GameLog) -> Void)? = nil
+    var pendingGameId: String? = nil
 
     var body: some View {
         HStack(spacing: 0) {
@@ -1194,7 +1262,9 @@ private struct PitchingGameLogTable: View {
                         PitchingFrozenHeader()
                         Divider()
                         ForEach(Array(group.games.enumerated()), id: \.offset) { idx, gc in
-                            PitchingFrozenGameRow(game: gc.game, alternate: !idx.isMultiple(of: 2))
+                            PitchingFrozenGameRow(game: gc.game, alternate: !idx.isMultiple(of: 2),
+                                      onTap: onTapGame,
+                                      isPending: pendingGameId == gc.game.game_id)
                             if idx != group.games.indices.last { Divider().opacity(0.25) }
                         }
                         PitchingFrozenMonthTotalsRow(group: group)
@@ -1204,7 +1274,9 @@ private struct PitchingGameLogTable: View {
                     PitchingFrozenHeader()
                     Divider()
                     ForEach(Array(rows.enumerated()), id: \.offset) { idx, gc in
-                        PitchingFrozenGameRow(game: gc.game, alternate: !idx.isMultiple(of: 2))
+                        PitchingFrozenGameRow(game: gc.game, alternate: !idx.isMultiple(of: 2),
+                                      onTap: onTapGame,
+                                      isPending: pendingGameId == gc.game.game_id)
                         if idx != rows.indices.last { Divider().opacity(0.25) }
                     }
                 }
@@ -1290,9 +1362,52 @@ private struct PitchingScrollableHeader: View {
 private struct PitchingFrozenGameRow: View {
     let game: GameLog
     let alternate: Bool
+    /// Non-nil when this stack can open a box score.
+    var onTap: ((GameLog) -> Void)? = nil
+    /// True while this row's game is being resolved.
+    var isPending: Bool = false
+
     var body: some View {
-        HStack(spacing: 0) {
+        // NO VISUAL AFFORDANCE, AND THAT IS THE HOUSE PATTERN RATHER THAN AN
+        // OVERSIGHT. Box-score player names are a Button with
+        // `.buttonStyle(.plain)` and no tint or underline; RosterSheet wraps a
+        // row in `NavigationLink` and renders the NON-tappable branch
+        // identically. Nothing in this app signals tappability, so a game-log
+        // row that underlined itself would read as a different kind of thing.
+        //
+        // AND THERE IS NO ROOM FOR A CHEVRON ANYWAY. The frozen pane is exactly
+        // 100pt - 12 lead + 38 date + 50 opp - and `opp` was already widened
+        // 44 to 50 to stop "vs CWS" truncating. An affordance here costs either
+        // that fix or 12pt of the scrollable side, on both tables.
+        Group {
+            if let onTap {
+                Button { onTap(game) } label: { content }
+                    .buttonStyle(.plain)
+            } else {
+                content
+            }
+        }
+    }
+
+    /// The date, or a spinner while this row's game is being resolved.
+    ///
+    /// The spinner is NOT an affordance — it is feedback that a tap landed,
+    /// which no existing pattern in the app covers because every other
+    /// tappable row pushes instantly and this one fetches first. It sits
+    /// INSIDE the date's existing frame, so the pane width and the row height
+    /// are untouched and the frozen and scrollable panes stay aligned.
+    @ViewBuilder
+    private var dateCell: some View {
+        if isPending {
+            ProgressView().controlSize(.mini)
+        } else {
             Text(formatGameDate(game.game_date))
+        }
+    }
+
+    private var content: some View {
+        HStack(spacing: 0) {
+            dateCell
                 .frame(width: PitchingGameColumn.date, alignment: .leading)
                 .monospacedDigit()
             opponentLabel(game)
@@ -1302,6 +1417,7 @@ private struct PitchingFrozenGameRow: View {
         .padding(.leading, 12)
         .padding(.vertical, 7)
         .frame(height: 30)
+        .contentShape(Rectangle())
         // No zebra striping — the hairline dividers between rows carry
         // the separation, matching the career tables. `alternate` is
         // kept in the row signature so call sites stay stable.

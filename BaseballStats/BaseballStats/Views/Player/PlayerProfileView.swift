@@ -37,6 +37,13 @@ struct PlayerProfileView: View {
     /// the two impossible to get out of step; a flag could say yes on a stack
     /// with no destination, and the tap would silently do nothing.
     var boxScorePath: Binding<NavigationPath>?
+
+    /// The `game_id` currently being resolved, so its row can show a spinner.
+    @State private var pendingGameLogId: String?
+    /// Set when a resolve fails for a reason that may not recur — the tap
+    /// stays available. A row that could never resolve is not tappable in the
+    /// first place, so this only ever holds a transient failure.
+    @State private var gameLogTapError: String?
     @StateObject private var viewModel: PlayerViewModel
     /// Current-season rank lookups for the Overview grid. One VM per
     /// role so two-way players (Ohtani) get independent loads when
@@ -1356,6 +1363,37 @@ struct PlayerProfileView: View {
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
     }
 
+    /// Resolve a game-log row to a `Game` and push its box score.
+    ///
+    /// The row is only tappable when `boxScorePath` is non-nil AND the season
+    /// can be served, so the two structural failures — no destination
+    /// registered, an era with no slate — are decided BEFORE the tap. What
+    /// remains is transient, which is why the error leaves the tap available
+    /// rather than disabling the row.
+    private func openBoxScore(for log: GameLog) {
+        guard let path = boxScorePath,
+              let gameId = log.game_id,
+              let date = log.game_date,
+              let season = log.season,
+              GameLogResolver.canResolve(season: season),
+              pendingGameLogId == nil          // one at a time
+        else { return }
+        pendingGameLogId = gameId
+        gameLogTapError = nil
+        Task { @MainActor in
+            defer { pendingGameLogId = nil }
+            do {
+                let game = try await GameLogResolver.resolve(
+                    gameId: gameId, dateString: date, season: season)
+                path.wrappedValue.append(game)
+            } catch {
+                gameLogTapError = "Couldn't open that box score."
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                if gameLogTapError != nil { gameLogTapError = nil }
+            }
+        }
+    }
+
     // MARK: - Game Logs
 
     /// `.id(showingBatting)` so flipping the role toggle recreates the
@@ -1371,6 +1409,8 @@ struct PlayerProfileView: View {
             isPitcher: !showingBatting,
             mlbDebut: player.mlb_debut,
             mlbLastSeason: player.mlb_last_season,
+            onTapGame: boxScorePath == nil ? nil : { openBoxScore(for: $0) },
+            pendingGameId: pendingGameLogId,
             year: $gameLogYear
         )
         .id(showingBatting)
