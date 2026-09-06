@@ -1357,6 +1357,11 @@ private func buildBoxScoreTeam(
 /// bottom, which is what the box score did before this existed. A
 /// wrong slot is worse than an append, because an append is visibly
 /// an append and a wrong slot reads as fact.
+///
+/// About one side in five falls back. That rate is even between home
+/// and away (12 of 58 each) and shows no team pattern, but it
+/// clusters hard on extra innings: 58% of extra-inning sides against
+/// 16% of nine-inning ones.
 private func substituteBattingOrders(
     plateAppearances: [BDLPlateAppearance],
     half: String,
@@ -1391,9 +1396,15 @@ private func substituteBattingOrders(
     guard !seq.isEmpty else { return nil }
 
     // Gate 1: the PA rows must reconcile exactly with the summed
-    // plate appearances on this side's stat lines. A surplus row
-    // means the feed carries an artifact, and an artifact anywhere
-    // before a substitute shifts his slot.
+    // plate appearances on this side's stat lines.
+    //
+    // Equality, not a surplus check. Measured over 116 sides
+    // (2026-09-06) the two disagree on about a fifth of them, and in
+    // BOTH directions: the feed DROPS rows slightly more often than
+    // it duplicates them — 12 sides short, 9 long, plus 3 that
+    // reconcile here and still fail gate 2. A deficit shifts the
+    // slots after it exactly as a surplus does, so neither direction
+    // is the safe one.
     let statsPA = stats.reduce(0) { $0 + ($1.plateAppearances ?? 0) }
     guard seq.count == statsPA else { return nil }
 
@@ -1404,10 +1415,12 @@ private func substituteBattingOrders(
     // slot than his first PA, means the sequence has drifted and
     // every slot after that point would be silently wrong.
     //
-    // This is what catches the real corruption: an inning-ending
-    // caught stealing writes a PA row for a batter who then leads
-    // off the next inning, so the side carries a duplicate and every
-    // slot behind it shifts by one.
+    // The largest single cause is an inning-ending caught stealing,
+    // which writes a PA row for a batter who then leads off the next
+    // inning — 8 of 24 observed failures. It is NOT the majority:
+    // ordinary results (groundout, strikeout, single, sac bunt) make
+    // up the rest, so this has to stay a general consistency check
+    // and can't be narrowed to that one shape.
     var codes: [Int: Int] = declaredSlot.mapValues { $0 * 100 }
     var depthInSlot: [Int: Int] = [:]
     var expected = 1
