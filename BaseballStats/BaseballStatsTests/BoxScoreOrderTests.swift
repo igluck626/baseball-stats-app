@@ -320,3 +320,50 @@ private func gameForFixtureTeams(
     #expect(bs.teams.away.renderedCodes.allSatisfy { $0 != nil })
     #expect(bs.teams.home.renderedCodes.allSatisfy { $0 != nil })
 }
+
+
+// MARK: - The real-world fallback: a dropped plate appearance
+
+//  TB @ TEX, 2026-09-05, game 5059902 — the SECOND of two games between
+//  these teams that BDL files under that date (its `dates[]` is
+//  UTC-keyed, so a 7pm ET game the evening before lands in the same
+//  bucket). This is the one a reader sees under September 5.
+//
+//  BDL drops Yandy Diaz's fifth plate appearance in the 10th: 40 PA rows
+//  against 41 counted. Both gates catch it, TB falls back to appending,
+//  and Ryan Vilade renders last and unindented — which is exactly what
+//  was reported from the device.
+//
+//  Ground truth for the side, from the published box score: Piper batted
+//  in Hicks's fourth slot, Vilade in Palacios's eighth.
+
+@Test func aDroppedPlateAppearanceSendsOnlyThatSideBack() throws {
+    let fx = try fixture("missingPARow")
+    let bs = boxScore(fx, isFinal: true)
+
+    // TB bats the top half and is the side with the fault.
+    let tb = bs.teams.away
+    #expect(tb.renderedCodes.allSatisfy { $0 == nil },
+            "the side with the dropped PA must place nobody")
+    // Three substitutes batted for TB — Vilade and Mateo both in
+    // Palacios's eighth slot, Piper in Hicks's fourth — and all three
+    // land in the appended tail past the starting nine rather than in
+    // a slot.
+    let names = tb.renderedNames
+    #expect(Array(names.prefix(9)) == fx.lineups
+        .filter { $0.team.id == fx.away.id && ($0.battingOrder ?? 0) > 0 }
+        .sorted { ($0.battingOrder ?? 0) < ($1.battingOrder ?? 0) }
+        .map(\.player.fullName))
+    for sub in ["Ryan Vilade", "Jorge Mateo", "Kenny Piper"] {
+        let i = try #require(names.firstIndex(of: sub), "\(sub) missing entirely")
+        #expect(i >= 9, "\(sub) is appended, not set into a slot")
+    }
+    for pid in tb.batters {
+        #expect(BoxScoreView.substitutionDepth(try #require(tb.players["ID\(pid)"])) == 0)
+    }
+
+    // TEX's half is intact, so it still places — the gate is per side
+    // even when the two halves come from one shared PA sequence.
+    let tex = bs.teams.home
+    #expect(tex.renderedCodes.allSatisfy { $0 != nil })
+}
