@@ -19,6 +19,16 @@ struct TeamLeadersSheet: View {
     /// every stat tap.
     @ObservedObject var vm: HomeViewModel
 
+    /// Passed explicitly (not `@EnvironmentObject`) because environment objects
+    /// don't reliably cross the `.sheet` boundary — the same reason
+    /// `ScheduleSheet` takes them.
+    @ObservedObject var navigation: AppNavigation
+    @ObservedObject var liveStore: LiveGameStore
+    /// This stack's own path. Value-based `NavigationLink`s append to it
+    /// whether or not a binding was supplied, so supplying one changes nothing
+    /// about them — it only makes a programmatic push possible, which is what
+    /// a box score needs.
+    @State private var path = NavigationPath()
     @Environment(\.dismiss) private var dismiss
 
     enum Role: String, Hashable { case batting, pitching }
@@ -65,7 +75,7 @@ struct TeamLeadersSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             VStack(spacing: 0) {
                 topControls
 
@@ -93,9 +103,19 @@ struct TeamLeadersSheet: View {
             }
             // Profiles push onto the sheet's own nav stack — back
             // returns to the leaderboard instead of dismissing.
-            .navigationDestination(for: PlayerSearchResult.self) { player in
-                PlayerProfileView(player: player)
-            }
+            .stackDestinations(BoxScoreContext(
+                path: $path,
+                owningTab: .home,
+                navigation: navigation,
+                liveStore: liveStore,
+                // This sheet already holds `HomeViewModel`, so the record line
+                // under each club in a pushed box score comes free. The other
+                // sheets carry no view model with standings and pass nothing,
+                // which omits those two sub-lines rather than breaking
+                // anything.
+                teamStandings: vm.teamStandings,
+                teamRecords: vm.teamRecords,
+            ))
         }
         // Glass sheet — matches the app-wide sheet treatment.
         .presentationBackground(.ultraThinMaterial)

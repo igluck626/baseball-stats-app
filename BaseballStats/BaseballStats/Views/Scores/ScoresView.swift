@@ -619,14 +619,14 @@ struct ScoresView: View {
                     }
                 }
             }
-            .stackDestinations(
+            .stackDestinations(BoxScoreContext(
                 path: $navigationPath,
                 owningTab: .scores,
                 navigation: navigation,
                 liveStore: liveStore,
                 teamStandings: vm.teamStandings,
                 teamRecords: vm.teamRecords,
-            )
+            ))
             .sheet(isPresented: $showingDatePicker) {
                 datePickerSheet
             }

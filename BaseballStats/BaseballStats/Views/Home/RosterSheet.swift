@@ -18,6 +18,16 @@ struct RosterSheet: View {
     let roster: [RosterPlayer]
     let isLoading: Bool
 
+    /// Passed explicitly (not `@EnvironmentObject`) because environment objects
+    /// don't reliably cross the `.sheet` boundary — the same reason
+    /// `ScheduleSheet` takes them.
+    @ObservedObject var navigation: AppNavigation
+    @ObservedObject var liveStore: LiveGameStore
+    /// This stack's own path. Value-based `NavigationLink`s append to it
+    /// whether or not a binding was supplied, so supplying one changes nothing
+    /// about them — it only makes a programmatic push possible, which is what
+    /// a box score needs.
+    @State private var path = NavigationPath()
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
 
@@ -80,7 +90,7 @@ struct RosterSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             VStack(spacing: 0) {
                 Picker("Mode", selection: $mode) {
                     Text("Hitters").tag(RosterMode.hitters)
@@ -110,9 +120,12 @@ struct RosterSheet: View {
             }
             // Profiles push onto the sheet's own nav stack — back
             // returns to the table instead of dismissing the sheet.
-            .navigationDestination(for: PlayerSearchResult.self) { player in
-                PlayerProfileView(player: player)
-            }
+            .stackDestinations(BoxScoreContext(
+                path: $path,
+                owningTab: .home,
+                navigation: navigation,
+                liveStore: liveStore,
+            ))
         }
         // Glass sheet — matches InjuryReportSheet and the app-wide
         // sheet treatment.

@@ -16,7 +16,15 @@ struct LeaderboardsView: View {
     /// (and clear) a pending leaderboard destination when other tabs
     /// route the user into this one (e.g. "View on the all-time
     /// leaderboard" from the player profile's All-Time Rankings).
+    /// This stack's own path. Value-based `NavigationLink`s append to it
+    /// whether or not a binding was supplied, so supplying one changes nothing
+    /// about them — it only makes a programmatic push possible, which is what
+    /// a box score needs.
+    @State private var path = NavigationPath()
     @EnvironmentObject private var navigation: AppNavigation
+    /// Available here because Leaders is a real tab, inside the TabView that
+    /// `ContentView` publishes both objects to. Sheets cannot rely on this.
+    @EnvironmentObject private var liveStore: LiveGameStore
     /// Secondary filters (league, team, year-range) collapse behind a
     /// toggle by default so the list gets maximum vertical real
     /// estate — the previous always-visible layout left only ~4
@@ -40,7 +48,7 @@ struct LeaderboardsView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             ZStack {
                 backgroundGradient
                 content
@@ -48,9 +56,12 @@ struct LeaderboardsView: View {
             .navigationTitle("Leaderboards")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
-            .navigationDestination(for: PlayerSearchResult.self) { player in
-                PlayerProfileView(player: player)
-            }
+            .stackDestinations(BoxScoreContext(
+                path: $path,
+                owningTab: .leaders,
+                navigation: navigation,
+                liveStore: liveStore,
+            ))
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     // Year picker only meaningful in season mode —

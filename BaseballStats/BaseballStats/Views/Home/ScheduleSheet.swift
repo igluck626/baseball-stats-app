@@ -62,14 +62,14 @@ struct ScheduleSheet: View {
                     Button("Close") { dismiss() }
                 }
             }
-            .stackDestinations(
+            .stackDestinations(BoxScoreContext(
                 path: $path,
                 owningTab: .home,
                 navigation: navigation,
                 liveStore: liveStore,
                 teamStandings: teamStandings,
                 teamRecords: teamRecords,
-            )
+            ))
         }
         .task { await vm.load(bdlTeamId: favorite.bdlTeamId) }
         .presentationDetents([.large])

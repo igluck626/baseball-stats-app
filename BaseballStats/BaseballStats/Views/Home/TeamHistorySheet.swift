@@ -109,14 +109,14 @@ struct TeamHistorySheet: View {
                 }
             }
             // The Awards section pushes the tapped winner's profile here.
-            .stackDestinations(
+            .stackDestinations(BoxScoreContext(
                 path: $path,
                 owningTab: .home,
                 navigation: navigation,
                 liveStore: liveStore,
                 teamStandings: vm.teamStandings,
                 teamRecords: vm.teamRecords,
-            )
+            ))
         }
         // Glass sheet — matches the app-wide sheet treatment.
         .presentationBackground(.ultraThinMaterial)

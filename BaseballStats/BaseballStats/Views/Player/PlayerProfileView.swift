@@ -27,16 +27,12 @@ fileprivate var currentOverviewSeason: Int {
 
 struct PlayerProfileView: View {
     let player: PlayerSearchResult
-    /// The host stack's path, when that stack can push a box score.
+    /// What this profile needs to open a box score, when its host stack can.
     ///
-    /// ⚠️ NIL IS THE CAPABILITY TEST, not an omission. Only
-    /// `StackDestinations` passes this, and it is the only thing that
-    /// registers the `Game` destination — so a non-nil binding means BOTH "I
-    /// have somewhere to push" and "something will catch it". Deriving the
-    /// capability from the binding rather than carrying a separate Bool makes
-    /// the two impossible to get out of step; a flag could say yes on a stack
-    /// with no destination, and the tap would silently do nothing.
-    var boxScorePath: Binding<NavigationPath>?
+    /// ⚠️ NIL IS THE CAPABILITY TEST, not an omission — see `BoxScoreContext`.
+    /// Carried rather than unpacked because `AwardVotingView`, presented from
+    /// here, needs the same thing to open a box score of its own.
+    var boxScoreContext: BoxScoreContext?
 
     /// The `game_id` currently being resolved, so its row can show a spinner.
     @State private var pendingGameLogId: String?
@@ -133,9 +129,9 @@ struct PlayerProfileView: View {
     }
 
     init(player: PlayerSearchResult,
-         boxScorePath: Binding<NavigationPath>? = nil) {
+         boxScoreContext: BoxScoreContext? = nil) {
         self.player = player
-        self.boxScorePath = boxScorePath
+        self.boxScoreContext = boxScoreContext
         let vm = PlayerViewModel(player: player)
         _viewModel = StateObject(wrappedValue: vm)
         let season = currentOverviewSeason
@@ -288,7 +284,8 @@ struct PlayerProfileView: View {
         // chiclet taps swap the sheet's content instead of
         // requiring a dismiss in between.
         .sheet(item: $presentingVoting) { destination in
-            AwardVotingView(destination: destination)
+            AwardVotingView(destination: destination,
+                            boxScoreContext: boxScoreContext)
         }
         // Multi-year aggregate sheet. Explicit toggle binding —
         // dismissal (drag-down or in-sheet X) just closes the sheet
@@ -309,6 +306,8 @@ struct PlayerProfileView: View {
         // currently being viewed (two-way players join the right career).
         .sheet(isPresented: $showingPlayerCompare) {
             PlayerCompareView(
+                navigation: boxScoreContext?.navigation,
+                liveStore: boxScoreContext?.liveStore,
                 startingPlayer: player,
                 startingType: showingBatting ? .batter : .pitcher
             )
@@ -1371,7 +1370,7 @@ struct PlayerProfileView: View {
     /// remains is transient, which is why the error leaves the tap available
     /// rather than disabling the row.
     private func openBoxScore(for log: GameLog) {
-        guard let path = boxScorePath,
+        guard let ctx = boxScoreContext,
               let gameId = log.game_id,
               let date = log.game_date,
               let season = log.season,
@@ -1385,7 +1384,7 @@ struct PlayerProfileView: View {
             do {
                 let game = try await GameLogResolver.resolve(
                     gameId: gameId, dateString: date, season: season)
-                path.wrappedValue.append(game)
+                ctx.path.wrappedValue.append(game)
             } catch {
                 gameLogTapError = "Couldn't open that box score."
                 try? await Task.sleep(nanoseconds: 3_000_000_000)
@@ -1409,7 +1408,7 @@ struct PlayerProfileView: View {
             isPitcher: !showingBatting,
             mlbDebut: player.mlb_debut,
             mlbLastSeason: player.mlb_last_season,
-            onTapGame: boxScorePath == nil ? nil : { openBoxScore(for: $0) },
+            onTapGame: boxScoreContext == nil ? nil : { openBoxScore(for: $0) },
             pendingGameId: pendingGameLogId,
             year: $gameLogYear
         )

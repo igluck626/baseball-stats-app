@@ -625,6 +625,20 @@ private enum CompareLayout {
 // MARK: - Main view
 
 struct PlayerCompareView: View {
+    /// Passed explicitly (not `@EnvironmentObject`) because environment objects
+    /// don't reliably cross the `.sheet` boundary — the same reason
+    /// `ScheduleSheet` takes them.
+    /// Forwarded, never observed — this view only hands them to a pushed box
+    /// score. Optional because a profile that has no context of its own can
+    /// still present the comparison; the rows there open a profile but not a
+    /// box score, which is what `applyStackDestinations` handles.
+    private let navigation: AppNavigation?
+    private let liveStore: LiveGameStore?
+    /// This stack's own path. Value-based `NavigationLink`s append to it
+    /// whether or not a binding was supplied, so supplying one changes nothing
+    /// about them — it only makes a programmatic push possible, which is what
+    /// a box score needs.
+    @State private var path = NavigationPath()
     @StateObject private var vm: PlayerCompareViewModel
     @State private var showingSearch = false
     /// Player id of the column currently under a drag, for the drop-target
@@ -635,7 +649,19 @@ struct PlayerCompareView: View {
     /// `startingPlayer` seeds the comparison (profile entry point); omit
     /// both for the empty Search-tab entry. `startingType` should be the
     /// role the profile is showing so a two-way player joins the right side.
-    init(startingPlayer: PlayerSearchResult? = nil, startingType: ComparisonType? = nil) {
+    /// Non-nil only when this view was given both objects — i.e. presented
+    /// from a screen that had them.
+    private var boxScoreContext: BoxScoreContext? {
+        guard let navigation, let liveStore else { return nil }
+        return BoxScoreContext(path: $path, owningTab: .search,
+                               navigation: navigation, liveStore: liveStore)
+    }
+
+    init(navigation: AppNavigation? = nil, liveStore: LiveGameStore? = nil,
+         startingPlayer: PlayerSearchResult? = nil,
+         startingType: ComparisonType? = nil) {
+        self.navigation = navigation
+        self.liveStore = liveStore
         _vm = StateObject(wrappedValue: PlayerCompareViewModel(
             startingPlayer: startingPlayer,
             startingType: startingType,
@@ -643,7 +669,7 @@ struct PlayerCompareView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             ScrollView {
                 VStack(spacing: 16) {
                     modePicker
@@ -669,9 +695,7 @@ struct PlayerCompareView: View {
                     Button("Done") { dismiss() }
                 }
             }
-            .navigationDestination(for: PlayerSearchResult.self) { player in
-                PlayerProfileView(player: player)
-            }
+                .applyStackDestinations(boxScoreContext)
             .sheet(isPresented: $showingSearch) {
                 ComparePlayerSearchSheet { picked in
                     Task { await vm.add(picked) }

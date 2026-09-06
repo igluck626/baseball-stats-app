@@ -51,9 +51,15 @@ final class AwardVotingViewModel: ObservableObject {
 struct AwardVotingView: View {
     @StateObject private var vm: AwardVotingViewModel
     @Environment(\.dismiss) private var dismiss
+    /// Passed through from whoever presented this sheet, so a profile opened
+    /// from a voting row can itself open a box score. Nil where the presenter
+    /// had none — see `BoxScoreContext`.
+    private let boxScoreContext: BoxScoreContext?
 
-    init(destination: AwardVotingDestination) {
+    init(destination: AwardVotingDestination,
+         boxScoreContext: BoxScoreContext? = nil) {
         _vm = StateObject(wrappedValue: AwardVotingViewModel(destination: destination))
+        self.boxScoreContext = boxScoreContext
     }
 
     var body: some View {
@@ -66,9 +72,7 @@ struct AwardVotingView: View {
                         Button("Done") { dismiss() }
                     }
                 }
-                .navigationDestination(for: PlayerSearchResult.self) { player in
-                    PlayerProfileView(player: player)
-                }
+                .applyStackDestinations(boxScoreContext)
         }
         // Glass sheet — matches the app-wide sheet treatment.
         .presentationBackground(.ultraThinMaterial)

@@ -43,14 +43,14 @@ struct HomeView: View {
             }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbarContent }
-            .stackDestinations(
+            .stackDestinations(BoxScoreContext(
                 path: $navigationPath,
                 owningTab: .home,
                 navigation: navigation,
                 liveStore: liveStore,
                 teamStandings: vm.teamStandings,
                 teamRecords: vm.teamRecords,
-            )
+            ))
             .navigationDestination(for: TeamNewsDestination.self) { dest in
                 TeamNewsListView(
                     scope:      dest.scope,
@@ -79,37 +79,10 @@ struct HomeView: View {
                     )
                 }
             }
-            .sheet(isPresented: $showingLeadersSheet) {
-                if let bdlId = store.bdlTeamId,
-                   let entry = MLBTeamCatalog.entry(forBDLId: bdlId) {
-                    TeamLeadersSheet(entry: entry, vm: vm)
-                        .presentationDetents([.large])
-                }
-            }
-            .sheet(isPresented: $showingRosterSheet) {
-                if let bdlId = store.bdlTeamId,
-                   let entry = MLBTeamCatalog.entry(forBDLId: bdlId) {
-                    RosterSheet(
-                        entry:     entry,
-                        roster:    vm.roster,
-                        isLoading: vm.isLoadingRoster,
-                    )
-                    .presentationDetents([.large])
-                }
-            }
+            .sheet(isPresented: $showingLeadersSheet) { leadersSheet }
+            .sheet(isPresented: $showingRosterSheet) { rosterSheet }
             .sheet(isPresented: $showingHistorySheet) { historySheet }
-            .sheet(isPresented: $showingInjurySheet) {
-                if let bdlId = store.bdlTeamId,
-                   let entry = MLBTeamCatalog.entry(forBDLId: bdlId) {
-                    InjuryReportSheet(
-                        entry:     entry,
-                        players:   vm.injuredPlayers,
-                        resolved:  vm.injuredPlayersResolved,
-                        isLoading: vm.isLoadingInjuries,
-                    )
-                    .presentationDetents([.large])
-                }
-            }
+            .sheet(isPresented: $showingInjurySheet) { injurySheet }
             // In-app Safari reader for a tapped news article. `item:` keys
             // the sheet to the exact tapped article so its url opens.
             .sheet(item: $selectedArticle) { article in
@@ -214,6 +187,47 @@ struct HomeView: View {
     /// shows through below the fade — so the lower half of the tab
     /// reads as plain system surface (and the glass cards on top look
     /// like genuine glass against it).
+    @ViewBuilder
+    private var leadersSheet: some View {
+            if let bdlId = store.bdlTeamId,
+               let entry = MLBTeamCatalog.entry(forBDLId: bdlId) {
+                TeamLeadersSheet(entry: entry, vm: vm,
+                                 navigation: navigation, liveStore: liveStore)
+                    .presentationDetents([.large])
+            }
+    }
+
+    @ViewBuilder
+    private var rosterSheet: some View {
+            if let bdlId = store.bdlTeamId,
+               let entry = MLBTeamCatalog.entry(forBDLId: bdlId) {
+                RosterSheet(
+                    entry:      entry,
+                    roster:     vm.roster,
+                    isLoading:  vm.isLoadingRoster,
+                    navigation: navigation,
+                    liveStore:  liveStore,
+                )
+                .presentationDetents([.large])
+            }
+    }
+
+    @ViewBuilder
+    private var injurySheet: some View {
+            if let bdlId = store.bdlTeamId,
+               let entry = MLBTeamCatalog.entry(forBDLId: bdlId) {
+                InjuryReportSheet(
+                    entry:      entry,
+                    players:    vm.injuredPlayers,
+                    resolved:   vm.injuredPlayersResolved,
+                    isLoading:  vm.isLoadingInjuries,
+                    navigation: navigation,
+                    liveStore:  liveStore,
+                )
+                .presentationDetents([.large])
+            }
+    }
+
     /// Extracted from the `.sheet` chain: adding a sixth argument to the
     /// destinations modifier pushed `body` past the compiler's type-checking
     /// budget ("unable to type-check this expression in reasonable time"). A

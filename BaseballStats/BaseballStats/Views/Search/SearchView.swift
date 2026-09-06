@@ -35,12 +35,12 @@ struct SearchView: View {
             }
             .navigationTitle("Search")
             .navigationBarTitleDisplayMode(.inline)
-            .stackDestinations(
+            .stackDestinations(BoxScoreContext(
                 path: $path,
                 owningTab: .search,
                 navigation: navigation,
                 liveStore: liveStore,
-            )
+            ))
             .navigationDestination(for: AwardVotingBrowserDestination.self) { _ in
                 AwardVotingBrowserView()
             }
@@ -61,7 +61,7 @@ struct SearchView: View {
                 if !viewModel.hasHeat { await viewModel.loadActiveStars() }
             }
             .sheet(isPresented: $showingCompare) {
-                PlayerCompareView()
+                PlayerCompareView(navigation: navigation, liveStore: liveStore)
             }
         }
     }

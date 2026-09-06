@@ -50,6 +50,47 @@ import SwiftUI
 ///
 /// So: expect to extract a sheet or two when adopting this on a big view. That
 /// is a cost of the modifier, not a defect in the view you are applying it to.
+/// Everything a stack must supply for a view pushed onto it to open a box
+/// score.
+///
+/// ⚠️ A STRUCT RATHER THAN FOUR-AND-COUNTING PARAMETERS, and the reason is the
+/// cascade rather than tidiness. `PlayerProfileView` needs these to construct
+/// `AwardVotingView`, which needs them to construct a box score, so every
+/// addition propagates through views that do not use it themselves. Four
+/// arguments is tolerable; this is the second time the list has grown, and the
+/// next growth would be free with a struct and expensive without one.
+///
+/// ⚠️ AND ITS OPTIONALITY IS THE CAPABILITY. A non-nil context means "this
+/// stack registered the destination AND has somewhere to push", because only
+/// `.stackDestinations(...)` builds one. That is the same reasoning that made
+/// an optional path binding better than a `canPushBoxScore: Bool` — a flag can
+/// disagree with reality; a context that is only ever constructed alongside the
+/// destination cannot.
+struct BoxScoreContext {
+    let path: Binding<NavigationPath>
+    /// Gates the pushed box score's live polling via
+    /// `navigation.shouldPoll(on:)`.
+    let owningTab: AppNavigation.Tab
+    let navigation: AppNavigation
+    let liveStore: LiveGameStore
+    /// Records + division ranks for the box score's team header. Empty is a
+    /// SUPPORTED value, not a degraded one — most stacks hold no standings and
+    /// `teamHeader` reads both through `if let`, so a miss omits the "(78-54)"
+    /// and "3rd AL East" sub-lines rather than rendering an empty parenthetical.
+    var teamStandings: [Int: TeamStandingInfo] = [:]
+    var teamRecords: [Int: TeamRecord] = [:]
+}
+
+// ⚠️ ONE STACK IS DELIBERATELY NOT COVERED: AskView. It is a
+// `fullScreenCover` launched from a floating button rather than a tab, so
+// `BoxScoreContext.owningTab` — which gates the pushed box score's live
+// polling through `navigation.shouldPoll(on:)` — has no correct value for it.
+// Giving Ask a `Tab` case means excluding that case everywhere `Tab` is
+// iterated (the TabView itself, `CaseIterable`, `TabOrderStore`); making
+// `owningTab` optional with always-poll semantics would leave a 15-second BDL
+// loop running behind the cover and after dismissal, with no visible symptom.
+// Neither is a call to make while wiring navigation, so Ask stays uncovered
+// until it is made. A KNOWN GAP, not an oversight.
 struct StackDestinations: ViewModifier {
     /// ⚠️ PASSED, NOT READ FROM THE ENVIRONMENT, AND DELIBERATELY SO. Five of
     /// the twelve stacks are SHEETS, and `.sheet` content is hosted separately
@@ -59,11 +100,7 @@ struct StackDestinations: ViewModifier {
     /// `@EnvironmentObject` is a RUNTIME CRASH, not a compile error. An
     /// environment-reading modifier would build clean and die the first time
     /// somebody opened a sheet and tapped a game.
-    let navigation: AppNavigation
-    let liveStore: LiveGameStore
-
-    @Binding var path: NavigationPath
-    let owningTab: AppNavigation.Tab
+    let context: BoxScoreContext
 
     /// Records + division ranks for the box score's team header.
     ///
@@ -75,26 +112,23 @@ struct StackDestinations: ViewModifier {
     /// reached from Search is therefore the same box score, minus two optional
     /// sub-lines. That is a far better outcome than the tap doing nothing,
     /// which is what those stacks do today.
-    var teamStandings: [Int: TeamStandingInfo] = [:]
-    var teamRecords: [Int: TeamRecord] = [:]
-
     func body(content: Content) -> some View {
         content
             .navigationDestination(for: PlayerSearchResult.self) { player in
                 // The path goes WITH the destination, so a profile can only be
                 // told it may push a box score by the same thing that
                 // registers where the box score goes.
-                PlayerProfileView(player: player, boxScorePath: $path)
+                PlayerProfileView(player: player, boxScoreContext: context)
             }
             .navigationDestination(for: Game.self) { game in
                 BoxScoreView(
                     game:           game,
-                    teamStandings:  teamStandings,
-                    teamRecords:    teamRecords,
-                    path:           $path,
-                    owningTab:      owningTab,
-                    navigation:     navigation,
-                    liveStore:      liveStore,
+                    teamStandings:  context.teamStandings,
+                    teamRecords:    context.teamRecords,
+                    path:           context.path,
+                    owningTab:      context.owningTab,
+                    navigation:     context.navigation,
+                    liveStore:      context.liveStore,
                 )
             }
     }
@@ -102,17 +136,23 @@ struct StackDestinations: ViewModifier {
 
 extension View {
     /// Apply at every `NavigationStack` root. See `StackDestinations`.
-    func stackDestinations(
-        path: Binding<NavigationPath>,
-        owningTab: AppNavigation.Tab,
-        navigation: AppNavigation,
-        liveStore: LiveGameStore,
-        teamStandings: [Int: TeamStandingInfo] = [:],
-        teamRecords: [Int: TeamRecord] = [:],
-    ) -> some View {
-        modifier(StackDestinations(
-            navigation: navigation, liveStore: liveStore,
-            path: path, owningTab: owningTab,
-            teamStandings: teamStandings, teamRecords: teamRecords))
+    /// Apply at every `NavigationStack` root. See `StackDestinations`.
+    func stackDestinations(_ context: BoxScoreContext) -> some View {
+        modifier(StackDestinations(context: context))
+    }
+
+    /// For a stack whose context is only sometimes available — a sheet that may
+    /// have been presented from a screen that had none. Registers the player
+    /// destination either way, so a profile still opens; only the box score
+    /// needs the context.
+    @ViewBuilder
+    func applyStackDestinations(_ context: BoxScoreContext?) -> some View {
+        if let context {
+            modifier(StackDestinations(context: context))
+        } else {
+            navigationDestination(for: PlayerSearchResult.self) { player in
+                PlayerProfileView(player: player)
+            }
+        }
     }
 }
