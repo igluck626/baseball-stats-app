@@ -139,37 +139,39 @@ private extension BoxScoreTeam {
     }
 }
 
-// MARK: - The gate: a sequence that doesn't reconcile falls back
+// MARK: - A faulted side places only what it can prove
 
-@Test func countMismatchFallsBackToAppending() throws {
+@Test func aFaultedSidePlacesOnlyLocallyProvenSubstitutes() throws {
     // LAD @ COL, 2026-08-20. COL's half carries 42 PA rows against 41
-    // counted plate appearances — an inning-ending caught stealing
-    // writes a row for a batter who then leads off the next inning.
-    // Every slot behind that point would shift by one, so the side
-    // must refuse rather than place anyone.
+    // counted — an inning-ending caught stealing writes a row for a
+    // batter who then leads off the next inning. The side-wide rotation
+    // walk refuses it, correctly: every slot behind that point is
+    // shifted. But the fault is in one place, and a substitute whose
+    // neighbours agree on both sides is unaffected by it.
     let fx = try fixture("countMismatch")
     let bs = boxScore(fx, isFinal: true)
-
     let col = bs.teams.home
-    #expect(col.renderedCodes.allSatisfy { $0 == nil },
-            "a side that fails the gate must carry no codes at all")
-    for pid in col.batters {
-        let p = try #require(col.players["ID\(pid)"])
-        #expect(BoxScoreView.substitutionDepth(p) == 0, "nothing may indent")
-    }
-    // Falling back means the old behaviour exactly: lineup order, then
-    // substitutes appended at the bottom.
-    let lineupOrder = fx.lineups
-        .filter { $0.team.id == fx.home.id && ($0.battingOrder ?? 0) > 0 }
-        .sorted { ($0.battingOrder ?? 0) < ($1.battingOrder ?? 0) }
-        .map(\.player.id)
-    #expect(Array(col.batters.prefix(9)) == lineupOrder)
-    #expect(col.batters.count > 9, "the substitutes are still present, just appended")
 
-    // The gate is PER SIDE: LAD's half reconciles, so it still places.
-    let lad = bs.teams.away
-    #expect(lad.renderedCodes.allSatisfy { $0 != nil },
-            "one bad side must not suppress the other")
+    #expect(col.player("Jordan Beck")?.stats_battingOrder == "501")
+    #expect(col.player("Willi Castro")?.stats_battingOrder == "901")
+    #expect(col.player("Zac Veen")?.stats_battingOrder == "500")
+    #expect(col.player("Ezequiel Tovar")?.stats_battingOrder == "900")
+
+    // Set in under the men they came in for, not appended.
+    let names = col.renderedNames
+    #expect(names.firstIndex(of: "Jordan Beck")
+            == (names.firstIndex(of: "Zac Veen").map { $0 + 1 }))
+    #expect(names.firstIndex(of: "Willi Castro")
+            == (names.firstIndex(of: "Ezequiel Tovar").map { $0 + 1 }))
+
+    // The nine starters keep their declared slots regardless — those
+    // come from the lineup, which the damaged sequence can't touch.
+    for slot in 1...9 {
+        let code = String(slot * 100)
+        #expect(col.renderedCodes.contains(code), "slot \(slot) missing")
+    }
+    // LAD's half is intact and unaffected.
+    #expect(bs.teams.away.renderedCodes.allSatisfy { $0 != nil })
 }
 
 // MARK: - Live games are owned by a different path
@@ -322,48 +324,46 @@ private func gameForFixtureTeams(
 }
 
 
-// MARK: - The real-world fallback: a dropped plate appearance
+// MARK: - The acceptance case
 
 //  TB @ TEX, 2026-09-05, game 5059902 — the SECOND of two games between
 //  these teams that BDL files under that date (its `dates[]` is
 //  UTC-keyed, so a 7pm ET game the evening before lands in the same
-//  bucket). This is the one a reader sees under September 5.
+//  bucket). This is the one a reader sees under September 5, and the one
+//  reported from the device as placing nothing.
 //
 //  BDL drops Yandy Diaz's fifth plate appearance in the 10th: 40 PA rows
-//  against 41 counted. Both gates catch it, TB falls back to appending,
-//  and Ryan Vilade renders last and unindented — which is exactly what
-//  was reported from the device.
+//  against 41 counted, and the rotation breaks where slot 1 should be.
+//  Both gates fire, so the side-wide walk refuses — and every one of the
+//  three substitutes still carries its own proof.
 //
-//  Ground truth for the side, from the published box score: Piper batted
-//  in Hicks's fourth slot, Vilade in Palacios's eighth.
+//  Ground truth from the published box score: Piper batted in Hicks's
+//  fourth slot, Vilade in Palacios's eighth.
 
-@Test func aDroppedPlateAppearanceSendsOnlyThatSideBack() throws {
+@Test func theDroppedPlateAppearanceStillPlacesEverySubstitute() throws {
     let fx = try fixture("missingPARow")
     let bs = boxScore(fx, isFinal: true)
-
-    // TB bats the top half and is the side with the fault.
     let tb = bs.teams.away
-    #expect(tb.renderedCodes.allSatisfy { $0 == nil },
-            "the side with the dropped PA must place nobody")
-    // Three substitutes batted for TB — Vilade and Mateo both in
-    // Palacios's eighth slot, Piper in Hicks's fourth — and all three
-    // land in the appended tail past the starting nine rather than in
-    // a slot.
-    let names = tb.renderedNames
-    #expect(Array(names.prefix(9)) == fx.lineups
-        .filter { $0.team.id == fx.away.id && ($0.battingOrder ?? 0) > 0 }
-        .sorted { ($0.battingOrder ?? 0) < ($1.battingOrder ?? 0) }
-        .map(\.player.fullName))
-    for sub in ["Ryan Vilade", "Jorge Mateo", "Kenny Piper"] {
-        let i = try #require(names.firstIndex(of: sub), "\(sub) missing entirely")
-        #expect(i >= 9, "\(sub) is appended, not set into a slot")
-    }
-    for pid in tb.batters {
-        #expect(BoxScoreView.substitutionDepth(try #require(tb.players["ID\(pid)"])) == 0)
-    }
 
-    // TEX's half is intact, so it still places — the gate is per side
-    // even when the two halves come from one shared PA sequence.
-    let tex = bs.teams.home
-    #expect(tex.renderedCodes.allSatisfy { $0 != nil })
+    #expect(tb.player("Kenny Piper")?.stats_battingOrder  == "401")
+    #expect(tb.player("Ryan Vilade")?.stats_battingOrder  == "801")
+    #expect(tb.player("Jorge Mateo")?.stats_battingOrder  == "802")
+    #expect(tb.player("Liam Hicks")?.stats_battingOrder   == "400")
+    #expect(tb.player("Richie Palacios")?.stats_battingOrder == "800")
+
+    // Piper sits under Hicks; Vilade then Mateo under Palacios, in the
+    // order they entered.
+    #expect(tb.renderedNames == [
+        "Yandy Diaz", "Jonathan Aranda", "Junior Caminero",
+        "Liam Hicks", "Kenny Piper",
+        "Chandler Simpson", "Victor Mesa Jr.", "Cedric Mullins",
+        "Richie Palacios", "Ryan Vilade", "Jorge Mateo",
+        "Taylor Walls",
+    ])
+    for sub in ["Kenny Piper", "Ryan Vilade", "Jorge Mateo"] {
+        let p = try #require(tb.player(sub))
+        #expect(BoxScoreView.substitutionDepth(p) > 0, "\(sub) must indent")
+    }
+    #expect(bs.teams.home.renderedCodes.allSatisfy { $0 != nil })
 }
+

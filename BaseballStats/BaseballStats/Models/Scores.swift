@@ -1352,16 +1352,26 @@ private func buildBoxScoreTeam(
 /// is the only current-season signal that says which slot a pinch
 /// hitter batted in.
 ///
-/// Returns nil when the sequence can't be trusted. Nil is not a
-/// failure: the caller falls back to appending substitutes at the
-/// bottom, which is what the box score did before this existed. A
-/// wrong slot is worse than an append, because an append is visibly
+/// A substitute with no code is appended at the bottom, which is what
+/// the box score did before this existed. That is the safe outcome and
+/// the rule reaches for it whenever the alternative would be a guess:
+/// a wrong slot is worse than an append, because an append is visibly
 /// an append and a wrong slot reads as fact.
 ///
-/// About one side in five falls back. That rate is even between home
-/// and away (12 of 58 each) and shows no team pattern, but it
-/// clusters hard on extra innings: 58% of extra-inning sides against
-/// 16% of nine-inning ones.
+/// Measured over 116 sides / 144 substitutes (2026-09-06):
+///   • 110 placed by the side-wide walk, on sides that pass both gates.
+///   • 25 placed by the local bracket, on the 24 sides that don't. One
+///     side in five has a fault somewhere, and that rate clusters hard
+///     on extra innings — 58% of extra-inning sides against 16% of
+///     nine-inning ones — but a fault in the tenth says nothing about a
+///     pinch hitter in the seventh.
+///   • 9 declined: 6 whose neighbours disagreed (the damage is next to
+///     them) and 3 who bat at the very start or end of a side's
+///     sequence, where only one neighbour exists and nothing can
+///     contradict it.
+///
+/// Returns nil only when the side can't be attempted at all — no full
+/// nine declared, an empty sequence, or a game that isn't final.
 private func substituteBattingOrders(
     plateAppearances: [BDLPlateAppearance],
     half: String,
@@ -1395,52 +1405,135 @@ private func substituteBattingOrders(
         .sorted { ($0.inning, $0.paNumber) < ($1.inning, $1.paNumber) }
     guard !seq.isEmpty else { return nil }
 
-    // Gate 1: the PA rows must reconcile exactly with the summed
-    // plate appearances on this side's stat lines.
+    // Two ways to place a substitute, and which one applies depends on
+    // whether this side's sequence is intact.
     //
-    // Equality, not a surplus check. Measured over 116 sides
-    // (2026-09-06) the two disagree on about a fifth of them, and in
-    // BOTH directions: the feed DROPS rows slightly more often than
-    // it duplicates them — 12 sides short, 9 long, plus 3 that
-    // reconcile here and still fail gate 2. A deficit shifts the
-    // slots after it exactly as a surplus does, so neither direction
-    // is the safe one.
+    // GATE 1 — the PA rows must reconcile exactly with the summed plate
+    // appearances on this side's stat lines. Equality, not a surplus
+    // check: measured over 116 sides (2026-09-06) the two disagree on
+    // about a fifth of them, and in BOTH directions — the feed DROPS
+    // rows slightly more often than it duplicates them (12 sides short,
+    // 9 long, plus 3 that reconcile here and still fail gate 2). A
+    // deficit shifts the slots after it exactly as a surplus does.
+    //
+    // GATE 2 — rotation consistency. Walk the sequence against a 1...9
+    // rotation; every batter whose slot we already know must land where
+    // the rotation says. The largest single cause of failure is an
+    // inning-ending caught stealing, which writes a PA row for a batter
+    // who then leads off the next inning — 8 of 24 observed failures.
+    // Not the majority though: ordinary results (groundout, strikeout,
+    // single, sac bunt) make up the rest, so it stays a general check.
+    //
+    // Pass both and the whole side is proven, so the walk places every
+    // substitute. Fail either and the side has a fault SOMEWHERE, which
+    // used to mean placing nobody — but a fault in the tenth says
+    // nothing about a pinch hitter in the seventh. So we fall back to
+    // proving each substitute locally instead (`bracketedSlots`), and
+    // place only the ones that carry their own proof.
     let statsPA = stats.reduce(0) { $0 + ($1.plateAppearances ?? 0) }
-    guard seq.count == statsPA else { return nil }
+    let derived: [Int: Int] =
+        (seq.count == statsPA ? rotationWalkSlots(seq, declaredSlot) : nil)
+        ?? bracketedSlots(seq, declaredSlot)
 
-    // Gate 2: rotation consistency, and the load-bearing one. Walk
-    // the sequence against a 1...9 rotation; every batter whose slot
-    // we already know must land where the rotation says. A starter
-    // out of position, or a substitute coming round in a different
-    // slot than his first PA, means the sequence has drifted and
-    // every slot after that point would be silently wrong.
-    //
-    // The largest single cause is an inning-ending caught stealing,
-    // which writes a PA row for a batter who then leads off the next
-    // inning — 8 of 24 observed failures. It is NOT the majority:
-    // ordinary results (groundout, strikeout, single, sac bunt) make
-    // up the rest, so this has to stay a general consistency check
-    // and can't be narrowed to that one shape.
+    // Starters always carry their declared slot at depth 0 — that comes
+    // from the lineup, not from the sequence, so a damaged sequence
+    // can't touch it. Substitutes take a depth in first-appearance
+    // order within their slot, which is what sets them under the man
+    // they came in for.
     var codes: [Int: Int] = declaredSlot.mapValues { $0 * 100 }
     var depthInSlot: [Int: Int] = [:]
+    for pa in seq {
+        guard let bid = pa.batterId,
+              declaredSlot[bid] == nil,
+              codes[bid] == nil,
+              let slot = derived[bid] else { continue }
+        let depth = (depthInSlot[slot] ?? 0) + 1
+        // Depth is the low two digits of the code, so a slot that
+        // somehow burned 99 men would collide with the next slot.
+        guard depth < 100 else { continue }
+        depthInSlot[slot] = depth
+        codes[bid] = slot * 100 + depth
+    }
+    return codes
+}
+
+/// Slot for every substitute, proven by the whole side at once: walk the
+/// sequence against a 1...9 rotation and require every already-known
+/// batter to land where it says. nil the moment one doesn't — at that
+/// point every slot after the fault would be silently wrong.
+private func rotationWalkSlots(
+    _ seq: [BDLPlateAppearance], _ declaredSlot: [Int: Int],
+) -> [Int: Int]? {
+    var out: [Int: Int] = [:]
     var expected = 1
     for pa in seq {
         guard let bid = pa.batterId else { return nil }
         if let declared = declaredSlot[bid] {
             guard declared == expected else { return nil }
-        } else if let already = codes[bid] {
-            guard already / 100 == expected else { return nil }
+        } else if let already = out[bid] {
+            guard already == expected else { return nil }
         } else {
-            let depth = (depthInSlot[expected] ?? 0) + 1
-            // Depth is the low two digits of the code, so a slot that
-            // somehow burned 99 men would collide with the next slot.
-            guard depth < 100 else { return nil }
-            depthInSlot[expected] = depth
-            codes[bid] = expected * 100 + depth
+            out[bid] = expected
         }
         expected = expected % 9 + 1
     }
-    return codes
+    return out
+}
+
+/// Slot for each substitute the side can prove INDIVIDUALLY, for use
+/// when the sequence has a fault somewhere and the walk above has
+/// refused it.
+///
+/// A batting order is nine slots turning over, so a substitute's slot is
+/// fixed by his neighbours. Take the nearest batter with a known slot on
+/// each side, rotate each one forward or back by its distance, and
+/// accept only when the two independently land on the same answer. A
+/// fault between the substitute and either neighbour makes them
+/// disagree, which is what makes the agreement a proof rather than a
+/// guess — and why a substitute with a neighbour on only one side is
+/// declined outright, since one anchor cannot be contradicted.
+///
+/// ⚠️ THE HOLE, WHICH IS NOT BOUNDED IN MECHANISM. Two faults of
+/// opposite sign — one dropped row and one duplicated — bracketing the
+/// same substitute would cancel, both neighbours would agree, and the
+/// slot would be wrong with nothing to show for it. Measured over 116
+/// sides: 3 carry two faults at all (2.6%), and across all 144
+/// substitutes not one sat between a pair of them. That bounds how
+/// often it has happened, NOT whether it can. It would be silent if it
+/// did, which is why this stays the fallback for a damaged side rather
+/// than the primary rule for a clean one.
+private func bracketedSlots(
+    _ seq: [BDLPlateAppearance], _ declaredSlot: [Int: Int],
+) -> [Int: Int] {
+    /// Where a batter `offset` places later in the order sits, given a
+    /// known slot. Negative offsets look backwards.
+    func rotate(_ slot: Int, by offset: Int) -> Int {
+        ((slot - 1 + offset) % 9 + 9) % 9 + 1
+    }
+    let known: [Int?] = seq.map { pa in pa.batterId.flatMap { declaredSlot[$0] } }
+
+    var votes: [Int: Set<Int>] = [:]
+    var vetoed: Set<Int> = []
+    for (i, pa) in seq.enumerated() {
+        guard let bid = pa.batterId, declaredSlot[bid] == nil else { continue }
+        var back: Int?
+        var forward: Int?
+        for d in 1..<10 {
+            if back == nil, i - d >= 0, let s = known[i - d] { back = rotate(s, by: d) }
+            if forward == nil, i + d < known.count, let s = known[i + d] { forward = rotate(s, by: -d) }
+            if back != nil && forward != nil { break }
+        }
+        guard let b = back, let f = forward else { continue }
+        // A disagreement anywhere vetoes the man entirely: one of his
+        // plate appearances sits next to the damage, and we can't tell
+        // which of his slots is the honest one.
+        if b == f { votes[bid, default: []].insert(b) } else { vetoed.insert(bid) }
+    }
+    return votes.reduce(into: [Int: Int]()) { out, entry in
+        guard !vetoed.contains(entry.key), entry.value.count == 1,
+              let slot = entry.value.first else { return }
+        out[entry.key] = slot
+    }
 }
 
 /// True iff this lineup row represents the probable starting
