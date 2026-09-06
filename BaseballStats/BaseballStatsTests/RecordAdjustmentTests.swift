@@ -330,6 +330,69 @@ struct RecordAdjustmentTests {
             teamId: kHome, resultCount: 1) == 0)
     }
 
+    /// ⚠️ THE DODGERS CASE: BDL HAS ABSORBED, OUR TABLE HAS NOT.
+    ///
+    /// The record's base (BDL) already contains last night's win, so absorbing
+    /// against it yields NOTHING to add — correct, and the record is right
+    /// without help. The streak's base is our nightly table, which does not
+    /// contain it, so absorbing against THAT must still yield the game.
+    ///
+    /// Sharing one absorption made the second answer equal the first: the
+    /// streak was never walked and showed its raw `streak_code`. W1 beside a
+    /// correct record.
+    @Test func eachVintageAbsorbsAgainstItsOwnBase() {
+        let games = [
+            finalGame(id: 1, homeId: kHome, awayId: kAway,
+                      homeRuns: 5, awayRuns: 2, iso: kGameISO),
+        ]
+        let feed: [Int: Int] = [kHome: 133, kAway: 133]
+
+        // BDL is caught up: 78+54 = 132... plus last night = 133. Nothing due.
+        let bdlBase: [Int: TeamRecord] = [kHome: record(79, 54), kAway: record(62, 71)]
+        let bdlDeltas = TodayRecordAdjustments.deltas(
+            from: games, lastUpdated: kAnchorStamp,
+            absorption: .counted(feedGamesPlayed: feed, current: bdlBase), now: kNow)
+        #expect(bdlDeltas.isEmpty, "the record's base already has it")
+
+        // Our table is a day behind: 78+54 = 132. One game outstanding.
+        let tableBase: [Int: TeamRecord] = [kHome: record(78, 54), kAway: record(62, 70)]
+        let tableDeltas = TodayRecordAdjustments.deltas(
+            from: games, lastUpdated: kAnchorStamp,
+            absorption: .counted(feedGamesPlayed: feed, current: tableBase), now: kNow)
+        #expect(tableDeltas[kHome]?.wDelta == 1,
+                "the streak's base does NOT have it — this is what W1 vs W2 turns on")
+
+        // And the streak walks that same game — asserted on the SET both the
+        // record and the streak derive from, which is where they could
+        // diverge. (`recalculateGB` itself returns empty for `standings: []`
+        // whatever the adjustments say, so it cannot carry this assertion —
+        // see `streakWalksTheSameGamesTheRecordDoes`.)
+        let walked = TodayRecordAdjustments.unabsorbedResultsByTeam(
+            from: games, lastUpdated: kAnchorStamp,
+            absorption: .counted(feedGamesPlayed: feed, current: tableBase), now: kNow)
+        #expect(walked[kHome]?.count == 1,
+                "the streak walks the game the shared gate skipped")
+    }
+
+    /// The converse must stay safe: absorbing the RECORD against our table
+    /// would double-count, because BDL's base already contains the game.
+    @Test func theRecordMustNotAbsorbAgainstTheTable() {
+        let games = [
+            finalGame(id: 1, homeId: kHome, awayId: kAway,
+                      homeRuns: 5, awayRuns: 2, iso: kGameISO),
+        ]
+        let feed: [Int: Int] = [kHome: 133, kAway: 133]
+        let tableBase: [Int: TeamRecord] = [kHome: record(78, 54), kAway: record(62, 70)]
+        let wrong = TodayRecordAdjustments.deltas(
+            from: games, lastUpdated: kAnchorStamp,
+            absorption: .counted(feedGamesPlayed: feed, current: tableBase), now: kNow)
+        // Applying THAT to BDL's already-current record is the double count.
+        let bdlBase: [Int: TeamRecord] = [kHome: record(79, 54)]
+        let doubled = TodayRecordAdjustments.apply(wrong, to: bdlBase)
+        #expect(doubled[kHome]?.wins == 80,
+                "80-54 for a club that is 79-54 — why the record keeps the BDL vintage")
+    }
+
     /// ⚠️ THE 08:00 ET REGRESSION, WITH THE HOUR WRITTEN DOWN. Isaac checked
     /// before 8am ET and last night's game had vanished from both the record
     /// and the streak. The cause was not absorption — it was scoping: a game

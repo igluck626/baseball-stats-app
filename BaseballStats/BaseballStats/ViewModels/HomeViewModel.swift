@@ -318,30 +318,65 @@ final class HomeViewModel: ObservableObject {
         // hand the streak the post-apply dict and it would count this tick's
         // own additions as already absorbed and drop them, leaving the pill a
         // game behind the record beside it.
-        // ⚠️ `.counted` WHEN THE FEED IS THERE, `.anchored` WHEN IT IS NOT.
-        // The anchor below is our own stored `G`, written by the nightly — an
-        // honest snapshot, but only as fresh as the last run, which measurement
-        // put at once a day. `recent_form.games_played` is what BDL's game feed
-        // says has actually been played right now, so the same subtraction gets
-        // a live left-hand side instead of a daily one.
+        // ⚠️⚠️ THE ABSORPTION ANCHOR MUST BE THE SAME VINTAGE AS THE FIELD IT
+        // ADJUSTS. Absorption answers "does the base already contain this
+        // game?", which can only be asked about ONE base. Home displays two of
+        // different ages — the RECORD is BDL's live standings, the STREAK is
+        // our nightly table's `streak_code` — so a single answer applied to
+        // both is wrong for whichever it was not computed against.
         //
-        // Both tabs must agree on this. Home reading the feed while Standings
-        // reads a clock would put the same club's record in two states
-        // depending on which tab you opened.
-        let absorption: TodayRecordAdjustments.Absorption = {
+        // ⚠️ THE RULE HAS BEEN BROKEN THREE TIMES, LOOKING DIFFERENT EACH TIME:
+        //   1. The original cutoff asked "did we FETCH after this game
+        //      started?" and applied it to BDL's numbers — a clock standing in
+        //      for a count, about a base it did not describe.
+        //   2. `.anchored` on the Standings tab compared our table against our
+        //      table, so the difference was always zero: a guard that could not
+        //      be seen failing because it never fired.
+        //   3. Home measured against BDL's record and applied the answer to our
+        //      table's streak. Once BDL caught up, the record needed nothing,
+        //      the shared gate went false, and the streak was never walked —
+        //      showing its raw base. A correct record beside a stale pill,
+        //      which reads as a computation gone wrong rather than one that
+        //      never ran.
+        //
+        // Hence TWO absorptions, one per vintage, each field taking its own.
+        // Do not collapse them back "because they are usually equal" — they are
+        // equal only while BDL and the nightly agree, which is exactly when
+        // neither of them matters.
+        func absorption(against current: [Int: TeamRecord])
+            -> TodayRecordAdjustments.Absorption {
             if let feed = recentForm?.gamesPlayedByBDLId, !feed.isEmpty {
-                return .counted(feedGamesPlayed: feed, current: self.teamRecords)
+                return .counted(feedGamesPlayed: feed, current: current)
             }
-            return .anchored(gamesPlayed: anchorGamesPlayed,
-                             current: self.teamRecords)
-        }()
-        let deltas = TodayRecordAdjustments.deltas(
+            return .anchored(gamesPlayed: anchorGamesPlayed, current: current)
+        }
+
+        // Our nightly table's W-L, keyed by BDL id — the vintage the streak's
+        // base comes from. The table is a SNAPSHOT of BDL taken at the nightly,
+        // so it can trail BDL but never lead it; this delta set is therefore
+        // always a superset of the BDL one, never smaller.
+        let tableRecords: [Int: TeamRecord] = standingsRows.reduce(into: [:]) { acc, row in
+            guard let code = row.team_id, let bdlId = lahmanToBDLTeamId[code],
+                  let w = row.W, let l = row.L else { return }
+            acc[bdlId] = TeamRecord(wins: w, losses: l, pct: nil)
+        }
+
+        // Captured BEFORE `apply` mutates `teamRecords`, or this tick's own
+        // additions would read as already-absorbed.
+        let bdlDeltas = TodayRecordAdjustments.deltas(
             from: recentAndUpcoming,
             lastUpdated: standingsLastUpdated,
-            absorption: absorption,
+            absorption: absorption(against: self.teamRecords),
         )
-        if !deltas.isEmpty {
-            self.teamRecords = TodayRecordAdjustments.apply(deltas, to: self.teamRecords)
+        let tableDeltas = TodayRecordAdjustments.deltas(
+            from: recentAndUpcoming,
+            lastUpdated: standingsLastUpdated,
+            absorption: absorption(against: tableRecords),
+        )
+
+        // ⚠️ EACH BRANCH ON ITS OWN GATE. Sharing one was the bug above.
+        if !bdlDeltas.isEmpty {
+            self.teamRecords = TodayRecordAdjustments.apply(bdlDeltas, to: self.teamRecords)
             self.teamRecord  = self.teamRecords[bdlTeamId]
             // Re-derive the division rank from the ADJUSTED records, so the
             // position beside the record cannot contradict it. Recomputed from
@@ -350,22 +385,24 @@ final class HomeViewModel: ObservableObject {
             // partially-adjusted set would rank some clubs on today and others
             // on yesterday.
             if let entries = await standingsTask {
+                // BDL's deltas, because both the entries and the records
+                // they sort are BDL's.
                 self.teamStandings = Self.standingsByBDLTeamId(
-                    entries, adjustments: deltas)
+                    entries, adjustments: bdlDeltas)
                 self.teamStanding = self.teamStandings[bdlTeamId]
             }
+        }
 
-            // Also adjust the streak to match the standings overlay so
-            // the STREAK pill doesn't lag the W/L record beside it.
-            // `recalculateGB` rolls `streak_code` forward across today's
-            // qualifying finals using the same logic the Standings tab
-            // runs; we read just the favorite team's entry by Lahman code.
+        // The streak, on its OWN gate and its own vintage: rolled forward
+        // across the games our TABLE has not absorbed, which is the set that
+        // matters for a field our table supplies.
+        if !tableDeltas.isEmpty {
             let adjusted = TodayRecordAdjustments.recalculateGB(
                 standings: standingsRows,
                 games: recentAndUpcoming,
-                adjustments: deltas,
+                adjustments: tableDeltas,
                 lastUpdated: standingsLastUpdated,
-                absorption: absorption,
+                absorption: absorption(against: tableRecords),
             )
             if let code = favLahmanCode,
                let favEntry = adjusted[code],
