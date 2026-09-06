@@ -1392,12 +1392,35 @@ private func substituteBattingOrders(
     // Finals only, and not for the reason it looks like. A live game's
     // box score is not built here at all: `BoxScoreView` subscribes to
     // `LiveGameStore` and overwrites `boxScore` with
-    // `LiveGameDetail.toBoxScoreResponse()` on every snapshot, which
-    // has no batting order to carry (`LiveBatterRow` has no such
-    // field) and keys players in a different id space. Deriving slots
-    // for a live game would therefore show the indent on first load
-    // and lose it one tick later. Substitute placement is a
-    // finals-only feature until that path can carry an order.
+    // `LiveGameDetail.toBoxScoreResponse()` on every snapshot, and
+    // `LiveBatterRow` has no batting-order field for the indent to read.
+    // Deriving slots here would therefore show them on first load and
+    // lose them one tick later.
+    //
+    // ⚠️ THAT IS A GAP IN THE CLIENT MODEL, NOT A MISSING ORDER. An
+    // earlier version of this note also claimed the live feed keys
+    // players in a different id space, which is FALSE and would put off
+    // anyone who tried. Measured 2026-09-06 against a live game: all 9
+    // of that side's live batter ids matched BDL's lineup ids exactly —
+    // the backend's live feed is assembled FROM BDL, so it inherits BDL
+    // player ids. No join, no mapping table.
+    //
+    // The order is not missing either. `live_service.assemble_unified`
+    // already holds the lineup (cached 6h) AND the plate-appearance feed
+    // (fetched every cycle for pitch counts), already builds a
+    // pid → slot map, and already ships `batting_order` on every live
+    // batting row. `LiveBatterRow` simply doesn't decode it. Placing
+    // substitutes live costs no additional fetch: emit the full
+    // slot * 100 + depth code from `assemble_unified` and decode it
+    // into `stats_battingOrder` here.
+    //
+    // What genuinely isn't settled is the announced-but-not-yet-batted
+    // pinch hitter. BDL opens a stat row the moment a man appears
+    // (`at_bats: 0`), the live path admits those rows, and he has no
+    // plate appearance to place him by — so he renders appended and
+    // would JUMP into his slot on his first PA. Whether a row may move
+    // mid-inning is a product question, and it wants answering before
+    // any of the above is built.
     guard isFinal else { return nil }
 
     let seq = plateAppearances
