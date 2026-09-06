@@ -610,22 +610,163 @@ def _pitch_counts_from_pas(pas: list[dict]) -> dict[int, int]:
     return pc
 
 
+def _rotation_walk_slots(seq: list[int], declared: dict[int, int]) -> Optional[dict[int, int]]:
+    """Slot for every substitute, proven by the whole side at once: walk the
+    sequence against a 1..9 rotation and require every already-known batter to
+    land where it says. None the moment one doesn't — past that point every
+    slot would be silently wrong."""
+    out: dict[int, int] = {}
+    expected = 1
+    for pid in seq:
+        d = declared.get(pid)
+        if d is not None:
+            if d != expected:
+                return None
+        elif pid in out:
+            if out[pid] != expected:
+                return None
+        else:
+            out[pid] = expected
+        expected = expected % 9 + 1
+    return out
+
+
+def _bracketed_slots(seq: list[int], declared: dict[int, int]) -> dict[int, int]:
+    """Slot for each substitute the side can prove INDIVIDUALLY, for when the
+    sequence has a fault somewhere and the walk above has refused it.
+
+    Take the nearest batter with a known slot on each side, rotate each by its
+    distance, and accept only when the two independently agree. A fault between
+    the man and either neighbour makes them disagree, which is what makes the
+    agreement a proof. A man with a neighbour on only one side is declined —
+    one anchor cannot be contradicted, and mid-game that is exactly the batter
+    at the end of the sequence.
+
+    Mirrors `bracketedSlots` in Scores.swift; the same unbounded hole applies
+    (two faults of opposite sign bracketing one man would cancel and agree)."""
+    def rotate(slot: int, offset: int) -> int:
+        return ((slot - 1 + offset) % 9 + 9) % 9 + 1
+
+    known = [declared.get(pid) for pid in seq]
+    votes: dict[int, set] = {}
+    vetoed: set = set()
+    for i, pid in enumerate(seq):
+        if declared.get(pid) is not None:
+            continue
+        back = forward = None
+        for d in range(1, 10):
+            if back is None and i - d >= 0 and known[i - d] is not None:
+                back = rotate(known[i - d], d)
+            if forward is None and i + d < len(known) and known[i + d] is not None:
+                forward = rotate(known[i + d], -d)
+            if back is not None and forward is not None:
+                break
+        if back is None or forward is None:
+            continue
+        if back == forward:
+            votes.setdefault(pid, set()).add(back)
+        else:
+            vetoed.add(pid)
+    return {pid: next(iter(v)) for pid, v in votes.items()
+            if pid not in vetoed and len(v) == 1}
+
+
+def _slot_codes(pas: list[dict], lineup: Optional[list[dict]], team_id,
+                half: str, stats_pa: int, is_final: bool) -> dict[int, int]:
+    """MLB-style `slot * 100 + depth` for one side — "600" the number-six
+    starter, "601" the first man to bat in his slot — so a substitute renders
+    indented under the man he came in for. Same encoding the historical box
+    score ships and the same the finals path derives in Scores.swift; the two
+    must agree, because the client reads them through one field.
+
+    A man with no code is appended, which is what the live box score did
+    before this existed. That is the safe outcome and this reaches for it
+    whenever the alternative would be a guess: a wrong slot reads as fact,
+    an append visibly doesn't."""
+    declared: dict[int, int] = {}
+    for row in (lineup or []):
+        pid = (row.get("player") or {}).get("id")
+        slot = row.get("batting_order")
+        tid = (row.get("team") or {}).get("id")
+        if pid is not None and slot is not None and tid == team_id:
+            declared[pid] = slot
+    if set(declared.values()) != set(range(1, 10)):
+        return {}
+
+    rows = [p for p in pas if (p.get("half_inning") or "").lower() == half]
+    rows.sort(key=lambda p: (p.get("inning") or 0, p.get("pa_number") or 0))
+    seq = [p.get("batter_id") for p in rows if p.get("batter_id") is not None]
+    if len(seq) != len(rows) or not seq:
+        return {}
+
+    # The count check, in its live-aware form.
+    #
+    # On a finished game the PA rows must reconcile EXACTLY with the summed
+    # plate appearances on this side's stat lines — measured over 116 sides,
+    # they disagree on about a fifth, in both directions.
+    #
+    # Mid-game one side always runs a row ahead, because BDL opens the PA row
+    # for the man at the plate before his stat line counts him. Measured on a
+    # game in progress: the batting side +1, the fielding side 0. A strict
+    # equality check would therefore refuse every live game outright. The
+    # surplus row is ALWAYS the last one, so dropping it costs nothing before
+    # it — the man at the plate simply waits for his plate appearance to
+    # finish before he can be placed, which is the accepted behaviour anyway.
+    surplus = len(seq) - stats_pa
+    if surplus == 0:
+        trusted = seq
+    elif surplus == 1 and not is_final:
+        trusted = seq[:-1]
+    else:
+        trusted = None
+
+    walk = _rotation_walk_slots(trusted, declared) if trusted is not None else None
+    basis = trusted if trusted is not None else seq
+    derived = walk if walk is not None else _bracketed_slots(basis, declared)
+
+    codes = {pid: slot * 100 for pid, slot in declared.items()}
+    depth: dict[int, int] = {}
+    for pid in basis:
+        if pid in codes or pid not in derived:
+            continue
+        slot = derived[pid]
+        d = depth.get(slot, 0) + 1
+        if d >= 100:            # would collide with the next slot's code
+            continue
+        depth[slot] = d
+        codes[pid] = slot * 100 + d
+    return codes
+
+
 def _box_lines(stats: list[dict], home_team: dict, away_team: dict,
                lineup: Optional[list[dict]],
                plays_sorted: list[dict],
-               pas: list[dict]) -> tuple[dict, dict]:
+               pas: list[dict],
+               is_final: bool = False) -> tuple[dict, dict]:
     """Per-player batting + pitching lines from /stats, sorted for display.
     Batting order joins /lineups (stats carries none); pitching order uses each
     pitcher's first appearance in the play feed (no extra BDL call). Per-pitcher
     pitch count (`pc`) is attached from the /plate_appearances feed (already
     fetched) — the ONLY feed carrying it. Otherwise unchanged from the
     pre-refactor inline assembly."""
+    # Bucket the stat rows first: the slot derivation needs each side's summed
+    # plate appearances to reconcile the PA feed against.
+    rows_by_side: dict[str, list] = {"away": [], "home": []}
+    for s_ in stats:
+        side_ = _side_for_stat(s_, home_team, away_team)
+        if side_ is not None:
+            rows_by_side[side_].append(s_)
+
+    # `slot * 100 + depth` per side, so a substitute renders under the man he
+    # came in for rather than at the foot of the table. The away side bats the
+    # top half, the home side the bottom — that pairing splits the one shared
+    # PA sequence between the two tables.
     batting_order: dict[int, int] = {}
-    for row in (lineup or []):
-        pid = (row.get("player") or {}).get("id")
-        slot = row.get("batting_order")
-        if pid is not None and slot is not None:
-            batting_order[pid] = slot
+    for side_, team_, half_ in (("away", away_team, "top"), ("home", home_team, "bottom")):
+        stats_pa = sum((r.get("plate_appearances") or 0) for r in rows_by_side[side_])
+        batting_order.update(_slot_codes(
+            pas, lineup, team_.get("id"), half_, stats_pa, is_final,
+        ))
 
     pitch_appearance: dict[int, int] = {}
     for idx, pl in enumerate(plays_sorted):
@@ -650,8 +791,10 @@ def _box_lines(stats: list[dict], home_team: dict, away_team: dict,
             pitching[side].append(p)
 
     # Python's sort is stable, so:
-    #   - batters: starters by slot 1-9; substitutes (no slot) fall after,
-    #     keeping their /stats order.
+    #   - batters: by the slot*100+depth code, which puts each substitute
+    #     directly behind the man whose slot he took; anyone without a code
+    #     (the derivation declined him, or he is at the plate right now and
+    #     his PA hasn't landed yet) falls after, keeping their /stats order.
     #   - pitchers: by play-feed appearance; any not found sort last.
     _LAST = float("inf")
     for side in ("away", "home"):
@@ -702,6 +845,7 @@ def assemble_unified(game: dict, stats: list[dict],
     )
     batting, pitching = _box_lines(                            # stats (+lineup/plays order)
         stats, home_team, away_team, lineup, plays_sorted, pas,
+        status == "final",
     )
     batter_id = state["batter_id"]
     pitcher_id = state["pitcher_id"]

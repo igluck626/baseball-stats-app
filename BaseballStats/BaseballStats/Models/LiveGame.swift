@@ -243,6 +243,23 @@ struct LiveBatterRow: Codable, Hashable {
     let sacBunts: Int?
     let gidp: Int?
     let plateAppearances: Int?
+    /// MLB-style `slot * 100 + depth` — "600" the number-six starter, "601"
+    /// the first man to bat in his slot — so the box score can set a
+    /// substitute in under the man he came in for. Derived server-side in
+    /// `live_service._slot_codes` from the lineup and the plate-appearance
+    /// feed, both of which the live assembly already holds.
+    ///
+    /// nil means the derivation declined to place him, which is a real
+    /// answer and not a gap: it refuses a damaged sequence rather than
+    /// guessing, and a man at the plate right now has no completed plate
+    /// appearance to place him by. Those rows sort to the foot of the table,
+    /// exactly as every substitute did before this field existed.
+    ///
+    /// ⚠️ Needs its explicit `CodingKeys` entry below. This decoder does NOT
+    /// apply `.convertFromSnakeCase` (see `APIClient.init`), so
+    /// `battingOrder` would quietly decode as nil against `batting_order` —
+    /// the same silent-nil failure the doubles/triples note above records.
+    let battingOrder: Int?
 
     enum CodingKeys: String, CodingKey {
         case id, name, position, ab, r, h, rbi, hr, bb, k, avg, obp, slg
@@ -253,6 +270,7 @@ struct LiveBatterRow: Codable, Hashable {
         case sacFlies         = "sac_flies"
         case sacBunts         = "sac_bunts"
         case plateAppearances = "plate_appearances"
+        case battingOrder     = "batting_order"
     }
 }
 
@@ -508,7 +526,12 @@ extension LiveGameDetail {
                 position: BoxPosition(abbreviation: b.position),
                 stats:    BoxStats(batting: batting, pitching: nil),
                 seasonStats: BoxStats(batting: seasonBatting, pitching: nil),
-                stats_battingOrder: nil,
+                // Drives `BoxScoreView.substitutionDepth`, the traditional
+                // indent — the same field and the same encoding the finals
+                // path fills from `substituteBattingOrders`. The backend has
+                // already sorted `batters` by this, so the array order and
+                // the codes agree.
+                stats_battingOrder: b.battingOrder.map(String.init),
             )
             batterOrder.append(pid)
         }

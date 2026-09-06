@@ -367,3 +367,77 @@ private func gameForFixtureTeams(
     #expect(bs.teams.home.renderedCodes.allSatisfy { $0 != nil })
 }
 
+
+// MARK: - The live path carries the order too
+
+//  A live box score is built by `LiveGameDetail.toBoxScoreResponse()`, not by
+//  the derivation in Scores.swift. The slot is derived SERVER-side
+//  (`live_service._slot_codes`, from the lineup and the plate-appearance feed
+//  the live assembly already holds) and arrives on the row as `batting_order`
+//  in the same `slot * 100 + depth` encoding the finals path produces.
+//
+//  Decoded by JSON on purpose: this decoder does NOT apply
+//  `.convertFromSnakeCase`, so `batting_order` needs its explicit CodingKey
+//  and a hand-assembled value would not prove it has one.
+
+private func liveDetail(awayRows: String) throws -> LiveGameDetail {
+    let json = """
+    {"game_id": 5059902, "fetched_at": "2026-09-05T23:40:00Z",
+     "status": "in_progress", "season": 2026, "season_type": "regular",
+     "summary": {"away": {"runs": 1}, "home": {"runs": 0}, "inning": 7,
+                 "inning_half": "top", "outs": 1, "balls": 0, "strikes": 0,
+                 "is_live": true},
+     "linescore": {"innings": []},
+     "situation": {"on_first": false, "on_second": false, "on_third": false},
+     "plays": [], "scoring_plays": [],
+     "batting": {"away": [\(awayRows)], "home": []},
+     "pitching": {"away": [], "home": []}}
+    """
+    return try JSONDecoder().decode(LiveGameDetail.self, from: Data(json.utf8))
+}
+
+@Test func aLiveSubstituteIsSetInUnderTheManHeReplaced() throws {
+    // Palacios batting eighth, Vilade in for him — the real shape from
+    // 5059902, which is where this feature was accepted.
+    let detail = try liveDetail(awayRows: """
+      {"id": 129, "name": "Richie Palacios", "position": "2B", "ab": 2, "batting_order": 800},
+      {"id": 364, "name": "Ryan Vilade", "position": "RF", "ab": 1, "batting_order": 801},
+      {"id": 161, "name": "Taylor Walls", "position": "SS", "ab": 4, "batting_order": 900}
+    """)
+    let away = detail.toBoxScoreResponse().teams.away
+
+    #expect(away.player("Ryan Vilade")?.stats_battingOrder == "801")
+    #expect(BoxScoreView.substitutionDepth(try #require(away.player("Ryan Vilade"))) == 1)
+    #expect(BoxScoreView.substitutionDepth(try #require(away.player("Richie Palacios"))) == 0)
+    // Directly beneath the man whose slot he took, and above the ninth.
+    #expect(away.renderedNames == ["Richie Palacios", "Ryan Vilade", "Taylor Walls"])
+}
+
+@Test func aLiveRowWithNoDerivedSlotStaysUnindented() throws {
+    // Two ways to arrive here and both are answers rather than gaps: the
+    // derivation declined a damaged sequence, or the man is at the plate right
+    // now and has no completed plate appearance to place him by. Either way he
+    // appends, exactly as every substitute did before this existed — and he
+    // must not indent, because an indent with no slot behind it is the guess
+    // this whole mechanism refuses to make.
+    let detail = try liveDetail(awayRows: """
+      {"id": 129, "name": "Richie Palacios", "position": "2B", "ab": 2, "batting_order": 800},
+      {"id": 999, "name": "Announced Pinch Hitter", "position": "1B", "ab": 0}
+    """)
+    let away = detail.toBoxScoreResponse().teams.away
+
+    #expect(away.player("Announced Pinch Hitter")?.stats_battingOrder == nil)
+    #expect(BoxScoreView.substitutionDepth(try #require(away.player("Announced Pinch Hitter"))) == 0)
+    #expect(away.renderedNames.last == "Announced Pinch Hitter")
+}
+
+@Test func theLiveOrderFieldNeedsItsExplicitCodingKey() throws {
+    // The decoder behind LiveGameDetail does not convert snake_case. If the
+    // CodingKey for `batting_order` is ever dropped, the field decodes as nil
+    // and every live substitute silently un-indents — the same failure mode
+    // that hid doubles and triples on this row until 2026-08-17.
+    let detail = try liveDetail(awayRows: """
+      {"id": 1, "name": "Someone", "position": "LF", "ab": 1, "batting_order": 601}
+    """)
+    #expect(detail.batting.away.first?.battingOrder == 601)
+}

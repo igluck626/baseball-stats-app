@@ -1405,22 +1405,27 @@ private func substituteBattingOrders(
     // the backend's live feed is assembled FROM BDL, so it inherits BDL
     // player ids. No join, no mapping table.
     //
-    // The order is not missing either. `live_service.assemble_unified`
-    // already holds the lineup (cached 6h) AND the plate-appearance feed
-    // (fetched every cycle for pitch counts), already builds a
-    // pid → slot map, and already ships `batting_order` on every live
-    // batting row. `LiveBatterRow` simply doesn't decode it. Placing
-    // substitutes live costs no additional fetch: emit the full
-    // slot * 100 + depth code from `assemble_unified` and decode it
-    // into `stats_battingOrder` here.
+    // A live game IS placed, just not here. `live_service._slot_codes`
+    // runs this same derivation server-side — the live assembly already
+    // holds the lineup (cached 6h) and the plate-appearance feed
+    // (fetched every cycle for pitch counts), so it costs no extra
+    // request — and ships the finished `slot * 100 + depth` code on
+    // every batting row. `LiveBatterRow.battingOrder` decodes it
+    // straight into `stats_battingOrder`.
     //
-    // What genuinely isn't settled is the announced-but-not-yet-batted
-    // pinch hitter. BDL opens a stat row the moment a man appears
-    // (`at_bats: 0`), the live path admits those rows, and he has no
-    // plate appearance to place him by — so he renders appended and
-    // would JUMP into his slot on his first PA. Whether a row may move
-    // mid-inning is a product question, and it wants answering before
-    // any of the above is built.
+    // ⚠️ THE TWO DERIVATIONS MUST AGREE, because they fill one field
+    // that one view reads. If the gates or the depth rule change here,
+    // change `_slot_codes` with them. The server's copy carries one
+    // rule this doesn't: mid-game the batting side always runs a plate
+    // appearance ahead of its stat lines, so it tolerates a surplus of
+    // exactly one and drops that trailing row. A strict equality check
+    // would refuse every live game outright.
+    //
+    // A man announced but not yet batted has no plate appearance to
+    // place him by, so he appends and moves into his slot once he bats.
+    // That single move is accepted; a slot never changes after it, which
+    // is checked by replaying every side's sequence prefix by prefix
+    // (116 sides, 2173 placements, none unstable).
     guard isFinal else { return nil }
 
     let seq = plateAppearances
