@@ -228,6 +228,30 @@ struct BDLPlay: Codable, Hashable {
     let trajectory: String?
 }
 
+// MARK: - Plate appearances
+
+/// One completed (or in-progress) plate appearance from
+/// `/plate_appearances?game_id=X`. Unlike `/lineups` and `/stats`,
+/// this endpoint DOES honour the singular `game_id`, returns the
+/// whole game in one response, and ships no pagination cursor —
+/// `per_page` is ignored outright.
+///
+/// The box score uses it for one job: placing substitutes. `/stats`
+/// carries no batting order, and `/plays` carries no substitution
+/// records at all, so the PA sequence is the only signal that says
+/// which slot a pinch hitter batted in. See
+/// `substituteBattingOrders` in Scores.swift.
+struct BDLPlateAppearance: Codable, Hashable {
+    let batterId: Int?
+    let inning: Int
+    /// "top" / "bottom" — the away side bats top.
+    let halfInning: String?
+    /// Sequential within the game, but NOT dense: it restarts and
+    /// skips, so it is only ever used as a sort key alongside
+    /// `inning`, never as an index.
+    let paNumber: Int
+}
+
 // MARK: - Season stats
 
 /// One row from `/season_stats?player_ids[]=X&season=Y`. Different

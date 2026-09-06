@@ -1118,6 +1118,8 @@ extension Array where Element == BDLPlayerStat {
         homeBDLTeamId: Int? = nil,
         lineup: [BDLGameLineup] = [],
         seasonStatsByPid: [Int: BDLSeasonStat] = [:],
+        plateAppearances: [BDLPlateAppearance] = [],
+        isFinal: Bool = false,
     ) -> BoxScoreResponse {
         // Bucket the per-player lines by team. BDL's `team_name`
         // is the short franchise name ("Yankees" / "Mariners");
@@ -1154,17 +1156,26 @@ extension Array where Element == BDLPlayerStat {
         let lineupHome = lineup.filter { $0.team.id == homeJoinId }
 
         return BoxScoreResponse(teams: BoxScoreTeams(
+            // The away side bats the top half, the home side the
+            // bottom — that pairing is what splits the shared PA
+            // sequence between the two box-score tables.
             away: buildBoxScoreTeam(
                 team:             awayTeam,
                 stats:            awayStats,
                 lineup:           lineupAway,
                 seasonStatsByPid: seasonStatsByPid,
+                plateAppearances: plateAppearances,
+                half:             "top",
+                isFinal:          isFinal,
             ),
             home: buildBoxScoreTeam(
                 team:             homeTeam,
                 stats:            homeStats,
                 lineup:           lineupHome,
                 seasonStatsByPid: seasonStatsByPid,
+                plateAppearances: plateAppearances,
+                half:             "bottom",
+                isFinal:          isFinal,
             ),
         ))
     }
@@ -1184,6 +1195,9 @@ private func buildBoxScoreTeam(
     stats: [BDLPlayerStat],
     lineup: [BDLGameLineup],
     seasonStatsByPid: [Int: BDLSeasonStat] = [:],
+    plateAppearances: [BDLPlateAppearance] = [],
+    half: String = "",
+    isFinal: Bool = false,
 ) -> BoxScoreTeam {
     // The merge: seed BoxPlayers for every starting batter AND the
     // probable starting pitcher from the lineup (blank stats, season
@@ -1259,7 +1273,47 @@ private func buildBoxScoreTeam(
         guard seenExtras.insert(pid).inserted else { return nil }
         return pid
     }
-    let battingOrder = lineupBatterIds + extraBatterIds
+    let appendOrder = lineupBatterIds + extraBatterIds
+
+    // Substitute placement. When the PA sequence yields a trustworthy
+    // set of slot codes, stamp them onto the players (which is what
+    // drives the traditional indent in BoxScoreView) and sort the
+    // batting order by them, so a pinch hitter sits under the man he
+    // replaced. Otherwise leave every code nil and keep the old
+    // append-at-the-bottom order.
+    let orderCodes = substituteBattingOrders(
+        plateAppearances: plateAppearances,
+        half:             half,
+        lineup:           lineup,
+        stats:            stats,
+        isFinal:          isFinal,
+    )
+    let battingOrder: [Int]
+    if let codes = orderCodes {
+        for (pid, code) in codes {
+            let key = "ID\(pid)"
+            guard let p = players[key] else { continue }
+            players[key] = BoxPlayer(
+                person:             p.person,
+                position:           p.position,
+                stats:              p.stats,
+                seasonStats:        p.seasonStats,
+                stats_battingOrder: String(code),
+            )
+        }
+        // Anything the sequence didn't cover keeps its old relative
+        // position at the end rather than being dropped.
+        battingOrder = appendOrder
+            .enumerated()
+            .sorted { a, b in
+                let ca = codes[a.element] ?? Int.max
+                let cb = codes[b.element] ?? Int.max
+                return ca == cb ? a.offset < b.offset : ca < cb
+            }
+            .map(\.element)
+    } else {
+        battingOrder = appendOrder
+    }
 
     // Pitchers: probable starter(s) from the lineup first, then any
     // stats-bearing pitchers not already covered (relievers; or the
@@ -1284,6 +1338,96 @@ private func buildBoxScoreTeam(
         batters:  battingOrder,
         pitchers: pitchingOrder,
     )
+}
+
+/// MLB-style `battingOrder` codes for one side, derived from the
+/// plate-appearance sequence: slot * 100 + depth, so "600" is the
+/// number-six starter and "601" the first man to bat in his slot.
+/// That is the same encoding the historical box score ships, which
+/// is why `BoxScoreView.substitutionDepth` can read both.
+///
+/// Why this is needed at all: `/lineups` carries only the nine
+/// starters, `/stats` carries no batting order, and `/plays` carries
+/// no substitution records — measured, not assumed. The PA sequence
+/// is the only current-season signal that says which slot a pinch
+/// hitter batted in.
+///
+/// Returns nil when the sequence can't be trusted. Nil is not a
+/// failure: the caller falls back to appending substitutes at the
+/// bottom, which is what the box score did before this existed. A
+/// wrong slot is worse than an append, because an append is visibly
+/// an append and a wrong slot reads as fact.
+private func substituteBattingOrders(
+    plateAppearances: [BDLPlateAppearance],
+    half: String,
+    lineup: [BDLGameLineup],
+    stats: [BDLPlayerStat],
+    isFinal: Bool,
+) -> [Int: Int]? {
+    // The nine declared slots are the anchors every derived slot is
+    // measured against. Anything other than a full nine (BDL outage,
+    // a lineup that hasn't posted) and we don't start.
+    var declaredSlot: [Int: Int] = [:]
+    for e in lineup {
+        guard let slot = e.battingOrder, slot > 0 else { continue }
+        declaredSlot[e.player.id] = slot
+    }
+    guard Set(declaredSlot.values) == Set(1...9) else { return nil }
+
+    // Finals only, and not for the reason it looks like. A live game's
+    // box score is not built here at all: `BoxScoreView` subscribes to
+    // `LiveGameStore` and overwrites `boxScore` with
+    // `LiveGameDetail.toBoxScoreResponse()` on every snapshot, which
+    // has no batting order to carry (`LiveBatterRow` has no such
+    // field) and keys players in a different id space. Deriving slots
+    // for a live game would therefore show the indent on first load
+    // and lose it one tick later. Substitute placement is a
+    // finals-only feature until that path can carry an order.
+    guard isFinal else { return nil }
+
+    let seq = plateAppearances
+        .filter { $0.halfInning?.lowercased() == half }
+        .sorted { ($0.inning, $0.paNumber) < ($1.inning, $1.paNumber) }
+    guard !seq.isEmpty else { return nil }
+
+    // Gate 1: the PA rows must reconcile exactly with the summed
+    // plate appearances on this side's stat lines. A surplus row
+    // means the feed carries an artifact, and an artifact anywhere
+    // before a substitute shifts his slot.
+    let statsPA = stats.reduce(0) { $0 + ($1.plateAppearances ?? 0) }
+    guard seq.count == statsPA else { return nil }
+
+    // Gate 2: rotation consistency, and the load-bearing one. Walk
+    // the sequence against a 1...9 rotation; every batter whose slot
+    // we already know must land where the rotation says. A starter
+    // out of position, or a substitute coming round in a different
+    // slot than his first PA, means the sequence has drifted and
+    // every slot after that point would be silently wrong.
+    //
+    // This is what catches the real corruption: an inning-ending
+    // caught stealing writes a PA row for a batter who then leads
+    // off the next inning, so the side carries a duplicate and every
+    // slot behind it shifts by one.
+    var codes: [Int: Int] = declaredSlot.mapValues { $0 * 100 }
+    var depthInSlot: [Int: Int] = [:]
+    var expected = 1
+    for pa in seq {
+        guard let bid = pa.batterId else { return nil }
+        if let declared = declaredSlot[bid] {
+            guard declared == expected else { return nil }
+        } else if let already = codes[bid] {
+            guard already / 100 == expected else { return nil }
+        } else {
+            let depth = (depthInSlot[expected] ?? 0) + 1
+            // Depth is the low two digits of the code, so a slot that
+            // somehow burned 99 men would collide with the next slot.
+            guard depth < 100 else { return nil }
+            depthInSlot[expected] = depth
+            codes[bid] = expected * 100 + depth
+        }
+        expected = expected % 9 + 1
+    }
+    return codes
 }
 
 /// True iff this lineup row represents the probable starting

@@ -434,7 +434,13 @@ final class BoxScoreViewModel: ObservableObject {
         // the view renders with a Retry button) and skips the rest.
         async let statsTask  = bdl.getGameStats(gameId: game.gamePk)
         async let lineupTask = bdl.getGameLineup(gameId: game.gamePk)
+        // Plate appearances place substitutes in their batting slot.
+        // Best-effort like the lineup: an empty slice just means the
+        // box score appends substitutes at the bottom as it always
+        // did, so this never blocks a render.
+        async let paTask     = bdl.getGamePlateAppearances(gameId: game.gamePk)
         let lineup = (try? await lineupTask) ?? []
+        let plateAppearances = (try? await paTask) ?? []
 
         let stats: [BDLPlayerStat]
         do {
@@ -471,6 +477,8 @@ final class BoxScoreViewModel: ObservableObject {
             homeBDLTeamId:    game.bdlHomeTeamId,
             lineup:           lineup,
             seasonStatsByPid: seasonStatsByPid,
+            plateAppearances: plateAppearances,
+            isFinal:          game.phase == .final,
         )
         self.error = nil
     }

@@ -306,6 +306,36 @@ final class BallDontLieClient: @unchecked Sendable {
         return envelope.data
     }
 
+    /// Every plate appearance in one game, in batting sequence.
+    /// Used solely to place substitutes in the batting order — see
+    /// `substituteBattingOrders` in Scores.swift.
+    ///
+    /// Unlike `/lineups` and `/stats`, this endpoint honours the
+    /// SINGULAR `game_id`. Measured 2026-09-06: the plural
+    /// `game_ids[]` is the filtering form on those two, `game_id`
+    /// is the filtering form here, and on `/games` neither works
+    /// (it ignores `game_ids[]` and returns the global list). The
+    /// param name that filters is per-endpoint and has to be
+    /// verified against a known game, never assumed.
+    ///
+    /// Ships the whole game in one response: `per_page` is ignored
+    /// and no cursor is returned, so there is nothing to paginate.
+    func getGamePlateAppearances(gameId: Int) async throws -> [BDLPlateAppearance] {
+        let key = "game_pas:\(gameId)"
+        if let cached: [BDLPlateAppearance] = cachedValue(key) { return cached }
+        let items: [URLQueryItem] = [
+            URLQueryItem(name: "game_id", value: String(gameId)),
+        ]
+        let envelope: BDLDataEnvelope<BDLPlateAppearance> = try await fetch(
+            path: "/mlb/v1/plate_appearances", query: items,
+        )
+        // Grows by one row per PA while a game is live, so this
+        // matches the 60s live TTL the /stats path uses rather
+        // than the 300s the fixed lineup gets.
+        storeInCache(key, envelope.data, ttl: 60)
+        return envelope.data
+    }
+
     // MARK: - Season stats
 
     /// Bulk-fetch current-season AVG/OBP/SLG/OPS/ERA for a set of
