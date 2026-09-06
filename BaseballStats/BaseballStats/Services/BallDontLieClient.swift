@@ -38,7 +38,13 @@ final class BallDontLieClient: @unchecked Sendable {
     // has the same access the server does.
     private let apiKey: String = "7cb7d51d-bba5-41eb-9010-7314b5889d4e"
 
-    private init(session: URLSession = .shared) {
+    /// Internal rather than private so a test can hand in a session
+    /// backed by a stubbed `URLProtocol`. The slate's correctness lives
+    /// in what `getGames(date:)` DOES to a response — the three-bucket
+    /// envelope, the Eastern-local filter, the dedupe — and none of that
+    /// is exercised by a captured result. Production only ever uses
+    /// `shared`.
+    init(session: URLSession = .shared) {
         self.session = session
         self.decoder = JSONDecoder()
         // BDL ships snake_case keys; map them to Swift's camelCase
