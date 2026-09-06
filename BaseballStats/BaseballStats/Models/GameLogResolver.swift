@@ -52,18 +52,32 @@ enum GameLogResolver {
     /// would need a shared store the app does not have.
     static func resolve(
         gameId: String,
-        date: Date,
+        dateString: String,
         season: Int,
         api: APIClient = .shared,
         bdl: BallDontLieClient = .shared,
     ) async throws -> Game {
         guard canResolve(season: season) else { throw Failure.unsupportedSeason }
 
+        // ⚠️ THE DATE IS PARSED IN THE DEVICE'S TIMEZONE, NOT ET, AND THAT IS
+        // NOT A STYLE CHOICE. A game-log row carries `game_date` as a plain
+        // "yyyy-MM-dd" with no zone; the consumers below disagree about what a
+        // `Date` means. `APIClient.getHistoricalGames` formats it back with a
+        // `.current` formatter, and `BDLRetroMatch.baseballDay` wants the local
+        // day the Scores tab passes it. Parsing in ET and handing the result to
+        // a `.current` formatter shifts the request a day on any device west of
+        // Eastern — which asked for the wrong slate and made every historical
+        // era fail `notInSlate` while 2026, which never round-trips a Date,
+        // passed. Same string in, same string out.
+        guard let date = Self.deviceYMD.date(from: dateString) else {
+            throw Failure.notInSlate
+        }
+
         // CURRENT SEASON: the row's `game_id` IS BDL's game id, so the slate
         // already carries everything and there is nothing to pair.
         if season > RetrosheetCoverage.lastSeason {
             guard let id = Int(gameId) else { throw Failure.notInSlate }
-            let games = (try? await bdl.getGames(date: Self.ymd.string(from: date))) ?? []
+            let games = (try? await bdl.getGames(date: dateString)) ?? []
             guard let match = games.first(where: { $0.id == id }) else {
                 throw Failure.notInSlate
             }
@@ -74,8 +88,8 @@ enum GameLogResolver {
         // adds the colour bar and the plays.
         let next = Calendar.current.date(byAdding: .day, value: 1, to: date) ?? date
         async let oursTask = try? api.getHistoricalGames(date: date)
-        async let todayTask = try? bdl.getGames(date: Self.ymd.string(from: date))
-        async let nextTask = try? bdl.getGames(date: Self.ymd.string(from: next))
+        async let todayTask = try? bdl.getGames(date: dateString)
+        async let nextTask = try? bdl.getGames(date: Self.deviceYMD.string(from: next))
 
         let ours = (await oursTask) ?? []
         guard !ours.isEmpty else { throw Failure.notInSlate }
@@ -128,11 +142,14 @@ enum GameLogResolver {
         return "\(chars)\(dateInt)\(number)"
     }
 
-    private static let ymd: DateFormatter = {
+    /// ⚠️ `.current`, TO MATCH `APIClient.ymd`. See the note in `resolve`: the
+    /// point is that a date string parsed here and re-formatted there must come
+    /// back identical, which only holds if both use the same zone.
+    private static let deviceYMD: DateFormatter = {
         let f = DateFormatter()
         f.calendar = .init(identifier: .gregorian)
         f.locale = .init(identifier: "en_US_POSIX")
-        f.timeZone = TimeZone(identifier: "America/New_York") ?? .current
+        f.timeZone = .current
         f.dateFormat = "yyyy-MM-dd"
         return f
     }()
