@@ -318,6 +318,26 @@ final class BallDontLieClient: @unchecked Sendable {
     /// param name that filters is per-endpoint and has to be
     /// verified against a known game, never assumed.
     ///
+    /// ⚠️ THE GENERAL RULE, because this has now cost us three times:
+    /// NOTHING about a BDL endpoint generalises to its neighbours, and
+    /// getting it wrong is always silent — a 200 with plausible data,
+    /// never an error.
+    ///   1. Filter parameters. `game_ids[]` on /stats and /lineups,
+    ///      `game_id` here, neither on /games. Wrong one = the global
+    ///      firehose, and a probe that looks like it worked.
+    ///   2. Ignored parameters poisoning a query. `team_ids[]` works on
+    ///      /games alone, but not when paired with
+    ///      `start_date`/`end_date`, which are themselves ignored. Vary
+    ///      ONE parameter at a time or the matrix lies.
+    ///   3. Response shape. `player.team` is nested on /players,
+    ///      /season_stats and /lineups — but NOT on /stats, which puts
+    ///      the team at row level instead. Assuming otherwise left
+    ///      `BoxScoreView.bdlTeams` reading nil and running its stub
+    ///      fallback from May to September 2026 without a symptom.
+    /// Check the shape against a game whose answer you already know
+    /// (a lineup is 20 rows across exactly two teams) before trusting
+    /// any of it.
+    ///
     /// Ships the whole game in one response: `per_page` is ignored
     /// and no cursor is returned, so there is nothing to paginate.
     func getGamePlateAppearances(gameId: Int) async throws -> [BDLPlateAppearance] {

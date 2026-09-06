@@ -237,3 +237,86 @@ private extension BoxScoreTeam {
     #expect(away.player("Ben Paulsen")?.position?.abbreviation == "PH")
     #expect(away.player("Carlos Gonzalez")?.position?.abbreviation == "RF")
 }
+
+
+// MARK: - The team resolver's primary path
+
+//  `bdlTeams(forGame:fromStats:)` read `s.player.team`, which /stats never
+//  populates, so it fell through to `stubBDLTeam` on every game from May
+//  2026 until the row-level `team` was decoded. These pin the primary path
+//  actually running, because "it compiles" was true for three and a half
+//  months while it never once resolved.
+
+private func gameForFixtureTeams(
+    away: BDLTeam, home: BDLTeam, bdlIds: Bool,
+) -> Game {
+    func info(_ t: BDLTeam) -> GameTeam {
+        GameTeam(
+            team: TeamInfo(id: 0, name: t.displayName, abbreviation: t.abbreviation),
+            score: nil, leagueRecord: nil, isWinner: nil, probablePitcher: nil,
+        )
+    }
+    return Game(
+        gamePk: 5059890,
+        gameDate: "2026-09-05T23:05:00Z",
+        status: GameStatus(abstractGameState: "Final", detailedState: "Final",
+                           statusCode: nil, codedGameState: nil),
+        teams: GameTeams(away: info(away), home: info(home)),
+        venue: nil, linescore: nil, decisions: nil,
+        bdlAwayTeamId: bdlIds ? away.id : nil,
+        bdlHomeTeamId: bdlIds ? home.id : nil,
+        bdlGameId: 5059890,
+    )
+}
+
+@MainActor
+@Test func statsRowsCarryTheirTeamAtRowLevel() throws {
+    let fx = try fixture("pinchHitters")
+    // The field the resolver used to read, on a real payload.
+    #expect(fx.stats.allSatisfy { $0.player.team == nil },
+            "/stats does not nest team under player — that was the bug")
+    // The field it reads now.
+    #expect(fx.stats.allSatisfy { $0.team != nil })
+    #expect(Set(fx.stats.compactMap { $0.team?.id }) == [27, 28])
+}
+
+@MainActor
+@Test func resolverProducesRealTeamIdsNotTheStub() throws {
+    let fx = try fixture("pinchHitters")
+    // Deliberately WITHOUT the caller-supplied BDL ids: this is the shape
+    // that used to resolve to two stubs, both with id 0, collapsing the
+    // lineup split on both sides at once.
+    let game = gameForFixtureTeams(away: fx.away, home: fx.home, bdlIds: false)
+    let vm = BoxScoreViewModel(game: game)
+    let (away, home) = vm.bdlTeams(forGame: game, fromStats: fx.stats)
+
+    #expect(away.id == 27, "TB resolved to \(away.id) — 0 means the stub ran")
+    #expect(home.id == 28, "TEX resolved to \(home.id) — 0 means the stub ran")
+    #expect(away.abbreviation == "TB")
+    #expect(home.abbreviation == "TEX")
+    // Short franchise name, which only the real BDL object carries — the
+    // stub sets both `name` and `displayName` to TeamInfo.name.
+    #expect(away.name == "Rays")
+    #expect(home.name == "Rangers")
+}
+
+@MainActor
+@Test func resolvedTeamsCarryTheBoxScoreWithoutCallerSuppliedIds() throws {
+    let fx = try fixture("pinchHitters")
+    let game = gameForFixtureTeams(away: fx.away, home: fx.home, bdlIds: false)
+    let vm = BoxScoreViewModel(game: game)
+    let (away, home) = vm.bdlTeams(forGame: game, fromStats: fx.stats)
+
+    // Nil join ids, exactly as the failing scenario had them. The lineup
+    // split now falls back to the RESOLVED team's id rather than zero, so
+    // both sides still place their substitutes.
+    let bs = fx.stats.toBoxScoreResponse(
+        awayTeam: away, homeTeam: home,
+        awayBDLTeamId: nil, homeBDLTeamId: nil,
+        lineup: fx.lineups, plateAppearances: fx.pas, isFinal: true)
+
+    #expect(bs.teams.away.player("Ryan Vilade")?.stats_battingOrder == "401")
+    #expect(bs.teams.home.player("Justin Foscue")?.stats_battingOrder == "101")
+    #expect(bs.teams.away.renderedCodes.allSatisfy { $0 != nil })
+    #expect(bs.teams.home.renderedCodes.allSatisfy { $0 != nil })
+}

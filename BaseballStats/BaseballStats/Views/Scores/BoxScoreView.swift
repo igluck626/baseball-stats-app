@@ -521,14 +521,23 @@ final class BoxScoreViewModel: ObservableObject {
     /// blocks on a team-lookup miss. Stubs lose the BDL `id` (set
     /// to 0) — logos go through the MLBAM bridge instead, so they
     /// still resolve via `Game.teams.{home,away}.team`.
-    private func bdlTeams(
+    func bdlTeams(
         forGame game: Game, fromStats stats: [BDLPlayerStat],
     ) -> (away: BDLTeam, home: BDLTeam) {
-        // Try to pull from the stats nesting: any row's `player.team`
-        // is the BDLTeam for that player's side this game.
+        // Each row carries its side as a full team object. This used to
+        // read `s.player.team`, which is never populated on `/stats`
+        // (it is on `/players`, `/season_stats` and `/lineups` — the
+        // shape is per-endpoint), so the lookup was always empty and
+        // every game fell through to `stubBDLTeam` below. The stub
+        // hardcodes `id: 0`, which meant the real BDL team ids reached
+        // the box score ONLY via the caller's `awayBDLTeamId` /
+        // `homeBDLTeamId`; if those were ever nil, both join ids
+        // collapsed to zero together and the lineup split matched
+        // nothing on either side. Reading the row-level `team` restores
+        // the primary path and removes that dependency.
         let byName: [String: BDLTeam] = Dictionary(
             stats.compactMap { s -> (String, BDLTeam)? in
-                guard let t = s.player.team else { return nil }
+                guard let t = s.team else { return nil }
                 return (t.name, t)
             },
             uniquingKeysWith: { a, _ in a },
@@ -561,6 +570,15 @@ final class BoxScoreViewModel: ObservableObject {
     /// know about this stub, by construction) — every other
     /// downstream consumer reads `name`/`displayName`/`abbreviation`,
     /// which we have, or hops through the MLBAM bridge for logos.
+    ///
+    /// ⚠️ `id: 0` is the sharp edge. Both sides stub to the SAME id, so
+    /// a caller that also lacks `awayBDLTeamId`/`homeBDLTeamId` gets
+    /// two join keys of zero and the lineup split matches nothing on
+    /// either side — no batting order, and no substitute placement.
+    /// Until the resolver above was fixed this was the path every game
+    /// took, and it only held up because the BDL-sourced `Game` always
+    /// carries those ids. Reaching this stub now means resolution
+    /// genuinely failed, so treat it as degraded rather than normal.
     private static func stubBDLTeam(from info: TeamInfo) -> BDLTeam {
         let abbr = info.abbreviation ?? String(info.name.prefix(3)).uppercased()
         return BDLTeam(

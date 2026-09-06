@@ -93,6 +93,20 @@ struct BDLPlayer: Codable, Hashable {
 struct BDLPlayerStat: Codable, Hashable {
     let player: BDLPlayer
     let gameId: Int
+    /// The side this line belongs to, as a full team object.
+    ///
+    /// ⚠️ This lives at ROW level on `/stats`. It does NOT appear under
+    /// `player` here, though it does on `/players`, `/season_stats` and
+    /// `/lineups` — see the endpoint-shape note on
+    /// `getGamePlateAppearances`. `BoxScoreView.bdlTeams` read
+    /// `player.team` from these rows from May 2026 until this field was
+    /// added, found nil every time, and silently ran its stub fallback
+    /// for three and a half months.
+    let team: BDLTeam?
+    /// BDL ships the team's DISPLAY name here ("Los Angeles Dodgers"),
+    /// not the short franchise name `BDLTeam.name` carries ("Dodgers").
+    /// Prefer `team` and keep this for the paths that still match on
+    /// strings.
     let teamName: String?
 
     // Batting line
@@ -143,6 +157,7 @@ struct BDLPlayerStat: Codable, Hashable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.player           = try c.decode(BDLPlayer.self, forKey: .player)
         self.gameId           = try c.decode(Int.self,       forKey: .gameId)
+        self.team             = try c.decodeIfPresent(BDLTeam.self, forKey: .team)
         self.teamName         = try c.decodeIfPresent(String.self, forKey: .teamName)
         self.atBats           = try c.decodeIfPresent(Int.self,    forKey: .atBats)
         self.runs             = try c.decodeIfPresent(Int.self,    forKey: .runs)
