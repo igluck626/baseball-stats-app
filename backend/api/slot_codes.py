@@ -190,6 +190,21 @@ def carry_forward(fresh: dict, previous: Optional[dict]) -> dict:
 
     Never crosses games: the caller keys the previous snapshot by game id, and
     a game that leaves the live set takes its memory with it.
+
+    ⚠️ AND IT DOES NOT CROSS THE FINAL WHISTLE, which is a known open edge.
+    When a game ends the app stops reading this feed and derives the box score
+    itself, from `substituteBattingOrders` in Scores.swift, with no memory at
+    all. A man whose code here existed only because this function filled a
+    silence can therefore lose it at that moment and drop back to the foot of
+    the table.
+
+    Left open deliberately. Deriving the finals path from `/plays` instead of
+    `/plate_appearances` was measured 2026-09-07 and recovers five of the nine
+    substitutes it declines — it halves the edge and does not close it, the
+    other four being structural. Closing it properly means the finals path
+    inheriting what was known here, which is state it does not carry today.
+    The signal that it is worth doing is somebody actually seeing a row move
+    when a game ends.
     """
     out = dict(fresh)
     for pid, code in (previous or {}).items():
