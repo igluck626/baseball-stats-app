@@ -76,10 +76,17 @@ struct RosterSheet: View {
     /// the hitters list because a designated hitter is the rarest
     /// dedicated entry on a modern roster.
     private var sections: [RosterPositionGroup] {
+        let known: [RosterPositionGroup]
         switch mode {
-        case .hitters:  return [.c, .infield, .outfield, .dh]
-        case .pitchers: return [.sp, .rp]
+        case .hitters:  known = [.c, .infield, .outfield, .dh]
+        case .pitchers: known = [.sp, .rp]
         }
+        // ⚠️ ONLY WHEN IT HAS SOMEONE IN IT, and in BOTH modes when it does.
+        // A position string we can't read might belong to either side, so
+        // guessing a side is what put a reliever among the hitters in the
+        // first place. Showing him under both, plainly labelled, says what is
+        // actually true: he is on the roster and we don't know where he goes.
+        return playersIn(.other).isEmpty ? known : known + [.other]
     }
 
     private var statColumns: [String] {
@@ -317,6 +324,10 @@ struct RosterSheet: View {
             }
         case .c, .dh:
             return players
+        case .other:
+            // No position to sort on — that is the whole reason they are
+            // here. Alphabetical so the section is at least readable.
+            return players.sorted { $0.name < $1.name }
         }
     }
 
@@ -359,6 +370,7 @@ struct RosterSheet: View {
         case .infield:  return "INFIELD"
         case .outfield: return "OUTFIELD"
         case .dh:       return "DH"
+        case .other:    return "UNRECOGNISED POSITION"
         }
     }
 
@@ -366,7 +378,13 @@ struct RosterSheet: View {
     /// bucket — uses `RosterPositionGroup.from` so the same mapping
     /// powers the segmented strip and the table.
     private func playersIn(_ group: RosterPositionGroup) -> [RosterPlayer] {
-        roster.filter { RosterPositionGroup.from($0.position) == group }
+        // `.other` is the nil case: everyone whose position string the
+        // bucketer doesn't recognise. It is deliberately NOT a `default` in
+        // `from(_:)` — that is what hid a reliever among the infielders.
+        if group == .other {
+            return roster.filter { RosterPositionGroup.from($0.position) == nil }
+        }
+        return roster.filter { RosterPositionGroup.from($0.position) == group }
     }
 
     /// Per-row stat strings in the same order as `statColumns`.

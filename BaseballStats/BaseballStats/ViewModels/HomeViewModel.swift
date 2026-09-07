@@ -1078,6 +1078,8 @@ enum RosterPositionGroup: String, CaseIterable, Hashable {
     case infield  = "IF"   // 1B / 2B / 3B / SS
     case outfield = "OF"   // LF / CF / RF / OF
     case dh = "DH"   // Designated hitter
+    /// A position string we don't recognise. Its own bucket so it is SEEN.
+    case other = "??"
 
     var displayName: String {
         switch self {
@@ -1087,24 +1089,48 @@ enum RosterPositionGroup: String, CaseIterable, Hashable {
         case .infield:  return "IF"
         case .outfield: return "OF"
         case .dh: return "DH"
+        case .other: return "?"
         }
     }
 
-    /// Map a raw BDL position string to its bucket. Falls back to
-    /// `rp` for an ambiguous "P" (most roster pitchers without an
-    /// SP/RP qualifier are relievers in modern MLB rosters) and to
-    /// `infield` for generic "IF". Anything unrecognized maps to
-    /// `infield` so the player still surfaces somewhere.
-    static func from(_ raw: String) -> RosterPositionGroup {
+    /// Map a raw BDL position string to its bucket, or nil when the string
+    /// isn't one we know.
+    ///
+    /// ⚠️ RETURNS AN OPTIONAL ON PURPOSE. This used to end
+    /// `default: return .infield`, which guaranteed a plausible-looking wrong
+    /// answer: Seth Halvorsen, a reliever, sat among the Dodgers' HITTERS for
+    /// weeks because BDL called him "Relief Pitcher" and the default filed
+    /// anything unrecognised with the infielders. A nil forces the caller to
+    /// decide, and the Roster sheet's `.other` section makes the next one
+    /// visible on the day it arrives instead of hiding it in a plausible spot.
+    ///
+    /// ⚠️ BDL SHIPS BOTH VOCABULARIES, and this is not a rare edge. Measured
+    /// 2026-09-07 over 1200 players: 24 distinct position strings, of which
+    /// twelve are spelled out, covering 493 players — about FORTY PER CENT.
+    /// Active rosters happen to be almost entirely abbreviated (1 of 940),
+    /// which is the only reason a single reliever was the visible symptom.
+    static func from(_ raw: String) -> RosterPositionGroup? {
         switch raw.uppercased() {
+        // Abbreviated — what active rosters mostly carry.
         case "SP":                                 return .sp
-        case "RP", "CL":                           return .rp
-        case "P":                                  return .rp
+        // "P" without an SP/RP qualifier: most roster pitchers carrying it
+        // are relievers on a modern staff.
+        case "RP", "CL", "P":                      return .rp
         case "C":                                  return .c
         case "1B", "2B", "3B", "SS", "IF":         return .infield
         case "LF", "CF", "RF", "OF":               return .outfield
         case "DH":                                 return .dh
-        default:                                   return .infield
+        // Spelled out — the other forty per cent of BDL's player table.
+        case "STARTING PITCHER":                   return .sp
+        case "RELIEF PITCHER", "CLOSER", "PITCHER": return .rp
+        case "CATCHER":                            return .c
+        case "FIRST BASEMAN", "SECOND BASEMAN",
+             "THIRD BASEMAN", "SHORTSTOP",
+             "INFIELDER":                          return .infield
+        case "LEFT FIELDER", "CENTER FIELDER",
+             "RIGHT FIELDER", "OUTFIELDER":        return .outfield
+        case "DESIGNATED HITTER":                  return .dh
+        default:                                   return nil
         }
     }
 }
