@@ -51,10 +51,16 @@ jobs:
       - name: Python slot codes match the shared fixture
         run: python3 backend/tests/test_slot_codes.py
 
-      # Not about substitutes, but it is the other standalone backend test and
-      # it costs nothing to keep honest while a runner is already warm.
+      # Not about substitutes, but these are the other standalone backend
+      # tests and they cost nothing while a runner is already warm.
       - name: Guard-tool parity
         run: python3 backend/tests/test_guard_tool.py
+
+      # Guards the player-matching rubric's strongest signal. BDL ships three
+      # date formats with different field orders; reading only one left that
+      # signal dead and corrupted a real player's birth year.
+      - name: BDL date-of-birth parsing
+        run: python3 backend/tests/test_bdl_dob.py
 
       - name: What to do when this fails
         if: failure()

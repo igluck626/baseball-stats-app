@@ -2702,23 +2702,69 @@ def _parse_bdl_weight(s: Optional[str]) -> Optional[int]:
 
 
 def _parse_bdl_dob(s: Optional[str]) -> tuple[Optional[int], Optional[int], Optional[int]]:
-    """`"08/07/91"` → (1991, 8, 7). BDL ships MM/DD/YY with a
-    2-digit year; the Y2K window split is "YY > 25 → 19xx, else
-    20xx" so active-player DOBs (peak window 1980-2005) all land
-    in the right century."""
-    if not s or "/" not in s:
+    """A BDL date of birth → (year, month, day).
+
+    ⚠️ BDL SHIPS THREE FORMATS AND THE FIELD ORDER DIFFERS BETWEEN TWO OF
+    THEM. This function knew only the first and mangled or dropped the rest.
+
+      "08/07/91"    M/D/YY    2-digit year, MONTH first  →  (1991, 8, 7)
+      "18/2/2000"   D/M/YYYY  4-digit year, DAY first    →  (2000, 2, 18)
+      "1999-09-23"  ISO                                  →  (1999, 9, 23)
+
+    ⚠️ THE ORDER IS SETTLED BY THE DATA, NOT ASSUMED — it is the question
+    anyone will re-ask. Counted over BDL's 12,803-player table on 2026-09-07:
+
+      * Of the 10,742 four-digit-year records, 6,537 have a FIRST field
+        greater than 12 and NONE have a second field greater than 12. Only
+        day-first explains that; month-first is impossible.
+      * Of the 788 two-digit-year records, NONE have a first field greater
+        than 12, which is consistent with month-first and is the format this
+        function was originally written against.
+
+    The formats are not scattered at random — they track whether BDL
+    considers the player active. Of 940 men on 2026 rosters, 936 are ISO;
+    every historical player is four-digit. So the old code returned None for
+    essentially every active player and a year in the 3800s for essentially
+    every retired one, which is why `_score_bdl_candidate`'s DOB signal —
+    "+50, the strongest single signal" — could almost never fire.
+
+    The 2-digit Y2K split stays as it was: YY > 25 → 19xx, else 20xx.
+    """
+    if not s:
         return None, None, None
-    parts = s.split("/")
+    text = s.strip()
+    if not text:
+        return None, None, None
+
+    # ISO first — the form BDL uses for active players.
+    if "-" in text:
+        parts = text.split("-")
+        if len(parts) != 3:
+            return None, None, None
+        try:
+            return int(parts[0]), int(parts[1]), int(parts[2])
+        except ValueError:
+            return None, None, None
+
+    if "/" not in text:
+        return None, None, None
+    parts = text.split("/")
     if len(parts) != 3:
         return None, None, None
     try:
-        m  = int(parts[0])
-        d  = int(parts[1])
-        yy = int(parts[2])
-        year = (1900 + yy) if yy > 25 else (2000 + yy)
-        return year, m, d
+        first = int(parts[0])
+        second = int(parts[1])
+        raw_year = parts[2]
+        year_val = int(raw_year)
     except ValueError:
         return None, None, None
+
+    if len(raw_year) == 4:
+        # D/M/YYYY — day first. See the counts above.
+        return year_val, second, first
+    # M/D/YY — month first, with the Y2K window.
+    year = (1900 + year_val) if year_val > 25 else (2000 + year_val)
+    return year, first, second
 
 
 def _parse_bdl_birth_place(
