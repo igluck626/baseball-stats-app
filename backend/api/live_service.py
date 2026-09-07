@@ -32,7 +32,7 @@ from typing import Any, Optional
 
 import data_service
 from cache import cache as _cache
-from slot_codes import _slot_codes
+from slot_codes import _slot_codes, _carried_codes, carry_forward
 
 log = logging.getLogger("live_service")
 
@@ -615,7 +615,8 @@ def _box_lines(stats: list[dict], home_team: dict, away_team: dict,
                lineup: Optional[list[dict]],
                plays_sorted: list[dict],
                pas: list[dict],
-               is_final: bool = False) -> tuple[dict, dict]:
+               is_final: bool = False,
+               previous_codes: Optional[dict] = None) -> tuple[dict, dict]:
     """Per-player batting + pitching lines from /stats, sorted for display.
     Batting order joins /lineups (stats carries none); pitching order uses each
     pitcher's first appearance in the play feed (no extra BDL call). Per-pitcher
@@ -640,6 +641,9 @@ def _box_lines(stats: list[dict], home_team: dict, away_team: dict,
         batting_order.update(_slot_codes(
             pas, lineup, team_.get("id"), half_, stats_pa, is_final,
         ))
+
+    # A slot once given is not taken away — see `carry_forward`.
+    batting_order = carry_forward(batting_order, previous_codes)
 
     pitch_appearance: dict[int, int] = {}
     for idx, pl in enumerate(plays_sorted):
@@ -682,7 +686,8 @@ def _box_lines(stats: list[dict], home_team: dict, away_team: dict,
 
 def assemble_unified(game: dict, stats: list[dict],
                      plays: list[dict], pas: list[dict],
-                     lineup: Optional[list[dict]] = None) -> dict:
+                     lineup: Optional[list[dict]] = None,
+                     previous_codes: Optional[dict] = None) -> dict:
     """Thin orchestrator (§4): derive live state from PLAYS, then attach
     names/bases/lines/errors from their own feeds — ONE source per field.
 
@@ -718,7 +723,7 @@ def assemble_unified(game: dict, stats: list[dict],
     )
     batting, pitching = _box_lines(                            # stats (+lineup/plays order)
         stats, home_team, away_team, lineup, plays_sorted, pas,
-        status == "final",
+        status == "final", previous_codes,
     )
     batter_id = state["batter_id"]
     pitcher_id = state["pitcher_id"]
@@ -868,7 +873,12 @@ async def _refresh_cycle() -> int:
             if lineup_called:
                 bdl_calls += 1
 
-            unified = assemble_unified(games_by_id[gid], stats, plays, pas, lineup)
+            # A batting slot, once given, must not be taken away. See
+            # `_carried_codes` — this reads the snapshot we are about to
+            # replace, so it has to happen BEFORE the `set` below.
+            previous = _carried_codes(_cache.get(_game_key(gid)))
+            unified = assemble_unified(games_by_id[gid], stats, plays, pas, lineup,
+                                       previous_codes=previous)
             _cache.set(_game_key(gid), unified, LIVE_CACHE_TTL_S)
             summaries.append(_summary_from_unified(unified))
         except Exception:

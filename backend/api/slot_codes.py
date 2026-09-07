@@ -149,3 +149,49 @@ def _slot_codes(pas: list[dict], lineup: Optional[list[dict]], team_id,
         depth[slot] = d
         codes[pid] = slot * 100 + d
     return codes
+
+
+def _carried_codes(previous_unified: Optional[dict]) -> dict:
+    """Batting-order codes from the snapshot we are replacing, keyed by player.
+
+    ⚠️ THE ONE PIECE OF MEMORY IN THIS FILE, and a deliberate exception to the
+    rule stated on `assemble_unified` that everything is recomputed from
+    scratch so revised upstream data self-corrects. That rule is right for
+    derived STATE — a score, a grid, a base — which must follow the feed
+    wherever it goes. A batting slot is not state, it is an identity: the man
+    batted where he batted, and no later fault in the feed unmakes it.
+
+    Without this a substitute placed in the seventh was silently un-placed in
+    the ninth, when a dropped plate appearance made his side unprovable, and
+    his row jumped from under the man he replaced back to the foot of the
+    table. Observed in production 2026-09-06: Randal Grichuk held slot 401 for
+    twenty-five snapshots and then lost it.
+    """
+    if not previous_unified:
+        return {}
+    out: dict = {}
+    for side in ("away", "home"):
+        for row in ((previous_unified.get("batting") or {}).get(side) or []):
+            pid, code = row.get("id"), row.get("batting_order")
+            if pid is not None and code is not None:
+                out[pid] = code
+    return out
+
+
+def carry_forward(fresh: dict, previous: Optional[dict]) -> dict:
+    """This cycle's codes, with anything it could not derive filled in from
+    the last one.
+
+    ⚠️ THE FRESH CODE ALWAYS WINS. The derivation is the authority whenever it
+    speaks: if it now returns a DIFFERENT code for a man it placed before, it
+    has learned something — another substitute ahead of him in the same slot,
+    say — and the new answer is the better one. Memory only fills silence, and
+    the set of placed men therefore only ever grows within a game.
+
+    Never crosses games: the caller keys the previous snapshot by game id, and
+    a game that leaves the live set takes its memory with it.
+    """
+    out = dict(fresh)
+    for pid, code in (previous or {}).items():
+        out.setdefault(pid, code)
+    return out

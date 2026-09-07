@@ -279,8 +279,19 @@ struct HomeView: View {
         ToolbarItem(placement: .principal) {
             if let bdlId = store.bdlTeamId,
                let entry = MLBTeamCatalog.entry(forBDLId: bdlId) {
-                HStack(spacing: 6) {
-                    TeamLogoView(team: entry.teamInfo, size: 22)
+                HStack(spacing: 8) {
+                    // Colour, not a circle of letters: the club's full name is
+                    // the very next thing in the header, so "LAD" beside "Los
+                    // Angeles Dodgers" said the same thing twice. Same
+                    // treatment the score surfaces took. 17pt matches the
+                    // .headline line it leads.
+                    //
+                    // The five Home SHEETS keep their badges deliberately:
+                    // their titles are "Injury Report", "2026 Roster",
+                    // "Season History" and the like, so there the mark is the
+                    // only thing naming the club and removing it would leave
+                    // the header not saying whose.
+                    TeamColorSwatch(team: entry.teamInfo, height: 17)
                     Text(entry.fullName)
                         .font(.headline.weight(.semibold))
                         .lineLimit(1)

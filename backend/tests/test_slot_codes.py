@@ -25,7 +25,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "api"))
-from slot_codes import _slot_codes  # noqa: E402
+from slot_codes import _slot_codes, _carried_codes, carry_forward  # noqa: E402
 
 FIXTURES = os.path.join(HERE, "..", "..", "testdata", "box-score-order.json")
 
@@ -100,6 +100,79 @@ def main():
         assert whole.get(pid) == code, (
             f"a damaged sequence MOVED someone: {pid} was {whole.get(pid)}, now {code}"
         )
+
+    # ⚠️ A PLACEMENT ONCE MADE MUST NOT BE WITHDRAWN.
+    #
+    # This is the test that was missing. The original stability check replayed
+    # every side and asserted no man's slot CHANGED VALUE, which was true and
+    # did not mean what it appeared to: a placement can also be taken away
+    # entirely, and comparing codes only where both exist cannot see that. In
+    # production a substitute held slot 401 for twenty-five snapshots and then
+    # lost it when a dropped plate appearance made his side unprovable.
+    #
+    # First: prove the fault is real, by replaying each side plate appearance
+    # by plate appearance with NO memory, exactly as it shipped. If this stops
+    # producing withdrawals the corpus has stopped covering the case and the
+    # test below is guarding nothing.
+    bare_withdrawals = []
+    for label, fixture in sorted(fixtures.items()):
+        names = {r["player"]["id"]: r["player"]["full_name"] for r in fixture["lineups"]}
+        for row in fixture["stats"]:
+            names.setdefault(row["player"]["id"], row["player"]["full_name"])
+        for side in ("away", "home"):
+            team = fixture[side]
+            rows = [p for p in fixture["pas"]
+                    if (p.get("half_inning") or "").lower() == HALVES[side]]
+            rows.sort(key=lambda p: (p.get("inning") or 0, p.get("pa_number") or 0))
+            previous: dict = {}
+            for n in range(1, len(rows) + 1):
+                # Both lag states: stats level with the feed, and one behind
+                # because the man at the plate has not been counted yet.
+                for lag in (0, 1):
+                    fresh = _slot_codes(rows[:n], fixture["lineups"], team["id"],
+                                        HALVES[side], n - lag, False)
+                    for pid, code in previous.items():
+                        if pid not in fresh:
+                            bare_withdrawals.append(
+                                f"{label}/{side}: {names.get(pid, pid)} "
+                                f"lost slot {code} at PA {n}")
+                    previous = fresh
+    assert bare_withdrawals, (
+        "the memoryless replay produced no withdrawals, so this test is not "
+        "exercising the fault it exists for — the corpus has stopped covering it"
+    )
+
+    # Second: the SHIPPED merge must repair every one of them. `carry_forward`
+    # is the function live_service actually calls, not a replica of it.
+    for label, fixture in sorted(fixtures.items()):
+        for side in ("away", "home"):
+            team = fixture[side]
+            rows = [p for p in fixture["pas"]
+                    if (p.get("half_inning") or "").lower() == HALVES[side]]
+            rows.sort(key=lambda p: (p.get("inning") or 0, p.get("pa_number") or 0))
+            carried: dict = {}
+            for n in range(1, len(rows) + 1):
+                for lag in (0, 1):
+                    fresh = _slot_codes(rows[:n], fixture["lineups"], team["id"],
+                                        HALVES[side], n - lag, False)
+                    merged = carry_forward(fresh, carried)
+                    missing = set(carried) - set(merged)
+                    assert not missing, (
+                        f"{label}/{side}: carry_forward dropped {missing} at PA {n}")
+                    # A fresh answer always outranks a remembered one.
+                    for pid, code in fresh.items():
+                        assert merged[pid] == code, (
+                            f"{label}/{side}: memory overrode a fresh code for {pid}")
+                    carried = merged
+
+    # And the reader that feeds it: codes lifted off a previous snapshot.
+    snapshot = {"batting": {
+        "away": [{"id": 1, "batting_order": 401}, {"id": 2, "batting_order": None}],
+        "home": [{"id": 3, "batting_order": 900}],
+    }}
+    assert _carried_codes(snapshot) == {1: 401, 3: 900}
+    assert _carried_codes(None) == {}, "no previous snapshot must mean no memory"
+    assert _carried_codes({}) == {}
 
     if failures:
         print("PYTHON SIDE DIVERGED from testdata/box-score-order.json:\n")
