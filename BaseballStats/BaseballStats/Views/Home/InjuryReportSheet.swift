@@ -188,33 +188,11 @@ struct InjuryReportSheet: View {
         }
     }
 
-    /// Normalize a BDL position string ("Starting Pitcher" / "Center
-    /// Field" / "Shortstop" / …) to its short baseball abbreviation
-    /// ("SP" / "CF" / "SS"). Returns the raw string when no mapping
-    /// exists so an unfamiliar value still renders legibly, and the
-    /// empty string when the input is nil.
-    /// Full position name → abbreviation. `static` (not private) so
-    /// the Team History sheet's Awards section can reuse the exact
-    /// same mapping. Already-abbreviated / unknown inputs pass through
-    /// unchanged via the default branch.
+    /// Short form of a BDL position string. The table itself lives in
+    /// `PositionAbbreviation` beside `RosterPositionGroup`, so display and
+    /// bucketing cannot drift apart — it used to live here and the Roster
+    /// sheet never found it.
     static func abbreviatePosition(_ pos: String?) -> String {
-        guard let pos = pos else { return "" }
-        switch pos.lowercased() {
-        case "starting pitcher", "starter":      return "SP"
-        case "relief pitcher", "reliever":       return "RP"
-        case "closing pitcher", "closer":        return "CL"
-        case "catcher":                          return "C"
-        case "first base", "first baseman":      return "1B"
-        case "second base", "second baseman":    return "2B"
-        case "third base", "third baseman":      return "3B"
-        case "shortstop":                        return "SS"
-        case "left field", "left fielder":       return "LF"
-        case "center field", "center fielder":   return "CF"
-        case "right field", "right fielder":     return "RF"
-        case "outfield", "outfielder":           return "OF"
-        case "designated hitter":                return "DH"
-        case "pitcher":                          return "P"
-        default:                                 return pos
-        }
+        PositionAbbreviation.canonical(pos)
     }
 }

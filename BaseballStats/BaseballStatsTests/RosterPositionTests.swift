@@ -76,3 +76,29 @@ import Testing
     #expect(RosterPositionGroup.other != .infield)
     #expect(RosterPositionGroup.other != .dh)
 }
+
+// MARK: - Display and bucketing read the same table
+
+@Test func theDisplayedAbbreviationMatchesTheBucket() {
+    // The reported bug: the Roster sheet printed the raw string, so one
+    // reliever read "RELIEF PITCHER" in a column of RP and SP. Display now
+    // goes through the same table as bucketing, so the two cannot disagree.
+    #expect(PositionAbbreviation.canonical("Relief Pitcher") == "RP")
+    #expect(PositionAbbreviation.canonical("Starting Pitcher") == "SP")
+    #expect(PositionAbbreviation.canonical("Shortstop") == "SS")
+    #expect(PositionAbbreviation.canonical("Designated Hitter") == "DH")
+    // Already short, and nil.
+    #expect(PositionAbbreviation.canonical("RP") == "RP")
+    #expect(PositionAbbreviation.canonical(nil) == "")
+    // Unknown passes through legibly rather than becoming an em-dash — the
+    // `.other` section is what flags it, not a blanked cell.
+    #expect(PositionAbbreviation.canonical("Utility") == "Utility")
+}
+
+@Test func theOldEntryPointStillResolvesToTheSameTable() {
+    // Two screens call `InjuryReportSheet.abbreviatePosition`; it now forwards.
+    for raw in ["Relief Pitcher", "Center Fielder", "SP", "Utility"] {
+        #expect(InjuryReportSheet.abbreviatePosition(raw)
+                == PositionAbbreviation.canonical(raw), "\(raw)")
+    }
+}

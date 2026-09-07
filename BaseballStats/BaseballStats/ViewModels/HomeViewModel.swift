@@ -1069,6 +1069,47 @@ struct RosterPlayer: Identifiable, Hashable {
     var id: Int { bdl_id }
 }
 
+/// Canonical short form of a position string, whichever way BDL spelled it.
+///
+/// ⚠️ ONE TABLE, and it needs to stay one. BDL ships BOTH vocabularies —
+/// measured 2026-09-07 over 1200 players, 24 distinct strings of which twelve
+/// are spelled out, covering about forty per cent of them. Active rosters are
+/// almost entirely abbreviated (1 of 940), which is why a single reliever was
+/// the only visible symptom.
+///
+/// This lived as `InjuryReportSheet.abbreviatePosition` and two screens used
+/// it; the Roster sheet did not, which is how "Relief Pitcher" reached a
+/// reader's eyes in a column of RP and SP, and how `RosterPositionGroup.from`
+/// came to need a second copy of the same knowledge. Moved here so display
+/// and bucketing read the same table.
+enum PositionAbbreviation {
+    /// The short form, or the input unchanged when we don't recognise it —
+    /// an unfamiliar value still renders legibly, and `RosterPositionGroup`
+    /// surfaces it as `.other` rather than filing it somewhere plausible.
+    /// Empty string for nil.
+    static func canonical(_ pos: String?) -> String {
+        guard let pos else { return "" }
+        switch pos.lowercased() {
+        case "starting pitcher", "starter":      return "SP"
+        case "relief pitcher", "reliever":       return "RP"
+        case "closing pitcher", "closer":        return "CL"
+        case "pitcher":                          return "P"
+        case "catcher":                          return "C"
+        case "first base", "first baseman":      return "1B"
+        case "second base", "second baseman":    return "2B"
+        case "third base", "third baseman":      return "3B"
+        case "shortstop":                        return "SS"
+        case "infielder":                        return "IF"
+        case "left field", "left fielder":       return "LF"
+        case "center field", "center fielder":   return "CF"
+        case "right field", "right fielder":     return "RF"
+        case "outfield", "outfielder":           return "OF"
+        case "designated hitter":                return "DH"
+        default:                                 return pos
+        }
+    }
+}
+
 /// Coarse-grained position bucket used by the Roster sheet's
 /// segmented picker and to group the compact home-tab strip.
 enum RosterPositionGroup: String, CaseIterable, Hashable {
@@ -1110,8 +1151,9 @@ enum RosterPositionGroup: String, CaseIterable, Hashable {
     /// Active rosters happen to be almost entirely abbreviated (1 of 940),
     /// which is the only reason a single reliever was the visible symptom.
     static func from(_ raw: String) -> RosterPositionGroup? {
-        switch raw.uppercased() {
-        // Abbreviated — what active rosters mostly carry.
+        // Both vocabularies collapse to one here, so this switch only has to
+        // know the short forms. See `PositionAbbreviation`.
+        switch PositionAbbreviation.canonical(raw).uppercased() {
         case "SP":                                 return .sp
         // "P" without an SP/RP qualifier: most roster pitchers carrying it
         // are relievers on a modern staff.
@@ -1120,16 +1162,6 @@ enum RosterPositionGroup: String, CaseIterable, Hashable {
         case "1B", "2B", "3B", "SS", "IF":         return .infield
         case "LF", "CF", "RF", "OF":               return .outfield
         case "DH":                                 return .dh
-        // Spelled out — the other forty per cent of BDL's player table.
-        case "STARTING PITCHER":                   return .sp
-        case "RELIEF PITCHER", "CLOSER", "PITCHER": return .rp
-        case "CATCHER":                            return .c
-        case "FIRST BASEMAN", "SECOND BASEMAN",
-             "THIRD BASEMAN", "SHORTSTOP",
-             "INFIELDER":                          return .infield
-        case "LEFT FIELDER", "CENTER FIELDER",
-             "RIGHT FIELDER", "OUTFIELDER":        return .outfield
-        case "DESIGNATED HITTER":                  return .dh
         default:                                   return nil
         }
     }

@@ -283,7 +283,10 @@ struct RosterSheet: View {
     @ViewBuilder
     private func positionLabel(_ player: RosterPlayer) -> some View {
         if !player.position.isEmpty {
-            Text(player.position.uppercased())
+            // Through the shared table: BDL spells the same position two ways
+            // and this column read the raw string, so one Dodgers reliever
+            // rendered "RELIEF PITCHER" in a column of RP and SP.
+            Text(PositionAbbreviation.canonical(player.position).uppercased())
                 .font(.subheadline.weight(.bold))
                 .foregroundStyle(tint)
         } else {
