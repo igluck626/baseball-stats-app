@@ -229,11 +229,11 @@ struct PlaysView: View {
     @State private var isExpanded = false
     @State private var playsMode: PlaysMode = .scoring
     @State private var expandedHalfInnings: Set<String> = []
-    /// Set of `AtBat.id` keys whose individual pitch list is
-    /// currently expanded inside the All-mode view. Empty by
-    /// default — every at-bat starts collapsed to just the
-    /// outcome headline.
-    @State private var expandedAtBats: Set<String> = []
+    /// The at-bat whose detail sheet is open, or nil. Replaces the
+    /// old in-line pitch expansion: the pitch list, the batted-ball
+    /// metrics and the batter's name all live in the sheet now, so the
+    /// row itself stays one sentence long.
+    @State private var selectedPlay: PlayDetail?
     /// `true` once the user has tapped the header, so subsequent
     /// scoring-play arrivals don't fight whatever state they chose.
     @State private var hasUserToggled = false
@@ -247,13 +247,9 @@ struct PlaysView: View {
     /// Tracks the previous scoring-play count so we only react to
     /// the LATCH from N → N+1, not to every plays update.
     @State private var prevScoringCount = 0
-    /// Width of the leading outs gutter. `@ScaledMetric` so the digit
-    /// still fits once Dynamic Type scales `.caption2` — a fixed
-    /// 14pt clips the mark at the accessibility sizes.
-    @ScaledMetric(relativeTo: .caption2) private var outsGutterWidth: CGFloat = 14
     /// Drives the at-bat row's layout. At the accessibility sizes the
-    /// trailing pitch-count button is moved BELOW the text rather than
-    /// beside it — see `atBatRow`.
+    /// trailing out count is moved BELOW the sentence rather than
+    /// beside it — see `battedRow`.
     @Environment(\.dynamicTypeSize) private var typeSize
 
     enum PlaysMode: String, Hashable, Identifiable, CaseIterable {
@@ -317,6 +313,9 @@ struct PlaysView: View {
                     .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
                     .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 3)
             }
+        }
+        .sheet(item: $selectedPlay) { detail in
+            PlayDetailSheet(detail: detail)
         }
         .onChange(of: plays) { _, new in
             let newScoringCount = new.filter(\.scoringPlay).count
@@ -611,7 +610,7 @@ struct PlaysView: View {
             }
             .buttonStyle(.plain)
             if isHalfExpanded {
-                let marks = Self.gutterMarks(half.atBats)
+                let marks = Self.outMarks(half.atBats)
                 ForEach(Array(zip(half.atBats, marks)), id: \.0.id) { ab, mark in
                     atBatRow(ab, outsMark: mark)
                 }
@@ -620,66 +619,75 @@ struct PlaysView: View {
         }
     }
 
-    /// The plays to list under an expanded at-bat: everything except
-    /// the at-bat's own result row, which is already the headline.
+    /// Build the sheet's payload for one at-bat.
     ///
-    /// Excluded by `order` rather than by dropping the last element.
-    /// The result row is NOT always last — on game 5059936 the row
-    /// "Smith hit for Feduccia" arrives after Tucker's result and
-    /// trails his at-bat, so `dropLast()` kept the result and hid the
-    /// substitution instead.
-    ///
-    /// Adjacent duplicates are collapsed because BDL ships a steal as
-    /// two rows with identical text — a `Stolen Base` row and a
-    /// `Play Result` row — which listed "De La Cruz stole second."
-    /// twice inside the at-bat it interrupted.
-    private static func expansionPlays(_ ab: AtBat) -> [BDLPlay] {
-        var out: [BDLPlay] = []
-        for p in ab.plays {
-            if let order = ab.resultOrder, p.order == order { continue }
-            if let last = out.last, last.text == p.text { continue }
-            out.append(p)
-        }
-        return out
+    /// The heading is the outcome NOUN rather than the sentence —
+    /// "Sacrifice Fly", "Home Run", "Strikeout" — so the sheet opens
+    /// with what happened before it says how. The sentence follows in
+    /// full, which is where the tail a two-line row may have clipped
+    /// is recovered.
+    private static func detail(for ab: AtBat, sentence: String) -> PlayDetail {
+        PlayDetail(
+            id:       ab.id,
+            title:    outcomeTitle(ab),
+            sentence: sentence,
+            // nil for any plate appearance that put no ball in play, so
+            // a strikeout's sheet omits the metrics block entirely
+            // rather than showing it with dashes — the same rule the
+            // row follows.
+            contact:  ab.contact,
+            pitches:  pitchRows(ab),
+        )
     }
 
-    private func pitchToggle(_ ab: AtBat, isExpanded: Bool, count: Int) -> some View {
-        Button {
-            withAnimation(.easeInOut(duration: 0.18)) {
-                if isExpanded { expandedAtBats.remove(ab.id) }
-                else          { expandedAtBats.insert(ab.id) }
-            }
-        } label: {
-            HStack(spacing: 2) {
-                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                    .font(.caption2.weight(.semibold))
-                Text("\(count) pitch\(count == 1 ? "" : "es")")
-                    .font(.caption2)
-                    .lineLimit(1)
-            }
-            .foregroundStyle(.secondary)
-            .contentShape(Rectangle())
+    /// The outcome as a noun.
+    ///
+    /// A ball in play names itself: BDL types that row "Home Run",
+    /// "Sacrifice Fly", "Ground Out", and its text is "Pitch N : Ball
+    /// In Play", which is what identifies it. A plate appearance that
+    /// ended without contact has no such row, so the last pitch's call
+    /// names it instead — a third strike means a strikeout, ball four
+    /// a walk.
+    private static func outcomeTitle(_ ab: AtBat) -> String {
+        let pitches = pitchRows(ab)
+        if let bip = pitches.last(where: { ($0.text ?? "").contains("Ball In Play") }),
+           let type = bip.type, !type.isEmpty {
+            return type
         }
-        .buttonStyle(.plain)
+        switch pitches.last?.type ?? "" {
+        case let t where t.hasPrefix("Automatic Ball"): return "Intentional Walk"
+        case let t where t.hasPrefix("Ball"):           return "Walk"
+        case let t where t.hasPrefix("Strike"):         return "Strikeout"
+        case "Hit By Pitch":                            return "Hit By Pitch"
+        default:                                        return "Play"
+        }
     }
 
-    /// The outs number to print in each at-bat's gutter, or nil where
-    /// the plate appearance made no out.
+    /// The pitches of the plate appearance, in order.
+    ///
+    /// Matched on the "Pitch N :" text rather than on the presence of
+    /// a pitch type: an intentional walk's automatic balls carry no
+    /// type, and a steal or substitution interleaved into the at-bat
+    /// carries no "Pitch" prefix. Type alone would drop the first and
+    /// admit the second.
+    private static func pitchRows(_ ab: AtBat) -> [BDLPlay] {
+        ab.plays.filter { ($0.text ?? "").hasPrefix("Pitch ") }
+    }
+
+    /// The number to print in each at-bat's trailing "N Out", or nil
+    /// where the plate appearance made no out.
     ///
     /// `AtBat.outs` is a RUNNING TOTAL after the PA, so it repeats
     /// across at-bats that didn't retire anyone — Top 7 of game
-    /// 5059936 reads `1,1,2,2,3`. Printing it on every row is the
-    /// clutter this replaces: a mark appears only where the count
-    /// actually advanced, giving `1,·,2,·,3`. Because a mark is only
-    /// ever drawn when an out was made, the bare digit reads
-    /// unambiguously as "this was the Nth out" — and
-    /// `outsAccessibilityLabel` spells that out for VoiceOver, which
-    /// cannot lean on the column to infer it.
+    /// 5059936 reads `1,1,2,2,3`. Printing it on every row is clutter:
+    /// a mark appears only where the count actually advanced, giving
+    /// `1,·,2,·,3`.
     ///
     /// A double play advances the count by two and prints the new
-    /// total (Bottom 7's `Rojas grounded into double play` prints 2),
-    /// which is the count a reader wants: how many are out now.
-    private static func gutterMarks(_ atBats: [AtBat]) -> [Int?] {
+    /// total (Bottom 7's `Rojas grounded into double play` prints
+    /// "2 Out"), which is the count a reader wants: how many are out
+    /// now.
+    private static func outMarks(_ atBats: [AtBat]) -> [Int?] {
         var running = 0
         return atBats.map { ab in
             guard let outs = ab.outs, outs > running else { return nil }
@@ -688,178 +696,113 @@ struct PlaysView: View {
         }
     }
 
+    /// One at-bat, in the shape of MLB's play list: the outcome
+    /// sentence, the out count trailing it, and the score beneath only
+    /// where the score changed. Everything else — the batter's name,
+    /// the batted-ball metrics, the pitch list — is behind a tap, in
+    /// `PlayDetailSheet`. The row's whole job is to be readable at a
+    /// glance while an inning scrolls past.
     private func atBatRow(_ ab: AtBat, outsMark: Int?) -> some View {
-        let isPAExpanded = expandedAtBats.contains(ab.id)
-        // Earlier pitches are the intermediate ball/strike/foul
-        // calls; the LAST play in the PA is the outcome and gets
-        // promoted to the headline. The expand-pitches button only
-        // shows when there's something to expand beyond the
-        // outcome row.
-        let pitches = Self.expansionPlays(ab)
-        let pitchCount = pitches.count
-        // Fall back to the last play only when the at-bat has no
-        // result row of its own — the relief-announcement and
-        // defensive-change pseudo-at-bats, whose text IS the last
-        // play and which correctly show no gutter mark or metrics.
-        let resultText = ab.resultText ?? ab.plays.last?.text ?? ab.batterText
-        return VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .top, spacing: 8) {
-                // Leading outs gutter. Reserved on EVERY row, marked
-                // only on the rows that retired someone, so the result
-                // text keeps a single left edge down the half-inning
-                // and the marks read as a column against it. Width
-                // scales with Dynamic Type so the digit isn't clipped
-                // at the accessibility sizes.
-                Text(outsMark.map(String.init) ?? "")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .frame(width: outsGutterWidth, alignment: .trailing)
-                    .accessibilityLabel(Self.outsAccessibilityLabel(outsMark))
-                VStack(alignment: .leading, spacing: 2) {
-                    if let batter = ab.batterText {
-                        Text(batter)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            // Truncating a name to "Eugeni…" is worse
-                            // than a second line, so at the
-                            // accessibility sizes let it wrap.
-                            .lineLimit(typeSize.isAccessibilitySize ? nil : 1)
-                    }
-                    Text(resultText ?? "—")
-                        .font(.caption)
-                        .foregroundStyle(.primary)
-                        // Two lines holds every result at the default
-                        // sizes; at the accessibility sizes the same
-                        // sentence needs five or six, and clipping the
-                        // result is clipping the whole point of the row.
-                        .lineLimit(typeSize.isAccessibilitySize ? nil : 2)
-                        .fixedSize(horizontal: false, vertical: true)
-                    // Run marker on its OWN LINE rather than as a
-                    // trailing chip beside the result. A chip is a
-                    // sibling of the text in the row's HStack, so at
-                    // the accessibility sizes it takes the top-right
-                    // and the result wraps in a narrow column beside
-                    // it, orphaned from the sentence it belongs to.
-                    // A full-width line below the result cannot do
-                    // that at any type size.
-                    if let runs = ab.runs {
-                        Text(Self.runLine(runs: runs, away: ab.awayScore, home: ab.homeScore))
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.green)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    // Contact metrics, unconditional for any ball in
-                    // play. One Text with " · " separators, never an
-                    // HStack of Texts — an HStack breaks mid-token at
-                    // the accessibility sizes, which is what the
-                    // metric rows elsewhere in the app were bitten by
-                    // twice. A barrel colours the whole line rather
-                    // than adding a capsule, for the same reason.
-                    if let c = ab.contact, let line = Self.contactLine(c) {
-                        Text(line)
-                            .font(.caption2)
-                            .foregroundStyle((c.isBarrel ?? false) ? Color.orange : Color.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    // At the accessibility sizes the pitch button sits
-                    // UNDER the text, inside the same column. Kept as a
-                    // trailing sibling it competes for width with the
-                    // result sentence: at AX5 it claimed roughly half
-                    // the row, broke its own label mid-token
-                    // ("pitch-es") and truncated every result to
-                    // "Suárez struck…". Below the text it has the full
-                    // width and neither happens.
-                    if pitchCount > 0, typeSize.isAccessibilitySize {
-                        pitchToggle(ab, isExpanded: isPAExpanded, count: pitchCount)
+        // Announcements — relief changes, defensive changes, pinch-hit
+        // notices — reach here as pseudo-at-bats with no batter. They
+        // are real events a reader following the inning wants, so they
+        // stay in the list, but they are not at-bats: quieter, flush
+        // to the margin the at-bats indent from, no out count and no
+        // tap. See `announcementRow`.
+        Group {
+            if ab.batterId == nil {
+                announcementRow(ab)
+            } else {
+                battedRow(ab, outsMark: outsMark)
+            }
+        }
+    }
+
+    private func battedRow(_ ab: AtBat, outsMark: Int?) -> some View {
+        let sentence = ab.resultText ?? ab.plays.last?.text ?? ab.batterText ?? "—"
+        return Button {
+            selectedPlay = Self.detail(for: ab, sentence: sentence)
+        } label: {
+            VStack(alignment: .leading, spacing: 3) {
+                // The out count is a trailing sibling of the sentence,
+                // which is exactly the arrangement that broke the old
+                // pitch button at the accessibility sizes — it claimed
+                // half the row and truncated the sentence to nothing.
+                // So above those sizes it moves below the sentence,
+                // where it has the full width.
+                if typeSize.isAccessibilitySize {
+                    sentenceText(sentence)
+                    if let mark = outsMark { outsText(mark) }
+                } else {
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        sentenceText(sentence)
+                        Spacer(minLength: 0)
+                        if let mark = outsMark {
+                            // `layoutPriority` so the sentence yields
+                            // to it rather than the other way round —
+                            // "1 Out" truncated to "1 O…" would be
+                            // worse than one fewer word of sentence.
+                            outsText(mark).layoutPriority(1)
+                        }
                     }
                 }
-                Spacer(minLength: 0)
-                if pitchCount > 0, !typeSize.isAccessibilitySize {
-                    pitchToggle(ab, isExpanded: isPAExpanded, count: pitchCount)
+                // Only where the score actually moved, and in the
+                // format the rest of the app already uses.
+                if ab.runs != nil, let away = ab.awayScore, let home = ab.homeScore {
+                    Text(scoreLineText(awayScore: away, homeScore: home))
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .padding(.leading, 12)
-            if isPAExpanded, pitchCount > 0 {
-                // Show the leading intermediate pitches (everything
-                // up to but not including the final outcome).
-                ForEach(pitches, id: \.order) { pitch in
-                    // Pitch type and speed ride on the play row itself
-                    // (`/plays` populates them on the pitch events),
-                    // so the expansion needs no join. Appended to the
-                    // call with " · " in a SINGLE Text for the same
-                    // Dynamic Type reason as the metric line above.
-                    Text(Self.pitchLine(pitch))
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(typeSize.isAccessibilitySize ? nil : 2)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.leading, 28)
-                }
-            }
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
         }
-        .padding(.vertical, 2)
+        .buttonStyle(.plain)
+    }
+
+    private func sentenceText(_ sentence: String) -> some View {
+        Text(sentence)
+            .font(.subheadline)
+            .foregroundStyle(.primary)
+            .multilineTextAlignment(.leading)
+            // Two lines holds all but the longest sentence at the
+            // default sizes, and the tail of one that overflows is
+            // carried in full by the sheet. At the accessibility sizes
+            // the same sentence needs five or six lines, and clipping
+            // it there would clip the only thing the row says.
+            .lineLimit(typeSize.isAccessibilitySize ? nil : 2)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func outsText(_ mark: Int) -> some View {
+        Text("\(mark) Out")
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+    }
+
+    /// A relief change, defensive change or pinch-hit notice. Flush to
+    /// the margin the at-bats indent from, in a smaller secondary face,
+    /// with no out count and no tap target — so it reads as a note
+    /// between at-bats rather than as an at-bat that failed to render.
+    private func announcementRow(_ ab: AtBat) -> some View {
+        Text(ab.resultText ?? ab.plays.last?.text ?? "—")
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .italic()
+            .lineLimit(typeSize.isAccessibilitySize ? nil : 2)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 5)
     }
 
     // MARK: Helpers
 
     private func scoreLineText(awayScore: Int, homeScore: Int) -> String {
         "\(awayAbbr) \(awayScore), \(homeAbbr) \(homeScore)"
-    }
-
-    /// "Run scores · 2-5" / "3 runs score · 1-5", with an en dash
-    /// between the scores. Away first, matching the linescore.
-    private static func runLine(runs: Int, away: Int?, home: Int?) -> String {
-        let noun = runs == 1 ? "Run scores" : "\(runs) runs score"
-        guard let away, let home else { return noun }
-        return "\(noun) \u{00B7} \(away)\u{2013}\(home)"
-    }
-
-    /// "104.4 mph · 34° · 403 ft · xBA .700", prefixed "Barrel · " on
-    /// a barrel. nil when the pitch carried no exit velocity, which is
-    /// every plate appearance that put no ball in play.
-    private static func contactLine(_ c: BDLPitchDetail) -> String? {
-        guard let ev = c.exitVelocity else { return nil }
-        var parts: [String] = []
-        if c.isBarrel ?? false { parts.append("Barrel") }
-        parts.append(String(format: "%.1f mph", ev))
-        if let la = c.launchAngle   { parts.append("\(Int(la.rounded()))\u{00B0}") }
-        if let d  = c.hitDistance   { parts.append("\(Int(d.rounded())) ft") }
-        // Batting averages are conventionally written without the
-        // leading zero, so .700 rather than 0.700.
-        if let x  = c.expectedBattingAverage {
-            parts.append("xBA " + String(format: "%.3f", x).replacingOccurrences(
-                of: "0.", with: ".", options: .anchored,
-            ))
-        }
-        return parts.joined(separator: " \u{00B7} ")
-    }
-
-    /// "Pitch 3 : Strike 3 Swinging · Curve 81 mph". Falls back to the
-    /// bare call when the row carries no pitch type — a pitch-out, an
-    /// automatic ball on an intentional walk, or any pre-tracking game.
-    private static func pitchLine(_ p: BDLPlay) -> String {
-        let call = p.text ?? ""
-        var tail: [String] = []
-        if let t = p.pitchType, !t.isEmpty { tail.append(t) }
-        if let v = p.pitchVelocity { tail.append("\(Int(v.rounded())) mph") }
-        guard !tail.isEmpty else { return call }
-        let detail = tail.joined(separator: " ")
-        return call.isEmpty ? detail : "\(call) \u{00B7} \(detail)"
-    }
-
-    /// VoiceOver reading for a gutter mark. The visual column carries
-    /// "this is an out count" by position, which speech cannot use, so
-    /// say it: "first out", "second out", "third out". An unmarked
-    /// gutter is skipped entirely rather than read as an empty string.
-    private static func outsAccessibilityLabel(_ mark: Int?) -> String {
-        switch mark {
-        case 1:  return "first out"
-        case 2:  return "second out"
-        case 3:  return "third out"
-        case let n?: return "\(n) out"
-        case nil: return ""
-        }
     }
 
     private struct HalfInning: Identifiable, Hashable {
@@ -904,11 +847,6 @@ struct PlaysView: View {
         /// outs and metrics beside it, which are derived from that
         /// same row.
         let resultText: String?
-        /// `order` of that same result row, so the expansion and the
-        /// pitch count can exclude it by IDENTITY rather than by
-        /// assuming it is `plays.last` — which it is not whenever the
-        /// stream interleaves another row after it.
-        let resultOrder: Int?
         /// Total outs AFTER this plate appearance, or nil when the
         /// at-bat carries no `Play Result` row of its own.
         ///
@@ -1003,7 +941,6 @@ struct PlaysView: View {
                 batterId:   currentBatterId,
                 plays:      currentPlays,
                 resultText: resultRow?.text,
-                resultOrder: resultRow?.order,
                 outs:       resultRow?.outs,
                 runs:       (resultRow?.scoringPlay ?? false) ? (resultRow?.scoreValue ?? 1) : nil,
                 awayScore:  (resultRow?.scoringPlay ?? false) ? resultRow?.awayScore : nil,
@@ -1101,7 +1038,6 @@ struct PlaysView: View {
                         batterId:   ab.batterId,
                         plays:      ab.plays,
                         resultText: ab.resultText,
-                        resultOrder: ab.resultOrder,
                         outs:       ab.outs,
                         runs:       ab.runs,
                         awayScore:  ab.awayScore,
