@@ -62,6 +62,12 @@ jobs:
       - name: BDL date-of-birth parsing
         run: python3 backend/tests/test_bdl_dob.py
 
+      # Guards the name search that maps a BDL player onto our MLBAM-keyed
+      # rows. An unaccented comparison there resolved a 2026 outfielder to his
+      # 1920 namesake and rewrote that man's bio nightly.
+      - name: MLBAM name resolution
+        run: python3 backend/tests/test_mlbam_name_resolve.py
+
       - name: What to do when this fails
         if: failure()
         run: |

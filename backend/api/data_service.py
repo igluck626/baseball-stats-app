@@ -2319,10 +2319,20 @@ def _resolve_mlbam_id_by_name(full_name: str) -> Optional[int]:
         return None
     if len(people) == 1:
         return _to_int(people[0].get("id"))
-    target = full_name.strip().lower()
+    # ⚠️ ACCENT-INSENSITIVE, and the bug that made this necessary is worth
+    # keeping in view. BDL ships names unaccented ("Hector Rodriguez") while
+    # MLB spells them properly ("Héctor Rodríguez"). A raw `.lower()` compare
+    # therefore EXCLUDED the modern player from the exact-match set and left
+    # his 1920 namesake as the unique "exact" match — so the nightly resolved
+    # a 2026 Reds outfielder to a Negro Leagues second baseman, overwrote that
+    # man's birth date with a 2004 one and hung a 2026 season on his career,
+    # every night. `_normalize_player_name` already strips accents for the
+    # scoring rubric; this comparison did not, and that difference was the
+    # whole fault.
+    target = _normalize_player_name(full_name)
     exact = [
         p for p in people
-        if (p.get("fullName") or "").strip().lower() == target
+        if _normalize_player_name(p.get("fullName")) == target
     ]
     if len(exact) == 1:
         return _to_int(exact[0].get("id"))
@@ -2360,6 +2370,34 @@ def _create_bio_from_bdl(
     bio["player_id"] = mlbam_id
     raw_position = (bio.get("position") or "").strip().lower()
     is_pitcher = raw_position in _BDL_PITCHER_POSITIONS
+
+    # ⚠️ CREATE ONLY. NEVER REWRITE SOMEBODY ELSE'S BIO.
+    #
+    # `crud.save_player` / `save_pitcher` upsert: on an existing row they
+    # overwrite every non-null field. This function reaches its target by NAME
+    # alone, so when the name search lands on the wrong man that upsert
+    # rewrites a real person's identity — it replaced a 1920 Negro Leagues
+    # second baseman's birth date with a 2004 one, night after night, and the
+    # only trace was a career that spanned a century.
+    #
+    # Creating a row for a player we have never seen is what this is for.
+    # Silently restating who an existing player is never was, and a wrong
+    # answer here is invisible: the row still reads like a person.
+    from database.models import Pitcher as _BioPitcher
+    from database.models import Player as _BioPlayer
+    existing = (
+        db.query(_BioPitcher).filter(_BioPitcher.player_id == mlbam_id).first()
+        or db.query(_BioPlayer).filter(_BioPlayer.player_id == mlbam_id).first()
+    )
+    if existing is not None:
+        log.warning(
+            "_create_bio_from_bdl(bdl_id=%d, name=%r): name search resolved to "
+            "MLBAM %d, which ALREADY HAS a bio (%r, born %s). Refusing to "
+            "overwrite it — the player stays unmapped for an operator to "
+            "resolve.",
+            bdl_id, full_name, mlbam_id, existing.name, existing.birth_year,
+        )
+        return None, None
     try:
         if is_pitcher:
             crud.save_pitcher(db, bio)
@@ -3558,6 +3596,10 @@ def sync_all_player_teams_from_rosters(current_year: int) -> dict:
         # didn't get a bdl_id during the bootstrap mapping pass
         # (or new BDL ids the bootstrap never ran on).
         "bdl_id:stamped":           0,
+        # The rubric found a same-named candidate and declined it, so we
+        # created nothing. A non-zero count here is the signal to look:
+        # these are the shapes name-twin collisions arrive in.
+        "refused_name_twin":        0,
     }
     bio_failed: list[int] = []
     failed_teams: list[str] = []
@@ -3614,6 +3656,10 @@ def sync_all_player_teams_from_rosters(current_year: int) -> dict:
                 #    DOB; etc. Candidates whose `bdl_id` is already
                 #    set are excluded — we're filling holes, not
                 #    overwriting existing stamps.
+                # Set when the rubric HAD candidates and still declined
+                # them. That is a collision warning, not a miss — see the
+                # gate on `_create_bio_from_bdl` below.
+                refused_candidates = False
                 if pit_row is None and bat_row is None and full_name:
                     norm_last = _normalize_player_name(
                         entry.get("last_name"),
@@ -3678,12 +3724,24 @@ def sync_all_player_teams_from_rosters(current_year: int) -> dict:
                             if mirror_pit is not None and mirror_pit.bdl_id is None:
                                 mirror_pit.bdl_id = bdl_player_id
                                 pit_row = mirror_pit
-                    # Ties (top >= 70 but not strictly greater) and
-                    # low-confidence misses (top < 70) intentionally
-                    # fall through to `_create_bio_from_bdl` below —
-                    # a brand-new player BDL just started shipping
-                    # is the more likely explanation than a name-
-                    # twin collision we're guessing at.
+                    else:
+                        # ⚠️ THE RUBRIC LOOKED AND SAID NO. It used to fall
+                        # through to `_create_bio_from_bdl`, on the argument
+                        # that "a brand-new player BDL just started shipping
+                        # is the more likely explanation than a name-twin
+                        # collision we're guessing at". This class is exactly
+                        # where that argument fails: a candidate SCORED and
+                        # was refused means a same-named row already exists,
+                        # which is the definition of a possible collision —
+                        # and the fallback matches on name alone, with no DOB
+                        # check, so it is least able to tell them apart
+                        # precisely when the risk is highest.
+                        #
+                        # Refused-a-candidate and found-nothing are different
+                        # answers and now take different paths. A genuinely
+                        # new player has no candidate at all, so he still
+                        # reaches creation below; a name-twin does not.
+                        refused_candidates = bool(scored)
 
                 # 3. Still no match — genuinely new BDL player not
                 #    cross-referenced to our MLBAM-keyed schema.
@@ -3693,7 +3751,19 @@ def sync_all_player_teams_from_rosters(current_year: int) -> dict:
                 #    the `unresolved` bucket the same way they did
                 #    before, so the operator can still hand-curate
                 #    the remaining cases.
-                if pit_row is None and bat_row is None:
+                if pit_row is None and bat_row is None and refused_candidates:
+                    # Declined by the rubric AND not created. Surfaced rather
+                    # than dropped: this is the shape a name-twin collision
+                    # takes, and it wants an operator, not a guess.
+                    counts["refused_name_twin"] += 1
+                    unresolved.append({
+                        "bdl_id":    bdl_player_id,
+                        "full_name": full_name,
+                        "team":      lahman_code,
+                        "reason":    "rubric refused a same-named candidate; "
+                                     "not created, to avoid a name-twin collision",
+                    })
+                elif pit_row is None and bat_row is None:
                     side, new_pid = _create_bio_from_bdl(
                         db,
                         bdl_id=bdl_player_id,
