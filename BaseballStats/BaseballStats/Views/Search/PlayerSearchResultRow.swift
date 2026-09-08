@@ -101,8 +101,15 @@ struct PlayerSearchResultRow: View {
 
     /// Years active. "2010–2024" if both sides known; "Debut 2010" if the
     /// player is still active and we don't have a final season yet.
+    ///
+    /// ⚠️ The closing year is `latest_season` — the most recent season row
+    /// the backend holds — falling back to `mlb_last_season`. The stored
+    /// column only clears when a man appears on BDL's ACTIVE roster, so this
+    /// row read "2023–2025" for a pitcher with twenty-one appearances in
+    /// 2026, asserting a career that had ended. For a genuinely retired
+    /// player the two agree, so the fallback costs nothing.
     private var careerYears: String? {
-        switch (player.mlb_debut, player.mlb_last_season) {
+        switch (player.mlb_debut, player.latest_season ?? player.mlb_last_season) {
         case let (debut?, last?):
             return debut == last ? "\(debut)" : "\(debut)–\(last)"
         case let (debut?, nil):
@@ -128,6 +135,7 @@ private extension String {
             bbref_id: "judgeaa01",
             mlb_debut: 2016,
             mlb_last_season: 2025,
+            latest_season: 2025,
             currentTeam: "New York",
             teamCode: "NYA",
             position: "RF",
@@ -154,6 +162,7 @@ private extension String {
             bbref_id: "ruthba01",
             mlb_debut: 1914,
             mlb_last_season: 1935,
+            latest_season: 1935,
             currentTeam: "NYA",
             teamCode: "NYA",
             position: "RF",

@@ -231,12 +231,27 @@ final class PlayerViewModel: ObservableObject {
         return careerIP >= Self.pitcherIPThreshold
     }
 
-    /// Player is retired iff we know their last season AND it's strictly
-    /// before the current year. Unknown last_season is treated as active
+    /// Player is retired iff the most recent season we hold for him is
+    /// strictly before the current year. Unknown is treated as active
     /// (rookies whose row hasn't landed yet).
+    ///
+    /// ⚠️ PREFER `latest_season`, WHICH CANNOT GO STALE. It is the year of a
+    /// season row the backend actually holds. `mlb_last_season` is only
+    /// cleared when a man appears on BDL's ACTIVE roster, and BDL drops
+    /// players from that list for a while after an injury or a demotion:
+    /// Emmet Sheehan had twenty-one appearances in 2026 and it still read
+    /// 2025, so this returned true and the profile opened on Career with no
+    /// Overview — the app had retired a man who was pitching that week.
+    ///
+    /// `mlb_last_season` stays as the fallback for a payload that carries no
+    /// `latest_season` (older responses, fixtures) and for the genuinely
+    /// season-less player, where it is the only signal there is.
     var isRetired: Bool {
-        guard let last = player.mlb_last_season else { return false }
         let currentYear = Calendar.current.component(.year, from: Date())
+        if let latest = player.latest_season {
+            return latest < currentYear
+        }
+        guard let last = player.mlb_last_season else { return false }
         return last < currentYear
     }
 

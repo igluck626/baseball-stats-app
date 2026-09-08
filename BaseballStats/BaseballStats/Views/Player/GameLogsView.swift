@@ -21,8 +21,10 @@ import SwiftUI
 final class GameLogsViewModel: ObservableObject {
     let playerId: Int
     let isPitcher: Bool
-    let mlbDebut: Int?
-    let mlbLastSeason: Int?
+    /// The whole player, not two year fields unpacked into loose `Int?`s.
+    /// That shape is why a stale value had to be chased through a view into
+    /// a view model one parameter at a time.
+    let player: PlayerSearchResult
 
     @Published var gameLogResponse: GameLogResponse?
     @Published var isLoading = false
@@ -40,32 +42,50 @@ final class GameLogsViewModel: ObservableObject {
     /// Lowest selectable season — the player's debut, clamped to 1898 (the
     /// game-log data floor) so we don't offer known-empty pre-1898 years for
     /// a 19th-century debut (e.g. Cy Young debuted 1890).
-    var seasonLowerBound: Int { max(mlbDebut ?? 1898, 1898) }
+    var seasonLowerBound: Int { Self.lowerBound(for: player) }
 
-    /// Highest selectable season. A retired player stops at their real last
-    /// season; an active player (null last_season, or last >= current year —
-    /// mirroring PlayerProfileView.isActive) extends to the current year.
-    var seasonUpperBound: Int {
-        if let last = mlbLastSeason, last < Self.currentYear { return last }
-        return Self.currentYear
+    private static func lowerBound(for p: PlayerSearchResult) -> Int {
+        max(p.mlb_debut ?? 1898, 1898)
     }
 
-    init(playerId: Int, isPitcher: Bool, mlbDebut: Int? = nil,
-         mlbLastSeason: Int? = nil, initialSeason: Int? = nil,
-         api: APIClient = .shared) {
-        self.playerId = playerId
+    /// Highest selectable season. A retired player stops at their real last
+    /// season; an active player extends to the current year.
+    var seasonUpperBound: Int { Self.upperBound(for: player) }
+
+    /// ⚠️ `latest_season` FIRST — the year of a season row the backend
+    /// actually holds. `mlb_last_season` is only cleared when a man turns up
+    /// on BDL's ACTIVE roster, and BDL drops players from that list after an
+    /// injury or a demotion: Emmet Sheehan had twenty-one appearances in 2026
+    /// and it still read 2025, so this bound stopped at 2025 and the season
+    /// picker never offered the year he was playing. The logs were there the
+    /// whole time; the year was not on the menu.
+    ///
+    /// `mlb_last_season` stays the fallback for a payload without
+    /// `latest_season`, and for a player with no season rows at all, where it
+    /// is the only signal there is.
+    ///
+    /// ⚠️ THE RANGE STAYS CONTIGUOUS ON PURPOSE. It is computed from bio
+    /// alone so the picker renders before the career response lands, and an
+    /// empty year reads as "he didn't play" where a missing one reads as a
+    /// fault in the app.
+    private static func upperBound(for p: PlayerSearchResult) -> Int {
+        if let latest = p.latest_season { return min(latest, currentYear) }
+        if let last = p.mlb_last_season, last < currentYear { return last }
+        return currentYear
+    }
+
+    init(player: PlayerSearchResult, isPitcher: Bool,
+         initialSeason: Int? = nil, api: APIClient = .shared) {
+        self.playerId = player.player_id
         self.isPitcher = isPitcher
-        self.mlbDebut = mlbDebut
-        self.mlbLastSeason = mlbLastSeason
+        self.player = player
         self.api = api
         // Bound the initial season to the player's real span. An explicit
         // initialSeason (career-table tap) is honored but clamped; otherwise
         // default to the upper bound (most recent season with data) — so a
         // retired player opens on their last season, not an empty current year.
-        let lo = max(mlbDebut ?? 1898, 1898)
-        let hi: Int
-        if let last = mlbLastSeason, last < Self.currentYear { hi = last }
-        else { hi = Self.currentYear }
+        let lo = Self.lowerBound(for: player)
+        let hi = Self.upperBound(for: player)
         self.selectedSeason = min(max(initialSeason ?? hi, lo), hi)
     }
 
@@ -106,8 +126,7 @@ private enum SplitRow: Hashable {
 struct GameLogsView: View {
     let playerId: Int
     let isPitcher: Bool
-    let mlbDebut: Int?
-    let mlbLastSeason: Int?
+    let player: PlayerSearchResult
     /// Non-nil when the host stack can open a box score — threaded to the
     /// frozen rows, which become tappable only then.
     var onTapGame: ((GameLog) -> Void)? = nil
@@ -128,27 +147,23 @@ struct GameLogsView: View {
     /// which doesn't need to push a year in from outside. Synthesizes
     /// a binding to a discarded local so the public API of GameLogsView
     /// stays a single source of truth (Binding<Int>).
-    init(playerId: Int, isPitcher: Bool, mlbDebut: Int? = nil, mlbLastSeason: Int? = nil) {
-        self.init(playerId: playerId, isPitcher: isPitcher,
-                  mlbDebut: mlbDebut, mlbLastSeason: mlbLastSeason,
+    init(player: PlayerSearchResult, isPitcher: Bool) {
+        self.init(player: player, isPitcher: isPitcher,
                   year: .constant(GameLogsViewModel.currentYear))
     }
 
-    init(playerId: Int, isPitcher: Bool, mlbDebut: Int? = nil,
-         mlbLastSeason: Int? = nil,
+    init(player: PlayerSearchResult, isPitcher: Bool,
          onTapGame: ((GameLog) -> Void)? = nil,
          pendingGameId: String? = nil,
          year: Binding<Int>) {
-        self.playerId = playerId
+        self.playerId = player.player_id
         self.isPitcher = isPitcher
-        self.mlbDebut = mlbDebut
-        self.mlbLastSeason = mlbLastSeason
+        self.player = player
         self.onTapGame = onTapGame
         self.pendingGameId = pendingGameId
         self._year = year
         _vm = StateObject(wrappedValue: GameLogsViewModel(
-            playerId: playerId, isPitcher: isPitcher,
-            mlbDebut: mlbDebut, mlbLastSeason: mlbLastSeason,
+            player: player, isPitcher: isPitcher,
             initialSeason: year.wrappedValue
         ))
     }

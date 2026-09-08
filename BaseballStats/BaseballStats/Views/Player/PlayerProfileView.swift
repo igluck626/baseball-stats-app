@@ -510,13 +510,19 @@ struct PlayerProfileView: View {
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
-    /// Active when we have no last-season info (rookies whose row hasn't
-    /// landed yet) or when the recorded last season is the current year.
-    /// "Retired" requires a known mlb_last_season strictly before the
-    /// current year.
+    /// Active when the most recent season we hold for him is the current
+    /// year, or when we have no season information at all (rookies whose row
+    /// hasn't landed yet).
+    ///
+    /// ⚠️ `latest_season` FIRST, for the reason `PlayerViewModel.isRetired`
+    /// gives: `mlb_last_season` only clears when a man appears on BDL's
+    /// ACTIVE roster, so it read 2025 for Emmet Sheehan while he was pitching
+    /// in 2026 — and this line put the word "Retired" in his header. Same
+    /// field, same staleness, a different consumer from the tab selection.
     private var isActive: Bool {
-        guard let last = player.mlb_last_season else { return true }
         let currentYear = Calendar.current.component(.year, from: Date())
+        if let latest = player.latest_season { return latest >= currentYear }
+        guard let last = player.mlb_last_season else { return true }
         return last >= currentYear
     }
 
@@ -1404,10 +1410,8 @@ struct PlayerProfileView: View {
         // new GameLogsViewModel's initialSeason: argument honors
         // gameLogYear so the chosen year survives the role swap too.
         GameLogsView(
-            playerId: player.player_id,
+            player: player,
             isPitcher: !showingBatting,
-            mlbDebut: player.mlb_debut,
-            mlbLastSeason: player.mlb_last_season,
             onTapGame: boxScoreContext == nil ? nil : { openBoxScore(for: $0) },
             pendingGameId: pendingGameLogId,
             year: $gameLogYear
@@ -4514,6 +4518,7 @@ final class CurrentSeasonRanksViewModel: ObservableObject {
             bbref_id: "ohtansh01",
             mlb_debut: 2018,
             mlb_last_season: 2026,
+            latest_season: 2026,
             currentTeam: "Los Angeles",
             teamCode: "LAN",
             position: "DH",

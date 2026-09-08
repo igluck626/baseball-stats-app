@@ -671,9 +671,17 @@ def _resolve_team_code(team: Optional[str], league: Optional[str]) -> Optional[s
 
 def _latest_team_info(
     db, player_id: int, *, pitcher: bool,
-) -> tuple[Optional[str], Optional[str]]:
-    """(team_display, team_code) from the player's most recent season
-    row across BOTH `pitcher_seasons` AND `player_seasons`.
+) -> tuple[Optional[str], Optional[str], Optional[int]]:
+    """(team_display, team_code, latest_season) from the player's most
+    recent season row across BOTH `pitcher_seasons` AND `player_seasons`.
+
+    ⚠️ `latest_season` IS THE HONEST ANSWER TO "IS HE STILL PLAYING". It is
+    the year of a row we actually hold, so it cannot go stale the way
+    `mlb_last_season` does: that column is only cleared when a player turns
+    up on BDL's ACTIVE roster, and BDL leaves men off it for a spell after an
+    injury or a demotion. Emmet Sheehan had twenty-one appearances in 2026
+    and `mlb_last_season` still read 2025, so the app opened his profile on
+    the Career tab with no Overview — it believed he had retired.
 
     Looking at only one side leaves stale-data holes for ex-NL
     pitchers (Tyler Rogers et al.): they have batting rows in
@@ -689,7 +697,7 @@ def _latest_team_info(
     every time. Two-way players (Ohtani: same team both sides)
     aren't affected; the answer matches either way.
 
-    Returns (None, None) when the player has no season rows in
+    Returns (None, None, None) when the player has no season rows in
     either table."""
     _ = pitcher
     rows = (
@@ -697,7 +705,7 @@ def _latest_team_info(
         + crud.get_player_seasons(db, player_id)
     )
     if not rows:
-        return None, None
+        return None, None, None
     latest = max(rows, key=lambda r: r.year or 0)
     team = latest.team
     # bref / bwar can emit multi-stint aggregate rows for traded
@@ -708,7 +716,7 @@ def _latest_team_info(
     # of bailing to NULL on the multi-team string.
     if team and "," in team:
         team = team.split(",")[-1].strip()
-    return team, _resolve_team_code(team, latest.league)
+    return team, _resolve_team_code(team, latest.league), latest.year
 
 
 # Position values that mark a batter row as a "phantom" — i.e. the player
@@ -818,7 +826,7 @@ def search_player(name: str) -> list[dict]:
                 row, is_pitcher = _choose_active_bio_row(
                     batter_rows.get(pid), pitcher_rows.get(pid), db,
                 )
-                team_display, team_code = _latest_team_info(
+                team_display, team_code, latest_season = _latest_team_info(
                     db, row.player_id, pitcher=is_pitcher,
                 )
                 out[pid] = {
@@ -830,6 +838,11 @@ def search_player(name: str) -> list[dict]:
                     "mlb_last_season": row.mlb_last_season,
                     "current_team":    team_display,
                     "team_code":       team_code,
+                    # Year of the most recent season row we hold. See
+                    # `_latest_team_info` — this is what tells a client
+                    # whether a man is still playing, where
+                    # `mlb_last_season` can lag a year behind.
+                    "latest_season":   latest_season,
                     "is_pitcher":      is_pitcher,
                     **_bio_dict(row, db),
                 }
@@ -876,7 +889,7 @@ def get_player_by_bdl_id(bdl_id: int) -> Optional[dict]:
             )
             if row is None:
                 continue
-            team_display, team_code = _latest_team_info(
+            team_display, team_code, latest_season = _latest_team_info(
                 db, row.player_id, pitcher=is_pitcher
             )
             return {
@@ -888,6 +901,7 @@ def get_player_by_bdl_id(bdl_id: int) -> Optional[dict]:
                 "mlb_last_season": row.mlb_last_season,
                 "current_team":    team_display,
                 "team_code":       team_code,
+                "latest_season":   latest_season,
                 **_bio_dict(row, db),
             }
     return None
@@ -913,7 +927,7 @@ def get_player_by_id(player_id: int) -> Optional[dict]:
         if batter_row is None and pitcher_row is None:
             return None
         row, is_pitcher = _choose_active_bio_row(batter_row, pitcher_row, db)
-        team_display, team_code = _latest_team_info(
+        team_display, team_code, latest_season = _latest_team_info(
             db, row.player_id, pitcher=is_pitcher
         )
         return {
@@ -925,6 +939,7 @@ def get_player_by_id(player_id: int) -> Optional[dict]:
             "mlb_last_season": row.mlb_last_season,
             "current_team":    team_display,
             "team_code":       team_code,
+            "latest_season":   latest_season,
             "is_pitcher":      is_pitcher,
             **_bio_dict(row, db),
         }
@@ -8096,7 +8111,7 @@ _HEAT_FRESHNESS_DAYS = 2
 
 def _heat_entry(db, row, is_pitcher: bool) -> dict:
     """Search-card-shaped block for one heat-list player."""
-    team_display, team_code = _latest_team_info(db, row.player_id, pitcher=is_pitcher)
+    team_display, team_code, _latest_yr = _latest_team_info(db, row.player_id, pitcher=is_pitcher)
     return {
         "player_id":    row.player_id,
         "name":         row.name,

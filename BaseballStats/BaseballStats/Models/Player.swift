@@ -26,6 +26,16 @@ struct PlayerSearchResult: Codable, Identifiable, Hashable {
     let bbref_id: String?
     let mlb_debut: Int?
     let mlb_last_season: Int?
+    /// Year of the most recent season row the backend holds for this player.
+    ///
+    /// ⚠️ THIS, NOT `mlb_last_season`, ANSWERS "IS HE STILL PLAYING". That
+    /// column is only cleared when a man turns up on BDL's ACTIVE roster, and
+    /// BDL leaves players off it for a spell after an injury or a demotion —
+    /// so it can read 2025 for someone with twenty-one appearances in 2026.
+    /// This is the year of a row we actually have, so it cannot lag.
+    /// Optional because older payloads (and any offline fixture) won't carry
+    /// it; `isRetired` falls back to `mlb_last_season` when it's absent.
+    let latest_season: Int?
     /// Team from the player's most recent season row in the DB. The raw
     /// stored value — may be a Lahman code, a bref code, or a city display
     /// name depending on which loader wrote the row. Use `teamCode` for
@@ -89,7 +99,7 @@ struct PlayerSearchResult: Codable, Identifiable, Hashable {
     var id: Int { player_id }
 
     enum CodingKeys: String, CodingKey {
-        case player_id, name, bbref_id, mlb_debut, mlb_last_season
+        case player_id, name, bbref_id, mlb_debut, mlb_last_season, latest_season
         case currentTeam = "current_team"
         case teamCode = "team_code"
         case position, bats
