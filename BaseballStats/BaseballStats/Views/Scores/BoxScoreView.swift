@@ -59,6 +59,11 @@ final class BoxScoreViewModel: ObservableObject {
     /// "All" modes. For LIVE games `applyLiveDetail` writes it from the store's
     /// snapshot; for final games `loadPlays` does a one-shot fetch.
     @Published var plays: [BDLPlay] = []
+    /// Plate appearances for this game, kept so the plays list can
+    /// join batted-ball metrics onto its at-bats. The box score's own
+    /// substitute placement consumes them inline; this holds the same
+    /// slice rather than fetching it a second time.
+    @Published var plateAppearances: [BDLPlateAppearance] = []
     /// Set only for a historical game — how its batters are sorted. The view
     /// shows it rather than letting a reader read a lineup into the order.
     @Published var batterOrdering: String?
@@ -441,6 +446,7 @@ final class BoxScoreViewModel: ObservableObject {
         async let paTask     = bdl.getGamePlateAppearances(gameId: game.gamePk)
         let lineup = (try? await lineupTask) ?? []
         let plateAppearances = (try? await paTask) ?? []
+        self.plateAppearances = plateAppearances
 
         let stats: [BDLPlayerStat]
         do {
@@ -993,6 +999,7 @@ struct BoxScoreView: View {
             Divider().opacity(0.4)
             PlaysView(
                 plays:               vm.plays,
+                plateAppearances:    vm.plateAppearances,
                 awayAbbr:            teamAbbr(vm.game.teams.away.team),
                 homeAbbr:            teamAbbr(vm.game.teams.home.team),
                 autoExpandOnScoring: true,
@@ -1193,6 +1200,7 @@ struct BoxScoreView: View {
                 Divider().opacity(0.4)
                 PlaysView(
                     plays:               vm.plays,
+                    plateAppearances:    vm.plateAppearances,
                     awayAbbr:            teamAbbr(vm.game.teams.away.team),
                     homeAbbr:            teamAbbr(vm.game.teams.home.team),
                     autoExpandOnScoring: false,

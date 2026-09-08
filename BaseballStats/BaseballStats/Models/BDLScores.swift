@@ -265,6 +265,44 @@ struct BDLPlateAppearance: Codable, Hashable {
     /// skips, so it is only ever used as a sort key alongside
     /// `inning`, never as an index.
     let paNumber: Int
+    /// Every pitch of the PA, in order. The CONTACT METRICS live on
+    /// the last one — see `BDLPitchDetail`. Absent on some rows, so
+    /// optional; the plays list treats a missing array the same as a
+    /// PA that never put a ball in play.
+    let pitches: [BDLPitchDetail]?
+
+    /// ⚠️ Do NOT add an `outs` field here, even though the endpoint
+    /// ships one. It is tempting because it needs no join at all,
+    /// and it matches NEITHER a before-count nor an after-count.
+    /// Measured on game 5059936 (2026-09-07):
+    ///   • Top 7, 5 PAs, inning ends: `1,1,1,2,2` — never reaches 3,
+    ///     so it cannot be an after-count; a before-count would read
+    ///     `0,1,1,2,2`, so the first value is wrong too
+    ///   • Bottom 2, Walk/K/Flyout/K: `0,1,1,2` — before would be
+    ///     `0,0,1,2`, after would be `0,1,2,3`. Matches neither
+    ///   • across 17 half-innings only 7 start at `outs = 0`
+    /// The outs count the plays list renders comes from the
+    /// `Play Result` row on `/plays`, which IS a clean after-count.
+    /// See `PlaysView.AtBat.outs`.
+}
+
+/// One pitch inside a `BDLPlateAppearance`. BDL ships 53 properties
+/// per pitch (release position, spin, acceleration vectors, plate
+/// coordinates); this decodes only the batted-ball outcome fields the
+/// plays list renders. `Codable` synthesis ignores unlisted keys, so
+/// adding a field here is the whole cost of surfacing one.
+///
+/// Every metric is optional because they are populated only on a
+/// pitch that was PUT IN PLAY — a called strike carries a pitch type
+/// and a speed but no exit velocity. A PA that ended in a strikeout,
+/// a walk or an intentional walk therefore yields no contact line at
+/// all, which is the intended rendering: absent, not zero.
+struct BDLPitchDetail: Codable, Hashable {
+    let exitVelocity: Double?
+    let launchAngle: Double?
+    let hitDistance: Double?
+    let expectedBattingAverage: Double?
+    let isBarrel: Bool?
 }
 
 // MARK: - Season stats
