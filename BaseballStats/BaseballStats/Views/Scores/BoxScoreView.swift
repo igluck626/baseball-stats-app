@@ -791,6 +791,23 @@ struct BoxScoreView: View {
                         }
                         teamPicker(bs: bs)
                         teamSection(side: currentSide, bs: bs)
+                        // Beneath the tables, above the plays list. A
+                        // block rather than a column, so it competes for
+                        // vertical room only — the tables' widths are
+                        // untouched. Absent, not empty, whenever the feed
+                        // carries no tracked measurements: every game
+                        // before 2015 (which ships no plate appearances
+                        // at all) and any modern game whose feed failed.
+                        if let leaders = gameLeaders(bs: bs) {
+                            let sides = gameLeadersByTeam(bs: bs)
+                            GameLeadersCard(
+                                leaders:   leaders,
+                                away:      sides.away,
+                                home:      sides.home,
+                                awayAbbr:  teamAbbr(bs.teams.away.team),
+                                homeAbbr:  teamAbbr(bs.teams.home.team),
+                            )
+                        }
                     } else if vm.isLoading {
                         ProgressView().controlSize(.large)
                             .frame(maxWidth: .infinity, minHeight: 120)
@@ -1266,6 +1283,37 @@ struct BoxScoreView: View {
             Text(bs.teams.home.team.name).tag(TeamSide.home)
         }
         .pickerStyle(.segmented)
+    }
+
+    /// Resolve a BDL player id to a display name and the team he
+    /// appeared for, from the `/stats` rows already loaded. Every id the
+    /// plate-appearance feed mentions is covered by that payload, so
+    /// this needs no additional fetch.
+    private func leaderIdentity(bs: BoxScoreResponse) -> (Int) -> (name: String, teamId: Int)? {
+        var table: [Int: (name: String, teamId: Int)] = [:]
+        for side in [bs.teams.away, bs.teams.home] {
+            let teamId = side.team.id
+            for p in side.players.values {
+                table[p.person.id] = (p.person.fullName, teamId)
+            }
+        }
+        return { table[$0] }
+    }
+
+    private func gameLeaders(bs: BoxScoreResponse) -> GameLeaders? {
+        GameLeaders.build(
+            plateAppearances: vm.plateAppearances,
+            nameAndTeam: leaderIdentity(bs: bs),
+        )
+    }
+
+    private func gameLeadersByTeam(bs: BoxScoreResponse) -> (away: GameLeaders?, home: GameLeaders?) {
+        GameLeaders.byTeam(
+            plateAppearances: vm.plateAppearances,
+            awayTeamId: bs.teams.away.team.id,
+            homeTeamId: bs.teams.home.team.id,
+            nameAndTeam: leaderIdentity(bs: bs),
+        )
     }
 
     private func teamSection(side: TeamSide, bs: BoxScoreResponse) -> some View {

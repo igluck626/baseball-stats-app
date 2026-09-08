@@ -265,6 +265,16 @@ struct BDLPlateAppearance: Codable, Hashable {
     /// skips, so it is only ever used as a sort key alongside
     /// `inning`, never as an index.
     let paNumber: Int
+    /// The pitcher who faced this batter. Needed to attribute a fast
+    /// pitch to a name — the pitch rows carry no identity of their own.
+    /// Every pitcher id in this feed is present in the `/stats` payload
+    /// the box score already holds (8 of 8 on game 5059936), so no
+    /// extra fetch is required to resolve it.
+    let pitcherId: Int?
+    /// The plate appearance's outcome — "Home Run", "Double",
+    /// "Groundout", "Walk". Used to say what a hard-hit ball actually
+    /// became, since an exit velocity alone doesn't.
+    let result: String?
     /// Every pitch of the PA, in order. The CONTACT METRICS live on
     /// the last one — see `BDLPitchDetail`. Absent on some rows, so
     /// optional; the plays list treats a missing array the same as a
@@ -303,6 +313,19 @@ struct BDLPitchDetail: Codable, Hashable {
     let hitDistance: Double?
     let expectedBattingAverage: Double?
     let isBarrel: Bool?
+    /// Velocity out of the hand, which is the number a broadcast means
+    /// by "98". BDL also ships `plate_speed` — the same pitch measured
+    /// at the plate, some 8 mph slower (98.7 against 90.7 on one
+    /// tracked fastball). Release speed is the convention; mixing the
+    /// two would make a leaderboard incomparable with every other
+    /// source.
+    ///
+    /// Unlike the batted-ball fields above, this is populated on EVERY
+    /// tracked pitch, not only those put in play — 341 of 341 on a
+    /// 2015 game.
+    let releaseSpeed: Double?
+    /// "4-Seam Fastball", "Sweeper", "Curve". Says what the number was.
+    let pitchType: String?
 }
 
 // MARK: - Season stats
