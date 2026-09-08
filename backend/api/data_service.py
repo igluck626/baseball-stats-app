@@ -2544,7 +2544,27 @@ def _score_bdl_candidate(bdl_player: dict, db_player: dict) -> int:
     # entry is suspicious — likely a name-twin collision
     # (Drew Smith dad-vs-son etc.) — so we penalize harder than
     # we reward the active-active case.
-    if db_player.get("mlb_last_season") is None:
+    #
+    # ⚠️ "ACTIVE" MEANS "HAS A ROW FOR THIS SEASON", not "mlb_last_season is
+    # NULL". That column was wrong in BOTH directions and this signal
+    # inherited both. It only clears when a man appears on BDL's ACTIVE
+    # roster, so it read 2025 for Emmet Sheehan through twenty-one 2026
+    # appearances and scored him -20 as retired; and 33 rows carry a
+    # `final_game` with a NULL here, scoring long-retired men +10.
+    #
+    # Measured over the 5,356 mapped rows on 2026-09-08: 174 flip -20 -> +10
+    # (called retired, actually playing) and 12 flip +10 -> -20 (called
+    # active, no current season). Of the 33, THIRTY keep +10 because they do
+    # have a current-season row — the stale-`final_game` actives this could
+    # have broken are unaffected — and the two that drop are Eliezer Alfonzo
+    # and Hector Rodriguez, genuinely retired, whose misclassification here
+    # is what let a name-twin collision through in the first place.
+    latest = db_player.get("latest_season")
+    if latest is not None:
+        is_active = latest >= _current_year()
+    else:
+        is_active = db_player.get("mlb_last_season") is None
+    if is_active:
         score += 10
     else:
         score -= 20
@@ -2566,11 +2586,27 @@ def _build_bio_candidate_index(
     set of bdl_ids already stamped somewhere in our DB, which the
     caller uses to skip BDL roster entries we've already matched.
     """
+    from sqlalchemy import func as _func
+
     from database.models import Pitcher as _Pitcher
     from database.models import Player as _Player
+    from database.models import PitcherSeason as _PitcherSeason
+    from database.models import PlayerSeason as _PlayerSeason
 
     index: dict[str, list[dict]] = {}
     mapped_bdl_ids: set[int] = set()
+
+    # Latest season row we hold per player, across BOTH season tables. Two
+    # grouped queries, merged in memory — see `latest_season` on the
+    # candidate dict for why the scorer needs it.
+    latest_by_pid: dict[int, int] = {}
+    for model in (_PlayerSeason, _PitcherSeason):
+        for pid, yr in db.query(model.player_id, _func.max(model.year)).group_by(model.player_id).all():
+            if pid is None or yr is None:
+                continue
+            pid = int(pid)
+            if yr > latest_by_pid.get(pid, 0):
+                latest_by_pid[pid] = int(yr)
 
     def _add(rows, side_pitcher: bool) -> None:
         for r in rows:
@@ -2590,6 +2626,9 @@ def _build_bio_candidate_index(
                 "position":        r.position,
                 "bdl_id":          r.bdl_id,
                 "mlb_last_season": r.mlb_last_season,
+                # Year of the most recent season row we hold. Signal 5 reads
+                # this in preference to `mlb_last_season` — see the scorer.
+                "latest_season":   latest_by_pid.get(int(r.player_id)),
                 "birth_year":      r.birth_year,
                 "birth_month":     r.birth_month,
                 "birth_day":       r.birth_day,
