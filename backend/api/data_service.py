@@ -2105,7 +2105,26 @@ def _parse_bdl_batter_row(s: dict) -> dict:
     field shape. Keys BDL doesn't carry (PA, CS, IBB, HBP, SF, SH,
     GIDP) are omitted so the upsert path doesn't NULL them out.
     TB is recomputed locally from H/2B/3B/HR for consistency with
-    the rest of the pipeline."""
+    the rest of the pipeline.
+
+    ⚠️ `G` IS BALLDONTLIE'S NUMBER, VERBATIM, AND MUST STAY THAT WAY.
+    The player profile decides whether to overlay recent finals onto this
+    row by comparing this `G` against a DEDUPED COUNT OF OUR OWN GAMELOG
+    ROWS — `gamelog_games` on `/batter-stats-at-date` and
+    `/pitcher-record-at-date`. The difference is exactly how many games
+    the aggregate is behind, and it works ONLY because the two sides have
+    different provenance: this row from balldontlie's season aggregate,
+    the gamelogs from per-game data.
+
+    Computing `G` here from our own gamelogs instead would make the two
+    numbers agree by construction. The comparison would then read zero
+    forever, the overlay would never fire, and a stale season row would
+    render as fact — a failure that looks exactly like everything
+    working. Measured 2026-09-09: Bryce Miller sat at G=18 / ERA 4.01
+    here while our gamelog held 19 rows, because balldontlie had not
+    absorbed one of the previous night's games some 11 hours after it
+    ended.
+    """
     h  = _to_int(s.get("batting_h"))     or 0
     d2 = _to_int(s.get("batting_2b"))    or 0
     d3 = _to_int(s.get("batting_3b"))    or 0
@@ -2148,6 +2167,24 @@ def _parse_bdl_pitcher_row(s: dict) -> dict:
 
     FIP is NOT taken from BDL — `_build_pitcher_season_entry`
     derives FIP from the HR/BB/SO components instead.
+
+    ⚠️ `G` IS BALLDONTLIE'S NUMBER, VERBATIM, AND MUST STAY THAT WAY.
+    The player profile decides whether to overlay recent finals onto this
+    row by comparing this `G` against a DEDUPED COUNT OF OUR OWN GAMELOG
+    ROWS — `gamelog_games` on `/batter-stats-at-date` and
+    `/pitcher-record-at-date`. The difference is exactly how many games
+    the aggregate is behind, and it works ONLY because the two sides have
+    different provenance: this row from balldontlie's season aggregate,
+    the gamelogs from per-game data.
+
+    Computing `G` here from our own gamelogs instead would make the two
+    numbers agree by construction. The comparison would then read zero
+    forever, the overlay would never fire, and a stale season row would
+    render as fact — a failure that looks exactly like everything
+    working. Measured 2026-09-09: Bryce Miller sat at G=18 / ERA 4.01
+    here while our gamelog held 19 rows, because balldontlie had not
+    absorbed one of the previous night's games some 11 hours after it
+    ended.
     """
     return {
         "G":      _to_int(s.get("pitching_gp")),

@@ -623,63 +623,37 @@ final class PlayerViewModel: ObservableObject {
             // network call would be wasted work.
             var batterIncludesToday = false
             var pitcherIncludesToday = false
+            var batterGamelogGames: Int? = nil
+            var pitcherGamelogGames: Int? = nil
             if let date = finalGameDateET {
                 if dbBattingG != nil && bdlBattingG != nil {
                     let outer = try? await api.getBatterStatsAtDate(
                         playerId: player.player_id, gameDate: date,
                     )
                     batterIncludesToday = (outer ?? nil)?.includesToday ?? false
+                    batterGamelogGames  = (outer ?? nil)?.gamelogGames
                 }
                 if dbPitchingG != nil && bdlPitchingG != nil {
                     let outer = try? await api.getPitcherRecordAtDate(
                         playerId: player.player_id, gameDate: date,
                     )
                     pitcherIncludesToday = (outer ?? nil)?.includesToday ?? false
+                    pitcherGamelogGames  = (outer ?? nil)?.gamelogGames
                 }
             }
-            // Nil-aware per-side gates. Each side's gate returns:
-            //   • `true` when there's no GP data on that side
-            //     (`dbG == nil` OR `bdlG == nil`) — the side has
-            //     nothing to say about whether the game's been
-            //     absorbed, so it shouldn't block the OTHER side
-            //     from firing.
-            //   • Otherwise: `dbG == bdlG` (DB and BDL agree the
-            //     game isn't double-counted) AND `!includesToday`
-            //     (our gamelog table doesn't have today's row yet).
-            //
-            // The previous formula gated on the `hasMeaningfulXxx`
-            // career-volume flags, which produced wrong answers
-            // for thin samples (Will Klein with <50 IP career →
-            // `hasMeaningfulPitching=false` → overlay never fires
-            // even when his GP comparison would say it should).
-            // The nil-aware version reads the actual GP fields the
-            // overlay decision depends on, not a meta-flag derived
-            // from career totals.
-            //
-            // Edge cases:
-            //   • Ohtani (two-way, both sides have data): both
-            //     gates must pass — same behavior as before.
-            //   • Pure pitcher / position-player (Johan Rojas):
-            //     one side is nil → gate auto-true → the other
-            //     side decides on its own. Same behavior as before.
-            //   • Rookie call-up with `currentBatting == nil` and
-            //     a pitching row: batting gate auto-true, pitching
-            //     gate decides. Old logic blocked the overlay
-            //     entirely because `hasMeaningful*` requires 50+
-            //     career PA/IP; this case is the user-visible win.
-            let battingGate: Bool = {
-                guard let db = dbBattingG, let bdl = bdlBattingG else {
-                    return true
-                }
-                return db == bdl && !batterIncludesToday
-            }()
-            let pitchingGate: Bool = {
-                guard let db = dbPitchingG, let bdl = bdlPitchingG else {
-                    return true
-                }
-                return db == bdl && !pitcherIncludesToday
-            }()
-            let shouldOverlayFinals = battingGate && pitchingGate
+            // The rule itself lives in `OverlayDecision` — extracted so
+            // it can be tested apart from the fetching, and so the three
+            // branches (behind > 0 / == 0 / < 0) are stated in one place.
+            let battingSide = OverlayDecision.Side(
+                seasonG: dbBattingG, bdlG: bdlBattingG,
+                gamelogGames: batterGamelogGames, includesToday: batterIncludesToday,
+            )
+            let pitchingSide = OverlayDecision.Side(
+                seasonG: dbPitchingG, bdlG: bdlPitchingG,
+                gamelogGames: pitcherGamelogGames, includesToday: pitcherIncludesToday,
+            )
+            let decision = OverlayDecision.decide(batting: battingSide, pitching: pitchingSide)
+            let shouldOverlayFinals = decision.shouldOverlayFinals
             // Captured for the diagnostic below — the three inputs that choose
             // the branch, plus what the OTHER branch would have produced.
             diagDB            = (dbBattingG, dbPitchingG)
@@ -731,6 +705,26 @@ final class PlayerViewModel: ObservableObject {
                     sawPit = true
                 }
                 usesBDLDirectStats = true
+            }
+            // ⚠️ BOUND THE FINALS TO WHAT THE COUNT SAYS IS MISSING, and
+            // dedupe by game id.
+            //
+            // The schedule can offer more finals than the season row is
+            // actually behind — a doubleheader, or a yesterday-retry that
+            // enqueues a game already absorbed. Adding an extra one reads
+            // as a plausible stat line and is wrong, which is the failure
+            // this whole change exists to remove; adding one too few
+            // leaves the row briefly stale, which self-corrects on the
+            // next aggregate. Prefer short over inflated.
+            //
+            // Live games are never bounded away — the count describes
+            // FINALS the aggregate has not absorbed, and a game in
+            // progress is in neither.
+            if shouldOverlayFinals {
+                eligible = OverlayDecision.boundedGames(
+                    eligible, budget: decision.budget,
+                    isLive: { $0.isLive }, gameId: { $0.gameId },
+                )
             }
             if !shouldOverlayFinals {
                 // BDL-direct or not, finals shouldn't go through

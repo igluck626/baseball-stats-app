@@ -162,6 +162,7 @@ final class APIClient {
             doubles:       resp.doubles,
             triples:       resp.triples,
             includesToday: resp.includes_today,
+            gamelogGames:  resp.gamelog_games,
         )
     }
 
@@ -187,6 +188,7 @@ final class APIClient {
             losses:        resp.losses,
             saves:         resp.saves,
             includesToday: resp.includes_today,
+            gamelogGames:  resp.gamelog_games,
         )
     }
 
@@ -613,6 +615,14 @@ struct PitcherRecord: Codable, Hashable {
     /// nightly / catch-up hasn't reached today yet and the caller
     /// needs to manually add the pitcher's current-game decision.
     let includesToday: Bool
+    /// How many DISTINCT DATES the gamelog holds for this season, up to
+    /// and including `gameDate`.
+    ///
+    /// ⚠️ THE COUNT IS THE SIGNAL, not `includesToday`. Compared against
+    /// the season row's `G` it says how many games the aggregate is
+    /// BEHIND — see `PlayerViewModel`'s overlay. Absent on an older
+    /// backend, hence optional; callers fall back to the boolean.
+    let gamelogGames: Int?
 }
 
 /// Raw shape `GET /players/{id}/pitcher-record-at-date` returns.
@@ -627,6 +637,8 @@ private struct PitcherRecordResponse: Decodable {
     let losses:         Int
     let saves:          Int
     let includes_today: Bool
+    /// Optional: an older backend doesn't send it.
+    let gamelog_games:  Int?
 }
 
 /// Sister to `PitcherRecord` — batter's cumulative HR / 2B / 3B
@@ -641,6 +653,14 @@ struct BatterStatsAtDate: Codable, Hashable {
     /// today's Eastern-local calendar date. Same semantics as
     /// `PitcherRecord.includesToday`.
     let includesToday: Bool
+    /// How many DISTINCT DATES the gamelog holds for this season, up to
+    /// and including `gameDate`.
+    ///
+    /// ⚠️ THE COUNT IS THE SIGNAL, not `includesToday`. Compared against
+    /// the season row's `G` it says how many games the aggregate is
+    /// BEHIND — see `PlayerViewModel`'s overlay. Absent on an older
+    /// backend, hence optional; callers fall back to the boolean.
+    let gamelogGames: Int?
 }
 
 /// Raw shape `GET /players/{id}/batter-stats-at-date` returns.
@@ -653,6 +673,8 @@ private struct BatterStatsAtDateResponse: Decodable {
     let doubles:        Int
     let triples:        Int
     let includes_today: Bool
+    /// Optional: an older backend doesn't send it.
+    let gamelog_games:  Int?
 }
 
 /// Response from `GET /teams/{team_id}/postseason` — every series

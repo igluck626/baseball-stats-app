@@ -1543,6 +1543,31 @@ def player_gamelogs_pitching(
     return response
 
 
+def _distinct_game_days(rows) -> int:
+    """How many distinct DATES the gamelog rows cover, season-to-date.
+
+    ⚠️ COUNTED, NOT COMPARED, and this is the point of the field. A
+    caller asking "is today's game in the gamelog?" learns nothing about
+    whether the SEASON ROW includes it, because the two are written from
+    different sources — the gamelog from game data, `player_seasons` from
+    balldontlie's aggregated season row. When balldontlie is late on a
+    game the gamelog gains a row the season row does not reflect, and a
+    boolean turns the one signal that should trigger a correction into
+    the thing that suppresses it. A count says HOW MANY games the season
+    row is missing, which is what a caller can act on.
+
+    ⚠️ DEDUPED BY DATE deliberately, and it is the conservative side of a
+    real trade. Duplicate gamelog rows for one game exist in this data —
+    see the backfill coverage asymmetry, ~1.5 rows per game where 18 were
+    expected — and an inflated count would make a caller add a game
+    twice, which reads as plausible and is wrong. Deduping costs the
+    second game of a doubleheader, which leaves a caller one game short:
+    stale rather than inflated, and self-correcting once the aggregate
+    catches up. Prefer that failure to the other one.
+    """
+    return len({r.game_date for r in rows if r.game_date is not None})
+
+
 @app.get("/players/{player_id}/pitcher-record-at-date")
 def player_pitcher_record_at_date(
     player_id: int,
@@ -1599,6 +1624,7 @@ def player_pitcher_record_at_date(
         "losses":         losses,
         "saves":          saves,
         "includes_today": includes_today,
+        "gamelog_games":  _distinct_game_days(rows),
     }
 
 
@@ -1657,6 +1683,7 @@ def player_batter_stats_at_date(
         "doubles":        doubles,
         "triples":        triples,
         "includes_today": includes_today,
+        "gamelog_games":  _distinct_game_days(rows),
     }
 
 
