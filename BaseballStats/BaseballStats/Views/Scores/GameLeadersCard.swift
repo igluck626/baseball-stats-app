@@ -34,39 +34,63 @@ struct GameLeadersCard: View {
     /// plays list. Absent for a PA falls back to the PA's own pitches.
     var pitchRows: [String: [BDLPlay]] = [:]
 
-    enum Grouping: String, CaseIterable, Identifiable {
-        case overall = "Overall"
-        case byTeam  = "By Team"
-        var id: String { rawValue }
+    /// ⚠️ THREE-WAY, replacing an Overall / By Team toggle whose
+    /// by-team state stacked BOTH sides — twenty rows where overall
+    /// rendered ten, which is most of why the card read long. A filter
+    /// shows ten rows in every state.
+    enum Scope: Hashable, Identifiable {
+        case overall, away, home
+        var id: Self { self }
     }
 
-    @State private var grouping: Grouping = .overall
+    @State private var scope: Scope = .overall
+    /// The card is collapsed until asked for, at EVERY text size. The
+    /// earlier collapse fired only at the accessibility sizes, where
+    /// the card ran to some eight screens; it reads long at the default
+    /// sizes too, and it sits between the box-score tables and the
+    /// plays list, which is a bad place to be long.
+    @State private var isExpanded = false
     @State private var selectedPlay: PlayDetail?
     /// Only consulted at the accessibility sizes — see `visible`.
     @State private var expanded = false
+    /// Width of the right-aligned value column. Scaled so the decimal
+    /// points still line up at the Dynamic Type steps below the
+    /// accessibility ones, where the table is still in use.
+    @ScaledMetric(relativeTo: .subheadline) private var valueColumnWidth: CGFloat = 46
     @Environment(\.dynamicTypeSize) private var typeSize
+
+    /// The board the current scope names. Each side is ranked again
+    /// from the whole game rather than filtered out of the overall
+    /// board, so a side that placed nowhere still shows its own best.
+    private var board: GameLeaders? {
+        switch scope {
+        case .overall: return leaders
+        case .away:    return away
+        case .home:    return home
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("GAME LEADERS")
-                .font(.caption.weight(.bold))
-                .tracking(0.8)
-                .foregroundStyle(.secondary)
+            header
+            if isExpanded {
+                Picker("Scope", selection: $scope) {
+                    Text("Overall").tag(Scope.overall)
+                    Text(awayAbbr).tag(Scope.away)
+                    Text(homeAbbr).tag(Scope.home)
+                }
+                .pickerStyle(.segmented)
 
-            Picker("Grouping", selection: $grouping) {
-                ForEach(Grouping.allCases) { g in Text(g.rawValue).tag(g) }
-            }
-            .pickerStyle(.segmented)
-
-            switch grouping {
-            case .overall:
-                category("HARDEST HIT", leaders.hardestHit, unit: "mph")
-                category("FASTEST PITCH", leaders.fastestPitches, unit: "mph")
-            case .byTeam:
-                // Each side re-ranked from the full set, so a side that
-                // placed nowhere overall still shows its own best.
-                sideBlock(awayAbbr, away)
-                sideBlock(homeAbbr, home)
+                if let board, !board.isEmpty {
+                    category("HARDEST HIT", board.hardestHit, unit: "mph")
+                    category("FASTEST PITCH", board.fastestPitches, unit: "mph")
+                } else {
+                    Text("No tracked measurements for this side.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                teaser
             }
         }
         .padding(.horizontal, 14)
@@ -87,21 +111,10 @@ struct GameLeadersCard: View {
     private func detail(for e: GameLeaders.Entry) -> PlayDetail {
         let rows = e.pa.pitches ?? []
         let key = GameLeaders.paKey(e.pa)
-        // Prefer the play stream's pitch rows, mapped through the SAME
-        // two functions the plays list uses — that is what guarantees
-        // the two routes into this sheet say the same thing, rather
-        // than two mappings that merely look alike today.
-        let pitches: [PlayDetail.Pitch]
-        if let stream = pitchRows[key], stream.count == rows.count {
-            pitches = stream.map {
-                PlayDetail.Pitch(
-                    call:   PlayDetailSheet.call($0),
-                    detail: PlayDetailSheet.pitchDescription($0),
-                )
-            }
-        } else {
-            pitches = rows.map(PlayDetailSheet.pitch(from:))
-        }
+        // Both feeds, each supplying what it is better at — the call
+        // from the stream, the speed and pitch name from the plate
+        // appearance. See `PlayDetailSheet.pitches(stream:pa:)`.
+        let pitches = PlayDetailSheet.pitches(stream: pitchRows[key] ?? [], pa: rows)
         return PlayDetail(
             id:       e.id,
             title:    e.pa.result ?? "Play",
@@ -110,6 +123,99 @@ struct GameLeadersCard: View {
             pitches:  pitches,
             highlightIndex: e.pitchIndex,
         )
+    }
+
+    private var header: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.2)) { isExpanded.toggle() }
+        } label: {
+            HStack {
+                Text("GAME LEADERS")
+                    .font(.caption.weight(.bold))
+                    .tracking(0.8)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// What the collapsed card shows.
+    ///
+    /// ⚠️ EACH LINE IS LABELLED. Two bare numbers — "112.6 mph" and
+    /// "100.9 mph" — do not say which is a batted ball and which is a
+    /// pitch, and a reader who has to tap to find out has been given a
+    /// puzzle rather than a summary.
+    ///
+    /// One Text per line with " · " separators, never an HStack, so the
+    /// line wraps rather than breaking mid-token at the accessibility
+    /// sizes.
+    @ViewBuilder
+    private var teaser: some View {
+        VStack(alignment: .leading, spacing: teaserSpacing) {
+            if let best = leaders.hardestHit.first {
+                teaserLine("Hardest hit", best)
+            }
+            if let best = leaders.fastestPitches.first {
+                teaserLine("Fastest pitch", best)
+            }
+        }
+    }
+
+    private var teaserSpacing: CGFloat { typeSize.isAccessibilitySize ? 14 : 4 }
+
+    private func teaserLine(_ label: String, _ e: GameLeaders.Entry) -> some View {
+        Text(Self.teaserText(label, e, detail: displayDetail(e), style: effectiveTeaserStyle))
+            .font(.subheadline)
+            .foregroundStyle(.primary)
+            .lineLimit(typeSize.isAccessibilitySize ? nil : 2)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// How much of the row to carry into the collapsed state.
+    enum TeaserStyle {
+        /// "Hardest hit · 112.6 mph"
+        case numberOnly
+        /// "Hardest hit · Teoscar Hernandez · 112.6 mph"
+        case named
+        /// "Hardest hit · Teoscar Hernandez · 112.6 mph · Home Run"
+        case full
+    }
+    /// The shape used at the ordinary text sizes. At the accessibility
+    /// sizes it is overridden — see `effectiveTeaserStyle`.
+    var teaserStyle: TeaserStyle = .named
+
+    /// ⚠️ NAMED ordinarily, NUMBER-ONLY at the accessibility sizes.
+    ///
+    /// The name is what makes a folded board worth opening — "Halvorsen
+    /// threw 100.9" poses the question the board answers, where a bare
+    /// number only reports. But at AX5 the named line wraps to three
+    /// lines, so two of them fill some 1350pt and folding the card has
+    /// saved almost nothing. Dropping the name there costs a third of
+    /// the height and keeps the LABEL, which is the part that carries
+    /// meaning: a reader still knows which number is a batted ball and
+    /// which is a pitch.
+    private var effectiveTeaserStyle: TeaserStyle {
+        typeSize.isAccessibilitySize ? .numberOnly : teaserStyle
+    }
+
+    static func teaserText(
+        _ label: String, _ e: GameLeaders.Entry, detail: String?, style: TeaserStyle,
+    ) -> String {
+        let value = String(format: "%.1f mph", e.value)
+        switch style {
+        case .numberOnly: return "\(label) \u{00B7} \(value)"
+        case .named:      return "\(label) \u{00B7} \(e.name) \u{00B7} \(value)"
+        case .full:
+            var parts = [label, e.name, value]
+            if let d = detail, !d.isEmpty { parts.append(d) }
+            return parts.joined(separator: " \u{00B7} ")
+        }
     }
 
     @ViewBuilder
@@ -135,7 +241,12 @@ struct GameLeadersCard: View {
             // together into one block of text. Widen the separation
             // there so an entry still reads as one item.
             VStack(alignment: .leading, spacing: typeSize.isAccessibilitySize ? 16 : 6) {
-                Text(title)
+                // ⚠️ The unit belongs in the header once the value has
+                // its own column: tabularising stripped "mph" from
+                // every row, leaving a column of bare numbers. At the
+                // accessibility sizes the rows carry it themselves, so
+                // the header would repeat it.
+                Text(typeSize.isAccessibilitySize ? title : "\(title) (\(unit.uppercased()))")
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(.tertiary)
                 ForEach(Array(shown.enumerated()), id: \.element.id) { i, e in
@@ -146,17 +257,8 @@ struct GameLeadersCard: View {
                     // read as the exception rather than as the rule
                     // this list follows.
                     Button { selectedPlay = detail(for: e) } label: {
-                        Text(Self.line(
-                            e, unit: unit,
-                            detail: displayDetail(e),
-                            previousDetail: i > 0 ? displayDetail(shown[i - 1]) : nil,
-                        ))
-                            .font(.subheadline)
-                            .foregroundStyle(.primary)
-                            .lineLimit(typeSize.isAccessibilitySize ? nil : 2)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .contentShape(Rectangle())
+                        row(e, unit: unit,
+                            previousDetail: i > 0 ? displayDetail(shown[i - 1]) : nil)
                     }
                     .buttonStyle(.plain)
                 }
@@ -165,6 +267,56 @@ struct GameLeadersCard: View {
                         .font(.subheadline.weight(.semibold))
                 }
             }
+        }
+    }
+
+    /// ⚠️ TABULAR AT THE ORDINARY SIZES, a single wrapping line at the
+    /// accessibility ones.
+    ///
+    /// Columns were rejected for the PLAYS list because a row there is a
+    /// sentence, and a sentence in a fixed column truncates. A leaders
+    /// row is three short fields — a name, a number, a word — so the
+    /// number can hold its own right-aligned column and the decimal
+    /// points line up down the board, which is most of what "organised"
+    /// means for a list of measurements.
+    ///
+    /// It still cannot survive the accessibility sizes: a name that
+    /// wraps to three lines beside a fixed 92pt column leaves the number
+    /// stranded against a tall block of text. So above those sizes the
+    /// row collapses to the same single Text the teaser uses. The
+    /// COLUMN WIDTH is a `@ScaledMetric`, so it also tracks the smaller
+    /// Dynamic Type steps rather than only working at the default.
+    @ViewBuilder
+    private func row(_ e: GameLeaders.Entry, unit: String, previousDetail: String?) -> some View {
+        let detail = displayDetail(e)
+        if typeSize.isAccessibilitySize {
+            Text(Self.line(e, unit: unit, detail: detail, previousDetail: previousDetail))
+                .font(.subheadline)
+                .foregroundStyle(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+        } else {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(e.name)
+                    .font(.subheadline)
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                Spacer(minLength: 4)
+                if let d = detail, !d.isEmpty, !(e.kind == .pitch && d == previousDetail) {
+                    Text(d)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Text(String(format: "%.1f", e.value))
+                    .font(.subheadline.weight(.semibold))
+                    .monospacedDigit()
+                    .frame(width: valueColumnWidth, alignment: .trailing)
+            }
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
         }
     }
 
@@ -220,23 +372,13 @@ struct GameLeadersCard: View {
 
     /// The trailing detail as it should read.
     ///
-    /// ⚠️ For a PITCH, the play stream's name wins over the plate
-    /// appearance's. The two feeds name the same pitch differently —
-    /// "Four-seam FB" against "4-Seam Fastball" — and the detail sheet
-    /// this row opens is built from the stream. Left alone, a row would
-    /// say one and its own sheet the other, one tap apart. Preferring
-    /// one source for display is the whole point of the exercise; the
-    /// PA feed remains the fallback where the two disagree on pitch
-    /// count and the stream cannot be trusted to line up.
+    /// ⚠️ A pitch's name comes from the PLATE APPEARANCE, which is what
+    /// the detail sheet also shows — the two must agree, since a row
+    /// and the sheet it opens are one tap apart. The play stream names
+    /// the same pitch differently ("Four-seam FB" against "4-Seam
+    /// Fastball") AND truncates its speed, so it supplies neither here.
     ///
     /// A HIT's detail is the plate-appearance outcome ("Double"), which
-    /// the stream has no equivalent of, so it is never overridden.
-    private func displayDetail(_ e: GameLeaders.Entry) -> String? {
-        guard e.kind == .pitch,
-              let stream = pitchRows[GameLeaders.paKey(e.pa)],
-              e.pitchIndex < stream.count,
-              let type = stream[e.pitchIndex].pitchType, !type.isEmpty
-        else { return e.detail }
-        return type
-    }
+    /// the stream has no equivalent of.
+    private func displayDetail(_ e: GameLeaders.Entry) -> String? { e.detail }
 }

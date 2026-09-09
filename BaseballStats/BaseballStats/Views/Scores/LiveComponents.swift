@@ -636,12 +636,7 @@ struct PlaysView: View {
             // rather than showing it with dashes — the same rule the
             // row follows.
             contact:  ab.contact,
-            pitches:  pitchRows(ab).map {
-                PlayDetail.Pitch(
-                    call:   PlayDetailSheet.call($0),
-                    detail: PlayDetailSheet.pitchDescription($0),
-                )
-            },
+            pitches:  PlayDetailSheet.pitches(stream: pitchRows(ab), pa: ab.paPitches),
             // The plays list's row is about the at-bat, not any one
             // pitch, so nothing is marked.
             highlightIndex: nil,
@@ -889,6 +884,10 @@ struct PlaysView: View {
         /// or joined to no PA at all. Rendered as an absent line
         /// rather than as zeros.
         let contact: BDLPitchDetail?
+        /// EVERY pitch of the joined plate appearance. Kept because the
+        /// PA feed carries speeds the play stream truncates — see
+        /// `PlayDetailSheet.pitches(stream:pa:)`, which pairs the two.
+        let paPitches: [BDLPitchDetail]
     }
 
     private static func groupedHalfInnings(_ plays: [BDLPlay]) -> [HalfInning] {
@@ -954,6 +953,7 @@ struct PlaysView: View {
                 awayScore:  (resultRow?.scoringPlay ?? false) ? resultRow?.awayScore : nil,
                 homeScore:  (resultRow?.scoringPlay ?? false) ? resultRow?.homeScore : nil,
                 contact:    nil,   // filled in by `attachContactMetrics`
+                paPitches:  [],
             ))
             currentBatter = nil
             currentBatterId = nil
@@ -1025,9 +1025,10 @@ struct PlaysView: View {
                     guard let pa = join.next(key) else { return ab }
                     // The contact metrics sit on the LAST pitch of the
                     // plate appearance — the one put in play. A PA that
-                    // put none yields nil, which renders the same as no
-                    // PA at all.
-                    guard let detail = pa.pitches?.last, detail.exitVelocity != nil else { return ab }
+                    // put none yields nil for `contact`, which renders
+                    // the same as no PA at all; its pitches are still
+                    // carried, since the sheet lists them either way.
+                    let last = pa.pitches?.last
                     return AtBat(
                         id:         ab.id,
                         batterText: ab.batterText,
@@ -1038,7 +1039,8 @@ struct PlaysView: View {
                         runs:       ab.runs,
                         awayScore:  ab.awayScore,
                         homeScore:  ab.homeScore,
-                        contact:    detail,
+                        contact:    (last?.exitVelocity != nil) ? last : nil,
+                        paPitches:  pa.pitches ?? [],
                     )
                 },
             )

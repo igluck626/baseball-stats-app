@@ -194,9 +194,7 @@ struct PlayDetailSheet: View {
         describe(type: p.pitchType, speed: p.pitchVelocity)
     }
 
-    /// The same, from the plate-appearance feed's own pitch record —
-    /// the leaders card's route into this sheet. `releaseSpeed` rather
-    /// than `pitchVelocity`: different feed, same measurement.
+    /// The same, from the plate-appearance feed's own pitch record.
     static func pitch(from d: BDLPitchDetail) -> PlayDetail.Pitch {
         PlayDetail.Pitch(
             call:   d.callName ?? d.description ?? "Pitch",
@@ -204,8 +202,47 @@ struct PlayDetailSheet: View {
         )
     }
 
+    /// Both feeds' readings of the same pitches, each supplying what it
+    /// is better at.
+    ///
+    /// ⚠️ THE CALL comes from the play stream, which distinguishes
+    /// "Strike Swinging" from "Strike Looking" where the plate
+    /// appearance's `callName` flattens both to "Strike".
+    ///
+    /// ⚠️ THE SPEED AND THE PITCH NAME come from the plate appearance,
+    /// because the stream TRUNCATES: it ships 94 where the PA feed has
+    /// 94.7, and 81 where it has 81.6 — systematically low, never
+    /// rounded. Reading speed off the stream made a leaders row promise
+    /// "100.9 mph" and its own sheet answer "100", one tap apart. The
+    /// PA feed also names pitches better ("4-Seam Fastball",
+    /// "Curveball" against the stream's "Four-seam FB", "Curve").
+    ///
+    /// Falls back to whichever side is available when the two disagree
+    /// on how many pitches the plate appearance held — 3 of 69 on game
+    /// 5059936, the out-of-order ball-in-play rows.
+    static func pitches(stream: [BDLPlay], pa: [BDLPitchDetail]) -> [PlayDetail.Pitch] {
+        guard stream.count == pa.count else {
+            return pa.isEmpty ? stream.map {
+                PlayDetail.Pitch(call: call($0), detail: pitchDescription($0))
+            } : pa.map(pitch(from:))
+        }
+        return zip(stream, pa).map { row, detail in
+            PlayDetail.Pitch(
+                call:   call(row),
+                detail: describe(type: detail.pitchType ?? row.pitchType,
+                                 speed: detail.releaseSpeed ?? row.pitchVelocity),
+            )
+        }
+    }
+
+    /// ⚠️ ONE DECIMAL, matching the leaders board. A broadcast writes
+    /// "98 mph", but the board writes "100.9" — and rounding here made
+    /// the row promise 100.9 and its own sheet answer 101, which is the
+    /// same one-tap contradiction that reading speed off the truncating
+    /// play stream produced. The two must agree before either matches a
+    /// convention.
     private static func describe(type: String?, speed: Double?) -> String? {
-        let parts = [type, speed.map { "\(Int($0.rounded())) mph" }]
+        let parts = [type, speed.map { String(format: "%.1f mph", $0) }]
             .compactMap { $0 }
             .filter { !$0.isEmpty }
         return parts.isEmpty ? nil : parts.joined(separator: " ")
