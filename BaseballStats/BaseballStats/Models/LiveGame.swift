@@ -81,6 +81,10 @@ struct LiveGameDetail: Codable, Hashable {
     let situation: LiveSituationBlock
     let plays: [LivePlayRow]
     let scoringPlays: [LivePlayRow]
+    /// Batted-ball metrics for the plays list, shaped as plate
+    /// appearances so the client's existing join renders them unchanged
+    /// — see `_contact_pas` in the backend. Absent on an older payload.
+    let contactPAs: [BDLPlateAppearance]?
     let batting: LiveSidePlayers<LiveBatterRow>
     let pitching: LiveSidePlayers<LivePitcherRow>
 
@@ -91,6 +95,7 @@ struct LiveGameDetail: Codable, Hashable {
         case seasonType = "season_type"
         case summary, linescore, situation, plays
         case scoringPlays = "scoring_plays"
+        case contactPAs = "contact_pas"
         case batting, pitching
     }
 }
@@ -193,6 +198,16 @@ struct LivePlayRow: Codable, Hashable {
     let pitcherId: Int?
     let text: String?
     let type: String?
+    /// Pitch identity, for the detail sheet's pitch list.
+    ///
+    /// ⚠️ The play stream TRUNCATES a speed — 94 where the
+    /// plate-appearance feed has 94.7 — so a live game reads a decimal
+    /// low against the same pitch after the final, when the client
+    /// fetches the PA feed itself. Taken anyway, because a speed that
+    /// rides the play row survives whatever the row survives, where the
+    /// exact value can vanish with a dropped plate appearance.
+    let pitchType: String?
+    let pitchVelocity: Double?
 
     enum CodingKeys: String, CodingKey {
         case order, inning, half, outs
@@ -203,6 +218,8 @@ struct LivePlayRow: Codable, Hashable {
         case batterId = "batter_id"
         case pitcherId = "pitcher_id"
         case text, type
+        case pitchType = "pitch_type"
+        case pitchVelocity = "pitch_velocity"
     }
 }
 
@@ -397,8 +414,8 @@ extension LivePlayRow {
             strikes:       nil,
             batterId:      batterId,
             pitcherId:     pitcherId,
-            pitchType:     nil,
-            pitchVelocity: nil,
+            pitchType:     pitchType,
+            pitchVelocity: pitchVelocity,
             trajectory:    nil,
         )
     }

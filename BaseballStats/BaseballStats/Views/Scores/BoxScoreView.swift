@@ -182,6 +182,11 @@ final class BoxScoreViewModel: ObservableObject {
     /// fetch and did NOT refresh them each poll tick).
     func applyLiveDetail(_ detail: LiveGameDetail) {
         plays     = detail.playsAsBDL
+        // Batted-ball metrics for a game in progress. The finals path
+        // fetches `/plate_appearances` itself; live, `load()` returns
+        // early and never does, so these arrive on the snapshot instead
+        // — in the same shape, so everything downstream is unchanged.
+        plateAppearances = detail.contactPAs ?? []
         live      = detail.toLiveFeedResponse()
         boxScore  = detail.toBoxScoreResponse()
         error     = nil
@@ -798,7 +803,33 @@ struct BoxScoreView: View {
                         // carries no tracked measurements: every game
                         // before 2015 (which ships no plate appearances
                         // at all) and any modern game whose feed failed.
-                        if let leaders = gameLeaders(bs: bs) {
+                        // ⚠️ FINAL ONLY, and this is now a DELIBERATE gate
+                        // rather than the accident it used to be. Live,
+                        // `plateAppearances` is populated (the snapshot
+                        // carries contact blocks), so the board would
+                        // render — half of it, since those blocks carry
+                        // no pitch speeds, and reordering roughly once
+                        // every five minutes with the tenth row
+                        // flickering in and out.
+                        //
+                        // ⚠️ THE NUMBER TO USE IS 33 AND 22 — reorderings
+                        // after the board first fills, measured on games
+                        // 5059936 and 5059818 by replaying them plate
+                        // appearance by plate appearance. An earlier
+                        // measurement of "~6-7 across three hours" is
+                        // still quoted in places and is NOT this board:
+                        // it was taken when the board showed THREE rows.
+                        // A tenth slot has a far lower entry threshold
+                        // and turns over constantly, and the pitch board
+                        // fills in the first inning and churns for two
+                        // hours after. Do not reason about ten rows from
+                        // the three-row figure.
+                        //
+                        // A ranked row that appears and vanishes
+                        // is the batting-slot fault in a more visible
+                        // place. See the note in memory for the three
+                        // conditions under which it could go live.
+                        if !isLiveNow, let leaders = gameLeaders(bs: bs) {
                             let sides = gameLeadersByTeam(bs: bs)
                             GameLeadersCard(
                                 leaders:   leaders,
