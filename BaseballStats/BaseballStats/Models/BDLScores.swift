@@ -326,6 +326,13 @@ struct BDLPitchDetail: Codable, Hashable {
     let releaseSpeed: Double?
     /// "4-Seam Fastball", "Sweeper", "Curve". Says what the number was.
     let pitchType: String?
+    /// How the pitch was called — "Ball", "Strike Looking", "In Play".
+    /// The play stream carries the same thing as a row `type`; this is
+    /// the plate-appearance feed's copy, so a detail sheet opened from
+    /// the leaders card can list pitches without the play stream.
+    let callName: String?
+    /// The fuller phrasing BDL ships beside it ("In play, run(s)").
+    let description: String?
 }
 
 // MARK: - Season stats

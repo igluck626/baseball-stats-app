@@ -636,7 +636,15 @@ struct PlaysView: View {
             // rather than showing it with dashes — the same rule the
             // row follows.
             contact:  ab.contact,
-            pitches:  pitchRows(ab),
+            pitches:  pitchRows(ab).map {
+                PlayDetail.Pitch(
+                    call:   PlayDetailSheet.call($0),
+                    detail: PlayDetailSheet.pitchDescription($0),
+                )
+            },
+            // The plays list's row is about the at-bat, not any one
+            // pitch, so nothing is marked.
+            highlightIndex: nil,
         )
     }
 
@@ -992,30 +1000,18 @@ struct PlaysView: View {
     ) -> [HalfInning] {
         guard !plateAppearances.isEmpty else { return halves }
 
-        struct Key: Hashable {
-            let inning: Int
-            let half: String
-            let batterId: Int
-        }
-        // `paNumber` is not dense — it restarts and skips — so it is
-        // used purely as a sort key here, never as an index.
-        var queues: [Key: [BDLPitchDetail?]] = [:]
-        for pa in plateAppearances.sorted(by: {
-            ($0.inning, $0.paNumber) < ($1.inning, $1.paNumber)
-        }) {
-            guard let bid = pa.batterId else { continue }
-            let key = Key(
-                inning:   pa.inning,
-                half:     normalizedInningType(pa.halfInning ?? ""),
-                batterId: bid,
-            )
-            // The contact metrics sit on the LAST pitch of the PA —
-            // the one that was put in play. Earlier pitches carry a
-            // type and a speed but no exit velocity.
-            queues[key, default: []].append(pa.pitches?.last)
-        }
+        // ⚠️ Keyed on inning + half + BATTER and consumed in order,
+        // never on a list index — see `InningJoin` for the measurement
+        // behind that. `paNumber` is not dense (it restarts and skips),
+        // so it orders within an inning and nothing more.
+        var join = InningJoin(
+            plateAppearances,
+            key: { pa in
+                pa.batterId.map { InningKey(inning: pa.inning, half: pa.halfInning, batterId: $0) }
+            },
+            order: { $0.inning * 1_000 + $0.paNumber },
+        )
 
-        var cursor: [Key: Int] = [:]
         return halves.map { half in
             HalfInning(
                 id:         half.id,
@@ -1023,15 +1019,15 @@ struct PlaysView: View {
                 inningType: half.inningType,
                 atBats:     half.atBats.map { ab in
                     guard let bid = ab.batterId else { return ab }
-                    let key = Key(
+                    let key = InningKey(
                         inning: half.inning, half: half.inningType, batterId: bid,
                     )
-                    let i = cursor[key, default: 0]
-                    guard let queue = queues[key], i < queue.count else { return ab }
-                    cursor[key] = i + 1
-                    // A PA with no ball in play yields nil here, which
-                    // is the same rendering as no PA at all.
-                    guard let detail = queue[i], detail.exitVelocity != nil else { return ab }
+                    guard let pa = join.next(key) else { return ab }
+                    // The contact metrics sit on the LAST pitch of the
+                    // plate appearance — the one put in play. A PA that
+                    // put none yields nil, which renders the same as no
+                    // PA at all.
+                    guard let detail = pa.pitches?.last, detail.exitVelocity != nil else { return ab }
                     return AtBat(
                         id:         ab.id,
                         batterText: ab.batterText,

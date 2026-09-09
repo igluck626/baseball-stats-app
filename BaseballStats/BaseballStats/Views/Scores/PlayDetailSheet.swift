@@ -28,7 +28,27 @@ struct PlayDetail: Identifiable, Hashable {
     /// strikeout shows no metrics rather than three dashes.
     let contact: BDLPitchDetail?
     /// Every pitch of the plate appearance, in order.
-    let pitches: [BDLPlay]
+    let pitches: [Pitch]
+    /// Index into `pitches` to mark, or nil for none.
+    ///
+    /// Set when the sheet is opened from a leaders row, which is about
+    /// ONE pitch rather than the plate appearance as a whole — a row
+    /// for the ninth-fastest pitch would otherwise open a sheet with
+    /// six pitches in it and leave the reader to find which. nil from
+    /// the plays list, where the row is about the at-bat.
+    let highlightIndex: Int?
+
+    /// One pitch, independent of which feed it came from. The plays
+    /// list builds these from `BDLPlay` rows; the leaders card builds
+    /// them from the plate appearance's own `BDLPitchDetail`, which
+    /// carries the same facts under different names. Keeping the sheet
+    /// on a neutral type is what lets one sheet serve both.
+    struct Pitch: Hashable {
+        /// "Swinging Strike", "Called Strike", "Ball", "Foul".
+        let call: String
+        /// "Sweeper 82 mph", or nil where the feed tracked neither.
+        let detail: String?
+    }
 }
 
 struct PlayDetailSheet: View {
@@ -96,6 +116,7 @@ struct PlayDetailSheet: View {
                 .tracking(0.8)
                 .foregroundStyle(.secondary)
             ForEach(Array(detail.pitches.enumerated()), id: \.offset) { i, p in
+                let marked = (i == detail.highlightIndex)
                 // One row per pitch: what it was called, and what it
                 // was thrown at. The type and speed are joined into a
                 // SINGLE Text with a space rather than an HStack of
@@ -104,21 +125,31 @@ struct PlayDetailSheet: View {
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
                     Text("\(i + 1)")
                         .font(.footnote.weight(.semibold))
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(marked ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
                         .monospacedDigit()
                         .frame(width: 18, alignment: .trailing)
-                    Text(Self.call(p))
-                        .font(.subheadline)
+                    Text(p.call)
+                        .font(marked ? .subheadline.weight(.semibold) : .subheadline)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 8)
-                    if let pitch = Self.pitchDescription(p) {
-                        Text(pitch)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                    if let d = p.detail {
+                        Text(d)
+                            .font(marked ? .subheadline.weight(.semibold) : .subheadline)
+                            .foregroundStyle(marked ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
                             .multilineTextAlignment(.trailing)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
+                // Weight and a tinted ground rather than a coloured
+                // rule: the marked pitch has to be findable at a glance
+                // without reading as an error or a selection the reader
+                // made.
+                .padding(.vertical, marked ? 4 : 0)
+                .padding(.horizontal, marked ? 8 : 0)
+                .background(
+                    marked ? Color.accentColor.opacity(0.12) : .clear,
+                    in: RoundedRectangle(cornerRadius: 6),
+                )
             }
         }
     }
@@ -141,6 +172,7 @@ struct PlayDetailSheet: View {
     }
 
     /// BDL's row type read as the call a broadcast would use.
+    /// Used by the plays list to build `Pitch` values.
     /// Prefix matching because BDL suffixes review outcomes onto the
     /// same types — "Ball - Confirmed", "Strike Looking - Overturned".
     static func call(_ p: BDLPlay) -> String {
@@ -159,7 +191,21 @@ struct PlayDetailSheet: View {
     /// "Sweeper 82 mph", or just one half when the other is missing —
     /// an intentional walk's automatic balls carry neither.
     static func pitchDescription(_ p: BDLPlay) -> String? {
-        let parts = [p.pitchType, p.pitchVelocity.map { "\(Int($0.rounded())) mph" }]
+        describe(type: p.pitchType, speed: p.pitchVelocity)
+    }
+
+    /// The same, from the plate-appearance feed's own pitch record —
+    /// the leaders card's route into this sheet. `releaseSpeed` rather
+    /// than `pitchVelocity`: different feed, same measurement.
+    static func pitch(from d: BDLPitchDetail) -> PlayDetail.Pitch {
+        PlayDetail.Pitch(
+            call:   d.callName ?? d.description ?? "Pitch",
+            detail: describe(type: d.pitchType, speed: d.releaseSpeed),
+        )
+    }
+
+    private static func describe(type: String?, speed: Double?) -> String? {
+        let parts = [type, speed.map { "\(Int($0.rounded())) mph" }]
             .compactMap { $0 }
             .filter { !$0.isEmpty }
         return parts.isEmpty ? nil : parts.joined(separator: " ")

@@ -806,6 +806,14 @@ struct BoxScoreView: View {
                                 home:      sides.home,
                                 awayAbbr:  teamAbbr(bs.teams.away.team),
                                 homeAbbr:  teamAbbr(bs.teams.home.team),
+                                sentences: GameLeaders.sentences(
+                                    plays: vm.plays,
+                                    plateAppearances: vm.plateAppearances,
+                                ),
+                                pitchRows: GameLeaders.pitchRows(
+                                    plays: vm.plays,
+                                    plateAppearances: vm.plateAppearances,
+                                ),
                             )
                         }
                     } else if vm.isLoading {
