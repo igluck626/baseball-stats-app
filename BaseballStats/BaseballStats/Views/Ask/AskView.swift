@@ -20,15 +20,64 @@ struct AskView: View {
     @StateObject private var viewModel = AskViewModel()
     @State private var path = NavigationPath()
     @FocusState private var inputFocused: Bool
+    @Environment(\.dynamicTypeSize) private var typeSize
 
-    /// Tappable starters — shown ONLY in the empty state. Once the user has
-    /// asked anything, the transcript takes over and these disappear.
-    private let examples = [
-        "What's Aaron Judge's batting average with runners in scoring position?",
-        "Who has the most career grand slams?",
-        "How many times did Clayton Kershaw strike a batter out on a full count?",
-        "How does Mookie Betts hit against left-handed pitching?",
-        "What was Shohei Ohtani's OPS in 2024?",
+    /// Tappable starters, grouped — shown ONLY in the empty state. Once the
+    /// user has asked anything, the transcript takes over and these disappear.
+    ///
+    /// ⚠️ THE CATEGORIES ARE DERIVED FROM THE TOOLS, not invented to look
+    /// complete. Each maps to one or more of the sixteen the backend exposes:
+    /// a player's numbers (situational / rates / splits), leaders (leaderboard
+    /// / rate leaderboard), comparisons, streaks and spans (four tools),
+    /// milestones and single-game feats, awards, and teams (team /
+    /// head-to-head). If a tool is added, a category or a sample belongs here
+    /// with it — this list going stale is exactly what happened between
+    /// 2026-07-13 and 2026-09-09, when the page still described three
+    /// capabilities and the backend had grown to sixteen.
+    ///
+    /// ⚠️ EVERY QUESTION HERE WAS RUN AGAINST THE LIVE ENDPOINT and returned a
+    /// real answer, 2026-09-09. A sample that declines teaches a reader the
+    /// feature does not work, which is worse than showing no sample. Re-run
+    /// them if the store or the prompt changes.
+    ///
+    /// Phrasings favour the shapes the parser handles most reliably — "How
+    /// many X does <player> have?" and "What is <player>'s <rate>?" are the
+    /// fast path's own templates, so they are both the best-served questions
+    /// and the ones worth teaching.
+    private struct ExampleGroup: Hashable {
+        let title: String
+        let questions: [String]
+    }
+
+    private let exampleGroups: [ExampleGroup] = [
+        .init(title: "A player's numbers", questions: [
+            "How many home runs does Aaron Judge have?",
+            "What's Aaron Judge's batting average with runners in scoring position?",
+        ]),
+        .init(title: "Leaders and records", questions: [
+            "Who has the most career grand slams?",
+            "Who has the lowest career ERA?",
+        ]),
+        .init(title: "Player against player", questions: [
+            "Who has more career home runs, Bonds or Aaron?",
+            "Did Judge or Ohtani hit more home runs in 2024?",
+        ]),
+        .init(title: "Streaks and stretches", questions: [
+            "Who has the longest hitting streak?",
+            "Most home runs in any 30-game span?",
+        ]),
+        .init(title: "Milestones and feats", questions: [
+            "When did Barry Bonds hit his 756th home run?",
+            "Has anyone hit 4 home runs in a game?",
+        ]),
+        .init(title: "Awards", questions: [
+            "How many Cy Youngs does Roger Clemens have?",
+            "Who has the most MVPs?",
+        ]),
+        .init(title: "Teams", questions: [
+            "How many World Series have the Yankees won?",
+            "What's the Dodgers' record against the Giants?",
+        ]),
     ]
 
     var body: some View {
@@ -97,23 +146,39 @@ struct AskView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 VStack(alignment: .leading, spacing: 10) {
-                    Image(systemName: "sparkles")
-                        .font(.largeTitle)
-                        .foregroundStyle(.tint)
+                    // ⚠️ DECORATION ONLY, and it is dropped at the
+                    // accessibility sizes. At AX5 the icon, a two-line title
+                    // and one sentence fill the screen between them, so every
+                    // sample — the entire point of this page — sits below the
+                    // fold and the reader meets a wall of prose instead of a
+                    // list of what they can ask. Nothing is lost by hiding a
+                    // sparkle; a great deal is lost by hiding the samples.
+                    if !typeSize.isAccessibilitySize {
+                        Image(systemName: "sparkles")
+                            .font(.largeTitle)
+                            .foregroundStyle(.tint)
+                    }
                     Text("Ask about baseball")
                         .font(.title2.weight(.bold))
-                    Text("Ask about any player's stats, splits, or situational numbers from 1910 to today. Each question is answered on its own.")
+                    // ⚠️ THE ERA CLAIM HAS TWO FLOORS, and the old copy gave
+                    // only the later one — "from 1910 to today" — which is the
+                    // play-by-play floor and false for season and career
+                    // figures, which reach 1876. A reader told 1910 never asks
+                    // about Cap Anson, so the sentence was suppressing
+                    // questions the system answers correctly.
+                    Text("Ask about a player, a team, or the record book.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.top, 24)
 
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Try asking")
+                ForEach(exampleGroups, id: \.self) { group in
+                  VStack(alignment: .leading, spacing: 10) {
+                    Text(group.title)
                         .font(.footnote.weight(.semibold))
                         .foregroundStyle(.secondary)
-                    ForEach(examples, id: \.self) { example in
+                    ForEach(group.questions, id: \.self) { example in
                         Button {
                             inputFocused = false
                             viewModel.ask(example)
@@ -138,7 +203,20 @@ struct AskView: View {
                         }
                         .buttonStyle(.plain)
                     }
+                  }
                 }
+
+                // ⚠️ BELOW THE SAMPLES, deliberately. This is reference —
+                // which modifiers exist, how far back each store reaches —
+                // and it was above them, where at the accessibility sizes it
+                // filled the screen on its own and pushed every sample off.
+                // The samples are what tell a reader what to ask; the floors
+                // are a footnote they consult once. Ordering by that reading
+                // helps every size, not only the large ones.
+                Text("Narrow by season, opponent, handedness, count, or the postseason. Season and career figures from 1876; pitch-by-pitch situations from 1910. Each question is answered on its own.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .padding(.top, 4)
             }
             .padding(.horizontal)
             .padding(.bottom, 12)
