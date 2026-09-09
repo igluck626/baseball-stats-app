@@ -257,8 +257,7 @@ struct GameLeadersCard: View {
                     // read as the exception rather than as the rule
                     // this list follows.
                     Button { selectedPlay = detail(for: e) } label: {
-                        row(e, unit: unit,
-                            previousDetail: i > 0 ? displayDetail(shown[i - 1]) : nil)
+                        row(e, unit: unit)
                     }
                     .buttonStyle(.plain)
                 }
@@ -287,10 +286,10 @@ struct GameLeadersCard: View {
     /// COLUMN WIDTH is a `@ScaledMetric`, so it also tracks the smaller
     /// Dynamic Type steps rather than only working at the default.
     @ViewBuilder
-    private func row(_ e: GameLeaders.Entry, unit: String, previousDetail: String?) -> some View {
+    private func row(_ e: GameLeaders.Entry, unit: String) -> some View {
         let detail = displayDetail(e)
         if typeSize.isAccessibilitySize {
-            Text(Self.line(e, unit: unit, detail: detail, previousDetail: previousDetail))
+            Text(Self.line(e, unit: unit, detail: detail))
                 .font(.subheadline)
                 .foregroundStyle(.primary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -304,7 +303,7 @@ struct GameLeadersCard: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
                 Spacer(minLength: 4)
-                if let d = detail, !d.isEmpty, !(e.kind == .pitch && d == previousDetail) {
+                if let d = detail, !d.isEmpty {
                     Text(d)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
@@ -345,28 +344,33 @@ struct GameLeadersCard: View {
     /// number mean something — 108 into a double play reads differently
     /// from 108 over the wall — so it is part of the line rather than
     /// an optional trailing decoration.
-    /// ⚠️ The trailing detail is dropped when it repeats the row
-    /// DIRECTLY above — consecutive suppression, not first-occurrence.
-    /// Seven of this game's ten fastest pitches are Halvorsen's, every
-    /// one a 4-Seam Fastball, and printing that seven times says
-    /// nothing after the first. Suppressing every later occurrence
-    /// instead would be wrong: where a slider interrupts a run of
-    /// fastballs, the fastball returning is news, and a reader scanning
-    /// from the middle of the list needs the label to have reappeared.
-    static func line(
-        _ e: GameLeaders.Entry, unit: String, detail: String?, previousDetail: String?,
-    ) -> String {
+    /// ⚠️ NOTHING IS SUPPRESSED ON EITHER BOARD, and the argument that
+    /// once said otherwise is kept here because it was not wrong so much
+    /// as wrong FOR THIS SURFACE.
+    ///
+    /// It ran: seven of a game's ten fastest pitches are one man's, every
+    /// one a 4-Seam Fastball, and printing that seven times says nothing
+    /// after the first. True of a LIST OF WRAPPING SENTENCES, where a
+    /// repeated tail is read as part of the sentence and pads a line the
+    /// eye is already tracking word by word.
+    ///
+    /// It is false of a TABLE. A column is read down, and a blank cell in
+    /// a column does not read as "same as above" — it reads as missing
+    /// data. A reader cannot know that the gap under "4-Seam Fastball"
+    /// means 4-Seam Fastball, and a board of measurements is exactly the
+    /// place where a reader assumes a blank means the number was not
+    /// recorded. Ten identical cells are repetitive; nine blank ones are
+    /// wrong.
+    ///
+    /// So the suppression is gone rather than disabled — a helper left in
+    /// place invites the next board to reuse it.
+    ///
+    /// The hardest-hit board never suppressed its outcomes, for a related
+    /// reason already recorded: two batters' singles are two facts that
+    /// happen to share a word.
+    static func line(_ e: GameLeaders.Entry, unit: String, detail: String?) -> String {
         var parts = [e.name, String(format: "%.1f \(unit)", e.value)]
-        if let d = detail, !d.isEmpty {
-            // ⚠️ Suppression applies to PITCH TYPES only. A run of one
-            // pitcher's fastballs is one fact repeated, and printing it
-            // seven times says nothing after the first. Two batters'
-            // singles are two different facts that happen to share a
-            // word — dropping the second leaves the reader unable to
-            // tell what that ball became, which is exactly the thing
-            // the outcome was added to say.
-            if e.kind == .pitch, d == previousDetail {} else { parts.append(d) }
-        }
+        if let d = detail, !d.isEmpty { parts.append(d) }
         return parts.joined(separator: " \u{00B7} ")
     }
 
