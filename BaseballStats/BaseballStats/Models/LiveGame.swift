@@ -81,10 +81,10 @@ struct LiveGameDetail: Codable, Hashable {
     let situation: LiveSituationBlock
     let plays: [LivePlayRow]
     let scoringPlays: [LivePlayRow]
-    /// Batted-ball metrics for the plays list, shaped as plate
-    /// appearances so the client's existing join renders them unchanged
-    /// — see `_contact_pas` in the backend. Absent on an older payload.
-    let contactPAs: [BDLPlateAppearance]?
+    /// Batted-ball metrics for the plays list. Absent on an older
+    /// payload. Converted to `[BDLPlateAppearance]` by `contactPlateAppearances`
+    /// so everything downstream is unchanged.
+    let contactPAs: [LiveContactPA]?
     let batting: LiveSidePlayers<LiveBatterRow>
     let pitching: LiveSidePlayers<LivePitcherRow>
 
@@ -159,10 +159,19 @@ struct LiveLinescoreBlock: Codable, Hashable {
     }
 }
 
+/// ⚠️ Spelled keys even though every field is one word and the plain
+/// decoder would match them anyway. This type and `LivePerson` were the
+/// only two on this path relying on that luck, and the luck lasts
+/// exactly until someone adds a field with two words in it — at which
+/// point the whole `LiveGameDetail` fails to decode and live box scores
+/// stop loading, which is precisely how this was found. See
+/// `LiveContactPA` for the full account.
 struct LiveInningRow: Codable, Hashable {
     let num: Int
     let away: Int?
     let home: Int?
+
+    enum CodingKeys: String, CodingKey { case num, away, home }
 }
 
 struct LiveSituationBlock: Codable, Hashable {
@@ -180,9 +189,101 @@ struct LiveSituationBlock: Codable, Hashable {
     }
 }
 
+/// Spelled keys for the same reason as `LiveInningRow`.
 struct LivePerson: Codable, Hashable {
     let id: Int?
     let name: String?
+
+    enum CodingKeys: String, CodingKey { case id, name }
+}
+
+/// Batted-ball metrics for one plate appearance, as OUR BACKEND ships them.
+///
+/// ⚠️ WHY THIS EXISTS RATHER THAN DECODING `BDLPlateAppearance` DIRECTLY —
+/// the two clients decode with different key strategies, and a model
+/// belongs to exactly one of them:
+///
+///   • `BallDontLieClient` sets `.convertFromSnakeCase`, so its models
+///     declare NO `CodingKeys` and let the strategy map `pa_number` onto
+///     `paNumber`.
+///   • `APIClient` (our backend) uses a PLAIN `JSONDecoder`, so every
+///     model on that path spells its keys itself — as every other type
+///     in this file does.
+///
+/// Decoding `BDLPlateAppearance` here therefore threw `keyNotFound` on
+/// `paNumber` (non-optional, and the payload says `pa_number`), which
+/// fails the WHOLE `LiveGameDetail` and took live box scores down while
+/// finished games carried on working.
+///
+/// ⚠️ AND THE OBVIOUS FIX IS THE WRONG ONE. Do not add `CodingKeys` to
+/// `BDLPlateAppearance` to "fix" a failure seen here: it has none BY
+/// DESIGN, and `convertFromSnakeCase` rewrites a key BEFORE matching it
+/// against the raw values, so snake_case `CodingKeys` would stop
+/// matching on the path that currently works. Two strategies, two
+/// models, converted at the boundary.
+struct LiveContactPA: Codable, Hashable {
+    let batterId: Int?
+    let inning: Int?
+    let halfInning: String?
+    let paNumber: Int?
+    let result: String?
+    let pitches: [LiveContactPitch]?
+
+    enum CodingKeys: String, CodingKey {
+        case batterId = "batter_id"
+        case inning
+        case halfInning = "half_inning"
+        case paNumber = "pa_number"
+        case result, pitches
+    }
+
+    /// `inning` and `paNumber` are non-optional on `BDLPlateAppearance`
+    /// because BDL always ships them; a snapshot that somehow omits one
+    /// falls back to 0 rather than failing the response, since a single
+    /// odd row must not cost a reader the whole box score again.
+    var asPlateAppearance: BDLPlateAppearance {
+        BDLPlateAppearance(
+            batterId:    batterId,
+            inning:      inning ?? 0,
+            halfInning:  halfInning,
+            paNumber:    paNumber ?? 0,
+            pitcherId:   nil,
+            result:      result,
+            pitches:     pitches?.map(\.asPitchDetail),
+        )
+    }
+}
+
+/// The one pitch of a plate appearance that was put in play. Same
+/// reasoning as `LiveContactPA` — spelled keys, converted at the boundary.
+struct LiveContactPitch: Codable, Hashable {
+    let exitVelocity: Double?
+    let launchAngle: Double?
+    let hitDistance: Double?
+    let expectedBattingAverage: Double?
+    let isBarrel: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case exitVelocity = "exit_velocity"
+        case launchAngle = "launch_angle"
+        case hitDistance = "hit_distance"
+        case expectedBattingAverage = "expected_batting_average"
+        case isBarrel = "is_barrel"
+    }
+
+    var asPitchDetail: BDLPitchDetail {
+        BDLPitchDetail(
+            exitVelocity:           exitVelocity,
+            launchAngle:            launchAngle,
+            hitDistance:            hitDistance,
+            expectedBattingAverage: expectedBattingAverage,
+            isBarrel:               isBarrel,
+            releaseSpeed:           nil,
+            pitchType:              nil,
+            callName:               nil,
+            description:            nil,
+        )
+    }
 }
 
 struct LivePlayRow: Codable, Hashable {
@@ -423,6 +524,11 @@ extension LivePlayRow {
 
 extension LiveGameDetail {
     var playsAsBDL: [BDLPlay] { plays.map { $0.toBDLPlay(gameId: gameId) } }
+
+    /// The snapshot's contact blocks in the shape the plays list joins.
+    var contactPlateAppearances: [BDLPlateAppearance] {
+        (contactPAs ?? []).map(\.asPlateAppearance)
+    }
 
     /// The live situation card's `LiveFeedResponse`, built DIRECTLY from the
     /// backend's already-synthesized state (no client-side play synthesis) —

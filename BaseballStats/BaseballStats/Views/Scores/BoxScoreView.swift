@@ -186,7 +186,7 @@ final class BoxScoreViewModel: ObservableObject {
         // fetches `/plate_appearances` itself; live, `load()` returns
         // early and never does, so these arrive on the snapshot instead
         // — in the same shape, so everything downstream is unchanged.
-        plateAppearances = detail.contactPAs ?? []
+        plateAppearances = detail.contactPlateAppearances
         live      = detail.toLiveFeedResponse()
         boxScore  = detail.toBoxScoreResponse()
         error     = nil
