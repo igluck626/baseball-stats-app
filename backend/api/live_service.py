@@ -248,89 +248,7 @@ def _play_block(p: dict) -> dict:
         "pitcher_id":  p.get("pitcher_id"),
         "text":        p.get("text"),
         "type":        p.get("type"),
-        # Pitch identity, for the play-by-play detail sheet. The client
-        # nulled these for live games because nothing shipped them, so a
-        # live reader saw "Called Strike" with no speed beside it while
-        # the same at-bat after the final read "Four-seam FB 94 mph".
-        #
-        # ⚠️ The stream TRUNCATES: it ships 94 where the plate-appearance
-        # feed has 94.7, systematically low. It is used anyway because it
-        # rides the play row — if the row survives, so does its speed —
-        # whereas the PA feed's exact value can vanish when that feed
-        # drops a row. See `_contact_pas` for what that costs there.
-        "pitch_type":     p.get("pitch_type"),
-        "pitch_velocity": p.get("pitch_velocity"),
     }
-
-
-def _contact_key(pa: dict) -> str:
-    """Stable identity for one plate appearance, for the contact memory."""
-    half = (pa.get("half_inning") or "").lower()
-    return f"{pa.get('inning')}-{half}-{pa.get('pa_number')}"
-
-
-def _contact_pas(pas: list[dict], previous: Optional[dict] = None) -> list[dict]:
-    """Batted-ball metrics per plate appearance, in the SHAPE OF A PLATE
-    APPEARANCE.
-
-    Deliberately shaped like `/plate_appearances` rather than as some new
-    kind of block: the client already joins that shape onto its play list
-    (inning + half + batter, consumed in order) and already renders the
-    metrics from it for finished games. Shipping the same shape means the
-    live path reuses that whole tested pipeline instead of growing a
-    second one beside it.
-
-    Only the pitch that was PUT IN PLAY is carried, and only its five
-    displayed fields — 39 rows and ~2.7KB on a completed game, against
-    the 309KB of `/plate_appearances` this is distilled from. Every other
-    pitch and all fifty other fields are dropped.
-
-    ⚠️ CARRIED FORWARD, because this is NOT append-only, which is the
-    thing that is easy to assume and wrong. The metrics live on the PA
-    feed, and that feed DROPS ROWS — see the `missingPARow` fixture,
-    a finished game whose feed is missing a plate appearance outright. A
-    dropped row here would take a home run's exit velocity off a row that
-    showed it ten seconds earlier, which is the batting-slot failure in a
-    more visible place. Memory only fills silence; a fresh reading always
-    wins, exactly as `carry_forward` treats a batting slot.
-    """
-    fresh: dict[str, dict] = {}
-    for pa in pas:
-        if pa.get("batter_id") is None:
-            continue
-        hit = next((q for q in (pa.get("pitches") or [])
-                    if q.get("exit_velocity") is not None), None)
-        if hit is None:
-            continue
-        fresh[_contact_key(pa)] = {
-            "batter_id":   pa.get("batter_id"),
-            "inning":      pa.get("inning"),
-            "half_inning": pa.get("half_inning"),
-            "pa_number":   pa.get("pa_number"),
-            "result":      pa.get("result"),
-            "pitches": [{
-                "exit_velocity":            hit.get("exit_velocity"),
-                "launch_angle":             hit.get("launch_angle"),
-                "hit_distance":             hit.get("hit_distance"),
-                "expected_batting_average": hit.get("expected_batting_average"),
-                "is_barrel":                hit.get("is_barrel"),
-            }],
-        }
-    merged = carry_forward(fresh, previous)
-    # Ordered as the game was played, so the client's join consumes them
-    # in the same order the play stream runs.
-    return [merged[k] for k in sorted(
-        merged, key=lambda k: (merged[k].get("inning") or 0,
-                               merged[k].get("pa_number") or 0),
-    )]
-
-
-def _carried_contact(previous_unified: Optional[dict]) -> Optional[dict]:
-    """The last cycle's contact blocks, re-keyed for `carry_forward`."""
-    if not previous_unified:
-        return None
-    rows = previous_unified.get("contact_pas") or []
-    return {_contact_key(r): r for r in rows} or None
 
 
 def _team_name_candidates(team: dict) -> set[str]:
@@ -769,8 +687,7 @@ def _box_lines(stats: list[dict], home_team: dict, away_team: dict,
 def assemble_unified(game: dict, stats: list[dict],
                      plays: list[dict], pas: list[dict],
                      lineup: Optional[list[dict]] = None,
-                     previous_codes: Optional[dict] = None,
-                     previous_contact: Optional[dict] = None) -> dict:
+                     previous_codes: Optional[dict] = None) -> dict:
     """Thin orchestrator (§4): derive live state from PLAYS, then attach
     names/bases/lines/errors from their own feeds — ONE source per field.
 
@@ -855,9 +772,6 @@ def assemble_unified(game: dict, stats: list[dict],
             "on_third":  on_third,
         },
         "plays":         full_plays,
-        # Batted-ball metrics, shaped like plate appearances — see
-        # `_contact_pas`. Additive: an older client ignores the key.
-        "contact_pas":   _contact_pas(pas, previous_contact),
         "scoring_plays": scoring,
         "batting":       batting,
         "pitching":      pitching,
@@ -962,14 +876,9 @@ async def _refresh_cycle() -> int:
             # A batting slot, once given, must not be taken away. See
             # `_carried_codes` — this reads the snapshot we are about to
             # replace, so it has to happen BEFORE the `set` below.
-            # Both memories read the snapshot we are about to replace, so
-            # they have to be taken BEFORE the `set` below.
-            snapshot = _cache.get(_game_key(gid))
-            previous = _carried_codes(snapshot)
-            prev_contact = _carried_contact(snapshot)
+            previous = _carried_codes(_cache.get(_game_key(gid)))
             unified = assemble_unified(games_by_id[gid], stats, plays, pas, lineup,
-                                       previous_codes=previous,
-                                       previous_contact=prev_contact)
+                                       previous_codes=previous)
             _cache.set(_game_key(gid), unified, LIVE_CACHE_TTL_S)
             summaries.append(_summary_from_unified(unified))
         except Exception:
