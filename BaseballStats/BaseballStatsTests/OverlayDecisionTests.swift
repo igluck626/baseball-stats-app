@@ -45,215 +45,212 @@ import Testing
 @Suite("Overlay decision")
 struct OverlayDecisionTests {
 
-    /// A pitcher whose side has no batting data — the batting side must
-    /// not veto.
-    private func pitcherOnly(seasonG: Int?, bdlG: Int?, gamelog: Int?,
-                             includesToday: Bool) -> OverlayDecision {
-        OverlayDecision.decide(
-            batting: .init(seasonG: nil, bdlG: nil, gamelogGames: nil, includesToday: false),
-            pitching: .init(seasonG: seasonG, bdlG: bdlG,
-                            gamelogGames: gamelog, includesToday: includesToday),
-        )
+    private func side(_ seasonG: Int?, _ bdlG: Int?, rows: Int?,
+                      today: Bool, rowHasToday: Bool? = nil) -> OverlayDecision.Side {
+        .init(seasonG: seasonG, bdlG: bdlG, gamelogRows: rows,
+              includesToday: today, seasonRowIncludesToday: rowHasToday)
+    }
+    private var noSide: OverlayDecision.Side {
+        .init(seasonG: nil, bdlG: nil, gamelogRows: nil,
+              includesToday: false, seasonRowIncludesToday: nil)
+    }
+    private func batter(_ g: Int?, _ b: Int?, rows: Int?, today: Bool,
+                        rowHasToday: Bool? = nil) -> OverlayDecision {
+        .decide(batting: side(g, b, rows: rows, today: today, rowHasToday: rowHasToday),
+                pitching: noSide)
+    }
+    private func pitcher(_ g: Int?, _ b: Int?, rows: Int?, today: Bool,
+                         rowHasToday: Bool? = nil) -> OverlayDecision {
+        .decide(batting: noSide,
+                pitching: side(g, b, rows: rows, today: today, rowHasToday: rowHasToday))
     }
 
-    private func batterOnly(seasonG: Int?, bdlG: Int?, gamelog: Int?,
-                            includesToday: Bool) -> OverlayDecision {
-        OverlayDecision.decide(
-            batting: .init(seasonG: seasonG, bdlG: bdlG,
-                           gamelogGames: gamelog, includesToday: includesToday),
-            pitching: .init(seasonG: nil, bdlG: nil, gamelogGames: nil, includesToday: false),
-        )
+    // ── a. clause 2: the same-day regression ──────────────────────────
+
+    /// Juan Soto, 2026-09-27. The day's final ended after the nightly, so
+    /// it is in neither source: our row matches balldontlie's at 110 and
+    /// the gamelog has no row for the date. Counting ROWS his 110 equal
+    /// his G exactly — `behind` is 0, not negative as the deduped count
+    /// made it look — so clause 1 cannot fire and clause 2 must.
+    @Test func sotoSameDayFinalInNeitherSourceOverlays() {
+        let d = batter(110, 110, rows: 110, today: false)
+        #expect(d.shouldOverlayFinals)
     }
 
-    // MARK: behind > 0 — the reported bug
+    // ── b. rows, not dates ────────────────────────────────────────────
 
-    @Test func millerIsOneGameBehindAndOverlaysExactlyOne() {
-        // ⚠️ includesToday is TRUE — our gamelog HAS the game. Under the
-        // old boolean gate that alone suppressed the overlay, which is
-        // precisely why the stale 4.01 rendered.
-        let d = pitcherOnly(seasonG: 18, bdlG: 18, gamelog: 19, includesToday: true)
-        #expect(d.shouldOverlayFinals, "the season row is a game behind and must be topped up")
-        #expect(d.budget == 1, "exactly one game is missing")
+    /// Bo Bichette, three doubleheaders: 159 rows across 156 dates
+    /// against a season G of 159. Counting dates read -3 and was called
+    /// an ingest hole; counting rows reads 0, which is the truth — his
+    /// gamelog is complete. The assertion is that `behind` is NOT
+    /// negative, because a negative here would silence the side.
+    @Test func doubleheaderRowsAreNotAShortfall() {
+        let s = side(159, 159, rows: 159, today: true)
+        #expect(s.behind == 0, "rows must be counted, not distinct dates")
+        #expect(s.vote == .refuse, "level and already absorbed is a definite no, not an abstention")
     }
 
-    @Test func canzoneIsOneGameBehindOnTheBattingSide() {
-        let d = batterOnly(seasonG: 128, bdlG: 128, gamelog: 129, includesToday: true)
+    // ── c. clause 1: the provider is late ─────────────────────────────
+
+    /// Bryce Miller, 2026-09-09. Our gamelog had the game and
+    /// balldontlie's season row did not: 19 rows against G=18. Note
+    /// `today: true` — the gamelog HAS the date, which is what made the
+    /// old boolean gate refuse.
+    @Test func millerProviderLateOverlaysViaTheCount() {
+        let d = pitcher(18, 18, rows: 19, today: true)
         #expect(d.shouldOverlayFinals)
         #expect(d.budget == 1)
     }
 
-    // MARK: behind == 0 — ⚠️ the double-count guard
+    // ── d. a phantom side must not veto ───────────────────────────────
 
-    @Test func afullyAbsorbedPlayerGainsNothing() {
-        // Skubal: the aggregate already counts the game our gamelog has.
-        let d = pitcherOnly(seasonG: 23, bdlG: 23, gamelog: 23, includesToday: true)
-        #expect(!d.shouldOverlayFinals, "a current season row must not be topped up")
+    /// Ezequiel Duran. His batting side is a game behind and due a
+    /// correction; his pitching row reads G=4 with zero pitching gamelog
+    /// rows — a 2025 line balldontlie carried into the 2026 season row —
+    /// giving `behind = -4`. That side has no vote and must not silence
+    /// the batting fix.
+    @Test func phantomPitchingSideDoesNotVetoBattingCorrection() {
+        let d = OverlayDecision.decide(
+            batting: side(135, 135, rows: 136, today: true),
+            pitching: side(4, 4, rows: 0, today: false))
+        #expect(d.shouldOverlayFinals)
+        #expect(d.budget == 1, "the budget comes from the side actually behind")
+    }
+
+    // ── e. the double-count guard on clause 1 ─────────────────────────
+
+    /// Behind on OLD games while the season row already counts today.
+    /// Clause 1 would otherwise hand today's final over a second time.
+    /// ⚠️ No caller supplies `seasonRowIncludesToday` yet — see the note
+    /// on `Side` — so this pins the parameter's behaviour, not a path
+    /// currently exercised in production.
+    @Test func aSeasonRowThatAlreadyHasTodayIsNotGivenItTwice() {
+        let d = batter(100, 100, rows: 101, today: true, rowHasToday: true)
+        #expect(!d.shouldOverlayFinals)
+        // and with it unknown, the overlay proceeds
+        let unknown = batter(100, 100, rows: 101, today: true, rowHasToday: nil)
+        #expect(unknown.shouldOverlayFinals)
+    }
+
+    // ── e2. the derivation itself ─────────────────────────────────────
+
+    /// ⚠️ The guard is only as good as the stamp it reads. A season row
+    /// written BEFORE first pitch cannot contain the game, so clause 1
+    /// stands; one written after it may, so clause 1 stands down.
+    @Test func theSeasonRowStampDecidesWhetherTodayIsAlreadyCounted() {
+        let firstPitch = Date(timeIntervalSince1970: 1_000_000)
+        let before = firstPitch.addingTimeInterval(-3600)
+        let after  = firstPitch.addingTimeInterval(+3600)
+
+        #expect(OverlayDecision.seasonRowIncludes(written: before, firstPitch: firstPitch) == false)
+        #expect(OverlayDecision.seasonRowIncludes(written: after,  firstPitch: firstPitch) == true)
+        #expect(OverlayDecision.seasonRowIncludes(written: nil,    firstPitch: firstPitch) == nil)
+        #expect(OverlayDecision.seasonRowIncludes(written: after,  firstPitch: nil) == nil)
+
+        // written before first pitch, a game behind -> overlays
+        let stale = batter(100, 100, rows: 101, today: true,
+                           rowHasToday: OverlayDecision.seasonRowIncludes(
+                               written: before, firstPitch: firstPitch))
+        #expect(stale.shouldOverlayFinals)
+        // written after the final -> clause 1 stands down, and with the
+        // date already in the gamelog clause 2 cannot fire either
+        let fresh = batter(100, 100, rows: 101, today: true,
+                           rowHasToday: OverlayDecision.seasonRowIncludes(
+                               written: after, firstPitch: firstPitch))
+        #expect(!fresh.shouldOverlayFinals)
+    }
+
+    // ── h. abstention decides nothing ─────────────────────────────────
+
+    /// ⚠️ A side with no gamelog count AND no BDL comparison must
+    /// ABSTAIN, never fire on its own — and two abstentions must not add
+    /// up to a yes. The previous Bool combination read
+    /// `(silent || allows) && (silent || allows)`, so a player with no
+    /// season row on either side produced `true && true` and had the
+    /// day's finals applied to nothing.
+    @Test func twoAbstainingSidesProduceNoOverlay() {
+        #expect(noSide.vote == .abstain)
+        #expect(!OverlayDecision.decide(batting: noSide, pitching: noSide).shouldOverlayFinals)
+        #expect(OverlayDecision.decide(batting: noSide, pitching: noSide).budget == nil)
+        // one abstention beside one firing side still overlays
+        #expect(OverlayDecision.decide(
+            batting: side(110, 110, rows: 110, today: false), pitching: noSide
+        ).shouldOverlayFinals)
+        // and a refusal outranks a fire
+        #expect(!OverlayDecision.decide(
+            batting: side(110, 110, rows: 110, today: false),
+            pitching: side(23, 23, rows: 23, today: true)
+        ).shouldOverlayFinals)
+    }
+
+    // ── f. already current ────────────────────────────────────────────
+
+    /// Both sources have the game: the gamelog holds the date and the
+    /// row counts it. Nothing to add, and adding would double-count.
+    @Test func aFullyAbsorbedPlayerGainsNothing() {
+        let d = pitcher(23, 23, rows: 23, today: true)
+        #expect(!d.shouldOverlayFinals)
         #expect(d.budget == nil)
     }
 
-    /// ⚠️ THIS ASSERTION WAS REVERSED, and it is worth knowing why: it
-    /// used to expect NO overlay here, and that expectation is the bug.
-    /// Same count with today's date absent from the gamelog does not mean
-    /// "nothing to add" — it means nothing has absorbed today's game yet,
-    /// which is precisely when it must be added. The test encoded the
-    /// regression and passed while every same-day final went uncorrected.
-    @Test func aCurrentRowWithTodayInNeitherSourceIsOverlaid() {
-        let d = pitcherOnly(seasonG: 23, bdlG: 23, gamelog: 23, includesToday: false)
-        #expect(d.shouldOverlayFinals)
-        // and once the gamelog HAS the date, both sources agree and it stops
-        let absorbed = pitcherOnly(seasonG: 23, bdlG: 23, gamelog: 23, includesToday: true)
-        #expect(!absorbed.shouldOverlayFinals)
+    // ── g. the dropped zero-stat row ──────────────────────────────────
+
+    /// Corey Seager, 2026-06-30: he appeared at shortstop with PA=0, MLB
+    /// counted the game in G, and our ingest wrote no row. His gamelog
+    /// therefore sits a row BELOW his season G all season. Today's final
+    /// is in neither source, so clause 1 reads negative and is silent
+    /// while clause 2 still fires — which is the whole reason the second
+    /// clause exists.
+    @Test func aDroppedZeroStatRowStillOverlaysViaClauseTwo() {
+        let d = batter(101, 101, rows: 100, today: false)
+        #expect(d.shouldOverlayFinals, "a short gamelog must not suppress a final neither source has")
+        #expect(d.budget == nil, "a negative shortfall is never a budget")
     }
 
-    // MARK: ⚠️ same-day finals — the case the first version regressed
-
-    /// A game that finished AFTER the nightly ran is in neither source:
-    /// our season row still matches balldontlie's, and our gamelog has no
-    /// row for the date. The count alone says nothing — it is the second
-    /// clause that must fire.
-    @Test func aFinalThatEndedAfterTheNightlyIsOverlaid() {
-        // clean case: no structural hole, count reads level
-        let d = batterOnly(seasonG: 110, bdlG: 110, gamelog: 110, includesToday: false)
-        #expect(d.shouldOverlayFinals, "a same-day final in neither source must be added")
-    }
-
-    /// ⚠️ THE ACTUAL REGRESSION. Juan Soto, 2026-09-27: our row and
-    /// balldontlie's both read 110 while the gamelog held 109 dates — a
-    /// structural hole — and the day's final was in neither. The count
-    /// reads NEGATIVE, so the first clause cannot fire and the second
-    /// must. Bichette and Benge read -3 the same night.
-    @Test func aStructuralHoleDoesNotBlockTheSameDayClause() {
-        for (name, gamelog, seasonG) in [("Soto", 109, 110), ("Bichette", 156, 159),
-                                         ("Benge", 152, 155)] {
-            let d = batterOnly(seasonG: seasonG, bdlG: seasonG,
-                               gamelog: gamelog, includesToday: false)
-            #expect(d.shouldOverlayFinals,
-                    "\(name): a short gamelog must not suppress a final neither source has")
-        }
-    }
-
-    /// The same hole must not veto the OTHER side either — the Duran
-    /// shape, now with a negative count rather than a zero.
-    @Test func aNegativeSideDoesNotVetoAValidCorrection() {
-        // batting is a game behind and due a correction; pitching is a
-        // phantom row (G = 4, no gamelog rows at all) reading -4.
-        let d = OverlayDecision.decide(
-            batting: .init(seasonG: 135, bdlG: 135, gamelogGames: 136, includesToday: true),
-            pitching: .init(seasonG: 4, bdlG: 4, gamelogGames: 0, includesToday: false),
-        )
-        #expect(d.shouldOverlayFinals, "a phantom pitching row vetoed a valid batting fix")
-        #expect(d.budget == 1, "the budget comes from the side that is actually behind")
-    }
-
-    /// ⚠️ THE KNOWN HOLE, pinned so it is not mistaken for solved. A
-    /// Miller-shaped player whose gamelog ALSO has a structural hole:
-    /// +1 and -1 cancel to `behind == 0`, and the gamelog HAS the game so
-    /// the second clause cannot fire either. Milner, Seager, Foscue and
-    /// Montes on the TEX @ SEA night. If this test ever starts failing,
-    /// someone has fixed it — update the comment on `allowsOverlay`.
-    @Test func aCancellingHoleStillLeavesTheRowStale() {
-        let d = batterOnly(seasonG: 85, bdlG: 85, gamelog: 85, includesToday: true)
-        #expect(!d.shouldOverlayFinals,
-                "this is the documented limit, not a passing case")
-    }
-
-    // MARK: behind < 0 — the BDL-direct path, untouched here
-
-    @Test func aNegativeShortfallIsNeverABudget() {
-        // ⚠️ This used to assert the overlay DECLINED here, and that
-        // assertion was wrong twice over: a negative count means our
-        // GAMELOG trails, which says nothing about whether the season row
-        // has today's game — and treating it as a refusal is what
-        // regressed every same-day final. It contributes no budget, and
-        // the second clause decides.
-        let d = pitcherOnly(seasonG: 24, bdlG: 24, gamelog: 23, includesToday: false)
-        #expect(d.budget == nil, "a negative shortfall is not a budget")
-        #expect(d.shouldOverlayFinals, "the second clause applies: the row matches BDL and the gamelog lacks the date")
-        // with the date already in the gamelog, neither clause fires
-        let absorbed = pitcherOnly(seasonG: 24, bdlG: 24, gamelog: 23, includesToday: true)
-        #expect(!absorbed.shouldOverlayFinals)
-    }
-
-    // MARK: the fallback, and two-way players
-
-    @Test func noCountFallsBackToTheBooleanThatShippedBefore() {
-        // Older backend: no `gamelog_games`. Old semantics exactly.
-        #expect(pitcherOnly(seasonG: 18, bdlG: 18, gamelog: nil,
-                            includesToday: false).shouldOverlayFinals)
-        #expect(!pitcherOnly(seasonG: 18, bdlG: 18, gamelog: nil,
-                             includesToday: true).shouldOverlayFinals)
-        #expect(!pitcherOnly(seasonG: 18, bdlG: 19, gamelog: nil,
-                             includesToday: false).shouldOverlayFinals)
-    }
+    // ── the pieces those seven rest on ────────────────────────────────
 
     @Test func aSilentSideDoesNotVetoTheOther() {
-        // A pure pitcher's batting side is all nil and must not block.
-        #expect(pitcherOnly(seasonG: 18, bdlG: 18, gamelog: 19,
-                            includesToday: true).shouldOverlayFinals)
+        #expect(pitcher(18, 18, rows: 19, today: true).shouldOverlayFinals)
     }
 
-    @Test func aCountedSideReadingZeroDoesBlock() {
-        // ⚠️ The distinction that makes the guard work: silent is not the
-        // same as "says no". A two-way player current at the plate and
-        // behind on the mound must not have his batting line topped up,
-        // so the whole overlay declines.
-        let d = OverlayDecision.decide(
-            batting: .init(seasonG: 100, bdlG: 100, gamelogGames: 100, includesToday: true),
-            pitching: .init(seasonG: 18, bdlG: 18, gamelogGames: 19, includesToday: true),
-        )
-        #expect(!d.shouldOverlayFinals)
+    @Test func noCountFallsBackToTheBooleanThatShippedBefore() {
+        #expect(pitcher(18, 18, rows: nil, today: false).shouldOverlayFinals)
+        #expect(!pitcher(18, 18, rows: nil, today: true).shouldOverlayFinals)
     }
 
     @Test func theBudgetTakesTheLargerShortfall() {
         let d = OverlayDecision.decide(
-            batting: .init(seasonG: 100, bdlG: 100, gamelogGames: 102, includesToday: true),
-            pitching: .init(seasonG: 18, bdlG: 18, gamelogGames: 19, includesToday: true),
-        )
-        #expect(d.budget == 2, "taking the smaller would leave the batting row short")
+            batting: side(100, 100, rows: 102, today: true),
+            pitching: side(18, 18, rows: 19, today: true))
+        #expect(d.budget == 2)
     }
-
-    // MARK: bounding
 
     @Test func boundingKeepsAtMostTheBudgetAndDedupesByGame() {
         let games = [(id: 1, live: false), (id: 1, live: false),
                      (id: 2, live: false), (id: 3, live: false)]
-        let kept = OverlayDecision.boundedGames(
-            games, budget: 1, isLive: { $0.live }, gameId: { $0.id })
-        #expect(kept.map(\.id) == [1], "a duplicate row and an extra final both dropped")
+        #expect(OverlayDecision.boundedGames(games, budget: 1,
+                isLive: { $0.live }, gameId: { $0.id }).map(\.id) == [1])
     }
 
     @Test func liveGamesAreNeverBoundedAway() {
-        // The count describes FINALS the aggregate has not absorbed; a
-        // game in progress is in neither, so it always applies.
         let games = [(id: 1, live: false), (id: 2, live: true), (id: 3, live: false)]
-        let kept = OverlayDecision.boundedGames(
-            games, budget: 1, isLive: { $0.live }, gameId: { $0.id })
-        #expect(kept.map(\.id) == [1, 2])
+        #expect(OverlayDecision.boundedGames(games, budget: 1,
+                isLive: { $0.live }, gameId: { $0.id }).map(\.id) == [1, 2])
     }
 
     @Test func noBudgetLeavesEveryGame() {
         let games = [(id: 1, live: false), (id: 2, live: false)]
-        let kept = OverlayDecision.boundedGames(
-            games, budget: nil, isLive: { $0.live }, gameId: { $0.id })
-        #expect(kept.count == 2)
+        #expect(OverlayDecision.boundedGames(games, budget: nil,
+                isLive: { $0.live }, gameId: { $0.id }).count == 2)
     }
 
-    // MARK: the arithmetic the overlay must produce
-
-    /// ⚠️ Rates must come from COMBINED TOTALS, never from averaging a
-    /// season rate with a game rate — that is where an overlay quietly
-    /// goes wrong. These are the numbers the profile renders.
+    /// ⚠️ Rates come from COMBINED TOTALS, never from averaging a season
+    /// rate with a game rate — where an overlay quietly goes wrong.
     @Test func ratesDeriveFromCombinedTotals() {
-        // Miller: ERA = ER * 9 / IP over the summed line.
         let ip = 98.667 + 3.667, er = Double(44 + 4)
-        #expect(abs(er * 9.0 / ip - 4.2215) < 0.001)
         #expect(String(format: "%.2f", er * 9.0 / ip) == "4.22")
-        // and NOT the average of the two ERAs, which is the wrong shape
         let wrong = (4.0135 + (4.0 * 9.0 / 3.667)) / 2.0
         #expect(abs(wrong - 4.2215) > 1.0, "averaging rates gives a wildly different answer")
-
-        // Canzone: AVG = H / AB over the summed line.
-        let avg = Double(103 + 2) / Double(405 + 5)
-        #expect(String(format: "%.3f", avg) == "0.256")
+        #expect(String(format: "%.3f", Double(103 + 2) / Double(405 + 5)) == "0.256")
     }
 }

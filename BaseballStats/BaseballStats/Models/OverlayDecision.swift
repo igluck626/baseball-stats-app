@@ -45,94 +45,129 @@ struct OverlayDecision: Equatable {
     /// One side's inputs. `gamelogGames` is the DEDUPED count of distinct
     /// gamelog dates season-to-date; `seasonG` is the stored row's G,
     /// which is balldontlie's number verbatim.
+    /// One side's inputs — batting or pitching, never mixed.
+    ///
+    /// ⚠️ PER-SIDE ONLY, NO UNION. Batting rows are compared against
+    /// batting G and pitching rows against pitching G. A union of dates
+    /// across both sides was measured and rejected: it does close
+    /// Ohtani's gap (his hitting G counts pitching-only appearances that
+    /// his hitting gamelog has no row for), but across 62 sampled
+    /// players it left 59% still mismatched and introduced over-counts
+    /// where a pitcher's batting G is the wrong denominator — Jack
+    /// Leiter read +14. Per-side keeps the arithmetic saying one thing.
     struct Side: Equatable {
         let seasonG: Int?
         let bdlG: Int?
-        let gamelogGames: Int?
+        /// RAW gamelog rows season-to-date, not distinct dates.
+        let gamelogRows: Int?
+        /// ⚠️ HOW THIS IS COMPUTED, because the whole gate turns on it:
+        /// the backend takes every gamelog row for the season up to and
+        /// including the queried date — `finalGameDateET`, the ET
+        /// calendar date of a final on today's schedule — and reports
+        /// whether ANY of them carries exactly that date
+        /// (`any(r.game_date == game_date)`). It is a DATE question, not
+        /// a count: both halves of a doubleheader satisfy it, which is
+        /// right, since it asks only whether our gamelog has reached
+        /// that day. False means our per-game ingest has not written the
+        /// day yet.
         let includesToday: Bool
+        /// Whether the SEASON ROW already counts today's game.
+        ///
+        /// Derived by `seasonRowIncludes(written:firstPitch:)` from the
+        /// row's own write time against the game's scheduled start. nil
+        /// when either is missing, and nil does not block — the
+        /// double-count this guards needs a definite yes.
+        let seasonRowIncludesToday: Bool?
 
         /// How many games the season row is behind our gamelog, or nil
         /// when the count is unavailable.
         var behind: Int? {
-            guard let gamelogGames, let seasonG else { return nil }
-            return gamelogGames - seasonG
+            guard let gamelogRows, let seasonG else { return nil }
+            return gamelogRows - seasonG
         }
 
-        /// True when this side has nothing to say and must not veto the
-        /// other.
-        ///
-        /// ⚠️ A NEGATIVE `behind` is deliberately NOT silence here, even
-        /// though an earlier note prescribed exactly that as the fix for
-        /// the phantom-pitching-row veto. It was the right fix for a
-        /// version of `allowsOverlay` that had only the count clause;
-        /// with the second clause below it is both unnecessary and too
-        /// loose. Unnecessary because a phantom row — `G = 4`, zero
-        /// gamelog rows, `behind = -4` — now passes the second clause on
-        /// its own and vetoes nothing. Too loose because a silent side
-        /// defers entirely, so a pure pitcher whose gamelog is short by
-        /// one would overlay today's finals even when the season row
-        /// already counted them, and double-count. Let the clauses speak
-        /// instead of muting the side.
-        ///
-        /// `behind == 0` remains a real "no": the season row and the
-        /// gamelog agree, so adding a game would double-count.
-        var isSilent: Bool {
-            behind == nil && (seasonG == nil || bdlG == nil)
+        /// ⚠️ A side answers one of THREE things, not a Bool. The
+        /// previous `allowsOverlay: Bool` conflated "fire" with "I have
+        /// nothing to say", and the caller combined sides with
+        /// `(isSilent || allows) && (isSilent || allows)` — so TWO
+        /// ABSTAINING SIDES produced `true && true` and the overlay
+        /// fired on the strength of nobody having an opinion. A player
+        /// with no season row on either side would have had today's
+        /// finals added to nothing.
+        enum Vote: Equatable {
+            /// A clause matched: this side wants the finals applied.
+            case fire
+            /// Counted, and the answer is no. Refusal outranks fire.
+            case refuse
+            /// Nothing to say. Never fires by itself and never blocks.
+            case abstain
         }
 
-        /// ⚠️ TWO CLAUSES, because neither signal is sufficient alone and
-        /// each covers the other's blind spot.
-        ///
-        /// 1. `behind > 0` — our gamelog holds more games than the season
-        ///    row counts, so the row is behind and must be topped up.
-        ///    Catches the case balldontlie is late on: Bryce Miller,
-        ///    2026-09-09, season row G=18 beside 19 gamelog rows.
-        ///
-        /// 2. `seasonG == bdlG && !includesToday` — today's game is in
-        ///    NEITHER source. Our row matches balldontlie's, and our
-        ///    gamelog has no row for the date, so nothing has absorbed
-        ///    it yet. Catches a game that finished after the nightly ran:
-        ///    NYM @ WSH started 17:05Z on 2026-09-27, two hours past the
-        ///    15:04Z nightly.
-        ///
-        /// ⚠️ THE FIRST CLAUSE ALONE REGRESSED EVERY SAME-DAY FINAL. The
-        /// count is `gamelog − seasonG`, and our gamelog carries holes of
-        /// its own — measured at 0 to 3 games per player across a sample
-        /// of seven, three of them negative. So a same-day final that no
-        /// source has absorbed still reads `behind <= 0`, because the
-        /// hole cancels it. Juan Soto read -1, Bo Bichette and Carson
-        /// Benge -3, and all three rendered a pre-game average.
-        ///
-        /// ⚠️ AND A HOLE REMAINS, deliberately named rather than papered
-        /// over: a Miller-shaped player — balldontlie late, our gamelog
-        /// HAS the game — whose gamelog also carries a structural hole
-        /// reads `behind == 0` (+1 and -1 cancelling) AND
-        /// `includesToday == true`, so neither clause fires and the
-        /// stale line stands. That is Hoby Milner, Corey Seager, Justin
-        /// Foscue and Lazaro Montes on the TEX @ SEA night exactly. This
-        /// pair of clauses fixes the same-day regression and does NOT
-        /// fix that; see the note in memory for the measurement that
-        /// would settle whether a same-source count removes it.
-        var allowsOverlay: Bool {
-            if let behind, behind > 0 { return true }
-            guard let seasonG, let bdlG else { return true }
-            return seasonG == bdlG && !includesToday
+        var vote: Vote {
+            // Clause 1 — our gamelog holds more rows than the season row
+            // counts, so the row is missing games. Suppressed when the
+            // row already has today, or today would go on twice.
+            if let behind, behind > 0, seasonRowIncludesToday != true { return .fire }
+            // Clause 2 needs both counts to compare; without them this
+            // side cannot speak at all.
+            guard let seasonG, let bdlG else { return .abstain }
+            // Today's game is in NEITHER source — nothing has absorbed it.
+            if seasonG == bdlG, !includesToday { return .fire }
+            // ⚠️ A negative `behind` abstains rather than refusing: our
+            // gamelog holds FEWER rows than the season row counts, which
+            // says nothing about today and is the BDL-direct path's
+            // business. Counting rows rather than dates makes this rare
+            // — the three negatives measured on 2026-09-27 were all
+            // doubleheaders and now read zero.
+            if let behind, behind < 0 { return .abstain }
+            // Counted, level or ahead, and today is already in the
+            // gamelog: adding anything would double-count.
+            return .refuse
+        }
+
+        /// How many games this side is short, when it is short at all.
+        var shortfall: Int? {
+            guard let behind, behind > 0 else { return nil }
+            return behind
         }
     }
 
+    /// Whether a season row written at `written` already counts a game
+    /// that started at `firstPitch`.
+    ///
+    /// ⚠️ THE ROW'S OWN WRITE TIME IS THE SIGNAL, and the intent was
+    /// already recorded beside the column: a box-score line is in the
+    /// row if the game started BEFORE the stamp, and missing if it
+    /// started after. `stats_last_updated` is per row — observed values
+    /// differ player to player by seconds within one nightly pass — so
+    /// this is a real per-player reading, not a global clock.
+    ///
+    /// ⚠️ AND IT IS A LOWER BOUND, not proof. The stamp says when WE
+    /// wrote the row; what we wrote is balldontlie's aggregate, which
+    /// may itself have been behind at that moment. So a row written
+    /// after first pitch MIGHT still lack the game — which is why a
+    /// `true` here only ever SUPPRESSES clause 1 and never fires
+    /// anything, and why clause 2 is left to catch what it misses.
+    static func seasonRowIncludes(written: Date?, firstPitch: Date?) -> Bool? {
+        guard let written, let firstPitch else { return nil }
+        return written >= firstPitch
+    }
+
+    /// ⚠️ REFUSAL OUTRANKS FIRE, AND ABSTENTION DECIDES NOTHING. The
+    /// overlay runs only when some side actually asks for it and no side
+    /// refuses. Two abstaining sides therefore produce NO overlay, which
+    /// the previous Bool combination got backwards.
     static func decide(batting: Side, pitching: Side) -> OverlayDecision {
-        let overlay = (batting.isSilent  || batting.allowsOverlay)
-                   && (pitching.isSilent || pitching.allowsOverlay)
+        let votes = [batting.vote, pitching.vote]
+        let overlay = !votes.contains(.refuse) && votes.contains(.fire)
         // The budget is the largest positive shortfall across the sides
         // that could be counted. A two-way player behind by one on the
         // mound and two at the plate needs two games applied; taking the
         // smaller would leave the batting row short.
-        let shortfalls = [batting.behind, pitching.behind]
-            .compactMap { $0 }
-            .filter { $0 > 0 }
+        let shortfalls = [batting.shortfall, pitching.shortfall].compactMap { $0 }
         return OverlayDecision(
             shouldOverlayFinals: overlay,
-            budget: shortfalls.max(),
+            budget: overlay ? shortfalls.max() : nil,
         )
     }
 

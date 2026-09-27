@@ -477,6 +477,9 @@ final class PlayerViewModel: ObservableObject {
         // tables. First-wins because doubleheader finals share a
         // date and we only need one to fix the absorption signal.
         var finalGameDateET: String? = nil
+        // Scheduled first pitch of the earliest final on the slate — the
+        // instant the season row must post-date to be said to contain it.
+        var earliestFinalStart: Date? = nil
         for g in todayGames {
             switch g.status {
             case "STATUS_IN_PROGRESS", "STATUS_DELAYED":
@@ -486,6 +489,13 @@ final class PlayerViewModel: ObservableObject {
                 hasFinal = true
                 eligible.append((g.id, false))
                 if finalGameDateET == nil { finalGameDateET = today }
+                let f = ISO8601DateFormatter()
+                f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                let g2 = ISO8601DateFormatter()
+                g2.formatOptions = [.withInternetDateTime]
+                if let d = f.date(from: g.date) ?? g2.date(from: g.date) {
+                    if earliestFinalStart == nil || d < earliestFinalStart! { earliestFinalStart = d }
+                }
             default:
                 break
             }
@@ -621,24 +631,45 @@ final class PlayerViewModel: ObservableObject {
             // type) or `bdlG == nil` (BDL doesn't carry that side)
             // means the gate below short-circuits anyway, so the
             // network call would be wasted work.
+            // ⚠️ Derived, no longer nil. The season row carries its own
+            // write time (`stats_last_updated`, per row); a final that
+            // started BEFORE that stamp is already in the row, one that
+            // started after is not. See
+            // `OverlayDecision.seasonRowIncludes(written:firstPitch:)`
+            // for why this can only ever suppress, never fire.
+            let iso = ISO8601DateFormatter()
+            iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            let isoPlain = ISO8601DateFormatter()
+            isoPlain.formatOptions = [.withInternetDateTime]
+            func parse(_ s: String?) -> Date? {
+                guard let s else { return nil }
+                return iso.date(from: s) ?? isoPlain.date(from: s)
+            }
+            let firstPitch = earliestFinalStart
+            let batSeasonWritten = parse(currentBatting?.stats_last_updated)
+            let pitSeasonWritten = parse(currentPitching?.stats_last_updated)
+            let batRowHasToday = OverlayDecision.seasonRowIncludes(
+                written: batSeasonWritten, firstPitch: firstPitch)
+            let pitRowHasToday = OverlayDecision.seasonRowIncludes(
+                written: pitSeasonWritten, firstPitch: firstPitch)
             var batterIncludesToday = false
             var pitcherIncludesToday = false
-            var batterGamelogGames: Int? = nil
-            var pitcherGamelogGames: Int? = nil
+            var batterGamelogRows: Int? = nil
+            var pitcherGamelogRows: Int? = nil
             if let date = finalGameDateET {
                 if dbBattingG != nil && bdlBattingG != nil {
                     let outer = try? await api.getBatterStatsAtDate(
                         playerId: player.player_id, gameDate: date,
                     )
                     batterIncludesToday = (outer ?? nil)?.includesToday ?? false
-                    batterGamelogGames  = (outer ?? nil)?.gamelogGames
+                    batterGamelogRows  = (outer ?? nil)?.gamelogRows
                 }
                 if dbPitchingG != nil && bdlPitchingG != nil {
                     let outer = try? await api.getPitcherRecordAtDate(
                         playerId: player.player_id, gameDate: date,
                     )
                     pitcherIncludesToday = (outer ?? nil)?.includesToday ?? false
-                    pitcherGamelogGames  = (outer ?? nil)?.gamelogGames
+                    pitcherGamelogRows  = (outer ?? nil)?.gamelogRows
                 }
             }
             // The rule itself lives in `OverlayDecision` — extracted so
@@ -646,11 +677,13 @@ final class PlayerViewModel: ObservableObject {
             // branches (behind > 0 / == 0 / < 0) are stated in one place.
             let battingSide = OverlayDecision.Side(
                 seasonG: dbBattingG, bdlG: bdlBattingG,
-                gamelogGames: batterGamelogGames, includesToday: batterIncludesToday,
+                gamelogRows: batterGamelogRows, includesToday: batterIncludesToday,
+                seasonRowIncludesToday: batRowHasToday,
             )
             let pitchingSide = OverlayDecision.Side(
                 seasonG: dbPitchingG, bdlG: bdlPitchingG,
-                gamelogGames: pitcherGamelogGames, includesToday: pitcherIncludesToday,
+                gamelogRows: pitcherGamelogRows, includesToday: pitcherIncludesToday,
+                seasonRowIncludesToday: pitRowHasToday,
             )
             let decision = OverlayDecision.decide(batting: battingSide, pitching: pitchingSide)
             let shouldOverlayFinals = decision.shouldOverlayFinals

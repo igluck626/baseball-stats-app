@@ -162,7 +162,7 @@ final class APIClient {
             doubles:       resp.doubles,
             triples:       resp.triples,
             includesToday: resp.includes_today,
-            gamelogGames:  resp.gamelog_games,
+            gamelogRows:   resp.gamelog_rows ?? resp.gamelog_games,
         )
     }
 
@@ -188,7 +188,7 @@ final class APIClient {
             losses:        resp.losses,
             saves:         resp.saves,
             includesToday: resp.includes_today,
-            gamelogGames:  resp.gamelog_games,
+            gamelogRows:   resp.gamelog_rows ?? resp.gamelog_games,
         )
     }
 
@@ -615,14 +615,14 @@ struct PitcherRecord: Codable, Hashable {
     /// nightly / catch-up hasn't reached today yet and the caller
     /// needs to manually add the pitcher's current-game decision.
     let includesToday: Bool
-    /// How many DISTINCT DATES the gamelog holds for this season, up to
-    /// and including `gameDate`.
+    /// How many gamelog ROWS the player has this season, up to and
+    /// including `gameDate`.
     ///
-    /// ⚠️ THE COUNT IS THE SIGNAL, not `includesToday`. Compared against
-    /// the season row's `G` it says how many games the aggregate is
-    /// BEHIND — see `PlayerViewModel`'s overlay. Absent on an older
-    /// backend, hence optional; callers fall back to the boolean.
-    let gamelogGames: Int?
+    /// ⚠️ ROWS, NOT DATES. A doubleheader is two games on one date and
+    /// the season row counts both; the deduped count this replaces made
+    /// such a player read short of a row that was current. Absent on an
+    /// older backend, hence optional; callers fall back to the boolean.
+    let gamelogRows: Int?
 }
 
 /// Raw shape `GET /players/{id}/pitcher-record-at-date` returns.
@@ -639,6 +639,7 @@ private struct PitcherRecordResponse: Decodable {
     let includes_today: Bool
     /// Optional: an older backend doesn't send it.
     let gamelog_games:  Int?
+    let gamelog_rows:   Int?
 }
 
 /// Sister to `PitcherRecord` — batter's cumulative HR / 2B / 3B
@@ -653,14 +654,14 @@ struct BatterStatsAtDate: Codable, Hashable {
     /// today's Eastern-local calendar date. Same semantics as
     /// `PitcherRecord.includesToday`.
     let includesToday: Bool
-    /// How many DISTINCT DATES the gamelog holds for this season, up to
-    /// and including `gameDate`.
+    /// How many gamelog ROWS the player has this season, up to and
+    /// including `gameDate`.
     ///
-    /// ⚠️ THE COUNT IS THE SIGNAL, not `includesToday`. Compared against
-    /// the season row's `G` it says how many games the aggregate is
-    /// BEHIND — see `PlayerViewModel`'s overlay. Absent on an older
-    /// backend, hence optional; callers fall back to the boolean.
-    let gamelogGames: Int?
+    /// ⚠️ ROWS, NOT DATES. A doubleheader is two games on one date and
+    /// the season row counts both; the deduped count this replaces made
+    /// such a player read short of a row that was current. Absent on an
+    /// older backend, hence optional; callers fall back to the boolean.
+    let gamelogRows: Int?
 }
 
 /// Raw shape `GET /players/{id}/batter-stats-at-date` returns.
@@ -675,6 +676,7 @@ private struct BatterStatsAtDateResponse: Decodable {
     let includes_today: Bool
     /// Optional: an older backend doesn't send it.
     let gamelog_games:  Int?
+    let gamelog_rows:   Int?
 }
 
 /// Response from `GET /teams/{team_id}/postseason` — every series
