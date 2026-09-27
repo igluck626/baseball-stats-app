@@ -59,21 +59,62 @@ struct OverlayDecision: Equatable {
         }
 
         /// True when this side has nothing to say and must not veto the
-        /// other — a pitcher's batting row, say. ⚠️ A side that IS
-        /// counted and reads `behind == 0` is a real "no" and does
-        /// block: that is the double-count guard.
+        /// other.
+        ///
+        /// ⚠️ A NEGATIVE `behind` is deliberately NOT silence here, even
+        /// though an earlier note prescribed exactly that as the fix for
+        /// the phantom-pitching-row veto. It was the right fix for a
+        /// version of `allowsOverlay` that had only the count clause;
+        /// with the second clause below it is both unnecessary and too
+        /// loose. Unnecessary because a phantom row — `G = 4`, zero
+        /// gamelog rows, `behind = -4` — now passes the second clause on
+        /// its own and vetoes nothing. Too loose because a silent side
+        /// defers entirely, so a pure pitcher whose gamelog is short by
+        /// one would overlay today's finals even when the season row
+        /// already counted them, and double-count. Let the clauses speak
+        /// instead of muting the side.
+        ///
+        /// `behind == 0` remains a real "no": the season row and the
+        /// gamelog agree, so adding a game would double-count.
         var isSilent: Bool {
             behind == nil && (seasonG == nil || bdlG == nil)
         }
 
-        /// ⚠️ Three branches:
-        ///   • `behind > 0`  → the row is missing games; overlay.
-        ///   • `behind == 0` → current; adding anything double-counts.
-        ///   • `behind < 0`  → the aggregate is AHEAD of our gamelog,
-        ///     which the BDL-direct path handles, not this one.
-        /// Only when the count is absent does the old boolean decide.
+        /// ⚠️ TWO CLAUSES, because neither signal is sufficient alone and
+        /// each covers the other's blind spot.
+        ///
+        /// 1. `behind > 0` — our gamelog holds more games than the season
+        ///    row counts, so the row is behind and must be topped up.
+        ///    Catches the case balldontlie is late on: Bryce Miller,
+        ///    2026-09-09, season row G=18 beside 19 gamelog rows.
+        ///
+        /// 2. `seasonG == bdlG && !includesToday` — today's game is in
+        ///    NEITHER source. Our row matches balldontlie's, and our
+        ///    gamelog has no row for the date, so nothing has absorbed
+        ///    it yet. Catches a game that finished after the nightly ran:
+        ///    NYM @ WSH started 17:05Z on 2026-09-27, two hours past the
+        ///    15:04Z nightly.
+        ///
+        /// ⚠️ THE FIRST CLAUSE ALONE REGRESSED EVERY SAME-DAY FINAL. The
+        /// count is `gamelog − seasonG`, and our gamelog carries holes of
+        /// its own — measured at 0 to 3 games per player across a sample
+        /// of seven, three of them negative. So a same-day final that no
+        /// source has absorbed still reads `behind <= 0`, because the
+        /// hole cancels it. Juan Soto read -1, Bo Bichette and Carson
+        /// Benge -3, and all three rendered a pre-game average.
+        ///
+        /// ⚠️ AND A HOLE REMAINS, deliberately named rather than papered
+        /// over: a Miller-shaped player — balldontlie late, our gamelog
+        /// HAS the game — whose gamelog also carries a structural hole
+        /// reads `behind == 0` (+1 and -1 cancelling) AND
+        /// `includesToday == true`, so neither clause fires and the
+        /// stale line stands. That is Hoby Milner, Corey Seager, Justin
+        /// Foscue and Lazaro Montes on the TEX @ SEA night exactly. This
+        /// pair of clauses fixes the same-day regression and does NOT
+        /// fix that; see the note in memory for the measurement that
+        /// would settle whether a same-source count removes it.
         var allowsOverlay: Bool {
-            if let behind { return behind > 0 }
+            if let behind, behind > 0 { return true }
             guard let seasonG, let bdlG else { return true }
             return seasonG == bdlG && !includesToday
         }

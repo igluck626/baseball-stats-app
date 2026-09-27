@@ -23,6 +23,20 @@
 //  Tarik Skubal pitched the same night in a game that WAS absorbed —
 //  season row and gamelog agree — and must gain nothing.
 //
+//  ⚠️ A REAL FIXTURE CAN STILL BE AN UNREPRESENTATIVE ONE. Every case
+//  here was drawn from real payload and the suite passed — and it passed
+//  while a regression shipped, because every player it happened to name
+//  had a COMPLETE gamelog. Our gamelog carries per-player holes of 0 to 3
+//  games (measured across seven players on 2026-09-27, three negative),
+//  and none of the original fixtures had one. The count read clean, the
+//  arithmetic looked sound, and every same-day final stopped being
+//  corrected.
+//
+//  So the cases below deliberately include shapes no single game would
+//  hand you together: a structural hole, a same-day final absent from
+//  both sources, and both at once. Real data tells you what happened;
+//  it does not tell you what can happen.
+//
 
 import Foundation
 import Testing
@@ -77,21 +91,87 @@ struct OverlayDecisionTests {
         #expect(d.budget == nil)
     }
 
-    @Test func aCurrentRowIsNotOverlaidEvenBeforeTheGamelogCatchesUp() {
-        // Same count, but the gamelog hasn't absorbed today yet. Still
-        // zero behind, so still nothing to add.
+    /// ⚠️ THIS ASSERTION WAS REVERSED, and it is worth knowing why: it
+    /// used to expect NO overlay here, and that expectation is the bug.
+    /// Same count with today's date absent from the gamelog does not mean
+    /// "nothing to add" — it means nothing has absorbed today's game yet,
+    /// which is precisely when it must be added. The test encoded the
+    /// regression and passed while every same-day final went uncorrected.
+    @Test func aCurrentRowWithTodayInNeitherSourceIsOverlaid() {
         let d = pitcherOnly(seasonG: 23, bdlG: 23, gamelog: 23, includesToday: false)
-        #expect(!d.shouldOverlayFinals)
+        #expect(d.shouldOverlayFinals)
+        // and once the gamelog HAS the date, both sources agree and it stops
+        let absorbed = pitcherOnly(seasonG: 23, bdlG: 23, gamelog: 23, includesToday: true)
+        #expect(!absorbed.shouldOverlayFinals)
+    }
+
+    // MARK: ⚠️ same-day finals — the case the first version regressed
+
+    /// A game that finished AFTER the nightly ran is in neither source:
+    /// our season row still matches balldontlie's, and our gamelog has no
+    /// row for the date. The count alone says nothing — it is the second
+    /// clause that must fire.
+    @Test func aFinalThatEndedAfterTheNightlyIsOverlaid() {
+        // clean case: no structural hole, count reads level
+        let d = batterOnly(seasonG: 110, bdlG: 110, gamelog: 110, includesToday: false)
+        #expect(d.shouldOverlayFinals, "a same-day final in neither source must be added")
+    }
+
+    /// ⚠️ THE ACTUAL REGRESSION. Juan Soto, 2026-09-27: our row and
+    /// balldontlie's both read 110 while the gamelog held 109 dates — a
+    /// structural hole — and the day's final was in neither. The count
+    /// reads NEGATIVE, so the first clause cannot fire and the second
+    /// must. Bichette and Benge read -3 the same night.
+    @Test func aStructuralHoleDoesNotBlockTheSameDayClause() {
+        for (name, gamelog, seasonG) in [("Soto", 109, 110), ("Bichette", 156, 159),
+                                         ("Benge", 152, 155)] {
+            let d = batterOnly(seasonG: seasonG, bdlG: seasonG,
+                               gamelog: gamelog, includesToday: false)
+            #expect(d.shouldOverlayFinals,
+                    "\(name): a short gamelog must not suppress a final neither source has")
+        }
+    }
+
+    /// The same hole must not veto the OTHER side either — the Duran
+    /// shape, now with a negative count rather than a zero.
+    @Test func aNegativeSideDoesNotVetoAValidCorrection() {
+        // batting is a game behind and due a correction; pitching is a
+        // phantom row (G = 4, no gamelog rows at all) reading -4.
+        let d = OverlayDecision.decide(
+            batting: .init(seasonG: 135, bdlG: 135, gamelogGames: 136, includesToday: true),
+            pitching: .init(seasonG: 4, bdlG: 4, gamelogGames: 0, includesToday: false),
+        )
+        #expect(d.shouldOverlayFinals, "a phantom pitching row vetoed a valid batting fix")
+        #expect(d.budget == 1, "the budget comes from the side that is actually behind")
+    }
+
+    /// ⚠️ THE KNOWN HOLE, pinned so it is not mistaken for solved. A
+    /// Miller-shaped player whose gamelog ALSO has a structural hole:
+    /// +1 and -1 cancel to `behind == 0`, and the gamelog HAS the game so
+    /// the second clause cannot fire either. Milner, Seager, Foscue and
+    /// Montes on the TEX @ SEA night. If this test ever starts failing,
+    /// someone has fixed it — update the comment on `allowsOverlay`.
+    @Test func aCancellingHoleStillLeavesTheRowStale() {
+        let d = batterOnly(seasonG: 85, bdlG: 85, gamelog: 85, includesToday: true)
+        #expect(!d.shouldOverlayFinals,
+                "this is the documented limit, not a passing case")
     }
 
     // MARK: behind < 0 — the BDL-direct path, untouched here
 
-    @Test func anAggregateAheadOfOurGamelogDoesNotOverlay() {
-        // balldontlie absorbed a game our gamelog lacks. This decision
-        // declines; `shouldUseBDLDirect` in the view model handles it.
+    @Test func aNegativeShortfallIsNeverABudget() {
+        // ⚠️ This used to assert the overlay DECLINED here, and that
+        // assertion was wrong twice over: a negative count means our
+        // GAMELOG trails, which says nothing about whether the season row
+        // has today's game — and treating it as a refusal is what
+        // regressed every same-day final. It contributes no budget, and
+        // the second clause decides.
         let d = pitcherOnly(seasonG: 24, bdlG: 24, gamelog: 23, includesToday: false)
-        #expect(!d.shouldOverlayFinals, "overlay must not fire when the row is AHEAD")
         #expect(d.budget == nil, "a negative shortfall is not a budget")
+        #expect(d.shouldOverlayFinals, "the second clause applies: the row matches BDL and the gamelog lacks the date")
+        // with the date already in the gamelog, neither clause fires
+        let absorbed = pitcherOnly(seasonG: 24, bdlG: 24, gamelog: 23, includesToday: true)
+        #expect(!absorbed.shouldOverlayFinals)
     }
 
     // MARK: the fallback, and two-way players
