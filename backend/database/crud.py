@@ -1,6 +1,6 @@
 import datetime
 
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy import text as _sa_text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
@@ -398,7 +398,13 @@ def get_batting_gamelogs(
     player_id: int,
     season: int | None = None,
     last_n: int | None = None,
+    batted_only: bool = False,
 ) -> list[BattingGameLog]:
+    """`batted_only` keeps games with a plate appearance — PA, AB or BB
+    above zero, nulls as zero, the same test the BDL parser applies. The
+    filter runs BEFORE `last_n`, so a last-15 window is fifteen games the
+    player batted in, not fifteen games minus his pinch-running ones. The
+    game log itself (Recent Games) leaves it off and shows every game."""
     q = (
         db.query(BattingGameLog)
         .filter(BattingGameLog.player_id == player_id)
@@ -406,6 +412,10 @@ def get_batting_gamelogs(
     )
     if season is not None:
         q = q.filter(BattingGameLog.season == season)
+    if batted_only:
+        q = q.filter(or_(func.coalesce(BattingGameLog.PA, 0) > 0,
+                         func.coalesce(BattingGameLog.AB, 0) > 0,
+                         func.coalesce(BattingGameLog.BB, 0) > 0))
     if last_n is not None:
         q = q.limit(last_n)
     return q.all()
@@ -424,7 +434,16 @@ def get_pitching_gamelogs(
     player_id: int,
     season: int | None = None,
     last_n: int | None = None,
+    faced_batter_only: bool = False,
 ) -> list[PitchingGameLog]:
+    """`faced_batter_only` keeps games where the pitcher faced a batter,
+    applied before `last_n` like `batted_only` above.
+
+    ⚠️ A PROXY: the table has no batters-faced column, so "faced a batter"
+    is read as IP > 0 or any of H / BB / HBP / SO / R above zero. It misses
+    only a zero-out appearance whose every batter reached on an error. Of
+    the 2026 rows, the three it rejects are all legacy MLB-path rows from
+    before 05-19. Storing BDL's `batters_faced` would make it exact."""
     q = (
         db.query(PitchingGameLog)
         .filter(PitchingGameLog.player_id == player_id)
@@ -432,6 +451,12 @@ def get_pitching_gamelogs(
     )
     if season is not None:
         q = q.filter(PitchingGameLog.season == season)
+    if faced_batter_only:
+        q = q.filter(or_(func.coalesce(PitchingGameLog.IP, 0) > 0,
+                         *(func.coalesce(c, 0) > 0 for c in (
+                             PitchingGameLog.H, PitchingGameLog.BB,
+                             PitchingGameLog.HBP, PitchingGameLog.SO,
+                             PitchingGameLog.R))))
     if last_n is not None:
         q = q.limit(last_n)
     return q.all()

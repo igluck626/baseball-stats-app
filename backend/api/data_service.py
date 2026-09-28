@@ -4984,6 +4984,13 @@ def _to_int(v) -> Optional[int]:
             return None
 
 
+def _batted(pa, ab, bb) -> bool:
+    """True if a line shows any batting activity. Nulls count as 0 —
+    BDL ships `plate_appearances` null on some rows that still carry AB
+    (19 such 2026 rows), so PA alone cannot decide it."""
+    return any((_to_int(v) or 0) > 0 for v in (pa, ab, bb))
+
+
 def _ip_str_to_decimal(v) -> Optional[float]:
     """Convert IP from MLB API string ('6.1' = 6⅓) to decimal innings."""
     if v is None or v == "":
@@ -5394,8 +5401,9 @@ def recalculate_batting_rates(db, season: int, player_id: Optional[int] = None) 
 
 def _parse_bdl_batting_gamelog(stat: dict, ctx: dict) -> Optional[dict]:
     """One BDL `/stats` row → `batting_gamelogs` row dict. Returns
-    None when the row carries no batting activity (the row's `ip`
-    side, or a row where the player didn't bat). Caller stamps
+    None for a pitching line with no batting activity. A zero-PA row
+    with no pitching line (defensive sub, pinch runner) IS returned,
+    with its PA as shipped — possibly null. Caller stamps
     `player_id` from the bdl→mlbam map; this function leaves
     that key out."""
     # Skip pure pitching rows — they're identified by a non-null
@@ -5404,11 +5412,16 @@ def _parse_bdl_batting_gamelog(stat: dict, ctx: dict) -> Optional[dict]:
     if stat.get("ip") is not None and (stat.get("at_bats") is None
                                        and stat.get("plate_appearances") is None):
         return None
-    pa = _to_int(stat.get("plate_appearances")) or 0
-    ab = _to_int(stat.get("at_bats")) or 0
-    bb = _to_int(stat.get("bb")) or 0
-    if pa == 0 and ab == 0 and bb == 0:
-        # No batting activity at all — pitcher's defensive-only line.
+    if not _batted(stat.get("plate_appearances"), stat.get("at_bats"), stat.get("bb")) \
+            and stat.get("ip") is not None:
+        # No batting activity on a row that carries a pitching line — a
+        # pitcher's pitching-only game (Ohtani on a start without the DH).
+        # MLB's game log leaves those out too.
+        #
+        # ⚠️ A row with NO pitching line is kept even at zero PA: that is a
+        # defensive substitute or a pinch runner (Seager 06-30, Foscue
+        # 05-29), and MLB's game log lists the game. Dropping them is what
+        # left the gamelog short of G for every everyday bench player.
         return None
 
     side = _resolve_side(stat, ctx)
@@ -5489,7 +5502,11 @@ def _parse_bdl_pitching_gamelog(stat: dict, ctx: dict) -> Optional[dict]:
     ip_dec = _ip_str_to_decimal(ip)
     if ip_dec is None:
         return None
-    if ip_dec <= 0 and (_to_int(stat.get("p_k")) or 0) == 0:
+    # A pitcher who recorded no out still pitched if he faced a batter —
+    # Milner 06-25: IP 0, three hits, BF 3. `batters_faced` is the direct
+    # evidence; the IP/K test only decides rows that don't ship it.
+    bf = _to_int(stat.get("batters_faced"))
+    if not (bf and bf > 0) and ip_dec <= 0 and (_to_int(stat.get("p_k")) or 0) == 0:
         return None
 
     side = _resolve_side(stat, ctx)
@@ -5602,14 +5619,55 @@ def fetch_bdl_game_stats(
     return bat_by_pid, pit_by_pid
 
 
-def save_bdl_gamelogs_for_date(date_str: str) -> dict:
+# ⚠️ THE 2026 BDL INGEST CUTOVER. Before this date the 2026 gamelogs were
+# written by the legacy MLB Stats API path, under bare six-digit gamePks —
+# the whole pitching slate (~5,900 rows; BDL's pitching ingest was not
+# working yet) and the zero-PA batting rows. BDL knows those games by its
+# own ids, so re-running BDL ingest over them writes a SECOND copy of every
+# game, and the (player_id, game_id) key cannot see it: the two copies have
+# different game_ids. Nothing downstream would notice — G, streaks and the
+# season overlay would just count the game twice.
+#
+# Hence two checks, both waived only by an explicit `allow_pre_cutover`:
+#   • the requested date — refused outright before the cutover;
+#   • each game's own ET date — a requested date is a UTC bucket, and the
+#     05-19 bucket holds 05-18 ET night games, which are on the wrong side.
+_BDL_INGEST_CUTOVER = datetime.date(2026, 5, 19)
+
+
+def _before_bdl_cutover(d: datetime.date) -> bool:
+    """True for a 2026 date the legacy MLB path owns. Other seasons are out
+    of this guard's scope (2020-2025 are Retrosheet ids throughout)."""
+    return d.year == _BDL_INGEST_CUTOVER.year and d < _BDL_INGEST_CUTOVER
+
+
+def save_bdl_gamelogs_for_date(
+    date_str: str, *, allow_pre_cutover: bool = False,
+) -> dict:
     """Walk every BDL final game on `date_str` (yyyy-mm-dd, local),
     fetch each game's full stat sheet, and upsert into
     `batting_gamelogs` / `pitching_gamelogs`. Rate-limited via
     `_BDL_RATE_LIMIT_SLEEP` between game calls.
 
     Idempotent — the row PK (player_id, game_id) means re-running
-    on a date that's already loaded is a no-op upsert."""
+    on a date that's already loaded is a no-op upsert.
+
+    Refuses 2026 dates before `_BDL_INGEST_CUTOVER`, and skips any game
+    whose own ET date falls before it, unless `allow_pre_cutover` — see
+    the note on that constant."""
+    try:
+        requested = datetime.date.fromisoformat(date_str)
+    except ValueError:
+        requested = None
+    if requested is not None and _before_bdl_cutover(requested) and not allow_pre_cutover:
+        log.warning(
+            "save_bdl_gamelogs_for_date(%s): refused — before the %s BDL ingest "
+            "cutover; pass allow_pre_cutover to override",
+            date_str, _BDL_INGEST_CUTOVER,
+        )
+        return {"status": "refused_pre_cutover", "date": date_str,
+                "games": 0, "bat_rows": 0, "pit_rows": 0,
+                "skipped_unmapped_players": 0}
     log.info("save_bdl_gamelogs_for_date: starting game log fetch for %s", date_str)
     if not connection.db_available():
         log.warning("save_bdl_gamelogs_for_date(%s): DATABASE_URL not configured", date_str)
@@ -5626,6 +5684,7 @@ def save_bdl_gamelogs_for_date(date_str: str) -> dict:
             "bat_rows":    0,
             "pit_rows":    0,
             "skipped_unmapped_players": 0,
+            "skipped_pre_cutover":      0,
         }
 
     game_ids = [g.get("id") for g in games]
@@ -5644,6 +5703,7 @@ def save_bdl_gamelogs_for_date(date_str: str) -> dict:
     total_bat = 0
     total_pit = 0
     skipped: int = 0
+    skipped_pre_cutover = 0
     for i, g in enumerate(games):
         game_id = g.get("id")
         if game_id is None:
@@ -5653,6 +5713,15 @@ def save_bdl_gamelogs_for_date(date_str: str) -> dict:
             date_str, i + 1, len(games), game_id,
         )
         ctx = _bdl_game_ctx(g, fallback_date=date_str)
+        if (not allow_pre_cutover and ctx.get("game_date") is not None
+                and _before_bdl_cutover(ctx["game_date"])):
+            log.info(
+                "save_bdl_gamelogs_for_date(%s): game %s skipped — ET date %s "
+                "is before the BDL ingest cutover",
+                date_str, game_id, ctx["game_date"],
+            )
+            skipped_pre_cutover += 1
+            continue
         try:
             bat_by_pid, pit_by_pid = fetch_bdl_game_stats(
                 int(game_id), bdl_to_mlbam, ctx,
@@ -5701,10 +5770,13 @@ def save_bdl_gamelogs_for_date(date_str: str) -> dict:
         "bat_rows":                  total_bat,
         "pit_rows":                  total_pit,
         "skipped_unmapped_players":  skipped,
+        "skipped_pre_cutover":       skipped_pre_cutover,
     }
 
 
-def backfill_bdl_gamelogs(start_date: str, end_date: str) -> dict:
+def backfill_bdl_gamelogs(
+    start_date: str, end_date: str, *, allow_pre_cutover: bool = False,
+) -> dict:
     """Walk dates from `start_date` through `end_date` (inclusive,
     `yyyy-mm-dd`) and call `save_bdl_gamelogs_for_date` for each.
     Resumable — already-loaded games are no-op upserts. Returns
@@ -5724,7 +5796,8 @@ def backfill_bdl_gamelogs(start_date: str, end_date: str) -> dict:
     total_pit   = 0
     cur = start
     while cur <= end:
-        result = save_bdl_gamelogs_for_date(cur.isoformat())
+        result = save_bdl_gamelogs_for_date(
+            cur.isoformat(), allow_pre_cutover=allow_pre_cutover)
         per_day.append(result)
         total_games += int(result.get("games") or 0)
         total_bat   += int(result.get("bat_rows") or 0)
@@ -7991,7 +8064,8 @@ def compute_player_heat(
 def _compute_batter_heat(
     db, player_id: int, current_year: int, league_avgs: dict,
 ) -> tuple[Optional[float], Optional[str], Optional[str]]:
-    logs = crud.get_batting_gamelogs(db, player_id, season=current_year, last_n=15)
+    logs = crud.get_batting_gamelogs(db, player_id, season=current_year, last_n=15,
+                                     batted_only=True)
     if len(logs) < 10 or not _heat_recent(logs):
         return (None, None, None)
 
@@ -8071,7 +8145,8 @@ def _compute_pitcher_heat(
     min_games = 3 if is_starter else 8
     min_ip = 10 if is_starter else 5
 
-    logs = crud.get_pitching_gamelogs(db, player_id, season=current_year, last_n=last_n)
+    logs = crud.get_pitching_gamelogs(db, player_id, season=current_year, last_n=last_n,
+                                      faced_batter_only=True)
     if len(logs) < min_games or not _heat_recent(logs):
         return (None, None, None)
 
