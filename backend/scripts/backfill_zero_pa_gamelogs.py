@@ -28,7 +28,11 @@ as a collision — the 05-19 Braves–Marlins game is held only under gamePk
 823865, so its BDL twin would be exactly that duplicate.
 
 Dry run by default: reads BDL and the DB, writes nothing, prints per-date
-totals. `--write` performs the inserts.
+totals. `--write` performs the inserts ONE ET DATE PER TRANSACTION, reports the
+rows each date actually inserted (RETURNING — the submitted count overstates
+under DO NOTHING), and stops at the first failed date. Dates before it stay
+committed, so a re-run picks up where it stopped: the rows already written
+conflict and are skipped. 2026 row counts are printed before and after.
 
 Usage (the backend's Python 3.11 environment, DATABASE_URL + BDL_KEY set):
     python backend/scripts/backfill_zero_pa_gamelogs.py               # dry run
@@ -50,9 +54,10 @@ sys.path.insert(0, os.path.join(_BACKEND_DIR, "api"))
 sys.path.insert(0, _BACKEND_DIR)
 
 import data_service                                              # noqa: E402
-from database import connection, crud                            # noqa: E402
+from database import connection                                  # noqa: E402
 from database.models import BattingGameLog, PitchingGameLog      # noqa: E402
 from sqlalchemy import text                                      # noqa: E402
+from sqlalchemy.dialects.postgresql import insert as pg_insert   # noqa: E402
 
 log = logging.getLogger("backfill_zero_pa")
 
@@ -67,6 +72,23 @@ def _old_rules_dropped_pitching(row: dict) -> bool:
     """The pre-commit-2 pitching filter: dropped when IP <= 0 and K == 0. The
     new parser only returns such a row when batters_faced > 0."""
     return (row.get("IP") or 0) <= 0 and (row.get("SO") or 0) == 0
+
+
+def _season_counts(db, season: int) -> tuple[int, int]:
+    return tuple(db.execute(text(
+        f"SELECT count(*) FROM {t} WHERE season = :s"), {"s": season}).scalar()
+        for t in ("batting_gamelogs", "pitching_gamelogs"))
+
+
+def _insert(db, model, rows: list[dict]) -> int:
+    """Rows actually inserted. The conflict target is the tables' primary key,
+    (player_id, game_id); a row already there is skipped, never rewritten."""
+    if not rows:
+        return 0
+    stmt = (pg_insert(model).values(rows)
+            .on_conflict_do_nothing(index_elements=["player_id", "game_id"])
+            .returning(model.player_id))
+    return len(db.execute(stmt).fetchall())
 
 
 def main() -> int:
@@ -198,14 +220,39 @@ def main() -> int:
               f"and {len(to_insert_pit)} pitching rows.")
         return 0
 
+    by_date: dict[datetime.date, tuple[list, list]] = collections.defaultdict(lambda: ([], []))
+    for r in to_insert_bat:
+        by_date[r["game_date"]][0].append(r)
+    for r in to_insert_pit:
+        by_date[r["game_date"]][1].append(r)
+
     with connection.get_session() as db:
-        for i in range(0, len(to_insert_bat), 500):
-            crud.bulk_insert_gamelogs(db, BattingGameLog, to_insert_bat[i:i + 500])
-        for i in range(0, len(to_insert_pit), 500):
-            crud.bulk_insert_gamelogs(db, PitchingGameLog, to_insert_pit[i:i + 500])
-    print(f"\nWROTE (ON CONFLICT DO NOTHING): {len(to_insert_bat)} batting and "
-          f"{len(to_insert_pit)} pitching rows submitted. Verify with a segmented "
-          "read-back — the submit count is not proof of a write.")
+        before = _season_counts(db, start.year)
+    print(f"\n{start.year} rows BEFORE: batting {before[0]}, pitching {before[1]}")
+    print("date\tbat_submitted\tbat_inserted\tpit_submitted\tpit_inserted")
+    ins_bat = ins_pit = 0
+    failed = None
+    for d in sorted(by_date):
+        bats, pits = by_date[d]
+        try:
+            with connection.get_session() as db:      # commits on exit, rolls back on raise
+                nb = _insert(db, BattingGameLog, bats)
+                np_ = _insert(db, PitchingGameLog, pits)
+        except Exception as exc:
+            failed = d
+            print(f"{d}\tFAILED — rolled back, stopping: {exc}")
+            break
+        ins_bat += nb
+        ins_pit += np_
+        print(f"{d}\t{len(bats)}\t{nb}\t{len(pits)}\t{np_}", flush=True)
+    with connection.get_session() as db:
+        after = _season_counts(db, start.year)
+    print(f"INSERTED: batting {ins_bat}, pitching {ins_pit}")
+    print(f"{start.year} rows AFTER:  batting {after[0]} ({after[0] - before[0]:+d}), "
+          f"pitching {after[1]} ({after[1] - before[1]:+d})")
+    if failed is not None:
+        print(f"⚠️ STOPPED at {failed}; dates before it are committed. Re-run to resume.")
+        return 1
     return 0
 
 
