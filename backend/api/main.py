@@ -8803,18 +8803,43 @@ def _run_milestone(player, event, n, season=None, game_type=None):
             "game_coverage": {"complete": False}}
 
 
-def _streak_classify(kind, H, HR, AB, reached, PA):
+def _streak_classify(kind, H, HR, AB, reached, PA, SF=0):
     """One game -> EXTEND / BREAK / SKIP under one streak definition. SKIP is
     NEUTRAL (the streak carries, the game isn't counted). THE BASEBALL RULE most
     implementations get wrong: a game with NO official at-bat (walked/HBP/sac
     only) does NOT break a hitting/HR/multi-hit streak — it's skipped. On-base
-    counts REACHING, so there a walk EXTENDS instead."""
+    counts REACHING, so there a walk EXTENDS instead.
+
+    ⚠️ A SACRIFICE FLY IS NOT EXCUSED. Rule 9.23 lists exactly what cannot end a
+    consecutive-game hitting streak — a base on balls, a hit by pitch, defensive
+    interference or obstruction, and a sacrifice BUNT — and a sacrifice fly is
+    not among them. A hitless game whose only plate appearance was a sac fly
+    therefore ENDS the streak, where every other at-bat-less game carries it.
+    The `AB == 0 -> skip` line below cannot tell the two apart, because a sac fly
+    is not an official at-bat either, so the sac-fly case is decided first.
+
+    Three such games sit in the 2026 data already — Joey Bart 04-13, Johnathan
+    Rodriguez 04-17, Jorbit Vivas 07-21, each PA=1 AB=0 BB=0 SF=1 H=0 — all
+    previously classified `skip`. None of the three changed that player's LONGEST
+    streak (each had been broken on an adjacent day), so this corrects the rule
+    rather than any figure we are currently publishing.
+
+    ⚠️ HITTING ONLY, deliberately. Home-run and multi-hit streaks keep the old
+    `skip` for a sac-fly game; 9.23 is written about hitting streaks and extending
+    it to the other kinds is a separate decision, not a consequence of this one.
+
+    `SF` defaults to 0 so a caller that does not pass it — or a Retrosheet-era row
+    that carries no SF column — behaves exactly as before.
+    """
+    SF = SF or 0
     if PA == 0:
         return "skip"                      # didn't bat (pinch-run/defense) — neutral
     if kind == "on_base":
         return "extend" if reached >= 1 else "break"
+    if kind == "hitting" and H == 0 and SF > 0:
+        return "break"                     # sac fly is an unexcused hitless PA
     if AB == 0:
-        return "skip"                      # walked/HBP/sac only — no at-bat to hit in
+        return "skip"                      # walked/HBP/sac bunt only — no at-bat to hit in
     if kind == "hitting":
         return "extend" if H >= 1 else "break"
     if kind == "home_run":
@@ -8835,7 +8860,7 @@ def _longest_streak(games, kind):
         H = g["H"]; HR = g["HR"]; AB = g["AB"]
         PA = AB + g["BB"] + g["HBP"] + g["SF"] + g["SH"]
         reached = H + g["BB"] + g["HBP"]
-        c = _streak_classify(kind, H, HR, AB, reached, PA)
+        c = _streak_classify(kind, H, HR, AB, reached, PA, g.get("SF") or 0)
         if c == "extend":
             if cur == 0:
                 start, run = g["game_date"], []
