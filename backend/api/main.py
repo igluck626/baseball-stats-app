@@ -8803,7 +8803,7 @@ def _run_milestone(player, event, n, season=None, game_type=None):
             "game_coverage": {"complete": False}}
 
 
-def _streak_classify(kind, H, HR, AB, reached, PA, SF=0):
+def _streak_classify(kind, H, HR, AB, reached, PA, SF=0, season=None):
     """One game -> EXTEND / BREAK / SKIP under one streak definition. SKIP is
     NEUTRAL (the streak carries, the game isn't counted). THE BASEBALL RULE most
     implementations get wrong: a game with NO official at-bat (walked/HBP/sac
@@ -8828,15 +8828,25 @@ def _streak_classify(kind, H, HR, AB, reached, PA, SF=0):
     `skip` for a sac-fly game; 9.23 is written about hitting streaks and extending
     it to the other kinds is a separate decision, not a consequence of this one.
 
+    ⚠️ EXCEPT IN THE SEASONS A SAC FLY WAS SCORED AS A SACRIFICE: 1908-1930 and
+    1939. In those years it was credited exactly like a sacrifice bunt — no
+    at-bat, a sacrifice — so the game carries the streak, as a bunt still does.
+    In 1931-1938 and 1940-1953 a fly that scored a run was an ordinary at-bat,
+    so no SF-only game exists to decide (the data holds none). From 1954 it is
+    its own statistic and rule 9.23 applies: break. The data holds 719 such
+    games in 1908-1930, 40 in 1939 and 3,726 from 1954.
+
     `SF` defaults to 0 so a caller that does not pass it — or a Retrosheet-era row
-    that carries no SF column — behaves exactly as before.
+    that carries no SF column — behaves exactly as before. `season` defaults to
+    None, which is read as the modern rule.
     """
     SF = SF or 0
+    sf_scored_as_sacrifice = season is not None and (1908 <= season <= 1930 or season == 1939)
     if PA == 0:
         return "skip"                      # didn't bat (pinch-run/defense) — neutral
     if kind == "on_base":
         return "extend" if reached >= 1 else "break"
-    if kind == "hitting" and H == 0 and SF > 0:
+    if kind == "hitting" and H == 0 and SF > 0 and not sf_scored_as_sacrifice:
         return "break"                     # sac fly is an unexcused hitless PA
     if AB == 0:
         return "skip"                      # walked/HBP/sac bunt only — no at-bat to hit in
@@ -8860,7 +8870,8 @@ def _longest_streak(games, kind):
         H = g["H"]; HR = g["HR"]; AB = g["AB"]
         PA = AB + g["BB"] + g["HBP"] + g["SF"] + g["SH"]
         reached = H + g["BB"] + g["HBP"]
-        c = _streak_classify(kind, H, HR, AB, reached, PA, g.get("SF") or 0)
+        c = _streak_classify(kind, H, HR, AB, reached, PA, g.get("SF") or 0,
+                             g.get("season"))
         if c == "extend":
             if cur == 0:
                 start, run = g["game_date"], []
