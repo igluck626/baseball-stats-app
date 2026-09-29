@@ -252,7 +252,7 @@ final class BallDontLieClient: @unchecked Sendable {
         let games: [BDLGame] = try await fetchAllPages(
             path: "/mlb/v1/games", baseQuery: items,
         )
-        let regular = games.filter { $0.seasonType == "regular" }
+        let regular = games.filter(\.isRegularSeason)
         storeInCache(key, regular, ttl: 300)
         return regular
     }

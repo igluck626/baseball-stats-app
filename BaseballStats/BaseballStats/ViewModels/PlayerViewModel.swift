@@ -480,7 +480,11 @@ final class PlayerViewModel: ObservableObject {
         // Scheduled first pitch of the earliest final on the slate — the
         // instant the season row must post-date to be said to contain it.
         var earliestFinalStart: Date? = nil
-        for g in todayGames {
+        // ⚠️ REGULAR SEASON ONLY. Everything added below lands on the player's
+        // regular-season line, and BDL's schedule carries the postseason too:
+        // without this a Wild Card final was overlaid onto the season. See
+        // `SeasonType`.
+        for g in Self.overlayCandidates(todayGames) {
             switch g.status {
             case "STATUS_IN_PROGRESS", "STATUS_DELAYED":
                 liveOnSchedule = true
@@ -533,7 +537,7 @@ final class PlayerViewModel: ObservableObject {
                 // ET. The previous filter dropped these live games
                 // entirely because it only let `STATUS_FINAL` rows
                 // through.
-                for g in yGames {
+                for g in Self.overlayCandidates(yGames) {
                     guard g.startDate != nil else { continue }
                     switch g.status {
                     case "STATUS_IN_PROGRESS", "STATUS_DELAYED":
@@ -609,7 +613,9 @@ final class PlayerViewModel: ObservableObject {
             let rows = (try? await bdl.getSeasonStats(
                 playerIds: [bdlPlayerId], season: season,
             )) ?? []
-            let bdlSeason = rows.first(where: { $0.player.id == bdlPlayerId })
+            // The REGULAR row: once he has played in the postseason BDL sends
+            // two, in no guaranteed order.
+            let bdlSeason = BDLSeasonStat.regularRow(in: rows, for: bdlPlayerId)
             let dbBattingG   = currentBatting?.standard?.G
             let dbPitchingG  = currentPitching?.standard?.G
             let bdlBattingG  = bdlSeason?.battingGp
@@ -973,6 +979,13 @@ final class PlayerViewModel: ObservableObject {
     /// PT's date string (the calendar day already over on the East
     /// Coast) and miss tonight's game which BDL files under ET's
     /// next day.
+    /// The schedule games the season overlay may add to the player's line —
+    /// regular season only (`SeasonType`). A Wild Card final is on the same
+    /// BDL schedule and must never land on the regular-season line.
+    nonisolated static func overlayCandidates(_ games: [BDLGame]) -> [BDLGame] {
+        games.filter(\.isRegularSeason)
+    }
+
     private static let dateOnly: DateFormatter = {
         let f = DateFormatter()
         f.calendar = .init(identifier: .gregorian)

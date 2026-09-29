@@ -1651,7 +1651,8 @@ struct BoxScoreView: View {
                 else if totalKey == \BoxBatting.doubles  { atDate = stats.doubles }
                 else if totalKey == \BoxBatting.triples  { atDate = stats.triples }
                 else                                     { atDate = 0 }
-                let bump = !stats.includesToday ? gameCount : 0
+                let bump = SeasonType.regularSeasonBump(gameCount, includesToday: stats.includesToday,
+                                                        game: vm.game)
                 return "\(prefix) (\(atDate + bump))"
             }
             // Historical: the contextual endpoint is never called for
@@ -1842,7 +1843,7 @@ struct BoxScoreView: View {
             // tracks the latter; flip the bump off as soon as the
             // catch-up writes today's gamelog row so the displayed
             // record doesn't double-count this decision.
-            let bump = !rec.includesToday ? 1 : 0
+            let bump = SeasonType.regularSeasonBump(1, includesToday: rec.includesToday, game: vm.game)
             if (game?.wins ?? 0) > 0 {
                 return "(W \(rec.wins + bump)-\(rec.losses))"
             }

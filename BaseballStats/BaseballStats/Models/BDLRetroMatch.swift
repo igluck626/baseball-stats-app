@@ -211,6 +211,7 @@ extension Game {
             bdlAwayTeamId: bdlGame.awayTeam.id,
             bdlHomeTeamId: bdlGame.homeTeam.id,
             bdlGameId:     bdlGame.id,
+            seasonType:    seasonType,
         )
     }
 }

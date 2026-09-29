@@ -535,7 +535,7 @@ struct RecordAdjustmentTests {
                                statusCode: "F", codedGameState: "F"),
             teams: GameTeams(away: side(away, awayScore), home: side(home, homeScore)),
             venue: nil, linescore: nil, decisions: nil,
-            bdlAwayTeamId: nil, bdlHomeTeamId: nil, bdlGameId: nil)
+            bdlAwayTeamId: nil, bdlHomeTeamId: nil, bdlGameId: nil, seasonType: nil)
     }
 
     private func bdl(id: Int, away: String, home: String,

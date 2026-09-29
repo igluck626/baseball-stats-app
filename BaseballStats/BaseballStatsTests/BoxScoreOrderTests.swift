@@ -283,6 +283,7 @@ private func gameForFixtureTeams(
         bdlAwayTeamId: bdlIds ? away.id : nil,
         bdlHomeTeamId: bdlIds ? home.id : nil,
         bdlGameId: 5059890,
+        seasonType: "regular",
     )
 }
 

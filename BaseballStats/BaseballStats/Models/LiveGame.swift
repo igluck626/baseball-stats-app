@@ -770,6 +770,7 @@ extension Game {
             bdlAwayTeamId: bdlAwayTeamId,
             bdlHomeTeamId: bdlHomeTeamId,
             bdlGameId:     bdlGameId,
+            seasonType:    seasonType,
         )
     }
 
@@ -817,6 +818,7 @@ extension Game {
             bdlAwayTeamId: bdlAwayTeamId,
             bdlHomeTeamId: bdlHomeTeamId,
             bdlGameId:     bdlGameId,
+            seasonType:    seasonType,
         )
     }
 }

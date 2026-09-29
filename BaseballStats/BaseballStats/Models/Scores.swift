@@ -52,8 +52,16 @@ struct Game: Codable, Identifiable, Hashable {
     /// `gamePk` cannot address it. nil means the match found nothing, which
     /// costs the plays list and nothing else.
     let bdlGameId: Int?
+    /// BDL's `season_type` for a BDL-served game; nil for our own historical
+    /// games (all regular season) and older payloads. Read it through
+    /// `isRegularSeason`, never directly.
+    let seasonType: String?
 
     var id: Int { gamePk }
+
+    /// Whether this game counts toward a REGULAR-season figure — every "add
+    /// today's game" bump checks it. See `SeasonType`.
+    var isRegularSeason: Bool { SeasonType.isRegular(seasonType, postseason: nil) }
 
     /// The SEASON this game belongs to, from its own date.
     ///
@@ -268,7 +276,8 @@ enum TodayRecordAdjustments {
         var out: [FinalResult] = []
         for game in games {
             let result: FinalResult? = {
-                guard game.phase == .final,
+                // A postseason result is not part of a regular-season W-L.
+                guard game.phase == .final, game.isRegularSeason,
                       let start = game.startDate,
                       validETDates.contains(etFormatter.string(from: start)) else { return nil }
                 if let cutoff, start <= cutoff { return nil }
@@ -1955,6 +1964,9 @@ extension BDLGame {
             bdlHomeTeamId: homeTeam.id,
             // A BDL game IS its own provider id, so plays address it directly.
             bdlGameId:     id,
+            // Folds BDL's two signals into one: an explicit postseason flag
+            // with no type still reads as postseason.
+            seasonType:    seasonType ?? (postseason == true ? "postseason" : nil),
         )
     }
 

@@ -67,7 +67,7 @@ final class ScheduleViewModel: ObservableObject {
     /// TWO THINGS HERE ARE LOAD-BEARING AND BOTH LOOK OPTIONAL.
     ///
     /// 1. `games` must already be REGULAR SEASON ONLY. `getTeamSeasonGames`
-    ///    filters `seasonType == "regular"` inside the client, and this walk
+    ///    filters to the regular season (`isRegularSeason`) inside the client, and this walk
     ///    depends on that having happened. BDL returns spring training in the
     ///    same season query — 194 rows for 2026 against 163 regular ones — so
     ///    walking the unfiltered set produces a record that is wrong by the

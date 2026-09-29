@@ -29,7 +29,9 @@ struct BDLGame: Codable, Identifiable, Hashable {
     let displayClock: String?
     let scoringSummary: [BDLScoringPlay]?
     let season: Int
-    let seasonType: String           // "regular", "postseason", "spring_training"
+    /// "regular", "postseason", "spring_training". Optional so a payload
+    /// without it still decodes — and counts as regular, see `SeasonType`.
+    let seasonType: String?
     let postseason: Bool?
     let homeTeamName: String?
     let awayTeamName: String?
@@ -38,6 +40,35 @@ struct BDLGame: Codable, Identifiable, Hashable {
     /// an unexpected format — caller falls back to the raw string.
     var startDate: Date? {
         try? Date(date, strategy: .iso8601)
+    }
+
+    /// Whether this game counts toward a REGULAR-season figure. See `SeasonType`.
+    var isRegularSeason: Bool { SeasonType.isRegular(seasonType, postseason: postseason) }
+}
+
+/// The one rule for "does this game belong to the regular season".
+///
+/// ⚠️ WHY IT EXISTS. Every place the app adds today's game to a season figure —
+/// the profile overlay, the Scores / box-score record and HR bumps, the
+/// standings fold — was written when only regular-season games were on the
+/// schedule. BDL lists the postseason on the same `/games` feed, so without
+/// this a Wild Card final was added to the player's REGULAR-season line.
+///
+/// A missing `seasonType` counts as regular: older payloads and our own
+/// historical endpoint don't carry it, and everything they serve is regular
+/// season. An explicit `postseason: true` wins over a missing type.
+enum SeasonType {
+    static func isRegular(_ seasonType: String?, postseason: Bool?) -> Bool {
+        if postseason == true { return false }
+        return (seasonType ?? "regular") == "regular"
+    }
+
+    /// How much of THIS game to add to a regular-season figure (a W-L-SV
+    /// record, an HR total) that our gamelog hasn't reached yet: `amount` when
+    /// the gamelog has not absorbed the day and the game is regular season,
+    /// otherwise nothing. The Scores and box-score bumps all read this.
+    static func regularSeasonBump(_ amount: Int, includesToday: Bool, game: Game) -> Int {
+        (!includesToday && game.isRegularSeason) ? amount : 0
     }
 }
 
@@ -347,6 +378,9 @@ struct BDLSeasonStat: Codable, Hashable {
     let player: BDLPlayer
     let teamName: String?
     let season: Int?
+    /// BDL sends a regular AND a postseason row per player once he has played
+    /// in the postseason, in no guaranteed order. See `regularRow(in:for:)`.
+    let postseason: Bool?
 
     let battingAvg: Double?
     let battingObp: Double?
@@ -398,6 +432,17 @@ struct BDLSeasonStat: Codable, Hashable {
     let pitchingBb:    Int?
     let pitchingK:     Int?
     let pitchingHr:    Int?
+}
+
+extension BDLSeasonStat {
+    /// The player's REGULAR-season row from a `/season_stats` response — the
+    /// same rule as the backend's `_regular_season_rows`: an explicit
+    /// `postseason == false` row if there is one, else a row with no flag (the
+    /// older single-row shape), never a `postseason == true` row.
+    static func regularRow(in rows: [BDLSeasonStat], for playerId: Int) -> BDLSeasonStat? {
+        let mine = rows.filter { $0.player.id == playerId }
+        return mine.first { $0.postseason == false } ?? mine.first { $0.postseason == nil }
+    }
 }
 
 // MARK: - Name utilities
