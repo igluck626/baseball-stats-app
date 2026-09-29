@@ -32,6 +32,7 @@ import sys
 import data_service
 import live_service
 import news_service
+import postseason_series
 import team_crosswalk
 from cache import cache as _cache
 
@@ -2803,6 +2804,48 @@ def live_game(game_id: int):
             detail=f"Game {game_id} is not currently live (no cached snapshot)",
         )
     return snapshot
+
+
+@app.get("/postseason/series")
+def postseason_series_state(season: int = Query(..., description="Season year, e.g. 2026")):
+    """Every postseason series in `season` so far, with each game's number and
+    display line ("AL Wild Card · Game 2 · BOS leads 1-0", "BOS wins 2-1"),
+    derived by `postseason_series.build_series` from balldontlie's postseason
+    games and its `/standings` playoff seeds. balldontlie has no series field
+    of its own — see that module for the rules and their validation.
+
+    One paginated `/games` request plus one `/standings` request, cached 60s:
+    the client refetches when a postseason game goes final, so a short cache
+    keeps a Game 2 line from trailing Game 1's final. A balldontlie failure is
+    a 503 — the client hides the series line rather than showing a wrong one.
+    """
+    key = f"postseason_series:{season}"
+    cached = _cache.get(key)
+    if cached is not None:
+        return cached
+    try:
+        games: list[dict] = []
+        cursor = None
+        for _ in range(10):                   # a whole postseason is ~55 games
+            params: dict = {"seasons[]": [season], "postseason": "true", "per_page": 100}
+            if cursor is not None:
+                params["cursor"] = cursor
+            page = data_service._bdl_get_json("games", params)
+            games.extend(page.get("data") or [])
+            cursor = (page.get("meta") or {}).get("next_cursor")
+            if not cursor:
+                break
+        standings = data_service._bdl_get_json("standings", {"season": season}).get("data") or []
+    except Exception as exc:
+        log.warning("postseason_series(%s): balldontlie fetch failed: %s", season, exc)
+        raise HTTPException(status_code=503, detail="Postseason data is unavailable right now")
+    payload = {
+        "season": season,
+        "fetched_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "series": postseason_series.build_series(games, standings, season),
+    }
+    _cache.set(key, payload, ttl_seconds=60)
+    return payload
 
 
 @app.get("/postseason/available")
