@@ -1578,6 +1578,36 @@ def _gamelog_row_count(rows) -> int:
     return len(rows)
 
 
+# ⚠️ TEMPORARY STOPGAP for installed builds WITHOUT the client's postseason
+# filter (1.1 (4) and earlier). Remove once every installed build filters
+# postseason games itself — it is on the work queue.
+#
+# Those builds add any final on a team's schedule to the player's
+# REGULAR-season line whenever the record-at-date endpoints say the gamelog
+# has not reached that day (`includes_today = false`). Postseason games are
+# never ingested, so for a Wild Card game that answer is always false, and
+# their overlay (clause 2) and the Scores / box-score +1 bumps fire on
+# playoff games. Reporting `includes_today = true` for any date after the
+# season's last regular-season day makes all of them refuse.
+#
+# The last day is the real last SCHEDULED regular-season date (MLB schedule,
+# gameType R), per season. NOT the latest date in our gamelogs: during the
+# season that is always yesterday, and the stopgap would fire every day. A
+# season missing from this table is left exactly as it was.
+_LAST_REGULAR_SEASON_DAY = {
+    2026: datetime.date(2026, 9, 27),   # statsapi schedule, checked 2026-09-28
+}
+
+
+def _includes_today(rows, game_date) -> bool:
+    """Whether the gamelog has reached `game_date` — any row on that date —
+    or, per the stopgap above, the date falls after the regular season."""
+    last = _LAST_REGULAR_SEASON_DAY.get(game_date.year)
+    if last is not None and game_date > last:
+        return True
+    return any(r.game_date == game_date for r in rows)
+
+
 @app.get("/players/{player_id}/pitcher-record-at-date")
 def player_pitcher_record_at_date(
     player_id: int,
@@ -1626,7 +1656,7 @@ def player_pitcher_record_at_date(
     wins   = sum(1 for r in rows if r.result == "W")
     losses = sum(1 for r in rows if r.result == "L")
     saves  = sum(1 for r in rows if r.result == "S")
-    includes_today = any(r.game_date == game_date for r in rows)
+    includes_today = _includes_today(rows, game_date)
     return {
         "player_id":      player_id,
         "game_date":      game_date.isoformat(),
@@ -1689,7 +1719,7 @@ def player_batter_stats_at_date(
     home_runs = sum((r.HR      or 0) for r in rows)
     doubles   = sum((r.doubles or 0) for r in rows)
     triples   = sum((r.triples or 0) for r in rows)
-    includes_today = any(r.game_date == game_date for r in rows)
+    includes_today = _includes_today(rows, game_date)
     return {
         "player_id":      player_id,
         "game_date":      game_date.isoformat(),
