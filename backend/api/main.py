@@ -1590,12 +1590,12 @@ def _gamelog_row_count(rows) -> int:
 # playoff games. Reporting `includes_today = true` for any date after the
 # season's last regular-season day makes all of them refuse.
 #
-# The last day is the real last SCHEDULED regular-season date (MLB schedule,
-# gameType R), per season. NOT the latest date in our gamelogs: during the
+# The last day is the real last SCHEDULED regular-season date (balldontlie
+# `/games`, `season_type == "regular"`), per season. NOT the latest date in our gamelogs: during the
 # season that is always yesterday, and the stopgap would fire every day. A
 # season missing from this table is left exactly as it was.
 _LAST_REGULAR_SEASON_DAY = {
-    2026: datetime.date(2026, 9, 27),   # statsapi schedule, checked 2026-09-28
+    2026: datetime.date(2026, 9, 27),   # balldontlie /games: last regular-season date, checked 2026-09-28
 }
 
 
