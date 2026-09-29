@@ -1,36 +1,36 @@
 {
   "meta": {
-    "n_cannot_answer_class": 8,
-    "n_drift_tolerant": 77,
-    "n_gated_questions": 196,
+    "n_cannot_answer_class": 7,
+    "n_drift_tolerant": 93,
+    "n_gated_questions": 197,
     "n_questions": 204,
-    "n_runs": 3,
-    "n_unstable_cells": 184,
-    "n_unstable_questions": 8,
+    "n_runs": 2,
+    "n_unstable_cells": 161,
+    "n_unstable_questions": 7,
     "unstable_by_key": {
-      "ambiguous": 8,
-      "answer100": 8,
-      "count": 8,
-      "db_status": 8,
-      "declined": 8,
-      "has_milestone": 8,
-      "has_rates": 8,
-      "has_span": 8,
-      "has_streak": 8,
-      "has_two_way": 8,
-      "highlighted_stat": 8,
-      "http": 8,
-      "leaders_val": 8,
-      "n_leaders": 8,
-      "n_sample": 8,
-      "n_splits": 8,
-      "out_of_scope": 8,
-      "rates_val": 8,
-      "reason100": 8,
-      "source": 8,
-      "splits_val": 8,
-      "tool_name": 8,
-      "understood_as": 8
+      "ambiguous": 7,
+      "answer100": 7,
+      "count": 7,
+      "db_status": 7,
+      "declined": 7,
+      "has_milestone": 7,
+      "has_rates": 7,
+      "has_span": 7,
+      "has_streak": 7,
+      "has_two_way": 7,
+      "highlighted_stat": 7,
+      "http": 7,
+      "leaders_val": 7,
+      "n_leaders": 7,
+      "n_sample": 7,
+      "n_splits": 7,
+      "out_of_scope": 7,
+      "rates_val": 7,
+      "reason100": 7,
+      "source": 7,
+      "splits_val": 7,
+      "tool_name": 7,
+      "understood_as": 7
     }
   },
   "questions": {
@@ -40,7 +40,7 @@
       "cell": {
         "ambiguous": false,
         "answer100": "",
-        "count": 385,
+        "count": 386,
         "db_status": "ok",
         "declined": false,
         "has_milestone": false,
@@ -55,7 +55,7 @@
         "n_sample": 0,
         "n_splits": 0,
         "out_of_scope": false,
-        "rates_val": "{\"AB\": 4319, \"AVG\": 0.291, \"H\": 1258, \"OBP\": 0.411, \"SLG\": 0.611}",
+        "rates_val": "{\"AB\": 4342, \"AVG\": 0.291, \"H\": 1262, \"OBP\": 0.41, \"SLG\": 0.61}",
         "reason100": "",
         "source": "season_stats",
         "splits_val": null,
@@ -75,7 +75,7 @@
       "cell": {
         "ambiguous": false,
         "answer100": "",
-        "count": 1441,
+        "count": 1454,
         "db_status": "ok",
         "declined": false,
         "has_milestone": false,
@@ -90,7 +90,7 @@
         "n_sample": 0,
         "n_splits": 0,
         "out_of_scope": false,
-        "rates_val": "{\"AB\": 4319, \"AVG\": 0.291, \"H\": 1258, \"OBP\": 0.411, \"SLG\": 0.611}",
+        "rates_val": "{\"AB\": 4342, \"AVG\": 0.291, \"H\": 1262, \"OBP\": 0.41, \"SLG\": 0.61}",
         "reason100": "",
         "source": "season_stats",
         "splits_val": null,
@@ -110,7 +110,7 @@
       "cell": {
         "ambiguous": false,
         "answer100": "",
-        "count": 859,
+        "count": 860,
         "db_status": "ok",
         "declined": false,
         "has_milestone": false,
@@ -125,7 +125,7 @@
         "n_sample": 0,
         "n_splits": 0,
         "out_of_scope": false,
-        "rates_val": "{\"AB\": 4319, \"AVG\": 0.291, \"H\": 1258, \"OBP\": 0.411, \"SLG\": 0.611}",
+        "rates_val": "{\"AB\": 4342, \"AVG\": 0.291, \"H\": 1262, \"OBP\": 0.41, \"SLG\": 0.61}",
         "reason100": "",
         "source": "season_stats",
         "splits_val": null,
@@ -145,7 +145,7 @@
       "cell": {
         "ambiguous": false,
         "answer100": "",
-        "count": 1258,
+        "count": 1262,
         "db_status": "ok",
         "declined": false,
         "has_milestone": false,
@@ -160,7 +160,7 @@
         "n_sample": 0,
         "n_splits": 0,
         "out_of_scope": false,
-        "rates_val": "{\"AB\": 4319, \"AVG\": 0.291, \"H\": 1258, \"OBP\": 0.411, \"SLG\": 0.611}",
+        "rates_val": "{\"AB\": 4342, \"AVG\": 0.291, \"H\": 1262, \"OBP\": 0.41, \"SLG\": 0.61}",
         "reason100": "",
         "source": "season_stats",
         "splits_val": null,
@@ -195,7 +195,7 @@
         "n_sample": 0,
         "n_splits": 0,
         "out_of_scope": false,
-        "rates_val": "{\"AB\": 4319, \"AVG\": 0.291, \"H\": 1258, \"OBP\": 0.411, \"SLG\": 0.611}",
+        "rates_val": "{\"AB\": 4342, \"AVG\": 0.291, \"H\": 1262, \"OBP\": 0.41, \"SLG\": 0.61}",
         "reason100": "",
         "source": "season_stats",
         "splits_val": null,
@@ -230,7 +230,7 @@
         "n_sample": 0,
         "n_splits": 0,
         "out_of_scope": false,
-        "rates_val": "{\"AB\": 4319, \"AVG\": 0.291, \"H\": 1258, \"OBP\": 0.411, \"SLG\": 0.611}",
+        "rates_val": "{\"AB\": 4342, \"AVG\": 0.291, \"H\": 1262, \"OBP\": 0.41, \"SLG\": 0.61}",
         "reason100": "",
         "source": "season_stats",
         "splits_val": null,
@@ -250,7 +250,7 @@
       "cell": {
         "ambiguous": false,
         "answer100": "",
-        "count": 2640,
+        "count": 2647,
         "db_status": "ok",
         "declined": false,
         "has_milestone": false,
@@ -265,7 +265,7 @@
         "n_sample": 0,
         "n_splits": 0,
         "out_of_scope": false,
-        "rates_val": "{\"AB\": 4319, \"AVG\": 0.291, \"H\": 1258, \"OBP\": 0.411, \"SLG\": 0.611}",
+        "rates_val": "{\"AB\": 4342, \"AVG\": 0.291, \"H\": 1262, \"OBP\": 0.41, \"SLG\": 0.61}",
         "reason100": "",
         "source": "season_stats",
         "splits_val": null,
@@ -300,7 +300,7 @@
         "n_sample": 0,
         "n_splits": 0,
         "out_of_scope": false,
-        "rates_val": "{\"AB\": 4319, \"AVG\": 0.291, \"H\": 1258, \"OBP\": 0.411, \"SLG\": 0.611}",
+        "rates_val": "{\"AB\": 4342, \"AVG\": 0.291, \"H\": 1262, \"OBP\": 0.41, \"SLG\": 0.61}",
         "reason100": "",
         "source": "season_stats",
         "splits_val": null,
@@ -320,7 +320,7 @@
       "cell": {
         "ambiguous": false,
         "answer100": "",
-        "count": 916,
+        "count": 918,
         "db_status": "ok",
         "declined": false,
         "has_milestone": false,
@@ -335,7 +335,7 @@
         "n_sample": 0,
         "n_splits": 0,
         "out_of_scope": false,
-        "rates_val": "{\"AB\": 4319, \"AVG\": 0.291, \"H\": 1258, \"OBP\": 0.411, \"SLG\": 0.611}",
+        "rates_val": "{\"AB\": 4342, \"AVG\": 0.291, \"H\": 1262, \"OBP\": 0.41, \"SLG\": 0.61}",
         "reason100": "",
         "source": "season_stats",
         "splits_val": null,
@@ -355,7 +355,7 @@
       "cell": {
         "ambiguous": false,
         "answer100": "",
-        "count": 868,
+        "count": 871,
         "db_status": "ok",
         "declined": false,
         "has_milestone": false,
@@ -370,7 +370,7 @@
         "n_sample": 0,
         "n_splits": 0,
         "out_of_scope": false,
-        "rates_val": "{\"AB\": 4319, \"AVG\": 0.291, \"H\": 1258, \"OBP\": 0.411, \"SLG\": 0.611}",
+        "rates_val": "{\"AB\": 4342, \"AVG\": 0.291, \"H\": 1262, \"OBP\": 0.41, \"SLG\": 0.61}",
         "reason100": "",
         "source": "season_stats",
         "splits_val": null,
@@ -390,7 +390,7 @@
       "cell": {
         "ambiguous": false,
         "answer100": "",
-        "count": 4319,
+        "count": 4342,
         "db_status": "ok",
         "declined": false,
         "has_milestone": false,
@@ -405,7 +405,7 @@
         "n_sample": 0,
         "n_splits": 0,
         "out_of_scope": false,
-        "rates_val": "{\"AB\": 4319, \"AVG\": 0.291, \"H\": 1258, \"OBP\": 0.411, \"SLG\": 0.611}",
+        "rates_val": "{\"AB\": 4342, \"AVG\": 0.291, \"H\": 1262, \"OBP\": 0.41, \"SLG\": 0.61}",
         "reason100": "",
         "source": "season_stats",
         "splits_val": null,
@@ -425,7 +425,7 @@
       "cell": {
         "ambiguous": false,
         "answer100": "",
-        "count": 605,
+        "count": 606,
         "db_status": "ok",
         "declined": false,
         "has_milestone": false,
@@ -440,7 +440,7 @@
         "n_sample": 0,
         "n_splits": 0,
         "out_of_scope": false,
-        "rates_val": "{\"AB\": 4319, \"AVG\": 0.291, \"H\": 1258, \"OBP\": 0.411, \"SLG\": 0.611}",
+        "rates_val": "{\"AB\": 4342, \"AVG\": 0.291, \"H\": 1262, \"OBP\": 0.41, \"SLG\": 0.61}",
         "reason100": "",
         "source": "season_stats",
         "splits_val": null,
@@ -525,7 +525,7 @@
       "cell": {
         "ambiguous": false,
         "answer100": "",
-        "count": 2338,
+        "count": 2382,
         "db_status": "ok",
         "declined": false,
         "has_milestone": false,
@@ -559,7 +559,7 @@
       "cell": {
         "ambiguous": false,
         "answer100": "",
-        "count": 159,
+        "count": 163,
         "db_status": "ok",
         "declined": false,
         "has_milestone": false,
@@ -627,7 +627,7 @@
       "cell": {
         "ambiguous": false,
         "answer100": "",
-        "count": 85,
+        "count": 89,
         "db_status": "ok",
         "declined": false,
         "has_milestone": false,
@@ -661,7 +661,7 @@
       "cell": {
         "ambiguous": false,
         "answer100": "",
-        "count": 720,
+        "count": 741,
         "db_status": "ok",
         "declined": false,
         "has_milestone": false,
@@ -695,7 +695,7 @@
       "cell": {
         "ambiguous": false,
         "answer100": "",
-        "count": 517,
+        "count": 525,
         "db_status": "ok",
         "declined": false,
         "has_milestone": false,
@@ -1360,7 +1360,7 @@
       "cell": {
         "ambiguous": false,
         "answer100": "",
-        "count": 275,
+        "count": 276,
         "db_status": "ok",
         "declined": false,
         "has_milestone": false,
@@ -1375,7 +1375,7 @@
         "n_sample": 0,
         "n_splits": 0,
         "out_of_scope": false,
-        "rates_val": "{\"AB\": 2902, \"AVG\": 0.3, \"H\": 871, \"OBP\": 0.419, \"SLG\": 0.637}",
+        "rates_val": "{\"AB\": 2925, \"AVG\": 0.299, \"H\": 875, \"OBP\": 0.418, \"SLG\": 0.635}",
         "reason100": "",
         "source": "season_stats",
         "splits_val": null,
@@ -1534,7 +1534,7 @@
         "n_sample": 0,
         "n_splits": 0,
         "out_of_scope": false,
-        "rates_val": "{\"AB\": 4319, \"AVG\": 0.291, \"H\": 1258, \"OBP\": 0.411, \"SLG\": 0.611}",
+        "rates_val": "{\"AB\": 4342, \"AVG\": 0.291, \"H\": 1262, \"OBP\": 0.41, \"SLG\": 0.61}",
         "reason100": "",
         "source": "season_stats",
         "splits_val": null,
@@ -1568,7 +1568,7 @@
         "n_sample": 0,
         "n_splits": 0,
         "out_of_scope": false,
-        "rates_val": "{\"AB\": 4319, \"AVG\": 0.291, \"H\": 1258, \"OBP\": 0.411, \"SLG\": 0.611}",
+        "rates_val": "{\"AB\": 4342, \"AVG\": 0.291, \"H\": 1262, \"OBP\": 0.41, \"SLG\": 0.61}",
         "reason100": "",
         "source": "season_stats",
         "splits_val": null,
@@ -1602,7 +1602,7 @@
         "n_sample": 0,
         "n_splits": 0,
         "out_of_scope": false,
-        "rates_val": "{\"AB\": 4319, \"AVG\": 0.291, \"H\": 1258, \"OBP\": 0.411, \"SLG\": 0.611}",
+        "rates_val": "{\"AB\": 4342, \"AVG\": 0.291, \"H\": 1262, \"OBP\": 0.41, \"SLG\": 0.61}",
         "reason100": "",
         "source": "season_stats",
         "splits_val": null,
@@ -1636,7 +1636,7 @@
         "n_sample": 0,
         "n_splits": 0,
         "out_of_scope": false,
-        "rates_val": "{\"AB\": 4319, \"AVG\": 0.291, \"H\": 1258, \"OBP\": 0.411, \"SLG\": 0.611}",
+        "rates_val": "{\"AB\": 4342, \"AVG\": 0.291, \"H\": 1262, \"OBP\": 0.41, \"SLG\": 0.61}",
         "reason100": "",
         "source": "season_stats",
         "splits_val": null,
@@ -1881,6 +1881,9 @@
         "tool_name": "query_leaderboard",
         "understood_as": "{\"event\": \"HR\"}"
       },
+      "drift_tolerant": [
+        "leaders_val"
+      ],
       "q": "Who has hit the most home runs?",
       "unstable": []
     },
@@ -2005,6 +2008,9 @@
         "tool_name": "query_rate_leaderboard",
         "understood_as": "{\"stat\": \"OPS\"}"
       },
+      "drift_tolerant": [
+        "leaders_val"
+      ],
       "q": "Who has the best OPS?",
       "unstable": []
     },
@@ -2351,7 +2357,7 @@
     },
     "q070": {
       "bucket": "streak",
-      "cannot_answer_class": true,
+      "cannot_answer_class": false,
       "cell": {
         "ambiguous": false,
         "answer100": "I don't track consecutive games played (the iron-man streak) — that needs game-by-game schedule data",
@@ -2374,35 +2380,11 @@
         "reason100": "I don't track consecutive games played (the iron-man streak) — that needs game-by-game schedule data",
         "source": null,
         "splits_val": null,
-        "tool_name": "cannot_answer",
+        "tool_name": "query_streak",
         "understood_as": null
       },
       "q": "What is Cal Ripken's longest consecutive games played streak?",
-      "unstable": [
-        "ambiguous",
-        "answer100",
-        "count",
-        "db_status",
-        "declined",
-        "has_milestone",
-        "has_rates",
-        "has_span",
-        "has_streak",
-        "has_two_way",
-        "highlighted_stat",
-        "http",
-        "leaders_val",
-        "n_leaders",
-        "n_sample",
-        "n_splits",
-        "out_of_scope",
-        "rates_val",
-        "reason100",
-        "source",
-        "splits_val",
-        "tool_name",
-        "understood_as"
-      ]
+      "unstable": []
     },
     "q071": {
       "bucket": "game_ach",
@@ -2564,7 +2546,7 @@
       "cannot_answer_class": false,
       "cell": {
         "ambiguous": false,
-        "answer100": "Gerrit Cole's career ERA is 3.19.",
+        "answer100": "Gerrit Cole's career ERA is 3.21.",
         "count": null,
         "db_status": "ok",
         "declined": false,
@@ -2587,6 +2569,9 @@
         "tool_name": "query_situational",
         "understood_as": "{\"event\": \"ERA\", \"player\": \"Gerrit Cole\", \"role\": \"pit\"}"
       },
+      "drift_tolerant": [
+        "answer100"
+      ],
       "q": "What is Gerrit Cole's ERA?",
       "unstable": []
     },
@@ -2618,6 +2603,9 @@
         "tool_name": "query_situational",
         "understood_as": "{\"event\": \"WHIP\", \"player\": \"Gerrit Cole\", \"role\": \"pit\"}"
       },
+      "drift_tolerant": [
+        "answer100"
+      ],
       "q": "What is Gerrit Cole's WHIP?",
       "unstable": []
     },
@@ -2626,7 +2614,7 @@
       "cannot_answer_class": false,
       "cell": {
         "ambiguous": false,
-        "answer100": "Gerrit Cole's career K/9 is 10.34.",
+        "answer100": "Gerrit Cole's career K/9 is 10.3.",
         "count": null,
         "db_status": "ok",
         "declined": false,
@@ -2649,6 +2637,9 @@
         "tool_name": "query_rates",
         "understood_as": "{\"player\": \"Gerrit Cole\", \"role\": \"pit\", \"stat\": \"K/9\"}"
       },
+      "drift_tolerant": [
+        "answer100"
+      ],
       "q": "How many strikeouts per nine does Gerrit Cole average?",
       "unstable": []
     },
@@ -2688,7 +2679,7 @@
       "cannot_answer_class": true,
       "cell": {
         "ambiguous": false,
-        "answer100": "I can't filter by day vs night games yet. The play-by-play database doesn't support filtering by gam",
+        "answer100": "I can't filter by day vs night games. The database supports filters like season, opponent, handednes",
         "count": null,
         "db_status": "out_of_scope",
         "declined": false,
@@ -2705,7 +2696,7 @@
         "n_splits": 0,
         "out_of_scope": true,
         "rates_val": null,
-        "reason100": "I can't filter by day vs night games yet. The play-by-play database doesn't support filtering by gam",
+        "reason100": "I can't filter by day vs night games. The database supports filters like season, opponent, handednes",
         "source": null,
         "splits_val": null,
         "tool_name": "cannot_answer",
@@ -2743,7 +2734,7 @@
       "cannot_answer_class": true,
       "cell": {
         "ambiguous": false,
-        "answer100": "I cannot filter by game situation (one-run games, close games, etc.). The database supports situatio",
+        "answer100": "I can't filter by game margin (one-run games, close games, etc.) yet. The available situational filt",
         "count": null,
         "db_status": "out_of_scope",
         "declined": false,
@@ -2760,7 +2751,7 @@
         "n_splits": 0,
         "out_of_scope": true,
         "rates_val": null,
-        "reason100": "I cannot filter by game situation (one-run games, close games, etc.). The database supports situatio",
+        "reason100": "I can't filter by game margin (one-run games, close games, etc.) yet. The available situational filt",
         "source": null,
         "splits_val": null,
         "tool_name": "cannot_answer",
@@ -2798,7 +2789,7 @@
       "cannot_answer_class": true,
       "cell": {
         "ambiguous": false,
-        "answer100": "I can't filter by \"clutch\" situations. While I can count home runs in specific situations (with runn",
+        "answer100": "I can't filter home runs by clutch situations. \"Clutch\" is a pressure measure (late-game, close scor",
         "count": null,
         "db_status": "out_of_scope",
         "declined": false,
@@ -2815,7 +2806,7 @@
         "n_splits": 0,
         "out_of_scope": true,
         "rates_val": null,
-        "reason100": "I can't filter by \"clutch\" situations. While I can count home runs in specific situations (with runn",
+        "reason100": "I can't filter home runs by clutch situations. \"Clutch\" is a pressure measure (late-game, close scor",
         "source": null,
         "splits_val": null,
         "tool_name": "cannot_answer",
@@ -2950,7 +2941,7 @@
       "cell": {
         "ambiguous": false,
         "answer100": "",
-        "count": 307,
+        "count": 310,
         "db_status": "ok",
         "declined": false,
         "has_milestone": false,
@@ -2965,7 +2956,7 @@
         "n_sample": 0,
         "n_splits": 0,
         "out_of_scope": false,
-        "rates_val": "{\"AB\": 4157, \"AVG\": 0.283, \"H\": 1175, \"OBP\": 0.376, \"SLG\": 0.579}",
+        "rates_val": "{\"AB\": 4252, \"AVG\": 0.281, \"H\": 1194, \"OBP\": 0.375, \"SLG\": 0.574}",
         "reason100": "",
         "source": "season_stats",
         "splits_val": null,
@@ -3016,7 +3007,7 @@
       "cell": {
         "ambiguous": false,
         "answer100": "",
-        "count": 307,
+        "count": 310,
         "db_status": "ok",
         "declined": false,
         "has_milestone": false,
@@ -3031,7 +3022,7 @@
         "n_sample": 0,
         "n_splits": 0,
         "out_of_scope": false,
-        "rates_val": "{\"AB\": 4157, \"AVG\": 0.283, \"H\": 1175, \"OBP\": 0.376, \"SLG\": 0.579}",
+        "rates_val": "{\"AB\": 4252, \"AVG\": 0.281, \"H\": 1194, \"OBP\": 0.375, \"SLG\": 0.574}",
         "reason100": "",
         "source": "season_stats",
         "splits_val": null,
@@ -3112,7 +3103,7 @@
       "cannot_answer_class": false,
       "cell": {
         "ambiguous": false,
-        "answer100": "Mike Trout leads with 424 to 385 home runs.",
+        "answer100": "Mike Trout leads with 426 to 386 home runs.",
         "count": null,
         "db_status": "ok",
         "declined": false,
@@ -3135,6 +3126,9 @@
         "tool_name": "query_comparison",
         "understood_as": "{\"event\": \"HR\", \"players\": [\"Aaron Judge\", \"Mike Trout\"]}"
       },
+      "drift_tolerant": [
+        "answer100"
+      ],
       "q": "Who has more home runs, Aaron Judge or Mike Trout?",
       "unstable": []
     },
@@ -3143,7 +3137,7 @@
       "cannot_answer_class": false,
       "cell": {
         "ambiguous": false,
-        "answer100": "Giancarlo Stanton leads with 456 to 385 home runs.",
+        "answer100": "Giancarlo Stanton leads with 456 to 386 home runs.",
         "count": null,
         "db_status": "ok",
         "declined": false,
@@ -3166,6 +3160,9 @@
         "tool_name": "query_comparison",
         "understood_as": "{\"event\": \"HR\", \"players\": [\"Aaron Judge\", \"Giancarlo Stanton\"]}"
       },
+      "drift_tolerant": [
+        "answer100"
+      ],
       "q": "Does Aaron Judge or Giancarlo Stanton have more home runs?",
       "unstable": []
     },
@@ -3244,7 +3241,7 @@
       "cannot_answer_class": true,
       "cell": {
         "ambiguous": false,
-        "answer100": "I can answer questions about baseball statistics, records, and achievements from the play-by-play da",
+        "answer100": "This is a roster/team composition question, not a statistical query about play-by-play data or seaso",
         "count": null,
         "db_status": "out_of_scope",
         "declined": false,
@@ -3261,7 +3258,7 @@
         "n_splits": 0,
         "out_of_scope": true,
         "rates_val": null,
-        "reason100": "I can answer questions about baseball statistics, records, and achievements from the play-by-play da",
+        "reason100": "This is a roster/team composition question, not a statistical query about play-by-play data or seaso",
         "source": null,
         "splits_val": null,
         "tool_name": "cannot_answer",
@@ -3299,7 +3296,7 @@
       "cannot_answer_class": true,
       "cell": {
         "ambiguous": false,
-        "answer100": "The database I have access to contains historical play-by-play records and career statistics for bas",
+        "answer100": "I don't have access to current roster information. My database covers play-by-play statistics and hi",
         "count": null,
         "db_status": "out_of_scope",
         "declined": false,
@@ -3316,7 +3313,7 @@
         "n_splits": 0,
         "out_of_scope": true,
         "rates_val": null,
-        "reason100": "The database I have access to contains historical play-by-play records and career statistics for bas",
+        "reason100": "I don't have access to current roster information. My database covers play-by-play statistics and hi",
         "source": null,
         "splits_val": null,
         "tool_name": "cannot_answer",
@@ -3510,7 +3507,7 @@
       "cell": {
         "ambiguous": false,
         "answer100": "",
-        "count": 424,
+        "count": 426,
         "db_status": "ok",
         "declined": false,
         "has_milestone": false,
@@ -3525,7 +3522,7 @@
         "n_sample": 0,
         "n_splits": 0,
         "out_of_scope": false,
-        "rates_val": "{\"AB\": 6334, \"AVG\": 0.291, \"H\": 1842, \"OBP\": 0.405, \"SLG\": 0.563}",
+        "rates_val": "{\"AB\": 6480, \"AVG\": 0.29, \"H\": 1878, \"OBP\": 0.405, \"SLG\": 0.558}",
         "reason100": "",
         "source": "season_stats",
         "splits_val": null,
@@ -3545,7 +3542,7 @@
       "cell": {
         "ambiguous": false,
         "answer100": "",
-        "count": 197,
+        "count": 198,
         "db_status": "ok",
         "declined": false,
         "has_milestone": false,
@@ -3560,7 +3557,7 @@
         "n_sample": 0,
         "n_splits": 0,
         "out_of_scope": false,
-        "rates_val": "{\"AB\": 6409, \"AVG\": 0.288, \"H\": 1845, \"OBP\": 0.365, \"SLG\": 0.507}",
+        "rates_val": "{\"AB\": 6561, \"AVG\": 0.288, \"H\": 1890, \"OBP\": 0.366, \"SLG\": 0.508}",
         "reason100": "",
         "source": "season_stats",
         "splits_val": null,
@@ -5181,7 +5178,7 @@
         "n_sample": 0,
         "n_splits": 0,
         "out_of_scope": false,
-        "rates_val": "{\"AB\": 6409, \"AVG\": 0.288, \"H\": 1845, \"OBP\": 0.365, \"SLG\": 0.507}",
+        "rates_val": "{\"AB\": 6561, \"AVG\": 0.288, \"H\": 1890, \"OBP\": 0.366, \"SLG\": 0.508}",
         "reason100": "",
         "source": "season_stats",
         "splits_val": null,
@@ -5346,7 +5343,7 @@
         "has_two_way": false,
         "highlighted_stat": null,
         "http": 200,
-        "leaders_val": "[[null, null, null, 385], [null, null, null, 375], [null, null, null, 359], [null, null, null, 343], [null, null, null, 338], [null, null, null, 333], [null, null, null, 326], [null, null, null, 323]]",
+        "leaders_val": "[[null, null, null, 386], [null, null, null, 385], [null, null, null, 366], [null, null, null, 355], [null, null, null, 347], [null, null, null, 337], [null, null, null, 329], [null, null, null, 328]]",
         "n_leaders": 10,
         "n_sample": 0,
         "n_splits": 0,
@@ -5358,6 +5355,9 @@
         "tool_name": "query_leaderboard",
         "understood_as": "{\"event\": \"HR\", \"season_start\": 2015}"
       },
+      "drift_tolerant": [
+        "leaders_val"
+      ],
       "q": "Who has hit the most home runs since 2015?",
       "unstable": []
     },
@@ -5377,7 +5377,7 @@
         "has_two_way": false,
         "highlighted_stat": null,
         "http": 200,
-        "leaders_val": "[[null, null, null, 5714], [null, null, null, 4875], [null, null, null, 4672], [null, null, null, 4136], [null, null, null, 3701], [null, null, null, 3640], [null, null, null, 3574], [null, null, null, 3554]]",
+        "leaders_val": "[[null, null, null, 5714], [null, null, null, 4875], [null, null, null, 4672], [null, null, null, 4136], [null, null, null, 3701], [null, null, null, 3640], [null, null, null, 3574], [null, null, null, 3560]]",
         "n_leaders": 10,
         "n_sample": 0,
         "n_splits": 0,
@@ -5389,6 +5389,9 @@
         "tool_name": "query_leaderboard",
         "understood_as": "{\"event\": \"K\", \"role\": \"pit\"}"
       },
+      "drift_tolerant": [
+        "leaders_val"
+      ],
       "q": "Who has the most strikeouts as a pitcher?",
       "unstable": []
     },
@@ -5408,7 +5411,7 @@
         "has_two_way": false,
         "highlighted_stat": null,
         "http": 200,
-        "leaders_val": "[[null, null, null, 652], [null, null, null, 601], [null, null, null, 490], [null, null, null, 478], [null, null, null, 440], [null, null, null, 437], [null, null, null, 424], [null, null, null, 422]]",
+        "leaders_val": "[[null, null, null, 652], [null, null, null, 601], [null, null, null, 498], [null, null, null, 478], [null, null, null, 441], [null, null, null, 437], [null, null, null, 424], [null, null, null, 422]]",
         "n_leaders": 10,
         "n_sample": 0,
         "n_splits": 0,
@@ -5420,6 +5423,9 @@
         "tool_name": "query_leaderboard",
         "understood_as": "{\"event\": \"SV\", \"role\": \"pit\"}"
       },
+      "drift_tolerant": [
+        "leaders_val"
+      ],
       "q": "Who has the most saves?",
       "unstable": []
     },
@@ -5439,7 +5445,7 @@
         "has_two_way": false,
         "highlighted_stat": null,
         "http": 200,
-        "leaders_val": "[[\"arral001\", null, 0.316, null], [\"belta001\", null, 0.307, null], [\"cabrm001\", null, 0.304, null], [\"poseb001\", null, 0.302, null], [\"freef001\", null, 0.3, null], [\"altuj001\", null, 0.3, null], [\"alvay001\", null, 0.3, null], [\"murpd006\", null, 0.299, null]]",
+        "leaders_val": "[[\"arral001\", null, 0.316, null], [\"belta001\", null, 0.307, null], [\"cabrm001\", null, 0.304, null], [\"poseb001\", null, 0.302, null], [\"altuj001\", null, 0.3, null], [\"alvay001\", null, 0.3, null], [\"freef001\", null, 0.299, null], [\"murpd006\", null, 0.299, null]]",
         "n_leaders": 10,
         "n_sample": 0,
         "n_splits": 0,
@@ -5451,6 +5457,9 @@
         "tool_name": "query_rate_leaderboard",
         "understood_as": "{\"season_start\": 2010, \"stat\": \"AVG\"}"
       },
+      "drift_tolerant": [
+        "leaders_val"
+      ],
       "q": "Who has the best batting average since 2010?",
       "unstable": []
     },
@@ -5668,6 +5677,9 @@
         "tool_name": "query_situational",
         "understood_as": "{\"event\": \"WHIP\", \"player\": \"Jacob deGrom\", \"role\": \"pit\"}"
       },
+      "drift_tolerant": [
+        "answer100"
+      ],
       "q": "What is Jacob deGrom's WHIP?",
       "unstable": []
     },
@@ -5813,7 +5825,7 @@
       "cannot_answer_class": true,
       "cell": {
         "ambiguous": false,
-        "answer100": "I can't filter by day vs night games. The play-by-play database doesn't track game time of day, so I",
+        "answer100": "I can't filter by day vs night games yet. The play-by-play database doesn't support game-time condit",
         "count": null,
         "db_status": "out_of_scope",
         "declined": false,
@@ -5830,7 +5842,7 @@
         "n_splits": 0,
         "out_of_scope": true,
         "rates_val": null,
-        "reason100": "I can't filter by day vs night games. The play-by-play database doesn't track game time of day, so I",
+        "reason100": "I can't filter by day vs night games yet. The play-by-play database doesn't support game-time condit",
         "source": null,
         "splits_val": null,
         "tool_name": "cannot_answer",
@@ -5868,7 +5880,7 @@
       "cannot_answer_class": false,
       "cell": {
         "ambiguous": false,
-        "answer100": "Aaron Judge's career WAR is 64.29.",
+        "answer100": "Aaron Judge's career WAR is 64.21.",
         "count": null,
         "db_status": "ok",
         "declined": false,
@@ -5884,7 +5896,7 @@
         "n_sample": 0,
         "n_splits": 0,
         "out_of_scope": false,
-        "rates_val": "{\"AB\": 4319, \"AVG\": 0.291, \"H\": 1258, \"OBP\": 0.411, \"SLG\": 0.611}",
+        "rates_val": "{\"AB\": 4342, \"AVG\": 0.291, \"H\": 1262, \"OBP\": 0.41, \"SLG\": 0.61}",
         "reason100": "",
         "source": "season_stats",
         "splits_val": null,
@@ -5892,6 +5904,7 @@
         "understood_as": "{\"event\": \"WAR\", \"player\": \"Aaron Judge\"}"
       },
       "drift_tolerant": [
+        "answer100",
         "rates_val"
       ],
       "q": "What is Aaron Judge's WAR?",
@@ -5967,7 +5980,7 @@
       "cannot_answer_class": true,
       "cell": {
         "ambiguous": false,
-        "answer100": "This database contains historical play-by-play statistics from 1910 to 2025, not a current roster. T",
+        "answer100": "I can answer questions about a team's record, standings, championships, or all-time franchise totals",
         "count": null,
         "db_status": "out_of_scope",
         "declined": false,
@@ -5984,7 +5997,7 @@
         "n_splits": 0,
         "out_of_scope": true,
         "rates_val": null,
-        "reason100": "This database contains historical play-by-play statistics from 1910 to 2025, not a current roster. T",
+        "reason100": "I can answer questions about a team's record, standings, championships, or all-time franchise totals",
         "source": null,
         "splits_val": null,
         "tool_name": "cannot_answer",
@@ -6333,6 +6346,9 @@
         "tool_name": "query_leaderboard",
         "understood_as": "{\"event\": \"W\", \"limit\": 10, \"per_season\": true, \"role\": \"pit\"}"
       },
+      "drift_tolerant": [
+        "leaders_val"
+      ],
       "q": "What is the most wins in a season?",
       "unstable": []
     },
@@ -6674,6 +6690,9 @@
         "tool_name": "query_leaderboard",
         "understood_as": "{\"event\": \"W\", \"limit\": 1, \"per_season\": true, \"role\": \"pit\"}"
       },
+      "drift_tolerant": [
+        "leaders_val"
+      ],
       "q": "What is the most wins by a pitcher in a season?",
       "unstable": []
     },
@@ -6736,6 +6755,9 @@
         "tool_name": "query_rate_leaderboard",
         "understood_as": "{\"per_season\": true, \"stat\": \"SLG\"}"
       },
+      "drift_tolerant": [
+        "leaders_val"
+      ],
       "q": "Who has the highest slugging percentage in a season?",
       "unstable": []
     },
@@ -6767,6 +6789,9 @@
         "tool_name": "query_rate_leaderboard",
         "understood_as": "{\"stat\": \"AVG\"}"
       },
+      "drift_tolerant": [
+        "leaders_val"
+      ],
       "q": "Who has the highest career batting average?",
       "unstable": []
     },

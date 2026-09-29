@@ -11,6 +11,19 @@ season advances). Those gate on DIRECTION, not equality: a bounded INCREASE is
 drift (pass); a DECREASE, a vanish, or a jump over DRIFT_MAX_JUMP is a real signal
 (fail). The rule is the gate's own — no human waves anything off.
 
+Two more kinds of drift-tolerant key, for the same live season:
+  • `leaders_val` — an open-ended leaderboard ("career", "since 2015"). Judged
+    POSITION BY POSITION, never by who holds the spot: the k-th count may only
+    rise (by at most DRIFT_MAX_JUMP) — on a board nobody's total can fall from,
+    the k-th largest cannot fall either — and the k-th rate stays within 2% of
+    its value (floor 0.010 below 1.0, 0.075 above). Names may reorder (a tie at
+    .300 re-sorts as averages move).
+  • `answer100` — an active player's answer in prose. The WORDS must match
+    exactly with every number blanked out (a different player, stat or leader
+    is a real change); then each number in order: whole numbers by the counting
+    rule, decimals within 2% of their value, floor 0.010 below 1.0 and 0.075
+    above (WAR moves both ways: 64.29 -> 64.21).
+
 ROUTING keys (tool_name, understood_as) are ADVISORY-BY-RULE — never gated. They
 record the model's RAW tool pick, which the server-side redirect/guard OVERRIDES,
 so they re-roll on every prompt_version bump even when the answer is identical
@@ -24,6 +37,7 @@ diagnostic context (did the route break, or just the answer?).
 """
 import json
 import os
+import re
 import sys
 
 HERE = os.path.dirname(__file__)
@@ -42,6 +56,19 @@ ROUTING_KEYS = ("tool_name", "understood_as")  # advisory-by-rule; see module do
 # .100 "real regression" threshold — so it tolerates a full season yet still catches a
 # rate that jumps .100 or collapses toward zero (a .282 AVG -> 0 is a .282 move).
 RATE_TOL = 0.075
+# Rates on a leaderboard and decimals quoted in an answer (AVG .305, ERA 3.19, WAR
+# 64.29): within 2% of the golden value, floored at 0.010 below 1.0 and at 0.075
+# from 1.0 up. The floor below 1.0 is what keeps a batting average honest — at a
+# flat 0.075 a .305 could read .380 and pass. A season moves Cole's ERA 0.02 and
+# Judge's WAR 0.08; a broken figure moves far more. (`rates_val` keeps its own
+# RATE_TOL, sized for small split samples — see above.)
+DRIFT_REL_TOL = 0.02
+DRIFT_FLOOR_UNDER_ONE = 0.010
+DRIFT_FLOOR = 0.075
+# A number in prose, INCLUDING a leading-dot decimal: a batting average is
+# written ".305", and read as the whole number 305 it would pass as a counting
+# stat that rose.
+_NUM = re.compile(r"\d*\.\d+|\d+")
 VALUE_KEYS = ("rates_val", "splits_val")
 RATE_COMPONENTS = {"AVG", "OBP", "SLG", "OPS", "ISO", "BABIP", "wOBA",
                    "ERA", "WHIP", "K%", "BB%"}
@@ -99,6 +126,60 @@ def _rate_line_drift_ok(gv, nv):
     return False, "blob type mismatch"
 
 
+def _rate_drift_ok(g, n):
+    """(ok, reason) for one rate or decimal: within DRIFT_REL_TOL of the golden
+    value, floored per DRIFT_FLOOR_UNDER_ONE / DRIFT_FLOOR."""
+    if not (_num(g) and _num(n)):
+        return (g == n), ("" if g == n else f"{g!r}->{n!r}")
+    floor = DRIFT_FLOOR_UNDER_ONE if abs(g) < 1.0 else DRIFT_FLOOR
+    tol = max(DRIFT_REL_TOL * abs(g), floor)
+    ok = abs(n - g) <= tol
+    return ok, ("" if ok else f"{g}->{n} (|Δ|>{tol:.3f})")
+
+
+def _leaders_drift_ok(gv, nv):
+    """(ok, reason) for a `leaders_val` blob: a list of [label, ?, rate, count]
+    rows. Same length; position by position, rates (index 2) by `_rate_drift_ok`
+    and every other number by the counting rule; labels are not compared."""
+    try:
+        gj = json.loads(gv) if isinstance(gv, str) else gv
+        nj = json.loads(nv) if isinstance(nv, str) else nv
+    except Exception:
+        return False, "unparseable leaderboard"
+    if not (isinstance(gj, list) and isinstance(nj, list)) or len(gj) != len(nj):
+        return False, "leaderboard length changed"
+    for pos, (grow, nrow) in enumerate(zip(gj, nj), start=1):
+        if len(grow) != len(nrow):
+            return False, f"#{pos} row shape changed"
+        for j, (g, n) in enumerate(zip(grow, nrow)):
+            if j == 0 or (g is None and n is None):
+                continue                         # the label: who holds the spot may change
+            ok, why = _rate_drift_ok(g, n) if j == 2 else _component_ok(f"#{pos}", g, n)
+            if not ok:
+                return False, f"#{pos} {why}"
+    return True, ""
+
+
+def _prose_drift_ok(gv, nv):
+    """(ok, reason) for an `answer100` sentence: identical words with numbers
+    blanked; then each number in order — whole numbers by the counting rule,
+    decimals by `_rate_drift_ok`."""
+    if not (isinstance(gv, str) and isinstance(nv, str)):
+        return False, "answer vanished"
+    if _NUM.sub("#", gv) != _NUM.sub("#", nv):
+        return False, "wording changed"
+    for g, n in zip(_NUM.findall(gv), _NUM.findall(nv)):
+        if "." in g or "." in n:
+            ok, why = _rate_drift_ok(float(g), float(n))
+            if not ok:
+                return False, why
+        else:
+            ok, why = _component_ok("count", int(g), int(n))
+            if not ok:
+                return False, why
+    return True, ""
+
+
 def main():
     new = json.load(open(sys.argv[1]))
     golden_path = sys.argv[2] if len(sys.argv) > 2 else os.path.join(HERE, "golden_baseline.json")
@@ -140,6 +221,13 @@ def main():
             # structurally — counting components by direction, rate components by
             # tolerance; a scalar (`count`) by bounded monotonic increase.
             if k in drift_ok:
+                if k in ("leaders_val", "answer100"):
+                    ok, why = (_leaders_drift_ok if k == "leaders_val" else _prose_drift_ok)(gv, nv)
+                    if ok:
+                        advisory += 1
+                        continue
+                    gated.append((k, gv, nv, f"  [drift-tolerant: {why}]"))
+                    continue
                 if k in VALUE_KEYS:
                     ok, why = _rate_line_drift_ok(gv, nv)
                     if ok:

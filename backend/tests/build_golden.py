@@ -12,6 +12,7 @@ Writes golden_baseline.json (last run's values) and prints the unstable summary.
 """
 import json
 import os
+import re
 import sys
 
 HERE = os.path.dirname(__file__)
@@ -26,6 +27,14 @@ ROUTING_KEYS = ("tool_name", "understood_as")  # advisory-by-rule at gate time; 
 VALUE_KEYS = ("rates_val", "splits_val")
 
 
+_NUM = re.compile(r"\d")
+
+
+def _NUM_IN_PROSE(answer) -> bool:
+    """Whether an `answer100` quotes any number worth judging for drift."""
+    return isinstance(answer, str) and bool(_NUM.search(answer))
+
+
 def flag_drift_tolerant(questions):
     """Mark cells drift_tolerant when they belong to an ACTIVE player and hold a value
     that moves as the live season advances — judged by direction/tolerance at gate
@@ -36,12 +45,20 @@ def flag_drift_tolerant(questions):
         plays-scoped line ('vs the Rays', 'by month') drifts just as a career one does.
         Its counting components (AB/H/IP/SO/BB…) grow; its rate components
         (AVG/OBP/SLG/OPS/ERA/WHIP) move both ways.
+      * `answer100` — an active player's answer in prose (one `player`, or any of a
+        `players` comparison) from season stats, judged number by number (see
+        diff_battery).
+      * `leaders_val` — an OPEN-ENDED season-stats leaderboard ("career", "since
+        2015"): no `season`/`season_end`, highest-first. Flagged whoever is on it —
+        an active player can climb onto a board of retirees — and judged position
+        by position. Plays boards (frozen) and count-MIN boards are not flagged.
     A single past season or a season_end-bounded range is FIXED (never flagged), as is
     a RETIRED player's line. Computed HERE so a golden rebuild RECOMPUTES the flags
     rather than quietly losing them. NEEDS the DB (active-status) via $ASK_DB_URL — the
     same URL run_battery uses for tool_name. Absent, we WARN and skip rather than emit
     an unflagged golden that would then read the season as a fault."""
-    cands = {}   # qid -> {"player": name, "keys": [flaggable keys]}
+    cands = {}   # qid -> {"players": [names], "keys": [flaggable keys]}
+    boards = 0   # open-ended leaderboards flagged (no DB needed)
     for qid, rec in questions.items():
         c = rec["cell"]
         unstable = set(rec.get("unstable", []))
@@ -49,11 +66,21 @@ def flag_drift_tolerant(questions):
             ua = json.loads(c["understood_as"]) if c.get("understood_as") else {}
         except Exception:
             ua = {}
-        player = ua.get("player")
-        if not player:
-            continue
         # a single past season or a bounded (season_end) range is FIXED, not drift-prone
         if ua.get("season") is not None or ua.get("season_end") is not None:
+            continue
+        # open-ended leaderboard: flagged without an active-player check
+        # Only boards that include the LIVE season, ranked highest-first: the plays
+        # boards are frozen through the last completed season (nothing to drift),
+        # and a count-MIN board ("fewest walks") ranks lowest-first, where the
+        # position-wise "may only rise" rule points the wrong way.
+        if (c.get("leaders_val") is not None and "leaders_val" not in unstable
+                and c.get("source") in ("season_stats_leaderboard", "season_rate_leaderboard")):
+            questions[qid]["drift_tolerant"] = sorted(
+                set(questions[qid].get("drift_tolerant", [])) | {"leaders_val"})
+            boards += 1
+        players = [ua["player"]] if ua.get("player") else list(ua.get("players") or [])
+        if not players:
             continue
         keys = []
         # count: ONLY a season-stats career/current-inclusive total (unchanged rule)
@@ -64,21 +91,27 @@ def flag_drift_tolerant(questions):
         for vk in VALUE_KEYS:
             if c.get(vk) is not None and vk not in unstable:
                 keys.append(vk)
+        # prose: the same sources as `count` (season stats) plus two-player comparisons
+        # of them — not game-log or plays answers, which the count rule also omits
+        if (_NUM_IN_PROSE(c.get("answer100")) and "answer100" not in unstable
+                and (str(c.get("source") or "").startswith("season_stats")
+                     or c.get("source") == "comparison")):
+            keys.append("answer100")
         if keys:
-            cands[qid] = {"player": player, "keys": keys}
+            cands[qid] = {"players": players, "keys": keys}
     if not cands:
-        return 0
+        return boards
     url = os.getenv("ASK_DB_URL")
     if not url:
         print("  WARNING: no ASK_DB_URL — drift_tolerant flags NOT computed. Rebuild "
               "with DB access to restore them, or the gate will read the live season "
               "as a fault.", file=sys.stderr)
-        return 0
+        return boards
     try:
         import psycopg2
         con = psycopg2.connect(url, connect_timeout=25); cur = con.cursor()
         active = {}
-        for p in {info["player"] for info in cands.values()}:
+        for p in {name for info in cands.values() for name in info["players"]}:
             base = p.split(" Jr")[0]      # DB stores names without a suffix
             yr = None
             for tbl, pl in (("player_seasons", "players"), ("pitcher_seasons", "pitchers")):
@@ -91,13 +124,15 @@ def flag_drift_tolerant(questions):
         cur.close(); con.close()
     except Exception as exc:  # noqa: BLE001
         print(f"  WARNING: drift-flag DB query failed ({exc}); flags NOT computed.", file=sys.stderr)
-        return 0
+        return boards
     n = 0
     for qid, info in cands.items():
-        if active.get(info["player"]):
-            questions[qid]["drift_tolerant"] = sorted(set(info["keys"]))
+        # a comparison drifts if ANY player in it is still active
+        if any(active.get(name) for name in info["players"]):
+            questions[qid]["drift_tolerant"] = sorted(
+                set(questions[qid].get("drift_tolerant", [])) | set(info["keys"]))
             n += 1
-    return n
+    return n + boards
 
 
 def main():
@@ -154,7 +189,7 @@ def main():
               "questions": questions}
     json.dump(golden, open(OUT, "w"), indent=2, ensure_ascii=False, sort_keys=True)
     print(f"wrote {OUT}")
-    print(f"questions: {len(ids)}   drift-tolerant cells (count + rate lines): {n_drift}")
+    print(f"questions: {len(ids)}   drift-tolerant questions (count, rate lines, prose, leaderboards): {n_drift}")
     print(f"UNSTABLE questions: {len(unstable_qs)}  (cells: {total_unstable})")
     print(f"unstable by key: {unstable_by_key}")
     for qid, q, keys in unstable_qs:
