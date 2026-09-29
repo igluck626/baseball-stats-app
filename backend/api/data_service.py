@@ -2048,8 +2048,18 @@ def _fetch_bdl_batch_stats(
 
     Note on the API: BDL's live endpoint accepts `player_ids[]` as
     a repeated query param plus a singular `season=` (despite the
-    OpenAPI spec advertising `seasons[]`)."""
+    OpenAPI spec advertising `seasons[]`).
+
+    ⚠️ ONE ROW PER PLAYER IS NOT WHAT BDL SENDS. Once a player has played in
+    the postseason he has a regular row AND a postseason row, in no
+    guaranteed order, and `postseason=false` is silently ignored (only
+    `postseason=true` filters). This used to keep whichever row came first,
+    so the nightly and the daily catch-up could write a Wild Card line over a
+    player's regular season. Rows are now grouped per player and the regular
+    one chosen by `_regular_season_rows`; a player with only a postseason row
+    is left out, like one with no activity."""
     out: dict[int, dict] = {}
+    rows_by_pid: dict[int, list[dict]] = {}
     if not bdl_ids:
         return out
 
@@ -2084,10 +2094,10 @@ def _fetch_bdl_batch_stats(
                 break
             for row in data.get("data") or []:
                 pid = (row.get("player") or {}).get("id")
-                if pid is None or pid in out:
+                if pid is None:
                     continue
                 try:
-                    out[int(pid)] = row
+                    rows_by_pid.setdefault(int(pid), []).append(row)
                 except (TypeError, ValueError):
                     continue
             cursor = (data.get("meta") or {}).get("next_cursor")
@@ -2097,6 +2107,10 @@ def _fetch_bdl_batch_stats(
         if start + batch_size < len(unique_ids):
             time.sleep(_BDL_RATE_LIMIT_SLEEP)
 
+    for pid, rows in rows_by_pid.items():
+        regular = _regular_season_rows(rows)
+        if regular:
+            out[pid] = regular[0]
     return out
 
 
@@ -4830,17 +4844,23 @@ def _pick_regular_season_row(rows: list[dict], stat_key: str) -> Optional[dict]:
       • Back-compat: if the rows carry no `postseason` flag at all (older single-
         row shape), keep the legacy "first row with the stat" behavior.
     """
-    candidates = [r for r in rows if r.get(stat_key) is not None]
-    if not candidates:
-        return None
-    regular = [r for r in candidates if r.get("postseason") is False]
+    candidates = _regular_season_rows([r for r in rows if r.get(stat_key) is not None])
+    return candidates[0] if candidates else None
+
+
+def _regular_season_rows(rows: list[dict]) -> list[dict]:
+    """The regular-season rows among one player's BDL `/season_stats` rows, in
+    their original order — the rule `_pick_regular_season_row` documents, and
+    the one place it lives. Explicit regular rows (`postseason is False`) if
+    there are any; otherwise the rows with no flag at all (the legacy single-row
+    shape); never a row flagged `postseason is True`."""
+    regular = [r for r in rows if r.get("postseason") is False]
     if regular:
-        return regular[0]
+        return regular
     # No explicit regular row. Rows that aren't explicitly postseason (flag
     # absent -> None) are the legacy single-row shape; keep them. Anything left
-    # is explicitly postseason -> refuse (return None).
-    non_postseason = [r for r in candidates if r.get("postseason") is not True]
-    return non_postseason[0] if non_postseason else None
+    # is explicitly postseason -> refuse.
+    return [r for r in rows if r.get("postseason") is not True]
 
 
 def _build_backfill_batter_entry(bdl_id: Optional[int], year: int) -> Optional[dict]:
