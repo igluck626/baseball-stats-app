@@ -1524,28 +1524,6 @@ def player_postseason(player_id: int):
         return postseason_stats.player_postseason(db, player_id, season, series)
 
 
-@app.get("/players/{player_id}/postseason/batting")
-def player_postseason_batting(player_id: int):
-    rows = data_service.get_postseason_batting(player_id)
-    if not rows:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No postseason batting found for player_id {player_id}",
-        )
-    return {"player_id": player_id, "postseason": rows}
-
-
-@app.get("/players/{player_id}/postseason/pitching")
-def player_postseason_pitching(player_id: int):
-    rows = data_service.get_postseason_pitching(player_id)
-    if not rows:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No postseason pitching found for player_id {player_id}",
-        )
-    return {"player_id": player_id, "postseason": rows}
-
-
 @app.get("/players/{player_id}/gamelogs/batting")
 def player_gamelogs_batting(
     player_id: int,

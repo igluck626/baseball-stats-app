@@ -343,27 +343,9 @@ def save_player_award_shares(db: Session, rows: list[dict]) -> None:
 # Postseason
 # ---------------------------------------------------------------------------
 
-def get_player_postseason_batting(db: Session, player_id: int) -> list[PlayerPostseasonBatting]:
-    return (
-        db.query(PlayerPostseasonBatting)
-        .filter(PlayerPostseasonBatting.player_id == player_id)
-        .order_by(PlayerPostseasonBatting.year, PlayerPostseasonBatting.round)
-        .all()
-    )
-
-
 def save_player_postseason_batting(db: Session, rows: list[dict]) -> None:
     for r in rows:
         db.merge(PlayerPostseasonBatting(**r))
-
-
-def get_player_postseason_pitching(db: Session, player_id: int) -> list[PlayerPostseasonPitching]:
-    return (
-        db.query(PlayerPostseasonPitching)
-        .filter(PlayerPostseasonPitching.player_id == player_id)
-        .order_by(PlayerPostseasonPitching.year, PlayerPostseasonPitching.round)
-        .all()
-    )
 
 
 def save_player_postseason_pitching(db: Session, rows: list[dict]) -> None:

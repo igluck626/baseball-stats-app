@@ -1883,22 +1883,6 @@ def get_awards_available(award_ids) -> dict:
     return {"awards": awards_out}
 
 
-def get_postseason_batting(player_id: int) -> list[dict]:
-    if not connection.db_available():
-        return []
-    with connection.get_session() as db:
-        rows = crud.get_player_postseason_batting(db, player_id)
-        return [_row_to_dict(r) for r in rows]
-
-
-def get_postseason_pitching(player_id: int) -> list[dict]:
-    if not connection.db_available():
-        return []
-    with connection.get_session() as db:
-        rows = crud.get_player_postseason_pitching(db, player_id)
-        return [_row_to_dict(r) for r in rows]
-
-
 def get_hof(player_id: int) -> Optional[dict]:
     """Return Hall of Fame summary + full voting history for a player.
     None if there are no HOF ballot rows for them."""
