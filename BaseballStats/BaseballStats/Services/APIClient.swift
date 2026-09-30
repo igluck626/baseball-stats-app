@@ -294,6 +294,23 @@ final class APIClient {
         return try await get(url)
     }
 
+    /// `GET /season/phase?season=` — the season's Opening Day and last
+    /// regular-season day (Eastern dates; null until the schedule exists).
+    func getSeasonPhase(season: Int) async throws -> SeasonPhase {
+        let url = try buildURL(path: "/season/phase",
+                               query: [URLQueryItem(name: "season", value: String(season))])
+        return try await get(url)
+    }
+
+    /// `GET /players/{id}/postseason/gamelogs?season=` — one postseason's
+    /// game lines per side, oldest first. Always a body; a side is null when
+    /// he has no games on it that postseason.
+    func getPlayerPostseasonGameLogs(playerId: Int, season: Int) async throws -> PostseasonGameLogs {
+        let url = try buildURL(path: "/players/\(playerId)/postseason/gamelogs",
+                               query: [URLQueryItem(name: "season", value: String(season))])
+        return try await get(url)
+    }
+
     func getPlayerAwards(playerId: Int) async throws -> PlayerAwardsResponse? {
         let url = try buildURL(path: "/players/\(playerId)/awards")
         return try await getOptional(url)

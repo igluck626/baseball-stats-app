@@ -142,6 +142,13 @@ struct GameLogsView: View {
     /// parent in lockstep so a career-table tap can push a specific
     /// year in, and a Picker change in here propagates back out.
     @Binding private var year: Int
+    /// Regular Season | Postseason — offered only when `postseasonSeasons` is
+    /// non-empty. Bound to the parent so the Overview's postseason card can
+    /// open this tab on the postseason.
+    @Binding private var scope: GameLogScope
+    /// The seasons this side has postseason games in, newest first.
+    private let postseasonSeasons: [Int]
+    @Binding private var postseasonYear: Int
 
     /// Convenience overload for the existing search → profile flow,
     /// which doesn't need to push a year in from outside. Synthesizes
@@ -155,13 +162,19 @@ struct GameLogsView: View {
     init(player: PlayerSearchResult, isPitcher: Bool,
          onTapGame: ((GameLog) -> Void)? = nil,
          pendingGameId: String? = nil,
-         year: Binding<Int>) {
+         year: Binding<Int>,
+         scope: Binding<GameLogScope> = .constant(.regular),
+         postseasonSeasons: [Int] = [],
+         postseasonYear: Binding<Int> = .constant(Calendar.current.component(.year, from: Date()))) {
         self.playerId = player.player_id
         self.isPitcher = isPitcher
         self.player = player
         self.onTapGame = onTapGame
         self.pendingGameId = pendingGameId
         self._year = year
+        self._scope = scope
+        self.postseasonSeasons = postseasonSeasons
+        self._postseasonYear = postseasonYear
         _vm = StateObject(wrappedValue: GameLogsViewModel(
             player: player, isPitcher: isPitcher,
             initialSeason: year.wrappedValue
@@ -170,9 +183,20 @@ struct GameLogsView: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            splitsTable
-            seasonPicker
-            gamesTable
+            if !postseasonSeasons.isEmpty {
+                Picker("Games", selection: $scope) {
+                    ForEach(GameLogScope.allCases) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented)
+            }
+            if scope == .postseason && !postseasonSeasons.isEmpty {
+                PostseasonGameLogsSection(playerId: playerId, isPitcher: isPitcher,
+                                          seasons: postseasonSeasons, year: $postseasonYear)
+            } else {
+                splitsTable
+                seasonPicker
+                gamesTable
+            }
         }
         .task { await vm.load() }
         // Pull external year changes (career-table row tap) into the VM,
@@ -1516,6 +1540,320 @@ private struct PitchingScrollableMonthTotalsRow: View {
         .frame(height: 32)
         .background(Color(.systemGray5).opacity(0.7))
         .overlay(alignment: .top) { Divider() }
+    }
+}
+
+// MARK: - Postseason game logs
+
+/// Game Logs' two scopes. The switch shows only for a side with a postseason.
+enum GameLogScope: String, CaseIterable, Identifiable {
+    case regular, postseason
+    var id: String { rawValue }
+    var label: String { self == .regular ? "Regular Season" : "Postseason" }
+}
+
+@MainActor
+final class PostseasonGameLogsViewModel: ObservableObject {
+    @Published var logs: PostseasonGameLogs?
+    @Published var isLoading = false
+    @Published var error: String?
+    private let playerId: Int
+    private let api: APIClient
+
+    init(playerId: Int, api: APIClient = .shared) {
+        self.playerId = playerId
+        self.api = api
+    }
+
+    func load(season: Int) async {
+        isLoading = true
+        error = nil
+        do {
+            logs = try await api.getPlayerPostseasonGameLogs(playerId: playerId, season: season)
+        } catch {
+            self.error = error.localizedDescription
+            logs = nil
+        }
+        isLoading = false
+    }
+}
+
+/// One postseason's games: a season picker over the postseasons he played,
+/// then the table — newest game first like the regular log, rates to date
+/// through each game.
+private struct PostseasonGameLogsSection: View {
+    let playerId: Int
+    let isPitcher: Bool
+    /// Newest first.
+    let seasons: [Int]
+    @Binding var year: Int
+    @StateObject private var vm: PostseasonGameLogsViewModel
+
+    init(playerId: Int, isPitcher: Bool, seasons: [Int], year: Binding<Int>) {
+        self.playerId = playerId
+        self.isPitcher = isPitcher
+        self.seasons = seasons
+        self._year = year
+        _vm = StateObject(wrappedValue: PostseasonGameLogsViewModel(playerId: playerId))
+    }
+
+    /// `year` when he played that postseason, else his latest.
+    private var season: Int { seasons.contains(year) ? year : (seasons.first ?? year) }
+
+    var body: some View {
+        VStack(spacing: 16) {
+            HStack {
+                Text("Postseason")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Picker("Postseason", selection: Binding(get: { season }, set: { year = $0 })) {
+                    ForEach(seasons, id: \.self) { Text(String($0)).tag($0) }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+            }
+            .padding(.horizontal, 4)
+            table
+                .frame(maxWidth: .infinity)
+                .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
+        }
+        .task(id: season) { await vm.load(season: season) }
+    }
+
+    @ViewBuilder
+    private var table: some View {
+        let current = vm.logs?.season == season ? vm.logs : nil
+        if let current, isPitcher, let lines = current.pitching, !lines.isEmpty {
+            PostseasonPitchingGameTable(rows: PostseasonGameRows.pitching(lines))
+        } else if let current, !isPitcher, let lines = current.batting, !lines.isEmpty {
+            PostseasonBattingGameTable(rows: PostseasonGameRows.batting(lines))
+        } else if current == nil && vm.error == nil {
+            ProgressView().frame(maxWidth: .infinity, minHeight: 140)
+        } else {
+            VStack(spacing: 8) {
+                Image(systemName: vm.error == nil ? "list.bullet.rectangle.portrait" : "exclamationmark.triangle")
+                    .font(.system(size: 32))
+                    .foregroundStyle(.secondary)
+                Text(vm.error ?? "No postseason games in \(String(season))")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            .padding(28)
+            .frame(maxWidth: .infinity)
+        }
+    }
+}
+
+/// Postseason lines paired with rates to date through each game, newest first.
+enum PostseasonGameRows {
+    struct Batting: Identifiable {
+        let line: PostseasonBattingGameLine
+        let avg, obp, slg, ops: Double?
+        var id: String { line.gameId }
+    }
+
+    struct Pitching: Identifiable {
+        let line: PostseasonPitchingGameLine
+        let era: Double?
+        var id: String { line.gameId }
+    }
+
+    /// `lines` arrive oldest first (the endpoint's order).
+    static func batting(_ lines: [PostseasonBattingGameLine]) -> [Batting] {
+        var ab = 0, h = 0, tb = 0, bb = 0, hbp = 0, sf = 0
+        var out: [Batting] = []
+        for l in lines {
+            ab += l.AB; h += l.H; bb += l.BB; hbp += l.HBP; sf += l.SF
+            tb += l.H + l.doubles + 2 * l.triples + 3 * l.HR
+            let avg: Double? = ab > 0 ? Double(h) / Double(ab) : nil
+            let obpDen = ab + bb + hbp + sf
+            let obp: Double? = obpDen > 0 ? Double(h + bb + hbp) / Double(obpDen) : nil
+            let slg: Double? = ab > 0 ? Double(tb) / Double(ab) : nil
+            let ops: Double? = (obp != nil && slg != nil) ? obp! + slg! : nil
+            out.append(Batting(line: l, avg: avg, obp: obp, slg: slg, ops: ops))
+        }
+        return out.reversed()
+    }
+
+    static func pitching(_ lines: [PostseasonPitchingGameLine]) -> [Pitching] {
+        var outs = 0, er = 0
+        var out: [Pitching] = []
+        for l in lines {
+            outs += l.outs; er += l.ER
+            out.append(Pitching(line: l, era: outs > 0 ? Double(er) * 27 / Double(outs) : nil))
+        }
+        return out.reversed()
+    }
+}
+
+/// The two columns a postseason game adds, first on the scrolling side:
+/// "ALDS G3" and "W 8-5".
+private enum PostseasonGameColumn {
+    static let game:   CGFloat = 58
+    static let result: CGFloat = 50
+}
+
+/// "vs NYY" / "@ PHI" from a postseason line: the opponent's full name
+/// through the regular log's short codes, else the stored code.
+private func postseasonOpponentLabel(_ line: PostseasonGameLine) -> some View {
+    HStack(spacing: 4) {
+        if line.homeAway == "H" {
+            Text("vs").font(.caption2.weight(.medium)).foregroundStyle(.secondary)
+        } else if line.homeAway == "A" {
+            Text("@").font(.caption2.weight(.medium)).foregroundStyle(.secondary)
+        }
+        Text(line.opponentName.flatMap { mlbTeamShortCode[$0] } ?? line.opponent ?? "—")
+            .lineLimit(1)
+    }
+}
+
+/// The frozen Date / Opp cells — the regular log's pane at its widths.
+private func postseasonFrozenCells(_ line: PostseasonGameLine) -> some View {
+    HStack(spacing: 0) {
+        Text(formatGameDate(line.date))
+            .frame(width: BattingGameColumn.date, alignment: .leading)
+            .monospacedDigit()
+        postseasonOpponentLabel(line)
+            .frame(width: BattingGameColumn.opp, alignment: .leading)
+    }
+    .font(.caption)
+    .padding(.leading, 12)
+    .padding(.vertical, 7)
+    .frame(height: 30)
+}
+
+/// Game + Result, the leading scrolling cells.
+private func postseasonGameCells(_ line: PostseasonGameLine) -> some View {
+    Group {
+        Text(line.seriesGameLabel)
+            .frame(width: PostseasonGameColumn.game, alignment: .leading)
+            .padding(.horizontal, 2)
+        Text(line.resultLabel)
+            .frame(width: PostseasonGameColumn.result, alignment: .leading)
+            .foregroundStyle(line.result == "W" ? Color.green : line.result == "L" ? Color.red : .secondary)
+            .monospacedDigit()
+            .padding(.horizontal, 2)
+    }
+    .font(.caption)
+    .lineLimit(1)
+    .minimumScaleFactor(0.6)
+    .padding(.leading, 12)
+}
+
+private struct PostseasonBattingGameTable: View {
+    let rows: [PostseasonGameRows.Batting]
+
+    var body: some View {
+        HStack(spacing: 0) {
+            VStack(spacing: 0) {
+                BattingFrozenHeader()
+                Divider()
+                ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
+                    postseasonFrozenCells(row.line)
+                    if idx != rows.indices.last { Divider().opacity(0.25) }
+                }
+            }
+            .frame(width: gameLogFrozenPaneWidth)
+            .background(.ultraThinMaterial)
+            .shadow(color: .black.opacity(0.08), radius: 4, x: 2, y: 0)
+            .zIndex(1)
+
+            // The regular log's own header and row, unchanged, with the two
+            // postseason cells in front.
+            ScrollView(.horizontal, showsIndicators: false) {
+                VStack(spacing: 0) {
+                    HStack(spacing: 0) {
+                        postseasonGameHeaderCells
+                        BattingScrollableHeader()
+                    }
+                    Divider()
+                    ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
+                        HStack(spacing: 0) {
+                            postseasonGameCells(row.line)
+                            BattingScrollableGameRow(
+                                game: row.line.asGameLog,
+                                rates: CumulativeBattingRates(avg: row.avg, obp: row.obp, slg: row.slg, ops: row.ops),
+                                alternate: false)
+                        }
+                        if idx != rows.indices.last { Divider().opacity(0.25) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct PostseasonPitchingGameTable: View {
+    let rows: [PostseasonGameRows.Pitching]
+
+    var body: some View {
+        HStack(spacing: 0) {
+            VStack(spacing: 0) {
+                PitchingFrozenHeader()
+                Divider()
+                ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
+                    postseasonFrozenCells(row.line)
+                    if idx != rows.indices.last { Divider().opacity(0.25) }
+                }
+            }
+            .frame(width: gameLogFrozenPaneWidth)
+            .background(.ultraThinMaterial)
+            .shadow(color: .black.opacity(0.08), radius: 4, x: 2, y: 0)
+            .zIndex(1)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                VStack(spacing: 0) {
+                    HStack(spacing: 0) {
+                        postseasonGameHeaderCells
+                        PitchingScrollableHeader()
+                    }
+                    Divider()
+                    ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
+                        HStack(spacing: 0) {
+                            postseasonGameCells(row.line)
+                            PitchingScrollableGameRow(game: row.line.asGameLog, cumulativeERA: row.era, alternate: false)
+                        }
+                        if idx != rows.indices.last { Divider().opacity(0.25) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private var postseasonGameHeaderCells: some View {
+    Group {
+        Text("Game")  .frame(width: PostseasonGameColumn.game,   alignment: .leading).padding(.horizontal, 2)
+        Text("Result").frame(width: PostseasonGameColumn.result, alignment: .leading).padding(.horizontal, 2)
+    }
+    .font(.caption.weight(.semibold))
+    .foregroundStyle(.secondary)
+    .lineLimit(1)
+    .minimumScaleFactor(0.6)
+    .padding(.leading, 12)
+}
+
+// The regular row types render a postseason line through the regular log's
+// own cells. A pitcher's DEC column reads `result`, so it carries HIS decision.
+extension PostseasonBattingGameLine {
+    var asGameLog: GameLog {
+        GameLog(game_id: gameId, game_date: date, season: nil, opponent: opponent, home_away: homeAway,
+                result: result, team_score: teamScore, opp_score: oppScore,
+                AB: AB, R: R, H: H, doubles: doubles, triples: triples, HR: HR, RBI: RBI, BB: BB, IBB: IBB,
+                SO: SO, SB: SB, CS: CS, HBP: HBP, SF: SF, LOB: nil,
+                IP: nil, ER: nil, WP: nil, pitches: nil, strikes: nil)
+    }
+}
+
+extension PostseasonPitchingGameLine {
+    var asGameLog: GameLog {
+        GameLog(game_id: gameId, game_date: date, season: nil, opponent: opponent, home_away: homeAway,
+                result: decision, team_score: teamScore, opp_score: oppScore,
+                AB: nil, R: R, H: H, doubles: nil, triples: nil, HR: HR, RBI: nil, BB: BB, IBB: nil,
+                SO: SO, SB: nil, CS: nil, HBP: HBP, SF: nil, LOB: nil,
+                IP: Double(outs) / 3, ER: ER, WP: nil, pitches: nil, strikes: nil)
     }
 }
 

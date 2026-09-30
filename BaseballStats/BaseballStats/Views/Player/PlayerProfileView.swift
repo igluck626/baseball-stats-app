@@ -73,6 +73,10 @@ struct PlayerProfileView: View {
     // the Career tab, we set this year and flip selectedTab to .gameLogs.
     // GameLogsView binds to it so the picker syncs in both directions.
     @State private var gameLogYear = Calendar.current.component(.year, from: Date())
+    /// Game Logs' Regular Season | Postseason, and the postseason shown —
+    /// set together by the Overview's postseason card.
+    @State private var gameLogScope: GameLogScope = .regular
+    @State private var postseasonGameLogYear = Calendar.current.component(.year, from: Date())
 
     /// Presents the award-voting sheet when the user taps an MVP /
     /// CY / ROY chiclet on a career row. Cleared on dismiss; the
@@ -705,23 +709,36 @@ struct PlayerProfileView: View {
     /// vs pitching bio) so a two-way player shows a different rating on
     /// each tab. Deliberately no cross-side fallback to the top-level
     /// `player` heat — that would flash the wrong side's rating mid-load.
+    ///
+    /// ⚠️ ONLY IN THE REGULAR SEASON (`showsHotCold`, loaded by the view
+    /// model): hidden in the postseason, the offseason and spring training.
     @ViewBuilder
     private func heatMeter(score: Double?, tier: String?, window: String) -> some View {
-        if let tier, let score {
+        if viewModel.showsHotCold, let tier, let score {
             HeatMeterView(score: score, tier: tier, window: window)
         }
     }
 
+    /// While `showsPostseasonOverviewLine` holds, the postseason leads:
+    /// "<season> Postseason", then "Postseason Career", then the season.
+    /// Outside that window the order is the regular one.
     @ViewBuilder
     private var battingOverview: some View {
         VStack(spacing: 20) {
-            heatMeter(
+            let heat = heatMeter(
                 score: viewModel.currentBatting?.bio?.heat_score,
                 tier: viewModel.currentBatting?.bio?.heat_tier,
                 window: "Last 15 games"
             )
-            battingCurrentSeasonCard
-            battingPostseasonCard
+            if let line = showsPostseasonOverviewLine(viewModel.postseason, side: viewModel.postseason?.batting) {
+                battingPostseasonCard(line)
+                battingPostseasonCareerCard
+                heat
+                battingCurrentSeasonCard
+            } else {
+                heat
+                battingCurrentSeasonCard
+            }
             RecentGamesSection(
                 playerId: player.player_id,
                 isPitcher: false,
@@ -739,13 +756,20 @@ struct PlayerProfileView: View {
     @ViewBuilder
     private var pitchingOverview: some View {
         VStack(spacing: 20) {
-            heatMeter(
+            let heat = heatMeter(
                 score: viewModel.currentPitching?.bio?.heat_score,
                 tier: viewModel.currentPitching?.bio?.heat_tier,
                 window: "Recent form"
             )
-            pitchingCurrentSeasonCard
-            pitchingPostseasonCard
+            if let line = showsPostseasonOverviewLine(viewModel.postseason, side: viewModel.postseason?.pitching) {
+                pitchingPostseasonCard(line)
+                pitchingPostseasonCareerCard
+                heat
+                pitchingCurrentSeasonCard
+            } else {
+                heat
+                pitchingCurrentSeasonCard
+            }
             RecentGamesSection(
                 playerId: player.player_id,
                 isPitcher: true,
@@ -768,10 +792,11 @@ struct PlayerProfileView: View {
 
     /// "<season> Postseason" — shown by `showsPostseasonOverviewLine`: while
     /// the league's postseason runs, once he has appeared, including after his
-    /// team is out. Subtitle: his latest series and where it stands.
+    /// team is out. Subtitle: his latest series and where it stands. A tap
+    /// opens his game log for that postseason.
     @ViewBuilder
-    private var battingPostseasonCard: some View {
-        if let line = showsPostseasonOverviewLine(viewModel.postseason, side: viewModel.postseason?.batting) {
+    private func battingPostseasonCard(_ line: PostseasonSeasonLine<PostseasonBattingTotals>) -> some View {
+        do {
             let t = line.totals
             currentSeasonGridCard(
                 title: "\(String(line.season)) Postseason",
@@ -790,14 +815,13 @@ struct PlayerProfileView: View {
                 ]
             )
             .contentShape(Rectangle())
-            .onTapGesture { postseasonSheet = .batting(line) }
-            .sheet(item: $postseasonSheet) { PostseasonSeasonSheet(item: $0) }
+            .onTapGesture { openPostseasonGameLog(season: line.season) }
         }
     }
 
     @ViewBuilder
-    private var pitchingPostseasonCard: some View {
-        if let line = showsPostseasonOverviewLine(viewModel.postseason, side: viewModel.postseason?.pitching) {
+    private func pitchingPostseasonCard(_ line: PostseasonSeasonLine<PostseasonPitchingTotals>) -> some View {
+        do {
             let t = line.totals
             currentSeasonGridCard(
                 title: "\(String(line.season)) Postseason",
@@ -816,9 +840,84 @@ struct PlayerProfileView: View {
                 ]
             )
             .contentShape(Rectangle())
-            .onTapGesture { postseasonSheet = .pitching(line) }
-            .sheet(item: $postseasonSheet) { PostseasonSeasonSheet(item: $0) }
+            .onTapGesture { openPostseasonGameLog(season: line.season) }
         }
+    }
+
+    // MARK: - Postseason career (Overview)
+
+    /// "Postseason Career": the 2026 Season box's stats and layout, from the
+    /// postseason career line. Shown with the "<season> Postseason" card
+    /// (same rule); WAR has no postseason figure and reads "—".
+    @ViewBuilder
+    private var battingPostseasonCareerCard: some View {
+        if let t = viewModel.postseason?.batting?.career {
+            VStack(alignment: .leading, spacing: 6) {
+                currentSeasonGridCard(
+                    title: "Postseason Career",
+                    subtitle: nil,
+                    items: [
+                        .init(label: "WAR", value: "—",               rank: .unrankable),
+                        .init(label: "AVG", value: format3(t.AVG),    rank: .unrankable),
+                        .init(label: "OBP", value: format3(t.OBP),    rank: .unrankable),
+                        .init(label: "SLG", value: format3(t.SLG),    rank: .unrankable),
+                        .init(label: "OPS", value: format3(t.OPS),    rank: .unrankable),
+                        .init(label: "HR",  value: formatCount(t.HR),  rank: .unrankable),
+                        .init(label: "RBI", value: formatCount(t.RBI), rank: .unrankable),
+                        .init(label: "SB",  value: formatCount(t.SB),  rank: .unrankable),
+                        .init(label: "G",   value: formatCount(t.G),   rank: .unrankable),
+                        .init(label: "PA",  value: formatCount(t.PA),  rank: .unrankable),
+                    ]
+                )
+                postseasonCoverageNote(firstSeason: viewModel.careerBatting?.seasons?.compactMap(\.year).min())
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var pitchingPostseasonCareerCard: some View {
+        if let t = viewModel.postseason?.pitching?.career {
+            VStack(alignment: .leading, spacing: 6) {
+                currentSeasonGridCard(
+                    title: "Postseason Career",
+                    subtitle: nil,
+                    items: [
+                        .init(label: "WAR",  value: "—",                  rank: .unrankable),
+                        .init(label: "W-L",  value: formatWL(t.W, t.L),   rank: .unrankable),
+                        .init(label: "ERA",  value: format2(t.ERA),       rank: .unrankable),
+                        .init(label: "WHIP", value: format2(t.WHIP),      rank: .unrankable),
+                        .init(label: "K/9",  value: format1(t.outs > 0 ? Double(t.SO) * 27 / Double(t.outs) : nil),
+                              rank: .unrankable),
+                        .init(label: "G",    value: formatCount(t.G),     rank: .unrankable),
+                        isStarterRole(g: t.G, gs: t.GS)
+                            ? StatItem(label: "GS", value: formatCount(t.GS), rank: .unrankable)
+                            : StatItem(label: "SV", value: formatCount(t.SV), rank: .unrankable),
+                        .init(label: "IP",   value: t.IP,                 rank: .unrankable),
+                        .init(label: "SO",   value: formatCount(t.SO),    rank: .unrankable),
+                        .init(label: "BB",   value: formatCount(t.BB),    rank: .unrankable),
+                    ]
+                )
+                postseasonCoverageNote(firstSeason: viewModel.careerPitching?.seasons?.compactMap(\.year).min())
+            }
+        }
+    }
+
+    /// The postseason logs start in 1903; a career that began earlier says so.
+    @ViewBuilder
+    private func postseasonCoverageNote(firstSeason: Int?) -> some View {
+        if let firstSeason, firstSeason < 1903 {
+            Text("Postseason games from 1903 on.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 4)
+        }
+    }
+
+    /// The Overview's postseason card opens that postseason's game log.
+    private func openPostseasonGameLog(season: Int) {
+        postseasonGameLogYear = season
+        gameLogScope = .postseason
+        selectedTab = .gameLogs
     }
 
     /// "AL Wild Card · Trails 0-1".
@@ -1209,13 +1308,17 @@ struct PlayerProfileView: View {
         .pickerStyle(.segmented)
     }
 
+    private var playerBirth: PostseasonBirth {
+        PostseasonBirth(year: player.birth_year, month: player.birth_month, day: player.birth_day)
+    }
+
     @ViewBuilder
     private var postseasonCareer: some View {
         VStack(alignment: .leading, spacing: 8) {
             if showingBatting, let side = viewModel.postseason?.batting {
-                PostseasonBattingTable(side: side) { postseasonSheet = .batting($0) }
+                PostseasonBattingTable(side: side, birth: playerBirth) { postseasonSheet = .batting($0) }
             } else if let side = viewModel.postseason?.pitching {
-                PostseasonPitchingTable(side: side) { postseasonSheet = .pitching($0) }
+                PostseasonPitchingTable(side: side, birth: playerBirth) { postseasonSheet = .pitching($0) }
             }
             // The logs' coverage, said once, where the numbers are.
             Text("Postseason games from 1903 on. Tap a season for its series.")
@@ -1522,9 +1625,20 @@ struct PlayerProfileView: View {
             isPitcher: !showingBatting,
             onTapGame: boxScoreContext == nil ? nil : { openBoxScore(for: $0) },
             pendingGameId: pendingGameLogId,
-            year: $gameLogYear
+            year: $gameLogYear,
+            scope: $gameLogScope,
+            postseasonSeasons: postseasonSeasonsShown,
+            postseasonYear: $postseasonGameLogYear
         )
         .id(showingBatting)
+    }
+
+    /// The postseasons the side being shown has games in, newest first.
+    private var postseasonSeasonsShown: [Int] {
+        if showingBatting {
+            return viewModel.postseason?.batting?.seasons.map(\.season) ?? []
+        }
+        return viewModel.postseason?.pitching?.seasons.map(\.season) ?? []
     }
 
     /// Programmatically jump the Game Logs tab to a specific season.
@@ -4675,9 +4789,17 @@ enum PostseasonSheetItem: Identifiable {
     }
 }
 
-/// Frozen pane of the postseason tables: Year + Team. (No Age column — the
-/// rows are the same seasons as the regular table's, where the age already is.)
-private let postseasonFrozenWidth: CGFloat = 12 + (BattingCareerColumn.year + 4) + 4 + (BattingCareerColumn.team + 4)
+/// Frozen pane of the postseason tables: Year + Age + Team, the regular
+/// table's pane at the regular table's widths.
+private let postseasonFrozenWidth: CGFloat = 12 + (BattingCareerColumn.year + 4) + (BattingCareerColumn.age + 4)
+    + 4 + (BattingCareerColumn.team + 4)
+
+/// The player's birth date, for the Age column — the regular table's inputs.
+struct PostseasonBirth {
+    let year: Int?
+    let month: Int?
+    let day: Int?
+}
 
 /// The postseason career table, batting: the regular table's look — frozen
 /// Year/Team pane, scrolling stat columns at the same widths, the same
@@ -4685,6 +4807,7 @@ private let postseasonFrozenWidth: CGFloat = 12 + (BattingCareerColumn.year + 4)
 /// season's rounds.
 private struct PostseasonBattingTable: View {
     let side: PostseasonSide<PostseasonBattingTotals>
+    let birth: PostseasonBirth
     let onTapSeason: (PostseasonSeasonLine<PostseasonBattingTotals>) -> Void
 
     private typealias C = BattingCareerColumn
@@ -4706,12 +4829,14 @@ private struct PostseasonBattingTable: View {
             seasons: side.seasons.map { ($0.season, $0.team, values($0.totals)) },
             career: values(side.career),
             columns: Self.columns,
+            birth: birth,
             onTap: { i in onTapSeason(side.seasons[i]) })
     }
 }
 
 private struct PostseasonPitchingTable: View {
     let side: PostseasonSide<PostseasonPitchingTotals>
+    let birth: PostseasonBirth
     let onTapSeason: (PostseasonSeasonLine<PostseasonPitchingTotals>) -> Void
 
     private typealias C = PitchingCareerColumn
@@ -4731,6 +4856,7 @@ private struct PostseasonPitchingTable: View {
             seasons: side.seasons.map { ($0.season, $0.team, values($0.totals)) },
             career: values(side.career),
             columns: Self.columns,
+            birth: birth,
             onTap: { i in onTapSeason(side.seasons[i]) })
     }
 }
@@ -4740,21 +4866,25 @@ private struct PostseasonTableFrame: View {
     let seasons: [(year: Int, team: String, values: [String])]
     let career: [String]
     let columns: [(String, CGFloat)]
+    let birth: PostseasonBirth
     let onTap: (Int) -> Void
 
     var body: some View {
         HStack(spacing: 0) {
             VStack(spacing: 0) {
-                frozenRow(year: "Year", team: "Team", header: true)
+                frozenRow(year: "Year", age: "Age", team: "Team", header: true)
                 Divider()
                 ForEach(Array(seasons.enumerated()), id: \.offset) { i, s in
-                    frozenRow(year: String(s.year), team: displayTeamCode(s.team), header: false)
+                    frozenRow(year: String(s.year),
+                              age: formatAge(seasonYear: s.year, birthYear: birth.year,
+                                             birthMonth: birth.month, birthDay: birth.day),
+                              team: displayTeamCode(s.team), header: false)
                         .contentShape(Rectangle())
                         .onTapGesture { onTap(i) }
                     if i != seasons.count - 1 { Divider().opacity(0.4) }
                 }
                 Divider()
-                frozenRow(year: "Career", team: "", header: true)
+                frozenRow(year: "Career", age: "", team: "", header: true)
                     .background(Color(.systemGray5).opacity(0.7))
             }
             .frame(width: postseasonFrozenWidth)
@@ -4782,10 +4912,14 @@ private struct PostseasonTableFrame: View {
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
     }
 
-    private func frozenRow(year: String, team: String, header: Bool) -> some View {
+    private func frozenRow(year: String, age: String, team: String, header: Bool) -> some View {
         HStack(spacing: 0) {
             Text(year)
                 .frame(width: BattingCareerColumn.year, alignment: .leading)
+                .padding(.horizontal, 2)
+            Text(age)
+                .frame(width: BattingCareerColumn.age, alignment: .trailing)
+                .monospacedDigit()
                 .padding(.horizontal, 2)
             Color.clear.frame(width: 4)
             Text(team)

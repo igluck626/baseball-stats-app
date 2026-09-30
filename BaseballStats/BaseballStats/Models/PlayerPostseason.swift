@@ -153,6 +153,156 @@ struct PostseasonCurrent: Codable, Hashable {
     }
 }
 
+// MARK: - Game logs (`GET /players/{id}/postseason/gamelogs?season=`)
+
+/// One postseason's game-by-game lines, oldest first, per side (nil when he
+/// has none on it). The backend reads the season's one source, the same rule
+/// as the career line.
+struct PostseasonGameLogs: Codable, Hashable {
+    let playerId: Int
+    let season: Int
+    let source: String
+    let batting: [PostseasonBattingGameLine]?
+    let pitching: [PostseasonPitchingGameLine]?
+
+    enum CodingKeys: String, CodingKey {
+        case season, source, batting, pitching
+        case playerId = "player_id"
+    }
+}
+
+/// The fields every postseason game line carries, whichever side.
+protocol PostseasonGameLine {
+    var gameId: String { get }
+    var date: String? { get }
+    var round: String { get }
+    var roundName: String { get }
+    var gameNumber: Int? { get }
+    var opponent: String? { get }
+    var opponentName: String? { get }
+    var homeAway: String? { get }
+    var result: String? { get }
+    var teamScore: Int? { get }
+    var oppScore: Int? { get }
+}
+
+extension PostseasonGameLine {
+    /// "ALDS G3", "WS G7", "WC G1" — the round short enough for a table
+    /// column, and the game's number in the series (his TEAM's games, so a
+    /// man who sat out Game 1 reads G2).
+    var seriesGameLabel: String { postseasonSeriesGameLabel(round: round, roundName: roundName, gameNumber: gameNumber) }
+    /// "W 8-5" / "L 1-6"; "—" when the score isn't known.
+    var resultLabel: String { postseasonResultLabel(result: result, teamScore: teamScore, oppScore: oppScore) }
+}
+
+func postseasonSeriesGameLabel(round: String, roundName: String, gameNumber: Int?) -> String {
+    let short: String
+    switch round {
+    case "WS": short = "WS"
+    case "WC": short = "WC"
+    default:   short = roundName            // "ALDS", "NLCS"
+    }
+    guard let gameNumber else { return short }
+    return "\(short) G\(gameNumber)"
+}
+
+func postseasonResultLabel(result: String?, teamScore: Int?, oppScore: Int?) -> String {
+    guard let result, let teamScore, let oppScore else { return "—" }
+    return "\(result) \(teamScore)-\(oppScore)"
+}
+
+struct PostseasonBattingGameLine: Codable, Hashable, Identifiable, PostseasonGameLine {
+    let gameId: String
+    let date: String?
+    let round: String
+    let roundName: String
+    let gameNumber: Int?
+    let team: String?
+    let opponent: String?
+    let opponentName: String?
+    let homeAway: String?
+    let result: String?
+    let teamScore: Int?
+    let oppScore: Int?
+    let PA: Int
+    let AB: Int
+    let R: Int
+    let H: Int
+    let doubles: Int
+    let triples: Int
+    let HR: Int
+    let RBI: Int
+    let BB: Int
+    let IBB: Int
+    let SO: Int
+    let SB: Int
+    let CS: Int
+    let HBP: Int
+    let SF: Int
+    let GIDP: Int
+    let SH: Int
+
+    var id: String { gameId }
+
+    enum CodingKeys: String, CodingKey {
+        case date, round, team, opponent, result
+        case PA, AB, R, H, doubles, triples, HR, RBI, BB, IBB, SO, SB, CS, HBP, SF, GIDP, SH
+        case gameId = "game_id"
+        case roundName = "round_name"
+        case gameNumber = "game_number"
+        case opponentName = "opponent_name"
+        case homeAway = "home_away"
+        case teamScore = "team_score"
+        case oppScore = "opp_score"
+    }
+}
+
+struct PostseasonPitchingGameLine: Codable, Hashable, Identifiable, PostseasonGameLine {
+    let gameId: String
+    let date: String?
+    let round: String
+    let roundName: String
+    let gameNumber: Int?
+    let team: String?
+    let opponent: String?
+    let opponentName: String?
+    let homeAway: String?
+    /// The TEAM's result; his own is `decision`.
+    let result: String?
+    let teamScore: Int?
+    let oppScore: Int?
+    /// W / L / S / H / ND.
+    let decision: String?
+    /// Outs recorded — the exact figure; `IP` is its display form ("6.2").
+    let outs: Int
+    let IP: String
+    let H: Int
+    let R: Int
+    let ER: Int
+    let BB: Int
+    let SO: Int
+    let HR: Int
+    let HBP: Int
+    let W: Int
+    let L: Int
+    let SV: Int
+    let GS: Int
+
+    var id: String { gameId }
+
+    enum CodingKeys: String, CodingKey {
+        case date, round, team, opponent, result, decision, outs, IP
+        case H, R, ER, BB, SO, HR, HBP, W, L, SV, GS
+        case gameId = "game_id"
+        case roundName = "round_name"
+        case gameNumber = "game_number"
+        case opponentName = "opponent_name"
+        case homeAway = "home_away"
+        case teamScore = "team_score"
+        case oppScore = "opp_score"
+    }
+}
+
 // MARK: - The Overview line
 
 /// ⚠️ THE OVERVIEW RULE: show the "<season> Postseason" line while the

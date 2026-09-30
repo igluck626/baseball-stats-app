@@ -136,6 +136,10 @@ final class PlayerViewModel: ObservableObject {
     /// and left nil on failure: the Career switch and the Overview line then
     /// simply don't appear.
     @Published var postseason: PlayerPostseason?
+    /// `showsHotCold` for today — false until known, and false when
+    /// `/season/phase` fails to load (the meter hides rather than show a stale
+    /// reading).
+    @Published var showsHotCold = false
 
     /// Cumulative box-score overlay for the player across today's
     /// live/final games. Summed in `loadRecentGameStats()` and
@@ -354,11 +358,12 @@ final class PlayerViewModel: ObservableObject {
         async let careerPitchingDone:  Void = loadCareerPitching()
         async let awardsDone:          Void = loadAwards()
         async let postseasonDone:      Void = loadPostseason()
+        async let hotColdDone:         Void = loadHotColdSeason()
 
         _ = await (
             currentBattingDone, careerBattingDone,
             currentPitchingDone, careerPitchingDone,
-            awardsDone, postseasonDone
+            awardsDone, postseasonDone, hotColdDone
         )
 
         // Background task — never awaited from `loadData`'s caller so
@@ -1035,6 +1040,10 @@ final class PlayerViewModel: ObservableObject {
             // Never a screen-level error: without it the profile just has
             // no postseason view, exactly as for a player who never played one.
         }
+    }
+
+    private func loadHotColdSeason() async {
+        showsHotCold = await HotColdSeason.load()
     }
 
     private func loadCurrentBatting() async {

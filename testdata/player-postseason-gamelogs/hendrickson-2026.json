@@ -1,0 +1,36 @@
+{
+ "player_id": 681973,
+ "season": 2026,
+ "source": "bdl",
+ "batting": null,
+ "pitching": [
+  {
+   "game_id": "15457178",
+   "date": "2026-09-29",
+   "round": "WC",
+   "round_name": "AL Wild Card",
+   "game_number": 1,
+   "team": "HOU",
+   "opponent": "CHA",
+   "opponent_name": "Chicago White Sox",
+   "home_away": "H",
+   "result": "L",
+   "team_score": 3,
+   "opp_score": 6,
+   "H": 3,
+   "R": 1,
+   "ER": 1,
+   "BB": 1,
+   "SO": 0,
+   "HR": 0,
+   "HBP": 1,
+   "W": 0,
+   "L": 0,
+   "SV": 0,
+   "GS": 0,
+   "decision": "ND",
+   "outs": 5,
+   "IP": "1.2"
+  }
+ ]
+}
