@@ -6,9 +6,9 @@ year STRICTLY less than the current year — pybaseball handles the in-flight
 season via nightly_update.py. After each season ends, Lahman is re-released
 with the just-completed year and this loader picks it up on the next run.
 
-Joins Lahman.playerID → Chadwick key_bbref → key_mlbam (our player_id).
-Players whose Chadwick row lacks a key_mlbam are skipped (a small tail of
-obscure 19th-century guys with no MLBAM ID assigned).
+Joins Lahman.playerID → key_mlbam (our player_id) through the Chadwick
+register, judged per player (`judge_lahman_ids`: retroID first, then name +
+played years). Players it can't judge are skipped and logged loudly.
 
 Idempotent: rows already in the database are skipped.
 """
@@ -21,6 +21,7 @@ import os
 import re
 import sys
 import threading
+import unicodedata
 from collections import defaultdict
 from typing import Optional
 
@@ -33,6 +34,7 @@ sys.path.insert(0, os.path.join(_BACKEND_DIR, "api"))
 sys.path.insert(0, _BACKEND_DIR)
 
 from database import connection, crud                                     # noqa: E402
+from chadwick_catchup import _reg_dob, norm_name                          # noqa: E402
 from database.models import (                                              # noqa: E402
     PitcherSeason, PlayerFielding, PlayerSeason, TeamSeason,
 )
@@ -155,56 +157,224 @@ def _f_or_none_safe(v):
 
 
 # ---------------------------------------------------------------------------
-# Chadwick bbref → mlbam bridge
+# Chadwick bridge: Lahman playerID → mlbam
 # ---------------------------------------------------------------------------
 
-def _load_chadwick_bridge() -> dict[str, int]:
-    """Lahman id → mlbam, resolving EVERY id form Lahman uses to key its files:
-    the season loaders look up by Lahman `playerID`, the bio loader by `bbrefID`,
-    and BOTH diverge from Chadwick's `key_bbref` for ~1% of players (e.g. CC
-    Sabathia: playerID `sabatcc01` / bbrefID `sabatc.01` / retroID `sabac001`).
-    A bbref-only bridge dropped those players' Lahman seasons — which then made
-    the bio loader skip them too — so they ended up as stats-without-identity
-    (unsearchable, nameless profiles). Keying playerID, bbrefID AND retroID all
-    to the same mlbam stops the silent drops. Any Lahman id that STILL can't map
-    is logged loudly, not swallowed."""
-    by_bbref: dict[str, int] = {}
-    by_retro: dict[str, int] = {}
-    with open(CHADWICK_CSV, newline="", encoding="utf-8-sig") as fh:
-        for row in csv.DictReader(fh):
-            mlbam = row.get("key_mlbam")
-            if not mlbam:
-                continue
-            mlbam = int(mlbam)
-            if row.get("key_bbref"):
-                by_bbref[row["key_bbref"]] = mlbam
-            if row.get("key_retro"):
-                by_retro[row["key_retro"]] = mlbam
+def _fold(s: Optional[str]) -> str:
+    """Accent-, case- and punctuation-blind form of a name."""
+    s = unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode().lower()
+    return re.sub(r"[^a-z]", "", s)
 
-    bridge: dict[str, int] = dict(by_bbref)   # bbrefID keys (bio loader + most seasons)
-    unmapped: list[str] = []
+
+def _chadwick_confirms(person: dict, years: Optional[tuple[int, int]], ch: dict, *, need_last: bool) -> bool:
+    """Does a Chadwick register row describe this Lahman person?
+
+    Played years must not contradict (overlap, ±1, when both sides have
+    them). Then either BOTH names match (accent/case/punctuation-blind), or one
+    name differs — a nickname (Casper/Bob Asbjornson), a spelling
+    (Beavens/Beavan) — and the FIRST season agrees within a year. The first
+    season is what separates real variants (0-1 years apart) from Lahman rows
+    whose ids point at the next man over (Buck Ewing -> Columbus Ewing: 11)."""
+    last_ok = _fold(person.get("nameLast")) == _fold(ch.get("name_last"))
+    first_ok = _fold(person.get("nameFirst")) == _fold(ch.get("name_first"))
+    c0, c1 = ch.get("mlb_played_first"), ch.get("mlb_played_last")
+    if years and c0 and c1:
+        if years[0] > int(float(c1)) + 1 or years[1] < int(float(c0)) - 1:
+            return False
+    if last_ok and first_ok:
+        return True
+    first_season_close = bool(years and c0 and abs(years[0] - int(float(c0))) <= 1)
+    return first_season_close and (last_ok if need_last else (last_ok or first_ok))
+
+
+def _lahman_dob(person: dict) -> Optional[str]:
+    """Lahman People's full birth date as ISO, or None when any part is missing."""
+    return _reg_dob({"birth_year": person.get("birthYear"), "birth_month": person.get("birthMonth"),
+                     "birth_day": person.get("birthDay")})
+
+
+def _names_exact(person: dict, ch: dict) -> bool:
+    """Both names equal under the Chadwick matcher's folding (accents, case,
+    punctuation, Jr./Sr./II-IV), and neither blank."""
+    f, l = norm_name(person.get("nameFirst")), norm_name(person.get("nameLast"))
+    return bool(f and l) and f == norm_name(ch.get("name_first")) and l == norm_name(ch.get("name_last"))
+
+
+def judge_lahman_ids(chadwick: list[dict], people: list[dict],
+                     years: dict[str, tuple[int, int]]) -> tuple[dict[str, int], dict]:
+    """Lahman playerID -> mlbam, each one JUDGED, never taken from a key by rule.
+
+    ⚠️ WHY JUDGED. For ~117 players, Chadwick looked up by Lahman's `playerID`
+    and by Lahman's `People.bbrefID` name DIFFERENT people, and neither key is
+    right for all of them: a playerID is Lahman's own id, which can be another
+    man's Baseball-Reference id (Lahman's `kingbr01` is Bryan King; Baseball-
+    Reference's `kingbr01` is Brennan King, 1943), and along a few chains
+    Lahman shifted bbrefID AND retroID onto the next man (Columbus Ewing's row
+    carries Julián Fabelo's ids — but still Columbus's own birth date).
+    Taking either key "always" misfiled real careers onto namesakes.
+
+    Per People row, first that applies:
+      1. "retro": retroID -> Chadwick `key_retro`, CONFIRMED (`_chadwick_confirms`).
+      2. "fallthrough": the retroID does NOT confirm (a shifted row). One of
+         the playerID/bbrefID candidates has both names exact, played years not
+         contradicting and the first season within a year — AND the register's
+         full birth date equals Lahman's; or, when Lahman has no full birth
+         date, the candidate is the ONLY register row with that exact name and
+         that exact first season.
+      3. "fallback": no retroID in the register. The playerID/bbrefID
+         candidate that confirms (last name required); if both do, the one
+         whose first season is Lahman's first season exactly.
+      4. "birth": still unplaced. Exact name + exact full birth date, unique in
+         the register AND among Lahman's people (the Chadwick matcher's
+         standard); first season off by 2+ holds.
+      5. HELD, with the reason. Two playerIDs landing on one mlbam: both HELD.
+         Never a guess.
+    Returns (bridge, report) — report = {"retro", "fallthrough", "fallback",
+    "birth": [playerIDs], "held": {playerID: reason}}."""
+    by_retro, by_bbref = {}, {}
+    by_name_dob: dict[tuple, list[dict]] = defaultdict(list)
+    for r in chadwick:
+        if not r.get("key_mlbam"):
+            continue
+        if r.get("key_retro"):
+            by_retro[r["key_retro"]] = r
+        if r.get("key_bbref"):
+            by_bbref[r["key_bbref"]] = r
+        dob = _reg_dob(r)
+        if dob:
+            by_name_dob[(norm_name(r.get("name_first")), norm_name(r.get("name_last")), dob)].append(r)
+    by_name_first: dict[tuple, int] = defaultdict(int)
+    for r in chadwick:
+        if r.get("key_mlbam") and r.get("mlb_played_first"):
+            by_name_first[(norm_name(r.get("name_first")), norm_name(r.get("name_last")),
+                           int(float(r["mlb_played_first"])))] += 1
+    lahman_name_dob = defaultdict(int)
+    for person in people:
+        dob = _lahman_dob(person)
+        if dob:
+            lahman_name_dob[(norm_name(person.get("nameFirst")), norm_name(person.get("nameLast")), dob)] += 1
+
+    def first_close(span, ch) -> bool:
+        c0 = ch.get("mlb_played_first")
+        return not (span and c0) or abs(span[0] - int(float(c0))) <= 1
+
+    def unique_first(person, span, ch) -> bool:
+        """No Lahman birth date to check: the candidate must be the ONLY register
+        row with this exact name and this exact first season."""
+        if not (span and ch.get("mlb_played_first")) or int(float(ch["mlb_played_first"])) != span[0]:
+            return False
+        key = (norm_name(person.get("nameFirst")), norm_name(person.get("nameLast")), span[0])
+        return by_name_first.get(key, 0) == 1
+
+    def candidates(person, pid) -> dict[int, dict]:
+        out = {}
+        for key in (pid, (person.get("bbrefID") or "").strip()):
+            if key in by_bbref:
+                out[int(by_bbref[key]["key_mlbam"])] = by_bbref[key]
+        return out
+
+    bridge: dict[str, int] = {}
+    report: dict = {"retro": [], "fallthrough": [], "fallback": [], "birth": [], "held": {}}
+    for person in people:
+        pid = (person.get("playerID") or "").strip()
+        if not pid:
+            continue
+        span = years.get(pid)
+        dob = _lahman_dob(person)
+        retro = (person.get("retroID") or "").strip()
+        ch = by_retro.get(retro) if retro else None
+        why = None
+        if ch is not None and _chadwick_confirms(person, span, ch, need_last=False):
+            bridge[pid] = int(ch["key_mlbam"])
+            report["retro"].append(pid)
+            continue
+        if ch is not None:
+            why = f"retroID {retro} -> {ch['key_mlbam']} {ch.get('name_first')} {ch.get('name_last')} does not confirm"
+            ok = [m for m, c in candidates(person, pid).items()
+                  if _names_exact(person, c) and _chadwick_confirms(person, span, c, need_last=True)
+                  and first_close(span, c) and (_reg_dob(c) == dob if dob else unique_first(person, span, c))]
+            if len(ok) == 1:
+                bridge[pid] = ok[0]
+                report["fallthrough"].append(pid)
+                continue
+        else:
+            cands = candidates(person, pid)
+            fitting = [m for m, c in cands.items() if _chadwick_confirms(person, span, c, need_last=True)]
+            if len(fitting) > 1 and span:
+                fitting = [m for m in fitting if cands[m].get("mlb_played_first")
+                           and int(float(cands[m]["mlb_played_first"])) == span[0]]
+            if len(fitting) == 1:
+                bridge[pid] = fitting[0]
+                report["fallback"].append(pid)
+                continue
+            why = (f"candidates {sorted(cands)}: {'none' if not fitting else 'more than one'} fit" if cands
+                   else "no Chadwick row by retroID, playerID or bbrefID")
+        # 4. exact name + exact full birth date
+        key = (norm_name(person.get("nameFirst")), norm_name(person.get("nameLast")), dob)
+        hits = by_name_dob.get(key, []) if dob and key[0] and key[1] else []
+        if len(hits) == 1 and lahman_name_dob[key] == 1 and first_close(span, hits[0]):
+            bridge[pid] = int(hits[0]["key_mlbam"])
+            report["birth"].append(pid)
+            continue
+        if not dob:
+            why += "; no full birth date in Lahman"
+        elif not hits:
+            why += "; no register row with this name + birth date"
+        elif len(hits) > 1 or lahman_name_dob[key] > 1:
+            why += "; name + birth date not unique"
+        else:
+            why += f"; name + birth date -> {hits[0]['key_mlbam']} but first season off by 2+"
+        report["held"][pid] = why
+
+    claimed: dict[int, list[str]] = defaultdict(list)
+    for pid, m in bridge.items():
+        claimed[m].append(pid)
+    for m, pids in claimed.items():
+        if len(pids) > 1:
+            for pid in pids:
+                del bridge[pid]
+                report["held"][pid] = f"mlbam {m} also judged for {', '.join(p for p in pids if p != pid)}"
+                for k in ("retro", "fallthrough", "fallback", "birth"):
+                    if pid in report[k]:
+                        report[k].remove(pid)
+    return bridge, report
+
+
+def _lahman_years() -> dict[str, tuple[int, int]]:
+    """playerID -> (first, last) season in Lahman's batting, pitching and fielding files."""
+    seen: dict[str, list[int]] = defaultdict(list)
+    for path in (BATTING_CSV, PITCHING_CSV, FIELDING_CSV):
+        try:
+            with open(path, newline="", encoding="utf-8-sig") as fh:
+                for row in csv.DictReader(fh):
+                    seen[row["playerID"]].append(int(row["yearID"]))
+        except FileNotFoundError:
+            continue
+    return {p: (min(y), max(y)) for p, y in seen.items()}
+
+
+def _load_chadwick_bridge() -> dict[str, int]:
+    """Lahman playerID -> mlbam, judged per player (`judge_lahman_ids`). Keyed
+    by Lahman playerID ONLY — every loader, the bio loader included, looks up
+    by playerID. (Keying Baseball-Reference ids, playerIDs and retroIDs in one
+    dict is how one man's playerID collided with another man's bbref id.)
+    Every held id is logged loudly, never dropped silently."""
+    with open(CHADWICK_CSV, newline="", encoding="utf-8-sig") as fh:
+        chadwick = list(csv.DictReader(fh))
     try:
         with open(PEOPLE_CSV, newline="", encoding="utf-8-sig") as fh:
-            for row in csv.DictReader(fh):
-                pid = (row.get("playerID") or "").strip()
-                if not pid:
-                    continue
-                retro = (row.get("retroID") or "").strip()
-                bbref = (row.get("bbrefID") or "").strip()
-                mlbam = by_retro.get(retro) or by_bbref.get(bbref)   # retroID is proven 100%
-                if mlbam is None:
-                    unmapped.append(pid)
-                    continue
-                bridge.setdefault(pid, mlbam)      # Lahman playerID -> mlbam
-                if retro:
-                    bridge.setdefault(retro, mlbam)
+            people = list(csv.DictReader(fh))
     except FileNotFoundError:
-        log.warning("People.csv not found; bridge covers bbref keys only "
-                    "(divergent-id players may be dropped)")
-    if unmapped:
-        log.warning("chadwick bridge: %d Lahman playerIDs could not map to an "
-                    "mlbam and will be dropped: %s%s", len(unmapped),
-                    ", ".join(unmapped[:20]), " ..." if len(unmapped) > 20 else "")
+        log.error("People.csv not found; the Lahman bridge is EMPTY and every Lahman row will be skipped")
+        return {}
+    bridge, report = judge_lahman_ids(chadwick, people, _lahman_years())
+    held = report["held"]
+    log.info("chadwick bridge: %d by retroID, %d past a shifted retroID, %d by name + years, "
+             "%d by name + birth date, %d held", len(report["retro"]), len(report["fallthrough"]),
+             len(report["fallback"]), len(report["birth"]), len(held))
+    if held:
+        log.warning("chadwick bridge: %d Lahman playerIDs HELD (their rows will be skipped): %s%s",
+                    len(held), ", ".join(list(held)[:20]), " ..." if len(held) > 20 else "")
     return bridge
 
 
@@ -408,6 +578,95 @@ def _read_pitching_aggregated() -> dict[tuple[str, int], dict]:
 # Loaders
 # ---------------------------------------------------------------------------
 
+def _batting_season(year: int, agg: dict) -> dict:
+    """One aggregated Lahman batting season as a player_seasons row (the loader's and the repair's)."""
+    derived = _batting_derived(
+        ab=agg["AB"], h=agg["H"],
+        doubles=agg["2B"], triples=agg["3B"], hr=agg["HR"],
+        bb=agg["BB"], ibb=agg["IBB"], hbp=agg["HBP"],
+        so=agg["SO"], sf=agg["SF"], sh=agg["SH"],
+    )
+
+    season = {
+        "year":    year,
+        "team":    agg["teamID"] or None,
+        "league":  agg["lgID"] or None,
+        "G":       agg["G"],
+        "AB":      agg["AB"],
+        "R":       agg["R"],
+        "H":       agg["H"],
+        "doubles": agg["2B"],
+        "triples": agg["3B"],
+        "HR":      agg["HR"],
+        "RBI":     int(agg["RBI"]),
+        "SB":      int(agg["SB"]),
+        "CS":      int(agg["CS"]),
+        "BB":      agg["BB"],
+        "SO":      int(agg["SO"]),
+        "IBB":     int(agg["IBB"]),
+        "HBP":     int(agg["HBP"]),
+        "SH":      int(agg["SH"]),
+        "SF":      int(agg["SF"]),
+        "GIDP":    int(agg["GIDP"]),
+        # TB = H + 2·doubles + 3·triples + 4·HR; computed here so
+        # Lahman-historical seasons go in pre-populated rather
+        # than relying on the init_db backfill (which still runs
+        # as a belt-and-suspenders for any nightly-only rows).
+        "TB":      (int(agg["H"]) + int(agg["2B"])
+                    + 2 * int(agg["3B"]) + 3 * int(agg["HR"])),
+        **derived,
+    }
+    return season
+
+
+def _pitching_season(year: int, agg: dict) -> dict:
+    """One aggregated Lahman pitching season as a pitcher_seasons row (the loader's and the repair's)."""
+    derived = _pitching_derived(
+        ipouts=agg["IPouts"], h=agg["H"], hr=agg["HR"],
+        bb=agg["BB"], hbp=agg["HBP"], so=agg["SO"], bfp=agg["BFP"],
+    )
+
+    # Lahman ERA is per-stint; for multi-stint years, recompute as ER*9/IP
+    ip_dec = agg["IPouts"] / 3 if agg["IPouts"] > 0 else 0.0
+    era = round(agg["ER"] * 9 / ip_dec, 2) if ip_dec > 0 else None
+
+    # BAOpp = H / (BFP - BB - HBP - SH - SF) — recompute for multi-stint
+    ab_faced = agg["BFP"] - agg["BB"] - agg["HBP"] - agg["SH"] - agg["SF"]
+    baopp = round(agg["H"] / ab_faced, 3) if ab_faced > 0 else None
+
+    season = {
+        "year":    year,
+        "team":    agg["teamID"] or None,
+        "league":  agg["lgID"] or None,
+        "W":       agg["W"],
+        "L":       agg["L"],
+        "G":       agg["G"],
+        "GS":      agg["GS"],
+        "CG":      agg["CG"],
+        "SHO":     agg["SHO"],
+        "SV":      agg["SV"],
+        "GF":      agg["GF"],
+        "H":       agg["H"],
+        "ER":      agg["ER"],
+        "R":       agg["R"],
+        "HR":      agg["HR"],
+        "BB":      agg["BB"],
+        "IBB":     int(agg["IBB"]),
+        "SO":      agg["SO"],
+        "HBP":     int(agg["HBP"]),
+        "WP":      agg["WP"],
+        "BK":      agg["BK"],
+        "BFP":     int(agg["BFP"]),
+        "SH":      int(agg["SH"]),
+        "SF":      int(agg["SF"]),
+        "GIDP":    int(agg["GIDP"]),
+        "ERA":     era,
+        "BAOpp":   baopp,
+        **derived,
+    }
+    return season
+
+
 def _load_batting(
     bridge: dict[str, int],
     existing_keys: set[tuple[int, int]],
@@ -438,42 +697,7 @@ def _load_batting(
             skipped_existing += 1
             continue
 
-        derived = _batting_derived(
-            ab=agg["AB"], h=agg["H"],
-            doubles=agg["2B"], triples=agg["3B"], hr=agg["HR"],
-            bb=agg["BB"], ibb=agg["IBB"], hbp=agg["HBP"],
-            so=agg["SO"], sf=agg["SF"], sh=agg["SH"],
-        )
-
-        season = {
-            "year":    year,
-            "team":    agg["teamID"] or None,
-            "league":  agg["lgID"] or None,
-            "G":       agg["G"],
-            "AB":      agg["AB"],
-            "R":       agg["R"],
-            "H":       agg["H"],
-            "doubles": agg["2B"],
-            "triples": agg["3B"],
-            "HR":      agg["HR"],
-            "RBI":     int(agg["RBI"]),
-            "SB":      int(agg["SB"]),
-            "CS":      int(agg["CS"]),
-            "BB":      agg["BB"],
-            "SO":      int(agg["SO"]),
-            "IBB":     int(agg["IBB"]),
-            "HBP":     int(agg["HBP"]),
-            "SH":      int(agg["SH"]),
-            "SF":      int(agg["SF"]),
-            "GIDP":    int(agg["GIDP"]),
-            # TB = H + 2·doubles + 3·triples + 4·HR; computed here so
-            # Lahman-historical seasons go in pre-populated rather
-            # than relying on the init_db backfill (which still runs
-            # as a belt-and-suspenders for any nightly-only rows).
-            "TB":      (int(agg["H"]) + int(agg["2B"])
-                        + 2 * int(agg["3B"]) + 3 * int(agg["HR"])),
-            **derived,
-        }
+        season = _batting_season(year, agg)
         by_player_id[mlbam].append(season)
 
     total_rows = sum(len(v) for v in by_player_id.values())
@@ -533,49 +757,7 @@ def _load_pitching(
             skipped_existing += 1
             continue
 
-        derived = _pitching_derived(
-            ipouts=agg["IPouts"], h=agg["H"], hr=agg["HR"],
-            bb=agg["BB"], hbp=agg["HBP"], so=agg["SO"], bfp=agg["BFP"],
-        )
-
-        # Lahman ERA is per-stint; for multi-stint years, recompute as ER*9/IP
-        ip_dec = agg["IPouts"] / 3 if agg["IPouts"] > 0 else 0.0
-        era = round(agg["ER"] * 9 / ip_dec, 2) if ip_dec > 0 else None
-
-        # BAOpp = H / (BFP - BB - HBP - SH - SF) — recompute for multi-stint
-        ab_faced = agg["BFP"] - agg["BB"] - agg["HBP"] - agg["SH"] - agg["SF"]
-        baopp = round(agg["H"] / ab_faced, 3) if ab_faced > 0 else None
-
-        season = {
-            "year":    year,
-            "team":    agg["teamID"] or None,
-            "league":  agg["lgID"] or None,
-            "W":       agg["W"],
-            "L":       agg["L"],
-            "G":       agg["G"],
-            "GS":      agg["GS"],
-            "CG":      agg["CG"],
-            "SHO":     agg["SHO"],
-            "SV":      agg["SV"],
-            "GF":      agg["GF"],
-            "H":       agg["H"],
-            "ER":      agg["ER"],
-            "R":       agg["R"],
-            "HR":      agg["HR"],
-            "BB":      agg["BB"],
-            "IBB":     int(agg["IBB"]),
-            "SO":      agg["SO"],
-            "HBP":     int(agg["HBP"]),
-            "WP":      agg["WP"],
-            "BK":      agg["BK"],
-            "BFP":     int(agg["BFP"]),
-            "SH":      int(agg["SH"]),
-            "SF":      int(agg["SF"]),
-            "GIDP":    int(agg["GIDP"]),
-            "ERA":     era,
-            "BAOpp":   baopp,
-            **derived,
-        }
+        season = _pitching_season(year, agg)
         by_player_id[mlbam].append(season)
 
     total_rows = sum(len(v) for v in by_player_id.values())
@@ -627,10 +809,8 @@ def _load_people_info(
     by_mlbam: dict[int, dict] = {}
     with open(PEOPLE_CSV, newline="", encoding="utf-8-sig") as fh:
         for row in csv.DictReader(fh):
-            bbref = row.get("bbrefID")
-            if not bbref:
-                continue
-            mlbam = bridge.get(bbref)
+            mlbam = bridge.get(row.get("playerID"))   # keyed by playerID, like every loader
+            bbref = (row.get("bbrefID") or "").strip() or None
             if mlbam is None:
                 continue
             if mlbam not in batter_ids and mlbam not in pitcher_ids:
@@ -1342,7 +1522,7 @@ def run(
     _set_state(state, lock, phase="bridge")
     log.info(f"Loading Chadwick bridge from {CHADWICK_CSV} ...")
     bridge = _load_chadwick_bridge()
-    log.info(f"  {len(bridge):,} bbref→mlbam mappings")
+    log.info(f"  {len(bridge):,} Lahman playerID→mlbam mappings")
 
     _set_state(state, lock, phase="snapshot")
     log.info("Snapshotting existing (player_id, year) keys to skip ...")
