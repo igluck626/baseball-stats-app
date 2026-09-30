@@ -25,20 +25,15 @@
 //  performs and would have passed straight through the bug.
 //
 //  Fixture: testdata/live-detail.json — a real snapshot of a game IN
-//  PROGRESS (CIN @ LAD, 2026-09-09, 9th inning), captured from
-//  production while the outage was being diagnosed.
+//  PROGRESS (BOS @ NYY, 2026 AL Wild Card Game 1, top of the 6th), captured
+//  from production on 2026-09-30 with the live-metrics re-land deployed: it
+//  carries `contact_pas` and one-decimal `pitch_velocity` from `_exact_speeds`.
+//  (The earlier fixture, CIN @ LAD 2026-09-09, predated both and could only
+//  assert that speeds were present.)
 //
-//  ⚠️ KNOWN GAP IN THE FIXTURE. It was captured before `_exact_speeds`
-//  reached production, so every `pitch_velocity` in it is a whole number
-//  taken straight from the play stream. `playRowsCarryPitchIdentity`
-//  therefore asserts that speeds are PRESENT, not that they carry the
-//  decimal the plate-appearance feed supplies. The decimal path has no
-//  real payload behind it here.
-//
-//  Recapture from a game in progress once that deploy is live —
-//  `curl <base>/live/games/<id> > testdata/live-detail.json` — and then
-//  tighten the test to require a decimal. Until that happens, treat this
-//  suite as covering the DECODE, not the precision.
+//  Recapture from a game in progress —
+//  `curl <base>/live/games/<id> > testdata/live-detail.json` — late enough
+//  that the size checks below still hold.
 //
 
 import Foundation
@@ -109,7 +104,25 @@ struct LivePayloadDecodeTests {
             LiveGameDetail.self, from: try liveFixtureData())
         let withSpeed = detail.plays.filter { $0.pitchVelocity != nil }
         #expect(withSpeed.count > 100, "pitch speeds vanished from the payload")
-        #expect(withSpeed.allSatisfy { $0.pitchType?.isEmpty == false })
+
+        // COMPLETED at-bats only: every pitch row up to the last "Play Result".
+        // The at-bat still underway is excluded on purpose — its two feeds are
+        // a pitch or two out of step, so it keeps whole numbers until it ends.
+        let ordered = detail.plays.sorted { ($0.order ?? 0) < ($1.order ?? 0) }
+        let lastResult = try #require(ordered.lastIndex { $0.type == "Play Result" })
+        let completed = ordered[...lastResult].filter { $0.pitchVelocity != nil }
+        #expect(completed.count > 100)
+        // Every completed pitch names its type.
+        let untyped = completed.filter { ($0.pitchType ?? "").isEmpty }
+        #expect(untyped.isEmpty, "\(untyped.count) completed pitches have no type")
+        // And at least 80% carry the decimal `_exact_speeds` supplies — not all:
+        // a few real speeds are whole (97.0), and an at-bat whose two feeds
+        // disagree keeps the stream's whole numbers. This fixture reads 86.8%.
+        let decimal = completed.filter { v in
+            v.pitchVelocity.map { $0 != $0.rounded() } ?? false
+        }
+        let share = Double(decimal.count) / Double(completed.count)
+        #expect(share >= 0.80, "only \(Int(share * 100))% of completed speeds have a decimal")
         // and they survive the bridge to the plays list's own type
         let bridged = detail.playsAsBDL.filter { $0.pitchVelocity != nil }
         #expect(bridged.count == withSpeed.count)
