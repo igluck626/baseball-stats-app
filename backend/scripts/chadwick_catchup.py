@@ -24,12 +24,23 @@ Three bugs the first dry run had, each pinned by a test:
   • duplicate balldontlie records were only caught within one bucket — any two
     ids sharing a name + birth date are both held, wherever they fell.
 
+WRITING (`--approved FILE --write`): only the ids in FILE ({bdl_id: mlbam}),
+each re-checked against a FRESH classification first (`plan_writes`) — an id
+that no longer classifies ACCEPT to the same MLBAM id is held, never written.
+An existing row with an empty bdl_id gets it stamped (only where bdl_id IS
+NULL); a player with no row gets a new bio from balldontlie through
+`data_service._insert_bio_for_mlbam`, which never overwrites a bio and makes NO
+MLB Stats API call. Every approved id is then read back; stored must equal
+submitted or the run exits non-zero. Without --write, --approved prints the
+plan and writes nothing.
+
 Usage:
     python backend/scripts/chadwick_catchup.py --register 'DIR/people-*.csv' \
-        --players players.json [--fetch] --out proposals.json
+        --players players.json [--fetch] --out proposals.json \
+        [--approved approved.json [--write]]
 `--fetch` pulls the unmapped players from balldontlie (BDL_KEY, GET only) into
 --players; without it the cached file is re-classified. DATABASE_URL is read
-read-only for the ids we already map.
+read-only for the ids we already map (and written only with --write).
 """
 import argparse
 import collections
@@ -147,6 +158,46 @@ def classify(players: list[dict], register: list[dict], held: dict) -> dict:
     return out
 
 
+STAMP = "stamp"                    # existing row, empty bdl_id
+CREATE = "create"                  # no row: new bio from balldontlie
+ALREADY = "already mapped"         # nothing to do: our row already has this bdl_id
+HOLD_GONE = "hold: no longer ACCEPT"
+HOLD_CHANGED = "hold: classifies to a different MLBAM id"
+HOLD_ELSEWHERE = "hold: bdl_id already on a different player"
+
+
+def plan_writes(approved: dict, accepted: dict, mapped_to: dict, rows: dict) -> list[dict]:
+    """What a write would do for each approved id. Pure.
+
+    `approved`: {bdl_id: mlbam} as approved. `accepted`: the FRESH
+    classification's ACCEPT list, {bdl_id: mlbam}. `mapped_to`: {bdl_id:
+    set(player_id)} for bdl_ids already on a row. `rows`: {mlbam: set(bdl_id
+    or None)} for every player_id with a row.
+
+    ⚠️ Approval is not enough on its own: the world moves between the dry run
+    and the write (the nightly mapped eight of these overnight). An id acts
+    only if it is still ACCEPT, to the SAME MLBAM id, right now."""
+    plan = []
+    for bdl_id, mlbam in sorted(approved.items()):
+        entry = {"bdl_id": bdl_id, "mlbam": mlbam}
+        on = mapped_to.get(bdl_id)
+        if on:
+            entry["action"] = ALREADY if on == {mlbam} else HOLD_ELSEWHERE
+            if entry["action"] == HOLD_ELSEWHERE:
+                entry["on"] = sorted(on)
+        elif bdl_id not in accepted:
+            entry["action"] = HOLD_GONE
+        elif accepted[bdl_id] != mlbam:
+            entry["action"] = HOLD_CHANGED
+            entry["now"] = accepted[bdl_id]
+        elif mlbam in rows:
+            entry["action"] = STAMP
+        else:
+            entry["action"] = CREATE
+        plan.append(entry)
+    return plan
+
+
 # ── I/O (not under test) ──────────────────────────────────────────────────────
 
 def _bdl_get(path: str, **params) -> dict:
@@ -190,7 +241,11 @@ def main() -> int:
     ap.add_argument("--fetch", action="store_true")
     ap.add_argument("--season", type=int, default=2026)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--approved", help="JSON {bdl_id: mlbam} approved for writing")
+    ap.add_argument("--write", action="store_true", help="with --approved: write. Without: plan only")
     args = ap.parse_args()
+    if args.write and not args.approved:
+        ap.error("--write needs --approved")
     import psycopg2
     con = psycopg2.connect(os.environ["DATABASE_URL"])
     con.set_session(readonly=True)
@@ -198,10 +253,12 @@ def main() -> int:
     cur.execute("SELECT player_id, bdl_id FROM players UNION ALL SELECT player_id, bdl_id FROM pitchers")
     held = collections.defaultdict(set)
     mapped = set()
+    mapped_to = collections.defaultdict(set)
     for pid, bid in cur.fetchall():
         held[pid].add(bid)
         if bid is not None:
             mapped.add(int(bid))
+            mapped_to[int(bid)].add(pid)
     if args.fetch:
         json.dump([p for p in fetch_unmapped(mapped, args.season) if p], open(args.players, "w"))
     players = [p for p in json.load(open(args.players)) if p["id"] not in mapped]
@@ -212,7 +269,84 @@ def main() -> int:
     print(f"unmapped balldontlie players: {len(players)}")
     for c in CLASSES:
         print(f"  {c}: {len(out[c])}")
-    print("DRY RUN — nothing written.")
+    if not args.approved:
+        print("DRY RUN — nothing written.")
+        return 0
+
+    approved = {int(k): int(v) for k, v in json.load(open(args.approved)).items()}
+    accepted = {x["bdl_id"]: x["mlbam"] for x in out[ACCEPT]}
+    plan = plan_writes(approved, accepted, mapped_to, held)
+    by_action = collections.Counter(e["action"] for e in plan)
+    print(f"\napproved: {len(approved)} — " + ", ".join(f"{k}: {n}" for k, n in sorted(by_action.items())))
+    creates = [e for e in plan if e["action"] == CREATE]
+    for e in plan:
+        if e["action"] != CREATE:
+            print(f"  {e['action']:<42} bdl {e['bdl_id']:>8} -> {e['mlbam']}"
+                  + (f"  {e.get('on') or e.get('now') or ''}" if e["action"].startswith("hold") else ""))
+    sys.path.insert(0, os.path.join(_BACKEND_DIR, "api"))
+    import data_service
+    for e in creates:
+        bio = data_service.fetch_bdl_player_bio(e["bdl_id"]) or {}
+        pos = (bio.get("position") or "").strip().lower()
+        e["side"] = "pitcher" if pos in data_service._BDL_PITCHER_POSITIONS else "batter"
+        e["team"] = bio.get("_team_code")
+        print(f"  {CREATE:<42} bdl {e['bdl_id']:>8} -> {e['mlbam']}  {bio.get('name')!r} "
+              f"{e['side']} {e['team']}")
+    if not args.write:
+        print("PLAN ONLY — nothing written (add --write).")
+        return 0
+    return _write(plan, cur, args.season)
+
+
+def _write(plan: list[dict], cur, season: int) -> int:
+    """Apply the plan, then read every actionable id back. Stored must equal
+    submitted: an id counts as stored only if its bdl_id now sits on its
+    approved MLBAM id and on no other."""
+    sys.path.insert(0, os.path.join(_BACKEND_DIR, "api"))
+    import data_service
+    from database import connection
+    from sqlalchemy import text
+
+    def counts():
+        cur.execute("SELECT (SELECT count(*) FROM players), (SELECT count(*) FROM pitchers), "
+                    "(SELECT count(*) FROM players WHERE bdl_id IS NOT NULL), "
+                    "(SELECT count(*) FROM pitchers WHERE bdl_id IS NOT NULL)")
+        return dict(zip(("players", "pitchers", "players_mapped", "pitchers_mapped"), cur.fetchone()))
+
+    act = [e for e in plan if e["action"] in (STAMP, CREATE)]
+    before = counts()
+    for e in act:
+        with connection.get_session() as db:
+            if e["action"] == STAMP:
+                n = 0
+                for table in ("players", "pitchers"):
+                    n += db.execute(text(f"UPDATE {table} SET bdl_id = :b "
+                                         "WHERE player_id = :m AND bdl_id IS NULL"),
+                                    {"b": e["bdl_id"], "m": e["mlbam"]}).rowcount
+                e["result"] = f"stamped {n} row(s)"
+            else:
+                side = data_service._insert_bio_for_mlbam(
+                    db, bdl_id=e["bdl_id"], mlbam_id=e["mlbam"], lahman_code=None,
+                    current_year=season, context="Chadwick matcher", team_from_bio=True)
+                e["result"] = f"created {side}" if side else "NOT created"
+            db.commit()
+    cur.connection.rollback()                       # fresh snapshot for the read-back
+    after = counts()
+    stored = 0
+    for e in act:
+        cur.execute("SELECT player_id FROM players WHERE bdl_id = %s "
+                    "UNION SELECT player_id FROM pitchers WHERE bdl_id = %s", (e["bdl_id"], e["bdl_id"]))
+        on = {r[0] for r in cur.fetchall()}
+        e["stored"] = on == {e["mlbam"]}
+        stored += e["stored"]
+        if not e["stored"]:
+            print(f"  NOT STORED: bdl {e['bdl_id']} -> {e['mlbam']} ({e['result']}; now on {sorted(on)})")
+    for k in before:
+        print(f"{k}: before {before[k]}, after {after[k]}, added {after[k] - before[k]}")
+    print(f"submitted {len(act)}, stored {stored}")
+    if stored != len(act):
+        print("⚠️ STORED ≠ SUBMITTED — investigate before trusting the mapping.")
+        return 1
     return 0
 
 

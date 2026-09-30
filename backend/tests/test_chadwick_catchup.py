@@ -97,5 +97,21 @@ c, _ = cls([bdl(32, "Bo", "Davidson", "2002-07-05", 2026), bdl(33, "Chanteyon", 
 check("  ...including twins whose FIRST names differ (Bo / Chanteyon Davidson)",
       c[32] == cc.HOLD_BDL_DUP, c)
 
+print("the write plan: approval is re-checked against a fresh classification")
+plan = {e["bdl_id"]: e for e in cc.plan_writes(
+    approved={1: 10, 2: 20, 3: 30, 4: 40, 5: 50, 6: 60},
+    accepted={1: 10, 2: 20, 4: 41, 6: 60},
+    mapped_to={3: {30}, 5: {999}},
+    rows={20: {None}},
+)}
+check("no row yet: create", plan[1]["action"] == cc.CREATE)
+check("a row with an empty bdl_id: stamp", plan[2]["action"] == cc.STAMP)
+check("mapped overnight to the same player: nothing to do", plan[3]["action"] == cc.ALREADY)
+check("now classifies to a different MLBAM id: held", plan[4]["action"] == cc.HOLD_CHANGED and plan[4]["now"] == 41)
+check("the bdl_id is already on someone else: held", plan[5]["action"] == cc.HOLD_ELSEWHERE and plan[5]["on"] == [999])
+check("still ACCEPT to the approved id, no row: create", plan[6]["action"] == cc.CREATE)
+plan2 = cc.plan_writes(approved={7: 70}, accepted={}, mapped_to={}, rows={})
+check("approved but no longer ACCEPT: held", plan2[0]["action"] == cc.HOLD_GONE)
+
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
