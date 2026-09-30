@@ -2413,10 +2413,8 @@ def _create_bio_from_bdl(
     current_year: int,
 ) -> tuple[Optional[str], Optional[int]]:
     """Discover-and-insert path. Resolves a BDL roster player to an
-    MLBAM id via the MLB Stats API name search, fetches their full
-    BDL bio, infers pitcher-vs-batter from the position, inserts a
-    new `players` or `pitchers` row keyed on the MLBAM id, and
-    stamps the current-year season row's team.
+    MLBAM id via the MLB Stats API name search, then hands off to
+    `_insert_bio_for_mlbam` to fetch their BDL bio and insert the row.
 
     Returns `("pitcher"|"batter", mlbam_id)` on success or
     `(None, None)` on any failure. The caller is responsible for
@@ -2429,9 +2427,38 @@ def _create_bio_from_bdl(
     mlbam_id = _resolve_mlbam_id_by_name(full_name)
     if mlbam_id is None:
         return None, None
+    side = _insert_bio_for_mlbam(db, bdl_id=bdl_id, mlbam_id=mlbam_id,
+                                 lahman_code=lahman_code, current_year=current_year,
+                                 context=f"name search for {full_name!r}")
+    return (side, mlbam_id) if side else (None, None)
+
+
+def _insert_bio_for_mlbam(
+    db,
+    *,
+    bdl_id: int,
+    mlbam_id: int,
+    lahman_code: Optional[str],
+    current_year: int,
+    context: str = "",
+    team_from_bio: bool = False,
+) -> Optional[str]:
+    """Insert a new `players` or `pitchers` row for a KNOWN MLBAM id from
+    the player's balldontlie bio, and stamp the current-year season row's
+    team. Returns "pitcher" / "batter", or None on any failure.
+
+    ⚠️ NO MLB STATS API CALL. The MLBAM id comes from the caller — the
+    nightly's name search (`_create_bio_from_bdl`) or the Chadwick matcher
+    (`scripts/chadwick_catchup.py`) — and everything here is balldontlie
+    plus our own tables. Keep it that way: the name search is the only
+    statsapi dependency in this path, and it lives in the caller.
+    """
     bio = fetch_bdl_player_bio(bdl_id)
     if bio is None:
-        return None, None
+        return None
+    # The nightly passes the roster team it found the player on; the Chadwick
+    # matcher has none and opts into the bio's current team instead.
+    team_code = lahman_code or (bio.get("_team_code") if team_from_bio else None)
     bio.pop("_team_code", None)
     bio["player_id"] = mlbam_id
     raw_position = (bio.get("position") or "").strip().lower()
@@ -2440,7 +2467,7 @@ def _create_bio_from_bdl(
     # ⚠️ CREATE ONLY. NEVER REWRITE SOMEBODY ELSE'S BIO.
     #
     # `crud.save_player` / `save_pitcher` upsert: on an existing row they
-    # overwrite every non-null field. This function reaches its target by NAME
+    # overwrite every non-null field. The nightly reaches its target by NAME
     # alone, so when the name search lands on the wrong man that upsert
     # rewrites a real person's identity — it replaced a 1920 Negro Leagues
     # second baseman's birth date with a 2004 one, night after night, and the
@@ -2457,13 +2484,13 @@ def _create_bio_from_bdl(
     )
     if existing is not None:
         log.warning(
-            "_create_bio_from_bdl(bdl_id=%d, name=%r): name search resolved to "
-            "MLBAM %d, which ALREADY HAS a bio (%r, born %s). Refusing to "
-            "overwrite it — the player stays unmapped for an operator to "
-            "resolve.",
-            bdl_id, full_name, mlbam_id, existing.name, existing.birth_year,
+            "_insert_bio_for_mlbam(bdl_id=%d%s): MLBAM %d ALREADY HAS a bio "
+            "(%r, born %s). Refusing to overwrite it — the player stays "
+            "unmapped for an operator to resolve.",
+            bdl_id, f", {context}" if context else "", mlbam_id,
+            existing.name, existing.birth_year,
         )
-        return None, None
+        return None
     try:
         if is_pitcher:
             crud.save_pitcher(db, bio)
@@ -2471,26 +2498,26 @@ def _create_bio_from_bdl(
             crud.save_player(db, bio)
     except Exception as exc:
         log.error(
-            "_create_bio_from_bdl(bdl_id=%d, name=%r): save failed: %s",
-            bdl_id, full_name, exc,
+            "_insert_bio_for_mlbam(bdl_id=%d, mlbam=%d): save failed: %s",
+            bdl_id, mlbam_id, exc,
         )
-        return None, None
-    if lahman_code:
+        return None
+    if team_code:
         try:
             _apply_team_to_season_rows(
                 db,
                 player_id=mlbam_id,
                 year=current_year,
-                abbr=lahman_code,
+                abbr=team_code,
                 create_pitcher=is_pitcher,
                 create_batter=not is_pitcher,
             )
         except Exception as exc:
             log.warning(
-                "_create_bio_from_bdl(%d): team-stamp failed: %s",
+                "_insert_bio_for_mlbam(%d): team-stamp failed: %s",
                 mlbam_id, exc,
             )
-    return ("pitcher" if is_pitcher else "batter"), mlbam_id
+    return "pitcher" if is_pitcher else "batter"
 
 
 # -----------------------------------------------------------------------------
@@ -2540,14 +2567,23 @@ def _are_nickname_match(a: str, b: str) -> bool:
     )
 
 
-# Free-form position strings BDL ships that mean "pitcher".
-# Covers the abbreviation set used by `_BDL_PITCHER_POSITIONS`
-# plus the full-name variants the `/players/active` payload
-# sometimes carries instead of the short codes.
-_BDL_PITCHER_POSITION_LABELS = {
+# Lower-case position strings BDL ships that mean "pitcher". Everything
+# else is treated as a position-player slot.
+#
+# ⚠️ THE SPELLED-OUT FORMS ARE REAL. Most rows carry "RP"/"SP", but some
+# carry "Pitcher", "Starting Pitcher" or "Relief Pitcher" (10 of 68 unmapped
+# players on 2026-09-30, among them J.P. France, Christian Roa and Tyler
+# Uberstine). This set once held only the codes, so a new bio for any of them
+# was filed as a BATTER. It is the one definition: `_BDL_PITCHER_POSITION_LABELS`
+# below, which had the full names all along, is now this same set.
+_BDL_PITCHER_POSITIONS: set[str] = {
     "p", "sp", "rp", "cl",
     "pitcher", "starting pitcher", "relief pitcher",
 }
+
+# The scoring rubric's name for the same rule — ONE set, so the two can't
+# drift apart again (they had: see `_BDL_PITCHER_POSITIONS`).
+_BDL_PITCHER_POSITION_LABELS = _BDL_PITCHER_POSITIONS
 
 _DB_PITCHER_POSITIONS = {"P", "SP", "RP"}
 
@@ -3315,9 +3351,8 @@ def get_bdl_mapping_status(since_year: int = 2002) -> dict:
     }
 
 
-# Lower-case position codes BDL ships that mean "pitcher". Everything
-# else is treated as a position-player slot.
-_BDL_PITCHER_POSITIONS: set[str] = {"p", "sp", "rp", "cl"}
+# `_BDL_PITCHER_POSITIONS` — lower-case BDL position strings meaning
+# "pitcher" — is defined once, above `_BDL_PITCHER_POSITION_LABELS`.
 
 # Suffix tokens stripped during name normalization. BDL is inconsistent
 # about including "Jr."/"Sr." — sometimes the canonical name carries
