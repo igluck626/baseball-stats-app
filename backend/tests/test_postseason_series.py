@@ -210,5 +210,15 @@ check("after Game 1 the Game 2 pre-game line carries the series state",
       one["games"][1]["line"] == "NL Wild Card · Game 2 · PHI leads 1-0"
       and one["games"][1]["clinch_teams"] == ["PHI"] and one["games"][1]["elimination_teams"] == ["ATL"])
 
+tonight = play(P26, {"ATL", "PHI"}, ["ATL"])     # the real 2026-09-29 result: ATL won Game 1
+g3 = tonight["games"][2]
+check("tonight's 1-0: Game 3 shows only 'NL Wild Card · Game 3 (if necessary)'",
+      g3["line"] == "NL Wild Card · Game 3 (if necessary)" and g3["series_status"] is None, g3["line"])
+check("  ...with no clinch or elimination flags",
+      not g3["can_clinch"] and g3["clinch_teams"] == [] and not g3["elimination_game"] and g3["elimination_teams"] == [])
+check("  ...while Game 2 keeps its state and flags",
+      tonight["games"][1]["line"] == "NL Wild Card · Game 2 · ATL leads 1-0"
+      and tonight["games"][1]["clinch_teams"] == ["ATL"] and tonight["games"][1]["elimination_teams"] == ["PHI"])
+
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

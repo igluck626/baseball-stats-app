@@ -208,23 +208,35 @@ def build_series(games: list[dict], standings: list[dict], season: int) -> list[
             if winner:
                 wins[winner] += 1
             final = g.get("status") == "STATUS_FINAL"
-            # Clinch / elimination are about the game about to be (or being)
-            # played, so they read the state ENTERING it, and only mean
-            # anything when the best-of is known.
-            clinch = [t for t, w in entering.items() if need and w == need - 1] \
-                if not final and need and max(entering.values()) < need else []
-            elimination = [t for t in (t1, t2) if any(o != t for o in clinch)] if clinch else []
             # Guaranteed only while the leader cannot have clinched before it:
             # the leader needs (need - lead) more wins after `played` games.
             if_necessary = (not final and need is not None
                             and n > played + (need - max(now.values())))
+            # Clinch / elimination are about the game about to be (or being)
+            # played, so they read the state ENTERING it, and only mean
+            # anything when the best-of is known.
+            #
+            # ⚠️ NOT FOR AN IF-NECESSARY GAME. Its entering state is not today's:
+            # a Wild Card Game 3 is only played at 1-1, so reading tonight's 1-0
+            # onto it ("ATL leads 1-0", ATL can clinch) describes a game that, if
+            # it happens, will not look like that. It shows its label alone, with
+            # no series state and no flags, until the series makes it certain.
+            if if_necessary:
+                clinch, elimination = [], []
+            else:
+                clinch = [t for t, w in entering.items() if need and w == need - 1] \
+                    if not final and need and max(entering.values()) < need else []
+                elimination = [t for t in (t1, t2) if any(o != t for o in clinch)] if clinch else []
             label = f"{name} · Game {n}" if name else f"Game {n}"
             if final:
                 line = series_text(wins, best_of)
+                status_text = line
+            elif if_necessary:
+                line = f"{label} (if necessary)"
+                status_text = None
             else:
-                state = series_text(entering, best_of)
-                shown = f"{label} (if necessary)" if if_necessary else label
-                line = f"{shown} · {state}" if state else shown
+                status_text = series_text(entering, best_of)
+                line = f"{label} · {status_text}" if status_text else label
             game_rows.append({
                 "game_id": g.get("id"),
                 "game_number": n,
@@ -236,7 +248,7 @@ def build_series(games: list[dict], standings: list[dict], season: int) -> list[
                 "away_runs": (g.get("away_team_data") or {}).get("runs"),
                 "label": label,
                 "if_necessary": if_necessary,
-                "series_status": series_text(wins if final else entering, best_of),
+                "series_status": status_text,
                 "line": line,
                 "can_clinch": bool(clinch),
                 "clinch_teams": clinch,
