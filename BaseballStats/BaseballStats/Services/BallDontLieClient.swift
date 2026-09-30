@@ -143,7 +143,7 @@ final class BallDontLieClient: @unchecked Sendable {
         for g in envelope.data {
             if seen.contains(g.id) { continue }
             seen.insert(g.id)
-            if Self.easternDateString(for: g) == date {
+            if Self.easternDateString(for: g) == date, !g.hasPlaceholderTeam {
                 filtered.append(g)
             }
         }
@@ -223,7 +223,7 @@ final class BallDontLieClient: @unchecked Sendable {
         for g in envelope.data {
             if seen.contains(g.id) { continue }
             seen.insert(g.id)
-            if Self.easternDateString(for: g) == date {
+            if Self.easternDateString(for: g) == date, !g.hasPlaceholderTeam {
                 filtered.append(g)
             }
         }
@@ -252,7 +252,7 @@ final class BallDontLieClient: @unchecked Sendable {
         let games: [BDLGame] = try await fetchAllPages(
             path: "/mlb/v1/games", baseQuery: items,
         )
-        let regular = games.filter(\.isRegularSeason)
+        let regular = games.filter { $0.isRegularSeason && !$0.hasPlaceholderTeam }
         storeInCache(key, regular, ttl: 300)
         return regular
     }

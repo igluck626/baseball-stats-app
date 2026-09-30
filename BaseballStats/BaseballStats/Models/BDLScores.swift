@@ -44,6 +44,15 @@ struct BDLGame: Codable, Identifiable, Hashable {
 
     /// Whether this game counts toward a REGULAR-season figure. See `SeasonType`.
     var isRegularSeason: Bool { SeasonType.isRegular(seasonType, postseason: postseason) }
+
+    /// ⚠️ balldontlie PRE-LISTS postseason games whose teams aren't known yet,
+    /// as team "UNK" with id -1 — both sides for a later round, one side for a
+    /// Division Series waiting on its Wild Card. Listed, they read "vs UNK" on
+    /// a bye team's Home card. Every game list drops them until balldontlie
+    /// fills the team in.
+    var hasPlaceholderTeam: Bool {
+        [homeTeam, awayTeam].contains { $0.id <= 0 || $0.abbreviation.uppercased() == "UNK" }
+    }
 }
 
 /// The one rule for "does this game belong to the regular season".
