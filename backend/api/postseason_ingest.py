@@ -24,7 +24,9 @@ tables the Retrosheet ingest fills — never the regular-season ones.
 from __future__ import annotations
 
 import collections
+import datetime
 import logging
+import threading
 from typing import Optional
 
 import data_service
@@ -174,3 +176,184 @@ def write(collected: dict) -> dict:
     added = {t: after[t] - before[t] for t in after}
     return {"before": before, "after": after, "added": added, "submitted": submitted,
             "ok": all(after[t] == submitted[t] for t in after)}
+
+
+# ---------------------------------------------------------------------------
+# Freshness: new finals soon after they end, and scorer revisions
+# ---------------------------------------------------------------------------
+#
+# A player's postseason line should update shortly after each game, not the
+# next morning. `refresh` inserts every final game not yet stored and re-reads
+# the last REVISE_DAYS days of stored games, UPDATING changed stat columns on
+# balldontlie rows only — a Retrosheet row is never touched. Every changed
+# value is logged (player, game, column, old -> new). A stored row that
+# balldontlie no longer lists is logged, never deleted.
+#
+# It runs from three places, all through `run_safely`: an in-process loop
+# every ~15 minutes that only INSERTS newly final games, and the nightly and
+# the 19:01Z catch-up, which also re-read the last REVISE_DAYS days for
+# revisions. A run never raises.
+#
+# ⚠️ ONE RUN AT A TIME, ACROSS PROCESSES. Production is one uvicorn process,
+# but a deploy briefly overlaps the old and new containers, and a manual script
+# can run beside the loop — an in-process lock sees neither. So every run takes
+# a Postgres advisory lock (pg_try_advisory_lock) on its own connection, and a
+# run that can't get it skips and logs.
+
+REVISE_DAYS = 3
+BAT_STATS = ("PA", "AB", "R", "H", "doubles", "triples", "HR", "RBI", "BB", "IBB", "SO", "SB", "CS",
+             "HBP", "SF", "GIDP", "SH")
+PIT_STATS = ("IP", "H", "R", "ER", "BB", "SO", "HR", "HBP", "W", "L", "SV", "GS")
+# Arbitrary, fixed: the advisory-lock key every postseason refresh contends on.
+ADVISORY_LOCK_KEY = 7_040_319_260
+
+
+class _AdvisoryLock:
+    """pg_try_advisory_lock on a dedicated connection, released on exit.
+    `acquired` is False when another session holds it."""
+
+    def __enter__(self):
+        from sqlalchemy import text
+        from database import connection
+        self._cx = connection._engine.connect()
+        self.acquired = bool(self._cx.execute(
+            text("SELECT pg_try_advisory_lock(:k)"), {"k": ADVISORY_LOCK_KEY}).scalar())
+        return self
+
+    def __exit__(self, *exc):
+        from sqlalchemy import text
+        try:
+            if self.acquired:
+                self._cx.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": ADVISORY_LOCK_KEY})
+        finally:
+            self._cx.close()
+        return False
+
+
+def diff_rows(stored: list[dict], fresh: list[dict], stat_cols: tuple) -> tuple[list, list, list]:
+    """(rows to insert, changes, stored rows no longer in balldontlie). Pure.
+
+    Rows are keyed by (game_id, bdl_player_id). A change is
+    (key, column, old, new) for a stat column whose value differs; IP is
+    compared to three decimals, since it is stored as a decimal float."""
+    have = {(r["game_id"], r["bdl_player_id"]): r for r in stored}
+    fresh_by = {(r["game_id"], r["bdl_player_id"]): r for r in fresh}
+    inserts = [r for k, r in fresh_by.items() if k not in have]
+    changes = []
+    for k, new in fresh_by.items():
+        old = have.get(k)
+        if old is None:
+            continue
+        for col in stat_cols:
+            a, b = old.get(col), new.get(col)
+            same = (round(a or 0, 3) == round(b or 0, 3)) if col == "IP" else a == b
+            if not same:
+                changes.append((k, col, a, b))
+    gone = [r for k, r in have.items() if k not in fresh_by]
+    return inserts, changes, gone
+
+
+def refresh(season: int, today: Optional[datetime.date] = None, revise: bool = False) -> dict:
+    """Insert final games not yet stored; with `revise`, also re-read stored
+    games from the last REVISE_DAYS days and apply changes.
+
+    balldontlie calls: 2 per run (/games — one page holds a whole postseason —
+    and /standings) plus one /stats per game read: each newly final game once,
+    and with `revise` every stored game in the window."""
+    import time
+    from sqlalchemy import text
+    from database import connection, crud
+    from database.models import PostseasonBattingGameLog, PostseasonPitchingGameLog
+
+    today = today or datetime.datetime.now(data_service._MLB_LOCAL_TZ).date()
+    games, standings = _fetch_inputs(season)
+    rounds = rounds_by_game(postseason_series.build_series(games, standings, season))
+    by_id = {g["id"]: g for g in games}
+    tables = (("bat", PostseasonBattingGameLog, "postseason_batting_gamelogs", BAT_STATS),
+              ("pit", PostseasonPitchingGameLog, "postseason_pitching_gamelogs", PIT_STATS))
+    with connection.get_session() as db:
+        bdl_to_mlbam = data_service._bdl_to_mlbam_map(db)
+        stored_games = {r[0]: r[1] for r in db.execute(text(
+            "SELECT game_id, max(game_date) FROM postseason_batting_gamelogs "
+            "WHERE source = 'bdl' AND season = :s GROUP BY 1 UNION "
+            "SELECT game_id, max(game_date) FROM postseason_pitching_gamelogs "
+            "WHERE source = 'bdl' AND season = :s GROUP BY 1"), {"s": season})}
+    summary = collections.Counter()
+    changes_log: list[str] = []
+    for gid, rnd in sorted(rounds.items()):
+        g = by_id.get(gid) or {}
+        if g.get("status") != "STATUS_FINAL" or rnd is None:
+            continue
+        key = str(gid)
+        if key in stored_games and (not revise or (today - stored_games[key]).days > REVISE_DAYS):
+            continue                              # stored, and not due a revision check
+        stats = _fetch_stats(gid)
+        time.sleep(data_service._BDL_RATE_LIMIT_SLEEP)
+        if not stats:
+            summary["empty_stat_sheets"] += 1
+            continue
+        bat, pit, _ = build_rows(g, rnd, stats, bdl_to_mlbam)
+        summary["games_new" if key not in stored_games else "games_rechecked"] += 1
+        with connection.get_session() as db:
+            for kind, model, table, cols in tables:
+                fresh = bat if kind == "bat" else pit
+                stored = [dict(r._mapping) for r in db.execute(text(
+                    f"SELECT * FROM {table} WHERE source = 'bdl' AND game_id = :g"), {"g": key})]
+                inserts, changes, gone = diff_rows(stored, fresh, cols)
+                if inserts:
+                    crud.bulk_insert_postseason(db, model, inserts)
+                    summary[f"{kind}_inserted"] += len(inserts)
+                for (g_id, bdl_pid), col, old, new in changes:
+                    db.execute(text(f'UPDATE {table} SET "{col}" = :v WHERE source = \'bdl\' '
+                                    "AND game_id = :g AND bdl_player_id = :b"),
+                               {"v": new, "g": g_id, "b": bdl_pid})
+                    changes_log.append(f"{kind} game {g_id} bdl_player {bdl_pid}: {col} {old} -> {new}")
+                    summary[f"{kind}_values_changed"] += 1
+                for r in gone:
+                    log.warning("[postseason] %s row no longer in balldontlie (kept): game %s bdl_player %s",
+                                kind, r["game_id"], r["bdl_player_id"])
+                    summary[f"{kind}_gone"] += 1
+    for line in changes_log:
+        log.info("[postseason] revision: %s", line)
+    return {"season": season, **summary, "changes": changes_log}
+
+
+def run_safely(trigger: str, now: Optional[datetime.datetime] = None,
+               revise: bool = False, lock=_AdvisoryLock) -> Optional[dict]:
+    """Run `refresh` for the current season, September through November only.
+    Never raises; if another run anywhere holds the advisory lock, this one
+    skips. The loop inserts only; the nightly and catch-up pass `revise`."""
+    now = now or datetime.datetime.now(data_service._MLB_LOCAL_TZ)
+    if now.month not in (9, 10, 11):
+        return None
+    try:
+        with lock() as held:
+            if not held.acquired:
+                log.info("[postseason] %s: skipped — another run holds the lock", trigger)
+                return None
+            result = refresh(now.year, today=now.date(), revise=revise)
+            log.info("[postseason] %s: %s", trigger,
+                     {k: v for k, v in result.items() if k != "changes"})
+            return result
+    except Exception as exc:                      # noqa: BLE001 — must never fail its caller
+        log.error("[postseason] %s FAILED (non-fatal): %s", trigger, exc)
+        return None
+
+
+_loop_started = False
+
+
+def start_loop(interval_seconds: int = 900) -> None:
+    """The ~15-minute freshness loop: a daemon thread, started at most once
+    per process (the single-worker assumption `live_service` makes too)."""
+    global _loop_started
+    if _loop_started:
+        return
+    _loop_started = True
+
+    def _loop():
+        import time
+        while True:
+            run_safely("loop")
+            time.sleep(interval_seconds)
+    threading.Thread(target=_loop, name="postseason-ingest", daemon=True).start()

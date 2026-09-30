@@ -9,6 +9,10 @@
     opponent are Lahman codes from balldontlie's team ids.
   • A pitcher's W / L / SV / GS come from the stat row; IP is decimal.
   • The round map follows build_series: a withheld round is None.
+  • Revisions: one logged change per value, IP compared to three decimals;
+    a dropped line is reported, never deleted. `run_safely` is idle outside
+    September-November, never raises, skips while another session holds the
+    advisory lock, and revises only when asked (the nightly / catch-up).
 
 Standalone, no pytest. Needs the backend's Python (3.10+).
 Run: <backend python> backend/tests/test_postseason_ingest.py
@@ -67,6 +71,65 @@ print("rounds")
 series = [{"round": "WC", "games": [{"game_id": 1}, {"game_id": 2}]},
           {"round": None, "games": [{"game_id": 3}]}]
 check("the round map follows build_series, withheld as None", pi.rounds_by_game(series) == {1: "WC", 2: "WC", 3: None})
+
+print("revisions")
+old = [{"game_id": "1", "bdl_player_id": 10, "H": 1, "IP": 1.667},
+       {"game_id": "1", "bdl_player_id": 11, "H": 0, "IP": 2.0},
+       {"game_id": "1", "bdl_player_id": 12, "H": 0, "IP": 0.0}]
+new = [{"game_id": "1", "bdl_player_id": 10, "H": 2, "IP": 1.6667},
+       {"game_id": "1", "bdl_player_id": 11, "H": 0, "IP": 2.333},
+       {"game_id": "1", "bdl_player_id": 13, "H": 1, "IP": 0.0}]
+ins, ch, gone = pi.diff_rows(old, new, ("H", "IP"))
+check("a scorer's change is one (key, column, old, new) per value",
+      sorted(ch) == [(("1", 10), "H", 1, 2), (("1", 11), "IP", 2.0, 2.333)], ch)
+check("  ...IP compared to three decimals (1.667 == 1.6667)", not any(c[0] == ("1", 10) and c[1] == "IP" for c in ch))
+check("a line balldontlie adds later is inserted", [r["bdl_player_id"] for r in ins] == [13])
+check("a stored line balldontlie drops is reported, not deleted", [r["bdl_player_id"] for r in gone] == [12])
+
+print("run_safely")
+import datetime
+from unittest import mock
+
+
+class FakeLock:
+    """Stands in for the Postgres advisory lock; `held_elsewhere` is another
+    session holding it."""
+    held_elsewhere = False
+
+    def __enter__(self):
+        self.acquired = not FakeLock.held_elsewhere
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+OCT = datetime.datetime(2026, 10, 4, 12)
+check("idle outside September-November",
+      pi.run_safely("test", now=datetime.datetime(2026, 7, 4, 12), lock=FakeLock) is None)
+with mock.patch.object(pi, "refresh", side_effect=RuntimeError("balldontlie down")):
+    try:
+        out = pi.run_safely("test", now=OCT, lock=FakeLock)
+        check("never raises: a failure is logged and returns None", out is None)
+    except Exception as exc:                                       # noqa: BLE001
+        check("never raises: a failure is logged and returns None", False, repr(exc))
+with mock.patch.object(pi, "refresh", return_value={"season": 2026}) as rf:
+    FakeLock.held_elsewhere = True
+    out = pi.run_safely("test", now=OCT, lock=FakeLock)
+    check("another session holding the advisory lock makes this run skip", out is None and not rf.called)
+    FakeLock.held_elsewhere = False
+    check("  ...and it runs once the lock is free", pi.run_safely("test", now=OCT, lock=FakeLock) == {"season": 2026})
+    check("the loop's run is insert-only (revise=False)", rf.call_args.kwargs.get("revise") is False)
+    pi.run_safely("nightly", now=OCT, revise=True, lock=FakeLock)
+    check("the nightly / catch-up run revises (revise=True)", rf.call_args.kwargs.get("revise") is True)
+with mock.patch.object(pi, "refresh", return_value={}) as rf:
+    class Boom(FakeLock):
+        def __enter__(self):
+            raise RuntimeError("database unreachable")
+    try:
+        check("a failure taking the lock is logged, never raised", pi.run_safely("test", now=OCT, lock=Boom) is None)
+    except Exception as exc:                                       # noqa: BLE001
+        check("a failure taking the lock is logged, never raised", False, repr(exc))
 
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

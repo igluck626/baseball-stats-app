@@ -32,6 +32,7 @@ import sys
 import data_service
 import live_service
 import news_service
+import postseason_ingest
 import postseason_series
 import team_crosswalk
 from cache import cache as _cache
@@ -1044,6 +1045,13 @@ def _run_nightly_update() -> None:
             )
         except Exception as exc:
             log.error(f"[nightly] reconciliation phase FAILED (non-fatal): {exc}")
+
+        # Postseason game logs: a safety net behind the ~15-minute loop, and the
+        # scorer-revision pass (the last three days). Only September-November;
+        # `run_safely` never raises and skips if another run holds the advisory
+        # lock, so this can't fail the nightly.
+        log.info("[nightly] starting postseason-gamelogs phase")
+        postseason_ingest.run_safely("nightly", revise=True)
     except Exception as exc:
         # Log the full traceback so silent thread crashes are visible in
         # Railway's log stream. The previous handler stored only str(exc),
@@ -1098,6 +1106,8 @@ def _run_catchup_update() -> None:
         with _catchup_lock:
             _catchup_state["result"] = result
         log.info(f"[catchup] thread complete: {result}")
+        # Second safety net and revision pass for postseason game logs (never raises).
+        postseason_ingest.run_safely("catchup", revise=True)
     except Exception as exc:
         tb = traceback.format_exc()
         log.error(f"[catchup] FAILED pid={pid} tid={tid}: {exc}\n{tb}")
@@ -1130,6 +1140,9 @@ async def lifespan(app: FastAPI):
     # by whoever happens to open the Standings tab first after a restart.
     threading.Thread(target=_form_warmup_worker, name="form-warmup",
                      daemon=True).start()
+    # Postseason game logs soon after each final: a ~15-minute loop that is
+    # idle outside September-November (see postseason_ingest.run_safely).
+    postseason_ingest.start_loop()
     yield
     live_service.stop_live_loop()
 
