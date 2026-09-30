@@ -21,6 +21,7 @@ postseason, which Lahman carries and Retrosheet does not.
 """
 from __future__ import annotations
 
+import datetime
 import re
 import time
 from typing import Optional
@@ -254,6 +255,68 @@ def player_postseason(db, player_id: int, current_season: int,
             "team_eliminated": eliminated,
         },
     }
+
+
+def player_postseason_gamelogs(db, player_id: int, season: int) -> dict:
+    """One postseason's game-by-game lines for the profile's Game Logs, from
+    the season's one source (`postseason_source`). Per side, oldest first:
+    date, round, game number in the series, opponent, the team's result and
+    score, and the batting or pitching line.
+
+    The game number counts the TEAM's games in that series, not the player's —
+    a man who sat out Game 1 shows "G2" for his first game. A pitcher's rows
+    carry his decision; the team's result and score come from its batting rows
+    for the same game."""
+    from sqlalchemy import text
+    src = postseason_source(season, retro_last(db))
+    params = {"pid": player_id, "season": season, "src": src}
+    sides = {}
+    for kind, cols in (("bat", _BAT_SUM), ("pit", _PIT_SUM)):
+        sel = ", ".join(f'"{c}"' if c not in ("doubles", "triples") else c for c in cols)
+        extra = ', "IP", result AS decision' if kind == "pit" else ""
+        sides[kind] = [dict(r._mapping) for r in db.execute(text(
+            f"SELECT game_id, game_date, round, team, opponent, home_away, {sel}{extra} FROM {TABLE[kind]} "
+            "WHERE player_id = :pid AND season = :season AND source = :src"), params)]
+    teams = sorted({r["team"] for rows in sides.values() for r in rows})
+    games: dict = {}          # (game_id, team) -> the team's result
+    series: dict = {}         # (round, team, opponent) -> [game_id, ...] in date order
+    if teams:
+        for gid, gdate, rnd, team, opp, res, ts, os_ in db.execute(text(
+                "SELECT DISTINCT game_id, game_date, round, team, opponent, result, team_score, opp_score "
+                f"FROM {TABLE['bat']} WHERE season = :season AND source = :src AND team = ANY(:tt) "
+                "ORDER BY game_date, game_id"), {**params, "tt": teams}):
+            games[(gid, team)] = {"result": res, "team_score": ts, "opp_score": os_}
+            ids = series.setdefault((rnd, team, opp), [])
+            if gid not in ids:
+                ids.append(gid)
+    info = _team_info(db, {(t, season) for t in teams} |
+                      {(r["opponent"], season) for rows in sides.values() for r in rows})
+
+    def line(r, kind):
+        cols = _BAT_SUM if kind == "bat" else _PIT_SUM
+        ids = series.get((r["round"], r["team"], r["opponent"]), [])
+        g = games.get((r["game_id"], r["team"]), {})
+        out = {"game_id": r["game_id"], "date": r["game_date"].isoformat() if r["game_date"] else None,
+               "round": r["round"], "round_name": round_name(r["round"], info.get((r["team"], season), {}).get("league")),
+               "game_number": ids.index(r["game_id"]) + 1 if r["game_id"] in ids else None,
+               "team": r["team"], "opponent": r["opponent"],
+               "opponent_name": info.get((r["opponent"], season), {}).get("name"),
+               "home_away": r["home_away"], "result": g.get("result"),
+               "team_score": g.get("team_score"), "opp_score": g.get("opp_score"),
+               **{c: r[c] or 0 for c in cols}}
+        if kind == "pit":
+            outs = round((r["IP"] or 0) * 3)
+            out.update({"decision": r["decision"], "outs": outs, "IP": f"{outs // 3}.{outs % 3}"})
+        else:
+            out.update(batting_rates(out))
+        return out
+
+    def build(kind):
+        rows = sorted(sides[kind], key=lambda r: (r["game_date"] or datetime.date.min, r["game_id"]))
+        return [line(r, kind) for r in rows] or None
+
+    return {"player_id": player_id, "season": season, "source": src,
+            "batting": build("bat"), "pitching": build("pit")}
 
 
 # ---------------------------------------------------------------------------

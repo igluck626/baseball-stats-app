@@ -35,6 +35,7 @@ import news_service
 import postseason_ingest
 import postseason_series
 import postseason_stats
+import season_phase
 import team_crosswalk
 from cache import cache as _cache
 
@@ -1053,6 +1054,10 @@ def _run_nightly_update() -> None:
         # lock, so this can't fail the nightly.
         log.info("[nightly] starting postseason-gamelogs phase")
         postseason_ingest.run_safely("nightly", revise=True)
+
+        # The season phase (/season/phase): re-derived off the nightly's own
+        # path, in a thread that retries on failure; never raises here.
+        season_phase.start_refresh("nightly", data_service._bdl_get_json)
     except Exception as exc:
         # Log the full traceback so silent thread crashes are visible in
         # Railway's log stream. The previous handler stored only str(exc),
@@ -1144,6 +1149,9 @@ async def lifespan(app: FastAPI):
     # Postseason game logs soon after each final: a ~15-minute loop that is
     # idle outside September-November (see postseason_ingest.run_safely).
     postseason_ingest.start_loop()
+    # /season/phase answers only from a stored value; derive it now (a ~30-page
+    # walk) so the first request after a restart finds one.
+    season_phase.start_refresh("startup", data_service._bdl_get_json)
     yield
     live_service.stop_live_loop()
 
@@ -1522,6 +1530,21 @@ def player_postseason(player_id: int):
         series = None
     with connection.get_session() as db:
         return postseason_stats.player_postseason(db, player_id, season, series)
+
+
+@app.get("/players/{player_id}/postseason/gamelogs")
+def player_postseason_gamelogs(
+    player_id: int,
+    season: int = Query(..., description="The postseason's year"),
+):
+    """One postseason's game-by-game lines for a player, from the season's one
+    source (`postseason_stats.postseason_source`): per side (null when he has
+    none), oldest first — date, round, game number in the series, opponent,
+    the team's result and score, and the batting or pitching line. Read-only."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    with connection.get_session() as db:
+        return postseason_stats.player_postseason_gamelogs(db, player_id, season)
 
 
 @app.get("/players/{player_id}/gamelogs/batting")
@@ -2846,6 +2869,22 @@ def _postseason_inputs(season: int) -> tuple[list[dict], list[dict]]:
     standings = data_service._bdl_get_json("standings", {"season": season}).get("data") or []
     _cache.set(key, (games, standings), ttl_seconds=60)
     return games, standings
+
+
+@app.get("/season/phase")
+def season_phase_span(season: int = Query(..., description="Season year, e.g. 2026")):
+    """The season's regular-season span: `opening_day` (the first date by which
+    at least 15 teams have played) and `last_regular_day` (the last scheduled
+    regular-season game), Eastern ISO dates, null until balldontlie's schedule
+    reaches them (`season_phase`). Read-only.
+
+    ⚠️ NEVER COMPUTED HERE. The value is derived in the background — at boot
+    and after the nightly, retrying on failure — for this season and last; this
+    only reads it, stale if need be. 503 only when it has never been derived."""
+    body = season_phase.cached(season)
+    if body is None:
+        raise HTTPException(status_code=503, detail="season phase not derived yet")
+    return body
 
 
 @app.get("/postseason/series")
