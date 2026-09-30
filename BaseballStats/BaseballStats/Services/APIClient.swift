@@ -349,6 +349,17 @@ final class APIClient {
     /// `GET /live/games`. All currently-live MLB games as compact cards from
     /// the backend live proxy (shared cache, server-side BDL key). Empty list
     /// when nothing is live; always returns a body, so this never 404s.
+    /// `GET /postseason/series?season=YYYY`. The current postseason's series
+    /// state, one entry per series with each game's display line. A 503 means
+    /// balldontlie was unavailable; callers hide the line.
+    func getPostseasonSeries(season: Int) async throws -> PostseasonSeriesResponse {
+        let url = try buildURL(
+            path: "/postseason/series",
+            query: [URLQueryItem(name: "season", value: String(season))]
+        )
+        return try await get(url)
+    }
+
     func getLiveGames() async throws -> LiveGamesResponse {
         let url = try buildURL(path: "/live/games")
         return try await get(url)

@@ -1084,6 +1084,7 @@ private struct CompactGameStripCard: View {
 
     var body: some View {
         VStack(spacing: 4) {
+            SeriesLine(game: game, compact: true)
             // No team mark here: the abbreviation sits immediately beside it,
             // so the badge was saying the same thing twice in the narrowest
             // card in the app (110pt). The letters alone read "vs NYY".

@@ -1022,6 +1022,10 @@ private struct GameCard: View {
     var isOver: Bool = false
 
     var body: some View {
+        // A one-child VStack lays out exactly like the row alone, so a
+        // regular-season card (no series line) is unchanged.
+        VStack(alignment: .leading, spacing: 8) {
+        SeriesLine(game: game)
         HStack(alignment: .center, spacing: 14) {
             VStack(spacing: 8) {
                 teamRow(side:       game.teams.away,
@@ -1058,6 +1062,7 @@ private struct GameCard: View {
                 }
             }
             .frame(width: 110, alignment: .trailing)
+        }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
@@ -1231,6 +1236,7 @@ private struct FinalGameCard: View {
 
     var body: some View {
         VStack(spacing: 10) {
+            SeriesLine(game: game)
             collapsedBody
                 // The historical guard that used to sit here is GONE, and
                 // deliberately. It existed because there was no box score
@@ -1957,6 +1963,7 @@ private struct LiveGameCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            SeriesLine(game: game)
             scoreboardRow
             if let live = liveFeed?.liveData {
                 Divider()

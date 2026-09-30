@@ -52,9 +52,18 @@ struct ContentView: View {
         // re-arms the visible tab's loop with an immediate refresh.
         .onChange(of: scenePhase) { _, phase in
             navigation.scenePhase = phase
+            if phase == .active {
+                Task { await SeriesStore.shared.loadCurrentIfPostseason() }
+            }
         }
         .environmentObject(navigation)
         .environmentObject(liveStore)
+        // Postseason series lines refetch when a game goes final; the store
+        // watches the live list for that transition. See `SeriesStore`.
+        .task {
+            SeriesStore.shared.watch(liveStore)
+            await SeriesStore.shared.loadCurrentIfPostseason()
+        }
         // Floating Ask entry point, overlaid above the tab bar. The bottom
         // padding lifts it clear of the ~49pt tab bar; trailing inset matches
         // the standard system margin.

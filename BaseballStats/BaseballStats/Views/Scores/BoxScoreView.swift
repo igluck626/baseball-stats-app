@@ -967,6 +967,7 @@ struct BoxScoreView: View {
             if isLiveNow {
                 LiveBadge()
             }
+            SeriesLine(game: vm.game, alignment: .center)
             HStack(spacing: 12) {
                 teamHeader(
                     side:      vm.game.teams.away,
