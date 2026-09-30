@@ -253,9 +253,23 @@ def diff_rows(stored: list[dict], fresh: list[dict], stat_cols: tuple) -> tuple[
     return inserts, changes, gone
 
 
-def refresh(season: int, today: Optional[datetime.date] = None, revise: bool = False) -> dict:
+def due_for_read(key: str, stored_games: dict, today: datetime.date,
+                 revise_days: Optional[int]) -> bool:
+    """Whether a FINAL game gets its /stats read: always when not stored yet;
+    a stored one only inside the revision window — `revise_days` days back
+    (0 = today's games only), None = insert-only. Pure."""
+    if key not in stored_games:
+        return True
+    return revise_days is not None and (today - stored_games[key]).days <= revise_days
+
+
+def refresh(season: int, today: Optional[datetime.date] = None, revise: bool = False,
+            revise_days: Optional[int] = None) -> dict:
     """Insert final games not yet stored; with `revise`, also re-read stored
-    games from the last REVISE_DAYS days and apply changes.
+    games from the last REVISE_DAYS days and apply changes; with `revise_days`
+    (the 15-minute loop passes 0), re-read only that window — today's finals,
+    so one stored before balldontlie's sheet was complete is corrected within
+    the loop's interval.
 
     balldontlie calls: 2 per run (/games — one page holds a whole postseason —
     and /standings) plus one /stats per game read: each newly final game once,
@@ -285,7 +299,7 @@ def refresh(season: int, today: Optional[datetime.date] = None, revise: bool = F
         if g.get("status") != "STATUS_FINAL" or rnd is None:
             continue
         key = str(gid)
-        if key in stored_games and (not revise or (today - stored_games[key]).days > REVISE_DAYS):
+        if not due_for_read(key, stored_games, today, REVISE_DAYS if revise else revise_days):
             continue                              # stored, and not due a revision check
         stats = _fetch_stats(gid)
         time.sleep(data_service._BDL_RATE_LIMIT_SLEEP)
@@ -319,10 +333,13 @@ def refresh(season: int, today: Optional[datetime.date] = None, revise: bool = F
 
 
 def run_safely(trigger: str, now: Optional[datetime.datetime] = None,
-               revise: bool = False, lock=_AdvisoryLock) -> Optional[dict]:
+               revise: bool = False, lock=_AdvisoryLock,
+               revise_days: Optional[int] = None) -> Optional[dict]:
     """Run `refresh` for the current season, September through November only.
     Never raises; if another run anywhere holds the advisory lock, this one
-    skips. The loop inserts only; the nightly and catch-up pass `revise`."""
+    skips. The loop inserts and re-checks TODAY's stored finals
+    (`revise_days=0`); the nightly and catch-up pass `revise` (the last
+    REVISE_DAYS days)."""
     now = now or datetime.datetime.now(data_service._MLB_LOCAL_TZ)
     if now.month not in (9, 10, 11):
         return None
@@ -331,7 +348,7 @@ def run_safely(trigger: str, now: Optional[datetime.datetime] = None,
             if not held.acquired:
                 log.info("[postseason] %s: skipped — another run holds the lock", trigger)
                 return None
-            result = refresh(now.year, today=now.date(), revise=revise)
+            result = refresh(now.year, today=now.date(), revise=revise, revise_days=revise_days)
             log.info("[postseason] %s: %s", trigger,
                      {k: v for k, v in result.items() if k != "changes"})
             return result
@@ -341,6 +358,12 @@ def run_safely(trigger: str, now: Optional[datetime.datetime] = None,
 
 
 _loop_started = False
+
+
+def loop_once() -> Optional[dict]:
+    """One pass of the 15-minute loop: new finals, plus today's stored finals
+    re-read for revisions (balldontlie rows only, each change logged)."""
+    return run_safely("loop", revise_days=0)
 
 
 def start_loop(interval_seconds: int = 900) -> None:
@@ -354,6 +377,6 @@ def start_loop(interval_seconds: int = 900) -> None:
     def _loop():
         import time
         while True:
-            run_safely("loop")
+            loop_once()
             time.sleep(interval_seconds)
     threading.Thread(target=_loop, name="postseason-ingest", daemon=True).start()

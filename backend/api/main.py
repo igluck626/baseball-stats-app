@@ -1529,7 +1529,27 @@ def player_postseason(player_id: int):
         log.warning("player_postseason(%s): balldontlie unavailable: %s", player_id, exc)
         series = None
     with connection.get_session() as db:
-        return postseason_stats.player_postseason(db, player_id, season, series)
+        live = _live_postseason_rows(db, player_id, season, series)
+        return postseason_stats.player_postseason(db, player_id, season, series, live)
+
+
+def _live_postseason_rows(db, player_id: int, season: int, series) -> "dict | None":
+    """His lines from postseason games in progress or final-not-yet-stored
+    (`postseason_stats.live_rows`), from the live loop's memory — no
+    balldontlie call. None when there are none, the series (hence the rounds)
+    are unknown, or anything fails: the stored record then serves alone."""
+    try:
+        raws = live_service.get_postseason_line_inputs()
+        if not raws or not series:
+            return None
+        bdl_ids = {r[0] for r in db.execute(_sa_text(
+            "SELECT bdl_id FROM players WHERE player_id = :p AND bdl_id IS NOT NULL "
+            "UNION SELECT bdl_id FROM pitchers WHERE player_id = :p AND bdl_id IS NOT NULL"), {"p": player_id})}
+        return postseason_stats.live_rows(raws, player_id, bdl_ids, season,
+                                          postseason_ingest.rounds_by_game(series))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("player_postseason(%s): live line skipped: %s", player_id, exc)
+        return None
 
 
 @app.get("/players/{player_id}/postseason/gamelogs")

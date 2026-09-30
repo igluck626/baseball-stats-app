@@ -159,11 +159,51 @@ def _team_info(db, pairs: set) -> dict:
     return out
 
 
+def live_rows(raws: list[dict], player_id: int, bdl_ids: set, season: int,
+              rounds: dict) -> dict:
+    """{"bat": [...], "pit": [...]}: this player's lines from POSTSEASON games
+    of `season` that are in progress — or final but maybe not stored yet — built
+    by the postseason ingest's own `build_rows` from the live loop's raw
+    balldontlie inputs: the shape of the final row that will replace them. Each
+    row carries `in_progress`. A regular-season game, another season's, or one
+    whose round is withheld is never used. Pure.
+
+    `raws`: `live_service.get_postseason_line_inputs()`; `bdl_ids`: his
+    balldontlie ids; `rounds`: `postseason_ingest.rounds_by_game(series)`."""
+    import postseason_ingest
+    out: dict = {"bat": [], "pit": []}
+    mapping = {int(b): player_id for b in bdl_ids if b is not None}
+    if not mapping:
+        return out
+    for raw in raws:
+        g = raw.get("game") or {}
+        is_post = g.get("season_type") == "postseason" or (g.get("season_type") is None and g.get("postseason") is True)
+        if not is_post or g.get("season") != season:
+            continue
+        rnd = rounds.get(g.get("id"))
+        if not rnd:
+            continue
+        bat, pit, _ = postseason_ingest.build_rows(g, rnd, raw.get("stats") or [], mapping)
+        in_progress = bool(raw.get("in_progress", True))
+        out["bat"] += [dict(r, in_progress=in_progress) for r in bat if r.get("player_id") == player_id]
+        out["pit"] += [dict(r, in_progress=in_progress) for r in pit if r.get("player_id") == player_id]
+    return out
+
+
 def player_postseason(db, player_id: int, current_season: int,
-                      current_series: Optional[list] = None) -> dict:
+                      current_series: Optional[list] = None,
+                      live: Optional[dict] = None) -> dict:
     """Everything the profile's postseason view needs, per season, per round
     and career, from one source per season. `current_series` is
-    `postseason_series.build_series` for `current_season` (None if unavailable)."""
+    `postseason_series.build_series` for `current_season` (None if unavailable).
+
+    `live` (`live_rows`): his lines from postseason games in progress, or final
+    but not yet stored, added as ordinary rows — so the season, round and
+    career totals and their rates all include them — KEYED BY GAME ID: a game
+    already stored for him is never added again, so nothing is counted twice
+    and nothing dips when its final is ingested. The response's `live` names
+    the IN-PROGRESS game(s) among them (a final's line counts untagged), or is
+    null."""
     from sqlalchemy import text
     params = {"pid": player_id, **source_params(db)}
     sides = {}
@@ -173,6 +213,21 @@ def player_postseason(db, player_id: int, current_season: int,
         sides[kind] = [dict(r._mapping) for r in db.execute(text(
             f"SELECT season, round, team, opponent, game_id, source, {sel}{extra} FROM {TABLE[kind]} "
             f"WHERE player_id = :pid AND {SOURCE_SQL}"), params)]
+    live_added: dict = {}
+    for kind, cols in (("bat", _BAT_SUM), ("pit", _PIT_SUM)):
+        stored = {str(r["game_id"]) for r in sides[kind]}
+        for r in (live or {}).get(kind) or []:
+            gid = str(r["game_id"])
+            if gid in stored or r.get("season") != current_season:
+                continue
+            row = {"season": current_season, "round": r["round"], "team": r["team"], "opponent": r["opponent"],
+                   "game_id": gid, "source": "bdl", **{c: r.get(c) or 0 for c in cols}}
+            if kind == "pit":
+                row["IP"] = r.get("IP") or 0
+            sides[kind].append(row)
+            stored.add(gid)
+            if r.get("in_progress", True):
+                live_added.setdefault(gid, []).append(kind)
 
     # Series results for every (season, round, team, opponent) the player saw,
     # from the team's game results in the same source.
@@ -246,6 +301,7 @@ def player_postseason(db, player_id: int, current_season: int,
         "retro_last": params["ps_retro_last"],
         "batting": build("bat"),
         "pitching": build("pit"),
+        "live": ([{"game_id": gid, "sides": kinds} for gid, kinds in live_added.items()] or None),
         "current": {
             "season": current_season,
             # from the first postseason game until the World Series ends

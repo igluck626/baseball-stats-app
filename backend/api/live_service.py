@@ -27,6 +27,8 @@ no client key is involved.
 import asyncio
 import datetime
 import logging
+import threading
+import time
 import urllib.error
 from typing import Any, Optional
 
@@ -69,6 +71,76 @@ def _game_key(game_id: int) -> str:
 
 def _lineup_key(game_id: int) -> str:
     return f"live:lineup:{game_id}"
+
+
+# --- Postseason line inputs ------------------------------------------------
+#
+# For `/players/{id}/postseason`'s live line: balldontlie's own game and
+# /stats rows for each POSTSEASON game in progress, from the cycle that already
+# fetched them (no extra call). ⚠️ A game that goes FINAL keeps its last
+# inputs — flagged final — until `FINAL_LINE_TTL_S`, so a player's line keeps
+# counting until the postseason ingest stores the final (which it is triggered
+# to do at once); the reader skips any game already stored for him, so it can
+# never count twice. A game that leaves the live set any other way (postponed,
+# suspended) is dropped.
+
+FINAL_LINE_TTL_S = 6 * 3600
+_line_inputs: dict[int, dict] = {}
+_line_lock = threading.Lock()
+
+
+def _is_postseason_game(game: dict) -> bool:
+    kind = game.get("season_type")
+    return kind == "postseason" or (kind is None and game.get("postseason") is True)
+
+
+def note_cycle(live_inputs: dict[int, dict], live_ids: set, slate_by_id: dict[int, dict],
+               now: Optional[float] = None) -> list[int]:
+    """Record one cycle's postseason line inputs. `live_inputs`: {game id:
+    {"game", "stats"}} fetched this cycle; `live_ids`: every game in progress
+    this cycle (a game whose fetch failed keeps its previous inputs). A game
+    that was in progress and is now final in the slate is kept, flagged final;
+    anything else that left is dropped; expired finals are pruned. Returns the
+    postseason games that went final this cycle."""
+    now = time.time() if now is None else now
+    newly_final: list[int] = []
+    with _line_lock:
+        for gid, raw in live_inputs.items():
+            if _is_postseason_game(raw.get("game") or {}):
+                _line_inputs[gid] = {"game": raw["game"], "stats": raw.get("stats") or [],
+                                     "in_progress": True, "updated_at": now, "final_at": None}
+        for gid, entry in list(_line_inputs.items()):
+            if entry["in_progress"] and gid not in live_ids:
+                if _norm_status((slate_by_id.get(gid) or {}).get("status")) == "final":
+                    entry.update(in_progress=False, final_at=now)
+                    newly_final.append(gid)
+                else:
+                    del _line_inputs[gid]
+            elif not entry["in_progress"] and now - entry["final_at"] > FINAL_LINE_TTL_S:
+                del _line_inputs[gid]
+    return newly_final
+
+
+def get_postseason_line_inputs(now: Optional[float] = None) -> list[dict]:
+    """{"game", "stats", "in_progress"} for each postseason game in progress
+    (as of a recent cycle) or gone final within `FINAL_LINE_TTL_S`. Memory only
+    — never calls balldontlie."""
+    now = time.time() if now is None else now
+    with _line_lock:
+        return [{"game": e["game"], "stats": e["stats"], "in_progress": e["in_progress"]}
+                for e in _line_inputs.values()
+                if (e["in_progress"] and now - e["updated_at"] <= LIVE_CACHE_TTL_S)
+                or (not e["in_progress"] and now - e["final_at"] <= FINAL_LINE_TTL_S)]
+
+
+def _ingest_finals(game_ids: list[int]) -> None:
+    """Store just-final postseason games now rather than at the next 15-minute
+    loop: the postseason ingest in a daemon thread (it takes its own advisory
+    lock and never raises), off the live loop."""
+    import postseason_ingest
+    log.info("postseason game(s) %s final — triggering the postseason ingest", game_ids)
+    threading.Thread(target=postseason_ingest.run_safely, args=("final",),
+                     name="postseason-final", daemon=True).start()
 
 
 # --- BDL fetch helpers (run the sync urllib client off the event loop) ----
@@ -1011,12 +1083,16 @@ async def _refresh_cycle() -> int:
                 if _norm_status(g.get("status")) == "in_progress"]
 
     if not live_ids:
+        finals = note_cycle({}, set(), games_by_id)
+        if finals:
+            _ingest_finals(finals)
         # Nothing live — publish an empty list and evict any stale snapshots.
         _cache.set(_SUMMARY_KEY, {"fetched_at": _now_iso(), "count": 0, "games": []},
                    LIVE_CACHE_TTL_S)
         return bdl_calls
 
     summaries = []
+    line_inputs: dict[int, dict] = {}
     for gid in live_ids:
         try:
             await asyncio.sleep(BDL_PACING_S)
@@ -1044,6 +1120,7 @@ async def _refresh_cycle() -> int:
                                        previous_codes=previous,
                                        previous_contact=prev_contact)
             _cache.set(_game_key(gid), unified, LIVE_CACHE_TTL_S)
+            line_inputs[gid] = {"game": games_by_id[gid], "stats": stats}
             summaries.append(_summary_from_unified(unified))
         except Exception:
             log.exception("live refresh failed for game %s — skipping this cycle", gid)
@@ -1051,6 +1128,9 @@ async def _refresh_cycle() -> int:
     _cache.set(_SUMMARY_KEY,
                {"fetched_at": _now_iso(), "count": len(summaries), "games": summaries},
                LIVE_CACHE_TTL_S)
+    finals = note_cycle(line_inputs, set(live_ids), games_by_id)
+    if finals:
+        _ingest_finals(finals)
     return bdl_calls
 
 

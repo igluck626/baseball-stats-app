@@ -12,7 +12,8 @@
   • Revisions: one logged change per value, IP compared to three decimals;
     a dropped line is reported, never deleted. `run_safely` is idle outside
     September-November, never raises, skips while another session holds the
-    advisory lock, and revises only when asked (the nightly / catch-up).
+    advisory lock. The 15-minute loop re-reads TODAY's stored finals only; the
+    nightly / catch-up re-read the last REVISE_DAYS days.
 
 Standalone, no pytest. Needs the backend's Python (3.10+).
 Run: <backend python> backend/tests/test_postseason_ingest.py
@@ -119,9 +120,28 @@ with mock.patch.object(pi, "refresh", return_value={"season": 2026}) as rf:
     check("another session holding the advisory lock makes this run skip", out is None and not rf.called)
     FakeLock.held_elsewhere = False
     check("  ...and it runs once the lock is free", pi.run_safely("test", now=OCT, lock=FakeLock) == {"season": 2026})
-    check("the loop's run is insert-only (revise=False)", rf.call_args.kwargs.get("revise") is False)
+    check("a plain run neither revises nor re-reads (revise=False, revise_days=None)",
+          rf.call_args.kwargs.get("revise") is False and rf.call_args.kwargs.get("revise_days") is None)
     pi.run_safely("nightly", now=OCT, revise=True, lock=FakeLock)
     check("the nightly / catch-up run revises (revise=True)", rf.call_args.kwargs.get("revise") is True)
+    pi.run_safely("loop", now=OCT, lock=FakeLock, revise_days=0)
+    check("run_safely passes the window through (revise_days=0, revise=False)",
+          rf.call_args.kwargs.get("revise_days") == 0 and rf.call_args.kwargs.get("revise") is False,
+          rf.call_args.kwargs)
+with mock.patch.object(pi, "run_safely") as rs:
+    pi.loop_once()
+    check("the 15-minute loop re-reads today's finals (revise_days=0), not the 3-day window",
+          rs.call_args.args == ("loop",) and rs.call_args.kwargs == {"revise_days": 0}, rs.call_args)
+
+print("which stored finals a run re-reads")
+TODAY = datetime.date(2026, 10, 1)
+STORED = {"today": TODAY, "yesterday": TODAY - datetime.timedelta(days=1),
+          "3 days ago": TODAY - datetime.timedelta(days=3), "4 days ago": TODAY - datetime.timedelta(days=4)}
+due = lambda days: sorted(k for k in STORED if pi.due_for_read(k, STORED, TODAY, days))
+check("a game not stored yet is always read", pi.due_for_read("new", STORED, TODAY, None))
+check("insert-only (None): no stored game is re-read", due(None) == [])
+check("the loop (0): today's stored finals only", due(0) == ["today"], due(0))
+check("the nightly (REVISE_DAYS): the last 3 days", due(pi.REVISE_DAYS) == ["3 days ago", "today", "yesterday"], due(pi.REVISE_DAYS))
 with mock.patch.object(pi, "refresh", return_value={}) as rf:
     class Boom(FakeLock):
         def __enter__(self):
