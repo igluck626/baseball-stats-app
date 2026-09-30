@@ -34,6 +34,7 @@ import live_service
 import news_service
 import postseason_ingest
 import postseason_series
+import postseason_stats
 import team_crosswalk
 from cache import cache as _cache
 
@@ -1495,6 +1496,32 @@ def awards_available():
     if not connection.db_available():
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
     return data_service.get_awards_available(_AWARD_VOTING_IDS)
+
+
+@app.get("/players/{player_id}/postseason")
+def player_postseason(player_id: int):
+    """A player's postseason record from our game logs — Retrosheet for the
+    seasons it has published, balldontlie after, one source per season
+    (`postseason_stats`). Per side (batting / pitching, null when the player
+    has none): each season with its rounds (opponent, series W-L and result,
+    totals and rates) and the career line. `current` carries the flags the
+    profile's current-season line needs: whether the league's postseason is in
+    progress (first game until the World Series ends), whether he has
+    appeared, and whether his team is out.
+
+    A balldontlie failure leaves `current`'s league-level flags null rather
+    than failing the whole response — the stored history still serves."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    season = datetime.datetime.now(data_service._MLB_LOCAL_TZ).year
+    try:
+        games, standings = _postseason_inputs(season)
+        series = postseason_series.build_series(games, standings, season)
+    except Exception as exc:
+        log.warning("player_postseason(%s): balldontlie unavailable: %s", player_id, exc)
+        series = None
+    with connection.get_session() as db:
+        return postseason_stats.player_postseason(db, player_id, season, series)
 
 
 @app.get("/players/{player_id}/postseason/batting")
@@ -8319,23 +8346,57 @@ def _run_season_total(player, role="bat", event=None, season=None,
     resolved = cands[0]
     pid = resolved["mlbam_id"]
 
-    if gt == "P":
-        table = "player_postseason_pitching" if role == "pit" else "player_postseason_batting"
-    else:
-        table = "pitcher_seasons" if role == "pit" else "player_seasons"
     where = ["player_id = :pid"]
     p: dict = {"pid": int(pid)}
+    ps_note = None
+    if gt == "P":
+        # Postseason totals come from OUR game logs — Retrosheet for published
+        # seasons, balldontlie after — one source per season (postseason_stats).
+        col = postseason_stats.column_expr(role, col)
+        if col is None:
+            return None       # a column the postseason logs don't carry -> plays store
+        with connection.get_session() as db:
+            negro = postseason_stats.negro_league_seasons(db, int(pid))
+            early = postseason_stats.has_early_seasons(
+                db, int(pid), season if season is not None else season_start,
+                season if season is not None else season_end)
+        decline, ps_note = postseason_stats.coverage(season, season_start, season_end, negro,
+                                                     early_seasons=early)
+        if decline:
+            return {"resolved": True, "declined": True, "source": "season_stats",
+                    "player": {"query": player, "name": resolved["name"], "mlbam_id": pid, "role": role},
+                    "filters": {"event": canon, "season": season, "season_start": season_start,
+                                "season_end": season_end, "game_type": gt},
+                    "stat_value": None, "reason": decline, "answer": decline}
+        table, ycol = postseason_stats.TABLE[role], "season"
+        where.append(postseason_stats.SOURCE_SQL)
+    else:
+        table, ycol = ("pitcher_seasons" if role == "pit" else "player_seasons"), "year"
     if season is not None:
-        where.append("year = :y"); p["y"] = int(season)
+        where.append(f"{ycol} = :y"); p["y"] = int(season)
     else:
         if season_start is not None:
-            where.append("year >= :ys"); p["ys"] = int(season_start)
+            where.append(f"{ycol} >= :ys"); p["ys"] = int(season_start)
         if season_end is not None:
-            where.append("year <= :ye"); p["ye"] = int(season_end)
-    sql = (f"SELECT COALESCE(SUM({col}),0), MIN(year), MAX(year), COUNT(*) "
+            where.append(f"{ycol} <= :ye"); p["ye"] = int(season_end)
+    sql = (f"SELECT COALESCE(SUM({col}),0), MIN({ycol}), MAX({ycol}), COUNT(*) "
            f"FROM {table} WHERE {' AND '.join(where)}")
     with connection.get_session() as db:
+        if gt == "P":
+            p.update(postseason_stats.source_params(db))
         total, minyr, maxyr, nrows = db.execute(_sa_text(sql), p).fetchone()
+        gap = (postseason_stats.uncovered_career(
+                   db, int(pid), season if season is not None else season_start,
+                   season if season is not None else season_end)
+               if gt == "P" and not nrows else None)
+    if gap:
+        # Nothing in the logs AND the whole asked span is a known gap: say so,
+        # rather than answer 0 (Arlie Latham's 1880s, a Negro Leagues career).
+        return {"resolved": True, "declined": True, "source": "season_stats",
+                "player": {"query": player, "name": resolved["name"], "mlbam_id": pid, "role": role},
+                "filters": {"event": canon, "season": season, "season_start": season_start,
+                            "season_end": season_end, "game_type": gt},
+                "stat_value": None, "reason": gap, "answer": gap}
 
     return {
         "resolved": True, "source": "season_stats",
@@ -8347,8 +8408,9 @@ def _run_season_total(player, role="bat", event=None, season=None,
         "empty": nrows == 0,           # no season rows (e.g. season outside the career)
         "span": [minyr, maxyr],
         "sample": [],
-        # complete source -> gates always clear
-        "game_coverage": {"complete": True},
+        # complete source -> gates always clear; a postseason career / range total
+        # states its coverage through the same footnote hook
+        "game_coverage": {"complete": False, "note": ps_note} if ps_note else {"complete": True},
         "count_data": None,
     }
 
@@ -12248,29 +12310,46 @@ def _run_season_leaderboard(event=None, role="bat", season=None, season_start=No
     if not connection.db_available():
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
     limit = max(1, min(int(limit or 10), 25))
+    where = ["1=1"]
+    p: dict = {"lim": limit}
+    ycol = "year"
+    ps_note = None
     if gt == "P":
-        table = "player_postseason_pitching" if role == "pit" else "player_postseason_batting"
+        # Postseason boards come from OUR game logs, one source per season
+        # (postseason_stats) — not Lahman's postseason tables.
+        col = postseason_stats.column_expr(role, col)
+        if col is None:
+            return None       # a column the postseason logs don't carry -> plays board
+        decline, ps_note = postseason_stats.coverage(season, season_start, season_end,
+                                                     leaderboard=True)
+        if decline:
+            return {"resolved": True, "declined": True, "source": "season_stats_leaderboard",
+                    "filters": {"event": canon, "role": role, "season": season,
+                                "season_start": season_start, "season_end": season_end,
+                                "game_type": gt}, "leaders": [], "reason": decline}
+        table, ycol = postseason_stats.TABLE[role], "season"
+        where.append(postseason_stats.SOURCE_SQL)
     elif team_codes:
         table = "pitcher_season_stints" if role == "pit" else "player_season_stints"
     else:
         table = "pitcher_seasons" if role == "pit" else "player_seasons"
-    where = ["1=1"]
-    p: dict = {"lim": limit}
     if team_codes:
         ph = ", ".join(f":tc{i}" for i in range(len(team_codes)))
         where.append(f"team IN ({ph})")
         for i, c in enumerate(team_codes):
             p[f"tc{i}"] = c
     if season is not None:
-        where.append("year = :y"); p["y"] = int(season)
+        where.append(f"{ycol} = :y"); p["y"] = int(season)
     else:
         if season_start is not None:
-            where.append("year >= :ys"); p["ys"] = int(season_start)
+            where.append(f"{ycol} >= :ys"); p["ys"] = int(season_start)
         if season_end is not None:
-            where.append("year <= :ye"); p["ye"] = int(season_end)
+            where.append(f"{ycol} <= :ye"); p["ye"] = int(season_end)
     sql = (f"SELECT player_id, SUM({col}) AS n FROM {table} WHERE {' AND '.join(where)} "
            f"GROUP BY player_id HAVING SUM({col}) > 0 ORDER BY n DESC, player_id LIMIT :lim")
     with connection.get_session() as db:
+        if gt == "P":
+            p.update(postseason_stats.source_params(db))
         rows = db.execute(_sa_text(sql), p).fetchall()
         ids = [r[0] for r in rows]
         names = {}
@@ -12293,6 +12372,8 @@ def _run_season_leaderboard(event=None, role="bat", season=None, season_start=No
         _note = _stints_currency_note(role, season, season_start, season_end)
         if _note:
             gc = {"complete": False, "note": _note}
+    if ps_note:
+        gc = {"complete": False, "note": ps_note}      # postseason coverage (1903 on)
     return {"resolved": True, "source": "season_stats_leaderboard",
             "filters": {"event": canon, "role": role, "season": season,
                         "season_start": season_start, "season_end": season_end,
