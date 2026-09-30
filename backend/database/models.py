@@ -1021,8 +1021,12 @@ class GamelogReconFinding(Base):
 # with `player_id` NULL — never skipped, unlike the regular-season ingest — and
 # resolved at read time once a mapping lands. Hence a surrogate `id` and partial
 # unique indexes: a plain UNIQUE (game_id, player_id) would admit any number of
-# NULLs. A Retrosheet row is unique on its retro id whether mapped or not, so a
-# re-run after a mapping lands can't insert the same appearance twice.
+# NULLs. A row is unique on its SOURCE id whether mapped or not — Retrosheet
+# rows on (game_id, retro_player_id), balldontlie rows on (game_id,
+# bdl_player_id) — so a re-run after a mapping lands can't insert the same
+# appearance twice. (The balldontlie index was first created partial, WHERE
+# player_id IS NULL, which had exactly that hole; see
+# scripts/migrate_ps_bdl_index.py.)
 _POSTSEASON_ROUNDS = "round IN ('WC', 'DS', 'CS', 'WS')"
 
 
@@ -1031,8 +1035,8 @@ class PostseasonBattingGameLog(Base):
     __table_args__ = (
         Index("uq_ps_bat_game_player", "game_id", "player_id", unique=True,
               postgresql_where=text("player_id IS NOT NULL")),
-        Index("uq_ps_bat_game_bdl", "game_id", "bdl_player_id", unique=True,
-              postgresql_where=text("player_id IS NULL AND bdl_player_id IS NOT NULL")),
+        Index("uq_ps_bat_game_bdl_any", "game_id", "bdl_player_id", unique=True,
+              postgresql_where=text("bdl_player_id IS NOT NULL")),
         Index("uq_ps_bat_game_retro", "game_id", "retro_player_id", unique=True,
               postgresql_where=text("retro_player_id IS NOT NULL")),
         Index("ix_ps_bat_player_season", "player_id", "season"),
@@ -1077,8 +1081,8 @@ class PostseasonPitchingGameLog(Base):
     __table_args__ = (
         Index("uq_ps_pit_game_player", "game_id", "player_id", unique=True,
               postgresql_where=text("player_id IS NOT NULL")),
-        Index("uq_ps_pit_game_bdl", "game_id", "bdl_player_id", unique=True,
-              postgresql_where=text("player_id IS NULL AND bdl_player_id IS NOT NULL")),
+        Index("uq_ps_pit_game_bdl_any", "game_id", "bdl_player_id", unique=True,
+              postgresql_where=text("bdl_player_id IS NOT NULL")),
         Index("uq_ps_pit_game_retro", "game_id", "retro_player_id", unique=True,
               postgresql_where=text("retro_player_id IS NOT NULL")),
         Index("ix_ps_pit_player_season", "player_id", "season"),

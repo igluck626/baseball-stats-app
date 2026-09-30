@@ -494,10 +494,11 @@ def bulk_insert_postseason(db: Session, model, rows: list[dict]) -> int:
     """INSERT ... ON CONFLICT DO NOTHING for the postseason game-log tables.
 
     Their identity is nullable (see `PostseasonBattingGameLog`), so each row
-    conflicts on the partial unique index of the id it is SURE to carry: a
-    Retrosheet row on (game_id, retro_player_id), mapped or not; otherwise a
-    mapped row on (game_id, player_id), an unmapped balldontlie row on
-    (game_id, bdl_player_id). An existing row is never rewritten.
+    conflicts on the partial unique index of its SOURCE id, which it always
+    carries and which holds whether or not it is mapped: a Retrosheet row on
+    (game_id, retro_player_id), a balldontlie row on (game_id, bdl_player_id).
+    A row with neither falls back to (game_id, player_id). An existing row is
+    never rewritten.
 
     ⚠️ A row with NO player id at all raises: no row is ever silently
     dropped. Returns rows submitted."""
@@ -507,16 +508,16 @@ def bulk_insert_postseason(db: Session, model, rows: list[dict]) -> int:
     for r in rows:
         if r.get("retro_player_id"):
             groups[0].append(r)
-        elif r.get("player_id") is not None:
-            groups[1].append(r)
         elif r.get("bdl_player_id") is not None:
+            groups[1].append(r)
+        elif r.get("player_id") is not None:
             groups[2].append(r)
         else:
             raise ValueError(f"postseason row with no player id: game {r.get('game_id')}")
     for group, cols, where in (
         (groups[0], ["game_id", "retro_player_id"], "retro_player_id IS NOT NULL"),
-        (groups[1], ["game_id", "player_id"], "player_id IS NOT NULL"),
-        (groups[2], ["game_id", "bdl_player_id"], "player_id IS NULL AND bdl_player_id IS NOT NULL"),
+        (groups[1], ["game_id", "bdl_player_id"], "bdl_player_id IS NOT NULL"),
+        (groups[2], ["game_id", "player_id"], "player_id IS NOT NULL"),
     ):
         if group:
             db.execute(pg_insert(model).values(group).on_conflict_do_nothing(
