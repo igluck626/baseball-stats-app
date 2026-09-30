@@ -234,7 +234,12 @@ def _team_block(team: dict, team_data: dict) -> dict:
     }
 
 
-def _play_block(p: dict) -> dict:
+def _play_block(p: dict, exact_speeds: Optional[dict[int, float]] = None) -> dict:
+    # The PA feed's speed where the two feeds agree on this at-bat's pitch
+    # count, else the stream's truncated one. See `_exact_speeds`.
+    speed = (exact_speeds or {}).get(p.get("order"))
+    if speed is None:
+        speed = p.get("pitch_velocity")
     return {
         "order":       p.get("order"),
         "inning":      p.get("inning"),
@@ -248,7 +253,155 @@ def _play_block(p: dict) -> dict:
         "pitcher_id":  p.get("pitcher_id"),
         "text":        p.get("text"),
         "type":        p.get("type"),
+        # Pitch identity, for the play-by-play detail sheet. The client
+        # nulled these for live games because nothing shipped them, so a
+        # live reader saw "Called Strike" with no speed beside it while
+        # the same at-bat after the final read "Four-seam FB 94 mph".
+        #
+        "pitch_type":     p.get("pitch_type"),
+        "pitch_velocity": speed,
     }
+
+
+def _exact_speeds(plays_sorted: list[dict], pas: list[dict]) -> dict[int, float]:
+    """`play order -> release_speed`, taken from the plate-appearance feed.
+
+    ⚠️ WHY BOTHER, when the play row already carries `pitch_velocity`: the
+    play stream TRUNCATES. Verified at the wire — every `pitch_velocity`
+    in a raw `/plays` response is a bare integer, no decimal point among
+    53 non-null values, and the difference against the PA feed runs 0.0
+    to 0.9 with a mean of 0.47 and never once negative. That is not our
+    decoding and there is no precision to recover from it.
+
+    What it costs a reader: on game 5059936 the 265 tracked pitches hold
+    152 distinct speeds at one decimal and only 25 as whole numbers, so
+    240 of them — nine in ten — share a number with some other pitch.
+    103.4 and 103.8 both read 103.
+
+    ⚠️ GUARDED ON PITCH COUNT, and the guard is the whole safety of this.
+    The two feeds interleave differently, so a positional join through a
+    disagreement lands a speed on the wrong pitch. Where an at-bat's
+    counts differ the at-bat is skipped ENTIRELY and its rows keep the
+    truncated value — never partially joined. Same rule as
+    `GameLeaders.pitchRows` on the client.
+
+    Measured live, mid-game, on two games: 70 of 71 and 64 of 65 at-bats
+    agree, and in both the single disagreement is the at-bat still
+    underway — the feeds are a pitch or two out of step because they are
+    separate fetches. So the pitches a reader is watching right now fall
+    back to whole numbers and gain their decimal the moment the at-bat
+    ends. That is the intended behaviour, not a gap.
+    """
+    # The stream's pitch rows, grouped into at-bats by the batter markers.
+    groups: list[tuple[tuple, list[dict]]] = []
+    current: Optional[tuple] = None
+    for p in plays_sorted:
+        if p.get("type") == "Start Batter/Pitcher":
+            if p.get("batter_id") is None:
+                current = None
+                continue
+            current = (p.get("inning"),
+                       "bottom" if "bot" in (p.get("inning_type") or "").lower() else "top",
+                       p.get("batter_id"))
+            groups.append((current, []))
+        elif current and (p.get("text") or "").startswith("Pitch ") and groups:
+            groups[-1][1].append(p)
+
+    queues: dict[tuple, list[list[dict]]] = {}
+    for key, rows in groups:
+        queues.setdefault(key, []).append(rows)
+
+    cursor: dict[tuple, int] = {}
+    out: dict[int, float] = {}
+    for pa in sorted(pas, key=lambda x: (x.get("inning") or 0, x.get("pa_number") or 0)):
+        if pa.get("batter_id") is None:
+            continue
+        key = (pa.get("inning"),
+               "bottom" if "bot" in (pa.get("half_inning") or "").lower() else "top",
+               pa.get("batter_id"))
+        i = cursor.get(key, 0)
+        cursor[key] = i + 1
+        rows = queues.get(key)
+        if not rows or i >= len(rows):
+            continue
+        pitches = pa.get("pitches") or []
+        if len(rows[i]) != len(pitches):
+            continue                      # ⚠️ skip the at-bat whole; never part-join
+        for row, pitch in zip(rows[i], pitches):
+            speed = pitch.get("release_speed")
+            if speed is not None and row.get("order") is not None:
+                out[row["order"]] = speed
+    return out
+
+
+def _contact_key(pa: dict) -> str:
+    """Stable identity for one plate appearance, for the contact memory."""
+    half = (pa.get("half_inning") or "").lower()
+    return f"{pa.get('inning')}-{half}-{pa.get('pa_number')}"
+
+
+def _contact_pas(pas: list[dict], previous: Optional[dict] = None) -> list[dict]:
+    """Batted-ball metrics per plate appearance, in the SHAPE OF A PLATE
+    APPEARANCE.
+
+    Deliberately shaped like `/plate_appearances` rather than as some new
+    kind of block: the client already joins that shape onto its play list
+    (inning + half + batter, consumed in order) and already renders the
+    metrics from it for finished games. Shipping the same shape means the
+    live path reuses that whole tested pipeline instead of growing a
+    second one beside it.
+
+    Only the pitch that was PUT IN PLAY is carried, and only its five
+    displayed fields — 39 rows and ~2.7KB on a completed game, against
+    the 309KB of `/plate_appearances` this is distilled from. Every other
+    pitch and all fifty other fields are dropped.
+
+    ⚠️ CARRIED FORWARD, because this is NOT append-only, which is the
+    thing that is easy to assume and wrong. The metrics live on the PA
+    feed, and that feed DROPS ROWS — see the `missingPARow` fixture,
+    a finished game whose feed is missing a plate appearance outright. A
+    dropped row here would take a home run's exit velocity off a row that
+    showed it ten seconds earlier, which is the batting-slot failure in a
+    more visible place. Memory only fills silence; a fresh reading always
+    wins, exactly as `carry_forward` treats a batting slot.
+    """
+    fresh: dict[str, dict] = {}
+    for pa in pas:
+        if pa.get("batter_id") is None:
+            continue
+        hit = next((q for q in (pa.get("pitches") or [])
+                    if q.get("exit_velocity") is not None), None)
+        if hit is None:
+            continue
+        fresh[_contact_key(pa)] = {
+            "batter_id":   pa.get("batter_id"),
+            "inning":      pa.get("inning"),
+            "half_inning": pa.get("half_inning"),
+            "pa_number":   pa.get("pa_number"),
+            "result":      pa.get("result"),
+            "pitches": [{
+                "exit_velocity":            hit.get("exit_velocity"),
+                "launch_angle":             hit.get("launch_angle"),
+                "hit_distance":             hit.get("hit_distance"),
+                "expected_batting_average": hit.get("expected_batting_average"),
+                "is_barrel":                hit.get("is_barrel"),
+            }],
+        }
+    merged = carry_forward(fresh, previous)
+    # Ordered as the game was played, so the client's join consumes them
+    # in the same order the play stream runs.
+    return [merged[k] for k in sorted(
+        merged, key=lambda k: (merged[k].get("inning") or 0,
+                               merged[k].get("pa_number") or 0),
+    )]
+
+
+def _carried_contact(previous_unified: Optional[dict]) -> Optional[dict]:
+    """The last cycle's contact blocks, re-keyed for `carry_forward`."""
+    if not previous_unified:
+        return None
+    rows = previous_unified.get("contact_pas") or []
+    return {_contact_key(r): r for r in rows} or None
 
 
 def _team_name_candidates(team: dict) -> set[str]:
@@ -556,9 +709,10 @@ def _derive_hits(plays_sorted: list[dict]) -> tuple[int, int]:
     return away, home
 
 
-def _derive_scoring(plays_sorted: list[dict]) -> list[dict]:
+def _derive_scoring(plays_sorted: list[dict],
+                    exact_speeds: Optional[dict[int, float]] = None) -> list[dict]:
     """Full-game scoring-play subset, as play blocks (PLAYS)."""
-    return [_play_block(p) for p in plays_sorted if p.get("scoring_play")]
+    return [_play_block(p, exact_speeds) for p in plays_sorted if p.get("scoring_play")]
 
 
 def _bases_from_pas(pas: list[dict], inning: Optional[int],
@@ -687,7 +841,8 @@ def _box_lines(stats: list[dict], home_team: dict, away_team: dict,
 def assemble_unified(game: dict, stats: list[dict],
                      plays: list[dict], pas: list[dict],
                      lineup: Optional[list[dict]] = None,
-                     previous_codes: Optional[dict] = None) -> dict:
+                     previous_codes: Optional[dict] = None,
+                     previous_contact: Optional[dict] = None) -> dict:
     """Thin orchestrator (§4): derive live state from PLAYS, then attach
     names/bases/lines/errors from their own feeds — ONE source per field.
 
@@ -711,8 +866,9 @@ def assemble_unified(game: dict, stats: list[dict],
     state = _derive_state(plays_sorted)
     grid = _derive_grid(plays_sorted)
     away_hits, home_hits = _derive_hits(plays_sorted)
-    scoring = _derive_scoring(plays_sorted)
-    full_plays = [_play_block(p) for p in plays_sorted]
+    exact_speeds = _exact_speeds(plays_sorted, pas)
+    scoring = _derive_scoring(plays_sorted, exact_speeds)
+    full_plays = [_play_block(p, exact_speeds) for p in plays_sorted]
     away_runs = state["away_runs"]
     home_runs = state["home_runs"]
 
@@ -772,6 +928,9 @@ def assemble_unified(game: dict, stats: list[dict],
             "on_third":  on_third,
         },
         "plays":         full_plays,
+        # Batted-ball metrics, shaped like plate appearances — see
+        # `_contact_pas`. Additive: an older client ignores the key.
+        "contact_pas":   _contact_pas(pas, previous_contact),
         "scoring_plays": scoring,
         "batting":       batting,
         "pitching":      pitching,
@@ -876,9 +1035,14 @@ async def _refresh_cycle() -> int:
             # A batting slot, once given, must not be taken away. See
             # `_carried_codes` — this reads the snapshot we are about to
             # replace, so it has to happen BEFORE the `set` below.
-            previous = _carried_codes(_cache.get(_game_key(gid)))
+            # Both memories read the snapshot we are about to replace, so
+            # they have to be taken BEFORE the `set` below.
+            snapshot = _cache.get(_game_key(gid))
+            previous = _carried_codes(snapshot)
+            prev_contact = _carried_contact(snapshot)
             unified = assemble_unified(games_by_id[gid], stats, plays, pas, lineup,
-                                       previous_codes=previous)
+                                       previous_codes=previous,
+                                       previous_contact=prev_contact)
             _cache.set(_game_key(gid), unified, LIVE_CACHE_TTL_S)
             summaries.append(_summary_from_unified(unified))
         except Exception:
