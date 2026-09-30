@@ -286,6 +286,14 @@ final class APIClient {
     /// `GET /players/{id}/awards`. Returns nil on 404 (player has
     /// no award rows, no All-Star selections, and no vote-share
     /// rows — common for players who never finished in a vote).
+    /// `GET /players/{id}/postseason` — per side, each season with its
+    /// rounds and the career line, plus the current-season flags. Always a
+    /// body; a side is null when the player has no postseason on it.
+    func getPlayerPostseason(playerId: Int) async throws -> PlayerPostseason {
+        let url = try buildURL(path: "/players/\(playerId)/postseason")
+        return try await get(url)
+    }
+
     func getPlayerAwards(playerId: Int) async throws -> PlayerAwardsResponse? {
         let url = try buildURL(path: "/players/\(playerId)/awards")
         return try await getOptional(url)

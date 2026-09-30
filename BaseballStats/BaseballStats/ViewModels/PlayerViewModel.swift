@@ -132,6 +132,10 @@ final class PlayerViewModel: ObservableObject {
     /// `awards?.career_by_year` drive the per-season chiclets in the
     /// frozen pane and the headline-counts row in the header card.
     @Published var awards: PlayerAwardsResponse?
+    /// The postseason record (`/players/{id}/postseason`). nil until loaded,
+    /// and left nil on failure: the Career switch and the Overview line then
+    /// simply don't appear.
+    @Published var postseason: PlayerPostseason?
 
     /// Cumulative box-score overlay for the player across today's
     /// live/final games. Summed in `loadRecentGameStats()` and
@@ -349,11 +353,12 @@ final class PlayerViewModel: ObservableObject {
         async let currentPitchingDone: Void = loadCurrentPitching()
         async let careerPitchingDone:  Void = loadCareerPitching()
         async let awardsDone:          Void = loadAwards()
+        async let postseasonDone:      Void = loadPostseason()
 
         _ = await (
             currentBattingDone, careerBattingDone,
             currentPitchingDone, careerPitchingDone,
-            awardsDone
+            awardsDone, postseasonDone
         )
 
         // Background task — never awaited from `loadData`'s caller so
@@ -1021,6 +1026,15 @@ final class PlayerViewModel: ObservableObject {
             // and no votes legitimately 404s.
         }
         isLoadingAwards = false
+    }
+
+    private func loadPostseason() async {
+        do {
+            postseason = try await api.getPlayerPostseason(playerId: player.player_id)
+        } catch {
+            // Never a screen-level error: without it the profile just has
+            // no postseason view, exactly as for a player who never played one.
+        }
     }
 
     private func loadCurrentBatting() async {

@@ -56,6 +56,11 @@ struct PlayerProfileView: View {
     // optional column the user wants to show; core columns (WAR/G/PA/AB
     // for batting, WAR/G for pitching) are always rendered regardless.
     @State private var showingColumnFilter = false
+    /// Career tab: regular-season table or the postseason one. Offered only
+    /// when the side being shown has a postseason; otherwise it is ignored.
+    @State private var careerScope: CareerScope = .regular
+    /// The postseason season whose rounds sheet is showing.
+    @State private var postseasonSheet: PostseasonSheetItem?
     @State private var visibleBattingColumns: Set<String> = Self.defaultBattingColumns
     @State private var visiblePitchingColumns: Set<String> = Self.defaultPitchingColumns
 
@@ -716,6 +721,7 @@ struct PlayerProfileView: View {
                 window: "Last 15 games"
             )
             battingCurrentSeasonCard
+            battingPostseasonCard
             RecentGamesSection(
                 playerId: player.player_id,
                 isPitcher: false,
@@ -739,6 +745,7 @@ struct PlayerProfileView: View {
                 window: "Recent form"
             )
             pitchingCurrentSeasonCard
+            pitchingPostseasonCard
             RecentGamesSection(
                 playerId: player.player_id,
                 isPitcher: true,
@@ -755,6 +762,69 @@ struct PlayerProfileView: View {
     /// Rankings are guaranteed to ask about the same year.
     private static var overviewSeason: Int {
         Calendar.current.component(.year, from: Date())
+    }
+
+    // MARK: - Current postseason (Overview)
+
+    /// "<season> Postseason" — shown by `showsPostseasonOverviewLine`: while
+    /// the league's postseason runs, once he has appeared, including after his
+    /// team is out. Subtitle: his latest series and where it stands.
+    @ViewBuilder
+    private var battingPostseasonCard: some View {
+        if let line = showsPostseasonOverviewLine(viewModel.postseason, side: viewModel.postseason?.batting) {
+            let t = line.totals
+            currentSeasonGridCard(
+                title: "\(String(line.season)) Postseason",
+                subtitle: postseasonSubtitle(line.rounds.last?.roundName, line.rounds.last?.series),
+                items: [
+                    .init(label: "AVG", value: format3(t.AVG), rank: .unrankable),
+                    .init(label: "OBP", value: format3(t.OBP), rank: .unrankable),
+                    .init(label: "SLG", value: format3(t.SLG), rank: .unrankable),
+                    .init(label: "OPS", value: format3(t.OPS), rank: .unrankable),
+                    .init(label: "HR",  value: formatCount(t.HR),  rank: .unrankable),
+                    .init(label: "RBI", value: formatCount(t.RBI), rank: .unrankable),
+                    .init(label: "H",   value: formatCount(t.H),   rank: .unrankable),
+                    .init(label: "BB",  value: formatCount(t.BB),  rank: .unrankable),
+                    .init(label: "G",   value: formatCount(t.G),   rank: .unrankable),
+                    .init(label: "AB",  value: formatCount(t.AB),  rank: .unrankable),
+                ]
+            )
+            .contentShape(Rectangle())
+            .onTapGesture { postseasonSheet = .batting(line) }
+            .sheet(item: $postseasonSheet) { PostseasonSeasonSheet(item: $0) }
+        }
+    }
+
+    @ViewBuilder
+    private var pitchingPostseasonCard: some View {
+        if let line = showsPostseasonOverviewLine(viewModel.postseason, side: viewModel.postseason?.pitching) {
+            let t = line.totals
+            currentSeasonGridCard(
+                title: "\(String(line.season)) Postseason",
+                subtitle: postseasonSubtitle(line.rounds.last?.roundName, line.rounds.last?.series),
+                items: [
+                    .init(label: "W-L",  value: formatWL(t.W, t.L), rank: .unrankable),
+                    .init(label: "ERA",  value: format2(t.ERA),     rank: .unrankable),
+                    .init(label: "WHIP", value: format2(t.WHIP),    rank: .unrankable),
+                    .init(label: "SV",   value: formatCount(t.SV),  rank: .unrankable),
+                    .init(label: "IP",   value: t.IP,               rank: .unrankable),
+                    .init(label: "G",    value: formatCount(t.G),   rank: .unrankable),
+                    .init(label: "SO",   value: formatCount(t.SO),  rank: .unrankable),
+                    .init(label: "BB",   value: formatCount(t.BB),  rank: .unrankable),
+                    .init(label: "H",    value: formatCount(t.H),   rank: .unrankable),
+                    .init(label: "ER",   value: formatCount(t.ER),  rank: .unrankable),
+                ]
+            )
+            .contentShape(Rectangle())
+            .onTapGesture { postseasonSheet = .pitching(line) }
+            .sheet(item: $postseasonSheet) { PostseasonSeasonSheet(item: $0) }
+        }
+    }
+
+    /// "AL Wild Card · Trails 0-1".
+    private func postseasonSubtitle(_ round: String?, _ series: PostseasonRoundSeries?) -> String? {
+        guard let round, let series else { return nil }
+        return "\(round) · \(series.summary)"
     }
 
     // MARK: - Current season cards (3×3 grids)
@@ -1110,10 +1180,48 @@ struct PlayerProfileView: View {
 
     @ViewBuilder
     private var careerTab: some View {
-        if showingBatting {
-            battingCareer
-        } else {
-            pitchingCareer
+        let hasPostseason = showingBatting
+            ? viewModel.postseason?.batting != nil
+            : viewModel.postseason?.pitching != nil
+        VStack(alignment: .leading, spacing: 10) {
+            if hasPostseason {
+                careerScopePicker
+            }
+            if hasPostseason && careerScope == .postseason {
+                postseasonCareer
+            } else if showingBatting {
+                battingCareer
+            } else {
+                pitchingCareer
+            }
+        }
+        .sheet(item: $postseasonSheet) { item in
+            PostseasonSeasonSheet(item: item)
+        }
+    }
+
+    /// Regular Season | Postseason. Hidden entirely for a player with no
+    /// postseason on this side — no empty state to explain.
+    private var careerScopePicker: some View {
+        Picker("Career", selection: $careerScope) {
+            ForEach(CareerScope.allCases) { Text($0.label).tag($0) }
+        }
+        .pickerStyle(.segmented)
+    }
+
+    @ViewBuilder
+    private var postseasonCareer: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if showingBatting, let side = viewModel.postseason?.batting {
+                PostseasonBattingTable(side: side) { postseasonSheet = .batting($0) }
+            } else if let side = viewModel.postseason?.pitching {
+                PostseasonPitchingTable(side: side) { postseasonSheet = .pitching($0) }
+            }
+            // The logs' coverage, said once, where the numbers are.
+            Text("Postseason games from 1903 on. Tap a season for its series.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 4)
         }
     }
 
@@ -4543,3 +4651,247 @@ final class CurrentSeasonRanksViewModel: ObservableObject {
 }
 
 
+
+// MARK: - Postseason career (Career tab switch, rounds sheet)
+
+/// Career tab scope. The switch appears only when the side being shown has a
+/// postseason (`/players/{id}/postseason`); otherwise it is never offered.
+private enum CareerScope: String, CaseIterable, Identifiable {
+    case regular, postseason
+    var id: String { rawValue }
+    var label: String { self == .regular ? "Regular Season" : "Postseason" }
+}
+
+/// One postseason season's rounds, for the sheet.
+enum PostseasonSheetItem: Identifiable {
+    case batting(PostseasonSeasonLine<PostseasonBattingTotals>)
+    case pitching(PostseasonSeasonLine<PostseasonPitchingTotals>)
+
+    var id: String {
+        switch self {
+        case .batting(let s):  return "bat-\(s.season)"
+        case .pitching(let s): return "pit-\(s.season)"
+        }
+    }
+}
+
+/// Frozen pane of the postseason tables: Year + Team. (No Age column — the
+/// rows are the same seasons as the regular table's, where the age already is.)
+private let postseasonFrozenWidth: CGFloat = 12 + (BattingCareerColumn.year + 4) + 4 + (BattingCareerColumn.team + 4)
+
+/// The postseason career table, batting: the regular table's look — frozen
+/// Year/Team pane, scrolling stat columns at the same widths, the same
+/// formatters — with only the columns a postseason has. A row opens that
+/// season's rounds.
+private struct PostseasonBattingTable: View {
+    let side: PostseasonSide<PostseasonBattingTotals>
+    let onTapSeason: (PostseasonSeasonLine<PostseasonBattingTotals>) -> Void
+
+    private typealias C = BattingCareerColumn
+    private static let columns: [(String, CGFloat)] = [
+        ("G", C.g), ("PA", C.pa), ("AB", C.ab), ("R", C.r), ("H", C.h), ("2B", C.doubles),
+        ("3B", C.triples), ("HR", C.hr), ("RBI", C.rbi), ("SB", C.sb), ("BB", C.bb), ("SO", C.so),
+        ("BA", C.ba), ("OBP", C.obp), ("SLG", C.slg), ("OPS", C.ops),
+    ]
+
+    private func values(_ t: PostseasonBattingTotals) -> [String] {
+        [formatCount(t.G), formatCount(t.PA), formatCount(t.AB), formatCount(t.R), formatCount(t.H),
+         formatCount(t.doubles), formatCount(t.triples), formatCount(t.HR), formatCount(t.RBI),
+         formatCount(t.SB), formatCount(t.BB), formatCount(t.SO),
+         format3(t.AVG), format3(t.OBP), format3(t.SLG), format3(t.OPS)]
+    }
+
+    var body: some View {
+        PostseasonTableFrame(
+            seasons: side.seasons.map { ($0.season, $0.team, values($0.totals)) },
+            career: values(side.career),
+            columns: Self.columns,
+            onTap: { i in onTapSeason(side.seasons[i]) })
+    }
+}
+
+private struct PostseasonPitchingTable: View {
+    let side: PostseasonSide<PostseasonPitchingTotals>
+    let onTapSeason: (PostseasonSeasonLine<PostseasonPitchingTotals>) -> Void
+
+    private typealias C = PitchingCareerColumn
+    private static let columns: [(String, CGFloat)] = [
+        ("G", C.g), ("GS", C.gs), ("W", C.w), ("L", C.l), ("SV", C.sv), ("IP", C.ip), ("H", C.h),
+        ("R", C.r), ("ER", C.er), ("HR", C.hr), ("BB", C.bb), ("SO", C.so), ("ERA", C.era), ("WHIP", C.era),
+    ]
+
+    private func values(_ t: PostseasonPitchingTotals) -> [String] {
+        [formatCount(t.G), formatCount(t.GS), formatCount(t.W), formatCount(t.L), formatCount(t.SV),
+         formatIP(t.inningsDecimal), formatCount(t.H), formatCount(t.R), formatCount(t.ER),
+         formatCount(t.HR), formatCount(t.BB), formatCount(t.SO), format2(t.ERA), format2(t.WHIP)]
+    }
+
+    var body: some View {
+        PostseasonTableFrame(
+            seasons: side.seasons.map { ($0.season, $0.team, values($0.totals)) },
+            career: values(side.career),
+            columns: Self.columns,
+            onTap: { i in onTapSeason(side.seasons[i]) })
+    }
+}
+
+/// The shared frame of both postseason tables.
+private struct PostseasonTableFrame: View {
+    let seasons: [(year: Int, team: String, values: [String])]
+    let career: [String]
+    let columns: [(String, CGFloat)]
+    let onTap: (Int) -> Void
+
+    var body: some View {
+        HStack(spacing: 0) {
+            VStack(spacing: 0) {
+                frozenRow(year: "Year", team: "Team", header: true)
+                Divider()
+                ForEach(Array(seasons.enumerated()), id: \.offset) { i, s in
+                    frozenRow(year: String(s.year), team: displayTeamCode(s.team), header: false)
+                        .contentShape(Rectangle())
+                        .onTapGesture { onTap(i) }
+                    if i != seasons.count - 1 { Divider().opacity(0.4) }
+                }
+                Divider()
+                frozenRow(year: "Career", team: "", header: true)
+                    .background(Color(.systemGray5).opacity(0.7))
+            }
+            .frame(width: postseasonFrozenWidth)
+            .background(.ultraThinMaterial)
+            .shadow(color: .black.opacity(0.08), radius: 4, x: 2, y: 0)
+            .zIndex(1)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                VStack(spacing: 0) {
+                    statRow(columns.map(\.0), header: true)
+                    Divider()
+                    ForEach(Array(seasons.enumerated()), id: \.offset) { i, s in
+                        statRow(s.values, header: false)
+                            .contentShape(Rectangle())
+                            .onTapGesture { onTap(i) }
+                        if i != seasons.count - 1 { Divider().opacity(0.4) }
+                    }
+                    Divider()
+                    statRow(career, header: true)
+                        .background(Color(.systemGray5).opacity(0.7))
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    private func frozenRow(year: String, team: String, header: Bool) -> some View {
+        HStack(spacing: 0) {
+            Text(year)
+                .frame(width: BattingCareerColumn.year, alignment: .leading)
+                .padding(.horizontal, 2)
+            Color.clear.frame(width: 4)
+            Text(team)
+                .lineLimit(1)
+                .frame(width: BattingCareerColumn.team, alignment: .leading)
+                .padding(.horizontal, 2)
+        }
+        .font(.system(size: header ? 9.5 : 11, weight: header ? .semibold : .regular))
+        .foregroundStyle(header && year == "Year" ? .secondary : .primary)
+        .lineLimit(1)
+        .minimumScaleFactor(0.6)
+        .padding(.leading, 12)
+        .frame(height: 28)
+    }
+
+    private func statRow(_ values: [String], header: Bool) -> some View {
+        HStack(spacing: 0) {
+            ForEach(Array(zip(values, columns).enumerated()), id: \.offset) { _, pair in
+                Text(pair.0)
+                    .frame(width: pair.1.1, alignment: .trailing)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                    .padding(.horizontal, 2)
+            }
+        }
+        .font(.system(size: 11, weight: header ? .semibold : .regular))
+        .foregroundStyle(header && values == columns.map(\.0) ? .secondary : .primary)
+        .padding(.trailing, 12)
+        .frame(height: 28)
+    }
+}
+
+/// One postseason season, round by round: opponent, series result, his line.
+struct PostseasonSeasonSheet: View {
+    let item: PostseasonSheetItem
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                switch item {
+                case .batting(let s):
+                    Section {
+                        ForEach(s.rounds) { r in
+                            roundRow(r.roundName, r.opponentName ?? r.opponent, r.series, battingLine(r.totals))
+                        }
+                    } header: {
+                        Text(s.teamName ?? s.team)
+                    } footer: {
+                        Text("Season: \(battingLine(s.totals))")
+                    }
+                case .pitching(let s):
+                    Section {
+                        ForEach(s.rounds) { r in
+                            roundRow(r.roundName, r.opponentName ?? r.opponent, r.series, pitchingLine(r.totals))
+                        }
+                    } header: {
+                        Text(s.teamName ?? s.team)
+                    } footer: {
+                        Text("Season: \(pitchingLine(s.totals))")
+                    }
+                }
+            }
+            .listStyle(.insetGrouped)
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private var title: String {
+        switch item {
+        case .batting(let s):  return "\(String(s.season)) Postseason"
+        case .pitching(let s): return "\(String(s.season)) Postseason"
+        }
+    }
+
+    /// One Text per line: an HStack of Texts breaks mid-word at AX sizes.
+    private func roundRow(_ round: String, _ opponent: String, _ series: PostseasonRoundSeries,
+                          _ line: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text("\(round) vs \(opponent)")
+                .font(.subheadline.weight(.semibold))
+            Text(series.summary)
+                .font(.caption)
+                .foregroundStyle(series.won == nil ? Color.accentColor : .secondary)
+            Text(line)
+                .font(.caption)
+                .monospacedDigit()
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func battingLine(_ t: PostseasonBattingTotals) -> String {
+        "\(t.G) G · \(t.H)-for-\(t.AB) · \(t.HR) HR · \(t.RBI) RBI · \(t.BB) BB · \(t.SO) SO · "
+            + "\(format3(t.AVG))/\(format3(t.OBP))/\(format3(t.SLG))"
+    }
+
+    private func pitchingLine(_ t: PostseasonPitchingTotals) -> String {
+        "\(t.G) G · \(t.IP) IP · \(t.W)-\(t.L)" + (t.SV > 0 ? " · \(t.SV) SV" : "")
+            + " · \(t.ER) ER · \(t.SO) SO · \(t.BB) BB · \(format2(t.ERA)) ERA"
+    }
+}
