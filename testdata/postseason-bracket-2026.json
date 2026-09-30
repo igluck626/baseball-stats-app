@@ -1,0 +1,682 @@
+{
+ "fetched_at": "2026-09-30T02:00:00+00:00",
+ "season": 2026,
+ "leagues": {
+  "AL": {
+   "trusted": true,
+   "seeds": [
+    {
+     "seed": 1,
+     "team": "TB"
+    },
+    {
+     "seed": 2,
+     "team": "CLE"
+    },
+    {
+     "seed": 3,
+     "team": "HOU"
+    },
+    {
+     "seed": 4,
+     "team": "NYY"
+    },
+    {
+     "seed": 5,
+     "team": "BOS"
+    },
+    {
+     "seed": 6,
+     "team": "CHW"
+    }
+   ],
+   "slots": [
+    {
+     "id": "AL-WC-3v6",
+     "round": "WC",
+     "round_name": "AL Wild Card",
+     "league": "AL",
+     "best_of": 3,
+     "sides": [
+      {
+       "team": "HOU",
+       "seed": 3,
+       "candidates": [
+        "HOU"
+       ]
+      },
+      {
+       "team": "CHW",
+       "seed": 6,
+       "candidates": [
+        "CHW"
+       ]
+      }
+     ],
+     "state": "scheduled",
+     "winner": null,
+     "series": {
+      "teams": [
+       "CHW",
+       "HOU"
+      ],
+      "seeds": {
+       "CHW": 6,
+       "HOU": 3
+      },
+      "league": "AL",
+      "round": "WC",
+      "round_name": "AL Wild Card",
+      "best_of": 3,
+      "wins": {
+       "CHW": 0,
+       "HOU": 0
+      },
+      "is_over": false,
+      "winner": null,
+      "games": [
+       {
+        "game_id": 15457178,
+        "game_number": 1,
+        "date": "2026-09-29T21:00:00.000Z",
+        "status": "STATUS_SCHEDULED",
+        "home": "HOU",
+        "away": "CHW",
+        "home_runs": 0,
+        "away_runs": 0,
+        "label": "AL Wild Card \u00b7 Game 1",
+        "if_necessary": false,
+        "series_status": null,
+        "line": "AL Wild Card \u00b7 Game 1",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       },
+       {
+        "game_id": 15467362,
+        "game_number": 2,
+        "date": "2026-09-30T21:00:00.000Z",
+        "status": "STATUS_SCHEDULED",
+        "home": "HOU",
+        "away": "CHW",
+        "home_runs": 0,
+        "away_runs": 0,
+        "label": "AL Wild Card \u00b7 Game 2",
+        "if_necessary": false,
+        "series_status": null,
+        "line": "AL Wild Card \u00b7 Game 2",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       },
+       {
+        "game_id": 15467366,
+        "game_number": 3,
+        "date": "2026-10-01T21:00:00.000Z",
+        "status": "STATUS_SCHEDULED",
+        "home": "HOU",
+        "away": "CHW",
+        "home_runs": 0,
+        "away_runs": 0,
+        "label": "AL Wild Card \u00b7 Game 3",
+        "if_necessary": true,
+        "series_status": null,
+        "line": "AL Wild Card \u00b7 Game 3 (if necessary)",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       }
+      ]
+     }
+    },
+    {
+     "id": "AL-WC-4v5",
+     "round": "WC",
+     "round_name": "AL Wild Card",
+     "league": "AL",
+     "best_of": 3,
+     "sides": [
+      {
+       "team": "NYY",
+       "seed": 4,
+       "candidates": [
+        "NYY"
+       ]
+      },
+      {
+       "team": "BOS",
+       "seed": 5,
+       "candidates": [
+        "BOS"
+       ]
+      }
+     ],
+     "state": "scheduled",
+     "winner": null,
+     "series": {
+      "teams": [
+       "BOS",
+       "NYY"
+      ],
+      "seeds": {
+       "BOS": 5,
+       "NYY": 4
+      },
+      "league": "AL",
+      "round": "WC",
+      "round_name": "AL Wild Card",
+      "best_of": 3,
+      "wins": {
+       "BOS": 0,
+       "NYY": 0
+      },
+      "is_over": false,
+      "winner": null,
+      "games": [
+       {
+        "game_id": 15457179,
+        "game_number": 1,
+        "date": "2026-09-30T00:00:00.000Z",
+        "status": "STATUS_SCHEDULED",
+        "home": "NYY",
+        "away": "BOS",
+        "home_runs": 0,
+        "away_runs": 0,
+        "label": "AL Wild Card \u00b7 Game 1",
+        "if_necessary": false,
+        "series_status": null,
+        "line": "AL Wild Card \u00b7 Game 1",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       },
+       {
+        "game_id": 15467363,
+        "game_number": 2,
+        "date": "2026-10-01T00:00:00.000Z",
+        "status": "STATUS_SCHEDULED",
+        "home": "NYY",
+        "away": "BOS",
+        "home_runs": 0,
+        "away_runs": 0,
+        "label": "AL Wild Card \u00b7 Game 2",
+        "if_necessary": false,
+        "series_status": null,
+        "line": "AL Wild Card \u00b7 Game 2",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       },
+       {
+        "game_id": 15467367,
+        "game_number": 3,
+        "date": "2026-10-02T00:00:00.000Z",
+        "status": "STATUS_SCHEDULED",
+        "home": "NYY",
+        "away": "BOS",
+        "home_runs": 0,
+        "away_runs": 0,
+        "label": "AL Wild Card \u00b7 Game 3",
+        "if_necessary": true,
+        "series_status": null,
+        "line": "AL Wild Card \u00b7 Game 3 (if necessary)",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       }
+      ]
+     }
+    },
+    {
+     "id": "AL-DS-1",
+     "round": "DS",
+     "round_name": "ALDS",
+     "league": "AL",
+     "best_of": 5,
+     "sides": [
+      {
+       "team": "TB",
+       "seed": 1,
+       "candidates": [
+        "TB"
+       ]
+      },
+      {
+       "team": null,
+       "seed": null,
+       "candidates": [
+        "NYY",
+        "BOS"
+       ]
+      }
+     ],
+     "state": "tbd",
+     "winner": null,
+     "series": null
+    },
+    {
+     "id": "AL-DS-2",
+     "round": "DS",
+     "round_name": "ALDS",
+     "league": "AL",
+     "best_of": 5,
+     "sides": [
+      {
+       "team": "CLE",
+       "seed": 2,
+       "candidates": [
+        "CLE"
+       ]
+      },
+      {
+       "team": null,
+       "seed": null,
+       "candidates": [
+        "HOU",
+        "CHW"
+       ]
+      }
+     ],
+     "state": "tbd",
+     "winner": null,
+     "series": null
+    },
+    {
+     "id": "AL-CS",
+     "round": "CS",
+     "round_name": "ALCS",
+     "league": "AL",
+     "best_of": 7,
+     "sides": [
+      {
+       "team": null,
+       "seed": null,
+       "candidates": [
+        "TB",
+        "NYY",
+        "BOS"
+       ]
+      },
+      {
+       "team": null,
+       "seed": null,
+       "candidates": [
+        "CLE",
+        "HOU",
+        "CHW"
+       ]
+      }
+     ],
+     "state": "tbd",
+     "winner": null,
+     "series": null
+    }
+   ],
+   "series": []
+  },
+  "NL": {
+   "trusted": true,
+   "seeds": [
+    {
+     "seed": 1,
+     "team": "MIL"
+    },
+    {
+     "seed": 2,
+     "team": "LAD"
+    },
+    {
+     "seed": 3,
+     "team": "ATL"
+    },
+    {
+     "seed": 4,
+     "team": "SD"
+    },
+    {
+     "seed": 5,
+     "team": "CHC"
+    },
+    {
+     "seed": 6,
+     "team": "PHI"
+    }
+   ],
+   "slots": [
+    {
+     "id": "NL-WC-3v6",
+     "round": "WC",
+     "round_name": "NL Wild Card",
+     "league": "NL",
+     "best_of": 3,
+     "sides": [
+      {
+       "team": "ATL",
+       "seed": 3,
+       "candidates": [
+        "ATL"
+       ]
+      },
+      {
+       "team": "PHI",
+       "seed": 6,
+       "candidates": [
+        "PHI"
+       ]
+      }
+     ],
+     "state": "in_progress",
+     "winner": null,
+     "series": {
+      "teams": [
+       "ATL",
+       "PHI"
+      ],
+      "seeds": {
+       "ATL": 3,
+       "PHI": 6
+      },
+      "league": "NL",
+      "round": "WC",
+      "round_name": "NL Wild Card",
+      "best_of": 3,
+      "wins": {
+       "ATL": 1,
+       "PHI": 0
+      },
+      "is_over": false,
+      "winner": null,
+      "games": [
+       {
+        "game_id": 15457180,
+        "game_number": 1,
+        "date": "2026-09-29T18:00:00.000Z",
+        "status": "STATUS_FINAL",
+        "home": "ATL",
+        "away": "PHI",
+        "home_runs": 3,
+        "away_runs": 1,
+        "label": "NL Wild Card \u00b7 Game 1",
+        "if_necessary": false,
+        "series_status": "ATL leads 1-0",
+        "line": "ATL leads 1-0",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       },
+       {
+        "game_id": 15467364,
+        "game_number": 2,
+        "date": "2026-09-30T18:00:00.000Z",
+        "status": "STATUS_SCHEDULED",
+        "home": "ATL",
+        "away": "PHI",
+        "home_runs": 0,
+        "away_runs": 0,
+        "label": "NL Wild Card \u00b7 Game 2",
+        "if_necessary": false,
+        "series_status": "ATL leads 1-0",
+        "line": "NL Wild Card \u00b7 Game 2 \u00b7 ATL leads 1-0",
+        "can_clinch": true,
+        "clinch_teams": [
+         "ATL"
+        ],
+        "elimination_game": true,
+        "elimination_teams": [
+         "PHI"
+        ]
+       },
+       {
+        "game_id": 15467368,
+        "game_number": 3,
+        "date": "2026-10-01T18:00:00.000Z",
+        "status": "STATUS_SCHEDULED",
+        "home": "ATL",
+        "away": "PHI",
+        "home_runs": 0,
+        "away_runs": 0,
+        "label": "NL Wild Card \u00b7 Game 3",
+        "if_necessary": true,
+        "series_status": null,
+        "line": "NL Wild Card \u00b7 Game 3 (if necessary)",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       }
+      ]
+     }
+    },
+    {
+     "id": "NL-WC-4v5",
+     "round": "WC",
+     "round_name": "NL Wild Card",
+     "league": "NL",
+     "best_of": 3,
+     "sides": [
+      {
+       "team": "SD",
+       "seed": 4,
+       "candidates": [
+        "SD"
+       ]
+      },
+      {
+       "team": "CHC",
+       "seed": 5,
+       "candidates": [
+        "CHC"
+       ]
+      }
+     ],
+     "state": "scheduled",
+     "winner": null,
+     "series": {
+      "teams": [
+       "CHC",
+       "SD"
+      ],
+      "seeds": {
+       "CHC": 5,
+       "SD": 4
+      },
+      "league": "NL",
+      "round": "WC",
+      "round_name": "NL Wild Card",
+      "best_of": 3,
+      "wins": {
+       "CHC": 0,
+       "SD": 0
+      },
+      "is_over": false,
+      "winner": null,
+      "games": [
+       {
+        "game_id": 15457181,
+        "game_number": 1,
+        "date": "2026-09-30T02:00:00.000Z",
+        "status": "STATUS_SCHEDULED",
+        "home": "SD",
+        "away": "CHC",
+        "home_runs": 0,
+        "away_runs": 0,
+        "label": "NL Wild Card \u00b7 Game 1",
+        "if_necessary": false,
+        "series_status": null,
+        "line": "NL Wild Card \u00b7 Game 1",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       },
+       {
+        "game_id": 15467365,
+        "game_number": 2,
+        "date": "2026-10-01T02:00:00.000Z",
+        "status": "STATUS_SCHEDULED",
+        "home": "SD",
+        "away": "CHC",
+        "home_runs": 0,
+        "away_runs": 0,
+        "label": "NL Wild Card \u00b7 Game 2",
+        "if_necessary": false,
+        "series_status": null,
+        "line": "NL Wild Card \u00b7 Game 2",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       },
+       {
+        "game_id": 15467369,
+        "game_number": 3,
+        "date": "2026-10-02T02:00:00.000Z",
+        "status": "STATUS_SCHEDULED",
+        "home": "SD",
+        "away": "CHC",
+        "home_runs": 0,
+        "away_runs": 0,
+        "label": "NL Wild Card \u00b7 Game 3",
+        "if_necessary": true,
+        "series_status": null,
+        "line": "NL Wild Card \u00b7 Game 3 (if necessary)",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       }
+      ]
+     }
+    },
+    {
+     "id": "NL-DS-1",
+     "round": "DS",
+     "round_name": "NLDS",
+     "league": "NL",
+     "best_of": 5,
+     "sides": [
+      {
+       "team": "MIL",
+       "seed": 1,
+       "candidates": [
+        "MIL"
+       ]
+      },
+      {
+       "team": null,
+       "seed": null,
+       "candidates": [
+        "SD",
+        "CHC"
+       ]
+      }
+     ],
+     "state": "tbd",
+     "winner": null,
+     "series": null
+    },
+    {
+     "id": "NL-DS-2",
+     "round": "DS",
+     "round_name": "NLDS",
+     "league": "NL",
+     "best_of": 5,
+     "sides": [
+      {
+       "team": "LAD",
+       "seed": 2,
+       "candidates": [
+        "LAD"
+       ]
+      },
+      {
+       "team": null,
+       "seed": null,
+       "candidates": [
+        "ATL",
+        "PHI"
+       ]
+      }
+     ],
+     "state": "tbd",
+     "winner": null,
+     "series": null
+    },
+    {
+     "id": "NL-CS",
+     "round": "CS",
+     "round_name": "NLCS",
+     "league": "NL",
+     "best_of": 7,
+     "sides": [
+      {
+       "team": null,
+       "seed": null,
+       "candidates": [
+        "MIL",
+        "SD",
+        "CHC"
+       ]
+      },
+      {
+       "team": null,
+       "seed": null,
+       "candidates": [
+        "LAD",
+        "ATL",
+        "PHI"
+       ]
+      }
+     ],
+     "state": "tbd",
+     "winner": null,
+     "series": null
+    }
+   ],
+   "series": []
+  }
+ },
+ "world_series": {
+  "id": "WS",
+  "round": "WS",
+  "round_name": "World Series",
+  "league": null,
+  "best_of": 7,
+  "sides": [
+   {
+    "team": null,
+    "seed": null,
+    "candidates": [
+     "TB",
+     "NYY",
+     "BOS",
+     "CLE",
+     "HOU",
+     "CHW"
+    ]
+   },
+   {
+    "team": null,
+    "seed": null,
+    "candidates": [
+     "MIL",
+     "SD",
+     "CHC",
+     "LAD",
+     "ATL",
+     "PHI"
+    ]
+   }
+  ],
+  "state": "tbd",
+  "winner": null,
+  "series": null
+ }
+}

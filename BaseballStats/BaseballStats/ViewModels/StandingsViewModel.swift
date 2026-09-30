@@ -13,6 +13,12 @@ import Foundation
 final class StandingsViewModel: ObservableObject {
     /// AL standings keyed by single-letter division code ("E", "C", "W").
     /// Each bucket is sorted by win_pct desc with rank as a tiebreaker.
+    /// Whether the CURRENT year's standings show a game played — an input to
+    /// `standingsDefault` (Opening Day has come once one has). `false` when the
+    /// backend has no standings for the year yet; nil until a load of the
+    /// current year succeeds, and left alone by a failed one — unknown is not
+    /// "no games".
+    @Published private(set) var currentYearGamesPlayed: Bool?
     @Published var alStandings: [String: [TeamStanding]] = [:]
     @Published var nlStandings: [String: [TeamStanding]] = [:]
     /// Wildcard race per league — all non-division-leader teams sorted
@@ -126,6 +132,10 @@ final class StandingsViewModel: ObservableObject {
         }
         do {
             let response = try await api.getStandings(year: selectedYear)
+            if selectedYear == Self.currentYear {
+                currentYearGamesPlayed = (response?.standings ?? [])
+                    .contains { ($0.W ?? 0) + ($0.L ?? 0) > 0 }
+            }
             partition(response)
             lastUpdated = response?.last_updated
             recentForm  = response?.recent_form

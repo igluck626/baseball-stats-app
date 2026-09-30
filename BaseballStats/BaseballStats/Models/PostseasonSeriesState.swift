@@ -41,6 +41,13 @@ struct PostseasonSeriesState: Codable, Hashable {
 struct PostseasonSeriesGame: Codable, Hashable {
     let gameId: Int             // balldontlie game id
     let gameNumber: Int
+    /// ISO start time, and the two teams with their runs — read by the bracket's
+    /// series sheet. Optional so a payload without them still decodes.
+    let date: String?
+    let home: String?
+    let away: String?
+    let homeRuns: Int?
+    let awayRuns: Int?
     let status: String
     let label: String           // "AL Wild Card · Game 2"
     let ifNecessary: Bool
@@ -50,8 +57,10 @@ struct PostseasonSeriesGame: Codable, Hashable {
     let eliminationGame: Bool
 
     enum CodingKeys: String, CodingKey {
-        case status, label, line
+        case status, label, line, date, home, away
         case gameId = "game_id"
+        case homeRuns = "home_runs"
+        case awayRuns = "away_runs"
         case gameNumber = "game_number"
         case ifNecessary = "if_necessary"
         case seriesStatus = "series_status"

@@ -360,6 +360,16 @@ final class APIClient {
         return try await get(url)
     }
 
+    /// `GET /postseason/bracket?season=YYYY` — the current format's bracket
+    /// (2022 on) at any stage. 404 before 2022; 503 when balldontlie fails.
+    func getPostseasonBracket(season: Int) async throws -> LiveBracket {
+        let url = try buildURL(
+            path: "/postseason/bracket",
+            query: [URLQueryItem(name: "season", value: String(season))]
+        )
+        return try await get(url)
+    }
+
     func getLiveGames() async throws -> LiveGamesResponse {
         let url = try buildURL(path: "/live/games")
         return try await get(url)

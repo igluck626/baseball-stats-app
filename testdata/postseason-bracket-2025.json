@@ -1,0 +1,1433 @@
+{
+ "fetched_at": "2026-09-30T02:00:00+00:00",
+ "season": 2025,
+ "leagues": {
+  "AL": {
+   "trusted": true,
+   "seeds": [
+    {
+     "seed": 1,
+     "team": "TOR"
+    },
+    {
+     "seed": 2,
+     "team": "SEA"
+    },
+    {
+     "seed": 3,
+     "team": "CLE"
+    },
+    {
+     "seed": 4,
+     "team": "NYY"
+    },
+    {
+     "seed": 5,
+     "team": "BOS"
+    },
+    {
+     "seed": 6,
+     "team": "DET"
+    }
+   ],
+   "slots": [
+    {
+     "id": "AL-WC-3v6",
+     "round": "WC",
+     "round_name": "AL Wild Card",
+     "league": "AL",
+     "best_of": 3,
+     "sides": [
+      {
+       "team": "CLE",
+       "seed": 3,
+       "candidates": [
+        "CLE"
+       ]
+      },
+      {
+       "team": "DET",
+       "seed": 6,
+       "candidates": [
+        "DET"
+       ]
+      }
+     ],
+     "state": "complete",
+     "winner": "DET",
+     "series": {
+      "teams": [
+       "CLE",
+       "DET"
+      ],
+      "seeds": {
+       "CLE": 3,
+       "DET": 6
+      },
+      "league": "AL",
+      "round": "WC",
+      "round_name": "AL Wild Card",
+      "best_of": 3,
+      "wins": {
+       "CLE": 1,
+       "DET": 2
+      },
+      "is_over": true,
+      "winner": "DET",
+      "games": [
+       {
+        "game_id": 4506563,
+        "game_number": 1,
+        "date": "2025-09-30T17:00:00.000Z",
+        "status": "STATUS_FINAL",
+        "home": "CLE",
+        "away": "DET",
+        "home_runs": 1,
+        "away_runs": 2,
+        "label": "AL Wild Card \u00b7 Game 1",
+        "if_necessary": false,
+        "series_status": "DET leads 1-0",
+        "line": "DET leads 1-0",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       },
+       {
+        "game_id": 4509085,
+        "game_number": 2,
+        "date": "2025-10-01T17:00:00.000Z",
+        "status": "STATUS_FINAL",
+        "home": "CLE",
+        "away": "DET",
+        "home_runs": 6,
+        "away_runs": 1,
+        "label": "AL Wild Card \u00b7 Game 2",
+        "if_necessary": false,
+        "series_status": "Series tied 1-1",
+        "line": "Series tied 1-1",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       },
+       {
+        "game_id": 4509089,
+        "game_number": 3,
+        "date": "2025-10-02T19:00:00.000Z",
+        "status": "STATUS_FINAL",
+        "home": "CLE",
+        "away": "DET",
+        "home_runs": 3,
+        "away_runs": 6,
+        "label": "AL Wild Card \u00b7 Game 3",
+        "if_necessary": false,
+        "series_status": "DET wins 2-1",
+        "line": "DET wins 2-1",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       }
+      ]
+     }
+    },
+    {
+     "id": "AL-WC-4v5",
+     "round": "WC",
+     "round_name": "AL Wild Card",
+     "league": "AL",
+     "best_of": 3,
+     "sides": [
+      {
+       "team": "NYY",
+       "seed": 4,
+       "candidates": [
+        "NYY"
+       ]
+      },
+      {
+       "team": "BOS",
+       "seed": 5,
+       "candidates": [
+        "BOS"
+       ]
+      }
+     ],
+     "state": "complete",
+     "winner": "NYY",
+     "series": {
+      "teams": [
+       "BOS",
+       "NYY"
+      ],
+      "seeds": {
+       "BOS": 5,
+       "NYY": 4
+      },
+      "league": "AL",
+      "round": "WC",
+      "round_name": "AL Wild Card",
+      "best_of": 3,
+      "wins": {
+       "BOS": 1,
+       "NYY": 2
+      },
+      "is_over": true,
+      "winner": "NYY",
+      "games": [
+       {
+        "game_id": 4506565,
+        "game_number": 1,
+        "date": "2025-09-30T22:00:00.000Z",
+        "status": "STATUS_FINAL",
+        "home": "NYY",
+        "away": "BOS",
+        "home_runs": 1,
+        "away_runs": 3,
+        "label": "AL Wild Card \u00b7 Game 1",
+        "if_necessary": false,
+        "series_status": "BOS leads 1-0",
+        "line": "BOS leads 1-0",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       },
+       {
+        "game_id": 4509087,
+        "game_number": 2,
+        "date": "2025-10-01T22:00:00.000Z",
+        "status": "STATUS_FINAL",
+        "home": "NYY",
+        "away": "BOS",
+        "home_runs": 4,
+        "away_runs": 3,
+        "label": "AL Wild Card \u00b7 Game 2",
+        "if_necessary": false,
+        "series_status": "Series tied 1-1",
+        "line": "Series tied 1-1",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       },
+       {
+        "game_id": 4509091,
+        "game_number": 3,
+        "date": "2025-10-03T00:00:00.000Z",
+        "status": "STATUS_FINAL",
+        "home": "NYY",
+        "away": "BOS",
+        "home_runs": 4,
+        "away_runs": 0,
+        "label": "AL Wild Card \u00b7 Game 3",
+        "if_necessary": false,
+        "series_status": "NYY wins 2-1",
+        "line": "NYY wins 2-1",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       }
+      ]
+     }
+    },
+    {
+     "id": "AL-DS-1",
+     "round": "DS",
+     "round_name": "ALDS",
+     "league": "AL",
+     "best_of": 5,
+     "sides": [
+      {
+       "team": "TOR",
+       "seed": 1,
+       "candidates": [
+        "TOR"
+       ]
+      },
+      {
+       "team": "NYY",
+       "seed": 4,
+       "candidates": [
+        "NYY"
+       ]
+      }
+     ],
+     "state": "complete",
+     "winner": "TOR",
+     "series": {
+      "teams": [
+       "NYY",
+       "TOR"
+      ],
+      "seeds": {
+       "NYY": 4,
+       "TOR": 1
+      },
+      "league": "AL",
+      "round": "DS",
+      "round_name": "ALDS",
+      "best_of": 5,
+      "wins": {
+       "NYY": 1,
+       "TOR": 3
+      },
+      "is_over": true,
+      "winner": "TOR",
+      "games": [
+       {
+        "game_id": 4576969,
+        "game_number": 1,
+        "date": "2025-10-04T20:08:00.000Z",
+        "status": "STATUS_FINAL",
+        "home": "TOR",
+        "away": "NYY",
+        "home_runs": 10,
+        "away_runs": 1,
+        "label": "ALDS \u00b7 Game 1",
+        "if_necessary": false,
+        "series_status": "TOR leads 1-0",
+        "line": "TOR leads 1-0",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       },
+       {
+        "game_id": 4576972,
+        "game_number": 2,
+        "date": "2025-10-05T20:08:00.000Z",
+        "status": "STATUS_FINAL",
+        "home": "TOR",
+        "away": "NYY",
+        "home_runs": 13,
+        "away_runs": 7,
+        "label": "ALDS \u00b7 Game 2",
+        "if_necessary": false,
+        "series_status": "TOR leads 2-0",
+        "line": "TOR leads 2-0",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       },
+       {
+        "game_id": 4509101,
+        "game_number": 3,
+        "date": "2025-10-08T00:08:00.000Z",
+        "status": "STATUS_FINAL",
+        "home": "NYY",
+        "away": "TOR",
+        "home_runs": 9,
+        "away_runs": 6,
+        "label": "ALDS \u00b7 Game 3",
+        "if_necessary": false,
+        "series_status": "TOR leads 2-1",
+        "line": "TOR leads 2-1",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       },
+       {
+        "game_id": 4509103,
+        "game_number": 4,
+        "date": "2025-10-08T23:08:00.000Z",
+        "status": "STATUS_FINAL",
+        "home": "NYY",
+        "away": "TOR",
+        "home_runs": 2,
+        "away_runs": 5,
+        "label": "ALDS \u00b7 Game 4",
+        "if_necessary": false,
+        "series_status": "TOR wins 3-1",
+        "line": "TOR wins 3-1",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       }
+      ]
+     }
+    },
+    {
+     "id": "AL-DS-2",
+     "round": "DS",
+     "round_name": "ALDS",
+     "league": "AL",
+     "best_of": 5,
+     "sides": [
+      {
+       "team": "SEA",
+       "seed": 2,
+       "candidates": [
+        "SEA"
+       ]
+      },
+      {
+       "team": "DET",
+       "seed": 6,
+       "candidates": [
+        "DET"
+       ]
+      }
+     ],
+     "state": "complete",
+     "winner": "SEA",
+     "series": {
+      "teams": [
+       "DET",
+       "SEA"
+      ],
+      "seeds": {
+       "DET": 6,
+       "SEA": 2
+      },
+      "league": "AL",
+      "round": "DS",
+      "round_name": "ALDS",
+      "best_of": 5,
+      "wins": {
+       "DET": 2,
+       "SEA": 3
+      },
+      "is_over": true,
+      "winner": "SEA",
+      "games": [
+       {
+        "game_id": 4576971,
+        "game_number": 1,
+        "date": "2025-10-05T00:38:00.000Z",
+        "status": "STATUS_FINAL",
+        "home": "SEA",
+        "away": "DET",
+        "home_runs": 2,
+        "away_runs": 3,
+        "label": "ALDS \u00b7 Game 1",
+        "if_necessary": false,
+        "series_status": "DET leads 1-0",
+        "line": "DET leads 1-0",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       },
+       {
+        "game_id": 4576973,
+        "game_number": 2,
+        "date": "2025-10-06T00:03:00.000Z",
+        "status": "STATUS_FINAL",
+        "home": "SEA",
+        "away": "DET",
+        "home_runs": 3,
+        "away_runs": 2,
+        "label": "ALDS \u00b7 Game 2",
+        "if_necessary": false,
+        "series_status": "Series tied 1-1",
+        "line": "Series tied 1-1",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       },
+       {
+        "game_id": 4509102,
+        "game_number": 3,
+        "date": "2025-10-07T20:08:00.000Z",
+        "status": "STATUS_FINAL",
+        "home": "DET",
+        "away": "SEA",
+        "home_runs": 4,
+        "away_runs": 8,
+        "label": "ALDS \u00b7 Game 3",
+        "if_necessary": false,
+        "series_status": "SEA leads 2-1",
+        "line": "SEA leads 2-1",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       },
+       {
+        "game_id": 4509104,
+        "game_number": 4,
+        "date": "2025-10-08T19:08:00.000Z",
+        "status": "STATUS_FINAL",
+        "home": "DET",
+        "away": "SEA",
+        "home_runs": 9,
+        "away_runs": 3,
+        "label": "ALDS \u00b7 Game 4",
+        "if_necessary": false,
+        "series_status": "Series tied 2-2",
+        "line": "Series tied 2-2",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       },
+       {
+        "game_id": 4576985,
+        "game_number": 5,
+        "date": "2025-10-11T00:08:00.000Z",
+        "status": "STATUS_FINAL",
+        "home": "SEA",
+        "away": "DET",
+        "home_runs": 3,
+        "away_runs": 2,
+        "label": "ALDS \u00b7 Game 5",
+        "if_necessary": false,
+        "series_status": "SEA wins 3-2",
+        "line": "SEA wins 3-2",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       }
+      ]
+     }
+    },
+    {
+     "id": "AL-CS",
+     "round": "CS",
+     "round_name": "ALCS",
+     "league": "AL",
+     "best_of": 7,
+     "sides": [
+      {
+       "team": "TOR",
+       "seed": 1,
+       "candidates": [
+        "TOR"
+       ]
+      },
+      {
+       "team": "SEA",
+       "seed": 2,
+       "candidates": [
+        "SEA"
+       ]
+      }
+     ],
+     "state": "complete",
+     "winner": "TOR",
+     "series": {
+      "teams": [
+       "SEA",
+       "TOR"
+      ],
+      "seeds": {
+       "SEA": 2,
+       "TOR": 1
+      },
+      "league": "AL",
+      "round": "CS",
+      "round_name": "ALCS",
+      "best_of": 7,
+      "wins": {
+       "SEA": 3,
+       "TOR": 4
+      },
+      "is_over": true,
+      "winner": "TOR",
+      "games": [
+       {
+        "game_id": 4710265,
+        "game_number": 1,
+        "date": "2025-10-13T00:03:00.000Z",
+        "status": "STATUS_FINAL",
+        "home": "TOR",
+        "away": "SEA",
+        "home_runs": 1,
+        "away_runs": 3,
+        "label": "ALCS \u00b7 Game 1",
+        "if_necessary": false,
+        "series_status": "SEA leads 1-0",
+        "line": "SEA leads 1-0",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       },
+       {
+        "game_id": 4723002,
+        "game_number": 2,
+        "date": "2025-10-13T21:03:00.000Z",
+        "status": "STATUS_FINAL",
+        "home": "TOR",
+        "away": "SEA",
+        "home_runs": 3,
+        "away_runs": 10,
+        "label": "ALCS \u00b7 Game 2",
+        "if_necessary": false,
+        "series_status": "SEA leads 2-0",
+        "line": "SEA leads 2-0",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       },
+       {
+        "game_id": 4676532,
+        "game_number": 3,
+        "date": "2025-10-16T00:08:00.000Z",
+        "status": "STATUS_FINAL",
+        "home": "SEA",
+        "away": "TOR",
+        "home_runs": 4,
+        "away_runs": 13,
+        "label": "ALCS \u00b7 Game 3",
+        "if_necessary": false,
+        "series_status": "SEA leads 2-1",
+        "line": "SEA leads 2-1",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       },
+       {
+        "game_id": 4723006,
+        "game_number": 4,
+        "date": "2025-10-17T00:33:00.000Z",
+        "status": "STATUS_FINAL",
+        "home": "SEA",
+        "away": "TOR",
+        "home_runs": 2,
+        "away_runs": 8,
+        "label": "ALCS \u00b7 Game 4",
+        "if_necessary": false,
+        "series_status": "Series tied 2-2",
+        "line": "Series tied 2-2",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       },
+       {
+        "game_id": 4723008,
+        "game_number": 5,
+        "date": "2025-10-17T22:08:00.000Z",
+        "status": "STATUS_FINAL",
+        "home": "SEA",
+        "away": "TOR",
+        "home_runs": 6,
+        "away_runs": 2,
+        "label": "ALCS \u00b7 Game 5",
+        "if_necessary": false,
+        "series_status": "SEA leads 3-2",
+        "line": "SEA leads 3-2",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       },
+       {
+        "game_id": 4710275,
+        "game_number": 6,
+        "date": "2025-10-20T00:03:00.000Z",
+        "status": "STATUS_FINAL",
+        "home": "TOR",
+        "away": "SEA",
+        "home_runs": 6,
+        "away_runs": 2,
+        "label": "ALCS \u00b7 Game 6",
+        "if_necessary": false,
+        "series_status": "Series tied 3-3",
+        "line": "Series tied 3-3",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       },
+       {
+        "game_id": 4723012,
+        "game_number": 7,
+        "date": "2025-10-21T00:10:00.000Z",
+        "status": "STATUS_FINAL",
+        "home": "TOR",
+        "away": "SEA",
+        "home_runs": 4,
+        "away_runs": 3,
+        "label": "ALCS \u00b7 Game 7",
+        "if_necessary": false,
+        "series_status": "TOR wins 4-3",
+        "line": "TOR wins 4-3",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       }
+      ]
+     }
+    }
+   ],
+   "series": []
+  },
+  "NL": {
+   "trusted": true,
+   "seeds": [
+    {
+     "seed": 1,
+     "team": "MIL"
+    },
+    {
+     "seed": 2,
+     "team": "PHI"
+    },
+    {
+     "seed": 3,
+     "team": "LAD"
+    },
+    {
+     "seed": 4,
+     "team": "CHC"
+    },
+    {
+     "seed": 5,
+     "team": "SD"
+    },
+    {
+     "seed": 6,
+     "team": "CIN"
+    }
+   ],
+   "slots": [
+    {
+     "id": "NL-WC-3v6",
+     "round": "WC",
+     "round_name": "NL Wild Card",
+     "league": "NL",
+     "best_of": 3,
+     "sides": [
+      {
+       "team": "LAD",
+       "seed": 3,
+       "candidates": [
+        "LAD"
+       ]
+      },
+      {
+       "team": "CIN",
+       "seed": 6,
+       "candidates": [
+        "CIN"
+       ]
+      }
+     ],
+     "state": "complete",
+     "winner": "LAD",
+     "series": {
+      "teams": [
+       "CIN",
+       "LAD"
+      ],
+      "seeds": {
+       "CIN": 6,
+       "LAD": 3
+      },
+      "league": "NL",
+      "round": "WC",
+      "round_name": "NL Wild Card",
+      "best_of": 3,
+      "wins": {
+       "CIN": 0,
+       "LAD": 2
+      },
+      "is_over": true,
+      "winner": "LAD",
+      "games": [
+       {
+        "game_id": 4506566,
+        "game_number": 1,
+        "date": "2025-10-01T01:00:00.000Z",
+        "status": "STATUS_FINAL",
+        "home": "LAD",
+        "away": "CIN",
+        "home_runs": 10,
+        "away_runs": 5,
+        "label": "NL Wild Card \u00b7 Game 1",
+        "if_necessary": false,
+        "series_status": "LAD leads 1-0",
+        "line": "LAD leads 1-0",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       },
+       {
+        "game_id": 4509088,
+        "game_number": 2,
+        "date": "2025-10-02T01:00:00.000Z",
+        "status": "STATUS_FINAL",
+        "home": "LAD",
+        "away": "CIN",
+        "home_runs": 8,
+        "away_runs": 4,
+        "label": "NL Wild Card \u00b7 Game 2",
+        "if_necessary": false,
+        "series_status": "LAD wins 2-0",
+        "line": "LAD wins 2-0",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       }
+      ]
+     }
+    },
+    {
+     "id": "NL-WC-4v5",
+     "round": "WC",
+     "round_name": "NL Wild Card",
+     "league": "NL",
+     "best_of": 3,
+     "sides": [
+      {
+       "team": "CHC",
+       "seed": 4,
+       "candidates": [
+        "CHC"
+       ]
+      },
+      {
+       "team": "SD",
+       "seed": 5,
+       "candidates": [
+        "SD"
+       ]
+      }
+     ],
+     "state": "complete",
+     "winner": "CHC",
+     "series": {
+      "teams": [
+       "CHC",
+       "SD"
+      ],
+      "seeds": {
+       "CHC": 4,
+       "SD": 5
+      },
+      "league": "NL",
+      "round": "WC",
+      "round_name": "NL Wild Card",
+      "best_of": 3,
+      "wins": {
+       "CHC": 2,
+       "SD": 1
+      },
+      "is_over": true,
+      "winner": "CHC",
+      "games": [
+       {
+        "game_id": 4506564,
+        "game_number": 1,
+        "date": "2025-09-30T19:00:00.000Z",
+        "status": "STATUS_FINAL",
+        "home": "CHC",
+        "away": "SD",
+        "home_runs": 3,
+        "away_runs": 1,
+        "label": "NL Wild Card \u00b7 Game 1",
+        "if_necessary": false,
+        "series_status": "CHC leads 1-0",
+        "line": "CHC leads 1-0",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       },
+       {
+        "game_id": 4509086,
+        "game_number": 2,
+        "date": "2025-10-01T19:00:00.000Z",
+        "status": "STATUS_FINAL",
+        "home": "CHC",
+        "away": "SD",
+        "home_runs": 0,
+        "away_runs": 3,
+        "label": "NL Wild Card \u00b7 Game 2",
+        "if_necessary": false,
+        "series_status": "Series tied 1-1",
+        "line": "Series tied 1-1",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       },
+       {
+        "game_id": 4509090,
+        "game_number": 3,
+        "date": "2025-10-02T21:00:00.000Z",
+        "status": "STATUS_FINAL",
+        "home": "CHC",
+        "away": "SD",
+        "home_runs": 3,
+        "away_runs": 1,
+        "label": "NL Wild Card \u00b7 Game 3",
+        "if_necessary": false,
+        "series_status": "CHC wins 2-1",
+        "line": "CHC wins 2-1",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       }
+      ]
+     }
+    },
+    {
+     "id": "NL-DS-1",
+     "round": "DS",
+     "round_name": "NLDS",
+     "league": "NL",
+     "best_of": 5,
+     "sides": [
+      {
+       "team": "MIL",
+       "seed": 1,
+       "candidates": [
+        "MIL"
+       ]
+      },
+      {
+       "team": "CHC",
+       "seed": 4,
+       "candidates": [
+        "CHC"
+       ]
+      }
+     ],
+     "state": "complete",
+     "winner": "MIL",
+     "series": {
+      "teams": [
+       "CHC",
+       "MIL"
+      ],
+      "seeds": {
+       "CHC": 4,
+       "MIL": 1
+      },
+      "league": "NL",
+      "round": "DS",
+      "round_name": "NLDS",
+      "best_of": 5,
+      "wins": {
+       "CHC": 2,
+       "MIL": 3
+      },
+      "is_over": true,
+      "winner": "MIL",
+      "games": [
+       {
+        "game_id": 4576968,
+        "game_number": 1,
+        "date": "2025-10-04T18:08:00.000Z",
+        "status": "STATUS_FINAL",
+        "home": "MIL",
+        "away": "CHC",
+        "home_runs": 9,
+        "away_runs": 3,
+        "label": "NLDS \u00b7 Game 1",
+        "if_necessary": false,
+        "series_status": "MIL leads 1-0",
+        "line": "MIL leads 1-0",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       },
+       {
+        "game_id": 4576974,
+        "game_number": 2,
+        "date": "2025-10-07T01:08:00.000Z",
+        "status": "STATUS_FINAL",
+        "home": "MIL",
+        "away": "CHC",
+        "home_runs": 7,
+        "away_runs": 3,
+        "label": "NLDS \u00b7 Game 2",
+        "if_necessary": false,
+        "series_status": "MIL leads 2-0",
+        "line": "MIL leads 2-0",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       },
+       {
+        "game_id": 4509105,
+        "game_number": 3,
+        "date": "2025-10-08T21:08:00.000Z",
+        "status": "STATUS_FINAL",
+        "home": "CHC",
+        "away": "MIL",
+        "home_runs": 4,
+        "away_runs": 3,
+        "label": "NLDS \u00b7 Game 3",
+        "if_necessary": false,
+        "series_status": "MIL leads 2-1",
+        "line": "MIL leads 2-1",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       },
+       {
+        "game_id": 4418024,
+        "game_number": 4,
+        "date": "2025-10-10T01:08:00.000Z",
+        "status": "STATUS_FINAL",
+        "home": "CHC",
+        "away": "MIL",
+        "home_runs": 6,
+        "away_runs": 0,
+        "label": "NLDS \u00b7 Game 4",
+        "if_necessary": false,
+        "series_status": "Series tied 2-2",
+        "line": "Series tied 2-2",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       },
+       {
+        "game_id": 4576986,
+        "game_number": 5,
+        "date": "2025-10-12T00:08:00.000Z",
+        "status": "STATUS_FINAL",
+        "home": "MIL",
+        "away": "CHC",
+        "home_runs": 3,
+        "away_runs": 1,
+        "label": "NLDS \u00b7 Game 5",
+        "if_necessary": false,
+        "series_status": "MIL wins 3-2",
+        "line": "MIL wins 3-2",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       }
+      ]
+     }
+    },
+    {
+     "id": "NL-DS-2",
+     "round": "DS",
+     "round_name": "NLDS",
+     "league": "NL",
+     "best_of": 5,
+     "sides": [
+      {
+       "team": "PHI",
+       "seed": 2,
+       "candidates": [
+        "PHI"
+       ]
+      },
+      {
+       "team": "LAD",
+       "seed": 3,
+       "candidates": [
+        "LAD"
+       ]
+      }
+     ],
+     "state": "complete",
+     "winner": "LAD",
+     "series": {
+      "teams": [
+       "LAD",
+       "PHI"
+      ],
+      "seeds": {
+       "LAD": 3,
+       "PHI": 2
+      },
+      "league": "NL",
+      "round": "DS",
+      "round_name": "NLDS",
+      "best_of": 5,
+      "wins": {
+       "LAD": 3,
+       "PHI": 1
+      },
+      "is_over": true,
+      "winner": "LAD",
+      "games": [
+       {
+        "game_id": 4576970,
+        "game_number": 1,
+        "date": "2025-10-04T22:38:00.000Z",
+        "status": "STATUS_FINAL",
+        "home": "PHI",
+        "away": "LAD",
+        "home_runs": 3,
+        "away_runs": 5,
+        "label": "NLDS \u00b7 Game 1",
+        "if_necessary": false,
+        "series_status": "LAD leads 1-0",
+        "line": "LAD leads 1-0",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       },
+       {
+        "game_id": 4576975,
+        "game_number": 2,
+        "date": "2025-10-06T22:08:00.000Z",
+        "status": "STATUS_FINAL",
+        "home": "PHI",
+        "away": "LAD",
+        "home_runs": 3,
+        "away_runs": 4,
+        "label": "NLDS \u00b7 Game 2",
+        "if_necessary": false,
+        "series_status": "LAD leads 2-0",
+        "line": "LAD leads 2-0",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       },
+       {
+        "game_id": 4509106,
+        "game_number": 3,
+        "date": "2025-10-09T01:08:00.000Z",
+        "status": "STATUS_FINAL",
+        "home": "LAD",
+        "away": "PHI",
+        "home_runs": 2,
+        "away_runs": 8,
+        "label": "NLDS \u00b7 Game 3",
+        "if_necessary": false,
+        "series_status": "LAD leads 2-1",
+        "line": "LAD leads 2-1",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       },
+       {
+        "game_id": 4418025,
+        "game_number": 4,
+        "date": "2025-10-09T22:08:00.000Z",
+        "status": "STATUS_FINAL",
+        "home": "LAD",
+        "away": "PHI",
+        "home_runs": 2,
+        "away_runs": 1,
+        "label": "NLDS \u00b7 Game 4",
+        "if_necessary": false,
+        "series_status": "LAD wins 3-1",
+        "line": "LAD wins 3-1",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       }
+      ]
+     }
+    },
+    {
+     "id": "NL-CS",
+     "round": "CS",
+     "round_name": "NLCS",
+     "league": "NL",
+     "best_of": 7,
+     "sides": [
+      {
+       "team": "MIL",
+       "seed": 1,
+       "candidates": [
+        "MIL"
+       ]
+      },
+      {
+       "team": "LAD",
+       "seed": 3,
+       "candidates": [
+        "LAD"
+       ]
+      }
+     ],
+     "state": "complete",
+     "winner": "LAD",
+     "series": {
+      "teams": [
+       "LAD",
+       "MIL"
+      ],
+      "seeds": {
+       "LAD": 3,
+       "MIL": 1
+      },
+      "league": "NL",
+      "round": "CS",
+      "round_name": "NLCS",
+      "best_of": 7,
+      "wins": {
+       "LAD": 4,
+       "MIL": 0
+      },
+      "is_over": true,
+      "winner": "LAD",
+      "games": [
+       {
+        "game_id": 4723003,
+        "game_number": 1,
+        "date": "2025-10-14T00:08:00.000Z",
+        "status": "STATUS_FINAL",
+        "home": "MIL",
+        "away": "LAD",
+        "home_runs": 1,
+        "away_runs": 2,
+        "label": "NLCS \u00b7 Game 1",
+        "if_necessary": false,
+        "series_status": "LAD leads 1-0",
+        "line": "LAD leads 1-0",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       },
+       {
+        "game_id": 4723004,
+        "game_number": 2,
+        "date": "2025-10-15T00:08:00.000Z",
+        "status": "STATUS_FINAL",
+        "home": "MIL",
+        "away": "LAD",
+        "home_runs": 1,
+        "away_runs": 5,
+        "label": "NLCS \u00b7 Game 2",
+        "if_necessary": false,
+        "series_status": "LAD leads 2-0",
+        "line": "LAD leads 2-0",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       },
+       {
+        "game_id": 4723007,
+        "game_number": 3,
+        "date": "2025-10-16T22:08:00.000Z",
+        "status": "STATUS_FINAL",
+        "home": "LAD",
+        "away": "MIL",
+        "home_runs": 3,
+        "away_runs": 1,
+        "label": "NLCS \u00b7 Game 3",
+        "if_necessary": false,
+        "series_status": "LAD leads 3-0",
+        "line": "LAD leads 3-0",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       },
+       {
+        "game_id": 4723009,
+        "game_number": 4,
+        "date": "2025-10-18T00:38:00.000Z",
+        "status": "STATUS_FINAL",
+        "home": "LAD",
+        "away": "MIL",
+        "home_runs": 5,
+        "away_runs": 1,
+        "label": "NLCS \u00b7 Game 4",
+        "if_necessary": false,
+        "series_status": "LAD wins 4-0",
+        "line": "LAD wins 4-0",
+        "can_clinch": false,
+        "clinch_teams": [],
+        "elimination_game": false,
+        "elimination_teams": []
+       }
+      ]
+     }
+    }
+   ],
+   "series": []
+  }
+ },
+ "world_series": {
+  "id": "WS",
+  "round": "WS",
+  "round_name": "World Series",
+  "league": null,
+  "best_of": 7,
+  "sides": [
+   {
+    "team": "TOR",
+    "seed": 1,
+    "candidates": [
+     "TOR"
+    ]
+   },
+   {
+    "team": "LAD",
+    "seed": 3,
+    "candidates": [
+     "LAD"
+    ]
+   }
+  ],
+  "state": "complete",
+  "winner": "LAD",
+  "series": {
+   "teams": [
+    "LAD",
+    "TOR"
+   ],
+   "seeds": {
+    "LAD": 3,
+    "TOR": 1
+   },
+   "league": null,
+   "round": "WS",
+   "round_name": "World Series",
+   "best_of": 7,
+   "wins": {
+    "LAD": 4,
+    "TOR": 3
+   },
+   "is_over": true,
+   "winner": "LAD",
+   "games": [
+    {
+     "game_id": 4854113,
+     "game_number": 1,
+     "date": "2025-10-25T00:00:00.000Z",
+     "status": "STATUS_FINAL",
+     "home": "TOR",
+     "away": "LAD",
+     "home_runs": 11,
+     "away_runs": 4,
+     "label": "World Series \u00b7 Game 1",
+     "if_necessary": false,
+     "series_status": "TOR leads 1-0",
+     "line": "TOR leads 1-0",
+     "can_clinch": false,
+     "clinch_teams": [],
+     "elimination_game": false,
+     "elimination_teams": []
+    },
+    {
+     "game_id": 4854114,
+     "game_number": 2,
+     "date": "2025-10-26T00:00:00.000Z",
+     "status": "STATUS_FINAL",
+     "home": "TOR",
+     "away": "LAD",
+     "home_runs": 1,
+     "away_runs": 5,
+     "label": "World Series \u00b7 Game 2",
+     "if_necessary": false,
+     "series_status": "Series tied 1-1",
+     "line": "Series tied 1-1",
+     "can_clinch": false,
+     "clinch_teams": [],
+     "elimination_game": false,
+     "elimination_teams": []
+    },
+    {
+     "game_id": 4854115,
+     "game_number": 3,
+     "date": "2025-10-28T00:00:00.000Z",
+     "status": "STATUS_FINAL",
+     "home": "LAD",
+     "away": "TOR",
+     "home_runs": 6,
+     "away_runs": 5,
+     "label": "World Series \u00b7 Game 3",
+     "if_necessary": false,
+     "series_status": "LAD leads 2-1",
+     "line": "LAD leads 2-1",
+     "can_clinch": false,
+     "clinch_teams": [],
+     "elimination_game": false,
+     "elimination_teams": []
+    },
+    {
+     "game_id": 4854116,
+     "game_number": 4,
+     "date": "2025-10-29T00:00:00.000Z",
+     "status": "STATUS_FINAL",
+     "home": "LAD",
+     "away": "TOR",
+     "home_runs": 2,
+     "away_runs": 6,
+     "label": "World Series \u00b7 Game 4",
+     "if_necessary": false,
+     "series_status": "Series tied 2-2",
+     "line": "Series tied 2-2",
+     "can_clinch": false,
+     "clinch_teams": [],
+     "elimination_game": false,
+     "elimination_teams": []
+    },
+    {
+     "game_id": 4854117,
+     "game_number": 5,
+     "date": "2025-10-30T00:00:00.000Z",
+     "status": "STATUS_FINAL",
+     "home": "LAD",
+     "away": "TOR",
+     "home_runs": 1,
+     "away_runs": 6,
+     "label": "World Series \u00b7 Game 5",
+     "if_necessary": false,
+     "series_status": "TOR leads 3-2",
+     "line": "TOR leads 3-2",
+     "can_clinch": false,
+     "clinch_teams": [],
+     "elimination_game": false,
+     "elimination_teams": []
+    },
+    {
+     "game_id": 4854118,
+     "game_number": 6,
+     "date": "2025-11-01T00:00:00.000Z",
+     "status": "STATUS_FINAL",
+     "home": "TOR",
+     "away": "LAD",
+     "home_runs": 1,
+     "away_runs": 3,
+     "label": "World Series \u00b7 Game 6",
+     "if_necessary": false,
+     "series_status": "Series tied 3-3",
+     "line": "Series tied 3-3",
+     "can_clinch": false,
+     "clinch_teams": [],
+     "elimination_game": false,
+     "elimination_teams": []
+    },
+    {
+     "game_id": 4854119,
+     "game_number": 7,
+     "date": "2025-11-02T00:00:00.000Z",
+     "status": "STATUS_FINAL",
+     "home": "TOR",
+     "away": "LAD",
+     "home_runs": 4,
+     "away_runs": 5,
+     "label": "World Series \u00b7 Game 7",
+     "if_necessary": false,
+     "series_status": "LAD wins 4-3",
+     "line": "LAD wins 4-3",
+     "can_clinch": false,
+     "clinch_teams": [],
+     "elimination_game": false,
+     "elimination_teams": []
+    }
+   ]
+  }
+ }
+}

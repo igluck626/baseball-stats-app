@@ -30,7 +30,24 @@ struct StandingsView: View {
     /// gate on `periodicRefresh` — the same signal the live loops use, so
     /// refreshing and polling stop together when the app backgrounds.
     @EnvironmentObject private var navigation: AppNavigation
+    /// Forwarded to the bracket's series sheet for its box scores.
+    @EnvironmentObject private var liveStore: LiveGameStore
     @State private var selectedTab: TabSelection = .al
+    /// The postseason bracket and when the tab opens on it (`standingsDefault`).
+    @StateObject private var bracketVM = LiveBracketViewModel()
+    @State private var mode: Mode = .standings
+    @State private var didApplyDefault = false
+    /// The bracket slot whose games sheet is showing.
+    @State private var selectedSlot: BracketSlot?
+
+    /// Bracket or standings — offered only while `standingsDefault` says the
+    /// bracket is the default, i.e. from the first pitch of a postseason
+    /// until the next Opening Day.
+    enum Mode: String, CaseIterable, Identifiable {
+        case bracket, standings
+        var id: String { rawValue }
+        var label: String { self == .bracket ? "Bracket" : "Standings" }
+    }
     /// Guards the one-time "open on the favorite team's league" jump so
     /// it fires only on first appearance — once the user taps a tab
     /// manually we never override their choice on later loads.
@@ -62,20 +79,35 @@ struct StandingsView: View {
         NavigationStack {
             ZStack {
                 backgroundGradient
-                content
+                VStack(spacing: 0) {
+                    if bracketVM.season != nil {
+                        modePicker
+                    }
+                    if mode == .bracket {
+                        bracketContent
+                    } else {
+                        content
+                    }
+                }
             }
             .navigationTitle("Standings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    yearMenu
+                    // The bracket is one season's; the year picker belongs to
+                    // the standings.
+                    if mode == .standings { yearMenu }
                 }
+            }
+            .sheet(item: $selectedSlot) { slot in
+                SeriesGamesSheet(slot: slot, navigation: navigation, liveStore: liveStore)
             }
         }
         .task {
             await viewModel.loadStandings()
             applyFavoriteLeagueIfNeeded()
+            await applyDefaultViewIfNeeded()
         }
         // Second adopter of the shared mechanism (after Scores and Home). This
         // screen had the same defect and no repair path at all: records change
@@ -97,6 +129,7 @@ struct StandingsView: View {
             isActive: navigation.shouldPoll(on: .standings),
         ) {
             await viewModel.loadStandings(quiet: true)
+            if mode == .bracket { await bracketVM.load(quiet: true) }
         }
         .onChange(of: viewModel.selectedYear) { _, _ in
             Task { await viewModel.loadStandings() }
@@ -147,6 +180,50 @@ struct StandingsView: View {
         case ..<1994:     return 0
         case 1994...2011: return 1
         default:          return 3
+        }
+    }
+
+    // MARK: - Bracket
+
+    /// One-time: open on the bracket when `standingsDefault` says so. Runs
+    /// after the first standings load, whose current-year games-played signal
+    /// is one of the rule's inputs; a later toggle by hand is never undone.
+    private func applyDefaultViewIfNeeded() async {
+        guard !didApplyDefault else { return }
+        didApplyDefault = true
+        await bracketVM.resolveDefault(currentYear: StandingsViewModel.currentYear,
+                                       currentYearGamesPlayed: viewModel.currentYearGamesPlayed)
+        if bracketVM.season != nil { mode = .bracket }
+    }
+
+    private var modePicker: some View {
+        Picker("View", selection: $mode) {
+            ForEach(Mode.allCases) { Text($0.label).tag($0) }
+        }
+        .pickerStyle(.segmented)
+        .padding(.horizontal, 16)
+        .padding(.top, 12)
+        .padding(.bottom, 4)
+    }
+
+    @ViewBuilder
+    private var bracketContent: some View {
+        switch bracketVM.state {
+        case .idle, .loading:
+            ProgressView()
+                .controlSize(.large)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .failed(let message):
+            ContentUnavailableView {
+                Label("Couldn't load the bracket", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text(message)
+            } actions: {
+                Button("Try Again") { Task { await bracketVM.load(quiet: false) } }
+                    .buttonStyle(.borderedProminent)
+            }
+        case .loaded(let bracket):
+            LiveBracketView(bracket: bracket) { selectedSlot = $0 }
         }
     }
 
