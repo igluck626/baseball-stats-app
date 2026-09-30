@@ -1672,7 +1672,7 @@ private struct FinalGameCard: View {
         // rather than the BDL placeholder + bump. Same rationale
         // as `hrSegments` — the flash of a wrong intermediate
         // value is worse than a brief dash. Animated below.
-        let recordText: String? = {
+        let seasonRecord: String? = {
             // Historical: the contextual endpoint is never called for these
             // games (it resolves through BDL ids they never had), so waiting on
             // `pitcherRecordsByBDL` would leave "(—)" on screen for good —
@@ -1709,6 +1709,8 @@ private struct FinalGameCard: View {
             default:   return nil
             }
         }()
+        // On a postseason game this is a REGULAR-season record — left off.
+        let recordText = SeasonType.regularSeasonFigure(seasonRecord, in: game)
         return HStack(spacing: 6) {
             Text("\(tag):")
                 .font(.caption.weight(.bold))
@@ -1771,6 +1773,12 @@ private struct FinalGameCard: View {
                 guard let hr = p.stats?.batting?.homeRuns, hr > 0 else { continue }
                 let last = lastNameWithSuffix(p.person.fullName)
                 let prefix = hr > 1 ? "\(last) \(hr)" : last
+                // A postseason game: the only total we hold is the regular
+                // season's, so the name stands alone — no figure, no "(—)".
+                guard game.isRegularSeason else {
+                    out.append(prefix)
+                    continue
+                }
                 // While the point-in-time fetch is still in flight,
                 // render `(—)` rather than the stale placeholder
                 // total. Eliminates the flash of e.g. "(20)" → "(21)"

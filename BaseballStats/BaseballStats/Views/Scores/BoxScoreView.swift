@@ -1641,6 +1641,9 @@ struct BoxScoreView: View {
             let last = lastName(bp.person.fullName)
             let gameCount = bp.stats?.batting?[keyPath: totalKey] ?? 0
             let prefix = gameCount > 1 ? "\(last) \(gameCount)" : last
+            // A postseason game: every total we hold is REGULAR-season, and
+            // "2B: Rice (24)" read as his playoff total. The name stands alone.
+            guard vm.game.isRegularSeason else { return prefix }
             // Prefer the contextual total from
             // `/players/{id}/batter-stats-at-date` — counts gamelog
             // rows up to this game's date. Bump only when the game
@@ -1831,6 +1834,11 @@ struct BoxScoreView: View {
     /// endpoint's scan has not yet absorbed today.
     private func pitcherDecisionTag(for p: BoxPlayer) -> String? {
         let game = p.stats?.pitching
+        // A postseason game: the decision is this game's, the record would be
+        // the regular season's — keep "(W)", drop the "15-6".
+        guard vm.game.isRegularSeason else {
+            return SeasonType.decisionOnly(wins: game?.wins, losses: game?.losses, saves: game?.saves)
+        }
         // Prefer the contextual record from
         // `/players/{id}/pitcher-record-at-date` — that endpoint
         // counts gamelog rows up to and including this game's date,
