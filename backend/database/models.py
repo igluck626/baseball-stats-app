@@ -1,6 +1,6 @@
 from sqlalchemy import (
-    Boolean, Column, Date, DateTime, Float, Index, Integer, String, Text,
-    UniqueConstraint,
+    Boolean, CheckConstraint, Column, Date, DateTime, Float, Index, Integer, String, Text,
+    UniqueConstraint, text,
 )
 from sqlalchemy.orm import DeclarativeBase
 
@@ -1004,3 +1004,108 @@ class GamelogReconFinding(Base):
     revision_age_days = Column(Integer)
     ours_value        = Column(Integer)
     bdl_value         = Column(Integer)
+
+
+# ---------------------------------------------------------------------------
+# Postseason game logs — SEPARATE from the regular-season tables, so nothing
+# written here can ever reach a regular-season figure.
+# ---------------------------------------------------------------------------
+#
+# One row per player per postseason game, from Retrosheet for the seasons it
+# has published (retrosplits daybyday, `season.phase` F/D/L/W) and from
+# balldontlie after that (the balldontlie ingest is Phase 3 (b), not yet written).
+#
+# ⚠️ IDENTITY IS NULLABLE ON PURPOSE. Every row carries its SOURCE's player id
+# — `retro_player_id` on Retrosheet rows, `bdl_player_id` on balldontlie rows —
+# and `player_id` (MLBAM) only when a mapping exists. An unmapped row is STORED
+# with `player_id` NULL — never skipped, unlike the regular-season ingest — and
+# resolved at read time once a mapping lands. Hence a surrogate `id` and partial
+# unique indexes: a plain UNIQUE (game_id, player_id) would admit any number of
+# NULLs. A Retrosheet row is unique on its retro id whether mapped or not, so a
+# re-run after a mapping lands can't insert the same appearance twice.
+_POSTSEASON_ROUNDS = "round IN ('WC', 'DS', 'CS', 'WS')"
+
+
+class PostseasonBattingGameLog(Base):
+    __tablename__ = "postseason_batting_gamelogs"
+    __table_args__ = (
+        Index("uq_ps_bat_game_player", "game_id", "player_id", unique=True,
+              postgresql_where=text("player_id IS NOT NULL")),
+        Index("uq_ps_bat_game_bdl", "game_id", "bdl_player_id", unique=True,
+              postgresql_where=text("player_id IS NULL AND bdl_player_id IS NOT NULL")),
+        Index("uq_ps_bat_game_retro", "game_id", "retro_player_id", unique=True,
+              postgresql_where=text("retro_player_id IS NOT NULL")),
+        Index("ix_ps_bat_player_season", "player_id", "season"),
+        CheckConstraint(_POSTSEASON_ROUNDS, name="ck_ps_bat_round"),
+    )
+    id            = Column(Integer, primary_key=True, autoincrement=True)
+    player_id     = Column(Integer, nullable=True)     # MLBAM; NULL until mapped
+    bdl_player_id = Column(Integer, nullable=True)     # set on balldontlie rows
+    retro_player_id = Column(String, nullable=True)   # set on Retrosheet rows ("judga001")
+    source        = Column(String, nullable=False)     # "retrosheet" / "bdl"
+    game_id       = Column(String, nullable=False)     # "retro-…" or a balldontlie id
+    game_date     = Column(Date)
+    season        = Column(Integer, nullable=False)
+    round         = Column(String, nullable=False)     # WC / DS / CS / WS
+    team          = Column(String)
+    opponent      = Column(String)
+    home_away     = Column(String)
+    result        = Column(String)
+    team_score    = Column(Integer)
+    opp_score     = Column(Integer)
+    PA            = Column(Integer, nullable=True)
+    AB            = Column(Integer)
+    R             = Column(Integer)
+    H             = Column(Integer)
+    doubles       = Column(Integer)
+    triples       = Column(Integer)
+    HR            = Column(Integer)
+    RBI           = Column(Integer)
+    BB            = Column(Integer)
+    IBB           = Column(Integer)
+    SO            = Column(Integer)
+    SB            = Column(Integer)
+    CS            = Column(Integer)
+    HBP           = Column(Integer)
+    SF            = Column(Integer)
+    GIDP          = Column(Integer)
+    SH            = Column(Integer)
+
+
+class PostseasonPitchingGameLog(Base):
+    __tablename__ = "postseason_pitching_gamelogs"
+    __table_args__ = (
+        Index("uq_ps_pit_game_player", "game_id", "player_id", unique=True,
+              postgresql_where=text("player_id IS NOT NULL")),
+        Index("uq_ps_pit_game_bdl", "game_id", "bdl_player_id", unique=True,
+              postgresql_where=text("player_id IS NULL AND bdl_player_id IS NOT NULL")),
+        Index("uq_ps_pit_game_retro", "game_id", "retro_player_id", unique=True,
+              postgresql_where=text("retro_player_id IS NOT NULL")),
+        Index("ix_ps_pit_player_season", "player_id", "season"),
+        CheckConstraint(_POSTSEASON_ROUNDS, name="ck_ps_pit_round"),
+    )
+    id            = Column(Integer, primary_key=True, autoincrement=True)
+    player_id     = Column(Integer, nullable=True)
+    bdl_player_id = Column(Integer, nullable=True)
+    retro_player_id = Column(String, nullable=True)
+    source        = Column(String, nullable=False)
+    game_id       = Column(String, nullable=False)
+    game_date     = Column(Date)
+    season        = Column(Integer, nullable=False)
+    round         = Column(String, nullable=False)
+    team          = Column(String)
+    opponent      = Column(String)
+    home_away     = Column(String)
+    result        = Column(String)     # the pitcher's decision: W / L / S / H / ND
+    IP            = Column(Float)      # decimal innings
+    H             = Column(Integer)
+    R             = Column(Integer)
+    ER            = Column(Integer)
+    BB            = Column(Integer)
+    SO            = Column(Integer)
+    HR            = Column(Integer)
+    HBP           = Column(Integer)
+    W             = Column(Integer)
+    L             = Column(Integer)
+    SV            = Column(Integer)
+    GS            = Column(Integer)
