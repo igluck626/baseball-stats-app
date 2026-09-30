@@ -271,3 +271,115 @@ def build_series(games: list[dict], standings: list[dict], season: int) -> list[
         })
     out.sort(key=lambda s: (s["games"][0]["date"] or "", s["teams"]))
     return out
+
+
+# ---------------------------------------------------------------------------
+# The bracket (current format, 2022 on)
+# ---------------------------------------------------------------------------
+#
+# Every slot comes from the BRACKET STRUCTURE and the seeds, never from
+# balldontlie's placeholder games: in each league seed 1 meets the 4/5 Wild
+# Card winner and seed 2 the 3/6 winner in the Division Series, the two
+# Division Series winners meet in the LCS, and the pennant winners in the
+# World Series. Checked against every 2022-2025 Division Series. A side whose
+# team isn't decided yet is a TBD side listing its candidates ("BOS/NYY").
+#
+# ⚠️ A league whose seeds can't be trusted (a seed missing, or first-round
+# pairs that aren't {3,6} and {4,5} — the same test as `build_series`) gets
+# NO slots: its series are returned as a flat list instead, and the World
+# Series slot needs both leagues. A bracket drawn from wrong seeds would put
+# teams in the wrong places, which is worse than no bracket.
+
+BRACKET_FIRST_SEASON = 2022          # the 12-team, 3/6 + 4/5 format
+
+
+def _league_map(standings: list[dict]) -> dict[str, str]:
+    """{abbreviation: 'AL'/'NL'} from standings rows."""
+    out = {}
+    for row in standings:
+        abbr = (row.get("team") or {}).get("abbreviation")
+        lg = row.get("league_short_name") or league_of(row.get("team") or {})
+        if abbr and lg in ("AL", "NL"):
+            out[abbr] = lg
+    return out
+
+
+def _slot_state(series: Optional[dict]) -> str:
+    if series is None:
+        return "scheduled"
+    if series["is_over"]:
+        return "complete"
+    if any(g["status"] in ("STATUS_FINAL", "STATUS_IN_PROGRESS", "STATUS_DELAYED") for g in series["games"]):
+        return "in_progress"
+    return "scheduled"
+
+
+def build_bracket(games: list[dict], standings: list[dict], season: int) -> dict:
+    """The season's bracket: per league the six seeds and five slots (two Wild
+    Card series, two Division Series, the LCS), plus the World Series slot."""
+    series = build_series(games, standings, season)
+    seeds = seeds_from_standings(standings, season)
+    leagues = _league_map(standings)
+    by_pair = {frozenset(s["teams"]): s for s in series}
+
+    by_seed: dict[str, dict[int, str]] = {"AL": {}, "NL": {}}
+    for abbr, seed in seeds.items():
+        lg = leagues.get(abbr)
+        if lg in by_seed:
+            by_seed[lg][seed] = abbr
+
+    def trusted(lg: str) -> bool:
+        if sorted(by_seed[lg]) != [1, 2, 3, 4, 5, 6]:
+            return False
+        return all(s["round"] is not None for s in series if s["league"] == lg)
+
+    def known(team: str) -> dict:
+        return {"team": team, "seed": seeds.get(team), "candidates": [team]}
+
+    def from_winner(feeder: Optional[dict]) -> dict:
+        """A side fed by an earlier slot: its winner once decided, else TBD
+        with every team that could still come through."""
+        if feeder is None:
+            return {"team": None, "seed": None, "candidates": []}
+        if feeder["winner"]:
+            return known(feeder["winner"])
+        cands = [c for side in feeder["sides"] for c in side["candidates"]]
+        return {"team": None, "seed": None, "candidates": cands}
+
+    def slot(slot_id: str, rnd: str, lg: Optional[str], a: dict, b: dict) -> dict:
+        s = by_pair.get(frozenset((a["team"], b["team"]))) if a["team"] and b["team"] else None
+        return {
+            "id": slot_id,
+            "round": rnd,
+            "round_name": round_name(rnd, lg),
+            "league": lg,
+            "best_of": BEST_OF[rnd],
+            "sides": [a, b],
+            "state": "tbd" if not (a["team"] and b["team"]) else _slot_state(s),
+            "winner": s["winner"] if s else None,
+            "series": s,
+        }
+
+    out_leagues: dict[str, dict] = {}
+    champions: dict[str, Optional[dict]] = {}
+    for lg in ("AL", "NL"):
+        if not trusted(lg):
+            out_leagues[lg] = {"trusted": False, "seeds": [], "slots": [],
+                               "series": [s for s in series if s["league"] == lg]}
+            champions[lg] = None
+            continue
+        sd = by_seed[lg]
+        wc36 = slot(f"{lg}-WC-3v6", "WC", lg, known(sd[3]), known(sd[6]))
+        wc45 = slot(f"{lg}-WC-4v5", "WC", lg, known(sd[4]), known(sd[5]))
+        ds1 = slot(f"{lg}-DS-1", "DS", lg, known(sd[1]), from_winner(wc45))
+        ds2 = slot(f"{lg}-DS-2", "DS", lg, known(sd[2]), from_winner(wc36))
+        cs = slot(f"{lg}-CS", "CS", lg, from_winner(ds1), from_winner(ds2))
+        out_leagues[lg] = {"trusted": True,
+                           "seeds": [{"seed": n, "team": sd[n]} for n in range(1, 7)],
+                           "slots": [wc36, wc45, ds1, ds2, cs], "series": []}
+        champions[lg] = cs
+
+    world_series = None
+    if champions["AL"] is not None and champions["NL"] is not None:
+        world_series = slot("WS", "WS", None, from_winner(champions["AL"]), from_winner(champions["NL"]))
+    return {"season": season, "leagues": out_leagues, "world_series": world_series}

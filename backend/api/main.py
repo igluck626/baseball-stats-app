@@ -2806,6 +2806,30 @@ def live_game(game_id: int):
     return snapshot
 
 
+def _postseason_inputs(season: int) -> tuple[list[dict], list[dict]]:
+    """A season's balldontlie postseason games and standings, cached 60s and
+    shared by `/postseason/series` and `/postseason/bracket` so the two never
+    disagree about the same moment. Raises on a balldontlie failure."""
+    key = f"postseason_inputs:{season}"
+    cached = _cache.get(key)
+    if cached is not None:
+        return cached
+    games: list[dict] = []
+    cursor = None
+    for _ in range(10):                   # a whole postseason is ~55 games
+        params: dict = {"seasons[]": [season], "postseason": "true", "per_page": 100}
+        if cursor is not None:
+            params["cursor"] = cursor
+        page = data_service._bdl_get_json("games", params)
+        games.extend(page.get("data") or [])
+        cursor = (page.get("meta") or {}).get("next_cursor")
+        if not cursor:
+            break
+    standings = data_service._bdl_get_json("standings", {"season": season}).get("data") or []
+    _cache.set(key, (games, standings), ttl_seconds=60)
+    return games, standings
+
+
 @app.get("/postseason/series")
 def postseason_series_state(season: int = Query(..., description="Season year, e.g. 2026")):
     """Every postseason series in `season` so far, with each game's number and
@@ -2814,38 +2838,52 @@ def postseason_series_state(season: int = Query(..., description="Season year, e
     games and its `/standings` playoff seeds. balldontlie has no series field
     of its own — see that module for the rules and their validation.
 
-    One paginated `/games` request plus one `/standings` request, cached 60s:
-    the client refetches when a postseason game goes final, so a short cache
-    keeps a Game 2 line from trailing Game 1's final. A balldontlie failure is
-    a 503 — the client hides the series line rather than showing a wrong one.
+    Inputs come from `_postseason_inputs` (one paged `/games` request and one
+    `/standings` request, cached 60s): the client refetches when a postseason
+    game goes final, so a short cache keeps a Game 2 line from trailing Game
+    1's final. A balldontlie failure is a 503 — the client hides the series
+    line rather than showing a wrong one.
     """
-    key = f"postseason_series:{season}"
-    cached = _cache.get(key)
-    if cached is not None:
-        return cached
     try:
-        games: list[dict] = []
-        cursor = None
-        for _ in range(10):                   # a whole postseason is ~55 games
-            params: dict = {"seasons[]": [season], "postseason": "true", "per_page": 100}
-            if cursor is not None:
-                params["cursor"] = cursor
-            page = data_service._bdl_get_json("games", params)
-            games.extend(page.get("data") or [])
-            cursor = (page.get("meta") or {}).get("next_cursor")
-            if not cursor:
-                break
-        standings = data_service._bdl_get_json("standings", {"season": season}).get("data") or []
+        games, standings = _postseason_inputs(season)
     except Exception as exc:
         log.warning("postseason_series(%s): balldontlie fetch failed: %s", season, exc)
         raise HTTPException(status_code=503, detail="Postseason data is unavailable right now")
-    payload = {
+    return {
         "season": season,
         "fetched_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "series": postseason_series.build_series(games, standings, season),
     }
-    _cache.set(key, payload, ttl_seconds=60)
-    return payload
+
+
+@app.get("/postseason/bracket")
+def postseason_bracket(season: int = Query(..., description="Season year, 2022 or later")):
+    """The season's bracket: per league the six seeds and five slots (two Wild
+    Card series, two Division Series, the LCS), plus the World Series. Each
+    slot names its round, best-of, both sides (a TBD side lists its possible
+    teams, "NYY/BOS"), its state (tbd / scheduled / in_progress / complete),
+    its winner and its series with every game. Built by
+    `postseason_series.build_bracket` from the same inputs as
+    `/postseason/series`.
+
+    2022 on only — the 12-team format the slots assume. Earlier seasons are
+    served from Lahman by `/postseason?year=`. A league whose seeds can't be
+    trusted has no slots, only its series as a flat list.
+    """
+    if season < postseason_series.BRACKET_FIRST_SEASON:
+        raise HTTPException(
+            status_code=404,
+            detail=f"The bracket covers {postseason_series.BRACKET_FIRST_SEASON} on; "
+                   f"use /postseason?year={season} for earlier seasons")
+    try:
+        games, standings = _postseason_inputs(season)
+    except Exception as exc:
+        log.warning("postseason_bracket(%s): balldontlie fetch failed: %s", season, exc)
+        raise HTTPException(status_code=503, detail="Postseason data is unavailable right now")
+    return {
+        "fetched_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        **postseason_series.build_bracket(games, standings, season),
+    }
 
 
 @app.get("/postseason/available")
