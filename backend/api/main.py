@@ -17172,6 +17172,18 @@ def ask(request: Request,
         base["answer"] = _note
         return _finish()
 
+    # A postseason total inside a known gap (before 1903, the Negro Leagues
+    # postseason) DECLINES with its reason; without this it rendered as an empty
+    # answer. Scoped to the postseason season-stats total on purpose: other count
+    # runners' declines take the paths they always have.
+    if (result.get("declined") and result.get("source") == "season_stats"
+            and (params.get("game_type") or "").upper() == "P"):
+        base["understood_as"] = params
+        base["declined"] = True
+        base["reason"] = result.get("reason")
+        base["answer"] = result.get("answer") or result.get("reason")
+        return _finish()
+
     # A situational count is really a question about a SPLIT — "76 HR off
     # lefties" also wants .293/.898. So return the FULL rate line for the
     # IDENTICAL filter set (reuse _run_rates) plus which stat was asked about,
