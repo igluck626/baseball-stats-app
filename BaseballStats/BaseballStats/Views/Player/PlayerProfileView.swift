@@ -794,81 +794,38 @@ struct PlayerProfileView: View {
     /// the league's postseason runs, once he has appeared, including after his
     /// team is out. Subtitle: his latest series and where it stands. A tap
     /// opens his game log for that postseason.
-    @ViewBuilder
     private func battingPostseasonCard(_ line: PostseasonSeasonLine<PostseasonBattingTotals>) -> some View {
-        do {
-            let t = line.totals
-            currentSeasonGridCard(
-                title: "\(String(line.season)) Postseason",
-                subtitle: postseasonSubtitle(line.rounds.last?.roundName, line.rounds.last?.series),
-                items: [
-                    .init(label: "AVG", value: format3(t.AVG), rank: .unrankable),
-                    .init(label: "OBP", value: format3(t.OBP), rank: .unrankable),
-                    .init(label: "SLG", value: format3(t.SLG), rank: .unrankable),
-                    .init(label: "OPS", value: format3(t.OPS), rank: .unrankable),
-                    .init(label: "HR",  value: formatCount(t.HR),  rank: .unrankable),
-                    .init(label: "RBI", value: formatCount(t.RBI), rank: .unrankable),
-                    .init(label: "H",   value: formatCount(t.H),   rank: .unrankable),
-                    .init(label: "BB",  value: formatCount(t.BB),  rank: .unrankable),
-                    .init(label: "G",   value: formatCount(t.G),   rank: .unrankable),
-                    .init(label: "AB",  value: formatCount(t.AB),  rank: .unrankable),
-                ]
-            )
-            .contentShape(Rectangle())
-            .onTapGesture { openPostseasonGameLog(season: line.season) }
-        }
+        currentSeasonGridCard(
+            title: "\(String(line.season)) Postseason",
+            subtitle: postseasonSubtitle(line.rounds.last?.roundName, line.rounds.last?.series),
+            items: postseasonBattingStatItems(line.totals)
+        )
+        .contentShape(Rectangle())
+        .onTapGesture { openPostseasonGameLog(season: line.season) }
     }
 
-    @ViewBuilder
     private func pitchingPostseasonCard(_ line: PostseasonSeasonLine<PostseasonPitchingTotals>) -> some View {
-        do {
-            let t = line.totals
-            currentSeasonGridCard(
-                title: "\(String(line.season)) Postseason",
-                subtitle: postseasonSubtitle(line.rounds.last?.roundName, line.rounds.last?.series),
-                items: [
-                    .init(label: "W-L",  value: formatWL(t.W, t.L), rank: .unrankable),
-                    .init(label: "ERA",  value: format2(t.ERA),     rank: .unrankable),
-                    .init(label: "WHIP", value: format2(t.WHIP),    rank: .unrankable),
-                    .init(label: "SV",   value: formatCount(t.SV),  rank: .unrankable),
-                    .init(label: "IP",   value: t.IP,               rank: .unrankable),
-                    .init(label: "G",    value: formatCount(t.G),   rank: .unrankable),
-                    .init(label: "SO",   value: formatCount(t.SO),  rank: .unrankable),
-                    .init(label: "BB",   value: formatCount(t.BB),  rank: .unrankable),
-                    .init(label: "H",    value: formatCount(t.H),   rank: .unrankable),
-                    .init(label: "ER",   value: formatCount(t.ER),  rank: .unrankable),
-                ]
-            )
-            .contentShape(Rectangle())
-            .onTapGesture { openPostseasonGameLog(season: line.season) }
-        }
+        currentSeasonGridCard(
+            title: "\(String(line.season)) Postseason",
+            subtitle: postseasonSubtitle(line.rounds.last?.roundName, line.rounds.last?.series),
+            items: postseasonPitchingStatItems(line.totals)
+        )
+        .contentShape(Rectangle())
+        .onTapGesture { openPostseasonGameLog(season: line.season) }
     }
 
     // MARK: - Postseason career (Overview)
 
-    /// "Postseason Career": the 2026 Season box's stats and layout, from the
-    /// postseason career line. Shown with the "<season> Postseason" card
-    /// (same rule); WAR has no postseason figure and reads "—".
+    /// "Postseason Career": the "<season> Postseason" card's stats, in its
+    /// order and layout, from the postseason career line — one definition
+    /// (`postseasonBattingStatItems` / `postseasonPitchingStatItems`), so the
+    /// two boxes can't drift apart. Shown with that card (same rule).
     @ViewBuilder
     private var battingPostseasonCareerCard: some View {
         if let t = viewModel.postseason?.batting?.career {
             VStack(alignment: .leading, spacing: 6) {
-                currentSeasonGridCard(
-                    title: "Postseason Career",
-                    subtitle: nil,
-                    items: [
-                        .init(label: "WAR", value: "—",               rank: .unrankable),
-                        .init(label: "AVG", value: format3(t.AVG),    rank: .unrankable),
-                        .init(label: "OBP", value: format3(t.OBP),    rank: .unrankable),
-                        .init(label: "SLG", value: format3(t.SLG),    rank: .unrankable),
-                        .init(label: "OPS", value: format3(t.OPS),    rank: .unrankable),
-                        .init(label: "HR",  value: formatCount(t.HR),  rank: .unrankable),
-                        .init(label: "RBI", value: formatCount(t.RBI), rank: .unrankable),
-                        .init(label: "SB",  value: formatCount(t.SB),  rank: .unrankable),
-                        .init(label: "G",   value: formatCount(t.G),   rank: .unrankable),
-                        .init(label: "PA",  value: formatCount(t.PA),  rank: .unrankable),
-                    ]
-                )
+                currentSeasonGridCard(title: "Postseason Career", subtitle: nil,
+                                      items: postseasonBattingStatItems(t))
                 postseasonCoverageNote(firstSeason: viewModel.careerBatting?.seasons?.compactMap(\.year).min())
             }
         }
@@ -878,25 +835,8 @@ struct PlayerProfileView: View {
     private var pitchingPostseasonCareerCard: some View {
         if let t = viewModel.postseason?.pitching?.career {
             VStack(alignment: .leading, spacing: 6) {
-                currentSeasonGridCard(
-                    title: "Postseason Career",
-                    subtitle: nil,
-                    items: [
-                        .init(label: "WAR",  value: "—",                  rank: .unrankable),
-                        .init(label: "W-L",  value: formatWL(t.W, t.L),   rank: .unrankable),
-                        .init(label: "ERA",  value: format2(t.ERA),       rank: .unrankable),
-                        .init(label: "WHIP", value: format2(t.WHIP),      rank: .unrankable),
-                        .init(label: "K/9",  value: format1(t.outs > 0 ? Double(t.SO) * 27 / Double(t.outs) : nil),
-                              rank: .unrankable),
-                        .init(label: "G",    value: formatCount(t.G),     rank: .unrankable),
-                        isStarterRole(g: t.G, gs: t.GS)
-                            ? StatItem(label: "GS", value: formatCount(t.GS), rank: .unrankable)
-                            : StatItem(label: "SV", value: formatCount(t.SV), rank: .unrankable),
-                        .init(label: "IP",   value: t.IP,                 rank: .unrankable),
-                        .init(label: "SO",   value: formatCount(t.SO),    rank: .unrankable),
-                        .init(label: "BB",   value: formatCount(t.BB),    rank: .unrankable),
-                    ]
-                )
+                currentSeasonGridCard(title: "Postseason Career", subtitle: nil,
+                                      items: postseasonPitchingStatItems(t))
                 postseasonCoverageNote(firstSeason: viewModel.careerPitching?.seasons?.compactMap(\.year).min())
             }
         }
@@ -3667,6 +3607,41 @@ private func leaderCell(
         .foregroundStyle(color)
         .frame(width: width, alignment: .trailing)
         .padding(.horizontal, 2)
+}
+
+// MARK: - Postseason Overview stats
+
+/// THE stat set of both Overview postseason boxes — "<season> Postseason" and
+/// "Postseason Career" — so they show the same stats in the same order. No
+/// WAR: postseason play has no such figure.
+func postseasonBattingStatItems(_ t: PostseasonBattingTotals) -> [StatItem] {
+    [
+        .init(label: "AVG", value: format3(t.AVG), rank: .unrankable),
+        .init(label: "OBP", value: format3(t.OBP), rank: .unrankable),
+        .init(label: "SLG", value: format3(t.SLG), rank: .unrankable),
+        .init(label: "OPS", value: format3(t.OPS), rank: .unrankable),
+        .init(label: "HR",  value: formatCount(t.HR),  rank: .unrankable),
+        .init(label: "RBI", value: formatCount(t.RBI), rank: .unrankable),
+        .init(label: "H",   value: formatCount(t.H),   rank: .unrankable),
+        .init(label: "BB",  value: formatCount(t.BB),  rank: .unrankable),
+        .init(label: "G",   value: formatCount(t.G),   rank: .unrankable),
+        .init(label: "AB",  value: formatCount(t.AB),  rank: .unrankable),
+    ]
+}
+
+func postseasonPitchingStatItems(_ t: PostseasonPitchingTotals) -> [StatItem] {
+    [
+        .init(label: "W-L",  value: formatWL(t.W, t.L), rank: .unrankable),
+        .init(label: "ERA",  value: format2(t.ERA),     rank: .unrankable),
+        .init(label: "WHIP", value: format2(t.WHIP),    rank: .unrankable),
+        .init(label: "SV",   value: formatCount(t.SV),  rank: .unrankable),
+        .init(label: "IP",   value: t.IP,               rank: .unrankable),
+        .init(label: "G",    value: formatCount(t.G),   rank: .unrankable),
+        .init(label: "SO",   value: formatCount(t.SO),  rank: .unrankable),
+        .init(label: "BB",   value: formatCount(t.BB),  rank: .unrankable),
+        .init(label: "H",    value: formatCount(t.H),   rank: .unrankable),
+        .init(label: "ER",   value: formatCount(t.ER),  rank: .unrankable),
+    ]
 }
 
 // MARK: - Formatters

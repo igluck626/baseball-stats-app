@@ -106,6 +106,33 @@ struct PlayerPostseasonTests {
         #expect(row.WAR == nil && row.OPS_plus == nil)       // season-only figures stay empty
     }
 
+    // MARK: the Overview boxes — one stat set for "<season> Postseason" and "Postseason Career"
+
+    @Test func bothBattingBoxesShowTheSameStatsWithoutWAR() throws {
+        let bat = try #require(try record("oneill").batting)
+        let career = postseasonBattingStatItems(bat.career).map(\.label)
+        let season = postseasonBattingStatItems(try #require(bat.seasons.first).totals).map(\.label)
+        #expect(career == ["AVG", "OBP", "SLG", "OPS", "HR", "RBI", "H", "BB", "G", "AB"])
+        #expect(season == career)
+        #expect(!career.contains("WAR"))
+    }
+
+    @Test func theBattingCareerBoxReadsTheCareerLine() throws {
+        let items = postseasonBattingStatItems(try #require(try record("oneill").batting).career)
+        let v = Dictionary(uniqueKeysWithValues: items.map { ($0.label, $0.value) })
+        #expect(v["AVG"] == ".284" && v["H"] == "85" && v["G"] == "85")
+    }
+
+    @Test func bothPitchingBoxesShowTheSameStatsWithoutWAR() throws {
+        let pit = try #require(try record("sabathia").pitching)
+        let career = postseasonPitchingStatItems(pit.career)
+        let season = postseasonPitchingStatItems(try #require(pit.seasons.first).totals)
+        #expect(career.map(\.label) == ["W-L", "ERA", "WHIP", "SV", "IP", "G", "SO", "BB", "H", "ER"])
+        #expect(season.map(\.label) == career.map(\.label))
+        let v = Dictionary(uniqueKeysWithValues: career.map { ($0.label, $0.value) })
+        #expect(v["W-L"] == "10-7" && v["IP"] == "130.1" && v["SO"] == "121")
+    }
+
     // MARK: the Overview line (until the World Series ends)
 
     @Test func theOverviewLineShowsOnceHeHasAppeared() throws {
