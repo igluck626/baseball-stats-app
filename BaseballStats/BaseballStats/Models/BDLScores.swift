@@ -320,6 +320,12 @@ struct BDLPlateAppearance: Codable, Hashable {
     /// optional; the plays list treats a missing array the same as a
     /// PA that never put a ball in play.
     let pitches: [BDLPitchDetail]?
+    /// false when `pitches` is NOT the whole plate appearance — the live
+    /// snapshot's contact rows carry only the pitch put in play. Such a row
+    /// supplies the batted-ball metrics and nothing else; the pitch
+    /// sequence then comes from the play stream (`attachContactMetrics`).
+    /// Absent from balldontlie's own feed, so nil there, meaning complete.
+    var sequenceComplete: Bool? = nil
 
     /// ⚠️ Do NOT add an `outs` field here, even though the endpoint
     /// ships one. It is tempting because it needs no join at all,

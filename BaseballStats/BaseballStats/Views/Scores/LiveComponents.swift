@@ -673,7 +673,7 @@ struct PlaysView: View {
     /// type, and a steal or substitution interleaved into the at-bat
     /// carries no "Pitch" prefix. Type alone would drop the first and
     /// admit the second.
-    private static func pitchRows(_ ab: AtBat) -> [BDLPlay] {
+    static func pitchRows(_ ab: AtBat) -> [BDLPlay] {
         ab.plays.filter { ($0.text ?? "").hasPrefix("Pitch ") }
     }
 
@@ -808,14 +808,15 @@ struct PlaysView: View {
         "\(awayAbbr) \(awayScore), \(homeAbbr) \(homeScore)"
     }
 
-    private struct HalfInning: Identifiable, Hashable {
+    // Internal, not private, only so tests can drive the live join.
+    struct HalfInning: Identifiable, Hashable {
         let id: String
         let inning: Int
         let inningType: String
         let atBats: [AtBat]
     }
 
-    private struct AtBat: Identifiable, Hashable {
+    struct AtBat: Identifiable, Hashable {
         /// Stable key combining the half-inning id with the order
         /// of the at-bat's first play, so SwiftUI's diffing keeps
         /// state aligned across live-poll updates.
@@ -890,7 +891,7 @@ struct PlaysView: View {
         let paPitches: [BDLPitchDetail]
     }
 
-    private static func groupedHalfInnings(_ plays: [BDLPlay]) -> [HalfInning] {
+    static func groupedHalfInnings(_ plays: [BDLPlay]) -> [HalfInning] {
         // First pass: bucket by (normalized inningType, inning),
         // preserving BDL's chronological order. Store the
         // NORMALIZED `Top` / `Bottom` so the half-inning header's
@@ -995,7 +996,7 @@ struct PlaysView: View {
     /// the Nth at-bat by a batter takes the Nth PA by that batter.
     /// Anything that fails to match keeps `contact == nil` and renders
     /// with no metric line — absent, not zero.
-    private static func attachContactMetrics(
+    static func attachContactMetrics(
         _ halves: [HalfInning], plateAppearances: [BDLPlateAppearance],
     ) -> [HalfInning] {
         guard !plateAppearances.isEmpty else { return halves }
@@ -1040,7 +1041,12 @@ struct PlaysView: View {
                         awayScore:  ab.awayScore,
                         homeScore:  ab.homeScore,
                         contact:    (last?.exitVelocity != nil) ? last : nil,
-                        paPitches:  pa.pitches ?? [],
+                        // ⚠️ A live contact row holds ONLY the in-play pitch.
+                        // Passed on as the at-bat's pitch list it became the
+                        // whole sequence, and the sheet read "1 Pitch" for
+                        // every ball in play. It supplies `contact` only; the
+                        // sheet then takes the sequence from the play stream.
+                        paPitches:  pa.sequenceComplete == false ? [] : (pa.pitches ?? []),
                     )
                 },
             )

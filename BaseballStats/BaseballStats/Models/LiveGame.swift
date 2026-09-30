@@ -250,6 +250,8 @@ struct LiveContactPA: Codable, Hashable {
             pitcherId:   nil,
             result:      result,
             pitches:     pitches?.map(\.asPitchDetail),
+            // Only the in-play pitch: its metrics count, its list does not.
+            sequenceComplete: false,
         )
     }
 }
