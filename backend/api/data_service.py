@@ -733,38 +733,54 @@ _PITCHER_POSITION_CODES = {"P", "SP", "RP", "CL", "CP", "RHP", "LHP"}
 # only pure pitchers with stray batting data trip this.
 _PHANTOM_MIN_CAREER_IP = 50
 
+# A blank-position batter row is a hitter's only with at least this many PA
+# (and PA >= 3 x IP) — see `_batter_row_is_phantom`.
+_BLANK_ROW_MIN_PA = 50
+
 
 def _batter_row_is_phantom(batter_row, pitcher_row, db) -> bool:
     """True when a player's batter row reflects a pitcher rather than a real
-    hitter. Two signals:
+    hitter. Three signals:
 
-      1. Position string: the batter row's position is a pitcher code
-         (Misiorowski = "P") or blank.
-      2. Career volume: pitching overwhelmingly dominates despite a stray
-         fielding label. Pre-DH NL pitchers (Freeland, Scherzer) carry an
-         "OF"/position string from a pinch appearance, so the string alone is
-         fragile — but their career IP (1300+, 2900+) dwarfs their PA (198,
-         529). Ohtani (~4600 PA vs ~600 IP) has PA well above IP and stays a
-         hitter; a position player has ~0 IP and never trips the gate.
+      1. A pitcher position on the batter row (Misiorowski = "P").
+      2. A BLANK position — but only when the volumes agree. A blank alone
+         used to be enough, so a hitter who pitched once opened as a pitcher
+         with no batting side (Paul O'Neill: 8,329 PA, 2.0 IP; Lefty O'Doul;
+         D'Angelo Jimenez). Now a blank row is a hitter's when he batted at
+         least three times as often as he pitched innings AND at least 50
+         times (PA >= 3 x IP and PA >= 50); otherwise it stays a pitcher's.
+         The floor keeps one-game pitchers (Rusty Yarnall: 1 PA, 1.0 IP) where
+         they are.
+      3. Career volume, whatever the string: pitching overwhelmingly dominates
+         despite a stray fielding label. Pre-DH NL pitchers (Freeland,
+         Scherzer) carry an "OF"/position string from a pinch appearance, but
+         their career IP (1300+, 2900+) dwarfs their PA (198, 529). Ohtani
+         (~4600 PA vs ~600 IP) stays a hitter.
 
-    The volume query runs only when the cheap position check is inconclusive
-    and a pitcher row exists, so it costs nothing for ordinary players."""
+    A "P" row is deliberately NOT volume-checked: the ones with big PA are
+    conflated or misfiled records (Josh D. Smith 605479 pitched 16 games and
+    batted 0 times per Baseball-Reference, but carries another man's 108 PA),
+    and flipping them would put someone else's hitting on the page.
+
+    The volume query runs only when the position string doesn't settle it and
+    a pitcher row exists, so it costs nothing for ordinary players."""
     pos = (getattr(batter_row, "position", None) or "").strip().upper()
-    if pos == "" or pos in _PITCHER_POSITION_CODES:
+    if pos in _PITCHER_POSITION_CODES:
         return True
+    if pitcher_row is None:
+        return pos == ""
 
-    if pitcher_row is not None:
-        career_ip = sum(
-            (getattr(s, "IP", None) or 0.0)
-            for s in crud.get_pitcher_seasons(db, pitcher_row.player_id)
-        )
-        career_pa = sum(
-            (getattr(s, "PA", None) or 0)
-            for s in crud.get_player_seasons(db, batter_row.player_id)
-        )
-        if career_ip >= _PHANTOM_MIN_CAREER_IP and career_pa < career_ip:
-            return True
-    return False
+    career_ip = sum(
+        (getattr(s, "IP", None) or 0.0)
+        for s in crud.get_pitcher_seasons(db, pitcher_row.player_id)
+    )
+    career_pa = sum(
+        (getattr(s, "PA", None) or 0)
+        for s in crud.get_player_seasons(db, batter_row.player_id)
+    )
+    if pos == "":
+        return not (career_pa >= 3 * career_ip and career_pa >= _BLANK_ROW_MIN_PA)
+    return career_ip >= _PHANTOM_MIN_CAREER_IP and career_pa < career_ip
 
 
 def _choose_active_bio_row(batter_row, pitcher_row, db):
