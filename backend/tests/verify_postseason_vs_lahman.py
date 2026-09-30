@@ -4,7 +4,10 @@
 Lahman is a TEST REFERENCE here and nothing else — the app never reads it
 for postseason stats. Every player-season Retrosheet produces (via
 `retrosheet_postseason.parse_year`) is compared with Lahman's postseason
-tables, stat by stat.
+SOURCE FILES (BattingPost.csv / PitchingPost.csv), stat by stat, each Lahman
+playerID mapped to MLBAM through the Lahman loader's own (fixed) bridge. Not
+our player_postseason_* tables: those were loaded through the old bridge, which
+dropped some players and swapped others, so they are no longer a reference.
 
 ⚠️ TWO EXEMPTIONS, each derived from the data and each LISTED, never silent:
   1. NEGRO LEAGUES POSTSEASON (league not AL/NL: NNL, NAL, ECL, NN2...).
@@ -17,7 +20,8 @@ tables, stat by stat.
      against the games actually played.
 
 Needs the downloaded retrosplits files (--cache, as the ingest's dry run
-leaves them) and read access to the database ($DATABASE_URL). Not part of the
+leaves them); --from-tables instead reads the written postseason game logs,
+which needs read access to the database ($DATABASE_URL). Not part of the
 offline suite for that reason.
 
 With --from-tables the Retrosheet side is read back from the WRITTEN
@@ -28,6 +32,7 @@ Run: python backend/tests/verify_postseason_vs_lahman.py --cache DIR [--from 190
 """
 import argparse
 import collections
+import csv
 import os
 import sys
 
@@ -36,6 +41,24 @@ sys.path.insert(0, os.path.join(HERE, "..", "scripts"))
 sys.path.insert(0, os.path.join(HERE, ".."))
 import retrosheet_postseason as rp                                # noqa: E402
 import retrosheet_gamelogs as rg                                  # noqa: E402
+import lahman_load as ll                                          # noqa: E402
+
+_CSV_COL = {"doubles": "2B", "triples": "3B", "IP_OUTS": "IPouts"}
+
+
+def lahman_post(fname: str, stats: tuple, bridge: dict) -> tuple[dict, int]:
+    """{year: [(mlbam, round, team, league, G, *stats)]} from a Lahman
+    postseason file, plus the count of rows whose playerID has no MLBAM id."""
+    out, unmapped = collections.defaultdict(list), 0
+    with open(os.path.join(ll.LAHMAN_DIR, fname), newline="", encoding="utf-8-sig") as fh:
+        for r in csv.DictReader(fh):
+            mlbam = bridge.get(r["playerID"])
+            if mlbam is None:
+                unmapped += 1
+                continue
+            vals = tuple(int(float(r.get(_CSV_COL.get(s, s)) or 0)) for s in stats)
+            out[int(r["yearID"])].append((mlbam, r["round"], r["teamID"], r["lgID"], int(r["G"] or 0), *vals))
+    return out, unmapped
 
 BAT = ("AB", "R", "H", "doubles", "triples", "HR", "RBI", "BB", "SO", "SB", "CS")
 PIT = ("W", "L", "SV", "H", "ER", "HR", "BB", "SO", "IP_OUTS")
@@ -57,11 +80,18 @@ def main() -> int:
     ap.add_argument("--from-tables", action="store_true",
                     help="read the Retrosheet side from the written postseason tables")
     args = ap.parse_args()
-    import psycopg2
-    con = psycopg2.connect(os.environ["DATABASE_URL"])
-    con.set_session(readonly=True)
-    cur = con.cursor()
+    cur = None
+    if args.from_tables:
+        import psycopg2
+        con = psycopg2.connect(os.environ["DATABASE_URL"])
+        con.set_session(readonly=True)
+        cur = con.cursor()
     bridge = rg._load_bridge()
+    lahman_bridge = ll._load_chadwick_bridge()
+    lahman = {"bat": lahman_post("BattingPost.csv", BAT, lahman_bridge),
+              "pit": lahman_post("PitchingPost.csv", PIT, lahman_bridge)}
+    for side, (_, n) in lahman.items():
+        print(f"Lahman {side} rows with no MLBAM id (skipped): {n}")
 
     counts = collections.Counter()
     stat_miss = collections.Counter()
@@ -105,23 +135,22 @@ def main() -> int:
 
         # Truncated team-rounds, judged on BATTING — an everyday player appears
         # in every game, a pitcher never does — and exempted on both sides.
-        cur.execute('SELECT team, round, max("G") FROM player_postseason_batting '
-                    "WHERE year=%s AND league IN ('AL','NL') GROUP BY 1,2", (year,))
+        max_g = collections.defaultdict(int)
+        for pid, rd, t, lg, g, *_ in lahman["bat"][0].get(year, []):
+            if lg in ("AL", "NL"):
+                max_g[(t, rd)] = max(max_g[(t, rd)], g)
         short = []
-        for t, rd, mg in cur.fetchall():
+        for (t, rd), mg in max_g.items():
             n = r_games.get((t, round_type(rd or "")), 0)
             if round_type(rd or "") and (mg or 0) < n:
                 short.append((t, rd))
                 exempt_trunc.append((year, t, rd, mg, n))
 
-        for side, table, stats, retro in (("bat", "player_postseason_batting", BAT, rb),
-                                          ("pit", "player_postseason_pitching", PIT, rpit)):
-            cols = ", ".join(("round(\"IP\"::numeric * 3)" if s == "IP_OUTS" else
-                              (s if s in ("doubles", "triples") else f'"{s}"')) for s in stats)
-            cur.execute(f'SELECT player_id, round, team, league, "G", {cols} FROM {table} WHERE year=%s', (year,))
+        for side, stats, retro in (("bat", BAT, rb), ("pit", PIT, rpit)):
+            year_rows = lahman[side][0].get(year, [])
             lah = collections.defaultdict(collections.Counter)
             exempt = set()
-            for row in cur.fetchall():
+            for row in year_rows:
                 pid, rnd, team, league, g = row[:5]
                 if league not in ("AL", "NL"):
                     exempt_negro[(year, rnd, league)] += 1
@@ -130,9 +159,7 @@ def main() -> int:
                 for s, v in zip(stats, row[5:]):
                     lah[pid][s] += int(v or 0)
             if short:
-                cur.execute(f"SELECT DISTINCT player_id FROM {table} WHERE year=%s AND ({' OR '.join(['(team=%s AND round=%s)'] * len(short))})",
-                            (year, *[v for t, rd in short for v in (t, rd)]))
-                exempt |= {x[0] for x in cur.fetchall()}
+                exempt |= {row[0] for row in year_rows if (row[2], row[1]) in set(short)}
                 # ...and from Retrosheet's side: a truncated round can drop a
                 # player's Lahman row entirely (2023 Dunning has no ALCS row).
                 short_rt = {(t, round_type(rd)) for t, rd in short}
