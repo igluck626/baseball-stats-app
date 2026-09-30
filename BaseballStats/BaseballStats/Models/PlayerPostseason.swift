@@ -21,11 +21,32 @@ struct PlayerPostseason: Codable, Hashable {
     let batting: PostseasonSide<PostseasonBattingTotals>?
     let pitching: PostseasonSide<PostseasonPitchingTotals>?
     let current: PostseasonCurrent
+    /// Games in progress whose line is already added to the totals (the
+    /// backend's live overlay); nil when none. Optional in the payload, so a
+    /// backend without the overlay still decodes.
+    var live: [PostseasonLiveGame]? = nil
 
     enum CodingKeys: String, CodingKey {
-        case batting, pitching, current
+        case batting, pitching, current, live
         case playerId = "player_id"
         case retroLast = "retro_last"
+    }
+
+    /// Whether a live line is in this side's totals ("bat" / "pit").
+    func isLive(batting: Bool) -> Bool {
+        (live ?? []).contains { $0.sides.contains(batting ? "bat" : "pit") }
+    }
+}
+
+/// One in-progress postseason game whose line the backend has added.
+struct PostseasonLiveGame: Codable, Hashable {
+    let gameId: String
+    /// "bat" / "pit".
+    let sides: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case sides
+        case gameId = "game_id"
     }
 }
 
@@ -321,6 +342,17 @@ func showsPostseasonOverviewLine<T>(_ postseason: PlayerPostseason?,
           let line = side?.seasons.first(where: { $0.season == postseason.current.season })
     else { return nil }
     return line
+}
+
+/// ⚠️ THE POSTSEASON CAREER BOX RULE: while the league's postseason is in
+/// progress, show it for ANY player with postseason history on the side being
+/// shown — whether or not he or his team is in this year's (Mookie Betts on a
+/// bye). Its own rule, not `showsPostseasonOverviewLine` (that one also needs
+/// him to have appeared). Unknown league state hides it.
+func showsPostseasonCareerBox<T>(_ postseason: PlayerPostseason?,
+                                 side: PostseasonSide<T>?) -> PostseasonSide<T>? {
+    guard postseason?.current.leagueInProgress == true, let side, !side.seasons.isEmpty else { return nil }
+    return side
 }
 
 // MARK: - Into the career tables' row types

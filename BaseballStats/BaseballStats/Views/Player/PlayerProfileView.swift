@@ -719,9 +719,10 @@ struct PlayerProfileView: View {
         }
     }
 
-    /// While `showsPostseasonOverviewLine` holds, the postseason leads:
-    /// "<season> Postseason", then "Postseason Career", then the season.
-    /// Outside that window the order is the regular one.
+    /// While the league's postseason runs and he has postseason history
+    /// (`showsPostseasonCareerBox`), the postseason leads: "<season>
+    /// Postseason" once he has appeared (`showsPostseasonOverviewLine`), then
+    /// "Postseason Career", then the season. Otherwise the regular order.
     @ViewBuilder
     private var battingOverview: some View {
         VStack(spacing: 20) {
@@ -730,21 +731,35 @@ struct PlayerProfileView: View {
                 tier: viewModel.currentBatting?.bio?.heat_tier,
                 window: "Last 15 games"
             )
-            if let line = showsPostseasonOverviewLine(viewModel.postseason, side: viewModel.postseason?.batting) {
-                battingPostseasonCard(line)
-                battingPostseasonCareerCard
+            if let career = showsPostseasonCareerBox(viewModel.postseason, side: viewModel.postseason?.batting) {
+                if let line = showsPostseasonOverviewLine(viewModel.postseason, side: viewModel.postseason?.batting) {
+                    battingPostseasonCard(line)
+                }
+                battingPostseasonCareerCard(career)
                 heat
                 battingCurrentSeasonCard
             } else {
                 heat
                 battingCurrentSeasonCard
             }
-            RecentGamesSection(
-                playerId: player.player_id,
-                isPitcher: false,
-                season: Self.overviewSeason
-            )
-            .id("recent-batting-\(player.player_id)")
+            switch viewModel.recentGamesMode {
+            case .regular:
+                RecentGamesSection(
+                    playerId: player.player_id,
+                    isPitcher: false,
+                    season: Self.overviewSeason
+                )
+                .id("recent-batting-\(player.player_id)")
+            case .postseason:
+                RecentPostseasonGamesSection(
+                    playerId: player.player_id,
+                    isPitcher: false,
+                    season: viewModel.postseason?.current.season ?? Self.overviewSeason
+                )
+                .id("recent-post-batting-\(player.player_id)")
+            case .hidden:
+                EmptyView()
+            }
             battingCareerCard
         }
         // Kick off rank fetching as soon as the Overview tab appears,
@@ -761,21 +776,35 @@ struct PlayerProfileView: View {
                 tier: viewModel.currentPitching?.bio?.heat_tier,
                 window: "Recent form"
             )
-            if let line = showsPostseasonOverviewLine(viewModel.postseason, side: viewModel.postseason?.pitching) {
-                pitchingPostseasonCard(line)
-                pitchingPostseasonCareerCard
+            if let career = showsPostseasonCareerBox(viewModel.postseason, side: viewModel.postseason?.pitching) {
+                if let line = showsPostseasonOverviewLine(viewModel.postseason, side: viewModel.postseason?.pitching) {
+                    pitchingPostseasonCard(line)
+                }
+                pitchingPostseasonCareerCard(career)
                 heat
                 pitchingCurrentSeasonCard
             } else {
                 heat
                 pitchingCurrentSeasonCard
             }
-            RecentGamesSection(
-                playerId: player.player_id,
-                isPitcher: true,
-                season: Self.overviewSeason
-            )
-            .id("recent-pitching-\(player.player_id)")
+            switch viewModel.recentGamesMode {
+            case .regular:
+                RecentGamesSection(
+                    playerId: player.player_id,
+                    isPitcher: true,
+                    season: Self.overviewSeason
+                )
+                .id("recent-pitching-\(player.player_id)")
+            case .postseason:
+                RecentPostseasonGamesSection(
+                    playerId: player.player_id,
+                    isPitcher: true,
+                    season: viewModel.postseason?.current.season ?? Self.overviewSeason
+                )
+                .id("recent-post-pitching-\(player.player_id)")
+            case .hidden:
+                EmptyView()
+            }
             pitchingCareerCard
         }
         .task { await pitchingRanksVM.load() }
@@ -798,6 +827,7 @@ struct PlayerProfileView: View {
         currentSeasonGridCard(
             title: "\(String(line.season)) Postseason",
             subtitle: postseasonSubtitle(line.rounds.last?.roundName, line.rounds.last?.series),
+            liveBadge: viewModel.postseason?.isLive(batting: true) == true,
             items: postseasonBattingStatItems(line.totals)
         )
         .contentShape(Rectangle())
@@ -808,7 +838,9 @@ struct PlayerProfileView: View {
         currentSeasonGridCard(
             title: "\(String(line.season)) Postseason",
             subtitle: postseasonSubtitle(line.rounds.last?.roundName, line.rounds.last?.series),
-            items: postseasonPitchingStatItems(line.totals)
+            liveBadge: viewModel.postseason?.isLive(batting: false) == true,
+            items: postseasonPitchingStatItems(line.totals,
+                                               starter: postseasonPitcherIsStarter(viewModel.postseason?.pitching?.career))
         )
         .contentShape(Rectangle())
         .onTapGesture { openPostseasonGameLog(season: line.season) }
@@ -819,26 +851,23 @@ struct PlayerProfileView: View {
     /// "Postseason Career": the "<season> Postseason" card's stats, in its
     /// order and layout, from the postseason career line — one definition
     /// (`postseasonBattingStatItems` / `postseasonPitchingStatItems`), so the
-    /// two boxes can't drift apart. Shown with that card (same rule).
-    @ViewBuilder
-    private var battingPostseasonCareerCard: some View {
-        if let t = viewModel.postseason?.batting?.career {
-            VStack(alignment: .leading, spacing: 6) {
-                currentSeasonGridCard(title: "Postseason Career", subtitle: nil,
-                                      items: postseasonBattingStatItems(t))
-                postseasonCoverageNote(firstSeason: viewModel.careerBatting?.seasons?.compactMap(\.year).min())
-            }
+    /// two boxes can't drift apart. Shown by `showsPostseasonCareerBox`: any
+    /// player with postseason history while the league's postseason runs.
+    private func battingPostseasonCareerCard(_ side: PostseasonSide<PostseasonBattingTotals>) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            currentSeasonGridCard(title: "Postseason Career", subtitle: nil,
+                                  liveBadge: viewModel.postseason?.isLive(batting: true) == true,
+                                  items: postseasonBattingStatItems(side.career))
+            postseasonCoverageNote(firstSeason: viewModel.careerBatting?.seasons?.compactMap(\.year).min())
         }
     }
 
-    @ViewBuilder
-    private var pitchingPostseasonCareerCard: some View {
-        if let t = viewModel.postseason?.pitching?.career {
-            VStack(alignment: .leading, spacing: 6) {
-                currentSeasonGridCard(title: "Postseason Career", subtitle: nil,
-                                      items: postseasonPitchingStatItems(t))
-                postseasonCoverageNote(firstSeason: viewModel.careerPitching?.seasons?.compactMap(\.year).min())
-            }
+    private func pitchingPostseasonCareerCard(_ side: PostseasonSide<PostseasonPitchingTotals>) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            currentSeasonGridCard(title: "Postseason Career", subtitle: nil,
+                                  liveBadge: viewModel.postseason?.isLive(batting: false) == true,
+                                  items: postseasonPitchingStatItems(side.career, starter: postseasonPitcherIsStarter(side.career)))
+            postseasonCoverageNote(firstSeason: viewModel.careerPitching?.seasons?.compactMap(\.year).min())
         }
     }
 
@@ -1568,6 +1597,7 @@ struct PlayerProfileView: View {
             year: $gameLogYear,
             scope: $gameLogScope,
             postseasonSeasons: postseasonSeasonsShown,
+            postseasonRecord: viewModel.postseason,
             postseasonYear: $postseasonGameLogYear
         )
         .id(showingBatting)
@@ -3612,36 +3642,48 @@ private func leaderCell(
 // MARK: - Postseason Overview stats
 
 /// THE stat set of both Overview postseason boxes — "<season> Postseason" and
-/// "Postseason Career" — so they show the same stats in the same order. No
-/// WAR: postseason play has no such figure.
+/// "Postseason Career" — so they show the same stats in the same order.
+/// Batting follows the season box's list with H in WAR's place (postseason
+/// play has no WAR): H, AVG, OBP, SLG, OPS, HR, RBI, SB, G, PA.
 func postseasonBattingStatItems(_ t: PostseasonBattingTotals) -> [StatItem] {
     [
-        .init(label: "AVG", value: format3(t.AVG), rank: .unrankable),
-        .init(label: "OBP", value: format3(t.OBP), rank: .unrankable),
-        .init(label: "SLG", value: format3(t.SLG), rank: .unrankable),
-        .init(label: "OPS", value: format3(t.OPS), rank: .unrankable),
+        .init(label: "H",   value: formatCount(t.H),   rank: .unrankable),
+        .init(label: "AVG", value: format3(t.AVG),     rank: .unrankable),
+        .init(label: "OBP", value: format3(t.OBP),     rank: .unrankable),
+        .init(label: "SLG", value: format3(t.SLG),     rank: .unrankable),
+        .init(label: "OPS", value: format3(t.OPS),     rank: .unrankable),
         .init(label: "HR",  value: formatCount(t.HR),  rank: .unrankable),
         .init(label: "RBI", value: formatCount(t.RBI), rank: .unrankable),
-        .init(label: "H",   value: formatCount(t.H),   rank: .unrankable),
-        .init(label: "BB",  value: formatCount(t.BB),  rank: .unrankable),
+        .init(label: "SB",  value: formatCount(t.SB),  rank: .unrankable),
         .init(label: "G",   value: formatCount(t.G),   rank: .unrankable),
-        .init(label: "AB",  value: formatCount(t.AB),  rank: .unrankable),
+        .init(label: "PA",  value: formatCount(t.PA),  rank: .unrankable),
     ]
 }
 
-func postseasonPitchingStatItems(_ t: PostseasonPitchingTotals) -> [StatItem] {
+/// Pitching follows the season box's list with H (hits allowed) in WAR's
+/// place: H, W-L, ERA, WHIP, K/9, G, GS or SV, IP, SO, BB. `starter` picks
+/// GS or SV — decided once from his postseason career, so both boxes match.
+func postseasonPitchingStatItems(_ t: PostseasonPitchingTotals, starter: Bool) -> [StatItem] {
     [
+        .init(label: "H",    value: formatCount(t.H),   rank: .unrankable),
         .init(label: "W-L",  value: formatWL(t.W, t.L), rank: .unrankable),
         .init(label: "ERA",  value: format2(t.ERA),     rank: .unrankable),
         .init(label: "WHIP", value: format2(t.WHIP),    rank: .unrankable),
-        .init(label: "SV",   value: formatCount(t.SV),  rank: .unrankable),
-        .init(label: "IP",   value: t.IP,               rank: .unrankable),
+        .init(label: "K/9",  value: format1(t.outs > 0 ? Double(t.SO) * 27 / Double(t.outs) : nil), rank: .unrankable),
         .init(label: "G",    value: formatCount(t.G),   rank: .unrankable),
+        starter ? .init(label: "GS", value: formatCount(t.GS), rank: .unrankable)
+                : .init(label: "SV", value: formatCount(t.SV), rank: .unrankable),
+        .init(label: "IP",   value: t.IP,               rank: .unrankable),
         .init(label: "SO",   value: formatCount(t.SO),  rank: .unrankable),
         .init(label: "BB",   value: formatCount(t.BB),  rank: .unrankable),
-        .init(label: "H",    value: formatCount(t.H),   rank: .unrankable),
-        .init(label: "ER",   value: formatCount(t.ER),  rank: .unrankable),
     ]
+}
+
+/// The GS-or-SV choice for both pitching boxes: a starter if at least 40% of
+/// his postseason appearances were starts (the season box's own threshold).
+func postseasonPitcherIsStarter(_ career: PostseasonPitchingTotals?) -> Bool {
+    guard let c = career, c.G > 0 else { return true }
+    return Double(c.GS) / Double(c.G) >= 0.4
 }
 
 // MARK: - Formatters

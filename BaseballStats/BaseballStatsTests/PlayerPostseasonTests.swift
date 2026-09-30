@@ -9,7 +9,8 @@
 //  `testdata/player-postseason/*.json` is the backend's OWN output (captured
 //  2026-09-30): O'Neill (batting only), Sabathia (a pitcher who also batted),
 //  Ohtani (two-way), Hendrickson (a 2026 Wild Card series in progress), Ruth
-//  (World Series only, both sides) and Ernie Banks (no postseason).
+//  (World Series only, both sides), Ernie Banks (no postseason), Betts (on a
+//  bye: history, not appeared) and Machado (appeared in the Wild Card).
 //
 
 import Foundation
@@ -112,7 +113,8 @@ struct PlayerPostseasonTests {
         let bat = try #require(try record("oneill").batting)
         let career = postseasonBattingStatItems(bat.career).map(\.label)
         let season = postseasonBattingStatItems(try #require(bat.seasons.first).totals).map(\.label)
-        #expect(career == ["AVG", "OBP", "SLG", "OPS", "HR", "RBI", "H", "BB", "G", "AB"])
+        // The season box's list with H in WAR's place.
+        #expect(career == ["H", "AVG", "OBP", "SLG", "OPS", "HR", "RBI", "SB", "G", "PA"])
         #expect(season == career)
         #expect(!career.contains("WAR"))
     }
@@ -123,14 +125,83 @@ struct PlayerPostseasonTests {
         #expect(v["AVG"] == ".284" && v["H"] == "85" && v["G"] == "85")
     }
 
-    @Test func bothPitchingBoxesShowTheSameStatsWithoutWAR() throws {
+    @Test func bothPitchingBoxesShowTheSameStatsWithHInWARsPlace() throws {
         let pit = try #require(try record("sabathia").pitching)
-        let career = postseasonPitchingStatItems(pit.career)
-        let season = postseasonPitchingStatItems(try #require(pit.seasons.first).totals)
-        #expect(career.map(\.label) == ["W-L", "ERA", "WHIP", "SV", "IP", "G", "SO", "BB", "H", "ER"])
+        let starter = postseasonPitcherIsStarter(pit.career)
+        let career = postseasonPitchingStatItems(pit.career, starter: starter)
+        let season = postseasonPitchingStatItems(try #require(pit.seasons.first).totals, starter: starter)
+        // The season box's list — WAR, W-L, ERA, WHIP, K/9, G, GS|SV, IP, SO, BB — with H for WAR.
+        #expect(career.map(\.label) == ["H", "W-L", "ERA", "WHIP", "K/9", "G", "GS", "IP", "SO", "BB"])
         #expect(season.map(\.label) == career.map(\.label))
         let v = Dictionary(uniqueKeysWithValues: career.map { ($0.label, $0.value) })
         #expect(v["W-L"] == "10-7" && v["IP"] == "130.1" && v["SO"] == "121")
+        #expect(v["K/9"] == String(format: "%.1f", 121.0 * 27 / 391))
+    }
+
+    @Test func aRelieverGetsSVInTheRoleSlot() throws {
+        // Hendrickson: one relief appearance, no start.
+        let pit = try #require(try record("hendrickson").pitching)
+        #expect(!postseasonPitcherIsStarter(pit.career))
+        #expect(postseasonPitchingStatItems(pit.career, starter: false).map(\.label)[6] == "SV")
+    }
+
+    // MARK: which Overview boxes show during the postseason
+
+    @Test func aPlayerOnAByeGetsTheCareerBoxOnly() throws {
+        // Betts, captured 2026-09-30: the league postseason is on, the Dodgers
+        // have a bye, he has nine postseasons of history.
+        let r = try record("betts")
+        #expect(r.current.leagueInProgress == true && r.current.playerAppeared == false)
+        #expect(showsPostseasonCareerBox(r, side: r.batting) != nil)
+        #expect(showsPostseasonOverviewLine(r, side: r.batting) == nil)
+    }
+
+    @Test func aPlayerWhoHasAppearedGetsBoth() throws {
+        let r = try record("machado")                       // captured 2026-09-30, after WC G1
+        #expect(showsPostseasonCareerBox(r, side: r.batting) != nil)
+        #expect(showsPostseasonOverviewLine(r, side: r.batting)?.season == 2026)
+    }
+
+    @Test func aPlayerWithNoPostseasonGetsNeither() throws {
+        let r = try record("banks")
+        let during = PlayerPostseason(playerId: r.playerId, retroLast: r.retroLast, batting: nil, pitching: nil,
+                                      current: PostseasonCurrent(season: 2026, leagueInProgress: true,
+                                                                 playerAppeared: false, teamEliminated: nil))
+        #expect(showsPostseasonCareerBox(during, side: during.batting) == nil)
+        #expect(showsPostseasonOverviewLine(during, side: during.batting) == nil)
+    }
+
+    @Test func theCareerBoxEndsWithTheWorldSeries() throws {
+        let r = try record("betts")
+        let over = PlayerPostseason(playerId: r.playerId, retroLast: r.retroLast, batting: r.batting, pitching: nil,
+                                    current: PostseasonCurrent(season: 2026, leagueInProgress: false,
+                                                               playerAppeared: false, teamEliminated: nil))
+        #expect(showsPostseasonCareerBox(over, side: over.batting) == nil)
+    }
+
+    // MARK: the live line
+
+    @Test func theLiveFlagNamesTheSide() throws {
+        let json = #"{"player_id": 1, "retro_last": 2025, "batting": null, "pitching": null,"# +
+            #""live": [{"game_id": "15467364", "sides": ["bat"]}],"# +
+            #""current": {"season": 2026, "league_in_progress": true, "player_appeared": true, "team_eliminated": false}}"#
+        let r = try JSONDecoder().decode(PlayerPostseason.self, from: Data(json.utf8))
+        #expect(r.isLive(batting: true) && !r.isLive(batting: false))
+        #expect(r.live?.first?.gameId == "15467364")
+    }
+
+    @Test func productionsPayloadBeforeTheOverlayDecodesWithNoLiveTag() throws {
+        // Schwarber, captured from production 2026-09-30 while PHI @ ATL was in
+        // progress — before the backend's live overlay: no `live` field at all.
+        let r = try record("schwarber")
+        #expect(r.live == nil)
+        #expect(!r.isLive(batting: true) && !r.isLive(batting: false))
+        #expect(r.batting?.seasons.first?.season == 2026)
+    }
+
+    @Test func aPayloadWithoutTheLiveFieldStillDecodes() throws {
+        let r = try record("machado")                       // captured before the overlay shipped
+        #expect(r.live == nil && !r.isLive(batting: true))
     }
 
     // MARK: the Overview line (until the World Series ends)

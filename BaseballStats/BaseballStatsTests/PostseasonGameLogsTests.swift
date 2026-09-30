@@ -27,6 +27,14 @@ private func logs(_ name: String) throws -> PostseasonGameLogs {
 }
 
 @MainActor
+private func postseasonRecord(_ name: String) throws -> PlayerPostseason {
+    let url = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        .appendingPathComponent("testdata/player-postseason/\(name).json")
+    return try JSONDecoder().decode(PlayerPostseason.self, from: Data(contentsOf: url))
+}
+
+@MainActor
 @Suite("Postseason game logs")
 struct PostseasonGameLogsTests {
 
@@ -90,6 +98,66 @@ struct PostseasonGameLogsTests {
         #expect(abs((rows.first?.avg ?? 0) - Double(h) / Double(ab)) < 1e-9)
         // The oldest row's is that one game's: 0-for-4.
         #expect(rows.last?.avg == 0)
+    }
+
+    // MARK: series groups
+
+    @Test func aSweep() throws {
+        // Jeter 1999: ALDS 3-0 over Texas, ALCS 4-1 over Boston, World Series 4-0 over Atlanta.
+        let rec = try postseasonRecord("jeter")
+        let series = PostseasonGameRows.battingSeries(
+            try #require(try logs("jeter-1999").batting),
+            records: PostseasonGameRows.records(rec.batting?.seasons.first { $0.season == 1999 }))
+        #expect(series.map(\.label) == ["WS vs ATL · Won 4-0", "ALCS vs BOS · Won 4-1", "ALDS vs TEX · Won 3-0"])
+        #expect(series.map(\.shortName) == ["WS", "ALCS", "ALDS"])
+        let ws = try #require(series.first)
+        #expect(ws.rows.map(\.line.seriesGameLabel) == ["WS G4", "WS G3", "WS G2", "WS G1"])
+    }
+
+    @Test func aSeriesHeSatOutAGameOf() throws {
+        // O'Neill 2001 ALDS: the Yankees came back from 0-2; he sat out Games 3 and 5.
+        let lines = try #require(try logs("oneill-2001").batting)
+        let rec = try postseasonRecord("oneill")
+        let series = PostseasonGameRows.battingSeries(
+            lines, records: PostseasonGameRows.records(rec.batting?.seasons.first { $0.season == 2001 }))
+        let alds = try #require(series.last)
+        #expect(alds.label == "ALDS vs OAK · Won 3-2")
+        #expect(alds.rows.map(\.line.seriesGameLabel) == ["ALDS G4", "ALDS G2", "ALDS G1"])
+        // Rates from the summed counts, not an average of per-game rates.
+        let games = lines.filter { $0.round == "DS" }
+        let h = games.map(\.H).reduce(0, +), ab = games.map(\.AB).reduce(0, +)
+        #expect(alds.totals.ab == ab && alds.totals.h == h)
+        #expect(abs((alds.totals.avg ?? -1) - Double(h) / Double(ab)) < 1e-9)
+        let averaged = games.map { $0.AB > 0 ? Double($0.H) / Double($0.AB) : 0 }.reduce(0, +) / Double(games.count)
+        #expect(abs(averaged - Double(h) / Double(ab)) > 1e-6)      // the two differ here, so the test can tell
+    }
+
+    @Test func aPitchersSeriesLine() throws {
+        // Sabathia, 2009 World Series: Game 1 (7.0 IP, 2 ER, L) and Game 4 (6.2 IP, 3 ER, ND).
+        let rec = try postseasonRecord("sabathia")
+        let series = PostseasonGameRows.pitchingSeries(
+            try #require(try logs("sabathia-2009").pitching),
+            records: PostseasonGameRows.records(rec.pitching?.seasons.first { $0.season == 2009 }))
+        let ws = try #require(series.first)
+        #expect(ws.title == "WS vs PHI" && ws.record?.summary == "Won 4-2")
+        #expect(abs((ws.totals.ip ?? 0) - 41.0 / 3) < 1e-9)                 // innings from outs: 13.2
+        #expect(ws.totals.er == 5)
+        #expect(abs((ws.totals.era ?? 0) - 5.0 * 27 / 41) < 1e-9)          // 3.29, from the summed outs
+    }
+
+    @Test func aSeriesStillInProgress() throws {
+        let rec = try postseasonRecord("hendrickson")
+        let series = PostseasonGameRows.pitchingSeries(
+            try #require(try logs("hendrickson-2026").pitching),
+            records: PostseasonGameRows.records(rec.pitching?.seasons.first { $0.season == 2026 }))
+        let wc = try #require(series.first)
+        #expect(wc.label == "WC vs CWS · Trails 0-1" && wc.record?.won == nil)
+    }
+
+    @Test func recentPostseasonGamesAreTheLatestFiveNewestFirst() throws {
+        let recent = recentPostseasonLines(try #require(try logs("oneill-2001").batting))
+        // He played World Series Games 1, 3, 4, 5 and 7.
+        #expect(recent.map(\.seriesGameLabel) == ["WS G7", "WS G5", "WS G4", "WS G3", "WS G1"])
     }
 
     @Test func pitchingRowsCarryEraToDateAndHisDecision() throws {

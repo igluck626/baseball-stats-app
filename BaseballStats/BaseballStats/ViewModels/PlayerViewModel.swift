@@ -136,10 +136,20 @@ final class PlayerViewModel: ObservableObject {
     /// and left nil on failure: the Career switch and the Overview line then
     /// simply don't appear.
     @Published var postseason: PlayerPostseason?
-    /// `showsHotCold` for today — false until known, and false when
-    /// `/season/phase` fails to load (the meter hides rather than show a stale
-    /// reading).
-    @Published var showsHotCold = false
+    /// `/season/phase` for today's season; nil until loaded or when it fails
+    /// (unknown — the Hot/Cold meter and Recent Games then hide).
+    @Published var seasonPhase: SeasonPhase?
+
+    /// `showsHotCold` for today — false while the phase is unknown.
+    var showsHotCold: Bool {
+        BaseballStats.showsHotCold(today: HotColdSeason.easternDateString(Date()), phase: seasonPhase)
+    }
+
+    /// `recentGamesMode` for today.
+    var recentGamesMode: RecentGamesMode {
+        BaseballStats.recentGamesMode(today: HotColdSeason.easternDateString(Date()),
+                                      phase: seasonPhase, postseason: postseason)
+    }
 
     /// Cumulative box-score overlay for the player across today's
     /// live/final games. Summed in `loadRecentGameStats()` and
@@ -182,6 +192,8 @@ final class PlayerViewModel: ObservableObject {
     /// finished); cancelled on view disappear via
     /// `stopRecentGameRefresh()`.
     private var refreshTask: Task<Void, Never>?
+    /// The postseason live-line reload (`startPostseasonLiveRefresh`).
+    private var postseasonRefreshTask: Task<Void, Never>?
 
     @Published var isLoadingCurrentBatting = false
     @Published var isLoadingCareerBatting = false
@@ -374,6 +386,7 @@ final class PlayerViewModel: ObservableObject {
         Task { [weak self] in
             await self?.loadRecentGameStats()
             self?.startRecentGameRefresh()
+            self?.startPostseasonLiveRefresh()
         }
     }
 
@@ -977,6 +990,27 @@ final class PlayerViewModel: ObservableObject {
     func stopRecentGameRefresh() {
         refreshTask?.cancel()
         refreshTask = nil
+        postseasonRefreshTask?.cancel()
+        postseasonRefreshTask = nil
+    }
+
+    /// While the league's postseason runs and his game is in progress, reload
+    /// `/players/{id}/postseason` — whose totals carry the backend's live line
+    /// — on the live store's cadence, so both Overview postseason boxes move
+    /// with the game. Stops once neither his team's live game nor a live line
+    /// remains; `stopRecentGameRefresh` (the view's `.onDisappear`) cancels it.
+    func startPostseasonLiveRefresh() {
+        postseasonRefreshTask?.cancel()
+        guard postseason?.current.leagueInProgress == true else { return }
+        guard teamHasLiveGame || postseason?.live != nil else { return }
+        postseasonRefreshTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: LiveGameStore.defaultRefreshIntervalNanos)
+                guard !Task.isCancelled, let self else { return }
+                await self.loadPostseason()
+                if !(self.teamHasLiveGame || self.postseason?.live != nil) { return }
+            }
+        }
     }
 
     /// `yyyy-MM-dd` in local timezone for BDL's `dates[]` filter.
@@ -1043,7 +1077,7 @@ final class PlayerViewModel: ObservableObject {
     }
 
     private func loadHotColdSeason() async {
-        showsHotCold = await HotColdSeason.load()
+        seasonPhase = await HotColdSeason.load()
     }
 
     private func loadCurrentBatting() async {

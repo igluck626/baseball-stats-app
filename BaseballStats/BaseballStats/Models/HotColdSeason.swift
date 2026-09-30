@@ -49,22 +49,45 @@ func showsHotCold(today: String, phase: SeasonPhase?) -> Bool {
     return first <= today && today <= last
 }
 
-/// Reads `showsHotCold`'s input and remembers the answer for 15 minutes, so
-/// opening profile after profile doesn't refetch it.
+/// What the Overview's recent-games section shows.
+enum RecentGamesMode: Equatable {
+    /// "Recent Games": the regular-season rolling windows.
+    case regular
+    /// "Recent Postseason Games": his latest games of this postseason.
+    case postseason
+    case hidden
+}
+
+/// ⚠️ THE RECENT GAMES RULE:
+///   • the regular season — Opening Day through the last regular day, from
+///     `/season/phase` (the same span as `showsHotCold`) — shows the
+///     regular-season windows, as always;
+///   • while the league's postseason is in progress AND he has appeared in it,
+///     his latest postseason games;
+///   • otherwise — postseason without an appearance, offseason, spring
+///     training, an unknown phase — nothing.
+func recentGamesMode(today: String, phase: SeasonPhase?, postseason: PlayerPostseason?) -> RecentGamesMode {
+    if showsHotCold(today: today, phase: phase) { return .regular }
+    if postseason?.current.leagueInProgress == true, postseason?.current.playerAppeared == true {
+        return .postseason
+    }
+    return .hidden
+}
+
+/// Reads `/season/phase` for today's season and remembers it for 15 minutes,
+/// so opening profile after profile doesn't refetch it. nil = unknown.
 @MainActor
 enum HotColdSeason {
-    private static var cached: (value: Bool, at: Date)?
+    private static var cached: (value: SeasonPhase, at: Date)?
 
-    static func load(now: Date = Date(), api: APIClient = .shared) async -> Bool {
+    static func load(now: Date = Date(), api: APIClient = .shared) async -> SeasonPhase? {
         if let cached, now.timeIntervalSince(cached.at) < 15 * 60 { return cached.value }
-        let today = easternDateString(now)
-        let season = Int(today.prefix(4)) ?? Calendar.current.component(.year, from: now)
+        let season = Int(easternDateString(now).prefix(4)) ?? Calendar.current.component(.year, from: now)
         guard let phase = try? await api.getSeasonPhase(season: season) else {
-            return false                    // unknown: hide, and retry next time
+            return nil                      // unknown: callers hide, and retry next time
         }
-        let value = showsHotCold(today: today, phase: phase)
-        cached = (value, now)
-        return value
+        cached = (phase, now)
+        return phase
     }
 
     static func easternDateString(_ date: Date) -> String {

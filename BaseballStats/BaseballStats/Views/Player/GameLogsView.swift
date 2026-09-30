@@ -148,6 +148,8 @@ struct GameLogsView: View {
     @Binding private var scope: GameLogScope
     /// The seasons this side has postseason games in, newest first.
     private let postseasonSeasons: [Int]
+    /// His postseason record — each series' state for the group labels.
+    private let postseasonRecord: PlayerPostseason?
     @Binding private var postseasonYear: Int
 
     /// Convenience overload for the existing search → profile flow,
@@ -165,6 +167,7 @@ struct GameLogsView: View {
          year: Binding<Int>,
          scope: Binding<GameLogScope> = .constant(.regular),
          postseasonSeasons: [Int] = [],
+         postseasonRecord: PlayerPostseason? = nil,
          postseasonYear: Binding<Int> = .constant(Calendar.current.component(.year, from: Date()))) {
         self.playerId = player.player_id
         self.isPitcher = isPitcher
@@ -174,6 +177,7 @@ struct GameLogsView: View {
         self._year = year
         self._scope = scope
         self.postseasonSeasons = postseasonSeasons
+        self.postseasonRecord = postseasonRecord
         self._postseasonYear = postseasonYear
         _vm = StateObject(wrappedValue: GameLogsViewModel(
             player: player, isPitcher: isPitcher,
@@ -191,7 +195,8 @@ struct GameLogsView: View {
             }
             if scope == .postseason && !postseasonSeasons.isEmpty {
                 PostseasonGameLogsSection(playerId: playerId, isPitcher: isPitcher,
-                                          seasons: postseasonSeasons, year: $postseasonYear)
+                                          seasons: postseasonSeasons, record: postseasonRecord,
+                                          year: $postseasonYear)
             } else {
                 splitsTable
                 seasonPicker
@@ -1586,13 +1591,16 @@ private struct PostseasonGameLogsSection: View {
     let isPitcher: Bool
     /// Newest first.
     let seasons: [Int]
+    /// His postseason record, for each series' state in the group labels.
+    let record: PlayerPostseason?
     @Binding var year: Int
     @StateObject private var vm: PostseasonGameLogsViewModel
 
-    init(playerId: Int, isPitcher: Bool, seasons: [Int], year: Binding<Int>) {
+    init(playerId: Int, isPitcher: Bool, seasons: [Int], record: PlayerPostseason?, year: Binding<Int>) {
         self.playerId = playerId
         self.isPitcher = isPitcher
         self.seasons = seasons
+        self.record = record
         self._year = year
         _vm = StateObject(wrappedValue: PostseasonGameLogsViewModel(playerId: playerId))
     }
@@ -1625,9 +1633,11 @@ private struct PostseasonGameLogsSection: View {
     private var table: some View {
         let current = vm.logs?.season == season ? vm.logs : nil
         if let current, isPitcher, let lines = current.pitching, !lines.isEmpty {
-            PostseasonPitchingGameTable(rows: PostseasonGameRows.pitching(lines))
+            PostseasonPitchingGameTable(series: PostseasonGameRows.pitchingSeries(
+                lines, records: PostseasonGameRows.records(record?.pitching?.seasons.first { $0.season == season })))
         } else if let current, !isPitcher, let lines = current.batting, !lines.isEmpty {
-            PostseasonBattingGameTable(rows: PostseasonGameRows.batting(lines))
+            PostseasonBattingGameTable(series: PostseasonGameRows.battingSeries(
+                lines, records: PostseasonGameRows.records(record?.batting?.seasons.first { $0.season == season })))
         } else if current == nil && vm.error == nil {
             ProgressView().frame(maxWidth: .infinity, minHeight: 140)
         } else {
@@ -1688,6 +1698,95 @@ enum PostseasonGameRows {
     }
 }
 
+// MARK: - Postseason series (the log's groups)
+
+extension PostseasonGameRows {
+    /// One series of his: the games he played in it (newest first) and his
+    /// totals over them — rates from the SUMMED counts (innings from outs),
+    /// never averaged. `record` is the series' state from his postseason
+    /// record (`/players/{id}/postseason`), nil when it isn't known.
+    struct Series<Row> {
+        let round: String
+        let roundName: String
+        let opponent: String?
+        let opponentName: String?
+        let record: PostseasonRoundSeries?
+        let rows: [Row]
+        let totals: WindowSnapshot
+
+        var opponentCode: String { opponentName.flatMap { mlbTeamShortCode[$0] } ?? opponent ?? "—" }
+        /// "ALDS vs NYY", "WS vs BOS" — the short round name, so it fits the
+        /// frozen pane ("World Series vs BOS" does not).
+        var title: String { "\(shortName) vs \(opponentCode)" }
+        /// "ALDS vs NYY · Won 3-2" (no state when unknown).
+        var label: String { record.map { "\(title) · \($0.summary)" } ?? title }
+        /// "ALDS", "WS" — the subtotal row's name.
+        var shortName: String { postseasonSeriesGameLabel(round: round, roundName: roundName, gameNumber: nil) }
+    }
+
+    /// Series records keyed by round + opponent, from his postseason record's season line.
+    static func records<T>(_ line: PostseasonSeasonLine<T>?) -> [String: PostseasonRoundSeries] {
+        Dictionary((line?.rounds ?? []).map { ("\($0.round)|\($0.opponent)", $0.series) }, uniquingKeysWith: { a, _ in a })
+    }
+
+    static func battingSeries(_ lines: [PostseasonBattingGameLine],
+                              records: [String: PostseasonRoundSeries]) -> [Series<Batting>] {
+        group(batting(lines), line: \.line, records: records) { .computeBatting(games: $0) }
+    }
+
+    static func pitchingSeries(_ lines: [PostseasonPitchingGameLine],
+                               records: [String: PostseasonRoundSeries]) -> [Series<Pitching>] {
+        group(pitching(lines), line: \.line, records: records) { .computePitching(games: $0) }
+    }
+
+    /// `rows` newest first -> series newest first, rows within newest first.
+    private static func group<Row, L: PostseasonGameLine & HasGameLog>(
+        _ rows: [Row], line: KeyPath<Row, L>, records: [String: PostseasonRoundSeries],
+        totals: ([GameLog]) -> WindowSnapshot) -> [Series<Row>] {
+        var order: [String] = []
+        var byKey: [String: [Row]] = [:]
+        for r in rows {
+            let l = r[keyPath: line]
+            let key = "\(l.round)|\(l.opponent ?? "")"
+            if byKey[key] == nil { order.append(key) }
+            byKey[key, default: []].append(r)
+        }
+        return order.map { key in
+            let rs = byKey[key]!
+            let first = rs[0][keyPath: line]
+            return Series(round: first.round, roundName: first.roundName, opponent: first.opponent,
+                          opponentName: first.opponentName, record: records[key], rows: rs,
+                          totals: totals(rs.map { $0[keyPath: line].asGameLog }))
+        }
+    }
+}
+
+/// A postseason line the regular log's cells can render.
+protocol HasGameLog {
+    var asGameLog: GameLog { get }
+}
+extension PostseasonBattingGameLine: HasGameLog {}
+extension PostseasonPitchingGameLine: HasGameLog {}
+
+/// A series' two-line label in the frozen pane ("ALDS vs NYY" / "Won 3-2"),
+/// and the equal-height spacer on the scrolling side.
+private let seriesLabelHeight: CGFloat = 40
+
+private struct SeriesSectionLabel: View {
+    let title: String
+    let state: String?
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(title).lineLimit(1).minimumScaleFactor(0.7)
+            if let state { Text(state).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.7) }
+        }
+        .font(.caption.weight(.semibold))
+        .padding(.leading, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: seriesLabelHeight)
+    }
+}
+
 /// The two columns a postseason game adds, first on the scrolling side:
 /// "ALDS G3" and "W 8-5".
 private enum PostseasonGameColumn {
@@ -1726,7 +1825,8 @@ private func postseasonFrozenCells(_ line: PostseasonGameLine) -> some View {
 
 /// Game + Result, the leading scrolling cells.
 private func postseasonGameCells(_ line: PostseasonGameLine) -> some View {
-    Group {
+    // One HStack, not a Group: a Group would pad and paint each cell separately.
+    HStack(spacing: 0) {
         Text(line.seriesGameLabel)
             .frame(width: PostseasonGameColumn.game, alignment: .leading)
             .padding(.horizontal, 2)
@@ -1743,16 +1843,21 @@ private func postseasonGameCells(_ line: PostseasonGameLine) -> some View {
 }
 
 private struct PostseasonBattingGameTable: View {
-    let rows: [PostseasonGameRows.Batting]
+    let series: [PostseasonGameRows.Series<PostseasonGameRows.Batting>]
 
     var body: some View {
         HStack(spacing: 0) {
             VStack(spacing: 0) {
-                BattingFrozenHeader()
-                Divider()
-                ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
-                    postseasonFrozenCells(row.line)
-                    if idx != rows.indices.last { Divider().opacity(0.25) }
+                ForEach(Array(series.enumerated()), id: \.offset) { sIdx, s in
+                    if sIdx > 0 { Divider() }
+                    SeriesSectionLabel(title: s.title, state: s.record?.summary)
+                    BattingFrozenHeader()
+                    Divider()
+                    ForEach(Array(s.rows.enumerated()), id: \.element.id) { idx, row in
+                        postseasonFrozenCells(row.line)
+                        if idx != s.rows.indices.last { Divider().opacity(0.25) }
+                    }
+                    postseasonSubtotalFrozen(s.shortName)
                 }
             }
             .frame(width: gameLogFrozenPaneWidth)
@@ -1760,24 +1865,32 @@ private struct PostseasonBattingGameTable: View {
             .shadow(color: .black.opacity(0.08), radius: 4, x: 2, y: 0)
             .zIndex(1)
 
-            // The regular log's own header and row, unchanged, with the two
-            // postseason cells in front.
+            // The regular log's own header, row and monthly-totals row,
+            // unchanged, with the two postseason cells in front.
             ScrollView(.horizontal, showsIndicators: false) {
                 VStack(spacing: 0) {
-                    HStack(spacing: 0) {
-                        postseasonGameHeaderCells
-                        BattingScrollableHeader()
-                    }
-                    Divider()
-                    ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
+                    ForEach(Array(series.enumerated()), id: \.offset) { sIdx, s in
+                        if sIdx > 0 { Divider() }
+                        Color.clear.frame(height: seriesLabelHeight)
                         HStack(spacing: 0) {
-                            postseasonGameCells(row.line)
-                            BattingScrollableGameRow(
-                                game: row.line.asGameLog,
-                                rates: CumulativeBattingRates(avg: row.avg, obp: row.obp, slg: row.slg, ops: row.ops),
-                                alternate: false)
+                            postseasonGameHeaderCells
+                            BattingScrollableHeader()
                         }
-                        if idx != rows.indices.last { Divider().opacity(0.25) }
+                        Divider()
+                        ForEach(Array(s.rows.enumerated()), id: \.element.id) { idx, row in
+                            HStack(spacing: 0) {
+                                postseasonGameCells(row.line)
+                                BattingScrollableGameRow(
+                                    game: row.line.asGameLog,
+                                    rates: CumulativeBattingRates(avg: row.avg, obp: row.obp, slg: row.slg, ops: row.ops),
+                                    alternate: false)
+                            }
+                            if idx != s.rows.indices.last { Divider().opacity(0.25) }
+                        }
+                        HStack(spacing: 0) {
+                            postseasonSubtotalCells(games: s.rows.count)
+                            BattingScrollableMonthTotalsRow(group: s.asMonthGroup)
+                        }
                     }
                 }
             }
@@ -1786,16 +1899,21 @@ private struct PostseasonBattingGameTable: View {
 }
 
 private struct PostseasonPitchingGameTable: View {
-    let rows: [PostseasonGameRows.Pitching]
+    let series: [PostseasonGameRows.Series<PostseasonGameRows.Pitching>]
 
     var body: some View {
         HStack(spacing: 0) {
             VStack(spacing: 0) {
-                PitchingFrozenHeader()
-                Divider()
-                ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
-                    postseasonFrozenCells(row.line)
-                    if idx != rows.indices.last { Divider().opacity(0.25) }
+                ForEach(Array(series.enumerated()), id: \.offset) { sIdx, s in
+                    if sIdx > 0 { Divider() }
+                    SeriesSectionLabel(title: s.title, state: s.record?.summary)
+                    PitchingFrozenHeader()
+                    Divider()
+                    ForEach(Array(s.rows.enumerated()), id: \.element.id) { idx, row in
+                        postseasonFrozenCells(row.line)
+                        if idx != s.rows.indices.last { Divider().opacity(0.25) }
+                    }
+                    postseasonSubtotalFrozen(s.shortName)
                 }
             }
             .frame(width: gameLogFrozenPaneWidth)
@@ -1805,17 +1923,25 @@ private struct PostseasonPitchingGameTable: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 VStack(spacing: 0) {
-                    HStack(spacing: 0) {
-                        postseasonGameHeaderCells
-                        PitchingScrollableHeader()
-                    }
-                    Divider()
-                    ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
+                    ForEach(Array(series.enumerated()), id: \.offset) { sIdx, s in
+                        if sIdx > 0 { Divider() }
+                        Color.clear.frame(height: seriesLabelHeight)
                         HStack(spacing: 0) {
-                            postseasonGameCells(row.line)
-                            PitchingScrollableGameRow(game: row.line.asGameLog, cumulativeERA: row.era, alternate: false)
+                            postseasonGameHeaderCells
+                            PitchingScrollableHeader()
                         }
-                        if idx != rows.indices.last { Divider().opacity(0.25) }
+                        Divider()
+                        ForEach(Array(s.rows.enumerated()), id: \.element.id) { idx, row in
+                            HStack(spacing: 0) {
+                                postseasonGameCells(row.line)
+                                PitchingScrollableGameRow(game: row.line.asGameLog, cumulativeERA: row.era, alternate: false)
+                            }
+                            if idx != s.rows.indices.last { Divider().opacity(0.25) }
+                        }
+                        HStack(spacing: 0) {
+                            postseasonSubtotalCells(games: s.rows.count)
+                            PitchingScrollableMonthTotalsRow(group: s.asMonthGroup)
+                        }
                     }
                 }
             }
@@ -1823,8 +1949,53 @@ private struct PostseasonPitchingGameTable: View {
     }
 }
 
+extension PostseasonGameRows.Series where Row == PostseasonGameRows.Batting {
+    /// The regular log's monthly-totals row reads a `MonthGroup`.
+    fileprivate var asMonthGroup: MonthGroup {
+        MonthGroup(year: 0, month: 0, games: rows.map {
+            GameWithCumulative(game: $0.line.asGameLog, battingRates: .empty, cumulativeERA: nil)
+        }, monthlyTotals: totals)
+    }
+}
+
+extension PostseasonGameRows.Series where Row == PostseasonGameRows.Pitching {
+    fileprivate var asMonthGroup: MonthGroup {
+        MonthGroup(year: 0, month: 0, games: rows.map {
+            GameWithCumulative(game: $0.line.asGameLog, battingRates: .empty, cumulativeERA: nil)
+        }, monthlyTotals: totals)
+    }
+}
+
+/// The subtotal row's frozen cells: the series' short name, like "Sep".
+private func postseasonSubtotalFrozen(_ name: String) -> some View {
+    HStack(spacing: 0) {
+        Text(name).frame(width: BattingGameColumn.date + BattingGameColumn.opp, alignment: .leading)
+    }
+    .font(.caption.weight(.semibold))
+    .padding(.leading, 12)
+    .padding(.vertical, 8)
+    .frame(height: 32)
+    .background(Color(.systemGray5).opacity(0.7))
+    .overlay(alignment: .top) { Divider() }
+}
+
+/// The subtotal row's Game + Result cells: his games in the series.
+private func postseasonSubtotalCells(games: Int) -> some View {
+    // One HStack, not a Group: a Group would pad and paint each cell separately.
+    HStack(spacing: 0) {
+        Text("\(games) G").frame(width: PostseasonGameColumn.game, alignment: .leading).padding(.horizontal, 2)
+        Text("").frame(width: PostseasonGameColumn.result, alignment: .leading).padding(.horizontal, 2)
+    }
+    .font(.caption.weight(.semibold))
+    .padding(.leading, 12)
+    .frame(height: 32)
+    .background(Color(.systemGray5).opacity(0.7))
+    .overlay(alignment: .top) { Divider() }
+}
+
 private var postseasonGameHeaderCells: some View {
-    Group {
+    // One HStack, not a Group: a Group would pad and paint each cell separately.
+    HStack(spacing: 0) {
         Text("Game")  .frame(width: PostseasonGameColumn.game,   alignment: .leading).padding(.horizontal, 2)
         Text("Result").frame(width: PostseasonGameColumn.result, alignment: .leading).padding(.horizontal, 2)
     }

@@ -52,6 +52,38 @@ struct HotColdSeasonTests {
                               phase: SeasonPhase(season: 2027, openingDay: nil, lastRegularDay: nil)))
     }
 
+    // MARK: Recent Games
+
+    private func record(_ name: String) throws -> PlayerPostseason {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("testdata/player-postseason/\(name).json")
+        return try JSONDecoder().decode(PlayerPostseason.self, from: Data(contentsOf: url))
+    }
+
+    @Test func midSeasonShowsTheRegularWindows() {
+        #expect(recentGamesMode(today: "2026-07-15", phase: season2026, postseason: nil) == .regular)
+    }
+
+    @Test func machadoInThePostseasonShowsHisPostseasonGames() throws {
+        #expect(recentGamesMode(today: "2026-09-30", phase: season2026, postseason: try record("machado")) == .postseason)
+    }
+
+    @Test func bettsOnAByeShowsNothing() throws {
+        #expect(recentGamesMode(today: "2026-09-30", phase: season2026, postseason: try record("betts")) == .hidden)
+    }
+
+    @Test func decemberShowsNothing() throws {
+        let m = try record("machado")
+        let over = PlayerPostseason(playerId: m.playerId, retroLast: m.retroLast, batting: m.batting, pitching: nil,
+                                    current: PostseasonCurrent(season: 2026, leagueInProgress: false,
+                                                               playerAppeared: true, teamEliminated: true))
+        #expect(recentGamesMode(today: "2026-12-10", phase: season2026, postseason: over) == .hidden)
+    }
+
+    @Test func anUnknownPhaseShowsNothing() {
+        #expect(recentGamesMode(today: "2026-07-15", phase: nil, postseason: nil) == .hidden)
+    }
+
     // MARK: the payload
 
     @Test func decodesThePublishedSpan() throws {
