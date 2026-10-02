@@ -4044,9 +4044,14 @@ def sync_player_active_status_from_bdl(current_year: int) -> dict:
       to flip back to active the moment BDL signals it, even
       though their `batting_gamelogs` / `pitching_gamelogs` rows
       for the current season may not exist yet.
-    - BDL inactive + `mlb_last_season IS NULL` → stamp it with
-      `current_year - 1`, **gated by the dual-source GP check**
-      described below.
+    - BDL inactive + `mlb_last_season IS NULL` → stamp it with the
+      last season he has regular-season games in (`_last_season_played`),
+      **gated by the dual-source GP check** described below. Never
+      `current_year - 1` blindly: a player released in spring after
+      sitting out the whole previous year did not play in it, and the
+      blind stamp recorded a season he never had (Dany Jiménez, Joely
+      Rodríguez, José Rodríguez, Chad Smith all read 2025). With no
+      season rows at all, the field is left as it was.
 
     The guard is direction-asymmetric on purpose: false positives
     for retirement (wrongly marking an active player retired) are
@@ -4116,6 +4121,7 @@ def sync_player_active_status_from_bdl(current_year: int) -> dict:
         "activated":          0,   # mlb_last_season cleared
         "retired":            0,   # mlb_last_season stamped
         "skipped_due_to_gp":  0,   # BDL says inactive but season GP > 0
+        "retire_skipped_no_seasons": 0,   # inactive, but no season rows to stamp from
         "injured_protected":  0,   # would-be retirement, saved by injury list
         "team_updated":       0,   # current-year season row's team changed
         "no_data":            0,   # BDL didn't return a profile for this id
@@ -4354,12 +4360,25 @@ def sync_player_active_status_from_bdl(current_year: int) -> dict:
                 if our_gp > 0:
                     counts["skipped_due_to_gp"] += 1
                     continue
-                row.mlb_last_season = current_year - 1
+                last = _last_season_played(db, player_id)
+                if last is None:
+                    counts["retire_skipped_no_seasons"] += 1
+                    continue
+                row.mlb_last_season = last
                 counts["retired"] += 1
 
         db.commit()
 
     return {"status": "ok", "counts": counts}
+
+
+def _last_season_played(db, player_id: int) -> Optional[int]:
+    """The last season `player_id` has a regular-season row with games in,
+    batting or pitching — what `mlb_last_season` means. None when he has no
+    such row (the caller then leaves the field alone)."""
+    years = [s.year for s in crud.get_player_seasons(db, player_id) if (s.G or 0) > 0]
+    years += [s.year for s in crud.get_pitcher_seasons(db, player_id) if (s.G or 0) > 0]
+    return max(years) if years else None
 
 
 def repair_null_stats(current_year: int) -> dict:
