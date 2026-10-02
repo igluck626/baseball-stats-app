@@ -582,6 +582,40 @@ class StagingBattingGameLog(Base):
     pos         = Column(String, nullable=True)
 
 
+class TeamGameResult(Base):
+    """One row per historical regular-season game, from Retrosheet's GAME LOGS,
+    with each side's record ENTERING and AFTER the game — the Scores tab's
+    "(W-L)" as of that game. Built by `scripts/retrosheet_game_results.py`; the
+    counting rules (suspended games on their start date, forfeits as forfeited,
+    "T" and ties for neither) live in `api/game_records.py`.
+
+    `game_id` is the same 'retro-…' id batting_gamelogs and retro_game_info use,
+    so a card's synthetic gamePk maps straight onto it. The current season is
+    not stored: it comes from balldontlie at request time (see game_records)."""
+    __tablename__ = "team_game_results"
+
+    game_id       = Column(String, primary_key=True)
+    season        = Column(Integer, index=True)
+    game_date     = Column(Date, index=True)     # the date the game STARTED
+    game_num      = Column(Integer)              # 0 single, 1/2 doubleheader
+    away_team     = Column(String)               # Retrosheet club codes
+    home_team     = Column(String)
+    away_score    = Column(Integer)              # on-field score, forfeits included
+    home_score    = Column(Integer)
+    forfeit       = Column(String)               # 'V' / 'H' / NULL
+    no_decision   = Column(Boolean)              # 'T': protest upheld, counts for neither
+    played        = Column(Boolean)              # False: forfeited without being played (no card)
+    completed_on  = Column(Date)                 # suspended games: the date they finished
+    winner        = Column(String)               # 'away' / 'home' / NULL (tie, no decision)
+    away_w_before = Column(Integer)
+    away_l_before = Column(Integer)
+    home_w_before = Column(Integer)
+    home_l_before = Column(Integer)
+    away_w_after  = Column(Integer)
+    away_l_after  = Column(Integer)
+    home_w_after  = Column(Integer)
+    home_l_after  = Column(Integer)
+
 class RetroGameInfo(Base):
     """One row per historical game, from Retrosheet's GAME LOGS (`gl{year}.zip`).
 

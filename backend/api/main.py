@@ -32,6 +32,7 @@ import sys
 
 import bio_sources
 import data_service
+import game_records
 import live_service
 import news_service
 import postseason_ingest
@@ -1060,6 +1061,10 @@ def _run_nightly_update() -> None:
         # The season phase (/season/phase): re-derived off the nightly's own
         # path, in a thread that retries on failure; never raises here.
         season_phase.start_refresh("nightly", data_service._bdl_get_json)
+        # /games/records: re-walk the current season whole, so a correction
+        # balldontlie made to an older game reaches the records. Off-path.
+        threading.Thread(target=_records_full_rewalk, name="game-records-nightly",
+                         daemon=True).start()
     except Exception as exc:
         # Log the full traceback so silent thread crashes are visible in
         # Railway's log stream. The previous handler stored only str(exc),
@@ -1154,6 +1159,10 @@ async def lifespan(app: FastAPI):
     # /season/phase answers only from a stored value; derive it now (a ~30-page
     # walk) so the first request after a restart finds one.
     season_phase.start_refresh("startup", data_service._bdl_get_json)
+    # /games/records for the current season: walk it now, then re-read the
+    # recent days every 3 minutes, so the request path only ever reads.
+    game_records.start_loop(data_service._bdl_get_json, _records_current_seasons,
+                            set(data_service._BDL_TEAM_ID_MAP.values()))
     yield
     live_service.stop_live_loop()
 
@@ -2907,6 +2916,72 @@ def season_phase_span(season: int = Query(..., description="Season year, e.g. 20
     if body is None:
         raise HTTPException(status_code=503, detail="season phase not derived yet")
     return body
+
+
+def _records_current_seasons() -> list[int]:
+    """Seasons /games/records serves from balldontlie: this Eastern year and
+    the one before, minus any the Retrosheet tables already cover."""
+    boundary = meta_coverage().get("retrosheet_last_season") or _COVERAGE_FALLBACK_SEASON
+    return [s for s in season_phase.current_seasons() if s > boundary]
+
+
+def _records_full_rewalk() -> None:
+    for s in _records_current_seasons():
+        try:
+            game_records.refresh_season(data_service._bdl_get_json, s,
+                                        set(data_service._BDL_TEAM_ID_MAP.values()))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("game records %s: nightly re-walk failed: %s", s, exc)
+
+
+@app.get("/games/records")
+def games_records(date: datetime.date = Query(..., description="yyyy-mm-dd")):
+    """Each team's record ENTERING and AFTER every regular-season game on
+    `date`, for the Scores cards' "(W-L)" — the record as of that game, never
+    today's standings printed beside an old game.
+
+    Per game: `game_pk` (the id the card already carries — the synthetic
+    negative id /games/by-date issues for a Retrosheet game, the balldontlie id
+    for the current season), `retro_game_id`, `bdl_game_id`, `final`,
+    `postseason`, `played` (false: a forfeit that was never played, which has
+    no card), `forfeit` ('V'/'H'/null), `no_decision` (a protest upheld), and
+    for each side its `team` with `before` and `after` ({w, l}); `after` is
+    null until the game is final, and both are null for a postseason or spring
+    game, or one with a non-MLB side.
+
+    History (seasons through the Retrosheet boundary) reads `team_game_results`
+    and is cached for a day — it cannot change — but only a result with games
+    in it: an empty or failed lookup is never cached. The current season reads the
+    store `game_records` keeps in the background (walked at boot and after the
+    nightly, yesterday and today re-read every 3 minutes); 503 until that first
+    walk lands. Counting rules: `game_records`."""
+    boundary = meta_coverage().get("retrosheet_last_season") or _COVERAGE_FALLBACK_SEASON
+    if date.year <= boundary:
+        key = f"game_records:{date.isoformat()}"
+        cached = _cache.get(key)
+        if cached is not None:
+            return cached
+        if not connection.db_available():
+            raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+        try:
+            with connection.get_session() as db:
+                rows = [dict(r._mapping) for r in db.execute(
+                    _sa_text("SELECT * FROM team_game_results WHERE game_date = :d"), {"d": date})]
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=503, detail=f"game records unavailable: {str(exc)[:80]}")
+        body = {"date": date.isoformat(), "source": "retrosheet",
+                "games": game_records.history_payload(rows, _synthetic_game_pk)}
+        # Cached only when it found games. An empty answer may be a table not
+        # yet loaded (or a load in progress), and a day-long cache would pin
+        # that emptiness; a failure never reaches here (it raised above).
+        if body["games"]:
+            _cache.set(key, body, ttl_seconds=86400)
+        return body
+    recs = game_records.current_records_for(date.year, date)
+    if recs is None:
+        raise HTTPException(status_code=503, detail="current-season records not loaded yet")
+    return {"date": date.isoformat(), "source": "balldontlie",
+            "games": game_records.current_payload(recs)}
 
 
 @app.get("/postseason/series")
