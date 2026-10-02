@@ -11,6 +11,7 @@ import threading
 import time
 import traceback
 import unicodedata
+from collections import Counter
 from contextlib import asynccontextmanager
 from urllib.parse import urlparse
 
@@ -29,6 +30,7 @@ from sqlalchemy import (
 
 import sys
 
+import bio_sources
 import data_service
 import live_service
 import news_service
@@ -17472,6 +17474,27 @@ _CHADWICK_BRIDGE_CSV = os.path.join(
     "data", "retrosheet", "chadwick_retro_bridge.csv")
 
 
+# The full Retrosheet biofile (BIOFILE.TXT as published, header row included).
+_RETRO_BIOFILE_CSV = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "data", "retrosheet", "biofile.csv")
+
+
+def _bio_source_files():
+    """(biofile by retro_id, Lahman People by playerID, state map, country map,
+    mlbam -> [judged Lahman playerIDs]) for `bio_sources`. Loaded per call: the
+    backfill is a rare admin run, not a request path."""
+    with open(_RETRO_BIOFILE_CSV, newline="", encoding="latin-1") as f:
+        biofile = {r["PLAYERID"]: r for r in csv.DictReader(f) if r.get("PLAYERID")}
+    with open(lahman_load.PEOPLE_CSV, newline="", encoding="utf-8-sig") as f:
+        people = {r["playerID"]: r for r in csv.DictReader(f)}
+    state_map, country_map = bio_sources.place_maps(biofile, list(people.values()))
+    lahman_men: dict = {}
+    for pid, mlbam in lahman_load._load_chadwick_bridge().items():
+        lahman_men.setdefault(mlbam, []).append(pid)
+    return biofile, people, state_map, country_map, lahman_men
+
+
 @app.post("/admin/backfill-missing-bios")
 def backfill_missing_bios(
     confirm: bool = Query(False),
@@ -17482,9 +17505,20 @@ def backfill_missing_bios(
     unsearchable, nameless profile) left by the Lahman loader silently dropping
     divergent-id players. INSERT-ONLY: never modifies an existing bio. Name from
     the shipped retro_names biofile (100% coverage), retro/bbref ids from the
-    Chadwick bridge, debut/last season derived from the season rows themselves
-    (no People.csv needed — it isn't in the deploy). confirm=false = DRY RUN
-    (counts + top 20 by career volume; no writes)."""
+    Chadwick bridge, debut/last season derived from the season rows themselves.
+    The rest of the bio (birth/death date and place, bats/throws, height/weight,
+    debut) by `bio_sources` precedence: the shipped Retrosheet biofile when he
+    has a retro_id, else Lahman People (it ships with the deploy) when his
+    seasons came from Lahman, through the judged bridge. final_game is his last
+    REGULAR-SEASON game: our game logs, else Lahman, never the biofile (it
+    counts the postseason), and only once his career is over — every man here
+    has no bdl_id, so he is historical. balldontlie, second in that precedence,
+    is not reachable here: a man with no bio row has no bdl_id, and current
+    players get their bio from `_insert_bio_for_mlbam`.
+    A row that used to be inserted with name and ids only (CC Sabathia: no birth
+    date, nothing physical) now carries what the sources have; a unit no source
+    has stays NULL. confirm=false = DRY RUN (counts + top 20 by career volume;
+    no writes)."""
     if not connection.db_available():
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
 
@@ -17504,35 +17538,60 @@ def backfill_missing_bios(
     # season players with NO bio row, + career span + a volume proxy
     with connection.get_session() as db:
         bat = db.execute(_sa_text(
-            'SELECT ps.player_id, MIN(ps.year), MAX(ps.year), COALESCE(SUM(ps."PA"),0) '
+            'SELECT ps.player_id, MIN(ps.year), MAX(ps.year), COALESCE(SUM(ps."PA"),0), '
+            "BOOL_OR(ps.source = 'lahman') "
             "FROM player_seasons ps LEFT JOIN players p ON p.player_id = ps.player_id "
             "WHERE p.player_id IS NULL GROUP BY ps.player_id")).fetchall()
         pit = db.execute(_sa_text(
-            'SELECT qs.player_id, MIN(qs.year), MAX(qs.year), COALESCE(SUM(qs."IP"),0) '
+            'SELECT qs.player_id, MIN(qs.year), MAX(qs.year), COALESCE(SUM(qs."IP"),0), '
+            "BOOL_OR(qs.source = 'lahman') "
             "FROM pitcher_seasons qs LEFT JOIN pitchers p ON p.player_id = qs.player_id "
             "WHERE p.player_id IS NULL GROUP BY qs.player_id")).fetchall()
 
     plan: dict[int, dict] = {}
-    for pid, mn, mx, pa in bat:
-        e = plan.setdefault(pid, {"in_bat": False, "in_pit": False, "pa": 0.0, "ip": 0.0})
+    for pid, mn, mx, pa, lah in bat:
+        e = plan.setdefault(pid, {"in_bat": False, "in_pit": False, "pa": 0.0, "ip": 0.0, "lahman": False})
         e.update(in_bat=True, debut=mn, last=mx, pa=float(pa or 0))
-    for pid, mn, mx, ip in pit:
-        e = plan.setdefault(pid, {"in_bat": False, "in_pit": False, "pa": 0.0, "ip": 0.0})
+        e["lahman"] = e["lahman"] or bool(lah)
+    for pid, mn, mx, ip, lah in pit:
+        e = plan.setdefault(pid, {"in_bat": False, "in_pit": False, "pa": 0.0, "ip": 0.0, "lahman": False})
         e["in_pit"] = True
+        e["lahman"] = e["lahman"] or bool(lah)
         e["debut"] = min(e.get("debut", mn), mn)
         e["last"] = max(e.get("last", mx), mx)
         e["ip"] = float(ip or 0)
 
+    biofile, people, state_map, country_map, lahman_men = _bio_source_files()
+    # his last regular-season game, for final_game (the game-log tables hold no
+    # postseason games; those live in postseason_*_gamelogs). Every man here has
+    # no bio row, so no bdl_id: historical, and his final game stands
+    last_game: dict = {}
+    if plan:
+        with connection.get_session() as db:
+            for pid, d in db.execute(_sa_text(
+                    "SELECT player_id, MAX(game_date) FROM ("
+                    "SELECT player_id, game_date FROM batting_gamelogs WHERE player_id = ANY(:ids) "
+                    "UNION ALL SELECT player_id, game_date FROM pitching_gamelogs WHERE player_id = ANY(:ids)"
+                    ") g GROUP BY player_id"), {"ids": list(plan)}).fetchall():
+                if d:
+                    last_game[pid] = str(d)[:10]
     items = []
     for mlbam, e in plan.items():
         retro, bbref = m2r.get(mlbam, (None, None))
         # name: Retrosheet biofile (by retro_id) -> Chadwick register (by mlbam)
         name = (names.get(retro) if retro else None) or mnames.get(mlbam)
+        men = lahman_men.get(mlbam, [])
+        bio, bio_src = bio_sources.merge({}, bio_sources.candidates(
+            retro_id=retro, biofile=biofile, bdl_fields=None,
+            lahman_row=people.get(men[0]) if len(men) == 1 else None,
+            lahman_seasons=e["lahman"], state_map=state_map, country_map=country_map,
+            last_regular_game=last_game.get(mlbam), bdl_active=None))
         items.append({
             "mlbam": mlbam, "retro_id": retro, "bbref_id": bbref, "name": name,
             "in_bat": e["in_bat"], "in_pit": e["in_pit"],
             "mlb_debut": e.get("debut"), "mlb_last_season": e.get("last"),
             "volume": round(e["pa"] + e["ip"] * 4.3),   # PA + rough batters-faced
+            "bio": bio, "bio_source": bio_src,
         })
     items.sort(key=lambda x: x["volume"], reverse=True)
     unnamed = [i for i in items if not i["name"]]
@@ -17557,6 +17616,8 @@ def backfill_missing_bios(
             "dry_run": True,
             "missing_total": len(items),
             "resolvable_names": len(items) - len(unnamed),
+            "birth_date_source": dict(Counter(
+                i["bio_source"].get("birth_year", "none") for i in items)),
             "unnamed": len(unnamed),
             "unnamed_detail": [{
                 "mlbam": i["mlbam"],
@@ -17583,7 +17644,8 @@ def backfill_missing_bios(
                 continue
             info = {"player_id": i["mlbam"], "name": i["name"],
                     "retro_id": i["retro_id"], "bbref_id": i["bbref_id"],
-                    "mlb_debut": i["mlb_debut"], "mlb_last_season": i["mlb_last_season"]}
+                    "mlb_debut": i["mlb_debut"], "mlb_last_season": i["mlb_last_season"],
+                    **i["bio"]}
             if i["in_bat"] and db.get(Player, i["mlbam"]) is None:
                 crud.save_player(db, info)
                 ins_p += 1
