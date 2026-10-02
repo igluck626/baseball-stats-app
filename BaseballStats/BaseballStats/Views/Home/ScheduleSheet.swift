@@ -21,10 +21,9 @@ struct ScheduleSheet: View {
 
     let favorite: MLBTeamCatalog.Entry
     /// Threaded through from HomeView so the sheet's BoxScoreView
-    /// destination renders the same division-rank + W-L header
-    /// the Scores tab uses.
+    /// destination renders the same division-rank header the Scores tab
+    /// uses. (Its "(W-L)" is the box score's own, loaded per game.)
     let teamStandings: [Int: TeamStandingInfo]
-    let teamRecords:   [Int: TeamRecord]
     /// Passed in explicitly (not via `@EnvironmentObject`) because environment
     /// objects don't reliably cross the `.sheet` boundary. Forwarded to the
     /// pushed BoxScoreView so its live polling still gates on lifecycle/tab.
@@ -68,7 +67,6 @@ struct ScheduleSheet: View {
                 navigation: navigation,
                 liveStore: liveStore,
                 teamStandings: teamStandings,
-                teamRecords: teamRecords,
             ))
         }
         .task { await vm.load(bdlTeamId: favorite.bdlTeamId) }

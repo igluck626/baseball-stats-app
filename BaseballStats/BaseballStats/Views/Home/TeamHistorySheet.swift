@@ -115,7 +115,6 @@ struct TeamHistorySheet: View {
                 navigation: navigation,
                 liveStore: liveStore,
                 teamStandings: vm.teamStandings,
-                teamRecords: vm.teamRecords,
             ))
         }
         // Glass sheet — matches the app-wide sheet treatment.

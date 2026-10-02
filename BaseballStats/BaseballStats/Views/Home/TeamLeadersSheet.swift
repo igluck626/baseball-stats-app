@@ -114,7 +114,6 @@ struct TeamLeadersSheet: View {
                 // which omits those two sub-lines rather than breaking
                 // anything.
                 teamStandings: vm.teamStandings,
-                teamRecords: vm.teamRecords,
             ))
         }
         // Glass sheet — matches the app-wide sheet treatment.

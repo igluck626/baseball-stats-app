@@ -49,7 +49,6 @@ struct HomeView: View {
                 navigation: navigation,
                 liveStore: liveStore,
                 teamStandings: vm.teamStandings,
-                teamRecords: vm.teamRecords,
             ))
             .navigationDestination(for: TeamNewsDestination.self) { dest in
                 TeamNewsListView(
@@ -73,7 +72,6 @@ struct HomeView: View {
                     ScheduleSheet(
                         favorite:      entry,
                         teamStandings: vm.teamStandings,
-                        teamRecords:   vm.teamRecords,
                         navigation:    navigation,
                         liveStore:     liveStore,
                     )

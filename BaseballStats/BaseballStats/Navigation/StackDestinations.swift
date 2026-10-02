@@ -73,12 +73,12 @@ struct BoxScoreContext {
     let owningTab: AppNavigation.Tab
     let navigation: AppNavigation
     let liveStore: LiveGameStore
-    /// Records + division ranks for the box score's team header. Empty is a
-    /// SUPPORTED value, not a degraded one — most stacks hold no standings and
-    /// `teamHeader` reads both through `if let`, so a miss omits the "(78-54)"
-    /// and "3rd AL East" sub-lines rather than rendering an empty parenthetical.
+    /// Division ranks for the box score's team header. Empty is a SUPPORTED
+    /// value, not a degraded one — most stacks hold no standings and
+    /// `teamHeader` reads it through `if let`, so a miss omits the
+    /// "3rd AL East" sub-line. (The "(W-L)" line is the box score's own: it
+    /// loads the record as of that game from `/games/records`.)
     var teamStandings: [Int: TeamStandingInfo] = [:]
-    var teamRecords: [Int: TeamRecord] = [:]
 }
 
 // ⚠️ ONE STACK IS DELIBERATELY NOT COVERED: AskView. It is a
@@ -124,7 +124,6 @@ struct StackDestinations: ViewModifier {
                 BoxScoreView(
                     game:           game,
                     teamStandings:  context.teamStandings,
-                    teamRecords:    context.teamRecords,
                     path:           context.path,
                     owningTab:      context.owningTab,
                     navigation:     context.navigation,

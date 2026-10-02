@@ -229,6 +229,18 @@ final class APIClient {
         return envelope?.games ?? []
     }
 
+    /// `GET /games/records?date=` — each side's record entering and after every
+    /// regular-season game on `date`, keyed by the cards' `gamePk`. A failure is
+    /// the caller's to absorb: the cards simply print no "(W-L)".
+    func getGameRecords(date: Date) async throws -> [Int: GameRecordEntry] {
+        let url = try buildURL(
+            path: "/games/records",
+            query: [URLQueryItem(name: "date", value: Self.ymd.string(from: date))]
+        )
+        let response: GameRecordsResponse = try await get(url)
+        return Dictionary(response.games.map { ($0.gamePk, $0) }, uniquingKeysWith: { a, _ in a })
+    }
+
     /// `GET /games/{pk}/historical-boxscore` — batting and pitching lines for a
     /// game older than BDL's coverage, assembled from our own game logs.
     ///

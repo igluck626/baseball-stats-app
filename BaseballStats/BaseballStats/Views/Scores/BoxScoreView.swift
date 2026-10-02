@@ -638,10 +638,11 @@ struct BoxScoreView: View {
     /// the dict here keeps the box-score view's data flow obvious
     /// (no `@EnvironmentObject` indirection through the standings).
     let teamStandings: [Int: TeamStandingInfo]
-    /// BDL team id → current-season W-L, same source the score
-    /// cards use. Threaded in alongside `teamStandings` so the
-    /// header sub-label reads "(21-27) • 3rd AL East".
-    let teamRecords: [Int: TeamRecord]
+    /// This game's entry from `/games/records`, loaded by the view itself so
+    /// the header's "(W-L)" is the record as of THIS game whichever stack
+    /// pushed it (most hold no standings at all). nil until it lands, or on a
+    /// miss — the line is then omitted.
+    @State private var gameRecord: GameRecordEntry?
     /// Parent (`ScoresView`) owns the NavigationStack path; we append
     /// to it when the user taps a player so the existing
     /// `.navigationDestination(for: PlayerSearchResult.self)` on
@@ -683,7 +684,6 @@ struct BoxScoreView: View {
     init(
         game: Game,
         teamStandings: [Int: TeamStandingInfo] = [:],
-        teamRecords: [Int: TeamRecord] = [:],
         path: Binding<NavigationPath>,
         owningTab: AppNavigation.Tab,
         navigation: AppNavigation,
@@ -691,7 +691,6 @@ struct BoxScoreView: View {
     ) {
         _vm = StateObject(wrappedValue: BoxScoreViewModel(game: game))
         self.teamStandings = teamStandings
-        self.teamRecords = teamRecords
         _path = path
         self.owningTab = owningTab
         self.navigation = navigation
@@ -871,6 +870,10 @@ struct BoxScoreView: View {
         }
         .navigationTitle(navigationTitle)
         .navigationBarTitleDisplayMode(.inline)
+        .task(id: vm.game.gamePk) {
+            guard let date = GameRecordDisplay.recordsDate(for: vm.game) else { return }
+            gameRecord = (try? await APIClient.shared.getGameRecords(date: date))?[vm.game.gamePk]
+        }
         .task {
             await vm.load()
             guard shouldSubscribeLive else { return }   // final / pre-game (not in live set): no subscription
@@ -973,6 +976,7 @@ struct BoxScoreView: View {
                     side:      vm.game.teams.away,
                     score:     vm.displayAwayScore,
                     bdlTeamId: vm.game.bdlAwayTeamId,
+                    isHome:    false,
                 )
                 Spacer()
                 Text(centerStatus)
@@ -983,6 +987,7 @@ struct BoxScoreView: View {
                     side:      vm.game.teams.home,
                     score:     vm.displayHomeScore,
                     bdlTeamId: vm.game.bdlHomeTeamId,
+                    isHome:    true,
                 )
             }
             if let venue = vm.game.venue?.name {
@@ -1099,17 +1104,20 @@ struct BoxScoreView: View {
         return bdlTeamId.flatMap { bdlToLahmanTeamId[$0] }
     }
 
-    private func teamHeader(side: GameTeam, score: Int?, bdlTeamId: Int?) -> some View {
+    private func teamHeader(side: GameTeam, score: Int?, bdlTeamId: Int?, isHome: Bool) -> some View {
         // Two stacked sub-lines under the score:
-        //   line 1: "(21-27)"  — current-season W-L
+        //   line 1: "(21-27)"  — the record as of this game (after it once
+        //           final, entering it before then; none in the postseason)
         //   line 2: "3rd AL East" — division rank label
         // Each segment is independently optional; missing pieces
         // collapse without leaving an empty row.
-        let recordText: String? = {
-            guard let r = bdlTeamId.flatMap({ teamRecords[$0] }),
-                  let w = r.wins, let l = r.losses else { return nil }
-            return "(\(w)-\(l))"
+        let isFinal = vm.game.phase == .final && !isLiveNow
+        let won: Bool? = {
+            guard isFinal, let a = vm.displayAwayScore, let h = vm.displayHomeScore, a != h else { return nil }
+            return isHome ? h > a : a > h
         }()
+        let recordText = GameRecordDisplay.text(GameRecordDisplay.record(
+            gameRecord, home: isHome, cardIsFinal: isFinal, wonOnCard: won))
         let standingText: String? = bdlTeamId
             .flatMap { teamStandings[$0] }
             .map { $0.displayString }

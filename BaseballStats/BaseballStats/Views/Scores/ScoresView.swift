@@ -75,14 +75,17 @@ final class ScoresViewModel: ObservableObject {
     /// Set true once a load completes (success or empty); used so the
     /// view can distinguish "still loading" from "no games today".
     @Published var didLoad: Bool = false
-    /// BDL team id → current-season W-L. Populated alongside `games`
-    /// from `getStandings(season:)`. Cards look up records by the
-    /// per-game `bdlAwayTeamId` / `bdlHomeTeamId`.
-    @Published var teamRecords: [Int: TeamRecord] = [:]
-    /// BDL team id → (division rank, label like "AL East").
-    /// Derived from the same standings payload `teamRecords`
-    /// uses — rank is computed within the team's (league, division)
-    /// bucket sorted by wins desc then losses asc.
+    /// `gamePk` → each side's record entering and after that game, from
+    /// `GET /games/records` for the selected date. The cards' "(W-L)" reads
+    /// this, so a game shows the record AS OF THAT GAME — never today's
+    /// standings beside an old game, and never a guessed adjustment for games
+    /// the standings have or haven't absorbed yet. Empty on a failed fetch:
+    /// the cards then print no record, which is better than a wrong one.
+    @Published var gameRecords: [Int: GameRecordEntry] = [:]
+    /// BDL team id → (division rank, label like "AL East"), from
+    /// `getStandings(season:)` — the box score's rank line, not its record.
+    /// Rank is computed within the team's (league, division) bucket sorted by
+    /// wins desc then losses asc.
     @Published var teamStandings: [Int: TeamStandingInfo] = [:]
 
     /// BDL's first season of game coverage. Verified against Boston — a club
@@ -368,9 +371,10 @@ final class ScoresViewModel: ObservableObject {
         error = nil
         // Year-of-the-selected-date is the right key for standings —
         // a user scrolling back to October 2024 should see the 2024
-        // records, not the live 2026 ones.
+        // division ranks, not the live 2026 ones. Records are per date.
         let year = Calendar.current.component(.year, from: date)
         async let standingsTask: [BDLStandingsEntry]? = try? bdl.getStandings(season: year)
+        async let recordsTask: [Int: GameRecordEntry]? = try? api.getGameRecords(date: date)
         do {
             let fetched = try await loadGames(for: date, bypassCache: bypassCache)
             // The date moved while this was in flight — drop the whole result
@@ -387,18 +391,17 @@ final class ScoresViewModel: ObservableObject {
         // inherit today's ended games. A pk that is now genuinely `.final` can
         // stay; `isOver` would answer true either way.
         self.endedLocally.formIntersection(Set(self.games.map(\.gamePk)))
-        // Awaited AFTER the games await so a slow standings fetch
-        // can't block the score cards from rendering. nil-coalesces
-        // to an empty dict when standings fail or BDL ships an
-        // empty payload — records just won't render that tick.
+        // Awaited AFTER the games await so a slow standings or records fetch
+        // can't block the score cards from rendering. Both nil-coalesce to
+        // empty on failure — the record and rank lines just don't render.
         let standings = (await standingsTask) ?? []
-        // Checked AGAIN: standings are awaited after the games, so the date can
+        let records = (await recordsTask) ?? [:]
+        // Checked AGAIN: these are awaited after the games, so the date can
         // have moved during THIS await even if it hadn't during the last one.
-        // The records are year-scoped, so a stale set is the wrong season.
+        // Records are per date, so a stale set belongs to another day's cards.
         guard isStillCurrent(date) else { return }
-        self.teamRecords   = Self.recordsByBDLTeamId(standings)
+        self.gameRecords   = records
         self.teamStandings = Self.standingsByBDLTeamId(standings)
-        applyTodayAdjustments()
         isLoading = false
         didLoad = true
     }
@@ -430,6 +433,7 @@ final class ScoresViewModel: ObservableObject {
         let date = selectedDate
         let year = Calendar.current.component(.year, from: date)
         async let standingsTask: [BDLStandingsEntry]? = try? bdl.getStandings(season: year)
+        async let recordsTask: [Int: GameRecordEntry]? = try? api.getGameRecords(date: date)
         do {
             // Same routine `load` uses — a pre-2000 date must not be re-fetched
             // from BDL here, or the periodic tick wipes what `load` just got.
@@ -442,9 +446,12 @@ final class ScoresViewModel: ObservableObject {
             // the screen on a transient pull-to-refresh hiccup.
         }
         if let standings = await standingsTask, isStillCurrent(date) {
-            self.teamRecords   = Self.recordsByBDLTeamId(standings)
             self.teamStandings = Self.standingsByBDLTeamId(standings)
-            applyTodayAdjustments()
+        }
+        // Non-destructive like the games: a failed refresh keeps the records
+        // already on screen.
+        if let records = await recordsTask, isStillCurrent(date) {
+            self.gameRecords = records
         }
     }
 
@@ -456,50 +463,19 @@ final class ScoresViewModel: ObservableObject {
     /// guarantees we don't read whatever's still in the 5-minute
     /// standings cache window.
     func refreshStandings() async {
-        let year = Calendar.current.component(.year, from: selectedDate)
+        let date = selectedDate
+        let year = Calendar.current.component(.year, from: date)
+        if let records = try? await api.getGameRecords(date: date), isStillCurrent(date) {
+            self.gameRecords = records
+        }
         do {
             let standings = try await bdl.getStandings(season: year, bypassCache: true)
-            self.teamRecords   = Self.recordsByBDLTeamId(standings)
             self.teamStandings = Self.standingsByBDLTeamId(standings)
-            applyTodayAdjustments()
             NotificationCenter.default.post(name: .standingsShouldRefresh, object: nil)
         } catch {
             // Silent — the dict keeps its previous values; the next
             // `load()` tick will retry.
         }
-    }
-
-    /// Fold today's ET final games (from the already-loaded `games`)
-    /// into `teamRecords` so the score cards' "(W-L)" matches the
-    /// Standings tab. Silent (no "†") per the Scores/Home design.
-    ///
-    /// KNOWN GAP, deliberately left as it was. This is `.unanchored` with a nil
-    /// cutoff, so every today-ET final in the slate is applied — including any
-    /// BDL has already absorbed into the base, which double-counts exactly the
-    /// way Home's did. Home could be fixed because it already fetches our
-    /// backend's standings and so has a games-played count anchored to a known
-    /// time; this view model fetches BDL only, so the anchor does not exist
-    /// here without adding a request. Fixing it means giving this view model
-    /// that fetch — its own change, not a rider on Home's.
-    private func applyTodayAdjustments() {
-        let deltas = TodayRecordAdjustments.deltas(
-            from: games, lastUpdated: nil, absorption: .unanchored,
-        )
-        teamRecords = TodayRecordAdjustments.apply(deltas, to: teamRecords)
-    }
-
-    private static func recordsByBDLTeamId(
-        _ standings: [BDLStandingsEntry],
-    ) -> [Int: TeamRecord] {
-        var dict: [Int: TeamRecord] = [:]
-        for s in standings {
-            dict[s.team.id] = TeamRecord(
-                wins:   s.wins,
-                losses: s.losses,
-                pct:    nil,
-            )
-        }
-        return dict
     }
 
     /// Build `{bdl_team_id: (rank, "AL East")}` from a BDL standings
@@ -625,7 +601,6 @@ struct ScoresView: View {
                 navigation: navigation,
                 liveStore: liveStore,
                 teamStandings: vm.teamStandings,
-                teamRecords: vm.teamRecords,
             ))
             .sheet(isPresented: $showingDatePicker) {
                 datePickerSheet
@@ -926,7 +901,7 @@ struct ScoresView: View {
                     ForEach(live) { game in
                         GameRowCard(
                             game:      game,
-                            records:   vm.teamRecords,
+                            record:    vm.gameRecords[game.gamePk],
                             standings: vm.teamStandings,
                             isOver:    vm.isOver(game),
                             path:      $navigationPath,
@@ -938,7 +913,7 @@ struct ScoresView: View {
                     ForEach(upcoming) { game in
                         GameRowCard(
                             game:      game,
-                            records:   vm.teamRecords,
+                            record:    vm.gameRecords[game.gamePk],
                             standings: vm.teamStandings,
                             isOver:    vm.isOver(game),
                             path:      $navigationPath,
@@ -950,7 +925,7 @@ struct ScoresView: View {
                     ForEach(completed) { game in
                         GameRowCard(
                             game:      game,
-                            records:   vm.teamRecords,
+                            record:    vm.gameRecords[game.gamePk],
                             standings: vm.teamStandings,
                             isOver:    vm.isOver(game),
                             path:      $navigationPath,
@@ -1014,7 +989,7 @@ struct ScoresView: View {
 
 private struct GameCard: View {
     let game: Game
-    let records: [Int: TeamRecord]
+    let record: GameRecordEntry?
     /// From `ScoresViewModel.isOver`. Belt-and-braces: with the bucketing fixed
     /// a finished game renders as `FinalGameCard` and never reaches here, but
     /// this card is the ONLY thing in the app that can print "BOT 9th", so it
@@ -1030,10 +1005,12 @@ private struct GameCard: View {
             VStack(spacing: 8) {
                 teamRow(side:       game.teams.away,
                         winner:     didWin(side: game.teams.away),
-                        bdlTeamId:  game.bdlAwayTeamId)
+                        bdlTeamId:  game.bdlAwayTeamId,
+                        isHome:     false)
                 teamRow(side:       game.teams.home,
                         winner:     didWin(side: game.teams.home),
-                        bdlTeamId:  game.bdlHomeTeamId)
+                        bdlTeamId:  game.bdlHomeTeamId,
+                        isHome:     true)
             }
             // Score section expands to fill remaining width; the
             // venue section to the right is fixed at 110pt so the
@@ -1072,7 +1049,7 @@ private struct GameCard: View {
         .contentShape(Rectangle())
     }
 
-    private func teamRow(side: GameTeam, winner: Bool, bdlTeamId: Int?) -> some View {
+    private func teamRow(side: GameTeam, winner: Bool, bdlTeamId: Int?, isHome: Bool) -> some View {
         HStack(spacing: 10) {
             // Colour, not a circle of letters: the abbreviation is the very
             // next thing in the row. 18pt matches the .subheadline line it leads.
@@ -1083,9 +1060,13 @@ private struct GameCard: View {
                 .foregroundStyle(loserDimmed(winner) ? .secondary : .primary)
                 .lineLimit(1)
 
-            if let w = bdlTeamId.flatMap({ records[$0] })?.wins,
-               let l = bdlTeamId.flatMap({ records[$0] })?.losses {
-                Text("(\(w)-\(l))")
+            // Entering the game while it is scheduled; after it once this card
+            // knows the game is over (`isOver`), moved by the result if the
+            // server's record has not caught up yet. See `GameRecordDisplay`.
+            if let text = GameRecordDisplay.text(GameRecordDisplay.record(
+                record, home: isHome, cardIsFinal: isOver,
+                wonOnCard: isOver ? winner : nil)) {
+                Text(text)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
@@ -1213,7 +1194,7 @@ private struct GameCard: View {
 /// score on the parent's NavigationStack.
 private struct FinalGameCard: View {
     let game: Game
-    let records: [Int: TeamRecord]
+    let record: GameRecordEntry?
     @Binding var path: NavigationPath
     @State private var isExpanded = false
     /// Lazily-fetched box score for the expanded view. Loaded the
@@ -1484,21 +1465,36 @@ private struct FinalGameCard: View {
     private var collapsedBody: some View {
         HStack(alignment: .center, spacing: 14) {
             VStack(spacing: 8) {
-                teamRow(side: game.teams.away, bdlTeamId: game.bdlAwayTeamId)
-                teamRow(side: game.teams.home, bdlTeamId: game.bdlHomeTeamId)
+                teamRow(side: game.teams.away, bdlTeamId: game.bdlAwayTeamId, isHome: false)
+                teamRow(side: game.teams.home, bdlTeamId: game.bdlHomeTeamId, isHome: true)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
             Divider().frame(height: 56)
 
-            Text("FINAL")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .frame(minWidth: 56, alignment: .trailing)
+            VStack(alignment: .trailing, spacing: 2) {
+                Text("FINAL")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                // The score above is the one on the field; the result counted
+                // is the forfeit's, which the records reflect.
+                if record?.isForfeit == true {
+                    Text("Forfeit")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(minWidth: 56, alignment: .trailing)
         }
     }
 
-    private func teamRow(side: GameTeam, bdlTeamId: Int?) -> some View {
+    /// "(W-L)" after this game — the card is final.
+    private func recordText(isHome: Bool, side: GameTeam) -> String? {
+        GameRecordDisplay.text(GameRecordDisplay.record(
+            record, home: isHome, cardIsFinal: true, wonOnCard: side.isWinner))
+    }
+
+    private func teamRow(side: GameTeam, bdlTeamId: Int?, isHome: Bool) -> some View {
         let isWinner = side.isWinner == true
         let dimmed = !isWinner
         return HStack(spacing: 10) {
@@ -1511,9 +1507,8 @@ private struct FinalGameCard: View {
                 .foregroundStyle(dimmed ? .secondary : .primary)
                 .lineLimit(1)
 
-            if let w = bdlTeamId.flatMap({ records[$0] })?.wins,
-               let l = bdlTeamId.flatMap({ records[$0] })?.losses {
-                Text("(\(w)-\(l))")
+            if let text = recordText(isHome: isHome, side: side) {
+                Text(text)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
@@ -1543,10 +1538,7 @@ private struct FinalGameCard: View {
                         innings: (1...inningCount).map { String($0) },
                         totals: ["R", "H", "E"],
                         isHeader: true)
-                lineRow(label: linescoreLabel(
-                            for: game.teams.away,
-                            bdlTeamId: game.bdlAwayTeamId,
-                        ),
+                lineRow(label: linescoreLabel(for: game.teams.away, isHome: false),
                         innings: (1...inningCount).map { i in
                             cell(innings.first(where: { $0.num == i })?.away?.runs)
                         },
@@ -1556,10 +1548,7 @@ private struct FinalGameCard: View {
                             cell(totals?.away?.errors),
                         ],
                         isHeader: false)
-                lineRow(label: linescoreLabel(
-                            for: game.teams.home,
-                            bdlTeamId: game.bdlHomeTeamId,
-                        ),
+                lineRow(label: linescoreLabel(for: game.teams.home, isHome: true),
                         innings: (1...inningCount).map { i in
                             cell(innings.first(where: { $0.num == i })?.home?.runs)
                         },
@@ -1602,16 +1591,14 @@ private struct FinalGameCard: View {
         v.map(String.init) ?? "-"
     }
 
-    /// "LAD (32-14)" — abbreviation + record when the BDL standings
-    /// lookup hits. Falls back to bare abbreviation when the team
-    /// isn't in the records dict (early-season cold start, or a
-    /// season the standings endpoint doesn't cover yet).
-    private func linescoreLabel(for side: GameTeam, bdlTeamId: Int?) -> String {
+    /// "LAD (32-14)" — abbreviation + the record after this game, the same
+    /// one the collapsed row shows. Bare abbreviation when there is none (the
+    /// records call failed, or a postseason game).
+    private func linescoreLabel(for side: GameTeam, isHome: Bool) -> String {
         let abbr = side.team.abbreviation
             ?? String(side.team.name.prefix(3)).uppercased()
-        if let w = bdlTeamId.flatMap({ records[$0] })?.wins,
-           let l = bdlTeamId.flatMap({ records[$0] })?.losses {
-            return "\(abbr) (\(w)-\(l))"
+        if let text = recordText(isHome: isHome, side: side) {
+            return "\(abbr) \(text)"
         }
         return abbr
     }
@@ -1861,7 +1848,8 @@ private struct FinalGameCard: View {
 /// separate for the Completed bucket.
 private struct GameRowCard: View {
     let game: Game
-    let records: [Int: TeamRecord]
+    /// This game's entry from `/games/records` (nil until it loads, or on a miss).
+    let record: GameRecordEntry?
     let standings: [Int: TeamStandingInfo]
     /// Answered once by `ScoresViewModel.isOver` and threaded down, rather than
     /// re-derived here. Two independent copies of "is it over" is precisely how
@@ -1903,7 +1891,7 @@ private struct GameRowCard: View {
                 // else, so a game the store still calls live can never draw as
                 // finished.
                 NavigationLink(value: game) {
-                    LiveGameCard(game: game, records: records, standings: standings)
+                    LiveGameCard(game: game, record: record, standings: standings)
                 }
                 .buttonStyle(.plain)
             } else if isOver {
@@ -1911,10 +1899,10 @@ private struct GameRowCard: View {
                 // expand-on-tap and pushes the box score from a button inside
                 // its expanded body; wrapping it in a link would make the whole
                 // card a push target and swallow the expand gesture.
-                FinalGameCard(game: game, records: records, path: $path)
+                FinalGameCard(game: game, record: record, path: $path)
             } else {
                 NavigationLink(value: game) {
-                    GameCard(game: game, records: records, isOver: isOver)
+                    GameCard(game: game, record: record, isOver: isOver)
                 }
                 .buttonStyle(.plain)
             }
@@ -1959,7 +1947,7 @@ private struct GameRowCard: View {
 /// the Upcoming→Live transition, which this card alone could not).
 private struct LiveGameCard: View {
     let game: Game
-    let records: [Int: TeamRecord]
+    let record: GameRecordEntry?
     let standings: [Int: TeamStandingInfo]
     @EnvironmentObject private var liveStore: LiveGameStore
 
@@ -2010,9 +1998,9 @@ private struct LiveGameCard: View {
         return HStack(alignment: .center, spacing: 14) {
             VStack(spacing: 8) {
                 teamRow(side: game.teams.away, bdlTeamId: game.bdlAwayTeamId,
-                        liveScore: summary?.away.runs)
+                        liveScore: summary?.away.runs, isHome: false)
                 teamRow(side: game.teams.home, bdlTeamId: game.bdlHomeTeamId,
-                        liveScore: summary?.home.runs)
+                        liveScore: summary?.home.runs, isHome: true)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -2026,7 +2014,7 @@ private struct LiveGameCard: View {
         }
     }
 
-    private func teamRow(side: GameTeam, bdlTeamId: Int?, liveScore: Int?) -> some View {
+    private func teamRow(side: GameTeam, bdlTeamId: Int?, liveScore: Int?, isHome: Bool) -> some View {
         let standingText: String? = bdlTeamId
             .flatMap { standings[$0] }
             .map { $0.displayString }
@@ -2040,9 +2028,10 @@ private struct LiveGameCard: View {
                     Text(side.team.abbreviation ?? String(side.team.name.prefix(3)).uppercased())
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
-                    if let w = bdlTeamId.flatMap({ records[$0] })?.wins,
-                       let l = bdlTeamId.flatMap({ records[$0] })?.losses {
-                        Text("(\(w)-\(l))")
+                    // Entering the game: it is still being played.
+                    if let text = GameRecordDisplay.text(GameRecordDisplay.record(
+                        record, home: isHome, cardIsFinal: false, wonOnCard: nil)) {
+                        Text(text)
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .monospacedDigit()
