@@ -271,6 +271,8 @@ def _update_batters(current_year: int) -> tuple[int, int, list[int]]:
               .all()
         )
         bdl_id_map: dict[int, int | None]    = {r.player_id: r.bdl_id    for r in bio_rows}
+        bdl_id_map = data_service._without_shared_bdl_ids(
+            bdl_id_map, data_service._shared_bdl_ids(db), "batters")
         debut_map:  dict[int, int | None]    = {r.player_id: r.mlb_debut for r in bio_rows}
     bdl_mapped = sum(1 for v in bdl_id_map.values() if v is not None)
     log.info(
@@ -433,6 +435,8 @@ def _update_pitchers(current_year: int) -> tuple[int, int, list[int]]:
               .all()
         )
         bdl_id_map: dict[int, int | None] = {r.player_id: r.bdl_id    for r in bio_rows}
+        bdl_id_map = data_service._without_shared_bdl_ids(
+            bdl_id_map, data_service._shared_bdl_ids(db), "pitchers")
         debut_map:  dict[int, int | None] = {r.player_id: r.mlb_debut for r in bio_rows}
     bdl_mapped = sum(1 for v in bdl_id_map.values() if v is not None)
     log.info(
@@ -1076,6 +1080,10 @@ def run_catchup_update() -> dict:
     bat_bdl_map: dict[int, int]          = {r.player_id: int(r.bdl_id) for r in bat_bio}
     bat_debut_map: dict[int, int | None] = {r.player_id: r.mlb_debut   for r in bat_bio}
     pit_bdl_map: dict[int, int]          = {r.player_id: int(r.bdl_id) for r in pit_bio}
+    with connection.get_session() as db:
+        _shared = data_service._shared_bdl_ids(db)
+    bat_bdl_map = data_service._without_shared_bdl_ids(bat_bdl_map, _shared, "catchup batters")
+    pit_bdl_map = data_service._without_shared_bdl_ids(pit_bdl_map, _shared, "catchup pitchers")
     pit_debut_map: dict[int, int | None] = {r.player_id: r.mlb_debut   for r in pit_bio}
     bat_db_g: dict[int, int | None] = {r.player_id: r.G for r in bat_g_rows}
     pit_db_g: dict[int, int | None] = {r.player_id: r.G for r in pit_g_rows}

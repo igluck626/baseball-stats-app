@@ -6078,6 +6078,15 @@ def admin_set_bdl_id(
                 status_code=404,
                 detail=f"No {bio_type} found with player_id {player_id}",
             )
+        if new_bdl_id is not None:
+            others = data_service._bdl_id_owners(db, new_bdl_id) - {player_id}
+            if others:
+                # ⚠️ One balldontlie id, one man. Clear the other row first if
+                # it is the wrong one; never leave the id on both.
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"bdl_id {new_bdl_id} already belongs to {sorted(others)}",
+                )
         previous = row.bdl_id
         row.bdl_id = new_bdl_id
         db.commit()

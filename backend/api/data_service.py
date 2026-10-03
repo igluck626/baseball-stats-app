@@ -2969,49 +2969,6 @@ def _parse_bdl_birth_place(
     return None, None, None
 
 
-def _stamp_bdl_id_by_name(
-    db, full_name: str, bdl_id: int, is_pitcher_hint: bool,
-) -> Optional[str]:
-    """Find an existing DB row whose normalized name matches
-    `full_name` AND whose `bdl_id` is still null, and stamp the
-    given `bdl_id` on it. Returns "pitcher" / "batter" identifying
-    which side was stamped, or None when no candidate was found.
-
-    Uses the same normalization (`_normalize_bdl_name`) as the
-    bootstrap mapping endpoint — strips accents, periods, and
-    suffix tokens. Prefers the position-side hinted by the BDL
-    entry (pitchers → `pitchers` table first); falls back to the
-    other side when the primary side has no candidate."""
-    from database.models import Pitcher as _Pitcher
-    from database.models import Player as _Player
-
-    target = _normalize_bdl_name(full_name)
-    if not target:
-        return None
-    tokens = full_name.strip().split() if full_name else []
-    last = tokens[-1] if tokens else ""
-    if not last:
-        return None
-
-    # Position-side priority: hint-first, then the other side.
-    sides = [(_Pitcher, "pitcher"), (_Player, "batter")]
-    if not is_pitcher_hint:
-        sides.reverse()
-
-    for model, side_label in sides:
-        candidates = (
-            db.query(model)
-            .filter(model.bdl_id.is_(None))
-            .filter(model.name.ilike(f"%{last}%"))
-            .all()
-        )
-        for row in candidates:
-            if _normalize_bdl_name(row.name) == target:
-                row.bdl_id = bdl_id
-                return side_label
-    return None
-
-
 def _fetch_bdl_batter_stats(bdl_id: int, year: int) -> Optional[dict]:
     """One-player convenience wrapper around `_fetch_bdl_batch_stats`
     + `_parse_bdl_batter_row`. Preserved for ad-hoc callers that
@@ -3156,6 +3113,7 @@ def build_bdl_player_mapping(since_year: int = 2010,
         "batters_ambiguous": 0,
         "pitchers_ambiguous": 0,
         "bdl_lookups":       0,
+        "refused_already_owned": 0,
     }
     ambiguous: list[dict] = []
     unmatched: list[dict] = []
@@ -3192,8 +3150,22 @@ def build_bdl_player_mapping(since_year: int = 2010,
             )
             counts["bdl_lookups"] += 1
 
-            if status == "matched":
+            if status == "matched" and (_bdl_id_owners(db, bdl_id) - {row.player_id}):
+                # ⚠️ ALREADY OURS. The match is by name and side only, and this walk
+                # covers rows with NO bdl_id — a retired namesake, a pitcher's
+                # phantom batter row. The real man usually holds the id already;
+                # stamping it again puts his line on both. Report, don't stamp.
+                counts["refused_already_owned"] += 1
+                ambiguous.append({
+                    "player_id":  row.player_id,
+                    "name":       row.name,
+                    "side":       side,
+                    "reason":     f"bdl_id {bdl_id} already belongs to "
+                                  f"{sorted(_bdl_id_owners(db, bdl_id) - {row.player_id})}",
+                })
+            elif status == "matched":
                 row.bdl_id = bdl_id
+                db.flush()   # the next row's ownership check must see this stamp
                 counts[f"{'batters' if side == 'batter' else 'pitchers'}_matched"] += 1
             elif status == "ambiguous":
                 counts[f"{'batters' if side == 'batter' else 'pitchers'}_ambiguous"] += 1
@@ -5148,28 +5120,74 @@ def fetch_bdl_games_for_date(date_str: str,
     return games
 
 
+def _bdl_id_owners(db, bdl_id: int) -> set[int]:
+    """Our player_ids whose bio row (either table) carries `bdl_id`."""
+    from database.models import Pitcher as _Pitcher
+    from database.models import Player as _Player
+    out: set[int] = set()
+    for model in (_Player, _Pitcher):
+        out.update(int(r[0]) for r in db.query(model.player_id).filter(model.bdl_id == bdl_id).all())
+    return out
+
+
+def _shared_bdl_ids(db) -> set[int]:
+    """bdl_ids carried by MORE THAN ONE of our player_ids.
+
+    ⚠️ A balldontlie id is one man. Every stats writer goes per player (our id ->
+    its bdl_id -> balldontlie's line), so an id on two of our rows writes the same
+    line onto both — that is how a retired José Ramírez came to hold sixty of the
+    Guardians' José Ramírez's games. A two-way player carries his id on both bio
+    tables under ONE player_id; that is not sharing."""
+    from database.models import Pitcher as _Pitcher
+    from database.models import Player as _Player
+    owners: dict[int, set[int]] = {}
+    for model in (_Player, _Pitcher):
+        for pid, bdl in db.query(model.player_id, model.bdl_id).filter(model.bdl_id.isnot(None)).all():
+            owners.setdefault(int(bdl), set()).add(int(pid))
+    return {b for b, pids in owners.items() if len(pids) > 1}
+
+
+def _without_shared_bdl_ids(id_map: dict, shared: set[int], label: str = "") -> dict:
+    """`{player_id: bdl_id}` with every shared bdl_id dropped (and logged). The
+    writers then leave both rows alone until an operator says which man it is,
+    rather than writing the same line onto two people."""
+    dropped = sorted(pid for pid, b in id_map.items() if b is not None and int(b) in shared)
+    if dropped:
+        log.warning("%sskipping %d player(s) whose bdl_id is shared with another of our ids: %s",
+                    f"[{label}] " if label else "", len(dropped), dropped)
+    return {pid: b for pid, b in id_map.items() if not (b is not None and int(b) in shared)}
+
+
 def _bdl_to_mlbam_map(db) -> dict[int, int]:
     """{bdl_id: mlbam_player_id} from both bio tables. Two-way
     players (Ohtani: same bdl_id stamped on both tables) end up
     keying to the same MLBAM id from either side — the merge is
-    a no-op."""
+    a no-op.
+
+    ⚠️ A bdl_id on two DIFFERENT player_ids maps to neither. It used to map to
+    whichever row the query returned last, so a game landed on one man one night
+    and, after a re-stamp, on the other the next — and both copies stayed."""
     from database.models import Pitcher as _Pitcher
     from database.models import Player as _Player
 
+    shared = _shared_bdl_ids(db)
+    if shared:
+        log.warning("_bdl_to_mlbam_map: %d bdl_id(s) held by two of our ids, not mapped: %s",
+                    len(shared), sorted(shared))
     out: dict[int, int] = {}
     for row in (
         db.query(_Player.player_id, _Player.bdl_id)
         .filter(_Player.bdl_id.isnot(None))
         .all()
     ):
-        if row.bdl_id is not None:
+        if row.bdl_id is not None and int(row.bdl_id) not in shared:
             out[int(row.bdl_id)] = int(row.player_id)
     for row in (
         db.query(_Pitcher.player_id, _Pitcher.bdl_id)
         .filter(_Pitcher.bdl_id.isnot(None))
         .all()
     ):
-        if row.bdl_id is not None:
+        if row.bdl_id is not None and int(row.bdl_id) not in shared:
             # Don't clobber a batter mapping (preserves two-way
             # player precedence matching `_latest_team_info`).
             out.setdefault(int(row.bdl_id), int(row.player_id))
