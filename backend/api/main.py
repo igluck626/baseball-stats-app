@@ -7389,6 +7389,17 @@ def _stints_max_season(role="bat"):
 # season. This bound is the plays-route ceiling used across the situational paths.
 _PLAYS_MAX = 2025
 
+
+def _plays_after_max(season=None, season_start=None, season_end=None):
+    """The decline for a play-by-play question that asks for ANY season after
+    _PLAYS_MAX, else None. The store has no rows for those seasons, so without this a
+    split or situational board came back as zeros (or an empty board) marked as
+    complete coverage."""
+    asked = [int(s) for s in (season, season_start, season_end) if s is not None]
+    if asked and max(asked) > _PLAYS_MAX:
+        return f"Splits come from play-by-play data, which currently runs through {_PLAYS_MAX}."
+    return None
+
 # The relative-time phrases that mean "the current season". 'last season' / an explicit
 # year carry no 'this' and are deliberately NOT matched; 'currently'/'right now' are
 # left out too (genuinely ambiguous between season-to-date and career — career is safer).
@@ -8697,6 +8708,13 @@ def _run_situational(
         raise HTTPException(
             status_code=400,
             detail=f"before the {_PLAYS_FLOOR} play-by-play data floor")
+    # ...and decline (never return 0) if it asks for a season AFTER the store's last one.
+    _after = _plays_after_max(season, season_start, season_end)
+    if _after:
+        return {"resolved": True, "declined": True, "plays_after_max": True, "source": "plays",
+                "filters": {"season": season, "season_start": season_start,
+                            "season_end": season_end, "game_type": gt},
+                "count": None, "reason": _after, "answer": _after}
     uses_count = balls is not None or strikes is not None   # GATE 2 applies only then
 
     if not connection.db_available():
@@ -12030,6 +12048,13 @@ def _run_leaderboard(event=None, role="bat", balls=None, strikes=None, outs=None
     if asked and max(asked) < _PLAYS_FLOOR:
         raise HTTPException(status_code=400,
                             detail=f"before the {_PLAYS_FLOOR} play-by-play data floor")
+    _after = _plays_after_max(season, season_start, season_end)
+    if _after:   # a season after the store's last one: decline, never an empty board
+        return {"resolved": True, "declined": True, "plays_after_max": True,
+                "source": "plays_leaderboard",
+                "filters": {"season": season, "season_start": season_start,
+                            "season_end": season_end, "game_type": gt},
+                "leaders": [], "reason": _after}
     uses_count = balls is not None or strikes is not None
     scoped = bool(asked)
 
@@ -17342,6 +17367,15 @@ def ask(request: Request,
         base["player_resolved"] = {"candidates": cands}
         base["answer"] = (f'There are multiple players matching '
                           f'"{params["player"]}" — tap the one you mean.')
+        return _finish()
+
+    # A season after the play-by-play store's last one: decline with the runner's reason.
+    if result.get("plays_after_max"):
+        base["understood_as"] = params
+        base["source"] = result.get("source")
+        base["declined"] = True
+        base["reason"] = result.get("reason")
+        base["answer"] = result.get("answer") or result.get("reason")
         return _finish()
 
     # RATE / FLOAT stat (audit follow-up): the result carries a computed stat_value +

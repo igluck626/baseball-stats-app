@@ -12,7 +12,8 @@ Checks, without importing the app (AST-extracted from api/main.py, like
 test_guard_tool.py): the detector's positives and negatives, the board titles, the
 "has the postseason started" check, and that the ask route applies the override —
 postseason tools only, decline when there's nothing yet, BEFORE the 'this season'
-override.
+override; and that a play-by-play split or situational board for a season after
+the store's last one declines instead of answering 0.
 Run: python3 backend/tests/test_this_postseason.py
 """
 import ast
@@ -157,6 +158,88 @@ check("it fires only for the CURRENT season (a past postseason with no games is 
       "int(season) == _current_season()" in branch)
 check("it comes after the known-gap branch and before the count is returned",
       tot.index("if gap:") < i_none < tot.index('"count": int(total) if nrows else 0'))
+
+print("play-by-play splits after the store's last season")
+# The plays store runs through _PLAYS_MAX (2025). "this postseason" / "this season" /
+# an explicit 2026 reached the split runner and the situational board with season 2026
+# and came back as zeros (or an empty board) marked as complete coverage.
+
+
+class _HTTPException(Exception):
+    def __init__(self, status_code=None, detail=None): self.detail = detail
+
+
+class _ReachedStore(Exception):
+    pass
+
+
+def _store(*a, **k):
+    raise _ReachedStore()
+
+
+pns = {"re": re, "time": time, "HTTPException": _HTTPException}
+for node in TREE.body:
+    names = ([node.name] if isinstance(node, ast.FunctionDef) else
+             [t.id for t in node.targets if isinstance(t, ast.Name)] if isinstance(node, ast.Assign) else [])
+    if set(names) & {"_PLAYS_MAX", "_PLAYS_FLOOR", "_PLAYS_EVENT_CD", "_CANON_EVENT", "_plays_after_max",
+                     "_game_type_filter", "_canon_event", "_run_situational", "_run_leaderboard"}:
+        exec(compile(ast.Module(body=[node], type_ignores=[]), MAIN, "exec"), pns)
+# Past the gates the runners build filters and touch the store or the DB: those stubs raise
+# _ReachedStore, so "it went on to the query" is observed, never assumed. Any other
+# exception is a FAIL (the call broke before reaching the gate or the store).
+
+
+class _Conn2:
+    def __getattr__(self, name): return _store
+
+
+for name in ("_plays_cursor", "_resolve_player", "_resolve_query_player", "_hand_venue_clauses"):
+    pns[name] = _store
+pns["connection"] = _Conn2()
+
+
+def _sit(**kw):
+    try:
+        return pns["_run_situational"](**kw)
+    except _ReachedStore:
+        return "REACHED_STORE"
+    except Exception as e:
+        return f"ERROR:{type(e).__name__}:{e}"
+
+
+def _lb(**kw):
+    try:
+        return pns["_run_leaderboard"](**kw)
+    except _ReachedStore:
+        return "REACHED_STORE"
+    except Exception as e:
+        return f"ERROR:{type(e).__name__}:{e}"
+
+
+_MSG = "Splits come from play-by-play data, which currently runs through 2025."
+check("the store's last season is 2025", pns["_PLAYS_MAX"] == 2025)
+r = _sit(player="Ben Rice", event="HR", pitcher_hand="L", game_type="P", season=2026)
+check("postseason split for 2026 (Ben Rice vs LHP this postseason) declines",
+      isinstance(r, dict) and r.get("declined") and r.get("plays_after_max") and r.get("answer") == _MSG)
+r = _sit(player="Aaron Judge", event="HR", pitcher_hand="L", season=2026)
+check("this-season split for 2026 (Judge vs LHP this season) declines",
+      isinstance(r, dict) and r.get("declined") and r.get("reason") == _MSG)
+r = _sit(player="Aaron Judge", event="HR", pitcher_hand="L", season=2025)
+check(f"an explicit 2025 split still goes on to the query ({r})", r == "REACHED_STORE")
+r = _sit(player="Aaron Judge", event="HR", pitcher_hand="L", season_start=2020, season_end=2026)
+check("a range reaching past 2025 (2020-2026) declines rather than answering 2020-2025",
+      isinstance(r, dict) and r.get("plays_after_max"))
+r = _sit(player="Aaron Judge", event="HR", pitcher_hand="L", season_start=2020, season_end=2025)
+check(f"a range ending in 2025 still goes on to the query ({r})", r == "REACHED_STORE")
+r = _lb(event="HR", base_state="risp", game_type="P", season=2026)
+check(f"situational board for 2026 (most HR with RISP this postseason) declines ({str(r)[:60]})",
+      isinstance(r, dict) and r.get("declined") and r.get("reason") == _MSG and r.get("leaders") == [])
+r = _lb(event="HR", base_state="risp", season=2025)
+check(f"a 2025 situational board still goes on to the query ({r})", r == "REACHED_STORE")
+i_ask = SRC.index('if result.get("plays_after_max"):')
+check("/ask's split path turns the runner's decline into a declined answer",
+      'base["declined"] = True' in SRC[i_ask:i_ask + 400]
+      and SRC.index('if result.get("ambiguous"):', i_ask - 3000) < i_ask < SRC.index('if result.get("is_rate"):', i_ask))
 
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

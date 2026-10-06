@@ -219,3 +219,5 @@
 {"id": "q218", "bucket": "postseason_this", "q": "Who has the most postseason home runs?", "note": "NEGATIVE: no 'this' -> CAREER postseason board (Manny Ramirez 29), titled 'career postseason'."}
 {"id": "q219", "bucket": "postseason_this", "q": "Who had the most postseason home runs last year?", "note": "NEGATIVE: 'last year' -> 2025 postseason, not overridden to the current season."}
 {"id": "q220", "bucket": "postseason_this", "q": "How many home runs has Aaron Judge hit this postseason?", "note": "THIS-POSTSEASON, one player's count: current postseason only (or a stated decline), never his career postseason 17."}
+{"id": "q221", "bucket": "postseason_this", "q": "How many home runs has Ben Rice hit against left-handed pitchers this postseason?", "note": "PLAYS-AFTER-MAX: a 2026 postseason split -> play-by-play runs through 2025 -> DECLINE, never 0 marked complete."}
+{"id": "q222", "bucket": "postseason_this", "q": "How many home runs does Aaron Judge have against left-handed pitchers this season?", "note": "PLAYS-AFTER-MAX: a 2026 regular-season split -> play-by-play runs through 2025 -> DECLINE, never 0 marked complete."}
