@@ -192,6 +192,8 @@ struct HomeView: View {
                 TeamLeadersSheet(entry: entry, vm: vm,
                                  navigation: navigation, liveStore: liveStore)
                     .presentationDetents([.large])
+                    // iPad: room for the tables. A phone ignores sizing (always full width).
+                    .presentationSizing(.page)
             }
     }
 
@@ -207,6 +209,8 @@ struct HomeView: View {
                     liveStore:  liveStore,
                 )
                 .presentationDetents([.large])
+                // iPad: room for the tables. A phone ignores sizing (always full width).
+                .presentationSizing(.page)
             }
     }
 
@@ -223,6 +227,8 @@ struct HomeView: View {
                     liveStore:  liveStore,
                 )
                 .presentationDetents([.large])
+                // iPad: room for the tables. A phone ignores sizing (always full width).
+                .presentationSizing(.page)
             }
     }
 
@@ -246,6 +252,8 @@ struct HomeView: View {
                 liveStore:        liveStore,
             )
             .presentationDetents([.large])
+            // iPad: room for the tables. A phone ignores sizing (always full width).
+            .presentationSizing(.page)
         }
     }
 
@@ -389,6 +397,7 @@ struct HomeView: View {
             }
             .padding(.top, 12)
             .padding(.bottom, 16)
+            .readableContentWidth()
         }
         .refreshable {
             if let bdlId = store.bdlTeamId {

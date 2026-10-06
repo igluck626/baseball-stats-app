@@ -347,17 +347,50 @@ struct AskExchangeCard: View {
 
 // MARK: - Floating button
 
+/// The Ask entry point as the tab view's bottom accessory — used where the
+/// floating button would cover content: regular width (iPad), and a phone on
+/// its side that has no landscape margin to hold the button. Inline beside a
+/// minimised tab bar it shows the icon alone.
+struct AskAccessoryButton: View {
+    let action: () -> Void
+    @Environment(\.tabViewBottomAccessoryPlacement) private var placement
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: "sparkles")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(Color.accentColor)
+                if placement != .inline {
+                    Text("Ask a question")
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                }
+            }
+            .padding(.horizontal, 16)
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Ask a question")
+    }
+}
+
 /// The always-available entry point, overlaid on the tab root above the tab
 /// bar. Uses the app's accent color.
 struct AskFloatingButton: View {
+    /// 56 everywhere it floats over content; 44 in a phone's landscape margin.
+    var diameter: CGFloat = 56
     let action: () -> Void
+
+    static let compactDiameter: CGFloat = 44
 
     var body: some View {
         Button(action: action) {
             Image(systemName: "sparkles")
-                .font(.title2.weight(.semibold))
+                .font(diameter < 56 ? .title3.weight(.semibold) : .title2.weight(.semibold))
                 .foregroundStyle(.white)
-                .frame(width: 56, height: 56)
+                .frame(width: diameter, height: diameter)
                 .background(Circle().fill(Color.accentColor.gradient))
                 .shadow(color: .black.opacity(0.25), radius: 8, y: 4)
         }

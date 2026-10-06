@@ -571,7 +571,9 @@ struct ScoresView: View {
     var body: some View {
         NavigationStack(path: $navigationPath) {
             VStack(spacing: 0) {
-                dateBar
+                // Same reading width as the cards below, so on a wide window the
+                // ◀ ▶ arrows sit over the column rather than at the window edges.
+                dateBar.readableContentWidth()
                 content
             }
             .navigationTitle("Scores")
@@ -940,6 +942,7 @@ struct ScoresView: View {
             // slides smoothly instead of snapping. `Game.id` (gamePk) identity
             // keeps rows stable across the section move.
             .animation(.default, value: liveIds)
+            .readableContentWidth()
         }
         .refreshable {
             await vm.refresh()

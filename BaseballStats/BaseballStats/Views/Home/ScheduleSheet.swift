@@ -71,6 +71,8 @@ struct ScheduleSheet: View {
         }
         .task { await vm.load(bdlTeamId: favorite.bdlTeamId) }
         .presentationDetents([.large])
+        // iPad: room for the tables. A phone ignores sizing (always full width).
+        .presentationSizing(.page)
         // Glass sheet — matches the app-wide sheet treatment.
         .presentationBackground(.ultraThinMaterial)
     }

@@ -197,6 +197,20 @@ struct BracketTreeCanvas<Cell, Box: View>: View {
     @ViewBuilder let box: (BracketTreeLayout<Cell>.Placed) -> Box
     @Environment(\.colorScheme) private var colorScheme
 
+    /// The scroll view's own measurements: how wide the window is, how wide
+    /// the bracket is, and how far it has been scrolled sideways.
+    @State private var scroll = HorizontalScroll()
+
+    struct HorizontalScroll: Equatable {
+        var container: CGFloat = 0
+        var content: CGFloat = 0
+        var offset: CGFloat = 0
+        /// The bracket is wider than the window, so part of it is off-screen.
+        var overflows: Bool { content > container + 1 }
+        /// Some of it is still to the right.
+        var moreToTheRight: Bool { overflows && offset < content - container - 4 }
+    }
+
     var body: some View {
         ScrollView([.horizontal, .vertical]) {
             ZStack(alignment: .topLeading) {
@@ -251,6 +265,46 @@ struct BracketTreeCanvas<Cell, Box: View>: View {
             }
             .frame(width: layout.size.width, height: layout.size.height, alignment: .topLeading)
             .padding(20)
+            // CENTRED WHEN IT FITS. A bracket narrower than the window used to
+            // sit against the left edge with the right half of an iPad empty.
+            // When it is wider, minWidth is the smaller number and changes nothing.
+            .frame(minWidth: scroll.container, alignment: .top)
         }
+        .onScrollGeometryChange(for: HorizontalScroll.self) { geo in
+            HorizontalScroll(container: geo.containerSize.width,
+                             content: geo.contentSize.width,
+                             offset: geo.contentOffset.x)
+        } action: { _, new in
+            scroll = new
+        }
+        // WHEN IT DOES NOT FIT, SAY SO. A two-axis canvas cut off at the right
+        // edge gave no sign that the Championship and World Series were there.
+        .scrollIndicators(scroll.overflows ? .visible : .automatic, axes: .horizontal)
+        .overlay(alignment: .trailing) {
+            if scroll.moreToTheRight {
+                MoreToTheRightHint()
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.2), value: scroll.moreToTheRight)
+    }
+}
+
+/// A fade and a chevron at the trailing edge of a canvas that scrolls sideways.
+/// Decoration only: it takes no touches, so the canvas scrolls beneath it.
+private struct MoreToTheRightHint: View {
+    var body: some View {
+        ZStack(alignment: .trailing) {
+            LinearGradient(colors: [Color(.systemBackground).opacity(0), Color(.systemBackground).opacity(0.85)],
+                           startPoint: .leading, endPoint: .trailing)
+                .frame(width: 44)
+            Image(systemName: "chevron.compact.right")
+                .font(.title2.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.trailing, 6)
+        }
+        .frame(maxHeight: .infinity)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }

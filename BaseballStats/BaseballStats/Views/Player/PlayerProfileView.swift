@@ -186,6 +186,7 @@ struct PlayerProfileView: View {
                         .padding(.top, 16)
                         .padding(.bottom, 32)
                     }
+                    .readableContentWidth()
                 }
                 // Hide the default scroll content background; layer
                 // the team-color tint on top of systemGroupedBackground
@@ -310,6 +311,10 @@ struct PlayerProfileView: View {
             )
             .presentationDetents([.height(320)])
             .presentationDragIndicator(.visible)
+            // On iPad the 320pt detent doesn't apply, and a full form sheet
+            // around a 320pt card left most of it empty. Form width, height
+            // fitted to the card. A phone ignores this and keeps the detent.
+            .presentationSizing(.form.fitted(horizontal: false, vertical: true))
         }
         // Cross-player comparison, seeded with this player on the side
         // currently being viewed (two-way players join the right career).
@@ -4859,7 +4864,7 @@ private struct PostseasonPitchingTable: View {
     private typealias C = PitchingCareerColumn
     private static let columns: [(String, CGFloat)] = [
         ("G", C.g), ("GS", C.gs), ("W", C.w), ("L", C.l), ("SV", C.sv), ("IP", C.ip), ("H", C.h),
-        ("R", C.r), ("ER", C.er), ("HR", C.hr), ("BB", C.bb), ("SO", C.so), ("ERA", C.era), ("WHIP", C.era),
+        ("R", C.r), ("ER", C.er), ("HR", C.hr), ("BB", C.bb), ("SO", C.so), ("ERA", C.era), ("WHIP", C.whip),
     ]
 
     private func values(_ t: PostseasonPitchingTotals) -> [String] {

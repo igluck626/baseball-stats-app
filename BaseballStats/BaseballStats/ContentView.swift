@@ -27,6 +27,29 @@ struct ContentView: View {
     /// so every live-polling loop can gate on it via `navigation.shouldPoll(on:)`.
     @Environment(\.scenePhase) private var scenePhase
 
+    /// Where the Ask button goes. The floating button sat on a leaders column on
+    /// iPad and on the live card's inning in phone landscape.
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+    /// The trailing safe-area margin — in landscape, the strip beside the
+    /// Dynamic Island / notch that content never uses.
+    @State private var trailingMargin: CGFloat = 0
+
+    private enum AskPlacement { case floating, sideMargin, accessory }
+
+    private var askPlacement: AskPlacement {
+        if verticalSizeClass == .compact {
+            // Any phone on its side. The margin holds a 44pt button clear of
+            // content; a phone without one (home-button models) uses the
+            // accessory instead.
+            return trailingMargin >= AskFloatingButton.compactDiameter + 4 ? .sideMargin : .accessory
+        }
+        // iPad and other wide windows: the tab view's bottom accessory.
+        if horizontalSizeClass == .regular { return .accessory }
+        // A phone held upright: exactly as before.
+        return .floating
+    }
+
     /// Drives the full-screen Ask experience, launched from the floating
     /// button overlaid above the tab bar.
     @State private var showingAsk = false
@@ -46,6 +69,16 @@ struct ContentView: View {
         }
         .toolbarBackground(.ultraThinMaterial, for: .tabBar)
         .toolbarBackground(.visible, for: .tabBar)
+        // ⚠️ VALUES, NOT BRANCHES. Rotating or resizing flips these, and an
+        // if/else around the TabView would give it a new identity and throw away
+        // every tab's navigation path. A changed modifier value does not.
+        //
+        // Landscape phone: a 400-point-tall screen can't spare the tab bar, so it
+        // shrinks as you scroll down. Upright, the system default is unchanged.
+        .tabBarMinimizeBehavior(verticalSizeClass == .compact ? .onScrollDown : .automatic)
+        .tabViewBottomAccessory(isEnabled: askPlacement == .accessory) {
+            AskAccessoryButton { showingAsk = true }
+        }
         // Mirror app lifecycle into the shared coordinator. Backgrounding /
         // going inactive flips `shouldPoll(on:)` false for every tab, which
         // each live loop observes to cancel itself; returning to active
@@ -68,10 +101,21 @@ struct ContentView: View {
         // padding lifts it clear of the ~49pt tab bar; trailing inset matches
         // the standard system margin.
         .overlay(alignment: .bottomTrailing) {
-            AskFloatingButton { showingAsk = true }
-                .padding(.trailing, 18)
-                .padding(.bottom, 66)
+            if askPlacement == .floating {
+                AskFloatingButton { showingAsk = true }
+                    .padding(.trailing, 18)
+                    .padding(.bottom, 66)
+            }
         }
+        // Landscape: centred in the trailing margin, outside the content area.
+        .overlay(alignment: .trailing) {
+            if askPlacement == .sideMargin {
+                AskFloatingButton(diameter: AskFloatingButton.compactDiameter) { showingAsk = true }
+                    .frame(width: trailingMargin)
+                    .ignoresSafeArea(.container, edges: .trailing)
+            }
+        }
+        .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.trailing } action: { trailingMargin = $0 }
         .fullScreenCover(isPresented: $showingAsk) {
             AskView()
         }
