@@ -1250,32 +1250,59 @@ def _derived_team_to_retro(raw, year):
     return segs[-1][0]   # a year past the last segment (the in-progress season) -> latest code
 
 
-# Batting stint columns summed per game (integers); G = game count, TB derived.
-_STINT_BAT_COLS = ["G", "AB", "R", "H", "doubles", "triples", "HR", "RBI", "BB",
+# Batting stint columns summed per game (integers); G = every game appeared in,
+# G_batted = the games with a batting line, TB derived.
+_STINT_BAT_COLS = ["G", "G_batted", "AB", "R", "H", "doubles", "triples", "HR", "RBI", "BB",
                    "SO", "SB", "CS", "IBB", "HBP", "SF", "SH", "GIDP", "PA"]
+# ⚠️ A player's team is "the other team in the game", so each game needs BOTH of its
+# teams. Built from the batting logs alone, the 281 early-2026 games whose batting
+# lines hold only one side lost that side's batters entirely (the pitching logs have
+# both sides of all 281); the pitching query lost 113 games the same way. The union of
+# the two logs has exactly two teams for every 2026 game.
+# G counts every game a player appeared in — batted, pitched, or both — the
+# Retrosheet-era convention; G_batted is the batting-game count. BDL's 2026 season G
+# is not consistent about it: for most pitchers it counts every appearance, but for
+# most position players who pitched it counts only the games they batted in.
 _STINT_BAT_SQL = """
-WITH game_team AS (
+WITH game_team AS (   -- both teams of every game, from BOTH logs
   SELECT game_id, opponent AS team FROM batting_gamelogs WHERE season = :yr
-  GROUP BY game_id, opponent
+  UNION
+  SELECT game_id, opponent AS team FROM pitching_gamelogs WHERE season = :yr
 ),
-per_game AS (   -- ONE row per (player, game): the other team + that game's line
-  SELECT g.player_id, g.game_id, MIN(gt.team) AS raw_team, MAX(g.game_date) AS gd,
-         MAX(g."AB") "AB", MAX(g."R") "R", MAX(g."H") "H", MAX(g.doubles) doubles,
-         MAX(g.triples) triples, MAX(g."HR") "HR", MAX(g."RBI") "RBI", MAX(g."BB") "BB",
-         MAX(g."SO") "SO", MAX(g."SB") "SB", MAX(g."CS") "CS", MAX(g."IBB") "IBB",
-         MAX(g."HBP") "HBP", MAX(g."SF") "SF", MAX(g."SH") "SH", MAX(g."GIDP") "GIDP",
-         MAX(g."PA") "PA"
-  FROM batting_gamelogs g
-  JOIN game_team gt ON gt.game_id = g.game_id AND gt.team <> g.opponent
-  WHERE g.season = :yr
-  GROUP BY g.player_id, g.game_id
+appearance AS (   -- every game a player appeared in: batted, pitched, or both
+  SELECT player_id, game_id, opponent, game_date, TRUE AS batted
+  FROM batting_gamelogs WHERE season = :yr
+  UNION ALL
+  SELECT player_id, game_id, opponent, game_date, FALSE
+  FROM pitching_gamelogs WHERE season = :yr
+),
+per_game AS (   -- ONE row per (player, game): the other team, and whether he batted
+  SELECT a.player_id, a.game_id, MIN(gt.team) AS raw_team, MAX(a.game_date) AS gd,
+         bool_or(a.batted) AS batted
+  FROM appearance a
+  JOIN game_team gt ON gt.game_id = a.game_id AND gt.team <> a.opponent
+  GROUP BY a.player_id, a.game_id
+),
+bat_line AS (   -- that game's batting line, when there is one
+  SELECT player_id, game_id,
+         MAX("AB") "AB", MAX("R") "R", MAX("H") "H", MAX(doubles) doubles,
+         MAX(triples) triples, MAX("HR") "HR", MAX("RBI") "RBI", MAX("BB") "BB",
+         MAX("SO") "SO", MAX("SB") "SB", MAX("CS") "CS", MAX("IBB") "IBB",
+         MAX("HBP") "HBP", MAX("SF") "SF", MAX("SH") "SH", MAX("GIDP") "GIDP",
+         MAX("PA") "PA"
+  FROM batting_gamelogs WHERE season = :yr
+  GROUP BY player_id, game_id
 )
-SELECT player_id, raw_team, min(gd) AS first_date, count(*) AS "G",
-       sum("AB") "AB", sum("R") "R", sum("H") "H", sum(doubles) doubles, sum(triples) triples,
-       sum("HR") "HR", sum("RBI") "RBI", sum("BB") "BB", sum("SO") "SO", sum("SB") "SB",
-       sum("CS") "CS", sum("IBB") "IBB", sum("HBP") "HBP", sum("SF") "SF", sum("SH") "SH",
-       sum("GIDP") "GIDP", sum("PA") "PA"
-FROM per_game GROUP BY player_id, raw_team
+SELECT p.player_id, p.raw_team, min(p.gd) AS first_date, count(*) AS "G",
+       count(*) FILTER (WHERE p.batted) AS "G_batted",
+       sum(b."AB") "AB", sum(b."R") "R", sum(b."H") "H", sum(b.doubles) doubles,
+       sum(b.triples) triples, sum(b."HR") "HR", sum(b."RBI") "RBI", sum(b."BB") "BB",
+       sum(b."SO") "SO", sum(b."SB") "SB", sum(b."CS") "CS", sum(b."IBB") "IBB",
+       sum(b."HBP") "HBP", sum(b."SF") "SF", sum(b."SH") "SH", sum(b."GIDP") "GIDP",
+       sum(b."PA") "PA"
+FROM per_game p
+LEFT JOIN bat_line b ON b.player_id = p.player_id AND b.game_id = p.game_id
+GROUP BY p.player_id, p.raw_team
 """
 
 # Pitching: W/L/SV counted from `result`; IP summed as OUTS (6.2 = 6⅔) so the
@@ -1283,9 +1310,10 @@ FROM per_game GROUP BY player_id, raw_team
 # gamelog and stay NULL (the team board ranks by W/L/SV/SO/ER, all derivable).
 _STINT_PIT_COLS = ["G", "W", "L", "SV", "H", "R", "ER", "BB", "SO", "HR", "HBP", "WP", "ip_outs"]
 _STINT_PIT_SQL = """
-WITH game_team AS (
+WITH game_team AS (   -- both teams of every game, from BOTH logs (see _STINT_BAT_SQL)
   SELECT game_id, opponent AS team FROM pitching_gamelogs WHERE season = :yr
-  GROUP BY game_id, opponent
+  UNION
+  SELECT game_id, opponent AS team FROM batting_gamelogs WHERE season = :yr
 ),
 per_game AS (
   SELECT g.player_id, g.game_id, MIN(gt.team) AS raw_team, MAX(g.game_date) AS gd,
