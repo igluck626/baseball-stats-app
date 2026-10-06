@@ -183,6 +183,8 @@ _PLAYER_SEASONS_NEW_COLUMNS: list[tuple[str, str]] = [
     ("SH",           "INTEGER"),
     ("GIDP",         "INTEGER"),
     ("TB",           "INTEGER"),
+    # Games with a batting event; G is every appearance. See PlayerSeason.G_batted.
+    ("G_batted",     "INTEGER"),
     # Stamped by save_player_seasons. iOS uses it to decide which
     # box-score lines need overlaying — anything started after this
     # ts isn't in the row yet, anything before is already counted.
@@ -397,6 +399,7 @@ def init_db() -> dict:
     for tbl_name, cols in (
         ("team_seasons",      _TEAM_SEASONS_NEW_COLUMNS),
         ("player_seasons",    _PLAYER_SEASONS_NEW_COLUMNS),
+        ("player_season_stints", [("G_batted", "INTEGER")]),
         ("pitcher_seasons",   _PITCHER_SEASONS_NEW_COLUMNS),
         ("batting_gamelogs",  _BATTING_GAMELOGS_NEW_COLUMNS),
         # The staging twin takes the same ALTER: if the table already exists in

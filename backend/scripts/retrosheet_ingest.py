@@ -132,6 +132,9 @@ def _ingest_batting_seasons(year, league_map, existing, state, lock) -> dict:
             season = {
                 "year": yr, "team": team, "source": "retrosheet",
                 "G": _i(r["G"]), "AB": ab, "R": _i(r["R"]), "H": h,
+                # Games with a batting event (the streak gate's count); absent from
+                # CSVs built before retrosheet_aggregate.py wrote it.
+                "G_batted": _i(r["G_batted"]) if r.get("G_batted") not in (None, "") else None,
                 "doubles": doubles, "triples": triples, "HR": hr,
                 "RBI": _i(r["RBI"]), "BB": bb, "SO": so, "SB": _i(r["SB"]),
                 "CS": _i(r["CS"]), "IBB": ibb, "HBP": hbp, "SH": sh, "SF": sf,
@@ -258,6 +261,8 @@ def _ingest_stints(path, cols, ip, save_fn, year, state, lock, key,
             }
             for c in cols:
                 row[c] = _i(r[c])
+            if "G_batted" in r and "PA" in cols:      # batting stints only
+                row["G_batted"] = _i(r["G_batted"]) if r["G_batted"] not in (None, "") else None
             if ip:
                 row["IP"] = _f(r["IP"])
             if pa_fallback:
@@ -267,13 +272,17 @@ def _ingest_stints(path, cols, ip, save_fn, year, state, lock, key,
                                           row["HBP"], row["SF"], row["SH"])
             rows.append(row)
 
-    saved = 0
+    # INSERT-ONLY (save_fn is crud.insert_absent_*): a stint already stored is never
+    # rewritten, the same rule the season ingest follows. Rows processed drive the
+    # progress counter; the summary says how many were actually new.
+    done = inserted = 0
     for i in range(0, len(rows), _STINT_BATCH):
         with connection.get_session() as db:
-            save_fn(db, rows[i:i + _STINT_BATCH])
-        saved += len(rows[i:i + _STINT_BATCH])
-        _set_state(state, lock, **{key: saved})
-    return {"upserted": len(rows), "skipped_current_year": skipped_year}
+            inserted += save_fn(db, rows[i:i + _STINT_BATCH])
+        done += len(rows[i:i + _STINT_BATCH])
+        _set_state(state, lock, **{key: done})
+    return {"rows": len(rows), "inserted": inserted, "already_present": len(rows) - inserted,
+            "skipped_current_year": skipped_year}
 
 
 # ---------------------------------------------------------------------------
@@ -304,11 +313,11 @@ def run(year: Optional[int] = None, state=None, lock=None) -> dict:
 
     _set_state(state, lock, phase="batting_stints")
     bat_stints = _ingest_stints(BAT_STINTS, _BAT_STINT_COLS, False,
-                                crud.save_player_season_stints, year, state, lock,
+                                crud.insert_absent_player_season_stints, year, state, lock,
                                 "batting_stints_upserted", pa_fallback=True)
     _set_state(state, lock, phase="pitching_stints")
     pit_stints = _ingest_stints(PIT_STINTS, _PIT_STINT_COLS, True,
-                                crud.save_pitcher_season_stints, year, state, lock,
+                                crud.insert_absent_pitcher_season_stints, year, state, lock,
                                 "pitching_stints_upserted")
 
     summary = {

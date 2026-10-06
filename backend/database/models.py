@@ -84,6 +84,10 @@ class PlayerSeason(Base):
     runs_above_avg = Column(Float)
     runs_above_rep = Column(Float)
     G              = Column(Integer)
+    # Games with any batting stat (a PA, a run, a steal, ...) — the count the
+    # Retrosheet-era G used to hold. G is every appearance; the streak/span completeness
+    # gate reads COALESCE(G_batted, G), because the game logs hold only batting games.
+    G_batted       = Column(Integer)
     PA             = Column(Integer)
     AB             = Column(Integer)
     R              = Column(Integer)
@@ -243,6 +247,7 @@ class PlayerSeasonStint(Base):
     team           = Column(String,  primary_key=True)
     stint_order    = Column(Integer)
     G              = Column(Integer)
+    G_batted       = Column(Integer)   # see PlayerSeason.G_batted
     PA             = Column(Integer)
     AB             = Column(Integer)
     R              = Column(Integer)

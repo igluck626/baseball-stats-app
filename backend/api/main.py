@@ -8963,6 +8963,14 @@ def _safe_through(daily, auth):
     return safe, diverge
 
 
+# ⚠️ The completeness gate compares the game-log rows with the games a man BATTED in,
+# not every game he appeared in. G counts every appearance (a defensive inning,
+# a pinch-run, pitching without batting); the game logs hold only batting games,
+# so gating on G would call most seasons incomplete and drop their streaks and
+# spans. G_batted holds the batting-game count where it differs; elsewhere G is it.
+_GATE_BATTING_G = 'COALESCE("G_batted", "G")'
+
+
 def _complete_seasons(mlbam_id):
     """(complete set{years}, daily_games {season:count}, auth_G {year:G}) — a season
     is complete in the daily table iff its game COUNT matches the official G. Used
@@ -8975,7 +8983,7 @@ def _complete_seasons(mlbam_id):
                 "WHERE player_id = :pid GROUP BY season"), {"pid": int(mlbam_id)}).fetchall():
             dg[s] = int(c or 0)
         for y, g in db.execute(_sa_text(
-                'SELECT year, SUM("G") FROM player_seasons '
+                f"SELECT year, SUM({_GATE_BATTING_G}) FROM player_seasons "
                 "WHERE player_id = :pid GROUP BY year"), {"pid": int(mlbam_id)}).fetchall():
             ag[y] = int(g or 0)
     # Complete = the daily table has AT LEAST every official game (no MISSING
@@ -18589,7 +18597,7 @@ def _backfill_leaderboard_core(confirm, limit, job_id=None):
                     "WHERE player_id = ANY(:ids) GROUP BY player_id, season"), {"ids": chunk}).fetchall():
                 dg_by[pid_][s_] = int(c_ or 0)
             for pid_, y_, g_ in db.execute(_sa_text(
-                    'SELECT player_id, year, SUM("G") FROM player_seasons '
+                    f"SELECT player_id, year, SUM({_GATE_BATTING_G}) FROM player_seasons "
                     "WHERE player_id = ANY(:ids) GROUP BY player_id, year"), {"ids": chunk}).fetchall():
                 ag_by[pid_][y_] = int(g_ or 0)
 

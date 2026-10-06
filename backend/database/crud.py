@@ -209,6 +209,40 @@ def save_pitcher_season_stints(db: Session, stints: list[dict]) -> None:
         _upsert_stint(db, PitcherSeasonStint, {"last_updated": now, **stint})
 
 
+def _insert_stint_if_absent(db: Session, model, row: dict) -> bool:
+    """Insert one stint row only when its (player_id, year, team) key is absent;
+    an existing row is left exactly as it is. True when a row was inserted."""
+    dialect = db.bind.dialect.name if db.bind is not None else ""
+    if dialect == "postgresql":
+        stmt = pg_insert(model).values(**row).on_conflict_do_nothing(
+            index_elements=["player_id", "year", "team"],
+        )
+        return (db.execute(stmt).rowcount or 0) == 1
+    if db.get(model, (row["player_id"], row["year"], row["team"])) is not None:
+        return False
+    db.add(model(**row))
+    db.flush()
+    return True
+
+
+def insert_absent_player_season_stints(db: Session, stints: list[dict]) -> int:
+    """Insert-only counterpart of save_player_season_stints, for the Retrosheet
+    ingest: a stint already stored is never rewritten. Returns rows inserted.
+
+    ⚠️ The historical stints are corrected in place (batting G raised to every
+    appearance, G_batted kept beside it). An upsert from a re-ingested CSV would
+    silently put back whatever the CSV holds. The nightly's current-season stints
+    still go through save_player_season_stints — they are meant to be rewritten."""
+    now = datetime.datetime.utcnow()
+    return sum(_insert_stint_if_absent(db, PlayerSeasonStint, {"last_updated": now, **s}) for s in stints)
+
+
+def insert_absent_pitcher_season_stints(db: Session, stints: list[dict]) -> int:
+    """Pitching twin of insert_absent_player_season_stints."""
+    now = datetime.datetime.utcnow()
+    return sum(_insert_stint_if_absent(db, PitcherSeasonStint, {"last_updated": now, **s}) for s in stints)
+
+
 def get_all_pitcher_ids(db: Session) -> list[int]:
     rows = db.query(PitcherSeason.player_id).distinct().all()
     return [r.player_id for r in rows]
