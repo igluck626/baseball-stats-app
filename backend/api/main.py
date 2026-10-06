@@ -7395,6 +7395,45 @@ _PLAYS_MAX = 2025
 _THIS_SEASON_RE = re.compile(
     r"\bthis\s+season\b|\bthis\s+year\b|\bthis\s+campaign\b", re.I)
 
+# The relative-time phrases that mean "the CURRENT postseason". Without this, "Who has
+# the most home runs this postseason?" reached the leaderboard as postseason with NO
+# season — the career postseason board — and answered Manny Ramirez's 29. Like
+# _THIS_SEASON_RE: no 'this'/'these'/'current' (e.g. "most postseason home runs",
+# "the 2025 playoffs", "last year's postseason") never matches.
+_THIS_POSTSEASON_RE = re.compile(
+    r"\bthis\s+(?:post-?season|october)\b"
+    r"|\b(?:these|this\s+year'?s|this\s+season'?s|the\s+current|the\s+ongoing)\s+(?:playoffs|post-?season)\b"
+    r"|\bso\s+far\s+(?:this|in\s+the)\s+(?:playoffs|post-?season)\b"
+    r"|\bin\s+the\s+(?:playoffs|post-?season)\s+this\s+(?:year|season)\b", re.I)
+
+# Tools whose game_type can say "postseason". Any other tool answering a "this
+# postseason" question would quietly return regular-season numbers, so it declines.
+_POSTSEASON_TOOLS = ("query_leaderboard", "query_situational", "query_comparison")
+
+_POSTSEASON_STATS_CACHE: dict = {}
+
+
+def _postseason_has_stats(season: int) -> bool:
+    """Whether any postseason game for `season` is stored yet — read from the same
+    source the postseason boards rank (postseason_stats.SOURCE_SQL). Cached briefly so a
+    burst of questions costs one query; a False result is re-checked sooner, since the
+    first game of October flips it."""
+    now = time.time()
+    hit = _POSTSEASON_STATS_CACHE.get(season)
+    if hit and now - hit[1] < (600 if hit[0] else 60):
+        return hit[0]
+    try:
+        with connection.get_session() as db:
+            rl = postseason_stats.retro_last(db)
+            n = db.execute(_sa_text(
+                f"SELECT count(*) FROM {postseason_stats.TABLE['bat']} "
+                f"WHERE season = :s AND {postseason_stats.SOURCE_SQL}"),
+                {"s": int(season), "ps_retro_last": rl}).scalar() or 0
+    except Exception:
+        return True          # DB trouble: don't invent a decline; let the query speak
+    _POSTSEASON_STATS_CACHE[season] = (n > 0, now)
+    return n > 0
+
 _CURRENT_SEASON_CACHE = {"year": None, "at": 0.0}
 
 
@@ -8520,6 +8559,15 @@ def _run_season_total(player, role="bat", event=None, season=None,
                 "filters": {"event": canon, "season": season, "season_start": season_start,
                             "season_end": season_end, "game_type": gt},
                 "stat_value": None, "reason": gap, "answer": gap}
+    if gt == "P" and not nrows and season is not None and int(season) == _current_season():
+        # No postseason games at all THIS postseason: he hasn't played, which is
+        # not the same answer as "0" (Aaron Judge, out for the 2026 postseason).
+        _msg = f"{resolved['name']} hasn't played in the {int(season)} postseason."
+        return {"resolved": True, "declined": True, "source": "season_stats",
+                "player": {"query": player, "name": resolved["name"], "mlbam_id": pid, "role": role},
+                "filters": {"event": canon, "season": season, "season_start": season_start,
+                            "season_end": season_end, "game_type": gt},
+                "stat_value": None, "reason": _msg, "answer": _msg}
 
     return {
         "resolved": True, "source": "season_stats",
@@ -11913,7 +11961,7 @@ def _run_awards(award, player=None, league=None, season=None, limit=10):
 
 
 def _lb_title(label, team_display=None, season=None, season_start=None,
-              season_end=None, month=None):
+              season_end=None, month=None, game_type=None):
     """Scope-labelled leaderboard heading — 'Most home runs for the New York Yankees
     in April 2024'. Names the team and/or the time the SAME way the streak boards name
     their year. None when there's nothing to name (a bare situational board stays
@@ -11939,6 +11987,10 @@ def _lb_title(label, team_display=None, season=None, season_start=None,
         when = None
     team = f"for the {team_display}" if team_display else None
     tail = " ".join(x for x in (team, when) if x)
+    # A postseason board says so: "Most home runs in 2026" read as a regular-season
+    # board. With no scope at all it is the career postseason board, and says that.
+    if (game_type or "").strip().upper() == "P":
+        return f"Most postseason {label} {tail}" if tail else f"Most career postseason {label}"
     return f"Most {label} {tail}" if tail else None
 
 
@@ -12046,7 +12098,7 @@ def _run_leaderboard(event=None, role="bat", balls=None, strikes=None, outs=None
     # Scope-labelled board title ("Most home runs for the New York Yankees in April").
     _lbl = (_COMPARE_STAT_LABEL.get(canon or (event or "").upper())
             or (event or "").lower())
-    _lb_title_str = _lb_title(_lbl, team_display, season, season_start, season_end, month)
+    _lb_title_str = _lb_title(_lbl, team_display, season, season_start, season_end, month, gt)
 
     def _base(**extra):
         out = {"resolved": True, "source": "plays_leaderboard", "filters": filters,
@@ -12510,7 +12562,8 @@ def _run_season_leaderboard(event=None, role="bat", season=None, season_start=No
                         "season_start": season_start, "season_end": season_end,
                         "game_type": gt, "team": team_display},
             "limit": limit, "leaders": leaders,
-            "leaderboard_title": _lb_title(_lbl, team_display, season, season_start, season_end),
+            "leaderboard_title": _lb_title(_lbl, team_display, season, season_start, season_end,
+                                           game_type=gt),
             "game_coverage": gc, "count_data": None}
 
 
@@ -15970,6 +16023,37 @@ def ask(request: Request,
     if _redir is not None:
         log.warning("ask: REDIRECT %s %s -> %s for %r", tool_name, tool_input, _redir[0], q)
         tool_name, tool_input = _redir
+
+    # 'this postseason' / 'these playoffs' / 'this October' means the CURRENT season's
+    # postseason. Same contract as the 'this season' override below: read the phrase from
+    # the QUESTION, override the model's reading (raw_tool_input keeps it for the cache,
+    # so a bad reading cached before this existed is corrected on replay).
+    if tool_input is not None and _THIS_POSTSEASON_RE.search(q):
+        _cs = _current_season()
+        if tool_name not in _POSTSEASON_TOOLS:
+            _msg = ("I can count and rank postseason stats (\"Who has the most home runs "
+                    "this postseason?\"), but I can't answer that kind of question for the "
+                    "postseason yet.")
+            base["out_of_scope"] = True
+            base["reason"] = _msg
+            base["answer"] = _msg
+            return _finish()
+        if not _postseason_has_stats(_cs):
+            _msg = f"There are no {_cs} postseason stats yet — its first game hasn't been played."
+            base["declined"] = True
+            base["reason"] = _msg
+            base["answer"] = _msg
+            return _finish()
+        _was = (tool_input.get("game_type"), tool_input.get("season"), tool_input.get("month"))
+        tool_input["game_type"] = "P"
+        tool_input["season"] = _cs
+        tool_input.pop("season_start", None)
+        tool_input.pop("season_end", None)
+        # A month is redundant once the scope is the postseason — and harmful: the model
+        # reads "this October" as month=10, which sends the question to the play-by-play
+        # board (no 2026 plays, and it can't rank RBI) instead of the postseason table.
+        tool_input.pop("month", None)
+        log.info("ask: 'this postseason' -> P %s (model said %r) for %r", _cs, _was, q)
 
     # ---- RELATIVE-TIME RESOLUTION (deterministic, GLOBAL — before the guard).
     # 'this season' / 'this year' means the CURRENT season, but the model reads the

@@ -211,3 +211,11 @@
 {"id": "q210", "bucket": "postseason", "q": "How many postseason hits did Willie Harris have?", "note": "LAHMAN-LOAD FIX, the swap: 2 \u2014 his own 2005 White Sox line (was Will Harris's reliever lines)."}
 {"id": "q211", "bucket": "postseason", "q": "How many postseason stolen bases did Rafael Furcal have?", "note": "LAHMAN-LOAD FIX: 13 (was 0)."}
 {"id": "q212", "bucket": "postseason", "q": "How many postseason hits did King Kelly have?", "note": "KNOWN GAP, NEVER SILENT: his whole career is before 1903 -> DECLINED with the reason, never 0."}
+{"id": "q213", "bucket": "postseason_this", "q": "Who has the most home runs this postseason?", "note": "THIS-POSTSEASON: the CURRENT season's postseason (game_type P, season = current), not the career board (was Manny Ramirez 29)."}
+{"id": "q214", "bucket": "postseason_this", "q": "home run leaders these playoffs", "note": "THIS-POSTSEASON: 'these playoffs' -> current postseason."}
+{"id": "q215", "bucket": "postseason_this", "q": "Who has the most strikeouts this postseason?", "note": "THIS-POSTSEASON, pitching side: current postseason strikeout leaders."}
+{"id": "q216", "bucket": "postseason_this", "q": "Who has the most RBI this October?", "note": "THIS-POSTSEASON: 'this October' -> current postseason."}
+{"id": "q217", "bucket": "postseason_this", "q": "Who has the most home runs in the 2026 postseason?", "note": "Explicit year, unchanged: 2026 postseason board; title names the postseason."}
+{"id": "q218", "bucket": "postseason_this", "q": "Who has the most postseason home runs?", "note": "NEGATIVE: no 'this' -> CAREER postseason board (Manny Ramirez 29), titled 'career postseason'."}
+{"id": "q219", "bucket": "postseason_this", "q": "Who had the most postseason home runs last year?", "note": "NEGATIVE: 'last year' -> 2025 postseason, not overridden to the current season."}
+{"id": "q220", "bucket": "postseason_this", "q": "How many home runs has Aaron Judge hit this postseason?", "note": "THIS-POSTSEASON, one player's count: current postseason only (or a stated decline), never his career postseason 17."}
