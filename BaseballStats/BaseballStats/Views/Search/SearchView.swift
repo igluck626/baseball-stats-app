@@ -11,6 +11,8 @@ import SwiftUI
 import UIKit
 
 struct SearchView: View {
+    /// This window's Search stack (see `SceneState`), so a resize keeps what's pushed.
+    @ObservedObject var stack: StackSceneState
     @StateObject private var viewModel = SearchViewModel()
     /// Drives the (empty) Player Comparison sheet opened from the browse
     /// landing's "Compare Players" card.
@@ -22,13 +24,12 @@ struct SearchView: View {
     /// — see `StackDestinations`.
     @EnvironmentObject private var navigation: AppNavigation
     @EnvironmentObject private var liveStore: LiveGameStore
-    @State private var path = NavigationPath()
     /// player_id being resolved from a heat-card tap (drives the card's
     /// inline spinner and guards against double-taps).
     @State private var resolvingHeatId: Int?
 
     var body: some View {
-        NavigationStack(path: $path) {
+        NavigationStack(path: $stack.path) {
             ZStack {
                 backgroundGradient
                 content
@@ -36,7 +37,7 @@ struct SearchView: View {
             .navigationTitle("Search")
             .navigationBarTitleDisplayMode(.inline)
             .stackDestinations(BoxScoreContext(
-                path: $path,
+                path: $stack.path,
                 owningTab: .search,
                 navigation: navigation,
                 liveStore: liveStore,
@@ -64,6 +65,8 @@ struct SearchView: View {
                 PlayerCompareView(navigation: navigation, liveStore: liveStore)
             }
         }
+        // The window keeps this path across a resize or a fold (see SceneState).
+        .scenePathPersistence(stack, key: "search")
     }
 
     // MARK: - Chrome
@@ -204,7 +207,7 @@ struct SearchView: View {
     /// sheet, so the breakdown has a clean pushed parent (no sheet-over-sheet).
     private var awardVotingEntryCard: some View {
         Button {
-            path.append(AwardVotingBrowserDestination())
+            stack.path.append(AwardVotingBrowserDestination())
         } label: {
             HStack(spacing: 12) {
                 Image(systemName: "trophy.fill")
@@ -238,7 +241,7 @@ struct SearchView: View {
     /// entry.
     private var playoffHistoryEntryCard: some View {
         Button {
-            path.append(PostseasonBracketDestination())
+            stack.path.append(PostseasonBracketDestination())
         } label: {
             HStack(spacing: 12) {
                 Image(systemName: "trophy.circle.fill")
@@ -326,7 +329,7 @@ struct SearchView: View {
             resolvingHeatId = leader.player_id
             Task {
                 if let player = await viewModel.resolveHeatPlayer(leader.player_id) {
-                    path.append(player)
+                    stack.path.append(player)
                 }
                 resolvingHeatId = nil
             }
@@ -596,5 +599,5 @@ private extension String {
 }
 
 #Preview {
-    SearchView()
+    SearchView(stack: StackSceneState())
 }

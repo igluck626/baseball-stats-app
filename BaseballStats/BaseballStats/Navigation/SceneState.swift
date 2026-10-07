@@ -34,6 +34,11 @@ final class SceneState: ObservableObject {
     /// value is the presented flag. The conversation and the draft live in its
     /// model, which only the Ask screen observes, so typing never redraws the window.
     let ask = AskSceneState()
+    /// The Home, Search and Leaders stacks (and the Leaders filters). NOT
+    /// forwarded, like Scores: a push redraws its own tab, not the window.
+    let home = StackSceneState()
+    let search = StackSceneState()
+    let leaders = LeadersSceneState()
     private var forward: [AnyCancellable] = []
 
     init(navigation: AppNavigation? = nil) {
@@ -45,6 +50,71 @@ final class SceneState: ObservableObject {
             navigation.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() },
             ask.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() },
         ]
+    }
+}
+
+/// A tab's navigation path, owned by the window. Saved with `@SceneStorage` by
+/// `scenePathPersistence(_:key:)`.
+@MainActor
+protocol ScenePathOwner: ObservableObject {
+    var path: NavigationPath { get set }
+    /// Set once the tab has looked at `@SceneStorage` for this store.
+    var restoredFromScene: Bool { get set }
+}
+
+/// The Home and Search stacks: a path and nothing else.
+@MainActor
+final class StackSceneState: ScenePathOwner {
+    @Published var path = NavigationPath()
+    var restoredFromScene = false
+}
+
+/// The Leaders stack, and the Leaders filters — which live in its view model,
+/// built on first use by the tab's first render, when the view's `@StateObject`
+/// used to build it.
+@MainActor
+final class LeadersSceneState: ScenePathOwner {
+    @Published var path = NavigationPath()
+    var restoredFromScene = false
+    private(set) lazy var model = LeaderboardsViewModel()
+}
+
+/// Saves a tab's path with `@SceneStorage` under this run's id, and restores it
+/// once per store — so a scene rebuilt mid-run (a fold, Stage Manager) reopens
+/// where it was, and a cold launch opens at the tab's root as before. A path
+/// that can't be encoded or decoded is skipped (see `SceneRestoration`).
+struct ScenePathPersistence<Owner: ScenePathOwner>: ViewModifier {
+    @ObservedObject var owner: Owner
+    @SceneStorage private var storedPath: Data?
+    @SceneStorage private var storedLaunch: String?
+
+    init(owner: Owner, key: String) {
+        self.owner = owner
+        _storedPath = SceneStorage("scene.\(key).path")
+        _storedLaunch = SceneStorage("scene.\(key).launchID")
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .onAppear {
+                guard !owner.restoredFromScene else { return }
+                owner.restoredFromScene = true
+                if let path = SceneRestoration.path(stored: storedPath, storedLaunch: storedLaunch,
+                                                    currentLaunch: AppLaunch.id) {
+                    owner.path = path
+                }
+            }
+            .onChange(of: owner.path) { _, path in
+                storedPath = SceneRestoration.encode(path)
+                storedLaunch = AppLaunch.id
+            }
+    }
+}
+
+extension View {
+    /// Apply to a tab's `NavigationStack`. See `ScenePathPersistence`.
+    func scenePathPersistence<Owner: ScenePathOwner>(_ owner: Owner, key: String) -> some View {
+        modifier(ScenePathPersistence(owner: owner, key: key))
     }
 }
 

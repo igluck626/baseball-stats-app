@@ -15,6 +15,8 @@
 import SwiftUI
 
 struct HomeView: View {
+    /// This window's Home stack (see `SceneState`), so a resize keeps what's pushed.
+    @ObservedObject var stack: StackSceneState
     @StateObject private var vm = HomeViewModel()
     @ObservedObject private var store = FavoriteTeamStore.shared
     @ObservedObject private var favoritesStore = FavoritePlayersStore.shared
@@ -23,7 +25,6 @@ struct HomeView: View {
     /// Stable token for this tab's refcounted hold on the shared list loop, so
     /// Home↔Scores switching can't cancel a loop the other tab still needs.
     @State private var listSubscriberID = LiveGameStore.SubscriberID()
-    @State private var navigationPath = NavigationPath()
     @State private var showingSettings = false
     @State private var showingAddPlayer = false
     @State private var showingSchedule = false
@@ -36,7 +37,7 @@ struct HomeView: View {
     @State private var selectedArticle: NewsArticle?
 
     var body: some View { 
-        NavigationStack(path: $navigationPath) {
+        NavigationStack(path: $stack.path) {
             ZStack {
                 backgroundGradient
                 content
@@ -44,7 +45,7 @@ struct HomeView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbarContent }
             .stackDestinations(BoxScoreContext(
-                path: $navigationPath,
+                path: $stack.path,
                 owningTab: .home,
                 navigation: navigation,
                 liveStore: liveStore,
@@ -91,6 +92,8 @@ struct HomeView: View {
                 }
             }
         }
+        // The window keeps this path across a resize or a fold (see SceneState).
+        .scenePathPersistence(stack, key: "home")
         .task(id: store.bdlTeamId) {
             guard let bdlId = store.bdlTeamId else { return }
             await vm.load(bdlTeamId: bdlId)
@@ -170,11 +173,11 @@ struct HomeView: View {
             guard let bdlId = store.bdlTeamId,
                   let lahmanCode = bdlToLahmanTeamId[bdlId] else { return }
             let teamName = MLBTeamCatalog.entry(forBDLId: bdlId)?.fullName
-            navigationPath.append(
+            stack.path.append(
                 TeamNewsDestination(scope: .team, lahmanCode: lahmanCode, teamName: teamName)
             )
         case .league:
-            navigationPath.append(
+            stack.path.append(
                 TeamNewsDestination(scope: .league, lahmanCode: nil, teamName: nil)
             )
         }
@@ -347,7 +350,7 @@ struct HomeView: View {
                     stripGames:   vm.recentAndUpcoming,
                     endedGames:   vm.endedLocally,
                     onSchedule:   { showingSchedule = true },
-                    onTapStripGame: { game in navigationPath.append(game) },
+                    onTapStripGame: { game in stack.path.append(game) },
                 )
 
                 // Team News — nice-to-have, so it only appears once
@@ -369,7 +372,7 @@ struct HomeView: View {
                     tint:        tint,
                     onSeeAll:    { showingLeadersSheet = true },
                     onTapPlayer: { player in
-                        navigationPath.append(player)
+                        stack.path.append(player)
                     },
                 )
 
@@ -391,7 +394,7 @@ struct HomeView: View {
                     onAdd:        { showingAddPlayer = true },
                     onRemove:     { id in favoritesStore.remove(id) },
                     onTapPlayer:  { player in
-                        navigationPath.append(player)
+                        stack.path.append(player)
                     },
                 )
             }
@@ -2006,5 +2009,5 @@ private struct NewsCard: View {
 }
 
 #Preview {
-    HomeView()
+    HomeView(stack: StackSceneState())
 }

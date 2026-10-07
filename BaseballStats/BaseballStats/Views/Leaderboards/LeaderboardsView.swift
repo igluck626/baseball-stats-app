@@ -10,17 +10,28 @@
 
 import SwiftUI
 
+/// The Leaders tab, reading its stack and filters from this window's store
+/// (`SceneState.leaders`), so a resize or a fold keeps them. See `SceneState`.
+struct LeadersTab: View {
+    @EnvironmentObject private var scene: SceneState
+
+    var body: some View {
+        LeaderboardsView(leaders: scene.leaders)
+    }
+}
+
 struct LeaderboardsView: View {
-    @StateObject private var viewModel = LeaderboardsViewModel()
+    /// The window's Leaders stack (see `SceneState`); its view model holds the
+    /// filters. The stack's path: value-based `NavigationLink`s append to it
+    /// whether or not a binding was supplied, so supplying one changes nothing
+    /// about them — it only makes a programmatic push possible, which is what a
+    /// box score needs.
+    @ObservedObject private var leaders: LeadersSceneState
+    @ObservedObject private var viewModel: LeaderboardsViewModel
     /// Cross-tab deeplink coordinator — read here so we can apply
     /// (and clear) a pending leaderboard destination when other tabs
     /// route the user into this one (e.g. "View on the all-time
     /// leaderboard" from the player profile's All-Time Rankings).
-    /// This stack's own path. Value-based `NavigationLink`s append to it
-    /// whether or not a binding was supplied, so supplying one changes nothing
-    /// about them — it only makes a programmatic push possible, which is what
-    /// a box score needs.
-    @State private var path = NavigationPath()
     @EnvironmentObject private var navigation: AppNavigation
     /// Available here because Leaders is a real tab, inside the TabView that
     /// `ContentView` publishes both objects to. Sheets cannot rely on this.
@@ -47,8 +58,13 @@ struct LeaderboardsView: View {
         FetchKey(token: viewModel.commitToken)
     }
 
+    init(leaders: LeadersSceneState) {
+        self.leaders = leaders
+        self.viewModel = leaders.model
+    }
+
     var body: some View {
-        NavigationStack(path: $path) {
+        NavigationStack(path: $leaders.path) {
             ZStack {
                 backgroundGradient
                 content
@@ -57,7 +73,7 @@ struct LeaderboardsView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
             .stackDestinations(BoxScoreContext(
-                path: $path,
+                path: $leaders.path,
                 owningTab: .leaders,
                 navigation: navigation,
                 liveStore: liveStore,
@@ -75,6 +91,8 @@ struct LeaderboardsView: View {
                 }
             }
         }
+        // The window keeps this path across a resize or a fold (see SceneState).
+        .scenePathPersistence(leaders, key: "leaders")
         // Single source of truth for fetching — runs once on mount and
         // again whenever any selection field changes. SwiftUI cancels
         // the in-flight fetch automatically when the id changes mid-
@@ -494,5 +512,6 @@ struct LeaderboardsView: View {
 }
 
 #Preview {
-    LeaderboardsView()
+    LeadersTab()
+        .environmentObject(SceneState())
 }

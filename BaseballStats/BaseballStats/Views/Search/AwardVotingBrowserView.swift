@@ -157,7 +157,8 @@ final class AwardVotingBrowserViewModel: ObservableObject {
 }
 
 /// Marker value pushed onto Search's navigation path to show this browser.
-struct AwardVotingBrowserDestination: Hashable {}
+/// Codable so the path can be saved with the scene.
+struct AwardVotingBrowserDestination: Hashable, Codable {}
 
 struct AwardVotingBrowserView: View {
     @StateObject private var vm = AwardVotingBrowserViewModel()

@@ -15,7 +15,7 @@ import SwiftUI
 
 /// Which news feed a surface is showing. Raw String so it persists cleanly via
 /// @AppStorage; Hashable so it can ride inside a navigation destination.
-enum NewsScope: String, Hashable {
+enum NewsScope: String, Hashable, Codable {
     case team
     case league
 }
@@ -24,7 +24,7 @@ enum NewsScope: String, Hashable {
 /// `navigationPath`. For `.team` it carries the team's Lahman code + display
 /// name; for `.league` those are nil (the title is fixed and the tint/badge
 /// are derived per-article).
-struct TeamNewsDestination: Hashable {
+struct TeamNewsDestination: Hashable, Codable {
     let scope: NewsScope
     let lahmanCode: String?
     let teamName: String?

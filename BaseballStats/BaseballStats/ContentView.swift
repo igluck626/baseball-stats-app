@@ -154,11 +154,11 @@ struct ContentView: View {
     @ViewBuilder
     private func tabContent(_ tab: AppNavigation.Tab) -> some View {
         switch tab {
-        case .home:      HomeView()
+        case .home:      HomeView(stack: scene.home)
         case .scores:    ScoresTab()
         case .standings: StandingsView()
-        case .leaders:   LeaderboardsView()
-        case .search:    SearchView()
+        case .leaders:   LeadersTab()
+        case .search:    SearchView(stack: scene.search)
         }
     }
 }

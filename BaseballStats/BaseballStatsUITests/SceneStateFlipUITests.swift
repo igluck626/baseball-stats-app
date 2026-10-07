@@ -97,6 +97,89 @@ final class SceneStateFlipUITests: XCTestCase {
         XCTAssertEqual(field.value as? String, draft, "the Ask draft didn't survive Done and reopen")
     }
 
+    /// Push something on Leaders (after changing a filter), Search and Home, then
+    /// flip the size class four times, visiting every tab after each flip: each
+    /// tab still shows what was pushed, and the Leaders filter is still set.
+    @MainActor
+    func testTabStacksAndLeadersFilterSurviveFlipsAndTabSwitches() throws {
+        let app = XCUIApplication()
+        // A favourite team, so Home shows its team page (and its news) rather
+        // than the team picker.
+        app.launchArguments += ["-SizeClassFlipHarness", "-favoriteTeamBDLId", "19"]
+        app.launch()
+
+        // Leaders: Career, then the first player.
+        app.tabBars.buttons["Leaders"].tap()
+        let career = app.buttons["Career"].firstMatch
+        XCTAssertTrue(career.waitForExistence(timeout: 10))
+        career.tap()
+        XCTAssertTrue(career.isSelected)
+        let firstRow = app.collectionViews.cells.firstMatch
+        XCTAssertTrue(firstRow.waitForExistence(timeout: 20), "no Career leaderboard rows")
+        // The profile has no navigation title, so it's recognised by the player's
+        // name on screen with the Leaderboards root gone.
+        let name = try XCTUnwrap(firstRow.staticTexts.allElementsBoundByIndex.map(\.label)
+            .first { $0.contains(" ") && $0.rangeOfCharacter(from: .letters) != nil }, "no player name in the row")
+        firstRow.tap()
+        let leadersRoot = app.navigationBars["Leaderboards"]
+        XCTAssertTrue(app.staticTexts[name].firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(leadersRoot.waitForNonExistence(timeout: 10), "the profile didn't open")
+
+        // Search: Award Voting.
+        app.tabBars.buttons["Search"].tap()
+        let awards = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Award Voting'")).firstMatch
+        XCTAssertTrue(awards.waitForExistence(timeout: 10))
+        awards.tap()
+        let searchTitle = pushedTitle(app, root: "Search")
+
+        // Home: the team's news list.
+        app.tabBars.buttons["Home"].tap()
+        let seeAll = app.buttons["See all"].firstMatch
+        XCTAssertTrue(seeAll.waitForExistence(timeout: 20), "no news section on Home")
+        for _ in 0..<8 where !seeAll.isHittable { app.swipeUp() }
+        seeAll.tap()
+        let homeTitle = pushedTitle(app, root: nil)
+        attachScreenshot(app, "d0 Home \(homeTitle); Search \(searchTitle); Leaders profile of \(name)")
+
+        let flip = app.buttons["harness.flipSizeClass"]
+        for (i, expected) in ["regular", "compact", "regular", "compact"].enumerated() {
+            flip.tap()
+            XCTAssertTrue(app.buttons[expected].firstMatch.waitForExistence(timeout: 5),
+                          "harness didn't flip to \(expected)")
+            app.tabBars.buttons["Leaders"].tap()
+            XCTAssertTrue(app.staticTexts[name].firstMatch.waitForExistence(timeout: 5) && !leadersRoot.exists,
+                          "Leaders lost \(name)'s profile after the flip to \(expected)")
+            app.tabBars.buttons["Search"].tap()
+            XCTAssertTrue(app.navigationBars[searchTitle].waitForExistence(timeout: 5),
+                          "Search lost \(searchTitle) after the flip to \(expected)")
+            app.tabBars.buttons["Home"].tap()
+            XCTAssertTrue(app.navigationBars[homeTitle].waitForExistence(timeout: 5),
+                          "Home lost \(homeTitle) after the flip to \(expected)")
+            attachScreenshot(app, "d\(i + 1) after flip to \(expected), on Home")
+        }
+
+        // Back to the Leaders root: still on Career.
+        app.tabBars.buttons["Leaders"].tap()
+        app.navigationBars.firstMatch.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(leadersRoot.waitForExistence(timeout: 5))
+        XCTAssertTrue(career.waitForExistence(timeout: 5))
+        XCTAssertTrue(career.isSelected, "the Leaders filter didn't survive the flips")
+    }
+
+    /// The title of the screen just pushed: the visible navigation bar, once it
+    /// is no longer the tab's root.
+    private func pushedTitle(_ app: XCUIApplication, root: String?) -> String {
+        let bar = app.navigationBars.firstMatch
+        let deadline = Date().addingTimeInterval(10)
+        while Date() < deadline {
+            if bar.exists, !bar.identifier.isEmpty, bar.identifier != root,
+               bar.buttons.count > 0 { return bar.identifier }
+            usleep(200_000)
+        }
+        XCTFail("nothing was pushed (still \(bar.identifier))")
+        return bar.identifier
+    }
+
     private func attachScreenshot(_ app: XCUIApplication, _ name: String) {
         let shot = XCTAttachment(screenshot: app.screenshot())
         shot.name = name

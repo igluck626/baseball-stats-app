@@ -101,7 +101,8 @@ final class PostseasonBracketViewModel: ObservableObject {
 }
 
 /// Marker value pushed onto Search's navigation path to show the bracket.
-struct PostseasonBracketDestination: Hashable {}
+/// Codable so the path can be saved with the scene.
+struct PostseasonBracketDestination: Hashable, Codable {}
 
 struct PostseasonBracketView: View {
     @StateObject private var vm = PostseasonBracketViewModel()

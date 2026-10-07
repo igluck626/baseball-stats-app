@@ -14,6 +14,10 @@
 //  Step c, Ask: the presented flag, the conversation and the draft live in the
 //  window's store; the draft round-trips through scene storage, gated on the run.
 //
+//  Step d, Home / Search / Leaders: their paths live in the window's store and
+//  round-trip through scene storage (every type they push is Codable); the
+//  Leaders filters live in its view model, owned by the store.
+//
 
 import Combine
 import Foundation
@@ -228,5 +232,85 @@ struct SceneStateTests {
         #expect(ask.model.exchanges.isEmpty)
         #expect(ask.model.draft.isEmpty)
         #expect(ask.restoredFromScene == false)
+    }
+
+    // MARK: - Home, Search, Leaders (step d)
+
+    @Test func homePathRoundTripsWithTheNewsListAndABoxScore() throws {
+        var path = NavigationPath()
+        path.append(TeamNewsDestination(scope: .team, lahmanCode: "NYA", teamName: "New York Yankees"))
+        path.append(try Self.game(776_003))
+        let data = try #require(SceneRestoration.encode(path))
+        let back = try #require(SceneRestoration.path(stored: data, storedLaunch: "run-1", currentLaunch: "run-1"))
+        #expect(back.count == 2)
+        #expect(SceneRestoration.encode(back) == data)
+        let items = try #require(try JSONSerialization.jsonObject(with: data) as? [String])
+        #expect(items.contains("BaseballStats.TeamNewsDestination"))
+        #expect(items.contains { $0.contains("\"lahmanCode\":\"NYA\"") })
+    }
+
+    @Test func searchPathRoundTripsWithItsBrowsers() throws {
+        var path = NavigationPath()
+        path.append(AwardVotingBrowserDestination())
+        path.append(try Self.player())
+        var bracket = NavigationPath()
+        bracket.append(PostseasonBracketDestination())
+        for p in [path, bracket] {
+            let data = try #require(SceneRestoration.encode(p))
+            let back = try #require(SceneRestoration.path(stored: data, storedLaunch: "run-1", currentLaunch: "run-1"))
+            #expect(back.count == p.count)
+            #expect(SceneRestoration.encode(back) == data)
+        }
+    }
+
+    @Test func leaguewideNewsDestinationRoundTrips() throws {
+        let dest = TeamNewsDestination(scope: .league, lahmanCode: nil, teamName: nil)
+        let back = try JSONDecoder().decode(TeamNewsDestination.self, from: JSONEncoder().encode(dest))
+        #expect(back == dest)
+    }
+
+    @Test func theSceneOwnsOneStackPerTab() throws {
+        let scene = SceneState()
+        scene.home.path.append(try Self.game(1))
+        scene.search.path.append(AwardVotingBrowserDestination())
+        scene.leaders.path.append(try Self.player())
+        #expect(scene.home.path.count == 1)
+        #expect(scene.search.path.count == 1)
+        #expect(scene.leaders.path.count == 1)
+        #expect(scene.scores.path.isEmpty)
+        #expect(ObjectIdentifier(scene.home) != ObjectIdentifier(scene.search))
+    }
+
+    @Test func theLeadersFiltersLiveInTheStore() {
+        let scene = SceneState()
+        let model = ObjectIdentifier(scene.leaders.model)
+        scene.leaders.model.selectedMode = .career
+        scene.leaders.model.playerKind = .pitcher
+        #expect(ObjectIdentifier(scene.leaders.model) == model)
+        #expect(scene.leaders.model.selectedMode == .career)
+        #expect(scene.leaders.model.playerKind == .pitcher)
+    }
+
+    @Test func tabPushesAndFiltersDoNotRedrawTheWholeWindow() throws {
+        let scene = SceneState()
+        var fired = 0
+        let sub = scene.objectWillChange.sink { _ in fired += 1 }
+        scene.home.path.append(try Self.game(1))
+        scene.search.path.append(PostseasonBracketDestination())
+        scene.leaders.path.append(try Self.player())
+        scene.leaders.model.selectedMode = .career
+        #expect(fired == 0)
+        _ = sub
+    }
+
+    @Test func newTabStoresStartAtTheRootWithDefaultFilters() {
+        let fresh = LeaderboardsViewModel()
+        let leaders = LeadersSceneState()
+        #expect(leaders.path.isEmpty && !leaders.restoredFromScene)
+        #expect(leaders.model.selectedMode == fresh.selectedMode)
+        #expect(leaders.model.playerKind == fresh.playerKind)
+        #expect(leaders.model.selectedStat == fresh.selectedStat)
+        let home = StackSceneState()
+        #expect(home.path.isEmpty && !home.restoredFromScene)
     }
 }
