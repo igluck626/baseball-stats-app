@@ -18,6 +18,9 @@
 //  round-trip through scene storage (every type they push is Codable); the
 //  Leaders filters live in its view model, owned by the store.
 //
+//  Step e, Standings: its own path in the store, saved like the others, and its
+//  league and mode pickers, in memory.
+//
 
 import Combine
 import Foundation
@@ -312,5 +315,45 @@ struct SceneStateTests {
         #expect(leaders.model.selectedStat == fresh.selectedStat)
         let home = StackSceneState()
         #expect(home.path.isEmpty && !home.restoredFromScene)
+    }
+
+    // MARK: - Standings (step e)
+
+    @Test func standingsHasItsOwnStackThatRoundTrips() throws {
+        let scene = SceneState()
+        scene.standings.path.append(try Self.game(776_004))
+        scene.standings.path.append(try Self.player())
+        #expect(scene.standings.path.count == 2)
+        #expect(scene.home.path.isEmpty && scene.search.path.isEmpty && scene.leaders.path.isEmpty)
+        let data = try #require(SceneRestoration.encode(scene.standings.path))
+        let back = try #require(SceneRestoration.path(stored: data, storedLaunch: "run-1", currentLaunch: "run-1"))
+        #expect(back.count == 2)
+        #expect(SceneRestoration.encode(back) == data)
+        #expect(SceneRestoration.path(stored: data, storedLaunch: "run-0", currentLaunch: "run-1") == nil)
+    }
+
+    @Test func standingsPushesAndPickersDoNotRedrawTheWholeWindow() throws {
+        let scene = SceneState()
+        var fired = 0
+        let sub = scene.objectWillChange.sink { _ in fired += 1 }
+        scene.standings.path.append(try Self.game(776_004))
+        scene.standings.league = .wc
+        scene.standings.mode = .bracket
+        #expect(fired == 0)
+        _ = sub
+    }
+
+    @Test func theStandingsPickersLiveInTheStore() {
+        let scene = SceneState()
+        let state = ObjectIdentifier(scene.standings)
+        #expect(scene.standings.league == .al && scene.standings.mode == .standings)
+        scene.standings.league = .nl
+        scene.standings.mode = .bracket
+        scene.standings.didApplyDefaultMode = true
+        scene.standings.didApplyFavoriteLeague = true
+        #expect(ObjectIdentifier(scene.standings) == state)
+        #expect(scene.standings.league == .nl && scene.standings.mode == .bracket)
+        // The one-time defaults are spent, so a rebuilt view won't re-apply them.
+        #expect(scene.standings.didApplyDefaultMode && scene.standings.didApplyFavoriteLeague)
     }
 }

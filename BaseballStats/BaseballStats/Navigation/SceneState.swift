@@ -34,11 +34,13 @@ final class SceneState: ObservableObject {
     /// value is the presented flag. The conversation and the draft live in its
     /// model, which only the Ask screen observes, so typing never redraws the window.
     let ask = AskSceneState()
-    /// The Home, Search and Leaders stacks (and the Leaders filters). NOT
-    /// forwarded, like Scores: a push redraws its own tab, not the window.
+    /// The Home, Search, Leaders and Standings stacks (and the Leaders filters
+    /// and Standings pickers). NOT forwarded, like Scores: a change redraws its
+    /// own tab, not the window.
     let home = StackSceneState()
     let search = StackSceneState()
     let leaders = LeadersSceneState()
+    let standings = StandingsSceneState()
     private var forward: [AnyCancellable] = []
 
     init(navigation: AppNavigation? = nil) {
@@ -77,6 +79,21 @@ final class LeadersSceneState: ScenePathOwner {
     @Published var path = NavigationPath()
     var restoredFromScene = false
     private(set) lazy var model = LeaderboardsViewModel()
+}
+
+/// The Standings stack, and its league and mode pickers — in memory only, like
+/// the Leaders filters — with the one-time defaults that set them, so a rebuilt
+/// view doesn't re-apply a default over the user's choice.
+@MainActor
+final class StandingsSceneState: ScenePathOwner {
+    @Published var path = NavigationPath()
+    var restoredFromScene = false
+    @Published var league: StandingsView.TabSelection = .al
+    @Published var mode: StandingsView.Mode = .standings
+    /// The bracket-or-standings default has been applied (once per window).
+    var didApplyDefaultMode = false
+    /// The favourite team's league has been selected (once per window).
+    var didApplyFavoriteLeague = false
 }
 
 /// Saves a tab's path with `@SceneStorage` under this run's id, and restores it

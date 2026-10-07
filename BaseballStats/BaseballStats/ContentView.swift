@@ -156,7 +156,7 @@ struct ContentView: View {
         switch tab {
         case .home:      HomeView(stack: scene.home)
         case .scores:    ScoresTab()
-        case .standings: StandingsView()
+        case .standings: StandingsView(stack: scene.standings)
         case .leaders:   LeadersTab()
         case .search:    SearchView(stack: scene.search)
         }

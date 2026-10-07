@@ -25,6 +25,13 @@ typealias AdjustedStandingColumns = (
 )
 
 struct StandingsView: View {
+    /// This window's Standings stack (see `SceneState`). Nothing on this screen
+    /// pushes onto it yet — the bracket's box scores open in the series sheet,
+    /// on that sheet's own stack — but it registers the same destinations as
+    /// every other tab, so a push from here works and is kept across a resize.
+    /// The league and mode pickers live there too (in memory), so they survive a
+    /// resize.
+    @ObservedObject var stack: StandingsSceneState
     @StateObject private var viewModel = StandingsViewModel()
     /// Injected at the root (see `ContentView`). Needed only for the visibility
     /// gate on `periodicRefresh` — the same signal the live loops use, so
@@ -32,11 +39,11 @@ struct StandingsView: View {
     @EnvironmentObject private var navigation: AppNavigation
     /// Forwarded to the bracket's series sheet for its box scores.
     @EnvironmentObject private var liveStore: LiveGameStore
-    @State private var selectedTab: TabSelection = .al
     /// The postseason bracket and when the tab opens on it (`standingsDefault`).
     @StateObject private var bracketVM = LiveBracketViewModel()
-    @State private var mode: Mode = .standings
-    @State private var didApplyDefault = false
+    /// This view's bracket view model has resolved its season (see
+    /// `applyDefaultViewIfNeeded`).
+    @State private var didResolveBracket = false
     /// The bracket slot whose games sheet is showing.
     @State private var selectedSlot: BracketSlot?
 
@@ -48,10 +55,6 @@ struct StandingsView: View {
         var id: String { rawValue }
         var label: String { self == .bracket ? "Bracket" : "Standings" }
     }
-    /// Guards the one-time "open on the favorite team's league" jump so
-    /// it fires only on first appearance — once the user taps a tab
-    /// manually we never override their choice on later loads.
-    @State private var didApplyFavoriteLeague = false
 
     /// Tab selection: AL division view, NL division view, or the
     /// Wildcard race across both leagues.
@@ -76,14 +79,14 @@ struct StandingsView: View {
     ]
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $stack.path) {
             ZStack {
                 backgroundGradient
                 VStack(spacing: 0) {
                     if bracketVM.season != nil {
                         modePicker
                     }
-                    if mode == .bracket {
+                    if stack.mode == .bracket {
                         bracketContent
                     } else {
                         content
@@ -97,13 +100,21 @@ struct StandingsView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     // The bracket is one season's; the year picker belongs to
                     // the standings.
-                    if mode == .standings { yearMenu }
+                    if stack.mode == .standings { yearMenu }
                 }
             }
+            .stackDestinations(BoxScoreContext(
+                path: $stack.path,
+                owningTab: .standings,
+                navigation: navigation,
+                liveStore: liveStore,
+            ))
             .sheet(item: $selectedSlot) { slot in
                 SeriesGamesSheet(slot: slot, navigation: navigation, liveStore: liveStore)
             }
         }
+        // The window keeps this path across a resize or a fold (see SceneState).
+        .scenePathPersistence(stack, key: "standings")
         .task {
             await viewModel.loadStandings()
             applyFavoriteLeagueIfNeeded()
@@ -129,7 +140,7 @@ struct StandingsView: View {
             isActive: navigation.shouldPoll(on: .standings),
         ) {
             await viewModel.loadStandings(quiet: true)
-            if mode == .bracket { await bracketVM.load(quiet: true) }
+            if stack.mode == .bracket { await bracketVM.load(quiet: true) }
         }
         .onChange(of: viewModel.selectedYear) { _, _ in
             Task { await viewModel.loadStandings() }
@@ -188,16 +199,25 @@ struct StandingsView: View {
     /// One-time: open on the bracket when `standingsDefault` says so. Runs
     /// after the first standings load, whose current-year games-played signal
     /// is one of the rule's inputs; a later toggle by hand is never undone.
+    ///
+    /// Two guards, because the two halves live in different places. The bracket
+    /// view model is this VIEW's, so a view rebuilt by a resize must resolve it
+    /// again or the bracket comes back empty; the mode is the WINDOW's, so the
+    /// default is applied once per window and never over the user's choice.
+    /// Both flags are set before the await, so a re-run during it does nothing.
     private func applyDefaultViewIfNeeded() async {
-        guard !didApplyDefault else { return }
-        didApplyDefault = true
-        await bracketVM.resolveDefault(currentYear: StandingsViewModel.currentYear,
-                                       currentYearGamesPlayed: viewModel.currentYearGamesPlayed)
-        if bracketVM.season != nil { mode = .bracket }
+        let applyMode = !stack.didApplyDefaultMode
+        stack.didApplyDefaultMode = true
+        if !didResolveBracket {
+            didResolveBracket = true
+            await bracketVM.resolveDefault(currentYear: StandingsViewModel.currentYear,
+                                           currentYearGamesPlayed: viewModel.currentYearGamesPlayed)
+        }
+        if applyMode, bracketVM.season != nil { stack.mode = .bracket }
     }
 
     private var modePicker: some View {
-        Picker("View", selection: $mode) {
+        Picker("View", selection: $stack.mode) {
             ForEach(Mode.allCases) { Text($0.label).tag($0) }
         }
         .pickerStyle(.segmented)
@@ -234,10 +254,10 @@ struct StandingsView: View {
     /// loaded rows). Guarded by `didApplyFavoriteLeague` so a later
     /// re-load never clobbers a tab the user has since chosen by hand.
     private func applyFavoriteLeagueIfNeeded() {
-        guard !didApplyFavoriteLeague else { return }
-        didApplyFavoriteLeague = true
+        guard !stack.didApplyFavoriteLeague else { return }
+        stack.didApplyFavoriteLeague = true
         guard let league = viewModel.favoriteLeagueDivision?.league else { return }
-        selectedTab = (league == "NL") ? .nl : .al
+        stack.league = (league == "NL") ? .nl : .al
     }
 
     /// The favorite team's division code for a given league tab, or nil
@@ -271,7 +291,7 @@ struct StandingsView: View {
             VStack(spacing: 16) {
                 tabPicker
                 Group {
-                    switch selectedTab {
+                    switch stack.league {
                     case .al:
                         LeagueTable(
                             buckets: viewModel.alStandings,
@@ -354,7 +374,7 @@ struct StandingsView: View {
         let available: [TabSelection] = showWildcard
             ? TabSelection.allCases
             : [.al, .nl]
-        return Picker("Tab", selection: $selectedTab) {
+        return Picker("Tab", selection: $stack.league) {
             ForEach(available) { tab in
                 Text(tab.label).tag(tab)
             }
@@ -364,7 +384,7 @@ struct StandingsView: View {
             // If the user was on the WC tab and we just dropped it
             // (e.g. they swiped the year picker into the 1980s),
             // bounce back to AL so the picker selection stays valid.
-            if !show && selectedTab == .wc { selectedTab = .al }
+            if !show && stack.league == .wc { stack.league = .al }
         }
     }
 
@@ -1211,5 +1231,5 @@ private struct ScrollableStatsRow: View {
 }
 
 #Preview {
-    StandingsView()
+    StandingsView(stack: StandingsSceneState())
 }
