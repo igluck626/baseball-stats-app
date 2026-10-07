@@ -11,7 +11,12 @@ import SwiftUI
 struct BaseballStatsApp: App {
     var body: some Scene {
         WindowGroup {
+            #if DEBUG
             ContentView()
+                .sizeClassFlipHarness()   // a UI-test hook; see SizeClassFlipHarness
+            #else
+            ContentView()
+            #endif
         }
     }
 }

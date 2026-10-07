@@ -555,21 +555,38 @@ final class ScoresViewModel: ObservableObject {
     }
 }
 
+/// The Scores tab, reading its state from this window's store (`SceneState.scores`)
+/// so a resize, a size-class change or a fold keeps the day, the open box score and
+/// the expanded cards. See `SceneState`.
+struct ScoresTab: View {
+    @EnvironmentObject private var scene: SceneState
+
+    var body: some View {
+        ScoresView(scores: scene.scores, vm: scene.scores.model)
+    }
+}
+
 struct ScoresView: View {
-    @StateObject private var vm = ScoresViewModel()
+    @ObservedObject var scores: ScoresSceneState
+    @ObservedObject var vm: ScoresViewModel
     @EnvironmentObject private var navigation: AppNavigation
     @EnvironmentObject private var liveStore: LiveGameStore
     /// Stable token for this tab's refcounted hold on the shared list loop, so
     /// Home↔Scores switching can't cancel a loop the other tab still needs.
     @State private var listSubscriberID = LiveGameStore.SubscriberID()
-    @State private var navigationPath = NavigationPath()
+    /// The day and the path, saved with this run's id so a scene rebuilt mid-run
+    /// (a fold, Stage Manager) reopens on them; a cold launch opens on today at the
+    /// stack's root, as before. See `SceneRestoration`.
+    @SceneStorage("scene.scores.date") private var storedDate: String?
+    @SceneStorage("scene.scores.path") private var storedPath: Data?
+    @SceneStorage("scene.scores.launchID") private var storedLaunch: String?
     @State private var showingDatePicker = false
     /// What the picker is currently showing, BEFORE the user commits it.
     /// Seeded from `vm.selectedDate` each time the sheet opens.
     @State private var draftDate = Date()
 
     var body: some View {
-        NavigationStack(path: $navigationPath) {
+        NavigationStack(path: $scores.path) {
             VStack(spacing: 0) {
                 // Same reading width as the cards below, so on a wide window the
                 // ◀ ▶ arrows sit over the column rather than at the window edges.
@@ -598,7 +615,7 @@ struct ScoresView: View {
                 }
             }
             .stackDestinations(BoxScoreContext(
-                path: $navigationPath,
+                path: $scores.path,
                 owningTab: .scores,
                 navigation: navigation,
                 liveStore: liveStore,
@@ -608,7 +625,20 @@ struct ScoresView: View {
                 datePickerSheet
             }
         }
-        .task { await vm.load(date: vm.selectedDate) }
+        .task {
+            restoreFromSceneStorage()
+            await vm.load(date: vm.selectedDate)
+        }
+        .onChange(of: vm.selectedDate) { _, date in
+            // A card used to start collapsed whenever its day came back on screen.
+            scores.expandedGames = []
+            storedDate = SceneRestoration.dayString(date)
+            storedLaunch = AppLaunch.id
+        }
+        .onChange(of: scores.path) { _, path in
+            storedPath = SceneRestoration.encode(path)
+            storedLaunch = AppLaunch.id
+        }
         // Re-read the slate while the tab is visible. This — not `finalize` — is
         // what makes a finished game show as finished. `finalize` only fires for
         // games the app already had as `.live`, so a game that went live AND
@@ -660,6 +690,21 @@ struct ScoresView: View {
         .onDisappear { liveStore.unsubscribeList(owner: listSubscriberID) }
     }
 
+    /// Once per store: if this window's scene was rebuilt during this run, reopen on
+    /// its day and path. A first launch, a cold launch and a tab switch change nothing.
+    private func restoreFromSceneStorage() {
+        guard !scores.restoredFromScene else { return }
+        scores.restoredFromScene = true
+        if let date = SceneRestoration.scoresDate(stored: storedDate, storedLaunch: storedLaunch,
+                                                  currentLaunch: AppLaunch.id) {
+            vm.selectedDate = date
+        }
+        if let path = SceneRestoration.path(stored: storedPath, storedLaunch: storedLaunch,
+                                            currentLaunch: AppLaunch.id) {
+            scores.path = path
+        }
+    }
+
     // MARK: - Date bar
 
     /// Symmetrical nav row: ◀ pill ▶. The center pill carries the
@@ -669,10 +714,12 @@ struct ScoresView: View {
     private var dateBar: some View {
         HStack(spacing: 12) {
             stepButton(systemImage: "chevron.left", days: -1)
+                .accessibilityIdentifier("scores.previousDay")
             Spacer(minLength: 0)
             datePill
             Spacer(minLength: 0)
             stepButton(systemImage: "chevron.right", days: 1)
+                .accessibilityIdentifier("scores.nextDay")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
@@ -718,6 +765,7 @@ struct ScoresView: View {
                 .glassEffect(.regular, in: Capsule())
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("scores.datePill")
     }
 
     /// Sheet content: graphical date picker. Tap a day → load it +
@@ -906,7 +954,8 @@ struct ScoresView: View {
                             record:    vm.gameRecords[game.gamePk],
                             standings: vm.teamStandings,
                             isOver:    vm.isOver(game),
-                            path:      $navigationPath,
+                            path:      $scores.path,
+                            expandedGames: $scores.expandedGames,
                         )
                     }
                 }
@@ -918,7 +967,8 @@ struct ScoresView: View {
                             record:    vm.gameRecords[game.gamePk],
                             standings: vm.teamStandings,
                             isOver:    vm.isOver(game),
-                            path:      $navigationPath,
+                            path:      $scores.path,
+                            expandedGames: $scores.expandedGames,
                         )
                     }
                 }
@@ -930,7 +980,8 @@ struct ScoresView: View {
                             record:    vm.gameRecords[game.gamePk],
                             standings: vm.teamStandings,
                             isOver:    vm.isOver(game),
-                            path:      $navigationPath,
+                            path:      $scores.path,
+                            expandedGames: $scores.expandedGames,
                         )
                     }
                 }
@@ -1199,7 +1250,15 @@ private struct FinalGameCard: View {
     let game: Game
     let record: GameRecordEntry?
     @Binding var path: NavigationPath
-    @State private var isExpanded = false
+    /// Whether this card is expanded lives in the window's store, so a rebuilt card
+    /// (a resize, a fold) comes back expanded.
+    @Binding var expandedGames: Set<Int>
+    private var isExpanded: Bool {
+        get { expandedGames.contains(game.gamePk) }
+        nonmutating set {
+            if newValue { expandedGames.insert(game.gamePk) } else { expandedGames.remove(game.gamePk) }
+        }
+    }
     /// Lazily-fetched box score for the expanded view. Loaded the
     /// first time the user expands the card so decision-pitcher
     /// records (W/L: …) and the HR summary line have data to
@@ -1279,6 +1338,12 @@ private struct FinalGameCard: View {
         .frame(maxWidth: .infinity)
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
         .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 3)
+        // A card rebuilt already expanded has no box score yet: fetch it, as the
+        // expanding tap would have. A collapsed card (every card on a first
+        // render) does nothing here.
+        .task {
+            if isExpanded && boxScore == nil && !isLoadingBoxScore { await fetchBoxScore() }
+        }
     }
 
     private func fetchBoxScore() async {
@@ -1864,6 +1929,8 @@ private struct GameRowCard: View {
     /// here rather than left at the call site, because unifying the row type
     /// is the entire point (see `body`).
     @Binding var path: NavigationPath
+    /// The window's expanded final cards (see `ScoresSceneState.expandedGames`).
+    @Binding var expandedGames: Set<Int>
     @EnvironmentObject private var navigation: AppNavigation
     @EnvironmentObject private var liveStore: LiveGameStore
     /// Stable per-row token for the store's refcounted detail loop (moved here
@@ -1902,7 +1969,8 @@ private struct GameRowCard: View {
                 // expand-on-tap and pushes the box score from a button inside
                 // its expanded body; wrapping it in a link would make the whole
                 // card a push target and swallow the expand gesture.
-                FinalGameCard(game: game, record: record, path: $path)
+                FinalGameCard(game: game, record: record, path: $path,
+                              expandedGames: $expandedGames)
             } else {
                 NavigationLink(value: game) {
                     GameCard(game: game, record: record, isOver: isOver)
@@ -2144,5 +2212,6 @@ private struct LiveGameCard: View {
 }
 
 #Preview {
-    ScoresView()
+    ScoresTab()
+        .environmentObject(SceneState())
 }

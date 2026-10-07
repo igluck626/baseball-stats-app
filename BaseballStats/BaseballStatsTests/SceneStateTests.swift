@@ -7,6 +7,10 @@
 //  by a fold or Stage Manager reopens on its tab; a cold launch opens on the
 //  tab-bar order's first tab, exactly as before.
 //
+//  Step b, Scores: the day, the path (which carries the open box score) and the
+//  expanded cards live in the window's store; the day and the path round-trip
+//  through scene storage, gated on the same run.
+//
 
 import Combine
 import Foundation
@@ -64,5 +68,110 @@ struct SceneStateTests {
     @Test func launchIdIsStableWithinARun() {
         #expect(AppLaunch.id == AppLaunch.id)
         #expect(!AppLaunch.id.isEmpty)
+    }
+
+    // MARK: - Scores (step b)
+
+    static func game(_ pk: Int) throws -> Game {
+        let json = """
+        {"gamePk": \(pk), "gameDate": "2026-10-04T23:08:00Z",
+         "status": {"abstractGameState": "Final", "detailedState": "Final"},
+         "teams": {"away": {"team": {"id": 147, "name": "New York Yankees"}},
+                   "home": {"team": {"id": 139, "name": "Tampa Bay Rays"}}}}
+        """
+        return try JSONDecoder().decode(Game.self, from: Data(json.utf8))
+    }
+
+    static func player() throws -> PlayerSearchResult {
+        let json = #"{"player_id": 592450, "name": "Aaron Judge"}"#
+        return try JSONDecoder().decode(PlayerSearchResult.self, from: Data(json.utf8))
+    }
+
+    @Test func scoresPathRoundTripsWithTheOpenBoxScore() throws {
+        var path = NavigationPath()
+        path.append(try Self.game(776_001))
+        path.append(try Self.player())
+        let data = try #require(SceneRestoration.encode(path))
+        let back = try #require(SceneRestoration.path(stored: data, storedLaunch: "run-1", currentLaunch: "run-1"))
+        // A decoded path stays LAZY until a stack resolves it, so `==` against the
+        // eager original is false by construction; compare what it holds instead.
+        #expect(back.count == 2)
+        #expect(SceneRestoration.encode(back) == data)
+        let items = try #require(try JSONSerialization.jsonObject(with: data) as? [String])
+        #expect(items.contains("BaseballStats.Game"))
+        #expect(items.contains("BaseballStats.PlayerSearchResult"))
+        #expect(items.contains { $0.contains("\"gamePk\":776001") })
+    }
+
+    @Test func scoresPathFromAnEarlierRunIsIgnored() throws {
+        var path = NavigationPath()
+        path.append(try Self.game(776_001))
+        let data = try #require(SceneRestoration.encode(path))
+        #expect(SceneRestoration.path(stored: data, storedLaunch: "run-0", currentLaunch: "run-1") == nil)
+        #expect(SceneRestoration.path(stored: data, storedLaunch: nil, currentLaunch: "run-1") == nil)
+    }
+
+    @Test func aCorruptPathRestoresNothing() {
+        #expect(SceneRestoration.path(stored: Data("not json".utf8), storedLaunch: "run-1", currentLaunch: "run-1") == nil)
+        #expect(SceneRestoration.path(stored: nil, storedLaunch: "run-1", currentLaunch: "run-1") == nil)
+    }
+
+    @Test func aPathHoldingSomethingNotCodableIsNotStored() {
+        struct NotCodable: Hashable {}
+        var path = NavigationPath()
+        path.append(NotCodable())
+        #expect(SceneRestoration.encode(path) == nil)
+    }
+
+    @Test func scoresDateRoundTrips() throws {
+        let cal = Calendar.current
+        let day = try #require(cal.date(from: DateComponents(year: 2026, month: 10, day: 4)))
+        let stored = SceneRestoration.dayString(day)
+        #expect(stored == "2026-10-04")
+        let back = SceneRestoration.scoresDate(stored: stored, storedLaunch: "run-1", currentLaunch: "run-1")
+        #expect(back == cal.startOfDay(for: day))
+    }
+
+    @Test func scoresDateIsGatedOnTheRunAndTheSelectableRange() {
+        #expect(SceneRestoration.scoresDate(stored: "2026-10-04", storedLaunch: "run-0", currentLaunch: "run-1") == nil)
+        #expect(SceneRestoration.scoresDate(stored: "2026-13-40", storedLaunch: "run-1", currentLaunch: "run-1") == nil)
+        #expect(SceneRestoration.scoresDate(stored: nil, storedLaunch: "run-1", currentLaunch: "run-1") == nil)
+        // Before the first game we hold, and after today: the picker can't reach them.
+        #expect(SceneRestoration.scoresDate(stored: "1897-06-01", storedLaunch: "run-1", currentLaunch: "run-1") == nil)
+        #expect(SceneRestoration.scoresDate(stored: "2999-01-01", storedLaunch: "run-1", currentLaunch: "run-1") == nil)
+    }
+
+    @Test func theSceneOwnsOneScoresStateAndViewModel() throws {
+        let scene = SceneState()
+        let state = ObjectIdentifier(scene.scores)
+        let model = ObjectIdentifier(scene.scores.model)
+        let day = try #require(Calendar.current.date(from: DateComponents(year: 2026, month: 10, day: 4)))
+        scene.scores.model.selectedDate = day
+        scene.scores.path.append(try Self.game(776_001))
+        scene.scores.expandedGames.insert(776_002)
+        #expect(ObjectIdentifier(scene.scores) == state)
+        #expect(ObjectIdentifier(scene.scores.model) == model)
+        #expect(scene.scores.model.selectedDate == day)
+        #expect(scene.scores.path.count == 1)
+        #expect(scene.scores.expandedGames == [776_002])
+    }
+
+    @Test func scoresChangesDoNotRedrawTheWholeWindow() throws {
+        let scene = SceneState()
+        var fired = 0
+        let sub = scene.objectWillChange.sink { _ in fired += 1 }
+        scene.scores.path.append(try Self.game(776_001))
+        scene.scores.expandedGames.insert(776_001)
+        scene.scores.model.selectedDate = Date(timeIntervalSince1970: 0)
+        #expect(fired == 0)
+        _ = sub
+    }
+
+    @Test func aNewScoresStateStartsOnTodayAtTheRoot() {
+        let state = ScoresSceneState()
+        #expect(Calendar.current.isDateInToday(state.model.selectedDate))
+        #expect(state.path.isEmpty)
+        #expect(state.expandedGames.isEmpty)
+        #expect(state.restoredFromScene == false)
     }
 }

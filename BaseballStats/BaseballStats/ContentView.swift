@@ -108,6 +108,7 @@ struct ContentView: View {
             }
         }
         .environmentObject(navigation)
+        .environmentObject(scene)
         .environmentObject(liveStore)
         // Postseason series lines refetch when a game goes final; the store
         // watches the live list for that transition. See `SeriesStore`.
@@ -148,7 +149,7 @@ struct ContentView: View {
     private func tabContent(_ tab: AppNavigation.Tab) -> some View {
         switch tab {
         case .home:      HomeView()
-        case .scores:    ScoresView()
+        case .scores:    ScoresTab()
         case .standings: StandingsView()
         case .leaders:   LeaderboardsView()
         case .search:    SearchView()
