@@ -17,7 +17,14 @@ import SwiftUI
 
 struct AskView: View {
     @Environment(\.dismiss) private var dismiss
-    @StateObject private var viewModel = AskViewModel()
+    /// The window's Ask state (see `AskSceneState`): the conversation and the
+    /// draft outlive this screen, so dismissing and reopening keeps them.
+    @ObservedObject private var ask: AskSceneState
+    @ObservedObject private var viewModel: AskViewModel
+    /// The draft, saved with this run's id so a scene rebuilt mid-run reopens
+    /// with it. The conversation is kept in memory only.
+    @SceneStorage("scene.ask.draft") private var storedDraft: String?
+    @SceneStorage("scene.ask.launchID") private var storedLaunch: String?
     @State private var path = NavigationPath()
     @FocusState private var inputFocused: Bool
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -80,6 +87,11 @@ struct AskView: View {
         ]),
     ]
 
+    init(ask: AskSceneState) {
+        self.ask = ask
+        self.viewModel = ask.model
+    }
+
     var body: some View {
         NavigationStack(path: $path) {
             ZStack {
@@ -89,6 +101,20 @@ struct AskView: View {
             .navigationTitle("Ask")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                // Only once there's a conversation to clear, so the empty screen
+                // is unchanged.
+                if !viewModel.exchanges.isEmpty {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button {
+                            inputFocused = false
+                            path = NavigationPath()
+                            viewModel.startOver()
+                        } label: {
+                            Label("New question", systemImage: "square.and.pencil")
+                        }
+                        .accessibilityIdentifier("ask.newQuestion")
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }
                 }
@@ -99,6 +125,23 @@ struct AskView: View {
             .safeAreaInset(edge: .bottom) { inputBar }
         }
         .appearanceOverride()
+        .onAppear(perform: restoreFromSceneStorage)
+        .onChange(of: viewModel.draft) { _, draft in
+            storedDraft = draft
+            storedLaunch = AppLaunch.id
+        }
+    }
+
+    /// Once per store: if this window's scene was rebuilt during this run, put its
+    /// draft back. Never over a draft already being typed.
+    private func restoreFromSceneStorage() {
+        guard !ask.restoredFromScene else { return }
+        ask.restoredFromScene = true
+        if viewModel.draft.isEmpty,
+           let draft = SceneRestoration.askDraft(stored: storedDraft, storedLaunch: storedLaunch,
+                                                 currentLaunch: AppLaunch.id) {
+            viewModel.draft = draft
+        }
     }
 
     // MARK: - Content
@@ -228,6 +271,7 @@ struct AskView: View {
     private var inputBar: some View {
         HStack(spacing: 10) {
             TextField("Ask a question…", text: $viewModel.draft)
+                .accessibilityIdentifier("ask.draft")
                 .textFieldStyle(.plain)
                 .submitLabel(.send)
                 .focused($inputFocused)

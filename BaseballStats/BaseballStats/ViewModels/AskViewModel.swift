@@ -87,6 +87,13 @@ final class AskViewModel: ObservableObject {
         }
     }
 
+    /// "New question": clear the conversation and the draft. An answer still in
+    /// flight lands nowhere — `update` finds no exchange with its id.
+    func startOver() {
+        exchanges = []
+        draft = ""
+    }
+
     private func update(_ id: UUID, _ state: AskExchange.State) {
         guard let index = exchanges.firstIndex(where: { $0.id == id }) else { return }
         exchanges[index].state = state

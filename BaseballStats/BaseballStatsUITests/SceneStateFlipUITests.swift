@@ -8,8 +8,8 @@
 //  local state would be thrown away on every resize.
 //
 //  Launched with `-SizeClassFlipHarness` (DEBUG builds), which adds a button that
-//  flips the root's horizontal size class. Reads live BDL data: it steps back
-//  to the nearest earlier day with a finished game.
+//  flips the window's horizontal size class (at the root and inside Ask). Reads
+//  live BDL data: it steps back to the nearest earlier day with a finished game.
 //
 
 import XCTest
@@ -20,7 +20,7 @@ final class SceneStateFlipUITests: XCTestCase {
     }
 
     @MainActor
-    func testScoresDateAndOpenBoxScoreSurviveSizeClassFlips() throws {
+    func testScoresAndAskStateSurviveSizeClassFlips() throws {
         let app = XCUIApplication()
         app.launchArguments += ["-SizeClassFlipHarness"]
         app.launch()
@@ -70,6 +70,31 @@ final class SceneStateFlipUITests: XCTestCase {
         XCTAssertTrue(pill.waitForExistence(timeout: 5))
         XCTAssertEqual(pill.label, day, "the Scores day didn't survive the flips")
         attachScreenshot(app, "5 back at the Scores root on \(pill.label)")
+
+        // Ask: type a draft, flip with Ask open, and the draft is still there.
+        app.buttons["Ask a question"].firstMatch.tap()
+        XCTAssertTrue(app.navigationBars["Ask"].waitForExistence(timeout: 5))
+        let field = app.textFields["ask.draft"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.tap()
+        let draft = "How many home runs did Babe Ruth hit"
+        field.typeText(draft)
+        XCTAssertEqual(field.value as? String, draft)
+        let askFlip = app.buttons["harness.flipSizeClass.ask"]
+        for (i, expected) in ["regular", "compact", "regular", "compact"].enumerated() {
+            askFlip.tap()
+            XCTAssertTrue(app.buttons[expected].firstMatch.waitForExistence(timeout: 5), "harness didn't flip to \(expected)")
+            XCTAssertTrue(app.navigationBars["Ask"].exists, "Ask closed on the flip to \(expected)")
+            XCTAssertEqual(field.value as? String, draft, "the Ask draft didn't survive the flip to \(expected)")
+            attachScreenshot(app, "\(6 + i) Ask after flip to \(expected)")
+        }
+
+        // Done and reopen: the window keeps the draft.
+        app.navigationBars["Ask"].buttons["Done"].tap()
+        XCTAssertTrue(pill.waitForExistence(timeout: 5))
+        app.buttons["Ask a question"].firstMatch.tap()
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        XCTAssertEqual(field.value as? String, draft, "the Ask draft didn't survive Done and reopen")
     }
 
     private func attachScreenshot(_ app: XCUIApplication, _ name: String) {

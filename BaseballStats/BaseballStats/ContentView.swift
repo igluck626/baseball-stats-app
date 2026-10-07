@@ -56,8 +56,11 @@ struct ContentView: View {
     }
 
     /// Drives the full-screen Ask experience, launched from the floating
-    /// button overlaid above the tab bar.
-    @State private var showingAsk = false
+    /// button overlaid above the tab bar. Kept in the window's store, with the
+    /// conversation and the draft (see `AskSceneState`).
+    private var showingAsk: Binding<Bool> {
+        Binding(get: { scene.ask.presented }, set: { scene.ask.presented = $0 })
+    }
 
     var body: some View {
         TabView(selection: Binding(get: { navigation.selectedTab },
@@ -83,7 +86,7 @@ struct ContentView: View {
         // shrinks as you scroll down. Upright, the system default is unchanged.
         .tabBarMinimizeBehavior(verticalSizeClass == .compact ? .onScrollDown : .automatic)
         .tabViewBottomAccessory(isEnabled: askPlacement == .accessory) {
-            AskAccessoryButton { showingAsk = true }
+            AskAccessoryButton { scene.ask.presented = true }
         }
         // Mirror app lifecycle into the shared coordinator. Backgrounding /
         // going inactive flips `shouldPoll(on:)` false for every tab, which
@@ -121,7 +124,7 @@ struct ContentView: View {
         // the standard system margin.
         .overlay(alignment: .bottomTrailing) {
             if askPlacement == .floating {
-                AskFloatingButton { showingAsk = true }
+                AskFloatingButton { scene.ask.presented = true }
                     .padding(.trailing, 18)
                     .padding(.bottom, 66)
             }
@@ -129,14 +132,17 @@ struct ContentView: View {
         // Landscape: centred in the trailing margin, outside the content area.
         .overlay(alignment: .trailing) {
             if askPlacement == .sideMargin {
-                AskFloatingButton(diameter: AskFloatingButton.compactDiameter) { showingAsk = true }
+                AskFloatingButton(diameter: AskFloatingButton.compactDiameter) { scene.ask.presented = true }
                     .frame(width: trailingMargin)
                     .ignoresSafeArea(.container, edges: .trailing)
             }
         }
         .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.trailing } action: { trailingMargin = $0 }
-        .fullScreenCover(isPresented: $showingAsk) {
-            AskView()
+        .fullScreenCover(isPresented: showingAsk) {
+            AskView(ask: scene.ask)
+                #if DEBUG
+                .sizeClassFlipHarness(id: "harness.flipSizeClass.ask")   // a UI-test hook
+                #endif
         }
         // User's System/Light/Dark choice, applied over the device appearance.
         // Cascades to every tab and the tab bar.

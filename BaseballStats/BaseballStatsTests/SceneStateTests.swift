@@ -11,6 +11,9 @@
 //  expanded cards live in the window's store; the day and the path round-trip
 //  through scene storage, gated on the same run.
 //
+//  Step c, Ask: the presented flag, the conversation and the draft live in the
+//  window's store; the draft round-trips through scene storage, gated on the run.
+//
 
 import Combine
 import Foundation
@@ -173,5 +176,57 @@ struct SceneStateTests {
         #expect(state.path.isEmpty)
         #expect(state.expandedGames.isEmpty)
         #expect(state.restoredFromScene == false)
+    }
+
+    // MARK: - Ask (step c)
+
+    @Test func askDraftIsRestoredOnlyFromThisRun() {
+        #expect(SceneRestoration.askDraft(stored: "Who has the most saves",
+                                          storedLaunch: "run-1", currentLaunch: "run-1") == "Who has the most saves")
+        #expect(SceneRestoration.askDraft(stored: "Who has the most saves",
+                                          storedLaunch: "run-0", currentLaunch: "run-1") == nil)
+        #expect(SceneRestoration.askDraft(stored: "Who", storedLaunch: nil, currentLaunch: "run-1") == nil)
+        #expect(SceneRestoration.askDraft(stored: "   ", storedLaunch: "run-1", currentLaunch: "run-1") == nil)
+        #expect(SceneRestoration.askDraft(stored: nil, storedLaunch: "run-1", currentLaunch: "run-1") == nil)
+    }
+
+    @Test func theSceneOwnsOneAskModelAcrossPresentations() {
+        let scene = SceneState()
+        let model = ObjectIdentifier(scene.ask.model)
+        scene.ask.presented = true
+        scene.ask.model.draft = "How many home runs does Aaron Judge have?"
+        scene.ask.presented = false          // Done
+        scene.ask.presented = true           // reopened
+        #expect(ObjectIdentifier(scene.ask.model) == model)
+        #expect(scene.ask.model.draft == "How many home runs does Aaron Judge have?")
+    }
+
+    @Test func startOverClearsTheConversationAndTheDraft() {
+        let model = AskViewModel()
+        model.exchanges = [AskExchange(id: UUID(), question: "Who has the most MVPs?", state: .failed("x"))]
+        model.draft = "Who has the most"
+        model.startOver()
+        #expect(model.exchanges.isEmpty)
+        #expect(model.draft.isEmpty)
+    }
+
+    @Test func presentingAskRedrawsTheWindowButTypingDoesNot() {
+        let scene = SceneState()
+        var fired = 0
+        let sub = scene.objectWillChange.sink { _ in fired += 1 }
+        scene.ask.model.draft = "Who has"
+        scene.ask.model.draft = "Who has the most"
+        #expect(fired == 0)
+        scene.ask.presented = true
+        #expect(fired == 1)
+        _ = sub
+    }
+
+    @Test func aNewAskStateStartsClosedAndEmpty() {
+        let ask = AskSceneState()
+        #expect(ask.presented == false)
+        #expect(ask.model.exchanges.isEmpty)
+        #expect(ask.model.draft.isEmpty)
+        #expect(ask.restoredFromScene == false)
     }
 }

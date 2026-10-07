@@ -30,17 +30,34 @@ final class SceneState: ObservableObject {
     /// The Scores tab's state. NOT forwarded: a pushed box score or a changed date
     /// redraws the Scores tab, which observes it, not the whole window.
     let scores = ScoresSceneState()
-    private var forward: AnyCancellable?
+    /// Ask's state. Forwarded, because the window presents Ask: its one published
+    /// value is the presented flag. The conversation and the draft live in its
+    /// model, which only the Ask screen observes, so typing never redraws the window.
+    let ask = AskSceneState()
+    private var forward: [AnyCancellable] = []
 
     init(navigation: AppNavigation? = nil) {
         // Built here, not as a default argument: a default argument is evaluated
         // off the main actor, and AppNavigation's init is main-actor isolated.
         let navigation = navigation ?? AppNavigation()
         self.navigation = navigation
-        forward = navigation.objectWillChange.sink { [weak self] _ in
-            self?.objectWillChange.send()
-        }
+        forward = [
+            navigation.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() },
+            ask.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() },
+        ]
     }
+}
+
+/// Ask's state for one window: whether it's presented, and its model — the
+/// conversation and the draft. Owned by the window, so dismissing Ask no longer
+/// throws the conversation away; "New question" starts fresh.
+@MainActor
+final class AskSceneState: ObservableObject {
+    @Published var presented = false
+    /// Built on first use, when Ask is first presented.
+    private(set) lazy var model = AskViewModel()
+    /// Set once the Ask screen has looked at `@SceneStorage` for this store.
+    var restoredFromScene = false
 }
 
 /// The Scores tab's state for one window: the day on screen (inside the view
@@ -89,6 +106,14 @@ enum SceneRestoration {
               let stored, let day = dayFormatter.date(from: stored) else { return nil }
         let start = Calendar.current.startOfDay(for: day)
         return ScoresViewModel.selectableDateRange.contains(start) ? start : nil
+    }
+
+    /// The Ask draft to restore, or nil: nil unless this run wrote it and it isn't
+    /// blank.
+    static func askDraft(stored: String?, storedLaunch: String?, currentLaunch: String) -> String? {
+        guard let storedLaunch, storedLaunch == currentLaunch, let stored,
+              !stored.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return stored
     }
 
     /// `yyyy-MM-dd` in the device's calendar day — the form the Scores day is stored in.
