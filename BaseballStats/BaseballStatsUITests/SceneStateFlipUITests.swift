@@ -99,7 +99,8 @@ final class SceneStateFlipUITests: XCTestCase {
 
     /// Push something on Leaders (after changing a filter), Search and Home, then
     /// flip the size class four times, visiting every tab after each flip: each
-    /// tab still shows what was pushed, and the Leaders filter is still set.
+    /// tab still shows what was pushed, the Leaders filter is still set, and the
+    /// profile opened from Leaders keeps its tab and its Career scope.
     @MainActor
     func testTabStacksAndLeadersFilterSurviveFlipsAndTabSwitches() throws {
         let app = XCUIApplication()
@@ -125,6 +126,16 @@ final class SceneStateFlipUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts[name].firstMatch.waitForExistence(timeout: 10))
         XCTAssertTrue(leadersRoot.waitForNonExistence(timeout: 10), "the profile didn't open")
 
+        // The profile's own choices: the Career table's Postseason scope, then
+        // the Game Logs tab.
+        let postseason = app.buttons["Postseason"].firstMatch
+        XCTAssertTrue(postseason.waitForExistence(timeout: 15), "no Postseason scope on \(name)'s Career tab")
+        postseason.tap()
+        XCTAssertTrue(postseason.isSelected)
+        let gameLogs = app.buttons["Game Logs"].firstMatch
+        gameLogs.tap()
+        XCTAssertTrue(gameLogs.isSelected)
+
         // Search: Award Voting.
         app.tabBars.buttons["Search"].tap()
         let awards = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Award Voting'")).firstMatch
@@ -149,6 +160,8 @@ final class SceneStateFlipUITests: XCTestCase {
             app.tabBars.buttons["Leaders"].tap()
             XCTAssertTrue(app.staticTexts[name].firstMatch.waitForExistence(timeout: 5) && !leadersRoot.exists,
                           "Leaders lost \(name)'s profile after the flip to \(expected)")
+            XCTAssertTrue(gameLogs.waitForExistence(timeout: 5) && gameLogs.isSelected,
+                          "\(name)'s profile left Game Logs after the flip to \(expected)")
             app.tabBars.buttons["Search"].tap()
             XCTAssertTrue(app.navigationBars[searchTitle].waitForExistence(timeout: 5),
                           "Search lost \(searchTitle) after the flip to \(expected)")
@@ -158,8 +171,13 @@ final class SceneStateFlipUITests: XCTestCase {
             attachScreenshot(app, "d\(i + 1) after flip to \(expected), on Home")
         }
 
-        // Back to the Leaders root: still on Career.
+        // The profile's Career tab: still on its Postseason table.
         app.tabBars.buttons["Leaders"].tap()
+        app.buttons["Career"].firstMatch.tap()
+        XCTAssertTrue(postseason.waitForExistence(timeout: 5) && postseason.isSelected,
+                      "\(name)'s Career scope didn't survive the flips")
+
+        // Back to the Leaders root: still on Career.
         app.navigationBars.firstMatch.buttons.element(boundBy: 0).tap()
         XCTAssertTrue(leadersRoot.waitForExistence(timeout: 5))
         XCTAssertTrue(career.waitForExistence(timeout: 5))

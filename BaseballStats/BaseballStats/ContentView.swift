@@ -113,6 +113,9 @@ struct ContentView: View {
         .environmentObject(navigation)
         .environmentObject(scene)
         .environmentObject(liveStore)
+        // Per-player profile choices, for every profile in this window — on a
+        // tab's stack, in a sheet, or in Ask (see `ProfileUIStore`).
+        .environment(\.profileUIStore, scene.profiles)
         // Postseason series lines refetch when a game goes final; the store
         // watches the live list for that transition. See `SeriesStore`.
         .task {
@@ -140,6 +143,10 @@ struct ContentView: View {
         .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.trailing } action: { trailingMargin = $0 }
         .fullScreenCover(isPresented: showingAsk) {
             AskView(ask: scene.ask)
+                // The cover is presented from outside the `.environment` above,
+                // so it doesn't inherit it: profiles opened from Ask need the
+                // store handed in here.
+                .environment(\.profileUIStore, scene.profiles)
                 #if DEBUG
                 .sizeClassFlipHarness(id: "harness.flipSizeClass.ask")   // a UI-test hook
                 #endif

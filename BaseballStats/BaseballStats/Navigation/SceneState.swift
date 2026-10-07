@@ -41,6 +41,9 @@ final class SceneState: ObservableObject {
     let search = StackSceneState()
     let leaders = LeadersSceneState()
     let standings = StandingsSceneState()
+    /// Each opened profile's choices, by player (see `ProfileUIStore`). Not
+    /// observable: a profile observes its own player's state.
+    let profiles = ProfileUIStore()
     private var forward: [AnyCancellable] = []
 
     init(navigation: AppNavigation? = nil) {

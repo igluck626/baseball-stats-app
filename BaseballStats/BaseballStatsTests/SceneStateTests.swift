@@ -21,6 +21,9 @@
 //  Step e, Standings: its own path in the store, saved like the others, and its
 //  league and mode pickers, in memory.
 //
+//  Step f, player profile: each profile's choices live in the window's store,
+//  keyed by player, in memory, for the most recently opened twenty players.
+//
 
 import Combine
 import Foundation
@@ -355,5 +358,73 @@ struct SceneStateTests {
         #expect(scene.standings.league == .nl && scene.standings.mode == .bracket)
         // The one-time defaults are spent, so a rebuilt view won't re-apply them.
         #expect(scene.standings.didApplyDefaultMode && scene.standings.didApplyFavoriteLeague)
+    }
+
+    // MARK: - Player profile (step f)
+
+    static func player(_ id: Int, lastSeason: Int) throws -> PlayerSearchResult {
+        let json = #"{"player_id": \#(id), "name": "Player \#(id)", "mlb_last_season": \#(lastSeason)}"#
+        return try JSONDecoder().decode(PlayerSearchResult.self, from: Data(json.utf8))
+    }
+
+    @Test func eachPlayerKeepsSeparateProfileChoices() throws {
+        let store = ProfileUIStore()
+        let bonds = try Self.player(111188, lastSeason: 2007)
+        let judge = try Self.player(592450, lastSeason: 2026)
+        let a = store.state(for: bonds), b = store.state(for: judge)
+        #expect(a !== b)
+        a.selectedTab = .gameLogs
+        a.careerScope = .postseason
+        a.selectedSeasons = [2001, 2004]
+        a.battingSort = CareerSort(key: "HR", direction: .descending)
+        #expect(b.selectedTab == .overview && b.careerScope == .regular && b.selectedSeasons.isEmpty)
+        #expect(b.battingSort == CareerSort(key: "Year", direction: .descending))
+        // Opening the same player again gets the same choices back.
+        #expect(store.state(for: bonds) === a)
+        #expect(store.state(for: bonds).selectedTab == .gameLogs)
+    }
+
+    @Test func aProfileStartsWhereItAlwaysStarted() throws {
+        let store = ProfileUIStore()
+        let currentYear = Calendar.current.component(.year, from: Date())
+        let retired = store.state(for: try Self.player(1, lastSeason: 2007))
+        let active = store.state(for: try Self.player(2, lastSeason: currentYear))
+        #expect(retired.selectedTab == .career)
+        #expect(active.selectedTab == .overview)
+        #expect(active.selectedRole == nil && active.careerScope == .regular && active.gameLogScope == .regular)
+        #expect(active.gameLogYear == currentYear && active.postseasonGameLogYear == currentYear)
+        #expect(active.visibleBattingColumns == PlayerProfileScreen.defaultBattingColumns)
+        #expect(active.visiblePitchingColumns == PlayerProfileScreen.defaultPitchingColumns)
+        #expect(active.selectedSeasons.isEmpty)
+    }
+
+    @Test func theStoreKeepsTheMostRecentlyOpenedPlayers() throws {
+        let store = ProfileUIStore(capacity: 3)
+        let p = try (1...4).map { try Self.player($0, lastSeason: 2007) }
+        let first = store.state(for: p[0])
+        first.selectedTab = .gameLogs
+        _ = store.state(for: p[1]); _ = store.state(for: p[2])
+        _ = store.state(for: p[0])          // touched: now the most recent
+        _ = store.state(for: p[3])          // over capacity: drops the least recent, player 2
+        #expect(store.count == 3)
+        #expect(store.contains(1) && !store.contains(2) && store.contains(3) && store.contains(4))
+        #expect(store.state(for: p[0]) === first && first.selectedTab == .gameLogs)
+        #expect(ProfileUIStore().capacity == 20)
+    }
+
+    @Test func profileChoicesDoNotRedrawTheWholeWindow() throws {
+        let scene = SceneState()
+        var fired = 0
+        let sub = scene.objectWillChange.sink { _ in fired += 1 }
+        let ui = scene.profiles.state(for: try Self.player(111188, lastSeason: 2007))
+        ui.selectedTab = .gameLogs
+        ui.selectedRole = .pitching
+        ui.gameLogYear = 2001
+        #expect(fired == 0)
+        _ = sub
+    }
+
+    @Test func noStoreIsInjectedByDefault() {
+        #expect(EnvironmentValues().profileUIStore == nil)
     }
 }

@@ -25,7 +25,41 @@ fileprivate var currentOverviewSeason: Int {
     Calendar.current.component(.year, from: Date())
 }
 
+/// A player's profile. Its on-screen choices (tab, side, Career table settings,
+/// Game Logs year and scope) come from the window's `ProfileUIStore`, keyed by
+/// player, so a resize or size-class change keeps them; where no store was
+/// injected the profile keeps its own for its lifetime, as it always did.
 struct PlayerProfileView: View {
+    let player: PlayerSearchResult
+    var boxScoreContext: BoxScoreContext?
+    @Environment(\.profileUIStore) private var store
+    /// Pins the state this view resolved, so it keeps the same object for its
+    /// whole life even if the store later drops the player.
+    @StateObject private var holder = ProfileUIHolder()
+
+    init(player: PlayerSearchResult, boxScoreContext: BoxScoreContext? = nil) {
+        self.player = player
+        self.boxScoreContext = boxScoreContext
+    }
+
+    var body: some View {
+        PlayerProfileScreen(player: player, boxScoreContext: boxScoreContext,
+                            ui: holder.resolve(player: player, store: store))
+    }
+}
+
+@MainActor
+private final class ProfileUIHolder: ObservableObject {
+    private var ui: ProfileUIState?
+    func resolve(player: PlayerSearchResult, store: ProfileUIStore?) -> ProfileUIState {
+        if let ui { return ui }
+        let resolved = store?.state(for: player) ?? ProfileUIState(player: player)
+        ui = resolved
+        return resolved
+    }
+}
+
+struct PlayerProfileScreen: View {
     let player: PlayerSearchResult
     /// What this profile needs to open a box score, when its host stack can.
     ///
@@ -46,11 +80,18 @@ struct PlayerProfileView: View {
     /// they toggle between the batting and pitching Overview tabs.
     @StateObject private var battingRanksVM:  CurrentSeasonRanksViewModel
     @StateObject private var pitchingRanksVM: CurrentSeasonRanksViewModel
-    @State private var selectedTab: Tab
+    /// This profile's choices, from the window's store (see `PlayerProfileView`).
+    /// The properties below read and write through it.
+    @ObservedObject private var ui: ProfileUIState
+    private var selectedTab: Tab {
+        get { ui.selectedTab } nonmutating set { ui.selectedTab = newValue }
+    }
     /// nil until the user explicitly toggles. While nil, the picker
     /// reflects `defaultRole`, which depends on the loaded VM data
     /// (two-way → batting; pitcher with batting history → pitching).
-    @State private var selectedRole: Role?
+    private var selectedRole: Role? {
+        get { ui.selectedRole } nonmutating set { ui.selectedRole = newValue }
+    }
 
     // Career-table column visibility. Sets contain the keys for every
     // optional column the user wants to show; core columns (WAR/G/PA/AB
@@ -58,25 +99,41 @@ struct PlayerProfileView: View {
     @State private var showingColumnFilter = false
     /// Career tab: regular-season table or the postseason one. Offered only
     /// when the side being shown has a postseason; otherwise it is ignored.
-    @State private var careerScope: CareerScope = .regular
+    private var careerScope: CareerScope {
+        get { ui.careerScope } nonmutating set { ui.careerScope = newValue }
+    }
     /// The postseason season whose rounds sheet is showing.
     @State private var postseasonSheet: PostseasonSheetItem?
-    @State private var visibleBattingColumns: Set<String> = Self.defaultBattingColumns
-    @State private var visiblePitchingColumns: Set<String> = Self.defaultPitchingColumns
+    private var visibleBattingColumns: Set<String> {
+        get { ui.visibleBattingColumns } nonmutating set { ui.visibleBattingColumns = newValue }
+    }
+    private var visiblePitchingColumns: Set<String> {
+        get { ui.visiblePitchingColumns } nonmutating set { ui.visiblePitchingColumns = newValue }
+    }
 
     // Career-table sort state. Default: most-recent season first
     // (chronological descending), matching the historical behavior.
-    @State private var battingSort  = CareerSort(key: "Year", direction: .descending)
-    @State private var pitchingSort = CareerSort(key: "Year", direction: .descending)
+    private var battingSort: CareerSort {
+        get { ui.battingSort } nonmutating set { ui.battingSort = newValue }
+    }
+    private var pitchingSort: CareerSort {
+        get { ui.pitchingSort } nonmutating set { ui.pitchingSort = newValue }
+    }
 
     // Cross-tab navigation state — when the user taps a season row on
     // the Career tab, we set this year and flip selectedTab to .gameLogs.
     // GameLogsView binds to it so the picker syncs in both directions.
-    @State private var gameLogYear = Calendar.current.component(.year, from: Date())
+    private var gameLogYear: Int {
+        get { ui.gameLogYear } nonmutating set { ui.gameLogYear = newValue }
+    }
     /// Game Logs' Regular Season | Postseason, and the postseason shown —
     /// set together by the Overview's postseason card.
-    @State private var gameLogScope: GameLogScope = .regular
-    @State private var postseasonGameLogYear = Calendar.current.component(.year, from: Date())
+    private var gameLogScope: GameLogScope {
+        get { ui.gameLogScope } nonmutating set { ui.gameLogScope = newValue }
+    }
+    private var postseasonGameLogYear: Int {
+        get { ui.postseasonGameLogYear } nonmutating set { ui.postseasonGameLogYear = newValue }
+    }
 
     /// Presents the award-voting sheet when the user taps an MVP /
     /// CY / ROY chiclet on a career row. Cleared on dismiss; the
@@ -92,7 +149,9 @@ struct PlayerProfileView: View {
     /// aggregate-summary sheet. Cleared on role flip so a batting-
     /// side selection doesn't bleed into the pitching table (or
     /// vice versa) and by the Clear button on the floating bar.
-    @State private var selectedSeasons: Set<Int> = []
+    private var selectedSeasons: Set<Int> {
+        get { ui.selectedSeasons } nonmutating set { ui.selectedSeasons = newValue }
+    }
 
     /// Drives the multi-year compare sheet. Decoupled from
     /// `selectedSeasons` so dismissing the sheet (drag-down or X)
@@ -138,9 +197,11 @@ struct PlayerProfileView: View {
     }
 
     init(player: PlayerSearchResult,
-         boxScoreContext: BoxScoreContext? = nil) {
+         boxScoreContext: BoxScoreContext? = nil,
+         ui: ProfileUIState) {
         self.player = player
         self.boxScoreContext = boxScoreContext
+        self.ui = ui
         let vm = PlayerViewModel(player: player)
         _viewModel = StateObject(wrappedValue: vm)
         let season = currentOverviewSeason
@@ -156,11 +217,9 @@ struct PlayerProfileView: View {
             season:    season,
             teamCode:  player.teamCode
         ))
-        // Retired players land on Career; active players on Overview.
-        // `isRetired` only depends on player.mlb_last_season, so it's
-        // valid here even before any network data has loaded.
-        _selectedTab = State(initialValue: vm.isRetired ? .career : .overview)
-        _selectedRole = State(initialValue: nil)
+        // The starting tab (Career for a retired player, Overview for an
+        // active one) is `ProfileUIState`'s, set when the window first opens
+        // this player.
     }
 
     var body: some View {
@@ -380,7 +439,7 @@ struct PlayerProfileView: View {
             ColumnFilterPanel(
                 title: "Batting Columns",
                 groups: battingFilterGroups,
-                visible: $visibleBattingColumns,
+                visible: $ui.visibleBattingColumns,
                 defaults: Self.defaultBattingColumns,
                 onDismiss: { showingColumnFilter = false }
             )
@@ -388,7 +447,7 @@ struct PlayerProfileView: View {
             ColumnFilterPanel(
                 title: "Pitching Columns",
                 groups: pitchingFilterGroups,
-                visible: $visiblePitchingColumns,
+                visible: $ui.visiblePitchingColumns,
                 defaults: Self.defaultPitchingColumns,
                 onDismiss: { showingColumnFilter = false }
             )
@@ -604,7 +663,7 @@ struct PlayerProfileView: View {
     }
 
     private var tabSelector: some View {
-        Picker("Section", selection: $selectedTab) {
+        Picker("Section", selection: $ui.selectedTab) {
             ForEach(availableTabs) { tab in
                 // .frame(maxWidth: .infinity) on each label forces the
                 // segmented picker to give every segment the same
@@ -1276,7 +1335,7 @@ struct PlayerProfileView: View {
     /// Regular Season | Postseason. Hidden entirely for a player with no
     /// postseason on this side — no empty state to explain.
     private var careerScopePicker: some View {
-        Picker("Career", selection: $careerScope) {
+        Picker("Career", selection: $ui.careerScope) {
             ForEach(CareerScope.allCases) { Text($0.label).tag($0) }
         }
         .pickerStyle(.segmented)
@@ -1423,7 +1482,7 @@ struct PlayerProfileView: View {
             // stat columns to the right scroll horizontally. Subtle
             // shadow on the right edge separates it from the scroller.
             VStack(spacing: 0) {
-                BattingCareerFrozenHeader(sort: $battingSort)
+                BattingCareerFrozenHeader(sort: $ui.battingSort)
                 Divider()
                 ForEach(Array(sorted.enumerated()), id: \.offset) { index, season in
                     let isSelected = season.year.map(selectedSeasons.contains) ?? false
@@ -1453,7 +1512,7 @@ struct PlayerProfileView: View {
             // Scrollable section — WAR + filtered optional columns.
             ScrollView(.horizontal, showsIndicators: false) {
                 VStack(spacing: 0) {
-                    BattingCareerScrollableHeader(visible: visibleBattingColumns, sort: $battingSort)
+                    BattingCareerScrollableHeader(visible: visibleBattingColumns, sort: $ui.battingSort)
                     Divider()
                     ForEach(Array(sorted.enumerated()), id: \.offset) { index, season in
                         let isSelected = season.year.map(selectedSeasons.contains) ?? false
@@ -1492,7 +1551,7 @@ struct PlayerProfileView: View {
             // table's split-pane structure: stays put while WAR/W/L/…
             // scroll horizontally to the right.
             VStack(spacing: 0) {
-                PitchingCareerFrozenHeader(sort: $pitchingSort)
+                PitchingCareerFrozenHeader(sort: $ui.pitchingSort)
                 Divider()
                 ForEach(Array(sorted.enumerated()), id: \.offset) { index, season in
                     let isSelected = season.year.map(selectedSeasons.contains) ?? false
@@ -1522,7 +1581,7 @@ struct PlayerProfileView: View {
             // Scrollable section — WAR + filtered optional columns.
             ScrollView(.horizontal, showsIndicators: false) {
                 VStack(spacing: 0) {
-                    PitchingCareerScrollableHeader(visible: visiblePitchingColumns, sort: $pitchingSort)
+                    PitchingCareerScrollableHeader(visible: visiblePitchingColumns, sort: $ui.pitchingSort)
                     Divider()
                     ForEach(Array(sorted.enumerated()), id: \.offset) { index, season in
                         let isSelected = season.year.map(selectedSeasons.contains) ?? false
@@ -1599,11 +1658,11 @@ struct PlayerProfileView: View {
             isPitcher: !showingBatting,
             onTapGame: boxScoreContext == nil ? nil : { openBoxScore(for: $0) },
             pendingGameId: pendingGameLogId,
-            year: $gameLogYear,
-            scope: $gameLogScope,
+            year: $ui.gameLogYear,
+            scope: $ui.gameLogScope,
             postseasonSeasons: postseasonSeasonsShown,
             postseasonRecord: viewModel.postseason,
-            postseasonYear: $postseasonGameLogYear
+            postseasonYear: $ui.postseasonGameLogYear
         )
         .id(showingBatting)
     }
@@ -4792,7 +4851,7 @@ final class CurrentSeasonRanksViewModel: ObservableObject {
 
 /// Career tab scope. The switch appears only when the side being shown has a
 /// postseason (`/players/{id}/postseason`); otherwise it is never offered.
-private enum CareerScope: String, CaseIterable, Identifiable {
+enum CareerScope: String, CaseIterable, Identifiable {
     case regular, postseason
     var id: String { rawValue }
     var label: String { self == .regular ? "Regular Season" : "Postseason" }
