@@ -39,6 +39,7 @@ import postseason_ingest
 import postseason_series
 import postseason_stats
 import season_phase
+import team_contact
 import team_crosswalk
 from cache import cache as _cache
 
@@ -2932,6 +2933,20 @@ def _records_full_rewalk() -> None:
                                         set(data_service._BDL_TEAM_ID_MAP.values()))
         except Exception as exc:  # noqa: BLE001
             log.warning("game records %s: nightly re-walk failed: %s", s, exc)
+
+
+@app.get("/games/{bdl_id}/team-contact")
+def game_team_contact(bdl_id: int):
+    """Team AVG, expected batting average (xBA) and balls hit 95+ mph for one
+    game, per side, from balldontlie's plate appearances — the same block the
+    live snapshot carries as `team_contact` (see team_contact.py), with the
+    server's `show` decision. Finished games are cached for the process's life;
+    a failed or empty fetch is not cached."""
+    try:
+        return team_contact.for_game(bdl_id, data_service._bdl_get_json)
+    except Exception as exc:  # noqa: BLE001 - balldontlie down / unknown id
+        log.warning("team-contact %s failed: %s", bdl_id, exc)
+        raise HTTPException(status_code=502, detail="Couldn't load plate appearances for this game")
 
 
 @app.get("/games/records")

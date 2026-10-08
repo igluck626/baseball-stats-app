@@ -1,0 +1,2736 @@
+{
+ "note": "balldontlie /plate_appearances for three 2026 postseason finals, fetched 2026-10-07, trimmed to the fields team_contact.py reads (the in-play pitch only). See test_team_contact.py.",
+ "games": {
+  "15333798": {
+   "date": "2026-10-06",
+   "away": "LAD",
+   "home": "ATL",
+   "status": "STATUS_FINAL",
+   "plate_appearances": [
+    {
+     "inning": 1,
+     "half_inning": "top",
+     "pa_number": 1,
+     "batter_id": 118,
+     "result": "Single",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 88.4,
+       "launch_angle": -31,
+       "expected_batting_average": 0.07
+      }
+     ]
+    },
+    {
+     "inning": 1,
+     "half_inning": "top",
+     "pa_number": 2,
+     "batter_id": 130,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 1,
+     "half_inning": "top",
+     "pa_number": 3,
+     "batter_id": 1098,
+     "result": "Field Error",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 100.9,
+       "launch_angle": -13,
+       "expected_batting_average": 0.24
+      }
+     ]
+    },
+    {
+     "inning": 1,
+     "half_inning": "top",
+     "pa_number": 4,
+     "batter_id": 103,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 1,
+     "half_inning": "top",
+     "pa_number": 5,
+     "batter_id": 208,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 1,
+     "half_inning": "bottom",
+     "pa_number": 6,
+     "batter_id": 114368,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 1,
+     "half_inning": "bottom",
+     "pa_number": 7,
+     "batter_id": 1835,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 1,
+     "half_inning": "bottom",
+     "pa_number": 8,
+     "batter_id": 856,
+     "result": "Groundout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 56.3,
+       "launch_angle": 22,
+       "expected_batting_average": 0.22
+      }
+     ]
+    },
+    {
+     "inning": 2,
+     "half_inning": "top",
+     "pa_number": 9,
+     "batter_id": 156,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 2,
+     "half_inning": "top",
+     "pa_number": 10,
+     "batter_id": 176,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 2,
+     "half_inning": "top",
+     "pa_number": 11,
+     "batter_id": 678,
+     "result": "Single",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 88,
+       "launch_angle": 14,
+       "expected_batting_average": 0.97
+      }
+     ]
+    },
+    {
+     "inning": 2,
+     "half_inning": "top",
+     "pa_number": 12,
+     "batter_id": 1101,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 2,
+     "half_inning": "bottom",
+     "pa_number": 13,
+     "batter_id": 825,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 2,
+     "half_inning": "bottom",
+     "pa_number": 14,
+     "batter_id": 874,
+     "result": "Single",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 34.2,
+       "launch_angle": -49,
+       "expected_batting_average": 0.33
+      }
+     ]
+    },
+    {
+     "inning": 2,
+     "half_inning": "bottom",
+     "pa_number": 15,
+     "batter_id": 628,
+     "result": "Flyout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 91.4,
+       "launch_angle": 39,
+       "expected_batting_average": 0.02
+      }
+     ]
+    },
+    {
+     "inning": 2,
+     "half_inning": "bottom",
+     "pa_number": 16,
+     "batter_id": 1048,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 3,
+     "half_inning": "top",
+     "pa_number": 17,
+     "batter_id": 118,
+     "result": "Single",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 92,
+       "launch_angle": 4,
+       "expected_batting_average": 0.5
+      }
+     ]
+    },
+    {
+     "inning": 3,
+     "half_inning": "top",
+     "pa_number": 18,
+     "batter_id": 130,
+     "result": "Flyout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 101.3,
+       "launch_angle": 30,
+       "expected_batting_average": 0.56
+      }
+     ]
+    },
+    {
+     "inning": 3,
+     "half_inning": "top",
+     "pa_number": 19,
+     "batter_id": 1098,
+     "result": "Flyout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 103.2,
+       "launch_angle": 46,
+       "expected_batting_average": 0.05
+      }
+     ]
+    },
+    {
+     "inning": 3,
+     "half_inning": "top",
+     "pa_number": 20,
+     "batter_id": 103,
+     "result": "Single",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 89.3,
+       "launch_angle": 23,
+       "expected_batting_average": 0.16
+      }
+     ]
+    },
+    {
+     "inning": 3,
+     "half_inning": "top",
+     "pa_number": 21,
+     "batter_id": 208,
+     "result": "Catcher Interference",
+     "pitches": []
+    },
+    {
+     "inning": 3,
+     "half_inning": "top",
+     "pa_number": 22,
+     "batter_id": 156,
+     "result": "Lineout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 91.4,
+       "launch_angle": 20,
+       "expected_batting_average": 0.34
+      }
+     ]
+    },
+    {
+     "inning": 3,
+     "half_inning": "bottom",
+     "pa_number": 23,
+     "batter_id": 863,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 3,
+     "half_inning": "bottom",
+     "pa_number": 24,
+     "batter_id": 406,
+     "result": "Flyout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 88.8,
+       "launch_angle": 53,
+       "expected_batting_average": 0.01
+      }
+     ]
+    },
+    {
+     "inning": 3,
+     "half_inning": "bottom",
+     "pa_number": 25,
+     "batter_id": 114368,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 4,
+     "half_inning": "top",
+     "pa_number": 26,
+     "batter_id": 176,
+     "result": "Single",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 102.8,
+       "launch_angle": -4,
+       "expected_batting_average": 0.38
+      }
+     ]
+    },
+    {
+     "inning": 4,
+     "half_inning": "top",
+     "pa_number": 27,
+     "batter_id": 678,
+     "result": "Lineout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 93.4,
+       "launch_angle": 11,
+       "expected_batting_average": 0.73
+      }
+     ]
+    },
+    {
+     "inning": 4,
+     "half_inning": "top",
+     "pa_number": 28,
+     "batter_id": 1101,
+     "result": "Home Run",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 106.8,
+       "launch_angle": 33,
+       "expected_batting_average": 0.87
+      }
+     ]
+    },
+    {
+     "inning": 4,
+     "half_inning": "top",
+     "pa_number": 29,
+     "batter_id": 118,
+     "result": "Groundout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 97.8,
+       "launch_angle": -11,
+       "expected_batting_average": 0.23
+      }
+     ]
+    },
+    {
+     "inning": 4,
+     "half_inning": "top",
+     "pa_number": 30,
+     "batter_id": 130,
+     "result": "Home Run",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 103.2,
+       "launch_angle": 34,
+       "expected_batting_average": 0.58
+      }
+     ]
+    },
+    {
+     "inning": 4,
+     "half_inning": "top",
+     "pa_number": 31,
+     "batter_id": 1098,
+     "result": "Flyout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 108.4,
+       "launch_angle": 21,
+       "expected_batting_average": 0.88
+      }
+     ]
+    },
+    {
+     "inning": 4,
+     "half_inning": "bottom",
+     "pa_number": 32,
+     "batter_id": 1835,
+     "result": "Groundout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 77.7,
+       "launch_angle": 6,
+       "expected_batting_average": 0.32
+      }
+     ]
+    },
+    {
+     "inning": 4,
+     "half_inning": "bottom",
+     "pa_number": 33,
+     "batter_id": 856,
+     "result": "Single",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 109.5,
+       "launch_angle": 4,
+       "expected_batting_average": 0.65
+      }
+     ]
+    },
+    {
+     "inning": 4,
+     "half_inning": "bottom",
+     "pa_number": 34,
+     "batter_id": 825,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 4,
+     "half_inning": "bottom",
+     "pa_number": 35,
+     "batter_id": 874,
+     "result": "Groundout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 105.5,
+       "launch_angle": -18,
+       "expected_batting_average": 0.2
+      }
+     ]
+    },
+    {
+     "inning": 5,
+     "half_inning": "top",
+     "pa_number": 36,
+     "batter_id": 103,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 5,
+     "half_inning": "top",
+     "pa_number": 37,
+     "batter_id": 208,
+     "result": "Flyout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 101.3,
+       "launch_angle": 52,
+       "expected_batting_average": 0.02
+      }
+     ]
+    },
+    {
+     "inning": 5,
+     "half_inning": "top",
+     "pa_number": 38,
+     "batter_id": 156,
+     "result": "Groundout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 97.7,
+       "launch_angle": -3,
+       "expected_batting_average": 0.29
+      }
+     ]
+    },
+    {
+     "inning": 5,
+     "half_inning": "bottom",
+     "pa_number": 39,
+     "batter_id": 628,
+     "result": "Single",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 83.2,
+       "launch_angle": 21,
+       "expected_batting_average": 0.71
+      }
+     ]
+    },
+    {
+     "inning": 5,
+     "half_inning": "bottom",
+     "pa_number": 40,
+     "batter_id": 1048,
+     "result": "Single",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 94.6,
+       "launch_angle": 17,
+       "expected_batting_average": 0.57
+      }
+     ]
+    },
+    {
+     "inning": 5,
+     "half_inning": "bottom",
+     "pa_number": 41,
+     "batter_id": 863,
+     "result": "Pop Out",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 81.8,
+       "launch_angle": 57,
+       "expected_batting_average": 0.04
+      }
+     ]
+    },
+    {
+     "inning": 5,
+     "half_inning": "bottom",
+     "pa_number": 42,
+     "batter_id": 2025,
+     "result": "Walk",
+     "pitches": []
+    },
+    {
+     "inning": 5,
+     "half_inning": "bottom",
+     "pa_number": 43,
+     "batter_id": 114368,
+     "result": "Groundout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 82.7,
+       "launch_angle": -42,
+       "expected_batting_average": 0.05
+      }
+     ]
+    },
+    {
+     "inning": 5,
+     "half_inning": "bottom",
+     "pa_number": 44,
+     "batter_id": 1835,
+     "result": "Groundout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 70.6,
+       "launch_angle": -23,
+       "expected_batting_average": 0.04
+      }
+     ]
+    },
+    {
+     "inning": 6,
+     "half_inning": "top",
+     "pa_number": 45,
+     "batter_id": 176,
+     "result": "Single",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 81.8,
+       "launch_angle": 20,
+       "expected_batting_average": 0.88
+      }
+     ]
+    },
+    {
+     "inning": 6,
+     "half_inning": "top",
+     "pa_number": 46,
+     "batter_id": 678,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 6,
+     "half_inning": "top",
+     "pa_number": 47,
+     "batter_id": 1101,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 6,
+     "half_inning": "top",
+     "pa_number": 48,
+     "batter_id": 118,
+     "result": "Flyout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 98.5,
+       "launch_angle": 35,
+       "expected_batting_average": 0.23
+      }
+     ]
+    },
+    {
+     "inning": 6,
+     "half_inning": "bottom",
+     "pa_number": 49,
+     "batter_id": 856,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 6,
+     "half_inning": "bottom",
+     "pa_number": 50,
+     "batter_id": 825,
+     "result": "Flyout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 93.4,
+       "launch_angle": 28,
+       "expected_batting_average": 0.13
+      }
+     ]
+    },
+    {
+     "inning": 6,
+     "half_inning": "bottom",
+     "pa_number": 51,
+     "batter_id": 874,
+     "result": "Groundout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 74.5,
+       "launch_angle": 6,
+       "expected_batting_average": 0.29
+      }
+     ]
+    },
+    {
+     "inning": 7,
+     "half_inning": "top",
+     "pa_number": 52,
+     "batter_id": 130,
+     "result": "Flyout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 101.6,
+       "launch_angle": 29,
+       "expected_batting_average": 0.66
+      }
+     ]
+    },
+    {
+     "inning": 7,
+     "half_inning": "top",
+     "pa_number": 53,
+     "batter_id": 1098,
+     "result": "Groundout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 73.2,
+       "launch_angle": -45,
+       "expected_batting_average": 0.21
+      }
+     ]
+    },
+    {
+     "inning": 7,
+     "half_inning": "top",
+     "pa_number": 54,
+     "batter_id": 103,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 7,
+     "half_inning": "bottom",
+     "pa_number": 55,
+     "batter_id": 628,
+     "result": "Pop Out",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 83.1,
+       "launch_angle": 68,
+       "expected_batting_average": 0
+      }
+     ]
+    },
+    {
+     "inning": 7,
+     "half_inning": "bottom",
+     "pa_number": 56,
+     "batter_id": 1048,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 7,
+     "half_inning": "bottom",
+     "pa_number": 57,
+     "batter_id": 863,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 8,
+     "half_inning": "top",
+     "pa_number": 58,
+     "batter_id": 208,
+     "result": "Walk",
+     "pitches": []
+    },
+    {
+     "inning": 8,
+     "half_inning": "top",
+     "pa_number": 59,
+     "batter_id": 156,
+     "result": "Pop Out",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 85.2,
+       "launch_angle": 79,
+       "expected_batting_average": 0.01
+      }
+     ]
+    },
+    {
+     "inning": 8,
+     "half_inning": "top",
+     "pa_number": 60,
+     "batter_id": 176,
+     "result": "Forceout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 92.1,
+       "launch_angle": 6,
+       "expected_batting_average": 0.47
+      }
+     ]
+    },
+    {
+     "inning": 8,
+     "half_inning": "top",
+     "pa_number": 61,
+     "batter_id": 678,
+     "result": "Pop Out",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 73.8,
+       "launch_angle": 63,
+       "expected_batting_average": 0
+      }
+     ]
+    },
+    {
+     "inning": 8,
+     "half_inning": "bottom",
+     "pa_number": 62,
+     "batter_id": 302,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 8,
+     "half_inning": "bottom",
+     "pa_number": 63,
+     "batter_id": 114368,
+     "result": "Groundout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 97.5,
+       "launch_angle": -12,
+       "expected_batting_average": 0.13
+      }
+     ]
+    },
+    {
+     "inning": 8,
+     "half_inning": "bottom",
+     "pa_number": 64,
+     "batter_id": 1835,
+     "result": "Walk",
+     "pitches": []
+    },
+    {
+     "inning": 8,
+     "half_inning": "bottom",
+     "pa_number": 65,
+     "batter_id": 856,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 9,
+     "half_inning": "top",
+     "pa_number": 66,
+     "batter_id": 1101,
+     "result": "Pop Out",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 79.2,
+       "launch_angle": 70,
+       "expected_batting_average": 0.01
+      }
+     ]
+    },
+    {
+     "inning": 9,
+     "half_inning": "top",
+     "pa_number": 67,
+     "batter_id": 118,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 9,
+     "half_inning": "top",
+     "pa_number": 68,
+     "batter_id": 130,
+     "result": "Walk",
+     "pitches": []
+    },
+    {
+     "inning": 9,
+     "half_inning": "top",
+     "pa_number": 69,
+     "batter_id": 142,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 9,
+     "half_inning": "bottom",
+     "pa_number": 70,
+     "batter_id": 825,
+     "result": "Double",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 104.4,
+       "launch_angle": 22,
+       "expected_batting_average": 0.7
+      }
+     ]
+    },
+    {
+     "inning": 9,
+     "half_inning": "bottom",
+     "pa_number": 71,
+     "batter_id": 874,
+     "result": "Groundout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 88,
+       "launch_angle": -8,
+       "expected_batting_average": 0.18
+      }
+     ]
+    },
+    {
+     "inning": 9,
+     "half_inning": "bottom",
+     "pa_number": 72,
+     "batter_id": 628,
+     "result": "Flyout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 87.7,
+       "launch_angle": 53,
+       "expected_batting_average": 0.01
+      }
+     ]
+    },
+    {
+     "inning": 9,
+     "half_inning": "bottom",
+     "pa_number": 73,
+     "batter_id": 167,
+     "result": "Groundout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 54.4,
+       "launch_angle": -15,
+       "expected_batting_average": 0.08
+      }
+     ]
+    }
+   ]
+  },
+  "15467376": {
+   "date": "2026-10-06",
+   "away": "NYY",
+   "home": "TB",
+   "status": "STATUS_FINAL",
+   "plate_appearances": [
+    {
+     "inning": 1,
+     "half_inning": "top",
+     "pa_number": 1,
+     "batter_id": 4480,
+     "result": "Flyout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 92.4,
+       "launch_angle": 35,
+       "expected_batting_average": 0.04
+      }
+     ]
+    },
+    {
+     "inning": 1,
+     "half_inning": "top",
+     "pa_number": 2,
+     "batter_id": 920,
+     "result": "Lineout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 98.9,
+       "launch_angle": 9,
+       "expected_batting_average": 0.62
+      }
+     ]
+    },
+    {
+     "inning": 1,
+     "half_inning": "top",
+     "pa_number": 3,
+     "batter_id": 125,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 1,
+     "half_inning": "bottom",
+     "pa_number": 4,
+     "batter_id": 92,
+     "result": "Field Error",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 96.5,
+       "launch_angle": -22,
+       "expected_batting_average": 0.09
+      }
+     ]
+    },
+    {
+     "inning": 1,
+     "half_inning": "bottom",
+     "pa_number": 5,
+     "batter_id": 58,
+     "result": "Single",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 103.1,
+       "launch_angle": null,
+       "expected_batting_average": 0.45
+      }
+     ]
+    },
+    {
+     "inning": 1,
+     "half_inning": "bottom",
+     "pa_number": 6,
+     "batter_id": 88,
+     "result": "Forceout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 98.5,
+       "launch_angle": -22,
+       "expected_batting_average": 0.12
+      }
+     ]
+    },
+    {
+     "inning": 1,
+     "half_inning": "bottom",
+     "pa_number": 7,
+     "batter_id": 12163,
+     "result": "Catcher Interference",
+     "pitches": []
+    },
+    {
+     "inning": 1,
+     "half_inning": "bottom",
+     "pa_number": 8,
+     "batter_id": 653217,
+     "result": "Forceout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 83.2,
+       "launch_angle": 5,
+       "expected_batting_average": 0.37
+      }
+     ]
+    },
+    {
+     "inning": 1,
+     "half_inning": "bottom",
+     "pa_number": 9,
+     "batter_id": 573,
+     "result": "Groundout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 97.2,
+       "launch_angle": -6,
+       "expected_batting_average": 0.26
+      }
+     ]
+    },
+    {
+     "inning": 2,
+     "half_inning": "top",
+     "pa_number": 10,
+     "batter_id": 4668097,
+     "result": "Flyout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 106.4,
+       "launch_angle": 44,
+       "expected_batting_average": 0.24
+      }
+     ]
+    },
+    {
+     "inning": 2,
+     "half_inning": "top",
+     "pa_number": 11,
+     "batter_id": 4838771,
+     "result": "Groundout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 100.8,
+       "launch_angle": -1,
+       "expected_batting_average": 0.41
+      }
+     ]
+    },
+    {
+     "inning": 2,
+     "half_inning": "top",
+     "pa_number": 12,
+     "batter_id": 518,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 2,
+     "half_inning": "bottom",
+     "pa_number": 13,
+     "batter_id": 182,
+     "result": "Double",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 95.8,
+       "launch_angle": 24,
+       "expected_batting_average": 0.24
+      }
+     ]
+    },
+    {
+     "inning": 2,
+     "half_inning": "bottom",
+     "pa_number": 14,
+     "batter_id": 129,
+     "result": "Groundout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 97,
+       "launch_angle": null,
+       "expected_batting_average": 0.37
+      }
+     ]
+    },
+    {
+     "inning": 2,
+     "half_inning": "bottom",
+     "pa_number": 15,
+     "batter_id": 161,
+     "result": "Groundout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 81,
+       "launch_angle": -26,
+       "expected_batting_average": 0.04
+      }
+     ]
+    },
+    {
+     "inning": 2,
+     "half_inning": "bottom",
+     "pa_number": 16,
+     "batter_id": 92,
+     "result": "Walk",
+     "pitches": []
+    },
+    {
+     "inning": 2,
+     "half_inning": "bottom",
+     "pa_number": 17,
+     "batter_id": 58,
+     "result": "Groundout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 97.6,
+       "launch_angle": -4,
+       "expected_batting_average": 0.25
+      }
+     ]
+    },
+    {
+     "inning": 3,
+     "half_inning": "top",
+     "pa_number": 18,
+     "batter_id": 551,
+     "result": "Flyout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 98.7,
+       "launch_angle": 48,
+       "expected_batting_average": 0.01
+      }
+     ]
+    },
+    {
+     "inning": 3,
+     "half_inning": "top",
+     "pa_number": 19,
+     "batter_id": 506,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 3,
+     "half_inning": "top",
+     "pa_number": 20,
+     "batter_id": 123,
+     "result": "Pop Out",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 72.8,
+       "launch_angle": 73,
+       "expected_batting_average": 0
+      }
+     ]
+    },
+    {
+     "inning": 3,
+     "half_inning": "bottom",
+     "pa_number": 21,
+     "batter_id": 88,
+     "result": "Single",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 84.7,
+       "launch_angle": 17,
+       "expected_batting_average": 0.95
+      }
+     ]
+    },
+    {
+     "inning": 3,
+     "half_inning": "bottom",
+     "pa_number": 22,
+     "batter_id": 12163,
+     "result": "Pop Out",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 56.7,
+       "launch_angle": 60,
+       "expected_batting_average": 0
+      }
+     ]
+    },
+    {
+     "inning": 3,
+     "half_inning": "bottom",
+     "pa_number": 23,
+     "batter_id": 653217,
+     "result": "Single",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 88.9,
+       "launch_angle": 15,
+       "expected_batting_average": 0.98
+      }
+     ]
+    },
+    {
+     "inning": 3,
+     "half_inning": "bottom",
+     "pa_number": 24,
+     "batter_id": 573,
+     "result": "Lineout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 86.9,
+       "launch_angle": 22,
+       "expected_batting_average": 0.36
+      }
+     ]
+    },
+    {
+     "inning": 3,
+     "half_inning": "bottom",
+     "pa_number": 25,
+     "batter_id": 182,
+     "result": "Forceout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 108.5,
+       "launch_angle": -4,
+       "expected_batting_average": 0.43
+      }
+     ]
+    },
+    {
+     "inning": 4,
+     "half_inning": "top",
+     "pa_number": 26,
+     "batter_id": 4480,
+     "result": "Home Run",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 100.1,
+       "launch_angle": 33,
+       "expected_batting_average": 0.38
+      }
+     ]
+    },
+    {
+     "inning": 4,
+     "half_inning": "top",
+     "pa_number": 27,
+     "batter_id": 920,
+     "result": "Single",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 90.3,
+       "launch_angle": 8,
+       "expected_batting_average": 0.55
+      }
+     ]
+    },
+    {
+     "inning": 4,
+     "half_inning": "top",
+     "pa_number": 28,
+     "batter_id": 125,
+     "result": "Pop Out",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 71.4,
+       "launch_angle": 70,
+       "expected_batting_average": 0
+      }
+     ]
+    },
+    {
+     "inning": 4,
+     "half_inning": "top",
+     "pa_number": 29,
+     "batter_id": 4668097,
+     "result": "Forceout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 74.8,
+       "launch_angle": 8,
+       "expected_batting_average": 0.28
+      }
+     ]
+    },
+    {
+     "inning": 4,
+     "half_inning": "top",
+     "pa_number": 30,
+     "batter_id": 4838771,
+     "result": "Pop Out",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 81.4,
+       "launch_angle": 62,
+       "expected_batting_average": 0.02
+      }
+     ]
+    },
+    {
+     "inning": 4,
+     "half_inning": "bottom",
+     "pa_number": 31,
+     "batter_id": 129,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 4,
+     "half_inning": "bottom",
+     "pa_number": 32,
+     "batter_id": 161,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 4,
+     "half_inning": "bottom",
+     "pa_number": 33,
+     "batter_id": 92,
+     "result": "Lineout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 103,
+       "launch_angle": 20,
+       "expected_batting_average": 0.54
+      }
+     ]
+    },
+    {
+     "inning": 5,
+     "half_inning": "top",
+     "pa_number": 34,
+     "batter_id": 518,
+     "result": "Groundout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 84.4,
+       "launch_angle": -23,
+       "expected_batting_average": 0.07
+      }
+     ]
+    },
+    {
+     "inning": 5,
+     "half_inning": "top",
+     "pa_number": 35,
+     "batter_id": 551,
+     "result": "Flyout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 88.4,
+       "launch_angle": 31,
+       "expected_batting_average": 0.03
+      }
+     ]
+    },
+    {
+     "inning": 5,
+     "half_inning": "top",
+     "pa_number": 36,
+     "batter_id": 506,
+     "result": "Double",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 108.6,
+       "launch_angle": 20,
+       "expected_batting_average": 0.86
+      }
+     ]
+    },
+    {
+     "inning": 5,
+     "half_inning": "top",
+     "pa_number": 37,
+     "batter_id": 123,
+     "result": "Walk",
+     "pitches": []
+    },
+    {
+     "inning": 5,
+     "half_inning": "top",
+     "pa_number": 38,
+     "batter_id": 4480,
+     "result": "Walk",
+     "pitches": []
+    },
+    {
+     "inning": 5,
+     "half_inning": "top",
+     "pa_number": 39,
+     "batter_id": 920,
+     "result": "Flyout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 102.9,
+       "launch_angle": 27,
+       "expected_batting_average": 0.76
+      }
+     ]
+    },
+    {
+     "inning": 5,
+     "half_inning": "bottom",
+     "pa_number": 40,
+     "batter_id": 58,
+     "result": "Single",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 109.4,
+       "launch_angle": 17,
+       "expected_batting_average": 0.65
+      }
+     ]
+    },
+    {
+     "inning": 5,
+     "half_inning": "bottom",
+     "pa_number": 41,
+     "batter_id": 88,
+     "result": "Double",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 112.4,
+       "launch_angle": 14,
+       "expected_batting_average": 0.75
+      }
+     ]
+    },
+    {
+     "inning": 5,
+     "half_inning": "bottom",
+     "pa_number": 42,
+     "batter_id": 12163,
+     "result": "Groundout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 55.1,
+       "launch_angle": -37,
+       "expected_batting_average": 0.11
+      }
+     ]
+    },
+    {
+     "inning": 5,
+     "half_inning": "bottom",
+     "pa_number": 43,
+     "batter_id": 653217,
+     "result": "Fielders Choice",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 64.8,
+       "launch_angle": -38,
+       "expected_batting_average": 0.11
+      }
+     ]
+    },
+    {
+     "inning": 5,
+     "half_inning": "bottom",
+     "pa_number": 44,
+     "batter_id": 573,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 5,
+     "half_inning": "bottom",
+     "pa_number": 45,
+     "batter_id": 182,
+     "result": "Field Error",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 76.7,
+       "launch_angle": -27,
+       "expected_batting_average": 0.05
+      }
+     ]
+    },
+    {
+     "inning": 5,
+     "half_inning": "bottom",
+     "pa_number": 46,
+     "batter_id": 129,
+     "result": "Single",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 99.9,
+       "launch_angle": 10,
+       "expected_batting_average": 0.8
+      }
+     ]
+    },
+    {
+     "inning": 5,
+     "half_inning": "bottom",
+     "pa_number": 47,
+     "batter_id": 161,
+     "result": "Flyout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 73,
+       "launch_angle": 45,
+       "expected_batting_average": 0.21
+      }
+     ]
+    },
+    {
+     "inning": 6,
+     "half_inning": "top",
+     "pa_number": 48,
+     "batter_id": 125,
+     "result": "Flyout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 85.6,
+       "launch_angle": 43,
+       "expected_batting_average": 0.01
+      }
+     ]
+    },
+    {
+     "inning": 6,
+     "half_inning": "top",
+     "pa_number": 49,
+     "batter_id": 4668097,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 6,
+     "half_inning": "top",
+     "pa_number": 50,
+     "batter_id": 4838771,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 6,
+     "half_inning": "bottom",
+     "pa_number": 51,
+     "batter_id": 92,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 6,
+     "half_inning": "bottom",
+     "pa_number": 52,
+     "batter_id": 58,
+     "result": "Lineout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 100.6,
+       "launch_angle": 11,
+       "expected_batting_average": 0.91
+      }
+     ]
+    },
+    {
+     "inning": 6,
+     "half_inning": "bottom",
+     "pa_number": 53,
+     "batter_id": 88,
+     "result": "Groundout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 80.7,
+       "launch_angle": -23,
+       "expected_batting_average": 0.06
+      }
+     ]
+    },
+    {
+     "inning": 7,
+     "half_inning": "top",
+     "pa_number": 54,
+     "batter_id": 518,
+     "result": "Groundout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 41.3,
+       "launch_angle": 2,
+       "expected_batting_average": 0.26
+      }
+     ]
+    },
+    {
+     "inning": 7,
+     "half_inning": "top",
+     "pa_number": 55,
+     "batter_id": 551,
+     "result": "Groundout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 92.4,
+       "launch_angle": -5,
+       "expected_batting_average": 0.21
+      }
+     ]
+    },
+    {
+     "inning": 7,
+     "half_inning": "top",
+     "pa_number": 56,
+     "batter_id": 506,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 7,
+     "half_inning": "bottom",
+     "pa_number": 57,
+     "batter_id": 12163,
+     "result": "Groundout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 94.8,
+       "launch_angle": -11,
+       "expected_batting_average": 0.16
+      }
+     ]
+    },
+    {
+     "inning": 7,
+     "half_inning": "bottom",
+     "pa_number": 58,
+     "batter_id": 653217,
+     "result": "Flyout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 75.5,
+       "launch_angle": 43,
+       "expected_batting_average": 0.17
+      }
+     ]
+    },
+    {
+     "inning": 7,
+     "half_inning": "bottom",
+     "pa_number": 59,
+     "batter_id": 573,
+     "result": "Walk",
+     "pitches": []
+    },
+    {
+     "inning": 7,
+     "half_inning": "bottom",
+     "pa_number": 60,
+     "batter_id": 182,
+     "result": "Groundout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 77.5,
+       "launch_angle": -49,
+       "expected_batting_average": 0.19
+      }
+     ]
+    },
+    {
+     "inning": 8,
+     "half_inning": "top",
+     "pa_number": 61,
+     "batter_id": 1439,
+     "result": "Pop Out",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 90,
+       "launch_angle": 61,
+       "expected_batting_average": 0.01
+      }
+     ]
+    },
+    {
+     "inning": 8,
+     "half_inning": "top",
+     "pa_number": 62,
+     "batter_id": 4480,
+     "result": "Home Run",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 98.9,
+       "launch_angle": 25,
+       "expected_batting_average": 0.49
+      }
+     ]
+    },
+    {
+     "inning": 8,
+     "half_inning": "top",
+     "pa_number": 63,
+     "batter_id": 920,
+     "result": "Pop Out",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 57.2,
+       "launch_angle": 73,
+       "expected_batting_average": 0
+      }
+     ]
+    },
+    {
+     "inning": 8,
+     "half_inning": "top",
+     "pa_number": 64,
+     "batter_id": 125,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 8,
+     "half_inning": "bottom",
+     "pa_number": 65,
+     "batter_id": 129,
+     "result": "Groundout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 66.5,
+       "launch_angle": -70,
+       "expected_batting_average": 0.25
+      }
+     ]
+    },
+    {
+     "inning": 8,
+     "half_inning": "bottom",
+     "pa_number": 66,
+     "batter_id": 161,
+     "result": "Groundout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 85.2,
+       "launch_angle": -3,
+       "expected_batting_average": 0.17
+      }
+     ]
+    },
+    {
+     "inning": 8,
+     "half_inning": "bottom",
+     "pa_number": 67,
+     "batter_id": 92,
+     "result": "Single",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 109.9,
+       "launch_angle": 4,
+       "expected_batting_average": 0.65
+      }
+     ]
+    },
+    {
+     "inning": 8,
+     "half_inning": "bottom",
+     "pa_number": 68,
+     "batter_id": 58,
+     "result": "Flyout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 104.3,
+       "launch_angle": 41,
+       "expected_batting_average": 0.27
+      }
+     ]
+    },
+    {
+     "inning": 9,
+     "half_inning": "top",
+     "pa_number": 69,
+     "batter_id": 4668097,
+     "result": "Groundout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 75.2,
+       "launch_angle": -21,
+       "expected_batting_average": 0.05
+      }
+     ]
+    },
+    {
+     "inning": 9,
+     "half_inning": "top",
+     "pa_number": 70,
+     "batter_id": 4838771,
+     "result": "Groundout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 98.8,
+       "launch_angle": -17,
+       "expected_batting_average": 0.21
+      }
+     ]
+    },
+    {
+     "inning": 9,
+     "half_inning": "top",
+     "pa_number": 71,
+     "batter_id": 518,
+     "result": "Groundout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 102.9,
+       "launch_angle": 3,
+       "expected_batting_average": 0.55
+      }
+     ]
+    }
+   ]
+  },
+  "15467377": {
+   "date": "2026-10-05",
+   "away": "CHW",
+   "home": "CLE",
+   "status": "STATUS_FINAL",
+   "plate_appearances": [
+    {
+     "inning": 1,
+     "half_inning": "top",
+     "pa_number": 1,
+     "batter_id": 4839465,
+     "result": "Groundout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 75.7,
+       "launch_angle": -29,
+       "expected_batting_average": 0.04
+      }
+     ]
+    },
+    {
+     "inning": 1,
+     "half_inning": "top",
+     "pa_number": 2,
+     "batter_id": 1567927,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 1,
+     "half_inning": "top",
+     "pa_number": 3,
+     "batter_id": 771,
+     "result": "Walk",
+     "pitches": []
+    },
+    {
+     "inning": 1,
+     "half_inning": "top",
+     "pa_number": 4,
+     "batter_id": 4667586,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 1,
+     "half_inning": "bottom",
+     "pa_number": 5,
+     "batter_id": 1007,
+     "result": "Single",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 84.8,
+       "launch_angle": -9,
+       "expected_batting_average": 0.15
+      }
+     ]
+    },
+    {
+     "inning": 1,
+     "half_inning": "bottom",
+     "pa_number": 6,
+     "batter_id": 965,
+     "result": "Walk",
+     "pitches": []
+    },
+    {
+     "inning": 1,
+     "half_inning": "bottom",
+     "pa_number": 7,
+     "batter_id": 3781026,
+     "result": "Groundout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 94.6,
+       "launch_angle": -23,
+       "expected_batting_average": 0.13
+      }
+     ]
+    },
+    {
+     "inning": 1,
+     "half_inning": "bottom",
+     "pa_number": 8,
+     "batter_id": 1501,
+     "result": "Intent Walk",
+     "pitches": []
+    },
+    {
+     "inning": 1,
+     "half_inning": "bottom",
+     "pa_number": 9,
+     "batter_id": 195,
+     "result": "Field Error",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": null,
+       "launch_angle": -67,
+       "expected_batting_average": null
+      }
+     ]
+    },
+    {
+     "inning": 1,
+     "half_inning": "bottom",
+     "pa_number": 10,
+     "batter_id": 1018,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 1,
+     "half_inning": "bottom",
+     "pa_number": 11,
+     "batter_id": 4839339,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 2,
+     "half_inning": "top",
+     "pa_number": 12,
+     "batter_id": 788,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 2,
+     "half_inning": "top",
+     "pa_number": 13,
+     "batter_id": 2752091,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 2,
+     "half_inning": "top",
+     "pa_number": 14,
+     "batter_id": 4838836,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 2,
+     "half_inning": "bottom",
+     "pa_number": 15,
+     "batter_id": 977,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 2,
+     "half_inning": "bottom",
+     "pa_number": 16,
+     "batter_id": 970,
+     "result": "Flyout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 86.6,
+       "launch_angle": 30,
+       "expected_batting_average": 0.04
+      }
+     ]
+    },
+    {
+     "inning": 2,
+     "half_inning": "bottom",
+     "pa_number": 17,
+     "batter_id": 1007,
+     "result": "Groundout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 84.9,
+       "launch_angle": -8,
+       "expected_batting_average": 0.1
+      }
+     ]
+    },
+    {
+     "inning": 3,
+     "half_inning": "top",
+     "pa_number": 18,
+     "batter_id": 519799,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 3,
+     "half_inning": "top",
+     "pa_number": 19,
+     "batter_id": 2094850,
+     "result": "Walk",
+     "pitches": []
+    },
+    {
+     "inning": 3,
+     "half_inning": "top",
+     "pa_number": 20,
+     "batter_id": 4839465,
+     "result": "GIDP",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 81.6,
+       "launch_angle": -7,
+       "expected_batting_average": 0.12
+      }
+     ]
+    },
+    {
+     "inning": 3,
+     "half_inning": "bottom",
+     "pa_number": 21,
+     "batter_id": 965,
+     "result": "Groundout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 106.6,
+       "launch_angle": -20,
+       "expected_batting_average": 0.17
+      }
+     ]
+    },
+    {
+     "inning": 3,
+     "half_inning": "bottom",
+     "pa_number": 22,
+     "batter_id": 3781026,
+     "result": "Single",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 84.1,
+       "launch_angle": 4,
+       "expected_batting_average": 0.26
+      }
+     ]
+    },
+    {
+     "inning": 3,
+     "half_inning": "bottom",
+     "pa_number": 23,
+     "batter_id": 1501,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 3,
+     "half_inning": "bottom",
+     "pa_number": 24,
+     "batter_id": 195,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 4,
+     "half_inning": "top",
+     "pa_number": 25,
+     "batter_id": 1567927,
+     "result": "Single",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 78.4,
+       "launch_angle": 19,
+       "expected_batting_average": 0.99
+      }
+     ]
+    },
+    {
+     "inning": 4,
+     "half_inning": "top",
+     "pa_number": 26,
+     "batter_id": 771,
+     "result": "Walk",
+     "pitches": []
+    },
+    {
+     "inning": 4,
+     "half_inning": "top",
+     "pa_number": 27,
+     "batter_id": 4667586,
+     "result": "Single",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 106.4,
+       "launch_angle": 5,
+       "expected_batting_average": 0.62
+      }
+     ]
+    },
+    {
+     "inning": 4,
+     "half_inning": "top",
+     "pa_number": 28,
+     "batter_id": 788,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 4,
+     "half_inning": "top",
+     "pa_number": 29,
+     "batter_id": 2752091,
+     "result": "Flyout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 91.6,
+       "launch_angle": 47,
+       "expected_batting_average": 0
+      }
+     ]
+    },
+    {
+     "inning": 4,
+     "half_inning": "top",
+     "pa_number": 30,
+     "batter_id": 4838836,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 4,
+     "half_inning": "bottom",
+     "pa_number": 31,
+     "batter_id": 1018,
+     "result": "Lineout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 87,
+       "launch_angle": 20,
+       "expected_batting_average": 0.6
+      }
+     ]
+    },
+    {
+     "inning": 4,
+     "half_inning": "bottom",
+     "pa_number": 32,
+     "batter_id": 4839339,
+     "result": "Walk",
+     "pitches": []
+    },
+    {
+     "inning": 4,
+     "half_inning": "bottom",
+     "pa_number": 33,
+     "batter_id": 977,
+     "result": "Flyout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 100.2,
+       "launch_angle": 40,
+       "expected_batting_average": 0.15
+      }
+     ]
+    },
+    {
+     "inning": 4,
+     "half_inning": "bottom",
+     "pa_number": 34,
+     "batter_id": 970,
+     "result": "Flyout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 92.1,
+       "launch_angle": 60,
+       "expected_batting_average": 0.03
+      }
+     ]
+    },
+    {
+     "inning": 5,
+     "half_inning": "top",
+     "pa_number": 35,
+     "batter_id": 519799,
+     "result": "Single",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 89.5,
+       "launch_angle": 15,
+       "expected_batting_average": 0.98
+      }
+     ]
+    },
+    {
+     "inning": 5,
+     "half_inning": "top",
+     "pa_number": 36,
+     "batter_id": 2094850,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 5,
+     "half_inning": "top",
+     "pa_number": 37,
+     "batter_id": 4839465,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 5,
+     "half_inning": "top",
+     "pa_number": 38,
+     "batter_id": 1567927,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 5,
+     "half_inning": "bottom",
+     "pa_number": 39,
+     "batter_id": 1007,
+     "result": "Groundout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 79.9,
+       "launch_angle": -12,
+       "expected_batting_average": 0.07
+      }
+     ]
+    },
+    {
+     "inning": 5,
+     "half_inning": "bottom",
+     "pa_number": 40,
+     "batter_id": 965,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 5,
+     "half_inning": "bottom",
+     "pa_number": 41,
+     "batter_id": 3781026,
+     "result": "Groundout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 99.1,
+       "launch_angle": -3,
+       "expected_batting_average": 0.34
+      }
+     ]
+    },
+    {
+     "inning": 6,
+     "half_inning": "top",
+     "pa_number": 42,
+     "batter_id": 771,
+     "result": "Single",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 104.7,
+       "launch_angle": 10,
+       "expected_batting_average": 0.87
+      }
+     ]
+    },
+    {
+     "inning": 6,
+     "half_inning": "top",
+     "pa_number": 43,
+     "batter_id": 4667586,
+     "result": "Groundout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 85.2,
+       "launch_angle": -34,
+       "expected_batting_average": 0.05
+      }
+     ]
+    },
+    {
+     "inning": 6,
+     "half_inning": "top",
+     "pa_number": 44,
+     "batter_id": 1445,
+     "result": "Walk",
+     "pitches": []
+    },
+    {
+     "inning": 6,
+     "half_inning": "top",
+     "pa_number": 45,
+     "batter_id": 1263,
+     "result": "Flyout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 92.2,
+       "launch_angle": 59,
+       "expected_batting_average": 0.01
+      }
+     ]
+    },
+    {
+     "inning": 6,
+     "half_inning": "top",
+     "pa_number": 46,
+     "batter_id": 4838836,
+     "result": "Double",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 101.4,
+       "launch_angle": 11,
+       "expected_batting_average": 0.91
+      }
+     ]
+    },
+    {
+     "inning": 6,
+     "half_inning": "top",
+     "pa_number": 47,
+     "batter_id": 519799,
+     "result": "Single",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 72.5,
+       "launch_angle": 20,
+       "expected_batting_average": 0.96
+      }
+     ]
+    },
+    {
+     "inning": 6,
+     "half_inning": "top",
+     "pa_number": 48,
+     "batter_id": 2094850,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 6,
+     "half_inning": "bottom",
+     "pa_number": 49,
+     "batter_id": 1501,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 6,
+     "half_inning": "bottom",
+     "pa_number": 50,
+     "batter_id": 195,
+     "result": "Groundout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 98.8,
+       "launch_angle": -19,
+       "expected_batting_average": 0.15
+      }
+     ]
+    },
+    {
+     "inning": 6,
+     "half_inning": "bottom",
+     "pa_number": 51,
+     "batter_id": 1018,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 7,
+     "half_inning": "top",
+     "pa_number": 52,
+     "batter_id": 4839465,
+     "result": "Lineout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 81.5,
+       "launch_angle": 28,
+       "expected_batting_average": 0.16
+      }
+     ]
+    },
+    {
+     "inning": 7,
+     "half_inning": "top",
+     "pa_number": 53,
+     "batter_id": 1567927,
+     "result": "Lineout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 83.3,
+       "launch_angle": 26,
+       "expected_batting_average": 0.15
+      }
+     ]
+    },
+    {
+     "inning": 7,
+     "half_inning": "top",
+     "pa_number": 54,
+     "batter_id": 771,
+     "result": "Flyout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 96.3,
+       "launch_angle": 47,
+       "expected_batting_average": 0.01
+      }
+     ]
+    },
+    {
+     "inning": 7,
+     "half_inning": "bottom",
+     "pa_number": 55,
+     "batter_id": 4839339,
+     "result": "Flyout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 102.3,
+       "launch_angle": 43,
+       "expected_batting_average": 0.12
+      }
+     ]
+    },
+    {
+     "inning": 7,
+     "half_inning": "bottom",
+     "pa_number": 56,
+     "batter_id": 977,
+     "result": "Groundout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 79,
+       "launch_angle": -12,
+       "expected_batting_average": 0.06
+      }
+     ]
+    },
+    {
+     "inning": 7,
+     "half_inning": "bottom",
+     "pa_number": 57,
+     "batter_id": 970,
+     "result": "Flyout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 84.7,
+       "launch_angle": 55,
+       "expected_batting_average": 0.01
+      }
+     ]
+    },
+    {
+     "inning": 8,
+     "half_inning": "top",
+     "pa_number": 58,
+     "batter_id": 4667586,
+     "result": "Groundout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 85.5,
+       "launch_angle": 7,
+       "expected_batting_average": 0.44
+      }
+     ]
+    },
+    {
+     "inning": 8,
+     "half_inning": "top",
+     "pa_number": 59,
+     "batter_id": 1445,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 8,
+     "half_inning": "top",
+     "pa_number": 60,
+     "batter_id": 220,
+     "result": "Groundout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 61.6,
+       "launch_angle": -7,
+       "expected_batting_average": 0.11
+      }
+     ]
+    },
+    {
+     "inning": 8,
+     "half_inning": "bottom",
+     "pa_number": 61,
+     "batter_id": 1007,
+     "result": "Lineout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 90.8,
+       "launch_angle": 19,
+       "expected_batting_average": 0.51
+      }
+     ]
+    },
+    {
+     "inning": 8,
+     "half_inning": "bottom",
+     "pa_number": 62,
+     "batter_id": 965,
+     "result": "Strikeout",
+     "pitches": []
+    },
+    {
+     "inning": 8,
+     "half_inning": "bottom",
+     "pa_number": 63,
+     "batter_id": 3781026,
+     "result": "Single",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 84.9,
+       "launch_angle": 19,
+       "expected_batting_average": 0.88
+      }
+     ]
+    },
+    {
+     "inning": 8,
+     "half_inning": "bottom",
+     "pa_number": 64,
+     "batter_id": 1501,
+     "result": "Triple",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 108.2,
+       "launch_angle": 32,
+       "expected_batting_average": 0.93
+      }
+     ]
+    },
+    {
+     "inning": 8,
+     "half_inning": "bottom",
+     "pa_number": 65,
+     "batter_id": 195,
+     "result": "Flyout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 96.1,
+       "launch_angle": 30,
+       "expected_batting_average": 0.21
+      }
+     ]
+    },
+    {
+     "inning": 9,
+     "half_inning": "top",
+     "pa_number": 66,
+     "batter_id": 4838836,
+     "result": "Groundout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 78.5,
+       "launch_angle": -36,
+       "expected_batting_average": 0.04
+      }
+     ]
+    },
+    {
+     "inning": 9,
+     "half_inning": "top",
+     "pa_number": 67,
+     "batter_id": 519799,
+     "result": "Groundout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 56.7,
+       "launch_angle": -20,
+       "expected_batting_average": 0.07
+      }
+     ]
+    },
+    {
+     "inning": 9,
+     "half_inning": "top",
+     "pa_number": 68,
+     "batter_id": 2094850,
+     "result": "Pop Out",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 65.1,
+       "launch_angle": 71,
+       "expected_batting_average": 0
+      }
+     ]
+    },
+    {
+     "inning": 9,
+     "half_inning": "bottom",
+     "pa_number": 69,
+     "batter_id": 1018,
+     "result": "Groundout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 95.9,
+       "launch_angle": -38,
+       "expected_batting_average": 0.08
+      }
+     ]
+    },
+    {
+     "inning": 9,
+     "half_inning": "bottom",
+     "pa_number": 70,
+     "batter_id": 4839339,
+     "result": "Flyout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 99.3,
+       "launch_angle": 36,
+       "expected_batting_average": 0.22
+      }
+     ]
+    },
+    {
+     "inning": 9,
+     "half_inning": "bottom",
+     "pa_number": 71,
+     "batter_id": 977,
+     "result": "Flyout",
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 103.5,
+       "launch_angle": 26,
+       "expected_batting_average": 0.8
+      }
+     ]
+    }
+   ]
+  }
+ }
+}

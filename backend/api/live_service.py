@@ -33,6 +33,7 @@ import urllib.error
 from typing import Any, Optional
 
 import data_service
+import team_contact
 from cache import cache as _cache
 from slot_codes import _slot_codes, _carried_codes, carry_forward
 
@@ -1003,6 +1004,9 @@ def assemble_unified(game: dict, stats: list[dict],
         # Batted-ball metrics, shaped like plate appearances — see
         # `_contact_pas`. Additive: an older client ignores the key.
         "contact_pas":   _contact_pas(pas, previous_contact),
+        # Team AVG / xBA / hard-hit, with the server's show/hide decision — see
+        # team_contact.py. Additive: an older client ignores the key.
+        "team_contact":  team_contact.team_contact(pas, final=status == "final"),
         "scoring_plays": scoring,
         "batting":       batting,
         "pitching":      pitching,
