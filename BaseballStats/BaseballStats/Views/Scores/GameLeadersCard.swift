@@ -33,6 +33,9 @@ struct GameLeadersCard: View {
     /// sheet opened from here reads exactly as one opened from the
     /// plays list. Absent for a PA falls back to the PA's own pitches.
     var pitchRows: [String: [BDLPlay]] = [:]
+    /// Each team's AVG / xBA / hard-hit, at the top of the card whether it is
+    /// collapsed or not — drawn only when the server says to (see `TeamContact`).
+    var contact: TeamContact? = nil
 
     /// ⚠️ THREE-WAY, replacing an Overall / By Team toggle whose
     /// by-team state stacked BOTH sides — twenty rows where overall
@@ -73,6 +76,9 @@ struct GameLeadersCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
+            if let contact, contact.isDisplayable {
+                TeamContactBlock(contact: contact, awayAbbr: awayAbbr, homeAbbr: homeAbbr)
+            }
             if isExpanded {
                 Picker("Scope", selection: $scope) {
                     Text("Overall").tag(Scope.overall)

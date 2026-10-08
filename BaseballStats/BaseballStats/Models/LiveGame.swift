@@ -85,6 +85,9 @@ struct LiveGameDetail: Codable, Hashable {
     /// payload. Converted to `[BDLPlateAppearance]` by `contactPlateAppearances`
     /// so everything downstream is unchanged.
     let contactPAs: [LiveContactPA]?
+    /// Team AVG / xBA / hard-hit with the server's show decision. Absent on an
+    /// older backend, hence optional — the block then doesn't render.
+    let teamContact: TeamContact?
     let batting: LiveSidePlayers<LiveBatterRow>
     let pitching: LiveSidePlayers<LivePitcherRow>
 
@@ -96,6 +99,7 @@ struct LiveGameDetail: Codable, Hashable {
         case summary, linescore, situation, plays
         case scoringPlays = "scoring_plays"
         case contactPAs = "contact_pas"
+        case teamContact = "team_contact"
         case batting, pitching
     }
 }

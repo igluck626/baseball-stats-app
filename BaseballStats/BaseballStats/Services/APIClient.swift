@@ -421,6 +421,14 @@ final class APIClient {
         return try await getOptional(url)
     }
 
+    /// `GET /games/{bdl_id}/team-contact`. Each team's AVG, xBA and balls hit
+    /// 95+ mph for a finished game, with the server's show decision. nil on 404
+    /// (an older backend without the route).
+    func getTeamContact(bdlGameId: Int) async throws -> TeamContact? {
+        let url = try buildURL(path: "/games/\(bdlGameId)/team-contact")
+        return try await getOptional(url)
+    }
+
     /// `GET /teams/standings?year=...`. Returns nil on 404.
     func getStandings(year: Int) async throws -> StandingsResponse? {
         let url = try buildURL(

@@ -64,6 +64,11 @@ final class BoxScoreViewModel: ObservableObject {
     /// substitute placement consumes them inline; this holds the same
     /// slice rather than fetching it a second time.
     @Published var plateAppearances: [BDLPlateAppearance] = []
+    /// Each team's AVG / xBA / hard-hit, from the backend: the live snapshot
+    /// while the game is on, `/games/{id}/team-contact` once it's final. nil for
+    /// a historical (Retrosheet-boxed) game and on any failure — the block then
+    /// simply isn't drawn.
+    @Published var teamContact: TeamContact?
     /// Set only for a historical game — how its batters are sorted. The view
     /// shows it rather than letting a reader read a lineup into the order.
     @Published var batterOrdering: String?
@@ -187,6 +192,7 @@ final class BoxScoreViewModel: ObservableObject {
         // early and never does, so these arrive on the snapshot instead
         // — in the same shape, so everything downstream is unchanged.
         plateAppearances = detail.contactPlateAppearances
+        teamContact = detail.teamContact
         live      = detail.toLiveFeedResponse()
         boxScore  = detail.toBoxScoreResponse()
         error     = nil
@@ -449,6 +455,16 @@ final class BoxScoreViewModel: ObservableObject {
         // box score appends substitutes at the bottom as it always
         // did, so this never blocks a render.
         async let paTask     = bdl.getGamePlateAppearances(gameId: game.gamePk)
+        // Team contact, for a finished game only (live, it rides the snapshot).
+        // Its own task, so it never holds up the box score; a failure just
+        // leaves the block off.
+        if game.phase == .final {
+            let gamePk = game.gamePk
+            Task { [weak self, api] in
+                let contact = try? await api.getTeamContact(bdlGameId: gamePk)
+                self?.teamContact = contact
+            }
+        }
         let lineup = (try? await lineupTask) ?? []
         let plateAppearances = (try? await paTask) ?? []
         self.plateAppearances = plateAppearances
@@ -844,7 +860,17 @@ struct BoxScoreView: View {
                                     plays: vm.plays,
                                     plateAppearances: vm.plateAppearances,
                                 ),
+                                contact: vm.teamContact,
                             )
+                        } else if isLiveNow, let contact = vm.teamContact, contact.isDisplayable {
+                            // Live: the team block alone, where the Game Leaders
+                            // card will appear at the final. A team total has no
+                            // ranking to churn, so it can show while the
+                            // leaders boards can't; the server holds it back
+                            // until each side has nine at-bats.
+                            TeamContactCard(contact: contact,
+                                            awayAbbr: teamAbbr(bs.teams.away.team),
+                                            homeAbbr: teamAbbr(bs.teams.home.team))
                         }
                     } else if vm.isLoading {
                         ProgressView().controlSize(.large)
