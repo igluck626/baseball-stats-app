@@ -6,7 +6,7 @@
 //  game — computed by the backend (`team_contact.py`), never here, and shipped
 //  on the live snapshot (`team_contact`) and by `GET /games/{bdl_id}/team-contact`
 //  for a finished game. The server also decides whether it's worth showing:
-//  enough of each side's contact tracked, and, live, enough at-bats.
+//  enough of each side's contact tracked, and, live, an at-bat for each side.
 //
 
 import Foundation
@@ -34,7 +34,7 @@ struct TeamContact: Codable, Hashable {
     /// The server's decision on the contact numbers (xBA's row). Rendered only
     /// when true.
     let show: Bool
-    /// Why it's hidden: "no_data", "untracked", "too_early".
+    /// Why it's hidden: "no_data", "untracked".
     let reason: String?
     /// The Team Stats rows. Absent from an older server, hence optional — the
     /// card then doesn't render.
@@ -52,7 +52,7 @@ struct TeamContact: Codable, Hashable {
 
 /// Team Stats for one game, computed by the backend (`team_stats.py`). The server
 /// decides which rows show, and in what order (`rows`); a row it holds back —
-/// xBA early in a live game, RISP when the play stream can't be read — is simply
+/// xBA before a side has batted, RISP when the play stream can't be read — is simply
 /// not listed. Unknown row keys (a newer server) are skipped.
 struct TeamStats: Codable, Hashable {
     struct Side: Codable, Hashable {

@@ -71,10 +71,10 @@ struct TeamContactTests {
     @Test func rowsTheServerHoldsBackOrCantFillDontDraw() throws {
         func make(_ rows: String, rispAb: String = "4") throws -> TeamStats {
             let side = #"{"avg": 0.25, "xba": 0.3, "hard_hit": 2, "hr": 1, "risp_h": 1, "risp_ab": \#(rispAb), "lob": 3, "bb": 1, "so": 2, "sb": 0, "dp": 1, "pitches": 40}"#
-            let json = #"{"rows": \#(rows), "away": \#(side), "home": \#(side), "hidden": {"xba": "too_early"}}"#
+            let json = #"{"rows": \#(rows), "away": \#(side), "home": \#(side), "hidden": {"xba": "no_data"}}"#
             return try JSONDecoder().decode(TeamStats.self, from: Data(json.utf8))
         }
-        // xBA held back early in a live game: the server leaves it out of `rows`.
+        // xBA held back before a side has batted: the server leaves it out of `rows`.
         #expect(try make(#"["avg", "hard_hit", "risp", "lob"]"#).displayRows.map(\.key) == ["avg", "hard_hit", "risp", "lob"])
         // A row the server lists but can't fill for a side is skipped, not drawn blank.
         #expect(try make(#"["avg", "risp"]"#, rispAb: "null").displayRows.map(\.key) == ["avg"])
