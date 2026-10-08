@@ -1,10 +1,11 @@
 //
 //  TeamContactTests.swift
 //
-//  Team contact (AVG / xBA / 95+ mph): the block decodes from the backend's
-//  shape, a payload without it still decodes (an older server), the block is
-//  drawn only when the server says to and the numbers are there, and the
-//  numbers are rounded once, here, batting-average style.
+//  Team Stats (inside the team-contact block): the block decodes from the
+//  backend's real shape (CHW @ CLE, 2026-10-05, as team_contact.py returns it), a
+//  payload without it still decodes (an older server), the rows draw in the
+//  server's order with each value formatted once, and a row the server holds back
+//  or can't fill doesn't draw.
 //
 
 import Foundation
@@ -12,15 +13,9 @@ import Testing
 @testable import BaseballStats
 
 struct TeamContactTests {
-    /// CHW @ CLE, 2026-10-05, as `team_contact.py` returns it (unrounded).
+    /// CHW @ CLE, 2026-10-05: the backend's own output for /games/15467377/team-contact.
     static let block = #"""
-    {"away": {"ab": 32, "h": 6, "avg": 0.1875, "xba": 0.20375, "xba_ab": 32,
-              "balls_in_play": 19, "tracked_balls_in_play": 19, "tracked_share": 1.0,
-              "hard_hit": 4, "tracked_batted_balls": 19},
-     "home": {"ab": 32, "h": 4, "avg": 0.125, "xba": 0.19387096774193549, "xba_ab": 31,
-              "balls_in_play": 23, "tracked_balls_in_play": 22, "tracked_share": 0.9565217391304348,
-              "hard_hit": 10, "tracked_batted_balls": 22},
-     "final": true, "show": true, "reason": null, "game_id": 15467377}
+    {"game_id": 15467377, "away": {"ab": 32, "h": 6, "avg": 0.1875, "xba": 0.20406250000000004, "xba_ab": 32, "balls_in_play": 19, "tracked_balls_in_play": 19, "tracked_share": 1.0, "hard_hit": 4, "tracked_batted_balls": 19}, "home": {"ab": 32, "h": 4, "avg": 0.125, "xba": 0.19387096774193543, "xba_ab": 31, "balls_in_play": 23, "tracked_balls_in_play": 22, "tracked_share": 0.9565217391304348, "hard_hit": 10, "tracked_batted_balls": 22}, "final": true, "show": true, "reason": null, "stats": {"rows": ["avg", "xba", "hard_hit", "hr", "risp", "lob", "bb", "so", "sb", "dp", "pitches"], "hidden": {}, "away": {"avg": 0.1875, "xba": 0.20406250000000004, "hard_hit": 4, "hr": 0, "risp_h": 3, "risp_ab": 8, "lob": 5, "bb": 4, "so": 13, "sb": 0, "dp": 0, "pitches": 147, "pa": 36, "feed_pa": 36}, "home": {"avg": 0.125, "xba": 0.19387096774193543, "hard_hit": 10, "hr": 0, "risp_h": 0, "risp_ab": 5, "lob": 5, "bb": 3, "so": 9, "sb": 0, "dp": 1, "pitches": 147, "pa": 35, "feed_pa": 35}, "unrecognised_events": []}}
     """#
 
     static func liveFixture() throws -> [String: Any] {
@@ -30,14 +25,30 @@ struct TeamContactTests {
         return try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
     }
 
-    @Test func decodesTheBackendBlock() throws {
+    @Test func decodesTheBackendBlockWithTeamStats() throws {
         let c = try JSONDecoder().decode(TeamContact.self, from: Data(Self.block.utf8))
         #expect(c.show && c.reason == nil)
-        #expect(c.away.ab == 32 && c.away.h == 6 && c.away.hardHit == 4)
-        #expect(c.home.hardHit == 10 && c.home.trackedShare == 0.9565217391304348)
-        #expect(TeamContact.rate(c.home.xba) == ".194")
-        #expect(TeamContact.rate(c.away.avg) == ".188")
-        #expect(c.isDisplayable)
+        let stats = try #require(c.stats)
+        #expect(stats.rows == ["avg", "xba", "hard_hit", "hr", "risp", "lob", "bb", "so", "sb", "dp", "pitches"])
+        let rows = stats.displayRows
+        #expect(rows.map(\.label) == ["AVG", "xBA", "Hit 95+ mph", "HR", "RISP", "LOB", "BB", "SO", "SB",
+                                       "Double plays", "Pitches"])
+        func row(_ k: String) -> TeamStats.Row? { rows.first { $0.key == k } }
+        #expect(row("avg")?.away == ".188" && row("avg")?.home == ".125")
+        #expect(row("xba")?.away == ".204" && row("xba")?.home == ".194")
+        #expect(row("hard_hit")?.away == "4" && row("hard_hit")?.home == "10")
+        // Baseball-Reference: CHW 3 for 8, CLE 0 for 5 with RISP; Team LOB 5 and 5.
+        #expect(row("risp")?.away == "3-for-8" && row("risp")?.home == "0-for-5")
+        #expect(row("lob")?.away == "5" && row("lob")?.home == "5")
+        #expect(row("dp")?.away == "0" && row("dp")?.home == "1")
+        #expect(row("pitches")?.away == "147" && row("pitches")?.home == "147")
+    }
+
+    @Test func aBlockFromAnOlderServerHasNoStats() throws {
+        let old = #"{"away": {"ab": 9, "h": 2, "avg": 0.222, "xba": 0.25, "hard_hit": 3},"# +
+                  #" "home": {"ab": 9, "h": 1, "avg": 0.111, "xba": 0.2, "hard_hit": 1}, "show": true, "reason": null}"#
+        let c = try JSONDecoder().decode(TeamContact.self, from: Data(old.utf8))
+        #expect(c.stats == nil)
     }
 
     @Test func aLiveSnapshotWithoutTheKeyStillDecodes() throws {
@@ -48,30 +59,29 @@ struct TeamContactTests {
         #expect(!detail.plays.isEmpty)
     }
 
-    @Test func aLiveSnapshotWithTheKeyDecodesIt() throws {
+    @Test func aLiveSnapshotWithTheKeyDecodesTeamStats() throws {
         var json = try Self.liveFixture()
         json["team_contact"] = try JSONSerialization.jsonObject(with: Data(Self.block.utf8))
         let data = try JSONSerialization.data(withJSONObject: json)
         let detail = try JSONDecoder().decode(LiveGameDetail.self, from: data)
-        let c = try #require(detail.teamContact)
-        #expect(c.isDisplayable && c.home.xba == 0.19387096774193549)
+        let stats = try #require(detail.teamContact?.stats)
+        #expect(stats.displayRows.count == 11)
     }
 
-    @Test func renderedOnlyWhenTheServerSaysSoAndTheNumbersAreThere() throws {
-        func make(show: Bool, reason: String?, homeXba: String = "0.2") throws -> TeamContact {
-            let json = """
-            {"away": {"ab": 9, "h": 2, "avg": 0.222, "xba": 0.25, "hard_hit": 3},
-             "home": {"ab": 9, "h": 1, "avg": 0.111, "xba": \(homeXba), "hard_hit": 1},
-             "show": \(show), "reason": \(reason.map { "\"\($0)\"" } ?? "null")}
-            """
-            return try JSONDecoder().decode(TeamContact.self, from: Data(json.utf8))
+    @Test func rowsTheServerHoldsBackOrCantFillDontDraw() throws {
+        func make(_ rows: String, rispAb: String = "4") throws -> TeamStats {
+            let side = #"{"avg": 0.25, "xba": 0.3, "hard_hit": 2, "hr": 1, "risp_h": 1, "risp_ab": \#(rispAb), "lob": 3, "bb": 1, "so": 2, "sb": 0, "dp": 1, "pitches": 40}"#
+            let json = #"{"rows": \#(rows), "away": \#(side), "home": \#(side), "hidden": {"xba": "too_early"}}"#
+            return try JSONDecoder().decode(TeamStats.self, from: Data(json.utf8))
         }
-        #expect(try make(show: true, reason: nil).isDisplayable)
-        #expect(!(try make(show: false, reason: "too_early").isDisplayable))
-        #expect(!(try make(show: false, reason: "untracked").isDisplayable))
-        #expect(!(try make(show: false, reason: "no_data").isDisplayable))
-        // The server said show but a number is missing: nothing to draw.
-        #expect(!(try make(show: true, reason: nil, homeXba: "null").isDisplayable))
+        // xBA held back early in a live game: the server leaves it out of `rows`.
+        #expect(try make(#"["avg", "hard_hit", "risp", "lob"]"#).displayRows.map(\.key) == ["avg", "hard_hit", "risp", "lob"])
+        // A row the server lists but can't fill for a side is skipped, not drawn blank.
+        #expect(try make(#"["avg", "risp"]"#, rispAb: "null").displayRows.map(\.key) == ["avg"])
+        // A row key this build doesn't know (a newer server) is skipped.
+        #expect(try make(#"["avg", "wpa"]"#).displayRows.map(\.key) == ["avg"])
+        // Nothing to show before the first plate appearance: no rows, so no card.
+        #expect(try make("[]").displayRows.isEmpty)
     }
 
     @Test func ratesRoundOnceBattingAverageStyle() {
@@ -79,5 +89,7 @@ struct TeamContactTests {
         #expect(TeamContact.rate(0.0) == ".000")
         #expect(TeamContact.rate(1.0) == "1.000")
         #expect(TeamContact.rate(nil) == "—")
+        #expect(TeamStats.value("risp", .init(avg: nil, xba: nil, hardHit: nil, hr: nil, rispH: 0, rispAb: 4,
+                                               lob: nil, bb: nil, so: nil, sb: nil, dp: nil, pitches: nil)) == "0-for-4")
     }
 }

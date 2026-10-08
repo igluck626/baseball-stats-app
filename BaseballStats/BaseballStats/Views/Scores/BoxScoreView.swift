@@ -811,6 +811,14 @@ struct BoxScoreView: View {
                         }
                         teamPicker(bs: bs)
                         teamSection(side: currentSide, bs: bs)
+                        // Team Stats, live and final, after the tables and before
+                        // the individual leaders. The server picks the rows (none
+                        // before the first plate appearance, so no card).
+                        if let stats = vm.teamContact?.stats, !stats.displayRows.isEmpty {
+                            TeamStatsCard(stats: stats,
+                                          awayAbbr: teamAbbr(bs.teams.away.team),
+                                          homeAbbr: teamAbbr(bs.teams.home.team))
+                        }
                         // Beneath the tables, above the plays list. A
                         // block rather than a column, so it competes for
                         // vertical room only — the tables' widths are
@@ -860,17 +868,7 @@ struct BoxScoreView: View {
                                     plays: vm.plays,
                                     plateAppearances: vm.plateAppearances,
                                 ),
-                                contact: vm.teamContact,
                             )
-                        } else if isLiveNow, let contact = vm.teamContact, contact.isDisplayable {
-                            // Live: the team block alone, where the Game Leaders
-                            // card will appear at the final. A team total has no
-                            // ranking to churn, so it can show while the
-                            // leaders boards can't; the server holds it back
-                            // until each side has nine at-bats.
-                            TeamContactCard(contact: contact,
-                                            awayAbbr: teamAbbr(bs.teams.away.team),
-                                            homeAbbr: teamAbbr(bs.teams.home.team))
                         }
                     } else if vm.isLoading {
                         ProgressView().controlSize(.large)

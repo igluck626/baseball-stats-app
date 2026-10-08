@@ -596,6 +596,10 @@ struct ScoresView: View {
             .navigationTitle("Scores")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                // Ask, at the leading edge — the trailing slot holds "Today".
+                ToolbarItem(placement: .topBarLeading) {
+                    AskNavButton()
+                }
                 // ⚠️ IN THE NAV BAR, NOT IN `dateBar`. That row is
                 // `◀ Spacer pill Spacer ▶` and its symmetry is the reason the
                 // pill reads as centred; putting a chip in either Spacer pulls

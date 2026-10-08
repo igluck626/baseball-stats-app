@@ -1,0 +1,126 @@
+//
+//  TeamStatsCard.swift
+//  BaseballStats
+//
+//  Team Stats: the two teams side by side — AVG, xBA, balls hit 95+ mph, HR,
+//  RISP, LOB, BB, SO, SB, double plays turned, pitches — after the batting and
+//  pitching tables, live and final. Every number and the choice of rows are the
+//  backend's (`TeamStats`); this view only lays them out.
+//
+
+import SwiftUI
+
+struct TeamStatsCard: View {
+    let stats: TeamStats
+    let awayAbbr: String
+    let homeAbbr: String
+
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @State private var showingInfo = false
+
+    var body: some View {
+        let rows = stats.displayRows
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Text("TEAM STATS")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                if rows.contains(where: { $0.key == "xba" || $0.key == "hard_hit" }) {
+                    Button { showingInfo = true } label: {
+                        Image(systemName: "info.circle")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("About xBA and hard-hit balls")
+                    .accessibilityIdentifier("teamStats.info")
+                    // A popover on a regular-width screen; a sheet on a phone,
+                    // where a popover anchored low on the screen had no room.
+                    .popover(isPresented: $showingInfo) {
+                        TeamStatsInfo()
+                            .presentationCompactAdaptation(.sheet)
+                            .presentationDetents([.medium, .large])
+                            .presentationDragIndicator(.visible)
+                    }
+                }
+            }
+            if typeSize.isAccessibilitySize {
+                // One Text per row, so it wraps rather than breaking a column
+                // apart (the house pattern for metric rows).
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(rows) { row in
+                        Text("\(row.label) · \(awayAbbr) \(row.away) · \(homeAbbr) \(row.home)")
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .font(.subheadline)
+            } else {
+                table(rows)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
+        .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 3)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("teamStats")
+    }
+
+    /// away | stat | home, at natural width and leading — on a wide window it stays
+    /// a compact table rather than stretching across the card.
+    private func table(_ rows: [TeamStats.Row]) -> some View {
+        Grid(horizontalSpacing: 20, verticalSpacing: 6) {
+            GridRow {
+                Text(awayAbbr).gridColumnAlignment(.trailing)
+                Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+                Text(homeAbbr).gridColumnAlignment(.leading)
+            }
+            .font(.subheadline.weight(.semibold))
+            ForEach(rows) { row in
+                GridRow {
+                    Text(row.away).monospacedDigit()
+                    Text(row.label)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Text(row.home).monospacedDigit()
+                }
+                .font(.subheadline)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("\(row.label): \(awayAbbr) \(row.away), \(homeAbbr) \(row.home)")
+            }
+        }
+        .fixedSize()
+    }
+}
+
+/// The ⓘ explanation of xBA and hard-hit balls, at a FIXED width: a popover
+/// measures the text's height at the width it proposes, and with only a maximum
+/// width the two disagreed and the last lines were cut off. (A popover's contents
+/// are compact width too, so the size class can't tell it from the phone's sheet.)
+/// It scrolls only if it doesn't fit — the sheet at the accessibility sizes.
+private struct TeamStatsInfo: View {
+    var body: some View {
+        ViewThatFits(in: .vertical) {
+            info
+            ScrollView { info }
+        }
+        .frame(width: 340, alignment: .leading)
+    }
+
+    private var info: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("xBA (expected batting average)")
+                .font(.subheadline.weight(.semibold))
+            Text("The average a team's contact would usually produce. Each ball in play is rated by how often balls hit at that speed and angle fall for hits; strikeouts count as outs. An xBA above the team's AVG means its contact deserved more hits than it got.")
+            Text("Hit 95+ mph")
+                .font(.subheadline.weight(.semibold))
+            Text("Balls hit 95 mph or harder off the bat — hard-hit balls.")
+            Text("Statcast data via balldontlie.")
+                .foregroundStyle(.secondary)
+        }
+        .font(.footnote)
+        .fixedSize(horizontal: false, vertical: true)
+        .padding()
+    }
+}

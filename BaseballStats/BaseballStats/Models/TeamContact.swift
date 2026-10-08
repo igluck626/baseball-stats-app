@@ -31,22 +31,98 @@ struct TeamContact: Codable, Hashable {
 
     let away: Side
     let home: Side
-    /// The server's decision. Rendered only when true.
+    /// The server's decision on the contact numbers (xBA's row). Rendered only
+    /// when true.
     let show: Bool
     /// Why it's hidden: "no_data", "untracked", "too_early".
     let reason: String?
+    /// The Team Stats rows. Absent from an older server, hence optional — the
+    /// card then doesn't render.
+    let stats: TeamStats?
 
-    /// Whether the block renders: the server said so AND the numbers it needs
-    /// are there. A `show` with a missing number would draw a blank, so it
-    /// doesn't render either.
-    var isDisplayable: Bool {
-        show && away.avg != nil && away.xba != nil && home.avg != nil && home.xba != nil
-    }
-
-    /// ".222", "1.000" — batting-average style, rounded once, here.
+    /// ".222", "1.000" — batting-average style, rounded once, here. Also used by
+    /// `TeamStats`.
     static func rate(_ value: Double?) -> String {
         guard let value else { return "—" }
         let s = String(format: "%.3f", value)
         return s.hasPrefix("0") ? String(s.dropFirst()) : s
+    }
+}
+
+
+/// Team Stats for one game, computed by the backend (`team_stats.py`). The server
+/// decides which rows show, and in what order (`rows`); a row it holds back —
+/// xBA early in a live game, RISP when the play stream can't be read — is simply
+/// not listed. Unknown row keys (a newer server) are skipped.
+struct TeamStats: Codable, Hashable {
+    struct Side: Codable, Hashable {
+        let avg: Double?
+        let xba: Double?
+        let hardHit: Int?
+        let hr: Int?
+        let rispH: Int?
+        let rispAb: Int?
+        let lob: Int?
+        let bb: Int?
+        let so: Int?
+        let sb: Int?
+        let dp: Int?
+        let pitches: Int?
+
+        enum CodingKeys: String, CodingKey {
+            case avg, xba, hr, lob, bb, so, sb, dp, pitches
+            case hardHit = "hard_hit"
+            case rispH = "risp_h"
+            case rispAb = "risp_ab"
+        }
+    }
+
+    let rows: [String]
+    let away: Side
+    let home: Side
+
+    /// One displayed row: its label and each side's value.
+    struct Row: Hashable, Identifiable {
+        let key: String
+        let label: String
+        let away: String
+        let home: String
+        var id: String { key }
+    }
+
+    static let labels: [String: String] = [
+        "avg": "AVG", "xba": "xBA", "hard_hit": "Hit 95+ mph", "hr": "HR",
+        "risp": "RISP", "lob": "LOB", "bb": "BB", "so": "SO", "sb": "SB",
+        "dp": "Double plays", "pitches": "Pitches",
+    ]
+
+    /// The rows to draw, in the server's order. A row whose value is missing for
+    /// either side is skipped rather than drawn with a blank.
+    var displayRows: [Row] {
+        rows.compactMap { key in
+            guard let label = Self.labels[key],
+                  let a = Self.value(key, away), let h = Self.value(key, home) else { return nil }
+            return Row(key: key, label: label, away: a, home: h)
+        }
+    }
+
+    static func value(_ key: String, _ s: Side) -> String? {
+        func n(_ v: Int?) -> String? { v.map(String.init) }
+        switch key {
+        case "avg": return s.avg.map { TeamContact.rate($0) }
+        case "xba": return s.xba.map { TeamContact.rate($0) }
+        case "hard_hit": return n(s.hardHit)
+        case "hr": return n(s.hr)
+        case "risp":
+            guard let h = s.rispH, let ab = s.rispAb else { return nil }
+            return "\(h)-for-\(ab)"
+        case "lob": return n(s.lob)
+        case "bb": return n(s.bb)
+        case "so": return n(s.so)
+        case "sb": return n(s.sb)
+        case "dp": return n(s.dp)
+        case "pitches": return n(s.pitches)
+        default: return nil
+        }
     }
 }

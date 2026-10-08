@@ -307,6 +307,10 @@ struct HomeView: View {
                 }
             }
         }
+        // Ask, at the leading edge — the trailing slot holds Settings.
+        ToolbarItem(placement: .topBarLeading) {
+            AskNavButton()
+        }
         ToolbarItem(placement: .topBarTrailing) {
             if store.bdlTeamId != nil {
                 Button {
