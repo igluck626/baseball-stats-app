@@ -1,5 +1,5 @@
 {
- "note": "balldontlie data for three 2026 postseason finals, fetched 2026-10-08 and trimmed to the fields team_contact.py and team_stats.py read: plate appearances (the in-play pitch only, with the runners at the start), /stats rows split by side, and the play stream without its pitch rows. RISP and LOB were checked against Baseball-Reference's box scores. See test_team_contact.py and test_team_stats.py.",
+ "note": "balldontlie data for four 2026 postseason finals, fetched 2026-10-08 and trimmed to the fields team_contact.py and team_stats.py read: plate appearances (the in-play pitch only, with the runners at the start), /stats rows split by side, and the play stream without its pitch rows. RISP and LOB were checked against Baseball-Reference's box scores. See test_team_contact.py and test_team_stats.py.",
  "games": {
   "15333798": {
    "date": "2026-10-06",
@@ -11869,6 +11869,4135 @@
      "batter_id": null,
      "type": "End Inning",
      "text": "End of the 9th inning"
+    }
+   ]
+  },
+  "15333797": {
+   "date": "2026-10-06",
+   "away": "MIL",
+   "home": "SD",
+   "status": "STATUS_FINAL",
+   "plate_appearances": [
+    {
+     "inning": 1,
+     "half_inning": "top",
+     "pa_number": 1,
+     "batter_id": 274,
+     "result": "Flyout",
+     "runner_on_first": false,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 5,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 103.2,
+       "launch_angle": 25,
+       "expected_batting_average": 0.75
+      }
+     ]
+    },
+    {
+     "inning": 1,
+     "half_inning": "top",
+     "pa_number": 2,
+     "batter_id": 207,
+     "result": "Strikeout",
+     "runner_on_first": false,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 9,
+     "pitches": []
+    },
+    {
+     "inning": 1,
+     "half_inning": "top",
+     "pa_number": 3,
+     "batter_id": 168,
+     "result": "Flyout",
+     "runner_on_first": false,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 3,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 97.2,
+       "launch_angle": 58,
+       "expected_batting_average": 0.01
+      }
+     ]
+    },
+    {
+     "inning": 1,
+     "half_inning": "bottom",
+     "pa_number": 4,
+     "batter_id": 492,
+     "result": "Groundout",
+     "runner_on_first": false,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 2,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 92.6,
+       "launch_angle": -9,
+       "expected_batting_average": 0.2
+      }
+     ]
+    },
+    {
+     "inning": 1,
+     "half_inning": "bottom",
+     "pa_number": 5,
+     "batter_id": 480,
+     "result": "Strikeout",
+     "runner_on_first": false,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 6,
+     "pitches": []
+    },
+    {
+     "inning": 1,
+     "half_inning": "bottom",
+     "pa_number": 6,
+     "batter_id": 412,
+     "result": "Walk",
+     "runner_on_first": false,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 5,
+     "pitches": []
+    },
+    {
+     "inning": 1,
+     "half_inning": "bottom",
+     "pa_number": 7,
+     "batter_id": 1471,
+     "result": "Groundout",
+     "runner_on_first": true,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 1,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 88.3,
+       "launch_angle": -25,
+       "expected_batting_average": 0.06
+      }
+     ]
+    },
+    {
+     "inning": 2,
+     "half_inning": "top",
+     "pa_number": 8,
+     "batter_id": 266,
+     "result": "Strikeout",
+     "runner_on_first": false,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 10,
+     "pitches": []
+    },
+    {
+     "inning": 2,
+     "half_inning": "top",
+     "pa_number": 9,
+     "batter_id": 1956,
+     "result": "Single",
+     "runner_on_first": false,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 3,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 104.5,
+       "launch_angle": 14,
+       "expected_batting_average": 0.69
+      }
+     ]
+    },
+    {
+     "inning": 2,
+     "half_inning": "top",
+     "pa_number": 10,
+     "batter_id": 318,
+     "result": "Flyout",
+     "runner_on_first": true,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 1,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 95.5,
+       "launch_angle": 54,
+       "expected_batting_average": 0.01
+      }
+     ]
+    },
+    {
+     "inning": 2,
+     "half_inning": "top",
+     "pa_number": 11,
+     "batter_id": 4838818,
+     "result": "Forceout",
+     "runner_on_first": true,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 3,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 87.9,
+       "launch_angle": -3,
+       "expected_batting_average": 0.27
+      }
+     ]
+    },
+    {
+     "inning": 2,
+     "half_inning": "bottom",
+     "pa_number": 12,
+     "batter_id": 4838709,
+     "result": "Strikeout",
+     "runner_on_first": false,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 6,
+     "pitches": []
+    },
+    {
+     "inning": 2,
+     "half_inning": "bottom",
+     "pa_number": 13,
+     "batter_id": 388,
+     "result": "Strikeout",
+     "runner_on_first": false,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 4,
+     "pitches": []
+    },
+    {
+     "inning": 2,
+     "half_inning": "bottom",
+     "pa_number": 14,
+     "batter_id": 254,
+     "result": "Flyout",
+     "runner_on_first": false,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 7,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 88,
+       "launch_angle": 63,
+       "expected_batting_average": 0.01
+      }
+     ]
+    },
+    {
+     "inning": 3,
+     "half_inning": "top",
+     "pa_number": 15,
+     "batter_id": 297,
+     "result": "Lineout",
+     "runner_on_first": false,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 2,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 102.6,
+       "launch_angle": 20,
+       "expected_batting_average": 0.54
+      }
+     ]
+    },
+    {
+     "inning": 3,
+     "half_inning": "top",
+     "pa_number": 16,
+     "batter_id": 260,
+     "result": "Single",
+     "runner_on_first": false,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 4,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 84.8,
+       "launch_angle": 4,
+       "expected_batting_average": 0.38
+      }
+     ]
+    },
+    {
+     "inning": 3,
+     "half_inning": "top",
+     "pa_number": 17,
+     "batter_id": 274,
+     "result": "Flyout",
+     "runner_on_first": true,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 2,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 91.6,
+       "launch_angle": 35,
+       "expected_batting_average": 0.04
+      }
+     ]
+    },
+    {
+     "inning": 3,
+     "half_inning": "top",
+     "pa_number": 18,
+     "batter_id": 207,
+     "result": "Strikeout",
+     "runner_on_first": true,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 3,
+     "pitches": []
+    },
+    {
+     "inning": 3,
+     "half_inning": "bottom",
+     "pa_number": 19,
+     "batter_id": 610,
+     "result": "Single",
+     "runner_on_first": false,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 4,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 97.6,
+       "launch_angle": 13,
+       "expected_batting_average": 0.94
+      }
+     ]
+    },
+    {
+     "inning": 3,
+     "half_inning": "bottom",
+     "pa_number": 20,
+     "batter_id": 403,
+     "result": "Sac Bunt",
+     "runner_on_first": true,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 3,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": null,
+       "launch_angle": null,
+       "expected_batting_average": null
+      },
+      {
+       "call_name": "In Play",
+       "exit_velocity": 39.4,
+       "launch_angle": -32,
+       "expected_batting_average": 0.33
+      }
+     ]
+    },
+    {
+     "inning": 3,
+     "half_inning": "bottom",
+     "pa_number": 21,
+     "batter_id": 492,
+     "result": "Groundout",
+     "runner_on_first": false,
+     "runner_on_second": false,
+     "runner_on_third": true,
+     "pitch_count": 3,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 79.9,
+       "launch_angle": -56,
+       "expected_batting_average": 0.31
+      }
+     ]
+    },
+    {
+     "inning": 3,
+     "half_inning": "bottom",
+     "pa_number": 22,
+     "batter_id": 480,
+     "result": "Single",
+     "runner_on_first": false,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 1,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 92.4,
+       "launch_angle": 7,
+       "expected_batting_average": 0.54
+      }
+     ]
+    },
+    {
+     "inning": 3,
+     "half_inning": "bottom",
+     "pa_number": 23,
+     "batter_id": 412,
+     "result": "Single",
+     "runner_on_first": true,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 3,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 92.2,
+       "launch_angle": 2,
+       "expected_batting_average": 0.37
+      }
+     ]
+    },
+    {
+     "inning": 3,
+     "half_inning": "bottom",
+     "pa_number": 24,
+     "batter_id": 1471,
+     "result": "Flyout",
+     "runner_on_first": true,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 2,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 103.1,
+       "launch_angle": 28,
+       "expected_batting_average": 0.73
+      }
+     ]
+    },
+    {
+     "inning": 4,
+     "half_inning": "top",
+     "pa_number": 25,
+     "batter_id": 168,
+     "result": "Home Run",
+     "runner_on_first": false,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 5,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 102.8,
+       "launch_angle": 40,
+       "expected_batting_average": 0.22
+      }
+     ]
+    },
+    {
+     "inning": 4,
+     "half_inning": "top",
+     "pa_number": 26,
+     "batter_id": 266,
+     "result": "Groundout",
+     "runner_on_first": false,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 4,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 99.1,
+       "launch_angle": -8,
+       "expected_batting_average": 0.31
+      }
+     ]
+    },
+    {
+     "inning": 4,
+     "half_inning": "top",
+     "pa_number": 27,
+     "batter_id": 1956,
+     "result": "Groundout",
+     "runner_on_first": false,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 4,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 97.3,
+       "launch_angle": -9,
+       "expected_batting_average": 0.26
+      }
+     ]
+    },
+    {
+     "inning": 4,
+     "half_inning": "top",
+     "pa_number": 28,
+     "batter_id": 318,
+     "result": "Strikeout",
+     "runner_on_first": false,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 4,
+     "pitches": []
+    },
+    {
+     "inning": 4,
+     "half_inning": "bottom",
+     "pa_number": 29,
+     "batter_id": 4838709,
+     "result": "Walk",
+     "runner_on_first": false,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 4,
+     "pitches": []
+    },
+    {
+     "inning": 4,
+     "half_inning": "bottom",
+     "pa_number": 30,
+     "batter_id": 388,
+     "result": "Forceout",
+     "runner_on_first": true,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 6,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 75.4,
+       "launch_angle": -11,
+       "expected_batting_average": 0.06
+      }
+     ]
+    },
+    {
+     "inning": 4,
+     "half_inning": "bottom",
+     "pa_number": 31,
+     "batter_id": 254,
+     "result": "Strikeout",
+     "runner_on_first": true,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 5,
+     "pitches": []
+    },
+    {
+     "inning": 4,
+     "half_inning": "bottom",
+     "pa_number": 32,
+     "batter_id": 610,
+     "result": "Pop Out",
+     "runner_on_first": true,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 2,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 73,
+       "launch_angle": 82,
+       "expected_batting_average": 0
+      }
+     ]
+    },
+    {
+     "inning": 5,
+     "half_inning": "top",
+     "pa_number": 33,
+     "batter_id": 4838818,
+     "result": "Single",
+     "runner_on_first": false,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 3,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 100.7,
+       "launch_angle": 8,
+       "expected_batting_average": 0.67
+      }
+     ]
+    },
+    {
+     "inning": 5,
+     "half_inning": "top",
+     "pa_number": 34,
+     "batter_id": 297,
+     "result": "Single",
+     "runner_on_first": true,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 3,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 99.2,
+       "launch_angle": -2,
+       "expected_batting_average": 0.38
+      }
+     ]
+    },
+    {
+     "inning": 5,
+     "half_inning": "top",
+     "pa_number": 35,
+     "batter_id": 260,
+     "result": "Sac Bunt",
+     "runner_on_first": true,
+     "runner_on_second": true,
+     "runner_on_third": false,
+     "pitch_count": 1,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 19.5,
+       "launch_angle": 29,
+       "expected_batting_average": 0.3
+      }
+     ]
+    },
+    {
+     "inning": 5,
+     "half_inning": "top",
+     "pa_number": 36,
+     "batter_id": 274,
+     "result": "Sac Fly",
+     "runner_on_first": false,
+     "runner_on_second": true,
+     "runner_on_third": true,
+     "pitch_count": 5,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 90.9,
+       "launch_angle": 52,
+       "expected_batting_average": 0
+      }
+     ]
+    },
+    {
+     "inning": 5,
+     "half_inning": "top",
+     "pa_number": 37,
+     "batter_id": 207,
+     "result": "Walk",
+     "runner_on_first": false,
+     "runner_on_second": true,
+     "runner_on_third": false,
+     "pitch_count": 5,
+     "pitches": []
+    },
+    {
+     "inning": 5,
+     "half_inning": "top",
+     "pa_number": 38,
+     "batter_id": 168,
+     "result": "Single",
+     "runner_on_first": true,
+     "runner_on_second": true,
+     "runner_on_third": false,
+     "pitch_count": 3,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 98,
+       "launch_angle": -7,
+       "expected_batting_average": 0.23
+      }
+     ]
+    },
+    {
+     "inning": 5,
+     "half_inning": "top",
+     "pa_number": 39,
+     "batter_id": 266,
+     "result": "Forceout",
+     "runner_on_first": true,
+     "runner_on_second": true,
+     "runner_on_third": true,
+     "pitch_count": 4,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 63.1,
+       "launch_angle": -28,
+       "expected_batting_average": 0.07
+      }
+     ]
+    },
+    {
+     "inning": 5,
+     "half_inning": "bottom",
+     "pa_number": 40,
+     "batter_id": 403,
+     "result": "Home Run",
+     "runner_on_first": false,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 1,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 98.1,
+       "launch_angle": 28,
+       "expected_batting_average": 0.37
+      }
+     ]
+    },
+    {
+     "inning": 5,
+     "half_inning": "bottom",
+     "pa_number": 41,
+     "batter_id": 492,
+     "result": "Strikeout",
+     "runner_on_first": false,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 8,
+     "pitches": []
+    },
+    {
+     "inning": 5,
+     "half_inning": "bottom",
+     "pa_number": 42,
+     "batter_id": 480,
+     "result": "Flyout",
+     "runner_on_first": false,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 9,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 93.3,
+       "launch_angle": 49,
+       "expected_batting_average": 0
+      }
+     ]
+    },
+    {
+     "inning": 5,
+     "half_inning": "bottom",
+     "pa_number": 43,
+     "batter_id": 412,
+     "result": "Lineout",
+     "runner_on_first": false,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 1,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 108.8,
+       "launch_angle": 17,
+       "expected_batting_average": 0.65
+      }
+     ]
+    },
+    {
+     "inning": 6,
+     "half_inning": "top",
+     "pa_number": 44,
+     "batter_id": 1956,
+     "result": "Walk",
+     "runner_on_first": false,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 4,
+     "pitches": []
+    },
+    {
+     "inning": 6,
+     "half_inning": "top",
+     "pa_number": 45,
+     "batter_id": 318,
+     "result": "Strikeout",
+     "runner_on_first": true,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 5,
+     "pitches": []
+    },
+    {
+     "inning": 6,
+     "half_inning": "top",
+     "pa_number": 46,
+     "batter_id": 4838818,
+     "result": "Single",
+     "runner_on_first": true,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 5,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 82.7,
+       "launch_angle": 9,
+       "expected_batting_average": 0.43
+      }
+     ]
+    },
+    {
+     "inning": 6,
+     "half_inning": "top",
+     "pa_number": 47,
+     "batter_id": 297,
+     "result": "Groundout",
+     "runner_on_first": true,
+     "runner_on_second": true,
+     "runner_on_third": false,
+     "pitch_count": 5,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 71.1,
+       "launch_angle": -1,
+       "expected_batting_average": 0.09
+      }
+     ]
+    },
+    {
+     "inning": 6,
+     "half_inning": "top",
+     "pa_number": 48,
+     "batter_id": 260,
+     "result": "Flyout",
+     "runner_on_first": false,
+     "runner_on_second": true,
+     "runner_on_third": true,
+     "pitch_count": 6,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 89,
+       "launch_angle": 38,
+       "expected_batting_average": 0.01
+      }
+     ]
+    },
+    {
+     "inning": 6,
+     "half_inning": "bottom",
+     "pa_number": 49,
+     "batter_id": 1471,
+     "result": "Strikeout",
+     "runner_on_first": false,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 4,
+     "pitches": []
+    },
+    {
+     "inning": 6,
+     "half_inning": "bottom",
+     "pa_number": 50,
+     "batter_id": 4838709,
+     "result": "Groundout",
+     "runner_on_first": false,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 7,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 85.8,
+       "launch_angle": -3,
+       "expected_batting_average": 0.17
+      }
+     ]
+    },
+    {
+     "inning": 6,
+     "half_inning": "bottom",
+     "pa_number": 51,
+     "batter_id": 388,
+     "result": "Single",
+     "runner_on_first": false,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 2,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 83.6,
+       "launch_angle": 15,
+       "expected_batting_average": 0.95
+      }
+     ]
+    },
+    {
+     "inning": 6,
+     "half_inning": "bottom",
+     "pa_number": 52,
+     "batter_id": 590,
+     "result": "Field Error",
+     "runner_on_first": true,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 9,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 56.8,
+       "launch_angle": 18,
+       "expected_batting_average": 0.14
+      }
+     ]
+    },
+    {
+     "inning": 6,
+     "half_inning": "bottom",
+     "pa_number": 53,
+     "batter_id": 610,
+     "result": "Caught Stealing 2B",
+     "runner_on_first": true,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 2,
+     "pitches": []
+    },
+    {
+     "inning": 7,
+     "half_inning": "top",
+     "pa_number": 54,
+     "batter_id": 274,
+     "result": "Strikeout",
+     "runner_on_first": false,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 3,
+     "pitches": []
+    },
+    {
+     "inning": 7,
+     "half_inning": "top",
+     "pa_number": 55,
+     "batter_id": 207,
+     "result": "Strikeout",
+     "runner_on_first": false,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 4,
+     "pitches": []
+    },
+    {
+     "inning": 7,
+     "half_inning": "top",
+     "pa_number": 56,
+     "batter_id": 168,
+     "result": "Single",
+     "runner_on_first": false,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 1,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 102,
+       "launch_angle": -5,
+       "expected_batting_average": 0.35
+      }
+     ]
+    },
+    {
+     "inning": 7,
+     "half_inning": "top",
+     "pa_number": 57,
+     "batter_id": 266,
+     "result": "Single",
+     "runner_on_first": true,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 1,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 72.7,
+       "launch_angle": 42,
+       "expected_batting_average": 0.29
+      }
+     ]
+    },
+    {
+     "inning": 7,
+     "half_inning": "top",
+     "pa_number": 58,
+     "batter_id": 1956,
+     "result": "Single",
+     "runner_on_first": true,
+     "runner_on_second": false,
+     "runner_on_third": true,
+     "pitch_count": 2,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 107.2,
+       "launch_angle": 10,
+       "expected_batting_average": 0.86
+      }
+     ]
+    },
+    {
+     "inning": 7,
+     "half_inning": "top",
+     "pa_number": 59,
+     "batter_id": 318,
+     "result": "Strikeout",
+     "runner_on_first": true,
+     "runner_on_second": true,
+     "runner_on_third": false,
+     "pitch_count": 4,
+     "pitches": []
+    },
+    {
+     "inning": 7,
+     "half_inning": "bottom",
+     "pa_number": 60,
+     "batter_id": 610,
+     "result": "Groundout",
+     "runner_on_first": false,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 3,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": null,
+       "launch_angle": null,
+       "expected_batting_average": null
+      },
+      {
+       "call_name": "In Play",
+       "exit_velocity": 90.7,
+       "launch_angle": -15,
+       "expected_batting_average": 0.12
+      }
+     ]
+    },
+    {
+     "inning": 7,
+     "half_inning": "bottom",
+     "pa_number": 61,
+     "batter_id": 403,
+     "result": "Single",
+     "runner_on_first": false,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 2,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 101.4,
+       "launch_angle": -8,
+       "expected_batting_average": 0.28
+      }
+     ]
+    },
+    {
+     "inning": 7,
+     "half_inning": "bottom",
+     "pa_number": 62,
+     "batter_id": 492,
+     "result": "Forceout",
+     "runner_on_first": true,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 7,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 96.8,
+       "launch_angle": -32,
+       "expected_batting_average": 0.08
+      }
+     ]
+    },
+    {
+     "inning": 7,
+     "half_inning": "bottom",
+     "pa_number": 63,
+     "batter_id": 480,
+     "result": "Strikeout",
+     "runner_on_first": true,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 6,
+     "pitches": []
+    },
+    {
+     "inning": 8,
+     "half_inning": "top",
+     "pa_number": 64,
+     "batter_id": 4838818,
+     "result": "Lineout",
+     "runner_on_first": false,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 7,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 96.9,
+       "launch_angle": 21,
+       "expected_batting_average": 0.24
+      }
+     ]
+    },
+    {
+     "inning": 8,
+     "half_inning": "top",
+     "pa_number": 65,
+     "batter_id": 297,
+     "result": "Groundout",
+     "runner_on_first": false,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 3,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 68,
+       "launch_angle": -16,
+       "expected_batting_average": 0.06
+      }
+     ]
+    },
+    {
+     "inning": 8,
+     "half_inning": "top",
+     "pa_number": 66,
+     "batter_id": 448,
+     "result": "Single",
+     "runner_on_first": false,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 7,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 83.5,
+       "launch_angle": 3,
+       "expected_batting_average": 0.33
+      }
+     ]
+    },
+    {
+     "inning": 8,
+     "half_inning": "top",
+     "pa_number": 67,
+     "batter_id": 274,
+     "result": "Groundout",
+     "runner_on_first": true,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 2,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 69.7,
+       "launch_angle": -8,
+       "expected_batting_average": 0.07
+      }
+     ]
+    },
+    {
+     "inning": 8,
+     "half_inning": "bottom",
+     "pa_number": 68,
+     "batter_id": 412,
+     "result": "Groundout",
+     "runner_on_first": false,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 3,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 87.5,
+       "launch_angle": -4,
+       "expected_batting_average": 0.15
+      }
+     ]
+    },
+    {
+     "inning": 8,
+     "half_inning": "bottom",
+     "pa_number": 69,
+     "batter_id": 1471,
+     "result": "Groundout",
+     "runner_on_first": false,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 3,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 103.4,
+       "launch_angle": 6,
+       "expected_batting_average": 0.65
+      }
+     ]
+    },
+    {
+     "inning": 8,
+     "half_inning": "bottom",
+     "pa_number": 70,
+     "batter_id": 4838709,
+     "result": "Groundout",
+     "runner_on_first": false,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 1,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 94.8,
+       "launch_angle": -6,
+       "expected_batting_average": 0.22
+      }
+     ]
+    },
+    {
+     "inning": 9,
+     "half_inning": "top",
+     "pa_number": 71,
+     "batter_id": 207,
+     "result": "Strikeout",
+     "runner_on_first": false,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 5,
+     "pitches": []
+    },
+    {
+     "inning": 9,
+     "half_inning": "top",
+     "pa_number": 72,
+     "batter_id": 168,
+     "result": "Walk",
+     "runner_on_first": false,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 9,
+     "pitches": []
+    },
+    {
+     "inning": 9,
+     "half_inning": "top",
+     "pa_number": 73,
+     "batter_id": 266,
+     "result": "Walk",
+     "runner_on_first": true,
+     "runner_on_second": false,
+     "runner_on_third": false,
+     "pitch_count": 6,
+     "pitches": []
+    },
+    {
+     "inning": 9,
+     "half_inning": "top",
+     "pa_number": 74,
+     "batter_id": 1956,
+     "result": "GIDP",
+     "runner_on_first": true,
+     "runner_on_second": true,
+     "runner_on_third": false,
+     "pitch_count": 1,
+     "pitches": [
+      {
+       "call_name": "In Play",
+       "exit_velocity": 107.1,
+       "launch_angle": 7,
+       "expected_batting_average": 0.63
+      }
+     ]
+    }
+   ],
+   "box": {
+    "away": [
+     {
+      "at_bats": 4,
+      "hits": 2,
+      "runs": 0,
+      "bb": 1,
+      "k": 0,
+      "hr": 0,
+      "plate_appearances": 5,
+      "stolen_bases": 0,
+      "caught_stealing": 0,
+      "pitching_outs": null,
+      "pitch_count": null,
+      "hit_by_pitch": 0,
+      "sac_flies": 0,
+      "sac_bunts": 0,
+      "gidp": 1,
+      "left_on_base": 2,
+      "errors": 0,
+      "player_id": 1956
+     },
+     {
+      "at_bats": 4,
+      "hits": 0,
+      "runs": 0,
+      "bb": 1,
+      "k": 4,
+      "hr": 0,
+      "plate_appearances": 5,
+      "stolen_bases": 0,
+      "caught_stealing": 0,
+      "pitching_outs": null,
+      "pitch_count": null,
+      "hit_by_pitch": 0,
+      "sac_flies": 0,
+      "sac_bunts": 0,
+      "gidp": 0,
+      "left_on_base": 1,
+      "errors": 0,
+      "player_id": 207
+     },
+     {
+      "at_bats": 4,
+      "hits": 3,
+      "runs": 2,
+      "bb": 1,
+      "k": 0,
+      "hr": 1,
+      "plate_appearances": 5,
+      "stolen_bases": 0,
+      "caught_stealing": 0,
+      "pitching_outs": null,
+      "pitch_count": null,
+      "hit_by_pitch": 0,
+      "sac_flies": 0,
+      "sac_bunts": 0,
+      "gidp": 0,
+      "left_on_base": 0,
+      "errors": 0,
+      "player_id": 168
+     },
+     {
+      "at_bats": null,
+      "hits": null,
+      "runs": null,
+      "bb": null,
+      "k": null,
+      "hr": null,
+      "plate_appearances": null,
+      "stolen_bases": null,
+      "caught_stealing": null,
+      "pitching_outs": 9,
+      "pitch_count": 52,
+      "hit_by_pitch": null,
+      "sac_flies": null,
+      "sac_bunts": null,
+      "gidp": null,
+      "left_on_base": null,
+      "errors": 0,
+      "player_id": 6133
+     },
+     {
+      "at_bats": 4,
+      "hits": 1,
+      "runs": 0,
+      "bb": 1,
+      "k": 1,
+      "hr": 0,
+      "plate_appearances": 5,
+      "stolen_bases": 0,
+      "caught_stealing": 0,
+      "pitching_outs": null,
+      "pitch_count": null,
+      "hit_by_pitch": 0,
+      "sac_flies": 0,
+      "sac_bunts": 0,
+      "gidp": 0,
+      "left_on_base": 3,
+      "errors": 0,
+      "player_id": 266
+     },
+     {
+      "at_bats": 2,
+      "hits": 1,
+      "runs": 0,
+      "bb": 0,
+      "k": 0,
+      "hr": 0,
+      "plate_appearances": 3,
+      "stolen_bases": 0,
+      "caught_stealing": 0,
+      "pitching_outs": null,
+      "pitch_count": null,
+      "hit_by_pitch": 0,
+      "sac_flies": 0,
+      "sac_bunts": 1,
+      "gidp": 0,
+      "left_on_base": 2,
+      "errors": 0,
+      "player_id": 260
+     },
+     {
+      "at_bats": 4,
+      "hits": 0,
+      "runs": 0,
+      "bb": 0,
+      "k": 3,
+      "hr": 0,
+      "plate_appearances": 4,
+      "stolen_bases": 0,
+      "caught_stealing": 0,
+      "pitching_outs": null,
+      "pitch_count": null,
+      "hit_by_pitch": 0,
+      "sac_flies": 0,
+      "sac_bunts": 0,
+      "gidp": 0,
+      "left_on_base": 4,
+      "errors": 0,
+      "player_id": 318
+     },
+     {
+      "at_bats": 4,
+      "hits": 1,
+      "runs": 0,
+      "bb": 0,
+      "k": 0,
+      "hr": 0,
+      "plate_appearances": 4,
+      "stolen_bases": 0,
+      "caught_stealing": 0,
+      "pitching_outs": null,
+      "pitch_count": null,
+      "hit_by_pitch": 0,
+      "sac_flies": 0,
+      "sac_bunts": 0,
+      "gidp": 0,
+      "left_on_base": 2,
+      "errors": 0,
+      "player_id": 297
+     },
+     {
+      "at_bats": 4,
+      "hits": 0,
+      "runs": 0,
+      "bb": 0,
+      "k": 1,
+      "hr": 0,
+      "plate_appearances": 5,
+      "stolen_bases": 0,
+      "caught_stealing": 0,
+      "pitching_outs": null,
+      "pitch_count": null,
+      "hit_by_pitch": 0,
+      "sac_flies": 1,
+      "sac_bunts": 0,
+      "gidp": 0,
+      "left_on_base": 2,
+      "errors": 0,
+      "player_id": 274
+     },
+     {
+      "at_bats": 4,
+      "hits": 2,
+      "runs": 1,
+      "bb": 0,
+      "k": 0,
+      "hr": 0,
+      "plate_appearances": 4,
+      "stolen_bases": 0,
+      "caught_stealing": 0,
+      "pitching_outs": null,
+      "pitch_count": null,
+      "hit_by_pitch": 0,
+      "sac_flies": 0,
+      "sac_bunts": 0,
+      "gidp": 0,
+      "left_on_base": 1,
+      "errors": 1,
+      "player_id": 4838818
+     },
+     {
+      "at_bats": null,
+      "hits": null,
+      "runs": null,
+      "bb": null,
+      "k": null,
+      "hr": null,
+      "plate_appearances": null,
+      "stolen_bases": null,
+      "caught_stealing": null,
+      "pitching_outs": 5,
+      "pitch_count": 30,
+      "hit_by_pitch": null,
+      "sac_flies": null,
+      "sac_bunts": null,
+      "gidp": null,
+      "left_on_base": null,
+      "errors": 0,
+      "player_id": 312
+     },
+     {
+      "at_bats": null,
+      "hits": null,
+      "runs": null,
+      "bb": null,
+      "k": null,
+      "hr": null,
+      "plate_appearances": null,
+      "stolen_bases": null,
+      "caught_stealing": null,
+      "pitching_outs": 3,
+      "pitch_count": 14,
+      "hit_by_pitch": null,
+      "sac_flies": null,
+      "sac_bunts": null,
+      "gidp": null,
+      "left_on_base": null,
+      "errors": 0,
+      "player_id": 63
+     },
+     {
+      "at_bats": null,
+      "hits": null,
+      "runs": null,
+      "bb": null,
+      "k": null,
+      "hr": null,
+      "plate_appearances": null,
+      "stolen_bases": null,
+      "caught_stealing": null,
+      "pitching_outs": 4,
+      "pitch_count": 29,
+      "hit_by_pitch": null,
+      "sac_flies": null,
+      "sac_bunts": null,
+      "gidp": null,
+      "left_on_base": null,
+      "errors": 0,
+      "player_id": 1056
+     },
+     {
+      "at_bats": 1,
+      "hits": 1,
+      "runs": 0,
+      "bb": 0,
+      "k": 0,
+      "hr": 0,
+      "plate_appearances": 1,
+      "stolen_bases": 0,
+      "caught_stealing": 0,
+      "pitching_outs": null,
+      "pitch_count": null,
+      "hit_by_pitch": 0,
+      "sac_flies": 0,
+      "sac_bunts": 0,
+      "gidp": 0,
+      "left_on_base": 0,
+      "errors": 0,
+      "player_id": 448
+     },
+     {
+      "at_bats": null,
+      "hits": null,
+      "runs": null,
+      "bb": null,
+      "k": null,
+      "hr": null,
+      "plate_appearances": null,
+      "stolen_bases": null,
+      "caught_stealing": null,
+      "pitching_outs": 3,
+      "pitch_count": 7,
+      "hit_by_pitch": null,
+      "sac_flies": null,
+      "sac_bunts": null,
+      "gidp": null,
+      "left_on_base": null,
+      "errors": 0,
+      "player_id": 135
+     },
+     {
+      "at_bats": 0,
+      "hits": 0,
+      "runs": 0,
+      "bb": 0,
+      "k": 0,
+      "hr": 0,
+      "plate_appearances": null,
+      "stolen_bases": null,
+      "caught_stealing": null,
+      "pitching_outs": null,
+      "pitch_count": null,
+      "hit_by_pitch": null,
+      "sac_flies": null,
+      "sac_bunts": null,
+      "gidp": null,
+      "left_on_base": null,
+      "errors": null,
+      "player_id": 4838816
+     }
+    ],
+    "home": [
+     {
+      "at_bats": 3,
+      "hits": 1,
+      "runs": 0,
+      "bb": 1,
+      "k": 0,
+      "hr": 0,
+      "plate_appearances": 4,
+      "stolen_bases": 0,
+      "caught_stealing": 0,
+      "pitching_outs": null,
+      "pitch_count": null,
+      "hit_by_pitch": 0,
+      "sac_flies": 0,
+      "sac_bunts": 0,
+      "gidp": 0,
+      "left_on_base": 0,
+      "errors": 0,
+      "player_id": 412
+     },
+     {
+      "at_bats": 3,
+      "hits": 1,
+      "runs": 1,
+      "bb": 0,
+      "k": 1,
+      "hr": 0,
+      "plate_appearances": 3,
+      "stolen_bases": 0,
+      "caught_stealing": 0,
+      "pitching_outs": null,
+      "pitch_count": null,
+      "hit_by_pitch": 0,
+      "sac_flies": 0,
+      "sac_bunts": 0,
+      "gidp": 0,
+      "left_on_base": 1,
+      "errors": 0,
+      "player_id": 388
+     },
+     {
+      "at_bats": 4,
+      "hits": 0,
+      "runs": 0,
+      "bb": 0,
+      "k": 1,
+      "hr": 0,
+      "plate_appearances": 4,
+      "stolen_bases": 0,
+      "caught_stealing": 0,
+      "pitching_outs": null,
+      "pitch_count": null,
+      "hit_by_pitch": 0,
+      "sac_flies": 0,
+      "sac_bunts": 0,
+      "gidp": 0,
+      "left_on_base": 2,
+      "errors": 0,
+      "player_id": 1471
+     },
+     {
+      "at_bats": 4,
+      "hits": 0,
+      "runs": 0,
+      "bb": 0,
+      "k": 1,
+      "hr": 0,
+      "plate_appearances": 4,
+      "stolen_bases": 0,
+      "caught_stealing": 0,
+      "pitching_outs": null,
+      "pitch_count": null,
+      "hit_by_pitch": 0,
+      "sac_flies": 0,
+      "sac_bunts": 0,
+      "gidp": 0,
+      "left_on_base": 1,
+      "errors": 0,
+      "player_id": 492
+     },
+     {
+      "at_bats": null,
+      "hits": null,
+      "runs": null,
+      "bb": null,
+      "k": null,
+      "hr": null,
+      "plate_appearances": null,
+      "stolen_bases": null,
+      "caught_stealing": null,
+      "pitching_outs": 13,
+      "pitch_count": 69,
+      "hit_by_pitch": null,
+      "sac_flies": null,
+      "sac_bunts": null,
+      "gidp": null,
+      "left_on_base": null,
+      "errors": 0,
+      "player_id": 5161
+     },
+     {
+      "at_bats": 2,
+      "hits": 2,
+      "runs": 1,
+      "bb": 0,
+      "k": 0,
+      "hr": 1,
+      "plate_appearances": 3,
+      "stolen_bases": 0,
+      "caught_stealing": 0,
+      "pitching_outs": null,
+      "pitch_count": null,
+      "hit_by_pitch": 0,
+      "sac_flies": 0,
+      "sac_bunts": 1,
+      "gidp": 0,
+      "left_on_base": 0,
+      "errors": 0,
+      "player_id": 403
+     },
+     {
+      "at_bats": 3,
+      "hits": 1,
+      "runs": 1,
+      "bb": 0,
+      "k": 0,
+      "hr": 0,
+      "plate_appearances": 3,
+      "stolen_bases": 1,
+      "caught_stealing": 0,
+      "pitching_outs": null,
+      "pitch_count": null,
+      "hit_by_pitch": 0,
+      "sac_flies": 0,
+      "sac_bunts": 0,
+      "gidp": 0,
+      "left_on_base": 1,
+      "errors": 0,
+      "player_id": 610
+     },
+     {
+      "at_bats": 4,
+      "hits": 1,
+      "runs": 1,
+      "bb": 0,
+      "k": 2,
+      "hr": 0,
+      "plate_appearances": 4,
+      "stolen_bases": 1,
+      "caught_stealing": 0,
+      "pitching_outs": null,
+      "pitch_count": null,
+      "hit_by_pitch": 0,
+      "sac_flies": 0,
+      "sac_bunts": 0,
+      "gidp": 0,
+      "left_on_base": 1,
+      "errors": 0,
+      "player_id": 480
+     },
+     {
+      "at_bats": 2,
+      "hits": 0,
+      "runs": 0,
+      "bb": 0,
+      "k": 1,
+      "hr": 0,
+      "plate_appearances": 2,
+      "stolen_bases": 0,
+      "caught_stealing": 0,
+      "pitching_outs": null,
+      "pitch_count": null,
+      "hit_by_pitch": 0,
+      "sac_flies": 0,
+      "sac_bunts": 0,
+      "gidp": 0,
+      "left_on_base": 1,
+      "errors": 0,
+      "player_id": 254
+     },
+     {
+      "at_bats": 3,
+      "hits": 0,
+      "runs": 0,
+      "bb": 1,
+      "k": 1,
+      "hr": 0,
+      "plate_appearances": 4,
+      "stolen_bases": 0,
+      "caught_stealing": 0,
+      "pitching_outs": null,
+      "pitch_count": null,
+      "hit_by_pitch": 0,
+      "sac_flies": 0,
+      "sac_bunts": 0,
+      "gidp": 0,
+      "left_on_base": 0,
+      "errors": 0,
+      "player_id": 4838709
+     },
+     {
+      "at_bats": null,
+      "hits": null,
+      "runs": null,
+      "bb": null,
+      "k": null,
+      "hr": null,
+      "plate_appearances": null,
+      "stolen_bases": null,
+      "caught_stealing": null,
+      "pitching_outs": 1,
+      "pitch_count": 13,
+      "hit_by_pitch": null,
+      "sac_flies": null,
+      "sac_bunts": null,
+      "gidp": null,
+      "left_on_base": null,
+      "errors": 0,
+      "player_id": 215
+     },
+     {
+      "at_bats": null,
+      "hits": null,
+      "runs": null,
+      "bb": null,
+      "k": null,
+      "hr": null,
+      "plate_appearances": null,
+      "stolen_bases": null,
+      "caught_stealing": null,
+      "pitching_outs": 3,
+      "pitch_count": 23,
+      "hit_by_pitch": null,
+      "sac_flies": null,
+      "sac_bunts": null,
+      "gidp": null,
+      "left_on_base": null,
+      "errors": 0,
+      "player_id": 303
+     },
+     {
+      "at_bats": null,
+      "hits": null,
+      "runs": null,
+      "bb": null,
+      "k": null,
+      "hr": null,
+      "plate_appearances": null,
+      "stolen_bases": null,
+      "caught_stealing": null,
+      "pitching_outs": 4,
+      "pitch_count": 21,
+      "hit_by_pitch": null,
+      "sac_flies": null,
+      "sac_bunts": null,
+      "gidp": null,
+      "left_on_base": null,
+      "errors": 0,
+      "player_id": 1441293
+     },
+     {
+      "at_bats": 1,
+      "hits": 0,
+      "runs": 0,
+      "bb": 0,
+      "k": 0,
+      "hr": 0,
+      "plate_appearances": 1,
+      "stolen_bases": 0,
+      "caught_stealing": 0,
+      "pitching_outs": null,
+      "pitch_count": null,
+      "hit_by_pitch": 0,
+      "sac_flies": 0,
+      "sac_bunts": 0,
+      "gidp": 0,
+      "left_on_base": 0,
+      "errors": 0,
+      "player_id": 590
+     },
+     {
+      "at_bats": 0,
+      "hits": 0,
+      "runs": 0,
+      "bb": 0,
+      "k": 0,
+      "hr": 0,
+      "plate_appearances": null,
+      "stolen_bases": null,
+      "caught_stealing": null,
+      "pitching_outs": null,
+      "pitch_count": null,
+      "hit_by_pitch": null,
+      "sac_flies": null,
+      "sac_bunts": null,
+      "gidp": null,
+      "left_on_base": null,
+      "errors": null,
+      "player_id": 4839022
+     },
+     {
+      "at_bats": null,
+      "hits": null,
+      "runs": null,
+      "bb": null,
+      "k": null,
+      "hr": null,
+      "plate_appearances": null,
+      "stolen_bases": null,
+      "caught_stealing": null,
+      "pitching_outs": 6,
+      "pitch_count": 40,
+      "hit_by_pitch": null,
+      "sac_flies": null,
+      "sac_bunts": null,
+      "gidp": null,
+      "left_on_base": null,
+      "errors": 0,
+      "player_id": 291
+     }
+    ]
+   },
+   "plays": [
+    {
+     "order": 424405882,
+     "inning": 1,
+     "inning_type": "Top",
+     "batter_id": null,
+     "type": "Start Inning",
+     "text": "Top of the 1st inning"
+    },
+    {
+     "order": 424405883,
+     "inning": 1,
+     "inning_type": "Top",
+     "batter_id": 274,
+     "type": "Start Batter/Pitcher",
+     "text": "Nick Pivetta pitches to Jackson Chourio"
+    },
+    {
+     "order": 424405900,
+     "inning": 1,
+     "inning_type": "Top",
+     "batter_id": 274,
+     "type": "Play Result",
+     "text": "Chourio flied out to center."
+    },
+    {
+     "order": 424405901,
+     "inning": 1,
+     "inning_type": "Top",
+     "batter_id": 274,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424405902,
+     "inning": 1,
+     "inning_type": "Top",
+     "batter_id": 207,
+     "type": "Start Batter/Pitcher",
+     "text": "Nick Pivetta pitches to Jake Bauers"
+    },
+    {
+     "order": 424405969,
+     "inning": 1,
+     "inning_type": "Top",
+     "batter_id": 207,
+     "type": "Play Result",
+     "text": "Bauers struck out looking."
+    },
+    {
+     "order": 424405970,
+     "inning": 1,
+     "inning_type": "Top",
+     "batter_id": 207,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424405971,
+     "inning": 1,
+     "inning_type": "Top",
+     "batter_id": 168,
+     "type": "Start Batter/Pitcher",
+     "text": "Nick Pivetta pitches to William Contreras"
+    },
+    {
+     "order": 424405998,
+     "inning": 1,
+     "inning_type": "Top",
+     "batter_id": 168,
+     "type": "Play Result",
+     "text": "Contreras flied out to center."
+    },
+    {
+     "order": 424405999,
+     "inning": 1,
+     "inning_type": "Top",
+     "batter_id": 168,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424406000,
+     "inning": 1,
+     "inning_type": "Mid",
+     "batter_id": null,
+     "type": "End Inning",
+     "text": "Middle of the 1st inning"
+    },
+    {
+     "order": 424406085,
+     "inning": 1,
+     "inning_type": "Bottom",
+     "batter_id": null,
+     "type": "Start Inning",
+     "text": "Bottom of the 1st inning"
+    },
+    {
+     "order": 424406086,
+     "inning": 1,
+     "inning_type": "Bottom",
+     "batter_id": 492,
+     "type": "Start Batter/Pitcher",
+     "text": "Dustin May pitches to Fernando Tatis Jr."
+    },
+    {
+     "order": 424406120,
+     "inning": 1,
+     "inning_type": "Bottom",
+     "batter_id": 492,
+     "type": "Play Result",
+     "text": "Tatis Jr. grounded out to shortstop."
+    },
+    {
+     "order": 424406121,
+     "inning": 1,
+     "inning_type": "Bottom",
+     "batter_id": 492,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424406122,
+     "inning": 1,
+     "inning_type": "Bottom",
+     "batter_id": 480,
+     "type": "Start Batter/Pitcher",
+     "text": "Dustin May pitches to Jackson Merrill"
+    },
+    {
+     "order": 424406205,
+     "inning": 1,
+     "inning_type": "Bottom",
+     "batter_id": 480,
+     "type": "Play Result",
+     "text": "Merrill struck out swinging."
+    },
+    {
+     "order": 424406206,
+     "inning": 1,
+     "inning_type": "Bottom",
+     "batter_id": 480,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424406207,
+     "inning": 1,
+     "inning_type": "Bottom",
+     "batter_id": 412,
+     "type": "Start Batter/Pitcher",
+     "text": "Dustin May pitches to Manny Machado"
+    },
+    {
+     "order": 424406305,
+     "inning": 1,
+     "inning_type": "Bottom",
+     "batter_id": 412,
+     "type": "Play Result",
+     "text": "Machado walked."
+    },
+    {
+     "order": 424406306,
+     "inning": 1,
+     "inning_type": "Bottom",
+     "batter_id": 412,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424406307,
+     "inning": 1,
+     "inning_type": "Bottom",
+     "batter_id": 1471,
+     "type": "Start Batter/Pitcher",
+     "text": "Dustin May pitches to Ty France"
+    },
+    {
+     "order": 424406361,
+     "inning": 1,
+     "inning_type": "Bottom",
+     "batter_id": 1471,
+     "type": "Play Result",
+     "text": "France grounded out to third."
+    },
+    {
+     "order": 424406362,
+     "inning": 1,
+     "inning_type": "Bottom",
+     "batter_id": 1471,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424406363,
+     "inning": 1,
+     "inning_type": "End",
+     "batter_id": null,
+     "type": "End Inning",
+     "text": "End of the 1st inning"
+    },
+    {
+     "order": 424406532,
+     "inning": 2,
+     "inning_type": "Top",
+     "batter_id": null,
+     "type": "Start Inning",
+     "text": "Top of the 2nd inning"
+    },
+    {
+     "order": 424406533,
+     "inning": 2,
+     "inning_type": "Top",
+     "batter_id": 266,
+     "type": "Start Batter/Pitcher",
+     "text": "Nick Pivetta pitches to Brice Turang"
+    },
+    {
+     "order": 424408394,
+     "inning": 2,
+     "inning_type": "Top",
+     "batter_id": 266,
+     "type": "Play Result",
+     "text": "Turang struck out swinging."
+    },
+    {
+     "order": 424408395,
+     "inning": 2,
+     "inning_type": "Top",
+     "batter_id": 266,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424408396,
+     "inning": 2,
+     "inning_type": "Top",
+     "batter_id": 1956,
+     "type": "Start Batter/Pitcher",
+     "text": "Nick Pivetta pitches to Christian Yelich"
+    },
+    {
+     "order": 424408471,
+     "inning": 2,
+     "inning_type": "Top",
+     "batter_id": 1956,
+     "type": "Play Result",
+     "text": "Yelich singled to center."
+    },
+    {
+     "order": 424408472,
+     "inning": 2,
+     "inning_type": "Top",
+     "batter_id": 1956,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424408473,
+     "inning": 2,
+     "inning_type": "Top",
+     "batter_id": 318,
+     "type": "Start Batter/Pitcher",
+     "text": "Nick Pivetta pitches to Garrett Mitchell"
+    },
+    {
+     "order": 424408552,
+     "inning": 2,
+     "inning_type": "Top",
+     "batter_id": 318,
+     "type": "Play Result",
+     "text": "Mitchell flied out to left."
+    },
+    {
+     "order": 424408553,
+     "inning": 2,
+     "inning_type": "Top",
+     "batter_id": 318,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424408554,
+     "inning": 2,
+     "inning_type": "Top",
+     "batter_id": 4838818,
+     "type": "Start Batter/Pitcher",
+     "text": "Nick Pivetta pitches to Cooper Pratt"
+    },
+    {
+     "order": 424408721,
+     "inning": 2,
+     "inning_type": "Top",
+     "batter_id": 4838818,
+     "type": "Play Result",
+     "text": "Pratt grounded into fielder's choice to shortstop, Yelich out at second."
+    },
+    {
+     "order": 424408722,
+     "inning": 2,
+     "inning_type": "Top",
+     "batter_id": 4838818,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424408723,
+     "inning": 2,
+     "inning_type": "Mid",
+     "batter_id": null,
+     "type": "End Inning",
+     "text": "Middle of the 2nd inning"
+    },
+    {
+     "order": 424408985,
+     "inning": 2,
+     "inning_type": "Bottom",
+     "batter_id": null,
+     "type": "Start Inning",
+     "text": "Bottom of the 2nd inning"
+    },
+    {
+     "order": 424408986,
+     "inning": 2,
+     "inning_type": "Bottom",
+     "batter_id": 4838709,
+     "type": "Start Batter/Pitcher",
+     "text": "Dustin May pitches to Ethan Salas"
+    },
+    {
+     "order": 424409178,
+     "inning": 2,
+     "inning_type": "Bottom",
+     "batter_id": 4838709,
+     "type": "Play Result",
+     "text": "Salas struck out swinging."
+    },
+    {
+     "order": 424409179,
+     "inning": 2,
+     "inning_type": "Bottom",
+     "batter_id": 4838709,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424409180,
+     "inning": 2,
+     "inning_type": "Bottom",
+     "batter_id": 388,
+     "type": "Start Batter/Pitcher",
+     "text": "Dustin May pitches to Xander Bogaerts"
+    },
+    {
+     "order": 424409285,
+     "inning": 2,
+     "inning_type": "Bottom",
+     "batter_id": 388,
+     "type": "Play Result",
+     "text": "Bogaerts struck out looking."
+    },
+    {
+     "order": 424409286,
+     "inning": 2,
+     "inning_type": "Bottom",
+     "batter_id": 388,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424409287,
+     "inning": 2,
+     "inning_type": "Bottom",
+     "batter_id": 254,
+     "type": "Start Batter/Pitcher",
+     "text": "Dustin May pitches to Dustin Harris"
+    },
+    {
+     "order": 424409728,
+     "inning": 2,
+     "inning_type": "Bottom",
+     "batter_id": 254,
+     "type": "Play Result",
+     "text": "Harris flied out to third."
+    },
+    {
+     "order": 424409729,
+     "inning": 2,
+     "inning_type": "Bottom",
+     "batter_id": 254,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424409730,
+     "inning": 2,
+     "inning_type": "End",
+     "batter_id": null,
+     "type": "End Inning",
+     "text": "End of the 2nd inning"
+    },
+    {
+     "order": 424409961,
+     "inning": 3,
+     "inning_type": "Top",
+     "batter_id": null,
+     "type": "Start Inning",
+     "text": "Top of the 3rd inning"
+    },
+    {
+     "order": 424409962,
+     "inning": 3,
+     "inning_type": "Top",
+     "batter_id": 297,
+     "type": "Start Batter/Pitcher",
+     "text": "Nick Pivetta pitches to Sal Frelick"
+    },
+    {
+     "order": 424410082,
+     "inning": 3,
+     "inning_type": "Top",
+     "batter_id": 297,
+     "type": "Play Result",
+     "text": "Frelick lined out to center."
+    },
+    {
+     "order": 424410083,
+     "inning": 3,
+     "inning_type": "Top",
+     "batter_id": 297,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424410084,
+     "inning": 3,
+     "inning_type": "Top",
+     "batter_id": 260,
+     "type": "Start Batter/Pitcher",
+     "text": "Nick Pivetta pitches to Joey Ortiz"
+    },
+    {
+     "order": 424410336,
+     "inning": 3,
+     "inning_type": "Top",
+     "batter_id": 260,
+     "type": "Play Result",
+     "text": "Ortiz singled to center."
+    },
+    {
+     "order": 424410337,
+     "inning": 3,
+     "inning_type": "Top",
+     "batter_id": 260,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424410338,
+     "inning": 3,
+     "inning_type": "Top",
+     "batter_id": 274,
+     "type": "Start Batter/Pitcher",
+     "text": "Nick Pivetta pitches to Jackson Chourio"
+    },
+    {
+     "order": 424410470,
+     "inning": 3,
+     "inning_type": "Top",
+     "batter_id": 274,
+     "type": "Play Result",
+     "text": "Chourio flied out to left."
+    },
+    {
+     "order": 424410471,
+     "inning": 3,
+     "inning_type": "Top",
+     "batter_id": 274,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424410605,
+     "inning": 3,
+     "inning_type": "Top",
+     "batter_id": 207,
+     "type": "Start Batter/Pitcher",
+     "text": "Nick Pivetta pitches to Jake Bauers"
+    },
+    {
+     "order": 424410609,
+     "inning": 3,
+     "inning_type": "Top",
+     "batter_id": 207,
+     "type": "Play Result",
+     "text": "Bauers struck out looking."
+    },
+    {
+     "order": 424410610,
+     "inning": 3,
+     "inning_type": "Top",
+     "batter_id": 207,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424410611,
+     "inning": 3,
+     "inning_type": "Mid",
+     "batter_id": null,
+     "type": "End Inning",
+     "text": "Middle of the 3rd inning"
+    },
+    {
+     "order": 424411032,
+     "inning": 3,
+     "inning_type": "Bottom",
+     "batter_id": null,
+     "type": "Start Inning",
+     "text": "Bottom of the 3rd inning"
+    },
+    {
+     "order": 424411033,
+     "inning": 3,
+     "inning_type": "Bottom",
+     "batter_id": 610,
+     "type": "Start Batter/Pitcher",
+     "text": "Dustin May pitches to Samad Taylor"
+    },
+    {
+     "order": 424411326,
+     "inning": 3,
+     "inning_type": "Bottom",
+     "batter_id": 610,
+     "type": "Play Result",
+     "text": "Taylor singled to center."
+    },
+    {
+     "order": 424411327,
+     "inning": 3,
+     "inning_type": "Bottom",
+     "batter_id": 610,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424411328,
+     "inning": 3,
+     "inning_type": "Bottom",
+     "batter_id": 403,
+     "type": "Start Batter/Pitcher",
+     "text": "Dustin May pitches to Jake Cronenworth"
+    },
+    {
+     "order": 424411330,
+     "inning": 3,
+     "inning_type": "Bottom",
+     "batter_id": null,
+     "type": "Stolen Base",
+     "text": "Taylor stole second."
+    },
+    {
+     "order": 424411331,
+     "inning": 3,
+     "inning_type": "Bottom",
+     "batter_id": null,
+     "type": "Play Result",
+     "text": "Taylor stole second."
+    },
+    {
+     "order": 424411638,
+     "inning": 3,
+     "inning_type": "Bottom",
+     "batter_id": 403,
+     "type": "Sacrifice",
+     "text": null
+    },
+    {
+     "order": 424411639,
+     "inning": 3,
+     "inning_type": "Bottom",
+     "batter_id": 403,
+     "type": "Play Result",
+     "text": "Cronenworth hit sacrifice bunt to third, Taylor to third."
+    },
+    {
+     "order": 424411640,
+     "inning": 3,
+     "inning_type": "Bottom",
+     "batter_id": 403,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424411641,
+     "inning": 3,
+     "inning_type": "Bottom",
+     "batter_id": 492,
+     "type": "Start Batter/Pitcher",
+     "text": "Dustin May pitches to Fernando Tatis Jr."
+    },
+    {
+     "order": 424411804,
+     "inning": 3,
+     "inning_type": "Bottom",
+     "batter_id": 492,
+     "type": "Play Result",
+     "text": "Tatis Jr. grounded out to shortstop, Taylor scored."
+    },
+    {
+     "order": 424411805,
+     "inning": 3,
+     "inning_type": "Bottom",
+     "batter_id": 492,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424411806,
+     "inning": 3,
+     "inning_type": "Bottom",
+     "batter_id": 480,
+     "type": "Start Batter/Pitcher",
+     "text": "Dustin May pitches to Jackson Merrill"
+    },
+    {
+     "order": 424411971,
+     "inning": 3,
+     "inning_type": "Bottom",
+     "batter_id": 480,
+     "type": "Play Result",
+     "text": "Merrill singled to center."
+    },
+    {
+     "order": 424411972,
+     "inning": 3,
+     "inning_type": "Bottom",
+     "batter_id": 480,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424411973,
+     "inning": 3,
+     "inning_type": "Bottom",
+     "batter_id": 412,
+     "type": "Start Batter/Pitcher",
+     "text": "Dustin May pitches to Manny Machado"
+    },
+    {
+     "order": 424412144,
+     "inning": 3,
+     "inning_type": "Bottom",
+     "batter_id": null,
+     "type": "Stolen Base",
+     "text": "Merrill stole second."
+    },
+    {
+     "order": 424412145,
+     "inning": 3,
+     "inning_type": "Bottom",
+     "batter_id": null,
+     "type": "Play Result",
+     "text": "Merrill stole second."
+    },
+    {
+     "order": 424412318,
+     "inning": 3,
+     "inning_type": "Bottom",
+     "batter_id": 412,
+     "type": "Play Result",
+     "text": "Machado singled to left, Merrill scored."
+    },
+    {
+     "order": 424412319,
+     "inning": 3,
+     "inning_type": "Bottom",
+     "batter_id": 412,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424412320,
+     "inning": 3,
+     "inning_type": "Bottom",
+     "batter_id": 1471,
+     "type": "Start Batter/Pitcher",
+     "text": "Dustin May pitches to Ty France"
+    },
+    {
+     "order": 424412499,
+     "inning": 3,
+     "inning_type": "Bottom",
+     "batter_id": 1471,
+     "type": "Play Result",
+     "text": "France flied out to right."
+    },
+    {
+     "order": 424412500,
+     "inning": 3,
+     "inning_type": "Bottom",
+     "batter_id": 1471,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424412501,
+     "inning": 3,
+     "inning_type": "End",
+     "batter_id": null,
+     "type": "End Inning",
+     "text": "End of the 3rd inning"
+    },
+    {
+     "order": 424413042,
+     "inning": 4,
+     "inning_type": "Top",
+     "batter_id": null,
+     "type": "Start Inning",
+     "text": "Top of the 4th inning"
+    },
+    {
+     "order": 424413043,
+     "inning": 4,
+     "inning_type": "Top",
+     "batter_id": 168,
+     "type": "Start Batter/Pitcher",
+     "text": "Nick Pivetta pitches to William Contreras"
+    },
+    {
+     "order": 424413234,
+     "inning": 4,
+     "inning_type": "Top",
+     "batter_id": 168,
+     "type": "Play Result",
+     "text": "Contreras homered to left (365 feet)."
+    },
+    {
+     "order": 424413235,
+     "inning": 4,
+     "inning_type": "Top",
+     "batter_id": 168,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424413425,
+     "inning": 4,
+     "inning_type": "Top",
+     "batter_id": 266,
+     "type": "Start Batter/Pitcher",
+     "text": "Nick Pivetta pitches to Brice Turang"
+    },
+    {
+     "order": 424413621,
+     "inning": 4,
+     "inning_type": "Top",
+     "batter_id": 266,
+     "type": "Play Result",
+     "text": "Turang grounded out to first."
+    },
+    {
+     "order": 424413622,
+     "inning": 4,
+     "inning_type": "Top",
+     "batter_id": 266,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424413819,
+     "inning": 4,
+     "inning_type": "Top",
+     "batter_id": 1956,
+     "type": "Start Batter/Pitcher",
+     "text": "Nick Pivetta pitches to Christian Yelich"
+    },
+    {
+     "order": 424414023,
+     "inning": 4,
+     "inning_type": "Top",
+     "batter_id": 1956,
+     "type": "Play Result",
+     "text": "Yelich grounded out to second."
+    },
+    {
+     "order": 424414024,
+     "inning": 4,
+     "inning_type": "Top",
+     "batter_id": 1956,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424414228,
+     "inning": 4,
+     "inning_type": "Top",
+     "batter_id": 318,
+     "type": "Start Batter/Pitcher",
+     "text": "Nick Pivetta pitches to Garrett Mitchell"
+    },
+    {
+     "order": 424414440,
+     "inning": 4,
+     "inning_type": "Top",
+     "batter_id": 318,
+     "type": "Play Result",
+     "text": "Mitchell struck out looking."
+    },
+    {
+     "order": 424414441,
+     "inning": 4,
+     "inning_type": "Top",
+     "batter_id": 318,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424414442,
+     "inning": 4,
+     "inning_type": "Mid",
+     "batter_id": null,
+     "type": "End Inning",
+     "text": "Middle of the 4th inning"
+    },
+    {
+     "order": 424415076,
+     "inning": 4,
+     "inning_type": "Bottom",
+     "batter_id": null,
+     "type": "Start Inning",
+     "text": "Bottom of the 4th inning"
+    },
+    {
+     "order": 424415077,
+     "inning": 4,
+     "inning_type": "Bottom",
+     "batter_id": 4838709,
+     "type": "Start Batter/Pitcher",
+     "text": "Dustin May pitches to Ethan Salas"
+    },
+    {
+     "order": 424415298,
+     "inning": 4,
+     "inning_type": "Bottom",
+     "batter_id": 4838709,
+     "type": "Play Result",
+     "text": "Salas walked."
+    },
+    {
+     "order": 424415299,
+     "inning": 4,
+     "inning_type": "Bottom",
+     "batter_id": 4838709,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424415519,
+     "inning": 4,
+     "inning_type": "Bottom",
+     "batter_id": 388,
+     "type": "Start Batter/Pitcher",
+     "text": "JoJo Romero pitches to Xander Bogaerts"
+    },
+    {
+     "order": 424415740,
+     "inning": 4,
+     "inning_type": "Bottom",
+     "batter_id": null,
+     "type": "Play Result",
+     "text": "Romero relieved May"
+    },
+    {
+     "order": 424416642,
+     "inning": 4,
+     "inning_type": "Bottom",
+     "batter_id": 388,
+     "type": "Play Result",
+     "text": "Bogaerts grounded into fielder's choice to shortstop, Salas out at second."
+    },
+    {
+     "order": 424416643,
+     "inning": 4,
+     "inning_type": "Bottom",
+     "batter_id": 388,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424416873,
+     "inning": 4,
+     "inning_type": "Bottom",
+     "batter_id": 254,
+     "type": "Start Batter/Pitcher",
+     "text": "JoJo Romero pitches to Dustin Harris"
+    },
+    {
+     "order": 424417346,
+     "inning": 4,
+     "inning_type": "Bottom",
+     "batter_id": 254,
+     "type": "Play Result",
+     "text": "Harris struck out looking."
+    },
+    {
+     "order": 424417347,
+     "inning": 4,
+     "inning_type": "Bottom",
+     "batter_id": 254,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424417348,
+     "inning": 4,
+     "inning_type": "Bottom",
+     "batter_id": 610,
+     "type": "Start Batter/Pitcher",
+     "text": "JoJo Romero pitches to Samad Taylor"
+    },
+    {
+     "order": 424417590,
+     "inning": 4,
+     "inning_type": "Bottom",
+     "batter_id": 610,
+     "type": "Play Result",
+     "text": "Taylor fouled out to first."
+    },
+    {
+     "order": 424417591,
+     "inning": 4,
+     "inning_type": "Bottom",
+     "batter_id": 610,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424417592,
+     "inning": 4,
+     "inning_type": "End",
+     "batter_id": null,
+     "type": "End Inning",
+     "text": "End of the 4th inning"
+    },
+    {
+     "order": 424419982,
+     "inning": 5,
+     "inning_type": "Top",
+     "batter_id": null,
+     "type": "Start Inning",
+     "text": "Top of the 5th inning"
+    },
+    {
+     "order": 424419983,
+     "inning": 5,
+     "inning_type": "Top",
+     "batter_id": 4838818,
+     "type": "Start Batter/Pitcher",
+     "text": "Nick Pivetta pitches to Cooper Pratt"
+    },
+    {
+     "order": 424420234,
+     "inning": 5,
+     "inning_type": "Top",
+     "batter_id": 4838818,
+     "type": "Play Result",
+     "text": "Pratt singled to center."
+    },
+    {
+     "order": 424420235,
+     "inning": 5,
+     "inning_type": "Top",
+     "batter_id": 4838818,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424420236,
+     "inning": 5,
+     "inning_type": "Top",
+     "batter_id": 297,
+     "type": "Start Batter/Pitcher",
+     "text": "Nick Pivetta pitches to Sal Frelick"
+    },
+    {
+     "order": 424420493,
+     "inning": 5,
+     "inning_type": "Top",
+     "batter_id": 297,
+     "type": "Play Result",
+     "text": "Frelick singled to left, Pratt to second."
+    },
+    {
+     "order": 424420494,
+     "inning": 5,
+     "inning_type": "Top",
+     "batter_id": 297,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424420495,
+     "inning": 5,
+     "inning_type": "Top",
+     "batter_id": 260,
+     "type": "Start Batter/Pitcher",
+     "text": "Nick Pivetta pitches to Joey Ortiz"
+    },
+    {
+     "order": 424420753,
+     "inning": 5,
+     "inning_type": "Top",
+     "batter_id": 260,
+     "type": "Sacrifice",
+     "text": null
+    },
+    {
+     "order": 424420754,
+     "inning": 5,
+     "inning_type": "Top",
+     "batter_id": 260,
+     "type": "Play Result",
+     "text": "Ortiz hit sacrifice bunt to pitcher, Frelick to second, Pratt to third."
+    },
+    {
+     "order": 424420755,
+     "inning": 5,
+     "inning_type": "Top",
+     "batter_id": 260,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424420756,
+     "inning": 5,
+     "inning_type": "Top",
+     "batter_id": 274,
+     "type": "Start Batter/Pitcher",
+     "text": "Jason Adam pitches to Jackson Chourio"
+    },
+    {
+     "order": 424421278,
+     "inning": 5,
+     "inning_type": "Top",
+     "batter_id": null,
+     "type": "Play Result",
+     "text": "Adam relieved Pivetta"
+    },
+    {
+     "order": 424422076,
+     "inning": 5,
+     "inning_type": "Top",
+     "batter_id": 274,
+     "type": "Play Result",
+     "text": "Chourio hit sacrifice fly to left, Pratt scored."
+    },
+    {
+     "order": 424422077,
+     "inning": 5,
+     "inning_type": "Top",
+     "batter_id": 274,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424422347,
+     "inning": 5,
+     "inning_type": "Top",
+     "batter_id": 207,
+     "type": "Start Batter/Pitcher",
+     "text": "Jason Adam pitches to Jake Bauers"
+    },
+    {
+     "order": 424422625,
+     "inning": 5,
+     "inning_type": "Top",
+     "batter_id": 207,
+     "type": "Play Result",
+     "text": "Bauers walked."
+    },
+    {
+     "order": 424422626,
+     "inning": 5,
+     "inning_type": "Top",
+     "batter_id": 207,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424422904,
+     "inning": 5,
+     "inning_type": "Top",
+     "batter_id": 168,
+     "type": "Start Batter/Pitcher",
+     "text": "Jason Adam pitches to William Contreras"
+    },
+    {
+     "order": 424423466,
+     "inning": 5,
+     "inning_type": "Top",
+     "batter_id": 168,
+     "type": "Play Result",
+     "text": "Contreras reached on infield single to shortstop, Bauers to second, Frelick to third."
+    },
+    {
+     "order": 424423467,
+     "inning": 5,
+     "inning_type": "Top",
+     "batter_id": 168,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424423468,
+     "inning": 5,
+     "inning_type": "Top",
+     "batter_id": 266,
+     "type": "Start Batter/Pitcher",
+     "text": "Yuki Matsui pitches to Brice Turang"
+    },
+    {
+     "order": 424423752,
+     "inning": 5,
+     "inning_type": "Top",
+     "batter_id": null,
+     "type": "Play Result",
+     "text": "Matsui relieved Adam"
+    },
+    {
+     "order": 424424902,
+     "inning": 5,
+     "inning_type": "Top",
+     "batter_id": 266,
+     "type": "Play Result",
+     "text": "Turang grounded into fielder's choice to shortstop, Contreras out at second."
+    },
+    {
+     "order": 424424903,
+     "inning": 5,
+     "inning_type": "Top",
+     "batter_id": 266,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424424904,
+     "inning": 5,
+     "inning_type": "Mid",
+     "batter_id": null,
+     "type": "End Inning",
+     "text": "Middle of the 5th inning"
+    },
+    {
+     "order": 424425489,
+     "inning": 5,
+     "inning_type": "Bottom",
+     "batter_id": null,
+     "type": "Start Inning",
+     "text": "Bottom of the 5th inning"
+    },
+    {
+     "order": 424425490,
+     "inning": 5,
+     "inning_type": "Bottom",
+     "batter_id": 403,
+     "type": "Start Batter/Pitcher",
+     "text": "JoJo Romero pitches to Jake Cronenworth"
+    },
+    {
+     "order": 424425786,
+     "inning": 5,
+     "inning_type": "Bottom",
+     "batter_id": 403,
+     "type": "Play Result",
+     "text": "Cronenworth homered to right (368 feet)."
+    },
+    {
+     "order": 424425787,
+     "inning": 5,
+     "inning_type": "Bottom",
+     "batter_id": 403,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424425788,
+     "inning": 5,
+     "inning_type": "Bottom",
+     "batter_id": 492,
+     "type": "Start Batter/Pitcher",
+     "text": "JoJo Romero pitches to Fernando Tatis Jr."
+    },
+    {
+     "order": 424426701,
+     "inning": 5,
+     "inning_type": "Bottom",
+     "batter_id": 492,
+     "type": "Play Result",
+     "text": "Tatis Jr. struck out swinging."
+    },
+    {
+     "order": 424426702,
+     "inning": 5,
+     "inning_type": "Bottom",
+     "batter_id": 492,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424426703,
+     "inning": 5,
+     "inning_type": "Bottom",
+     "batter_id": 480,
+     "type": "Start Batter/Pitcher",
+     "text": "JoJo Romero pitches to Jackson Merrill"
+    },
+    {
+     "order": 424427652,
+     "inning": 5,
+     "inning_type": "Bottom",
+     "batter_id": 480,
+     "type": "Play Result",
+     "text": "Merrill flied out to left."
+    },
+    {
+     "order": 424427653,
+     "inning": 5,
+     "inning_type": "Bottom",
+     "batter_id": 480,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424427654,
+     "inning": 5,
+     "inning_type": "Bottom",
+     "batter_id": 412,
+     "type": "Start Batter/Pitcher",
+     "text": "Antonio Senzatela pitches to Manny Machado"
+    },
+    {
+     "order": 424427975,
+     "inning": 5,
+     "inning_type": "Bottom",
+     "batter_id": null,
+     "type": "Play Result",
+     "text": "Senzatela relieved Romero"
+    },
+    {
+     "order": 424428622,
+     "inning": 5,
+     "inning_type": "Bottom",
+     "batter_id": 412,
+     "type": "Play Result",
+     "text": "Machado lined out to left."
+    },
+    {
+     "order": 424428623,
+     "inning": 5,
+     "inning_type": "Bottom",
+     "batter_id": 412,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424428624,
+     "inning": 5,
+     "inning_type": "End",
+     "batter_id": null,
+     "type": "End Inning",
+     "text": "End of the 5th inning"
+    },
+    {
+     "order": 424429603,
+     "inning": 6,
+     "inning_type": "Top",
+     "batter_id": null,
+     "type": "Start Inning",
+     "text": "Top of the 6th inning"
+    },
+    {
+     "order": 424429604,
+     "inning": 6,
+     "inning_type": "Top",
+     "batter_id": 1956,
+     "type": "Start Batter/Pitcher",
+     "text": "Yuki Matsui pitches to Christian Yelich"
+    },
+    {
+     "order": 424430269,
+     "inning": 6,
+     "inning_type": "Top",
+     "batter_id": 1956,
+     "type": "Play Result",
+     "text": "Yelich walked."
+    },
+    {
+     "order": 424430270,
+     "inning": 6,
+     "inning_type": "Top",
+     "batter_id": 1956,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424430271,
+     "inning": 6,
+     "inning_type": "Top",
+     "batter_id": 318,
+     "type": "Start Batter/Pitcher",
+     "text": "Yuki Matsui pitches to Garrett Mitchell"
+    },
+    {
+     "order": 424431289,
+     "inning": 6,
+     "inning_type": "Top",
+     "batter_id": 318,
+     "type": "Play Result",
+     "text": "Mitchell struck out looking."
+    },
+    {
+     "order": 424431290,
+     "inning": 6,
+     "inning_type": "Top",
+     "batter_id": 318,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424431291,
+     "inning": 6,
+     "inning_type": "Top",
+     "batter_id": 4838818,
+     "type": "Start Batter/Pitcher",
+     "text": "Yuki Matsui pitches to Cooper Pratt"
+    },
+    {
+     "order": 424432334,
+     "inning": 6,
+     "inning_type": "Top",
+     "batter_id": 4838818,
+     "type": "Play Result",
+     "text": "Pratt singled to left, Yelich to second."
+    },
+    {
+     "order": 424432335,
+     "inning": 6,
+     "inning_type": "Top",
+     "batter_id": 4838818,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424432336,
+     "inning": 6,
+     "inning_type": "Top",
+     "batter_id": 297,
+     "type": "Start Batter/Pitcher",
+     "text": "Yuki Matsui pitches to Sal Frelick"
+    },
+    {
+     "order": 424433403,
+     "inning": 6,
+     "inning_type": "Top",
+     "batter_id": 297,
+     "type": "Play Result",
+     "text": "Frelick grounded out to first, Pratt to second, Yelich to third."
+    },
+    {
+     "order": 424433404,
+     "inning": 6,
+     "inning_type": "Top",
+     "batter_id": 297,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424433405,
+     "inning": 6,
+     "inning_type": "Top",
+     "batter_id": 260,
+     "type": "Start Batter/Pitcher",
+     "text": "Bradgley Rodriguez pitches to Joey Ortiz"
+    },
+    {
+     "order": 424433764,
+     "inning": 6,
+     "inning_type": "Top",
+     "batter_id": null,
+     "type": "Play Result",
+     "text": "Rodriguez relieved Matsui"
+    },
+    {
+     "order": 424435220,
+     "inning": 6,
+     "inning_type": "Top",
+     "batter_id": 260,
+     "type": "Play Result",
+     "text": "Ortiz flied out to right."
+    },
+    {
+     "order": 424435221,
+     "inning": 6,
+     "inning_type": "Top",
+     "batter_id": 260,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424435222,
+     "inning": 6,
+     "inning_type": "Mid",
+     "batter_id": null,
+     "type": "End Inning",
+     "text": "Middle of the 6th inning"
+    },
+    {
+     "order": 424436330,
+     "inning": 6,
+     "inning_type": "Bottom",
+     "batter_id": null,
+     "type": "Start Inning",
+     "text": "Bottom of the 6th inning"
+    },
+    {
+     "order": 424436331,
+     "inning": 6,
+     "inning_type": "Bottom",
+     "batter_id": 1471,
+     "type": "Start Batter/Pitcher",
+     "text": "Antonio Senzatela pitches to Ty France"
+    },
+    {
+     "order": 424436710,
+     "inning": 6,
+     "inning_type": "Bottom",
+     "batter_id": 1471,
+     "type": "Play Result",
+     "text": "France struck out swinging."
+    },
+    {
+     "order": 424436711,
+     "inning": 6,
+     "inning_type": "Bottom",
+     "batter_id": 1471,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424436712,
+     "inning": 6,
+     "inning_type": "Bottom",
+     "batter_id": 4838709,
+     "type": "Start Batter/Pitcher",
+     "text": "Antonio Senzatela pitches to Ethan Salas"
+    },
+    {
+     "order": 424437863,
+     "inning": 6,
+     "inning_type": "Bottom",
+     "batter_id": 4838709,
+     "type": "Play Result",
+     "text": "Salas grounded out to shortstop."
+    },
+    {
+     "order": 424437864,
+     "inning": 6,
+     "inning_type": "Bottom",
+     "batter_id": 4838709,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424437865,
+     "inning": 6,
+     "inning_type": "Bottom",
+     "batter_id": 388,
+     "type": "Start Batter/Pitcher",
+     "text": "Antonio Senzatela pitches to Xander Bogaerts"
+    },
+    {
+     "order": 424438257,
+     "inning": 6,
+     "inning_type": "Bottom",
+     "batter_id": 388,
+     "type": "Play Result",
+     "text": "Bogaerts singled to left."
+    },
+    {
+     "order": 424438258,
+     "inning": 6,
+     "inning_type": "Bottom",
+     "batter_id": 388,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424438259,
+     "inning": 6,
+     "inning_type": "Bottom",
+     "batter_id": 590,
+     "type": "Start Batter/Pitcher",
+     "text": "DL Hall pitches to Miguel Andujar"
+    },
+    {
+     "order": 424438652,
+     "inning": 6,
+     "inning_type": "Bottom",
+     "batter_id": null,
+     "type": "Play Result",
+     "text": "Hall relieved Senzatela"
+    },
+    {
+     "order": 424439619,
+     "inning": 6,
+     "inning_type": "Bottom",
+     "batter_id": null,
+     "type": "Play Result",
+     "text": "Andujar hit for Harris"
+    },
+    {
+     "order": 424440818,
+     "inning": 6,
+     "inning_type": "Bottom",
+     "batter_id": null,
+     "type": "Wild Pitch",
+     "text": "Bogaerts to second on wild pitch by Hall."
+    },
+    {
+     "order": 424440819,
+     "inning": 6,
+     "inning_type": "Bottom",
+     "batter_id": null,
+     "type": "Play Result",
+     "text": "Bogaerts to second on wild pitch by Hall."
+    },
+    {
+     "order": 424442035,
+     "inning": 6,
+     "inning_type": "Bottom",
+     "batter_id": 590,
+     "type": "Play Result",
+     "text": "Bogaerts scored on error, Andujar safe at first on throwing error by shortstop Pratt."
+    },
+    {
+     "order": 424442036,
+     "inning": 6,
+     "inning_type": "Bottom",
+     "batter_id": 590,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424442037,
+     "inning": 6,
+     "inning_type": "Bottom",
+     "batter_id": 610,
+     "type": "Start Batter/Pitcher",
+     "text": "DL Hall pitches to Samad Taylor"
+    },
+    {
+     "order": 424442446,
+     "inning": 6,
+     "inning_type": "Bottom",
+     "batter_id": null,
+     "type": "Play Result",
+     "text": "Bowen ran for Andujar"
+    },
+    {
+     "order": 424443270,
+     "inning": 6,
+     "inning_type": "Bottom",
+     "batter_id": null,
+     "type": "Caught Stealing",
+     "text": "Bowen caught stealing second, catcher to second."
+    },
+    {
+     "order": 424443271,
+     "inning": 6,
+     "inning_type": "Bottom",
+     "batter_id": null,
+     "type": "Play Result",
+     "text": "Bowen caught stealing second, catcher to second."
+    },
+    {
+     "order": 424443272,
+     "inning": 6,
+     "inning_type": "End",
+     "batter_id": null,
+     "type": "End Inning",
+     "text": "End of the 6th inning"
+    },
+    {
+     "order": 424443688,
+     "inning": 7,
+     "inning_type": "Top",
+     "batter_id": null,
+     "type": "Start Inning",
+     "text": "Top of the 7th inning"
+    },
+    {
+     "order": 424443689,
+     "inning": 7,
+     "inning_type": "Top",
+     "batter_id": null,
+     "type": "Play Result",
+     "text": "Bowen in left field."
+    },
+    {
+     "order": 424443690,
+     "inning": 7,
+     "inning_type": "Top",
+     "batter_id": 274,
+     "type": "Start Batter/Pitcher",
+     "text": "Bradgley Rodriguez pitches to Jackson Chourio"
+    },
+    {
+     "order": 424444530,
+     "inning": 7,
+     "inning_type": "Top",
+     "batter_id": 274,
+     "type": "Play Result",
+     "text": "Chourio struck out looking."
+    },
+    {
+     "order": 424444531,
+     "inning": 7,
+     "inning_type": "Top",
+     "batter_id": 274,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424444955,
+     "inning": 7,
+     "inning_type": "Top",
+     "batter_id": 207,
+     "type": "Start Batter/Pitcher",
+     "text": "Bradgley Rodriguez pitches to Jake Bauers"
+    },
+    {
+     "order": 424445386,
+     "inning": 7,
+     "inning_type": "Top",
+     "batter_id": 207,
+     "type": "Play Result",
+     "text": "Bauers struck out swinging."
+    },
+    {
+     "order": 424445387,
+     "inning": 7,
+     "inning_type": "Top",
+     "batter_id": 207,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424445388,
+     "inning": 7,
+     "inning_type": "Top",
+     "batter_id": 168,
+     "type": "Start Batter/Pitcher",
+     "text": "Bradgley Rodriguez pitches to William Contreras"
+    },
+    {
+     "order": 424445821,
+     "inning": 7,
+     "inning_type": "Top",
+     "batter_id": 168,
+     "type": "Play Result",
+     "text": "Contreras singled to center."
+    },
+    {
+     "order": 424445822,
+     "inning": 7,
+     "inning_type": "Top",
+     "batter_id": 168,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424445823,
+     "inning": 7,
+     "inning_type": "Top",
+     "batter_id": 266,
+     "type": "Start Batter/Pitcher",
+     "text": "Bradgley Rodriguez pitches to Brice Turang"
+    },
+    {
+     "order": 424445825,
+     "inning": 7,
+     "inning_type": "Top",
+     "batter_id": 266,
+     "type": "Play Result",
+     "text": "Turang singled to center, Contreras to third."
+    },
+    {
+     "order": 424445826,
+     "inning": 7,
+     "inning_type": "Top",
+     "batter_id": 266,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424446265,
+     "inning": 7,
+     "inning_type": "Top",
+     "batter_id": 1956,
+     "type": "Start Batter/Pitcher",
+     "text": "Bradgley Rodriguez pitches to Christian Yelich"
+    },
+    {
+     "order": 424446708,
+     "inning": 7,
+     "inning_type": "Top",
+     "batter_id": 1956,
+     "type": "Play Result",
+     "text": "Yelich singled to center, Contreras scored, Turang to second."
+    },
+    {
+     "order": 424446709,
+     "inning": 7,
+     "inning_type": "Top",
+     "batter_id": 1956,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424446710,
+     "inning": 7,
+     "inning_type": "Top",
+     "batter_id": 318,
+     "type": "Start Batter/Pitcher",
+     "text": "Bradgley Rodriguez pitches to Garrett Mitchell"
+    },
+    {
+     "order": 424447604,
+     "inning": 7,
+     "inning_type": "Top",
+     "batter_id": 318,
+     "type": "Play Result",
+     "text": "Mitchell struck out swinging."
+    },
+    {
+     "order": 424447605,
+     "inning": 7,
+     "inning_type": "Top",
+     "batter_id": 318,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424447606,
+     "inning": 7,
+     "inning_type": "Mid",
+     "batter_id": null,
+     "type": "End Inning",
+     "text": "Middle of the 7th inning"
+    },
+    {
+     "order": 424449862,
+     "inning": 7,
+     "inning_type": "Bottom",
+     "batter_id": null,
+     "type": "Start Inning",
+     "text": "Bottom of the 7th inning"
+    },
+    {
+     "order": 424449863,
+     "inning": 7,
+     "inning_type": "Bottom",
+     "batter_id": 610,
+     "type": "Start Batter/Pitcher",
+     "text": "DL Hall pitches to Samad Taylor"
+    },
+    {
+     "order": 424450776,
+     "inning": 7,
+     "inning_type": "Bottom",
+     "batter_id": 610,
+     "type": "Play Result",
+     "text": "Taylor grounded out to shortstop."
+    },
+    {
+     "order": 424450777,
+     "inning": 7,
+     "inning_type": "Bottom",
+     "batter_id": 610,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424450778,
+     "inning": 7,
+     "inning_type": "Bottom",
+     "batter_id": 403,
+     "type": "Start Batter/Pitcher",
+     "text": "DL Hall pitches to Jake Cronenworth"
+    },
+    {
+     "order": 424451241,
+     "inning": 7,
+     "inning_type": "Bottom",
+     "batter_id": 403,
+     "type": "Play Result",
+     "text": "Cronenworth singled to left."
+    },
+    {
+     "order": 424451242,
+     "inning": 7,
+     "inning_type": "Bottom",
+     "batter_id": 403,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424451243,
+     "inning": 7,
+     "inning_type": "Bottom",
+     "batter_id": 492,
+     "type": "Start Batter/Pitcher",
+     "text": "DL Hall pitches to Fernando Tatis Jr."
+    },
+    {
+     "order": 424452656,
+     "inning": 7,
+     "inning_type": "Bottom",
+     "batter_id": 492,
+     "type": "Play Result",
+     "text": "Tatis Jr. grounded into fielder's choice to shortstop, Cronenworth out at second."
+    },
+    {
+     "order": 424452657,
+     "inning": 7,
+     "inning_type": "Bottom",
+     "batter_id": 492,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424452658,
+     "inning": 7,
+     "inning_type": "Bottom",
+     "batter_id": 480,
+     "type": "Start Batter/Pitcher",
+     "text": "DL Hall pitches to Jackson Merrill"
+    },
+    {
+     "order": 424453619,
+     "inning": 7,
+     "inning_type": "Bottom",
+     "batter_id": 480,
+     "type": "Play Result",
+     "text": "Merrill struck out swinging."
+    },
+    {
+     "order": 424453620,
+     "inning": 7,
+     "inning_type": "Bottom",
+     "batter_id": 480,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424453621,
+     "inning": 7,
+     "inning_type": "End",
+     "batter_id": null,
+     "type": "End Inning",
+     "text": "End of the 7th inning"
+    },
+    {
+     "order": 424454105,
+     "inning": 8,
+     "inning_type": "Top",
+     "batter_id": null,
+     "type": "Start Inning",
+     "text": "Top of the 8th inning"
+    },
+    {
+     "order": 424454106,
+     "inning": 8,
+     "inning_type": "Top",
+     "batter_id": null,
+     "type": "Play Result",
+     "text": "King relieved Rodriguez"
+    },
+    {
+     "order": 424454107,
+     "inning": 8,
+     "inning_type": "Top",
+     "batter_id": 4838818,
+     "type": "Start Batter/Pitcher",
+     "text": "Michael King pitches to Cooper Pratt"
+    },
+    {
+     "order": 424456066,
+     "inning": 8,
+     "inning_type": "Top",
+     "batter_id": 4838818,
+     "type": "Play Result",
+     "text": "Pratt lined out to right."
+    },
+    {
+     "order": 424456067,
+     "inning": 8,
+     "inning_type": "Top",
+     "batter_id": 4838818,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424456068,
+     "inning": 8,
+     "inning_type": "Top",
+     "batter_id": 297,
+     "type": "Start Batter/Pitcher",
+     "text": "Michael King pitches to Sal Frelick"
+    },
+    {
+     "order": 424456568,
+     "inning": 8,
+     "inning_type": "Top",
+     "batter_id": 297,
+     "type": "Play Result",
+     "text": "Frelick grounded out to second."
+    },
+    {
+     "order": 424456569,
+     "inning": 8,
+     "inning_type": "Top",
+     "batter_id": 297,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424456570,
+     "inning": 8,
+     "inning_type": "Top",
+     "batter_id": null,
+     "type": "Play Result",
+     "text": "Hamilton hit for Ortiz"
+    },
+    {
+     "order": 424456571,
+     "inning": 8,
+     "inning_type": "Top",
+     "batter_id": 448,
+     "type": "Start Batter/Pitcher",
+     "text": "Michael King pitches to David Hamilton"
+    },
+    {
+     "order": 424458601,
+     "inning": 8,
+     "inning_type": "Top",
+     "batter_id": 448,
+     "type": "Play Result",
+     "text": "Hamilton singled to center."
+    },
+    {
+     "order": 424458602,
+     "inning": 8,
+     "inning_type": "Top",
+     "batter_id": 448,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424458603,
+     "inning": 8,
+     "inning_type": "Top",
+     "batter_id": 274,
+     "type": "Start Batter/Pitcher",
+     "text": "Michael King pitches to Jackson Chourio"
+    },
+    {
+     "order": 424459120,
+     "inning": 8,
+     "inning_type": "Top",
+     "batter_id": 274,
+     "type": "Play Result",
+     "text": "Chourio grounded out to shortstop."
+    },
+    {
+     "order": 424459121,
+     "inning": 8,
+     "inning_type": "Top",
+     "batter_id": 274,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424459122,
+     "inning": 8,
+     "inning_type": "Mid",
+     "batter_id": null,
+     "type": "End Inning",
+     "text": "Middle of the 8th inning"
+    },
+    {
+     "order": 424460159,
+     "inning": 8,
+     "inning_type": "Bottom",
+     "batter_id": null,
+     "type": "Start Inning",
+     "text": "Bottom of the 8th inning"
+    },
+    {
+     "order": 424460160,
+     "inning": 8,
+     "inning_type": "Bottom",
+     "batter_id": null,
+     "type": "Play Result",
+     "text": "Hamilton at third base."
+    },
+    {
+     "order": 424460161,
+     "inning": 8,
+     "inning_type": "Bottom",
+     "batter_id": null,
+     "type": "Play Result",
+     "text": "Uribe relieved Hall"
+    },
+    {
+     "order": 424460162,
+     "inning": 8,
+     "inning_type": "Bottom",
+     "batter_id": 412,
+     "type": "Start Batter/Pitcher",
+     "text": "Abner Uribe pitches to Manny Machado"
+    },
+    {
+     "order": 424461211,
+     "inning": 8,
+     "inning_type": "Bottom",
+     "batter_id": 412,
+     "type": "Play Result",
+     "text": "Machado grounded out to second."
+    },
+    {
+     "order": 424461212,
+     "inning": 8,
+     "inning_type": "Bottom",
+     "batter_id": 412,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424461213,
+     "inning": 8,
+     "inning_type": "Bottom",
+     "batter_id": 1471,
+     "type": "Start Batter/Pitcher",
+     "text": "Abner Uribe pitches to Ty France"
+    },
+    {
+     "order": 424461745,
+     "inning": 8,
+     "inning_type": "Bottom",
+     "batter_id": 1471,
+     "type": "Play Result",
+     "text": "France grounded out to shortstop."
+    },
+    {
+     "order": 424461746,
+     "inning": 8,
+     "inning_type": "Bottom",
+     "batter_id": 1471,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424462280,
+     "inning": 8,
+     "inning_type": "Bottom",
+     "batter_id": 4838709,
+     "type": "Start Batter/Pitcher",
+     "text": "Abner Uribe pitches to Ethan Salas"
+    },
+    {
+     "order": 424462282,
+     "inning": 8,
+     "inning_type": "Bottom",
+     "batter_id": 4838709,
+     "type": "Play Result",
+     "text": "Salas grounded out to third."
+    },
+    {
+     "order": 424462283,
+     "inning": 8,
+     "inning_type": "Bottom",
+     "batter_id": 4838709,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424462284,
+     "inning": 8,
+     "inning_type": "End",
+     "batter_id": null,
+     "type": "End Inning",
+     "text": "End of the 8th inning"
+    },
+    {
+     "order": 424463899,
+     "inning": 9,
+     "inning_type": "Top",
+     "batter_id": null,
+     "type": "Start Inning",
+     "text": "Top of the 9th inning"
+    },
+    {
+     "order": 424463900,
+     "inning": 9,
+     "inning_type": "Top",
+     "batter_id": 207,
+     "type": "Start Batter/Pitcher",
+     "text": "Michael King pitches to Jake Bauers"
+    },
+    {
+     "order": 424464448,
+     "inning": 9,
+     "inning_type": "Top",
+     "batter_id": 207,
+     "type": "Play Result",
+     "text": "Bauers struck out swinging."
+    },
+    {
+     "order": 424464449,
+     "inning": 9,
+     "inning_type": "Top",
+     "batter_id": 207,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424464997,
+     "inning": 9,
+     "inning_type": "Top",
+     "batter_id": 168,
+     "type": "Start Batter/Pitcher",
+     "text": "Michael King pitches to William Contreras"
+    },
+    {
+     "order": 424466667,
+     "inning": 9,
+     "inning_type": "Top",
+     "batter_id": 168,
+     "type": "Play Result",
+     "text": "Contreras walked."
+    },
+    {
+     "order": 424466668,
+     "inning": 9,
+     "inning_type": "Top",
+     "batter_id": 168,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424466669,
+     "inning": 9,
+     "inning_type": "Top",
+     "batter_id": null,
+     "type": "Play Result",
+     "text": "Lara ran for Contreras"
+    },
+    {
+     "order": 424466670,
+     "inning": 9,
+     "inning_type": "Top",
+     "batter_id": 266,
+     "type": "Start Batter/Pitcher",
+     "text": "Michael King pitches to Brice Turang"
+    },
+    {
+     "order": 424468939,
+     "inning": 9,
+     "inning_type": "Top",
+     "batter_id": 266,
+     "type": "Play Result",
+     "text": "Turang walked, Lara to second. San Diego Padres challenged: call on the field was upheld."
+    },
+    {
+     "order": 424468940,
+     "inning": 9,
+     "inning_type": "Top",
+     "batter_id": 266,
+     "type": "End Batter/Pitcher",
+     "text": null
+    },
+    {
+     "order": 424468941,
+     "inning": 9,
+     "inning_type": "Top",
+     "batter_id": 1956,
+     "type": "Start Batter/Pitcher",
+     "text": "Michael King pitches to Christian Yelich"
+    },
+    {
+     "order": 424470083,
+     "inning": 9,
+     "inning_type": "Top",
+     "batter_id": 1956,
+     "type": "Play Result",
+     "text": "Yelich grounded into double play, shortstop to first, Turang out at second."
+    },
+    {
+     "order": 424470084,
+     "inning": 9,
+     "inning_type": "Top",
+     "batter_id": 1956,
+     "type": "End Batter/Pitcher",
+     "text": null
     }
    ]
   }

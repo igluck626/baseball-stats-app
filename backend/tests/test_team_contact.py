@@ -100,10 +100,15 @@ check("final, 10 AB a side, all tracked: shown", tc.team_contact(game(10, 10), f
 b = tc.team_contact(game(10, 10, tracked_away=0.8), final=True)
 check("a side 80% tracked: hidden, reason 'untracked'", not b["show"] and b["reason"] == "untracked")
 check("exactly 90% tracked is enough", tc.team_contact(game(10, 10, tracked_home=0.9), final=True)["show"])
-b = tc.team_contact(game(8, 12), final=False)
-check("live, a side with 8 AB: hidden, reason 'too_early'", not b["show"] and b["reason"] == "too_early")
-check("live, 9 AB each: shown", tc.team_contact(game(9, 9), final=False)["show"])
-check("final ignores the 9-AB rule", tc.team_contact(game(8, 8), final=True)["show"])
+# Live: shown as soon as each side has an at-bat (no wait for nine).
+check("live, one at-bat a side: shown", tc.team_contact(game(1, 1), final=False)["show"])
+b = tc.team_contact(game(3, 0), final=False)
+check("live, the home side yet to bat: hidden, reason 'no_data'", not b["show"] and b["reason"] == "no_data")
+ks = [pa("top", "Strikeout"), pa("top", "Strikeout"), pa("bottom", "Groundout", .2, 88)]
+b = tc.team_contact(ks, final=False)
+check("a side whose at-bats are all strikeouts reads .000, and shows", b["show"] and b["away"]["xba"] == 0.0)
+check("live, a side 80% tracked: still hidden, reason 'untracked'",
+      tc.team_contact(game(10, 10, tracked_home=0.8), final=False)["reason"] == "untracked")
 b = tc.team_contact([], final=True)
 check("no plate appearances: hidden, reason 'no_data', no crash", not b["show"] and b["reason"] == "no_data"
       and b["away"]["xba"] is None and b["home"]["avg"] is None)

@@ -5,7 +5,8 @@ team-contact block as `stats` (see team_contact.py), on the live snapshot and fr
 
 Rows, in display order:
   avg       H / AB, from the box.
-  xba       the team-contact xBA (PA feed); shown under team_contact's own rule.
+  xba       the team-contact xBA (PA feed); shown under team_contact's own rule (each
+            side has an at-bat, and 90% of its balls in play are tracked).
   hard_hit  balls hit 95+ mph (PA feed).
   hr, bb, so, sb, pitches   summed from the box.
   risp      hits and at-bats with runners in scoring position (PA feed + plays).
@@ -34,6 +35,10 @@ six sides of the three games.
 PA-FEED ROWS (xba, hard_hit, risp, dp) hide when that side's completed plate
 appearances in the feed don't number the box's plate appearances: the feed drops a
 row now and then, and a count read from an incomplete feed would be quietly wrong.
+Only TRUE plate appearances count — not the row the feed writes for an inning that
+ended on the bases (MIL @ SD 2026-10-06: Taylor's "Caught Stealing 2B", which hid
+these rows for the whole game). LOB's plate appearances come from the box, which
+never counted that row.
 """
 from __future__ import annotations
 
@@ -169,6 +174,12 @@ def _risp(pas_side: list[dict], plays: list[dict], half: str) -> tuple[Optional[
     return (h, ab), []
 
 
+def _is_plate_appearance(result) -> bool:
+    """A completed plate appearance: a result that isn't a base-running out (the same
+    rule `team_contact.is_at_bat` uses to keep those out of the at-bats)."""
+    return bool(result) and not result.startswith(tc.BASERUNNING_PREFIXES)
+
+
 def _sum(rows: list[dict], key: str) -> int:
     return sum((r.get(key) or 0) for r in rows)
 
@@ -190,7 +201,10 @@ def team_stats(pas: list[dict], box: dict, plays: Optional[list[dict]], contact:
         pitchers_mine = [r for r in box.get(side, []) if r.get("pitch_count") is not None or r.get("pitching_outs")]
         pitchers_theirs = box.get(other, [])
         side_pas = [p for p in pas if (p.get("half_inning") or "").lower() == half]
-        completed = [p for p in side_pas if p.get("result")]
+        # True plate appearances only: the feed also writes a row for an inning that
+        # ended on the bases ("Caught Stealing 2B" with a batter at the plate), which
+        # isn't one — the batter leads off the next inning, and the box agrees.
+        completed = [p for p in side_pas if _is_plate_appearance(p.get("result"))]
         opp_side_pas = [p for p in pas if (p.get("half_inning") or "").lower() != half and p.get("result")]
         pa_box = _sum(mine, "plate_appearances")
         if len(completed) != pa_box:

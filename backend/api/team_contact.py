@@ -20,15 +20,15 @@ left out). AVG is unaffected — it is the real H / AB. `tracked_share` says how
 much of a side's contact the xBA rests on, and below `MIN_TRACKED_SHARE` the
 block isn't shown at all (2015-2017 games run 83-88%).
 
-Live, the block waits for `MIN_LIVE_AB` at-bats a side: before once through the
-order a single ball moves xBA by more than .100.
+Live, it shows as soon as each side has an at-bat (a side whose at-bats are all
+strikeouts reads .000). Early in a game one ball in play moves it a lot; the app's
+explanation says so rather than hiding the number.
 """
 from __future__ import annotations
 
 from typing import Optional
 
 MIN_TRACKED_SHARE = 0.90
-MIN_LIVE_AB = 9
 HARD_HIT_MPH = 95.0
 
 HITS = {"Single", "Double", "Triple", "Home Run"}
@@ -116,7 +116,7 @@ def team_contact(pas: list[dict], final: bool, *, box: Optional[dict] = None,
 
     `pas` is balldontlie's `/plate_appearances` for one game; the away side bats
     in the top half. `show` is the server's call on whether a client renders
-    the block; `reason` says why not ("no_data", "untracked", "too_early").
+    the block; `reason` says why not ("no_data", "untracked").
 
     With `box` ({"away"|"home": /stats rows}), the block also carries `stats`, the
     Team Stats rows (see team_stats.py); `plays` is the play stream RISP reads
@@ -130,12 +130,11 @@ def team_contact(pas: list[dict], final: bool, *, box: Optional[dict] = None,
     away, home = _side(halves["top"]), _side(halves["bottom"])
 
     reason: Optional[str] = None
-    if not away["balls_in_play"] or not home["balls_in_play"]:
-        reason = "no_data"
-    elif min(away["tracked_share"], home["tracked_share"]) < MIN_TRACKED_SHARE:
+    if away["xba"] is None or home["xba"] is None:
+        reason = "no_data"          # a side without an at-bat (or only untracked ones)
+    elif any(s["tracked_share"] is not None and s["tracked_share"] < MIN_TRACKED_SHARE
+             for s in (away, home)):
         reason = "untracked"
-    elif not final and min(away["ab"], home["ab"]) < MIN_LIVE_AB:
-        reason = "too_early"
     block = {
         "away": away,
         "home": home,

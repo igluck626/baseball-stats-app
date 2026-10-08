@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Team Stats — team_stats.py, shipped inside the team-contact block as `stats`.
 
-Three 2026 postseason finals: RISP and team LOB reproduce Baseball-Reference's box
+Four 2026 postseason finals: RISP and team LOB reproduce Baseball-Reference's box
 scores exactly (fetched by hand, one page per game, 2026-10-08), and every other row
-the totals measured from balldontlie's box. Then the start-or-during RISP rule, the
-event classifier, the fail-closed path (an unrecognised in-at-bat event hides RISP,
-with the reason and a log line), the PA-count gate on the PA-feed rows, and live LOB.
+the totals measured from balldontlie's box. The fourth (MIL @ SD 2026-10-06) has a
+half-inning that ended on a caught stealing with a batter at the plate. Then the
+start-or-during RISP rule, the event classifier, the fail-closed path (an
+unrecognised in-at-bat event hides RISP, with the reason and a log line), the
+PA-count gate on the PA-feed rows, and live LOB.
 Run: python3 backend/tests/test_team_stats.py
 """
 import json
@@ -44,6 +46,7 @@ BREF = {   # game: ((away, RISP h, ab, LOB), (home, ...))
     15333798: (("LAD", 0, 4, 9), ("ATL", 0, 6, 6)),
     15467376: (("NYY", 0, 1, 4), ("TB", 1, 13, 9)),
     15467377: (("CHW", 3, 8, 5), ("CLE", 0, 5, 5)),
+    15333797: (("MIL", 2, 7, 11), ("SD", 1, 3, 4)),
 }
 for gid, sides in BREF.items():
     st = stats_for(gid)
@@ -67,6 +70,21 @@ for gid, sides in ROWS.items():
     check(f"game {gid}: all eleven rows shown, in order",
           st["rows"] == ["avg", "xba", "hard_hit", "hr", "risp", "lob", "bb", "so", "sb", "dp", "pitches"]
           and st["hidden"] == {})
+
+print("an inning that ends on the bases isn't a plate appearance")
+g = FIX["15333797"]
+sd = [p for p in g["plate_appearances"] if p["half_inning"].lower() == "bottom"]
+taylor = [p for p in sd if p["batter_id"] == 610]
+check("the feed has a row for Taylor's 6th, result 'Caught Stealing 2B' (the inning's third out)",
+      any(p["result"] == "Caught Stealing 2B" for p in taylor))
+box_sd = sum(r.get("plate_appearances") or 0 for r in g["box"]["home"])
+check(f"SD: 33 feed rows with a result, 32 true plate appearances, the box's {box_sd}",
+      sum(1 for p in sd if p["result"]) == 33 and sum(1 for p in sd if ts._is_plate_appearance(p["result"])) == 32 == box_sd)
+st = stats_for(15333797)
+check("so the feed rows aren't hidden for MIL @ SD (they were, in production, on 2026-10-08)",
+      st["hidden"] == {} and st["rows"] == ["avg", "xba", "hard_hit", "hr", "risp", "lob", "bb", "so", "sb", "dp", "pitches"])
+check("a dropped row is still a mismatch", tc.team_contact(g["plate_appearances"][1:], final=True, box=g["box"],
+      plays=g["plays"])["stats"]["hidden"].get("risp") == "pa_feed_mismatch")
 
 print("RISP counts a runner who reaches scoring position during the at-bat")
 # Without the play stream's in-at-bat moves the three sides come out short, as measured.
@@ -146,13 +164,19 @@ check("a plate appearance still in progress (no result) isn't a mismatch",
       "risp" in tc.team_contact(inprogress, final=False, box=g["box"], plays=g["plays"])["stats"]["rows"])
 
 print("xBA keeps its own rule")
+g = FIX["15333798"]
 st = tc.team_contact(g["plate_appearances"], final=False, box=g["box"], plays=g["plays"])["stats"]
 check("final=False with 30+ at-bats a side: xBA still shown", "xba" in st["rows"])
-early = [p for p in g["plate_appearances"] if p["inning"] <= 2]
-box_early = {side: [dict(r, plate_appearances=0, at_bats=0, hits=0, runs=0) for r in rows] for side, rows in g["box"].items()}
-st = tc.team_contact(early, final=False, box=box_early, plays=g["plays"])["stats"]
-check("live, under 9 at-bats a side: xBA hidden with team_contact's reason",
-      "xba" not in st["rows"] and st["hidden"].get("xba") in ("too_early", "pa_feed_mismatch"))
+top1 = [p for p in g["plate_appearances"] if p["inning"] == 1 and p["half_inning"].lower() == "top"]
+box_top1 = {"away": [{"plate_appearances": len(top1), "at_bats": len(top1), "hits": 0, "runs": 0}], "home": []}
+st = tc.team_contact(top1, final=False, box=box_top1, plays=g["plays"])["stats"]
+check("live, top of the 1st (the home side yet to bat): xBA hidden, reason 'no_data'",
+      "xba" not in st["rows"] and st["hidden"].get("xba") == "no_data")
+first = [p for p in g["plate_appearances"] if p["inning"] == 1]
+box_first = {side: [{"plate_appearances": sum(1 for p in first if p["half_inning"].lower() == half),
+                     "at_bats": 3, "hits": 0, "runs": 0}] for side, half in (("away", "top"), ("home", "bottom"))}
+st = tc.team_contact(first, final=False, box=box_first, plays=g["plays"])["stats"]
+check("live, after one inning (no wait for nine at-bats): xBA shown", "xba" in st["rows"])
 
 print("live LOB leaves out runners still on base")
 base = tc.team_contact(g["plate_appearances"], final=True, box=g["box"], plays=g["plays"])["stats"]
