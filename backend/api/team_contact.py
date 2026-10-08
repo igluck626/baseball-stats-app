@@ -109,12 +109,18 @@ def _side(pas: list[dict]) -> dict:
     }
 
 
-def team_contact(pas: list[dict], final: bool) -> dict:
+def team_contact(pas: list[dict], final: bool, *, box: Optional[dict] = None,
+                 plays: Optional[list[dict]] = None, on_base: Optional[dict] = None,
+                 game_id=None) -> dict:
     """Per-side contact block plus the display decision.
 
     `pas` is balldontlie's `/plate_appearances` for one game; the away side bats
     in the top half. `show` is the server's call on whether a client renders
     the block; `reason` says why not ("no_data", "untracked", "too_early").
+
+    With `box` ({"away"|"home": /stats rows}), the block also carries `stats`, the
+    Team Stats rows (see team_stats.py); `plays` is the play stream RISP reads
+    (None hides RISP) and `on_base` the live runners on base for the side batting.
     """
     halves: dict[str, list[dict]] = {"top": [], "bottom": []}
     for pa in pas or []:
@@ -130,27 +136,50 @@ def team_contact(pas: list[dict], final: bool) -> dict:
         reason = "untracked"
     elif not final and min(away["ab"], home["ab"]) < MIN_LIVE_AB:
         reason = "too_early"
-    return {
+    block = {
         "away": away,
         "home": home,
         "final": bool(final),
         "show": reason is None,
         "reason": reason,
     }
+    if box is not None:
+        import team_stats   # here, not at the top: team_stats imports this module
+        block["stats"] = team_stats.team_stats(pas or [], box, plays, block, final,
+                                               on_base=on_base, game_id=game_id)
+    return block
 
 
 # --- Finished games: /games/{bdl_id}/team-contact ---------------------------
 
 # Finished games only, for the life of the process: a final game's plate
 # appearances don't change. A failed fetch raises and an empty one returns
-# `no_data` — neither is cached, so the next request tries again.
+# `no_data` — neither is cached, so the next request tries again. Nor is a block
+# missing a part that failed to load (the box or the play stream).
 _FINAL_CACHE: dict[int, dict] = {}
+MAX_PLAY_PAGES = 12
+
+
+def _paged(get_json, path: str, params: dict) -> list[dict]:
+    """Every page of a cursor-paginated balldontlie list."""
+    rows: list[dict] = []
+    cursor = None
+    for _ in range(MAX_PLAY_PAGES):
+        q = dict(params, per_page=100, **({"cursor": cursor} if cursor else {}))
+        page = get_json(path, q) or {}
+        chunk = page.get("data") or []
+        rows += chunk
+        cursor = (page.get("meta") or {}).get("next_cursor")
+        if not cursor or len(chunk) < 100:
+            return rows
+    raise RuntimeError(f"{path} for {params} ran past {MAX_PLAY_PAGES} pages")
 
 
 def for_game(bdl_id: int, get_json) -> dict:
     """The block for one game, fetched from balldontlie through `get_json(path,
     params)` (the backend's `data_service._bdl_get_json`). Raises on a failed
-    fetch; the caller turns that into an HTTP error."""
+    plate-appearance fetch; the caller turns that into an HTTP error. A failed box
+    or play-stream fetch leaves its rows out and the block uncached."""
     hit = _FINAL_CACHE.get(bdl_id)
     if hit is not None:
         return hit
@@ -158,7 +187,18 @@ def for_game(bdl_id: int, get_json) -> dict:
     status = (game.get("status") or "").upper()
     final = "FINAL" in status
     pas = (get_json("plate_appearances", {"game_id": bdl_id, "per_page": 100}) or {}).get("data") or []
-    block = {"game_id": bdl_id, **team_contact(pas, final=final)}
-    if final and pas and block["reason"] != "no_data":
+    complete = True
+    try:
+        rows = _paged(get_json, "stats", {"game_ids[]": bdl_id})
+        ids = {"away": (game.get("away_team") or {}).get("id"), "home": (game.get("home_team") or {}).get("id")}
+        box = {side: [r for r in rows if (r.get("team") or {}).get("id") == tid] for side, tid in ids.items()}
+    except Exception:  # noqa: BLE001 - the contact rows still stand without the box
+        box, complete = None, False
+    try:
+        plays = _paged(get_json, "plays", {"game_id": bdl_id})
+    except Exception:  # noqa: BLE001 - RISP hides as "no_plays"
+        plays, complete = None, False
+    block = {"game_id": bdl_id, **team_contact(pas, final=final, box=box, plays=plays, game_id=bdl_id)}
+    if final and pas and block["reason"] != "no_data" and complete:
         _FINAL_CACHE[bdl_id] = block
     return block

@@ -118,7 +118,10 @@ def fake_get(final, rows):
     def get(path, params):
         calls.append(path)
         if path.startswith("games/"):
-            return {"data": {"status": "STATUS_FINAL" if final else "STATUS_IN_PROGRESS"}}
+            return {"data": {"status": "STATUS_FINAL" if final else "STATUS_IN_PROGRESS",
+                             "away_team": {"id": 1}, "home_team": {"id": 2}}}
+        if path in ("stats", "plays"):   # the box and the play stream (Team Stats)
+            return {"data": []}
         return {"data": rows}
     return get
 
@@ -127,14 +130,15 @@ tc._FINAL_CACHE.clear(); calls.clear()
 rows = FIX["15467377"]["plate_appearances"]
 b1 = tc.for_game(15467377, fake_get(True, rows))
 b2 = tc.for_game(15467377, fake_get(True, rows))
-check("a final game is fetched once and then served from the cache", len(calls) == 2 and b1 is b2)
+check("a final game is fetched once (game, plate appearances, box, plays) and then served from the cache",
+      calls == ["games/15467377", "plate_appearances", "stats", "plays"] and b1 is b2)
 check("the cached block is the same block (CLE xBA .194)", r3(b2["home"]["xba"]) == .194 and b2["game_id"] == 15467377)
 tc._FINAL_CACHE.clear(); calls.clear()
 tc.for_game(1, fake_get(False, rows)); tc.for_game(1, fake_get(False, rows))
-check("a game still in progress is not cached", len(calls) == 4)
+check("a game still in progress is not cached", len(calls) == 8)
 tc._FINAL_CACHE.clear(); calls.clear()
 tc.for_game(2, fake_get(True, [])); tc.for_game(2, fake_get(True, []))
-check("an empty fetch is not cached", len(calls) == 4)
+check("an empty fetch is not cached", len(calls) == 8)
 
 
 def boom(path, params):
@@ -151,8 +155,9 @@ check("a failed fetch raises (the endpoint returns 502) and caches nothing", rai
 
 print("wired in")
 SRC = open(os.path.join(HERE, "..", "api", "live_service.py")).read()
-check("the live snapshot carries team_contact from the same function",
-      '"team_contact":  team_contact.team_contact(pas, final=status == "final")' in SRC)
+check("the live snapshot carries team_contact from the same function, with the box and plays",
+      '"team_contact":  _team_contact_live(' in SRC
+      and "team_contact.team_contact(pas, final=status == \"final\", box=box, plays=plays," in SRC)
 MAIN = open(os.path.join(HERE, "..", "api", "main.py")).read()
 check("/games/{bdl_id}/team-contact is served from team_contact.for_game",
       '@app.get("/games/{bdl_id}/team-contact")' in MAIN and "team_contact.for_game(bdl_id" in MAIN)

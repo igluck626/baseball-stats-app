@@ -1004,13 +1004,34 @@ def assemble_unified(game: dict, stats: list[dict],
         # Batted-ball metrics, shaped like plate appearances — see
         # `_contact_pas`. Additive: an older client ignores the key.
         "contact_pas":   _contact_pas(pas, previous_contact),
-        # Team AVG / xBA / hard-hit, with the server's show/hide decision — see
-        # team_contact.py. Additive: an older client ignores the key.
-        "team_contact":  team_contact.team_contact(pas, final=status == "final"),
+        # Team AVG / xBA / hard-hit, with the server's show/hide decision, and the
+        # Team Stats rows under `stats` — see team_contact.py / team_stats.py.
+        # Additive: an older client ignores the key.
+        "team_contact":  _team_contact_live(pas, stats, plays, home_team, away_team, status,
+                                            state["half"], (on_first, on_second, on_third),
+                                            game.get("id")),
         "scoring_plays": scoring,
         "batting":       batting,
         "pitching":      pitching,
     }
+
+
+def _team_contact_live(pas: list[dict], stats: list[dict], plays: list[dict],
+                       home_team: dict, away_team: dict, status: str, half: Optional[str],
+                       bases: tuple, game_id) -> dict:
+    """The team-contact block with Team Stats for a live (or just-final) snapshot.
+    Runners on base belong to the side batting in the current half: they aren't
+    "left on base" yet, so live LOB leaves them out."""
+    box: dict = {"away": [], "home": []}
+    for st in stats:
+        side = _side_for_stat(st, home_team, away_team)
+        if side in box:
+            box[side].append(st)
+    on_base = None
+    if status == "in_progress" and half in ("top", "bottom"):
+        on_base = {"away" if half == "top" else "home": sum(1 for b in bases if b)}
+    return team_contact.team_contact(pas, final=status == "final", box=box, plays=plays,
+                                     on_base=on_base, game_id=game_id)
 
 
 def _summary_from_unified(u: dict) -> dict:
