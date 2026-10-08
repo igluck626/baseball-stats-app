@@ -32,15 +32,14 @@ struct ContentView: View {
     /// so every live-polling loop can gate on it via `navigation.shouldPoll(on:)`.
     @Environment(\.scenePhase) private var scenePhase
 
-    /// Where the Ask button goes. The floating button sat on a leaders column on
-    /// iPad and on the live card's inning in phone landscape.
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    /// Where the Ask entry point goes: a phone on its side (compact height) uses
+    /// the trailing margin; everything else, the tab view's bottom accessory.
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     /// The trailing safe-area margin — in landscape, the strip beside the
     /// Dynamic Island / notch that content never uses.
     @State private var trailingMargin: CGFloat = 0
 
-    private enum AskPlacement { case floating, sideMargin, accessory }
+    private enum AskPlacement { case sideMargin, accessory }
 
     private var askPlacement: AskPlacement {
         if verticalSizeClass == .compact {
@@ -49,15 +48,15 @@ struct ContentView: View {
             // accessory instead.
             return trailingMargin >= AskFloatingButton.compactDiameter + 4 ? .sideMargin : .accessory
         }
-        // iPad and other wide windows: the tab view's bottom accessory.
-        if horizontalSizeClass == .regular { return .accessory }
-        // A phone held upright: exactly as before.
-        return .floating
+        // Everywhere else — iPad, wide windows, and a phone held upright — the
+        // tab view's bottom accessory, which follows the bar as it minimizes.
+        return .accessory
     }
 
-    /// Drives the full-screen Ask experience, launched from the floating
-    /// button overlaid above the tab bar. Kept in the window's store, with the
-    /// conversation and the draft (see `AskSceneState`).
+    /// Drives the full-screen Ask experience, launched from the "Ask a
+    /// question" bar in the tab view's bottom accessory (or, on a phone on its
+    /// side, the button in the trailing margin). Kept in the window's store,
+    /// with the conversation and the draft (see `AskSceneState`).
     private var showingAsk: Binding<Bool> {
         Binding(get: { scene.ask.presented }, set: { scene.ask.presented = $0 })
     }
@@ -82,9 +81,9 @@ struct ContentView: View {
         // if/else around the TabView would give it a new identity and throw away
         // every tab's navigation path. A changed modifier value does not.
         //
-        // Landscape phone: a 400-point-tall screen can't spare the tab bar, so it
-        // shrinks as you scroll down. Upright, the system default is unchanged.
-        .tabBarMinimizeBehavior(verticalSizeClass == .compact ? .onScrollDown : .automatic)
+        // The tab bar shrinks as you scroll down, in every orientation, and comes
+        // back on scroll-up or a tap.
+        .tabBarMinimizeBehavior(.onScrollDown)
         .tabViewBottomAccessory(isEnabled: askPlacement == .accessory) {
             AskAccessoryButton { scene.ask.presented = true }
         }
@@ -121,16 +120,6 @@ struct ContentView: View {
         .task {
             SeriesStore.shared.watch(liveStore)
             await SeriesStore.shared.loadCurrentIfPostseason()
-        }
-        // Floating Ask entry point, overlaid above the tab bar. The bottom
-        // padding lifts it clear of the ~49pt tab bar; trailing inset matches
-        // the standard system margin.
-        .overlay(alignment: .bottomTrailing) {
-            if askPlacement == .floating {
-                AskFloatingButton { scene.ask.presented = true }
-                    .padding(.trailing, 18)
-                    .padding(.bottom, 66)
-            }
         }
         // Landscape: centred in the trailing margin, outside the content area.
         .overlay(alignment: .trailing) {

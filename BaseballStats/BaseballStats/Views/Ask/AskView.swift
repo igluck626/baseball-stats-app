@@ -420,10 +420,11 @@ struct AskAccessoryButton: View {
     }
 }
 
-/// The always-available entry point, overlaid on the tab root above the tab
-/// bar. Uses the app's accent color.
+/// The Ask entry point in a phone's landscape margin, beside the Dynamic Island
+/// or notch (elsewhere Ask is the tab view's bottom accessory — see
+/// `AskAccessoryButton`). Uses the app's accent color.
 struct AskFloatingButton: View {
-    /// 56 everywhere it floats over content; 44 in a phone's landscape margin.
+    /// 44 in a phone's landscape margin (`compactDiameter`); 56 by default.
     var diameter: CGFloat = 56
     let action: () -> Void
 
