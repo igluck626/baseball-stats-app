@@ -105,6 +105,9 @@ def _side(pas: list[dict]) -> dict:
         "balls_in_play": bip,
         "tracked_balls_in_play": tracked,
         "tracked_share": tracked / bip if bip else None,
+        # No longer a Team Stats row, but build 12 of the app decodes it as a
+        # required field: dropping it would fail the block — and with it the live
+        # snapshot — on that build.
         "hard_hit": hard,
         "tracked_batted_balls": tracked_batted,
     }

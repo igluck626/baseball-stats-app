@@ -3,11 +3,11 @@
 
 Four 2026 postseason finals: RISP and team LOB reproduce Baseball-Reference's box
 scores exactly (fetched by hand, one page per game, 2026-10-08), and every other row
-the totals measured from balldontlie's box. The fourth (MIL @ SD 2026-10-06) has a
-half-inning that ended on a caught stealing with a batter at the plate. Then the
-start-or-during RISP rule, the event classifier, the fail-closed path (an
-unrecognised in-at-bat event hides RISP, with the reason and a log line), the
-PA-count gate on the PA-feed rows, and live LOB.
+the totals measured from balldontlie's box (XBH = 2B + 3B + HR from its batting
+lines). The fourth (MIL @ SD 2026-10-06) has a half-inning that ended on a caught
+stealing with a batter at the plate. Then the start-or-during RISP rule, the event
+classifier, the fail-closed path (an unrecognised in-at-bat event hides RISP, with
+the reason and a log line), the PA-count gate on the PA-feed rows, and live LOB.
 Run: python3 backend/tests/test_team_stats.py
 """
 import json
@@ -56,20 +56,47 @@ for gid, sides in BREF.items():
               (s["risp_h"], s["risp_ab"], s["lob"]) == (h, ab, lob))
 
 print("the other rows match the box")
-ROWS = {   # avg, xba, hard_hit, hr, bb, so, sb, dp turned, pitches thrown
-    15333798: ((.222, .259, 12, 2, 2, 12, 1, 0, 136), (.156, .146, 4, 0, 2, 12, 0, 0, 164)),
-    15467376: ((.129, .195, 10, 2, 2, 7, 0, 0, 137), (.229, .313, 15, 0, 2, 4, 3, 0, 124)),
-    15467377: ((.188, .204, 4, 0, 4, 13, 0, 0, 147), (.125, .194, 10, 0, 3, 9, 0, 1, 147)),
+ROWS = {   # avg, xba, xbh (2B + 3B + HR), hr, bb, so, sb, dp turned
+    15333798: ((.222, .259, 2, 2, 2, 12, 1, 0), (.156, .146, 1, 0, 2, 12, 0, 0)),
+    15467376: ((.129, .195, 3, 2, 2, 7, 0, 0), (.229, .313, 2, 0, 2, 4, 3, 0)),
+    15467377: ((.188, .204, 1, 0, 4, 13, 0, 0), (.125, .194, 1, 0, 3, 9, 0, 1)),
+    15333797: ((.314, .234, 1, 1, 4, 9, 0, 0), (.207, .241, 1, 1, 2, 7, 2, 1)),
 }
 for gid, sides in ROWS.items():
     st = stats_for(gid)
     for want, side in zip(sides, ("away", "home")):
         s = st[side]
-        got = (r3(s["avg"]), r3(s["xba"]), s["hard_hit"], s["hr"], s["bb"], s["so"], s["sb"], s["dp"], s["pitches"])
+        got = (r3(s["avg"]), r3(s["xba"]), s["xbh"], s["hr"], s["bb"], s["so"], s["sb"], s["dp"])
         check(f"{FIX[str(gid)][side]} {gid}: {want} (got {got})", got == want)
-    check(f"game {gid}: all eleven rows shown, in order",
-          st["rows"] == ["avg", "xba", "hard_hit", "hr", "risp", "lob", "bb", "so", "sb", "dp", "pitches"]
+    check(f"game {gid}: all ten rows shown, in order",
+          st["rows"] == ["avg", "xba", "xbh", "hr", "risp", "lob", "bb", "so", "sb", "dp"]
           and st["hidden"] == {})
+
+print("XBH is doubles + triples + home runs from the box, and fails closed")
+g = FIX["15333797"]
+for side in ("away", "home"):
+    want = sum((r.get("doubles") or 0) + (r.get("triples") or 0) + (r.get("hr") or 0) for r in g["box"][side])
+    check(f"MIL @ SD 10-06 {g[side]}: XBH {want} (2B + 3B + HR summed from the box's batting lines)",
+          stats_for(15333797)[side]["xbh"] == want == 1)
+st = stats_for(15467377)
+check("a triple counts (CLE 10-05: 0 2B, 1 3B, 0 HR -> 1)", st["home"]["xbh"] == 1)
+quiet = {"away": [dict(r, doubles=0, triples=0, hr=0) for r in FIX["15467377"]["box"]["away"]],
+         "home": FIX["15467377"]["box"]["home"]}
+st = tc.team_contact(FIX["15467377"]["plate_appearances"], final=True, box=quiet, plays=FIX["15467377"]["plays"])["stats"]
+check("a side with no extra-base hits reads 0, and the row shows", st["away"]["xbh"] == 0 and "xbh" in st["rows"])
+first = FIX["15467377"]["plate_appearances"][:1]
+live_box = {"away": [{"plate_appearances": 1, "at_bats": 1, "hits": 1, "runs": 0, "doubles": 1, "triples": 0, "hr": 0}],
+            "home": []}
+st = tc.team_contact(first, final=False, box=live_box, plays=FIX["15467377"]["plays"])["stats"]
+check("live after the first plate appearance (a double): XBH 1 against 0, row shown",
+      "xbh" in st["rows"] and (st["away"]["xbh"], st["home"]["xbh"]) == (1, 0))
+gap = {"away": [dict(r) for r in FIX["15467377"]["box"]["away"]], "home": FIX["15467377"]["box"]["home"]}
+batter = next(r for r in gap["away"] if r.get("at_bats"))
+batter.pop("doubles")
+st = tc.team_contact(FIX["15467377"]["plate_appearances"], final=True, box=gap, plays=FIX["15467377"]["plays"])["stats"]
+check("a batting line with an at-bat but no doubles: XBH hidden, reason 'box_incomplete', others stay",
+      "xbh" not in st["rows"] and st["hidden"].get("xbh") == "box_incomplete"
+      and st["away"]["xbh"] is None and st["home"]["xbh"] is None and "hr" in st["rows"])
 
 print("an inning that ends on the bases isn't a plate appearance")
 g = FIX["15333797"]
@@ -82,7 +109,7 @@ check(f"SD: 33 feed rows with a result, 32 true plate appearances, the box's {bo
       sum(1 for p in sd if p["result"]) == 33 and sum(1 for p in sd if ts._is_plate_appearance(p["result"])) == 32 == box_sd)
 st = stats_for(15333797)
 check("so the feed rows aren't hidden for MIL @ SD (they were, in production, on 2026-10-08)",
-      st["hidden"] == {} and st["rows"] == ["avg", "xba", "hard_hit", "hr", "risp", "lob", "bb", "so", "sb", "dp", "pitches"])
+      st["hidden"] == {} and st["rows"] == ["avg", "xba", "xbh", "hr", "risp", "lob", "bb", "so", "sb", "dp"])
 check("a dropped row is still a mismatch", tc.team_contact(g["plate_appearances"][1:], final=True, box=g["box"],
       plays=g["plays"])["stats"]["hidden"].get("risp") == "pa_feed_mismatch")
 
@@ -142,7 +169,7 @@ check("RISP is hidden, reason 'unrecognised_event'", "risp" not in st["rows"] an
 check("its counts are blanked for both sides", st["away"]["risp_ab"] is None and st["home"]["risp_ab"] is None)
 check("the event text is recorded in the block", st["unrecognised_events"] == ["Tucker safe at second on throwing error by catcher Baldwin."])
 check("and logged server-side", any("unrecognised in-at-bat event" in m and "15333798" in m for m in cap.records))
-check("every other row still shows", st["rows"] == ["avg", "xba", "hard_hit", "hr", "lob", "bb", "so", "sb", "dp", "pitches"])
+check("every other row still shows", st["rows"] == ["avg", "xba", "xbh", "hr", "lob", "bb", "so", "sb", "dp"])
 note = list(g["plays"]) + [{"order": 10**12, "inning": 9, "inning_type": "Top", "batter_id": None,
                             "type": "Mound Visit", "text": "Mound visit."}]
 check("a note that moves nobody (a mound visit) doesn't hide RISP", "risp" in stats_for(15333798, plays=note)["rows"])
@@ -153,11 +180,11 @@ print("PA-feed rows hide when the feed's count disagrees with the box")
 dropped = [p for p in g["plate_appearances"] if not (p["inning"] == 3 and p["half_inning"] == "Top")][:]
 dropped = g["plate_appearances"][:5] + g["plate_appearances"][6:]          # one plate appearance missing
 st = tc.team_contact(dropped, final=True, box=g["box"], plays=g["plays"])["stats"]
-check("xBA, hit 95+, RISP and DP hide, reason 'pa_feed_mismatch'",
-      all(st["hidden"].get(k) == "pa_feed_mismatch" for k in ("xba", "hard_hit", "risp", "dp"))
-      and not set(st["rows"]) & {"xba", "hard_hit", "risp", "dp"})
-check("the box rows stay (AVG, HR, LOB, BB, SO, SB, pitches)",
-      st["rows"] == ["avg", "hr", "lob", "bb", "so", "sb", "pitches"])
+check("xBA, RISP and DP hide, reason 'pa_feed_mismatch'",
+      all(st["hidden"].get(k) == "pa_feed_mismatch" for k in ("xba", "risp", "dp"))
+      and not set(st["rows"]) & {"xba", "risp", "dp"})
+check("the box rows stay (AVG, XBH, HR, LOB, BB, SO, SB)",
+      st["rows"] == ["avg", "xbh", "hr", "lob", "bb", "so", "sb"])
 inprogress = g["plate_appearances"] + [{"inning": 9, "half_inning": "bottom", "pa_number": 999,
                                         "batter_id": 1, "result": None, "pitches": []}]
 check("a plate appearance still in progress (no result) isn't a mismatch",

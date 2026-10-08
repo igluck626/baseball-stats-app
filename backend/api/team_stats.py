@@ -7,8 +7,9 @@ Rows, in display order:
   avg       H / AB, from the box.
   xba       the team-contact xBA (PA feed); shown under team_contact's own rule (a side
             has an at-bat, and 90% of each side's balls in play are tracked).
-  hard_hit  balls hit 95+ mph (PA feed).
-  hr, bb, so, sb, pitches   summed from the box.
+  xbh       extra-base hits, 2B + 3B + HR, from the box. Hidden ("box_incomplete")
+            if a batting line with an at-bat lacks doubles or triples.
+  hr, bb, so, sb   summed from the box.
   risp      hits and at-bats with runners in scoring position (PA feed + plays).
   lob       team left on base, by the box-score proof.
   dp        double plays turned by this side's defense (PA feed).
@@ -32,7 +33,7 @@ home side didn't bat in the 9th). Live, runners still on base in the half being
 played are not "left" yet and are subtracted too. Matches Baseball-Reference for all
 six sides of the three games.
 
-PA-FEED ROWS (xba, hard_hit, risp, dp) hide when that side's completed plate
+PA-FEED ROWS (xba, risp, dp) hide when that side's completed plate
 appearances in the feed don't number the box's plate appearances: the feed drops a
 row now and then, and a count read from an incomplete feed would be quietly wrong.
 Only TRUE plate appearances count — not the row the feed writes for an inning that
@@ -50,8 +51,8 @@ import team_contact as tc
 
 log = logging.getLogger(__name__)
 
-ROW_ORDER = ["avg", "xba", "hard_hit", "hr", "risp", "lob", "bb", "so", "sb", "dp", "pitches"]
-PA_FEED_ROWS = {"xba", "hard_hit", "risp", "dp"}
+ROW_ORDER = ["avg", "xba", "xbh", "hr", "risp", "lob", "bb", "so", "sb", "dp"]
+PA_FEED_ROWS = {"xba", "risp", "dp"}
 DP_WORDS = ("Double Play", "GIDP", "Triple Play")
 
 # --- the in-at-bat event classifier ------------------------------------------------
@@ -198,7 +199,6 @@ def team_stats(pas: list[dict], box: dict, plays: Optional[list[dict]], contact:
     for side, half in halves.items():
         other = "home" if side == "away" else "away"
         mine = [r for r in box.get(side, []) if r.get("at_bats") is not None or r.get("plate_appearances") is not None]
-        pitchers_mine = [r for r in box.get(side, []) if r.get("pitch_count") is not None or r.get("pitching_outs")]
         pitchers_theirs = box.get(other, [])
         side_pas = [p for p in pas if (p.get("half_inning") or "").lower() == half]
         # True plate appearances only: the feed also writes a row for an inning that
@@ -212,10 +212,15 @@ def team_stats(pas: list[dict], box: dict, plays: Optional[list[dict]], contact:
         ab, h, r = _sum(mine, "at_bats"), _sum(mine, "hits"), _sum(mine, "runs")
         outs = _sum(pitchers_theirs, "pitching_outs")
         lob = pa_box - r - outs - ((on_base or {}).get(side) or 0)
+        # Fails closed: a batting line with an at-bat but no doubles or triples
+        # would undercount, so the row hides rather than read short.
+        if any((row.get("at_bats") or 0) and (row.get("doubles") is None or row.get("triples") is None)
+               for row in mine):
+            hidden["xbh"] = "box_incomplete"
         out[side] = {
             "avg": h / ab if ab else None,
             "xba": contact[side]["xba"],
-            "hard_hit": contact[side]["hard_hit"],
+            "xbh": _sum(mine, "doubles") + _sum(mine, "triples") + _sum(mine, "hr"),
             "hr": _sum(mine, "hr"),
             "risp_h": None, "risp_ab": None,
             "lob": max(lob, 0),
@@ -223,9 +228,11 @@ def team_stats(pas: list[dict], box: dict, plays: Optional[list[dict]], contact:
             "so": _sum(mine, "k"),
             "sb": _sum(mine, "stolen_bases"),
             "dp": sum(1 for p in opp_side_pas if any(w in (p.get("result") or "") for w in DP_WORDS)),
-            "pitches": sum((r.get("pitch_count") or 0) for r in pitchers_mine),
             "pa": pa_box, "feed_pa": len(completed),
         }
+    if "xbh" in hidden:
+        for side in halves:
+            out[side]["xbh"] = None
     if not feed_ok:
         for k in PA_FEED_ROWS:
             hidden[k] = "pa_feed_mismatch"

@@ -1212,7 +1212,9 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 130
+      "player_id": 130,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 3,
@@ -1232,7 +1234,9 @@
       "gidp": 0,
       "left_on_base": 3,
       "errors": 0,
-      "player_id": 156
+      "player_id": 156,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 4,
@@ -1252,7 +1256,9 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 1101
+      "player_id": 1101,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 5,
@@ -1272,7 +1278,9 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 0,
-      "player_id": 118
+      "player_id": 118,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 4,
@@ -1292,7 +1300,9 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 1098
+      "player_id": 1098,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 4,
@@ -1312,7 +1322,9 @@
       "gidp": 0,
       "left_on_base": 3,
       "errors": 0,
-      "player_id": 678
+      "player_id": 678,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 4,
@@ -1332,7 +1344,9 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 103
+      "player_id": 103,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 2,
@@ -1352,7 +1366,9 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 208
+      "player_id": 208,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 4,
@@ -1372,7 +1388,9 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 0,
-      "player_id": 176
+      "player_id": 176,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": null,
@@ -1392,7 +1410,9 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 79
+      "player_id": 79,
+      "doubles": null,
+      "triples": null
      },
      {
       "at_bats": 1,
@@ -1412,7 +1432,9 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 0,
-      "player_id": 160
+      "player_id": 160,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": null,
@@ -1432,7 +1454,9 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 2898
+      "player_id": 2898,
+      "doubles": null,
+      "triples": null
      },
      {
       "at_bats": 1,
@@ -1452,7 +1476,9 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 0,
-      "player_id": 142
+      "player_id": 142,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": null,
@@ -1472,7 +1498,9 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 184
+      "player_id": 184,
+      "doubles": null,
+      "triples": null
      }
     ],
     "home": [
@@ -1494,7 +1522,9 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 736
+      "player_id": 736,
+      "doubles": null,
+      "triples": null
      },
      {
       "at_bats": 4,
@@ -1514,7 +1544,9 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 0,
-      "player_id": 856
+      "player_id": 856,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 4,
@@ -1534,7 +1566,9 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 0,
-      "player_id": 825
+      "player_id": 825,
+      "doubles": 1,
+      "triples": 0
      },
      {
       "at_bats": 3,
@@ -1554,7 +1588,9 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 863
+      "player_id": 863,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 4,
@@ -1574,7 +1610,9 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 628
+      "player_id": 628,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 3,
@@ -1594,7 +1632,9 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 1835
+      "player_id": 1835,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 3,
@@ -1614,7 +1654,9 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 0,
-      "player_id": 1048
+      "player_id": 1048,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 4,
@@ -1634,7 +1676,9 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 874
+      "player_id": 874,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 1,
@@ -1654,7 +1698,9 @@
       "gidp": 0,
       "left_on_base": 0,
       "errors": 1,
-      "player_id": 406
+      "player_id": 406,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 4,
@@ -1674,7 +1720,9 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 1,
-      "player_id": 114368
+      "player_id": 114368,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 0,
@@ -1694,7 +1742,9 @@
       "gidp": 0,
       "left_on_base": 0,
       "errors": 0,
-      "player_id": 2025
+      "player_id": 2025,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 1,
@@ -1714,7 +1764,9 @@
       "gidp": 0,
       "left_on_base": 0,
       "errors": 0,
-      "player_id": 302
+      "player_id": 302,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": null,
@@ -1734,7 +1786,9 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 630
+      "player_id": 630,
+      "doubles": null,
+      "triples": null
      },
      {
       "at_bats": null,
@@ -1754,7 +1808,9 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 703
+      "player_id": 703,
+      "doubles": null,
+      "triples": null
      },
      {
       "at_bats": null,
@@ -1774,7 +1830,9 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 706
+      "player_id": 706,
+      "doubles": null,
+      "triples": null
      },
      {
       "at_bats": null,
@@ -1794,7 +1852,9 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 667
+      "player_id": 667,
+      "doubles": null,
+      "triples": null
      },
      {
       "at_bats": 1,
@@ -1814,7 +1874,9 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 0,
-      "player_id": 167
+      "player_id": 167,
+      "doubles": 0,
+      "triples": 0
      }
     ]
    },
@@ -5269,7 +5331,9 @@
       "gidp": 0,
       "left_on_base": 0,
       "errors": 1,
-      "player_id": 123
+      "player_id": 123,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 4,
@@ -5289,7 +5353,9 @@
       "gidp": 0,
       "left_on_base": 3,
       "errors": 0,
-      "player_id": 920
+      "player_id": 920,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 3,
@@ -5309,7 +5375,9 @@
       "gidp": 0,
       "left_on_base": 0,
       "errors": 0,
-      "player_id": 551
+      "player_id": 551,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 4,
@@ -5329,7 +5397,9 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 0,
-      "player_id": 125
+      "player_id": 125,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 4,
@@ -5349,7 +5419,9 @@
       "gidp": 0,
       "left_on_base": 0,
       "errors": 1,
-      "player_id": 518
+      "player_id": 518,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 3,
@@ -5369,7 +5441,9 @@
       "gidp": 0,
       "left_on_base": 0,
       "errors": 1,
-      "player_id": 506
+      "player_id": 506,
+      "doubles": 1,
+      "triples": 0
      },
      {
       "at_bats": 4,
@@ -5389,7 +5463,9 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 0,
-      "player_id": 4668097
+      "player_id": 4668097,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 3,
@@ -5409,7 +5485,9 @@
       "gidp": 0,
       "left_on_base": 0,
       "errors": 0,
-      "player_id": 4480
+      "player_id": 4480,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": null,
@@ -5429,7 +5507,9 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 2183925
+      "player_id": 2183925,
+      "doubles": null,
+      "triples": null
      },
      {
       "at_bats": 4,
@@ -5449,7 +5529,9 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 1,
-      "player_id": 4838771
+      "player_id": 4838771,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": null,
@@ -5469,7 +5551,9 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 765
+      "player_id": 765,
+      "doubles": null,
+      "triples": null
      },
      {
       "at_bats": 1,
@@ -5489,7 +5573,9 @@
       "gidp": 0,
       "left_on_base": 0,
       "errors": 0,
-      "player_id": 1439
+      "player_id": 1439,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": null,
@@ -5509,7 +5595,9 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 4443
+      "player_id": 4443,
+      "doubles": null,
+      "triples": null
      },
      {
       "at_bats": null,
@@ -5529,7 +5617,9 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 556
+      "player_id": 556,
+      "doubles": null,
+      "triples": null
      },
      {
       "at_bats": null,
@@ -5549,7 +5639,9 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 61
+      "player_id": 61,
+      "doubles": null,
+      "triples": null
      },
      {
       "at_bats": null,
@@ -5569,7 +5661,9 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 414
+      "player_id": 414,
+      "doubles": null,
+      "triples": null
      },
      {
       "at_bats": 0,
@@ -5589,7 +5683,9 @@
       "gidp": null,
       "left_on_base": null,
       "errors": null,
-      "player_id": 72
+      "player_id": 72,
+      "doubles": null,
+      "triples": null
      }
     ],
     "home": [
@@ -5611,7 +5707,9 @@
       "gidp": 0,
       "left_on_base": 0,
       "errors": 0,
-      "player_id": 92
+      "player_id": 92,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": null,
@@ -5631,7 +5729,9 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 114
+      "player_id": 114,
+      "doubles": null,
+      "triples": null
      },
      {
       "at_bats": 4,
@@ -5651,7 +5751,9 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 161
+      "player_id": 161,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 5,
@@ -5671,7 +5773,9 @@
       "gidp": 0,
       "left_on_base": 3,
       "errors": 0,
-      "player_id": 58
+      "player_id": 58,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 4,
@@ -5691,7 +5795,9 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 0,
-      "player_id": 129
+      "player_id": 129,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 4,
@@ -5711,7 +5817,9 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 653217
+      "player_id": 653217,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 3,
@@ -5731,7 +5839,9 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 12163
+      "player_id": 12163,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 4,
@@ -5751,7 +5861,9 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 0,
-      "player_id": 88
+      "player_id": 88,
+      "doubles": 1,
+      "triples": 0
      },
      {
       "at_bats": 3,
@@ -5771,7 +5883,9 @@
       "gidp": 0,
       "left_on_base": 5,
       "errors": 0,
-      "player_id": 573
+      "player_id": 573,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 4,
@@ -5791,7 +5905,9 @@
       "gidp": 0,
       "left_on_base": 4,
       "errors": 0,
-      "player_id": 182
+      "player_id": 182,
+      "doubles": 1,
+      "triples": 0
      },
      {
       "at_bats": null,
@@ -5811,7 +5927,9 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 222
+      "player_id": 222,
+      "doubles": null,
+      "triples": null
      },
      {
       "at_bats": 0,
@@ -5831,7 +5949,9 @@
       "gidp": null,
       "left_on_base": null,
       "errors": null,
-      "player_id": 1311
+      "player_id": 1311,
+      "doubles": null,
+      "triples": null
      },
      {
       "at_bats": null,
@@ -5851,7 +5971,9 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 1602862
+      "player_id": 1602862,
+      "doubles": null,
+      "triples": null
      },
      {
       "at_bats": null,
@@ -5871,7 +5993,9 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 624
+      "player_id": 624,
+      "doubles": null,
+      "triples": null
      }
     ]
    },
@@ -9171,7 +9295,9 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 788
+      "player_id": 788,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": null,
@@ -9191,7 +9317,9 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 6032
+      "player_id": 6032,
+      "doubles": null,
+      "triples": null
      },
      {
       "at_bats": 2,
@@ -9211,7 +9339,9 @@
       "gidp": 0,
       "left_on_base": 0,
       "errors": 0,
-      "player_id": 771
+      "player_id": 771,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 4,
@@ -9231,7 +9361,9 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 0,
-      "player_id": 1567927
+      "player_id": 1567927,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 4,
@@ -9251,7 +9383,9 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 4667586
+      "player_id": 4667586,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 3,
@@ -9271,7 +9405,9 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 2094850
+      "player_id": 2094850,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 4,
@@ -9291,7 +9427,9 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 4838836
+      "player_id": 4838836,
+      "doubles": 1,
+      "triples": 0
      },
      {
       "at_bats": 2,
@@ -9311,7 +9449,9 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 2752091
+      "player_id": 2752091,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 4,
@@ -9331,7 +9471,9 @@
       "gidp": 0,
       "left_on_base": 0,
       "errors": 0,
-      "player_id": 519799
+      "player_id": 519799,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 4,
@@ -9351,7 +9493,9 @@
       "gidp": 1,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 4839465
+      "player_id": 4839465,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": null,
@@ -9371,7 +9515,9 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 1,
-      "player_id": 2274
+      "player_id": 2274,
+      "doubles": null,
+      "triples": null
      },
      {
       "at_bats": null,
@@ -9391,7 +9537,9 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 534
+      "player_id": 534,
+      "doubles": null,
+      "triples": null
      },
      {
       "at_bats": 1,
@@ -9411,7 +9559,9 @@
       "gidp": 0,
       "left_on_base": 0,
       "errors": 0,
-      "player_id": 1445
+      "player_id": 1445,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 1,
@@ -9431,7 +9581,9 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 1263
+      "player_id": 1263,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 1,
@@ -9451,7 +9603,9 @@
       "gidp": 0,
       "left_on_base": 0,
       "errors": 0,
-      "player_id": 220
+      "player_id": 220,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": null,
@@ -9471,7 +9625,9 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 1645455
+      "player_id": 1645455,
+      "doubles": null,
+      "triples": null
      }
     ],
     "home": [
@@ -9493,7 +9649,9 @@
       "gidp": 0,
       "left_on_base": 0,
       "errors": 0,
-      "player_id": 965
+      "player_id": 965,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 4,
@@ -9513,7 +9671,9 @@
       "gidp": 0,
       "left_on_base": 3,
       "errors": 0,
-      "player_id": 195
+      "player_id": 195,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 3,
@@ -9533,7 +9693,9 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 0,
-      "player_id": 1501
+      "player_id": 1501,
+      "doubles": 0,
+      "triples": 1
      },
      {
       "at_bats": 3,
@@ -9553,7 +9715,9 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 0,
-      "player_id": 970
+      "player_id": 970,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 4,
@@ -9573,7 +9737,9 @@
       "gidp": 0,
       "left_on_base": 0,
       "errors": 0,
-      "player_id": 1007
+      "player_id": 1007,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 4,
@@ -9593,7 +9759,9 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 1018
+      "player_id": 1018,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": null,
@@ -9613,7 +9781,9 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 879
+      "player_id": 879,
+      "doubles": null,
+      "triples": null
      },
      {
       "at_bats": 4,
@@ -9633,7 +9803,9 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 0,
-      "player_id": 977
+      "player_id": 977,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 4,
@@ -9653,7 +9825,9 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 3781026
+      "player_id": 3781026,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 3,
@@ -9673,7 +9847,9 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 4839339
+      "player_id": 4839339,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": null,
@@ -9693,7 +9869,9 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 835
+      "player_id": 835,
+      "doubles": null,
+      "triples": null
      },
      {
       "at_bats": null,
@@ -9713,7 +9891,9 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 1,
-      "player_id": 764
+      "player_id": 764,
+      "doubles": null,
+      "triples": null
      },
      {
       "at_bats": null,
@@ -9733,7 +9913,9 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 4300
+      "player_id": 4300,
+      "doubles": null,
+      "triples": null
      },
      {
       "at_bats": null,
@@ -9753,7 +9935,9 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 841
+      "player_id": 841,
+      "doubles": null,
+      "triples": null
      }
     ]
    },
@@ -13156,7 +13340,9 @@
       "gidp": 1,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 1956
+      "player_id": 1956,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 4,
@@ -13176,7 +13362,9 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 0,
-      "player_id": 207
+      "player_id": 207,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 4,
@@ -13196,7 +13384,9 @@
       "gidp": 0,
       "left_on_base": 0,
       "errors": 0,
-      "player_id": 168
+      "player_id": 168,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": null,
@@ -13216,7 +13406,9 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 6133
+      "player_id": 6133,
+      "doubles": null,
+      "triples": null
      },
      {
       "at_bats": 4,
@@ -13236,7 +13428,9 @@
       "gidp": 0,
       "left_on_base": 3,
       "errors": 0,
-      "player_id": 266
+      "player_id": 266,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 2,
@@ -13256,7 +13450,9 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 260
+      "player_id": 260,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 4,
@@ -13276,7 +13472,9 @@
       "gidp": 0,
       "left_on_base": 4,
       "errors": 0,
-      "player_id": 318
+      "player_id": 318,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 4,
@@ -13296,7 +13494,9 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 297
+      "player_id": 297,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 4,
@@ -13316,7 +13516,9 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 274
+      "player_id": 274,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 4,
@@ -13336,7 +13538,9 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 1,
-      "player_id": 4838818
+      "player_id": 4838818,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": null,
@@ -13356,7 +13560,9 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 312
+      "player_id": 312,
+      "doubles": null,
+      "triples": null
      },
      {
       "at_bats": null,
@@ -13376,7 +13582,9 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 63
+      "player_id": 63,
+      "doubles": null,
+      "triples": null
      },
      {
       "at_bats": null,
@@ -13396,7 +13604,9 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 1056
+      "player_id": 1056,
+      "doubles": null,
+      "triples": null
      },
      {
       "at_bats": 1,
@@ -13416,7 +13626,9 @@
       "gidp": 0,
       "left_on_base": 0,
       "errors": 0,
-      "player_id": 448
+      "player_id": 448,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": null,
@@ -13436,7 +13648,9 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 135
+      "player_id": 135,
+      "doubles": null,
+      "triples": null
      },
      {
       "at_bats": 0,
@@ -13456,7 +13670,9 @@
       "gidp": null,
       "left_on_base": null,
       "errors": null,
-      "player_id": 4838816
+      "player_id": 4838816,
+      "doubles": null,
+      "triples": null
      }
     ],
     "home": [
@@ -13478,7 +13694,9 @@
       "gidp": 0,
       "left_on_base": 0,
       "errors": 0,
-      "player_id": 412
+      "player_id": 412,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 3,
@@ -13498,7 +13716,9 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 0,
-      "player_id": 388
+      "player_id": 388,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 4,
@@ -13518,7 +13738,9 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 1471
+      "player_id": 1471,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 4,
@@ -13538,7 +13760,9 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 0,
-      "player_id": 492
+      "player_id": 492,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": null,
@@ -13558,7 +13782,9 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 5161
+      "player_id": 5161,
+      "doubles": null,
+      "triples": null
      },
      {
       "at_bats": 2,
@@ -13578,7 +13804,9 @@
       "gidp": 0,
       "left_on_base": 0,
       "errors": 0,
-      "player_id": 403
+      "player_id": 403,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 3,
@@ -13598,7 +13826,9 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 0,
-      "player_id": 610
+      "player_id": 610,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 4,
@@ -13618,7 +13848,9 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 0,
-      "player_id": 480
+      "player_id": 480,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 2,
@@ -13638,7 +13870,9 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 0,
-      "player_id": 254
+      "player_id": 254,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 3,
@@ -13658,7 +13892,9 @@
       "gidp": 0,
       "left_on_base": 0,
       "errors": 0,
-      "player_id": 4838709
+      "player_id": 4838709,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": null,
@@ -13678,7 +13914,9 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 215
+      "player_id": 215,
+      "doubles": null,
+      "triples": null
      },
      {
       "at_bats": null,
@@ -13698,7 +13936,9 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 303
+      "player_id": 303,
+      "doubles": null,
+      "triples": null
      },
      {
       "at_bats": null,
@@ -13718,7 +13958,9 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 1441293
+      "player_id": 1441293,
+      "doubles": null,
+      "triples": null
      },
      {
       "at_bats": 1,
@@ -13738,7 +13980,9 @@
       "gidp": 0,
       "left_on_base": 0,
       "errors": 0,
-      "player_id": 590
+      "player_id": 590,
+      "doubles": 0,
+      "triples": 0
      },
      {
       "at_bats": 0,
@@ -13758,7 +14002,9 @@
       "gidp": null,
       "left_on_base": null,
       "errors": null,
-      "player_id": 4839022
+      "player_id": 4839022,
+      "doubles": null,
+      "triples": null
      },
      {
       "at_bats": null,
@@ -13778,7 +14024,9 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 291
+      "player_id": 291,
+      "doubles": null,
+      "triples": null
      }
     ]
    },

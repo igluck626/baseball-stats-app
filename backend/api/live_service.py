@@ -1004,7 +1004,7 @@ def assemble_unified(game: dict, stats: list[dict],
         # Batted-ball metrics, shaped like plate appearances — see
         # `_contact_pas`. Additive: an older client ignores the key.
         "contact_pas":   _contact_pas(pas, previous_contact),
-        # Team AVG / xBA / hard-hit, with the server's show/hide decision, and the
+        # Team AVG / xBA, with the server's show/hide decision, and the
         # Team Stats rows under `stats` — see team_contact.py / team_stats.py.
         # Additive: an older client ignores the key.
         "team_contact":  _team_contact_live(pas, stats, plays, home_team, away_team, status,
