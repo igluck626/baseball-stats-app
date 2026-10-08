@@ -2,10 +2,10 @@
 //  TeamStatsCard.swift
 //  BaseballStats
 //
-//  Team Stats: the two teams side by side — AVG, xBA, balls hit 95+ mph, HR,
-//  RISP, LOB, BB, SO, SB, double plays turned, pitches — after the batting and
-//  pitching tables, live and final. Every number and the choice of rows are the
-//  backend's (`TeamStats`); this view only lays them out.
+//  Team Stats: the two teams side by side — AVG, xBA, extra-base hits, HR, RISP,
+//  LOB, BB, SO, SB, double plays turned — after the batting and pitching tables,
+//  live and final. Every number and the choice of rows are the backend's
+//  (`TeamStats`); this view only lays them out.
 //
 
 import SwiftUI
@@ -26,14 +26,14 @@ struct TeamStatsCard: View {
                     .font(.caption.weight(.bold))
                     .tracking(0.8)
                     .foregroundStyle(.secondary)
-                if rows.contains(where: { $0.key == "xba" || $0.key == "hard_hit" }) {
+                if rows.contains(where: { $0.key == "xba" }) {
                     Button { showingInfo = true } label: {
                         Image(systemName: "info.circle")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("About xBA and hard-hit balls")
+                    .accessibilityLabel("About xBA")
                     .accessibilityIdentifier("teamStats.info")
                     // A popover on a regular-width screen; a sheet on a phone,
                     // where a popover anchored low on the screen had no room.
@@ -109,7 +109,7 @@ struct TeamStatsCard: View {
     private static let tableMaxWidth: CGFloat = 420
 }
 
-/// The ⓘ explanation of xBA and hard-hit balls, at a FIXED width: a popover
+/// The ⓘ explanation of xBA, at a FIXED width: a popover
 /// measures the text's height at the width it proposes, and with only a maximum
 /// width the two disagreed and the last lines were cut off. (A popover's contents
 /// are compact width too, so the size class can't tell it from the phone's sheet.)
@@ -128,9 +128,6 @@ private struct TeamStatsInfo: View {
             Text("xBA (expected batting average)")
                 .font(.subheadline.weight(.semibold))
             Text("The average a team's contact would usually produce. Each ball in play is rated by how often balls hit at that speed and angle fall for hits; strikeouts count as outs. An xBA above the team's AVG means its contact deserved more hits than it got. Early in a game, a single ball in play can move xBA a lot.")
-            Text("Hit 95+ mph")
-                .font(.subheadline.weight(.semibold))
-            Text("Balls hit 95 mph or harder off the bat — hard-hit balls.")
             Text("Statcast data via balldontlie.")
                 .foregroundStyle(.secondary)
         }

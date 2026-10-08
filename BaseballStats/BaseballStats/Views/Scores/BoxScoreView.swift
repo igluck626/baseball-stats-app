@@ -64,10 +64,10 @@ final class BoxScoreViewModel: ObservableObject {
     /// substitute placement consumes them inline; this holds the same
     /// slice rather than fetching it a second time.
     @Published var plateAppearances: [BDLPlateAppearance] = []
-    /// Each team's AVG / xBA / hard-hit, from the backend: the live snapshot
-    /// while the game is on, `/games/{id}/team-contact` once it's final. nil for
-    /// a historical (Retrosheet-boxed) game and on any failure — the block then
-    /// simply isn't drawn.
+    /// Each team's Team Stats (AVG, xBA, XBH and the rest), from the backend: the
+    /// live snapshot while the game is on, `/games/{id}/team-contact` once it's
+    /// final. nil for a historical (Retrosheet-boxed) game and on any failure —
+    /// the block then simply isn't drawn.
     @Published var teamContact: TeamContact?
     /// Set only for a historical game — how its batters are sorted. The view
     /// shows it rather than letting a reader read a lineup into the order.

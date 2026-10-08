@@ -2,12 +2,13 @@
 //  TeamContact.swift
 //  BaseballStats
 //
-//  Each team's AVG, expected batting average (xBA) and balls hit 95+ mph in one
-//  game — computed by the backend (`team_contact.py`), never here, and shipped
-//  on the live snapshot (`team_contact`) and by `GET /games/{bdl_id}/team-contact`
-//  for a finished game. The server also decides whether it's worth showing:
-//  enough of each side's contact tracked, and, live, an at-bat (each side's
-//  value shows from its own first; a side yet to bat reads "—").
+//  Each team's AVG and expected batting average (xBA) in one game, with the
+//  Team Stats rows under `stats` — computed by the backend (`team_contact.py`),
+//  never here, and shipped on the live snapshot (`team_contact`) and by
+//  `GET /games/{bdl_id}/team-contact` for a finished game. The server also
+//  decides whether it's worth showing: enough of each side's contact tracked,
+//  and, live, an at-bat (each side's value shows from its own first; a side yet
+//  to bat reads "—").
 //
 
 import Foundation
@@ -18,14 +19,12 @@ struct TeamContact: Codable, Hashable {
         let h: Int
         let avg: Double?
         let xba: Double?
-        let hardHit: Int
         /// The share of this side's balls in play that carry an xBA. Optional
         /// with the other diagnostics: the display decision is the server's.
         let trackedShare: Double?
 
         enum CodingKeys: String, CodingKey {
             case ab, h, avg, xba
-            case hardHit = "hard_hit"
             case trackedShare = "tracked_share"
         }
     }
@@ -59,7 +58,7 @@ struct TeamStats: Codable, Hashable {
     struct Side: Codable, Hashable {
         let avg: Double?
         let xba: Double?
-        let hardHit: Int?
+        let xbh: Int?
         let hr: Int?
         let rispH: Int?
         let rispAb: Int?
@@ -68,11 +67,9 @@ struct TeamStats: Codable, Hashable {
         let so: Int?
         let sb: Int?
         let dp: Int?
-        let pitches: Int?
 
         enum CodingKeys: String, CodingKey {
-            case avg, xba, hr, lob, bb, so, sb, dp, pitches
-            case hardHit = "hard_hit"
+            case avg, xba, xbh, hr, lob, bb, so, sb, dp
             case rispH = "risp_h"
             case rispAb = "risp_ab"
         }
@@ -92,9 +89,9 @@ struct TeamStats: Codable, Hashable {
     }
 
     static let labels: [String: String] = [
-        "avg": "AVG", "xba": "xBA", "hard_hit": "Hit 95+ mph", "hr": "HR",
+        "avg": "AVG", "xba": "xBA", "xbh": "XBH", "hr": "HR",
         "risp": "RISP", "lob": "LOB", "bb": "BB", "so": "SO", "sb": "SB",
-        "dp": "Double plays", "pitches": "Pitches",
+        "dp": "Double plays",
     ]
 
     /// The rows to draw, in the server's order. A side without a value — the home
@@ -122,7 +119,7 @@ struct TeamStats: Codable, Hashable {
         switch key {
         case "avg": return s.avg.map { TeamContact.rate($0) }
         case "xba": return s.xba.map { TeamContact.rate($0) }
-        case "hard_hit": return n(s.hardHit)
+        case "xbh": return n(s.xbh)
         case "hr": return n(s.hr)
         case "risp":
             guard let h = s.rispH, let ab = s.rispAb else { return nil }
@@ -132,7 +129,6 @@ struct TeamStats: Codable, Hashable {
         case "so": return n(s.so)
         case "sb": return n(s.sb)
         case "dp": return n(s.dp)
-        case "pitches": return n(s.pitches)
         default: return nil
         }
     }
