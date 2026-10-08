@@ -23,7 +23,8 @@ struct TeamStatsCard: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
                 Text("TEAM STATS")
-                    .font(.caption.weight(.semibold))
+                    .font(.caption.weight(.bold))
+                    .tracking(0.8)
                     .foregroundStyle(.secondary)
                 if rows.contains(where: { $0.key == "xba" || $0.key == "hard_hit" }) {
                     Button { showingInfo = true } label: {
@@ -67,31 +68,45 @@ struct TeamStatsCard: View {
         .accessibilityIdentifier("teamStats")
     }
 
-    /// away | stat | home, at natural width and leading — on a wide window it stays
-    /// a compact table rather than stretching across the card.
+    /// away | stat | home, mirrored around the centred labels. The two team
+    /// columns share the width equally and centre their values, so a long value
+    /// ("2-for-7") and a short one ("4") sit on the same axis, and the header
+    /// abbreviations sit over them. One Grid, so every row has the same column
+    /// widths whichever rows the server sends. Capped and centred in the card: on
+    /// a regular-width screen the values stay near their labels rather than at
+    /// the card's edges.
     private func table(_ rows: [TeamStats.Row]) -> some View {
-        Grid(horizontalSpacing: 20, verticalSpacing: 6) {
+        Grid(horizontalSpacing: 12, verticalSpacing: 7) {
             GridRow {
-                Text(awayAbbr).gridColumnAlignment(.trailing)
+                Text(awayAbbr).frame(maxWidth: .infinity)
                 Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
-                Text(homeAbbr).gridColumnAlignment(.leading)
+                Text(homeAbbr).frame(maxWidth: .infinity)
             }
             .font(.subheadline.weight(.semibold))
+            .accessibilityHidden(true)
+            Divider().opacity(0.4)
             ForEach(rows) { row in
                 GridRow {
-                    Text(row.away).monospacedDigit()
+                    Text(row.away).monospacedDigit().frame(maxWidth: .infinity)
                     Text(row.label)
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
-                    Text(row.home).monospacedDigit()
+                        .lineLimit(1)
+                        .fixedSize()
+                    Text(row.home).monospacedDigit().frame(maxWidth: .infinity)
                 }
                 .font(.subheadline)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("\(row.label): \(awayAbbr) \(row.away), \(homeAbbr) \(row.home)")
             }
         }
-        .fixedSize()
+        .frame(maxWidth: Self.tableMaxWidth)
+        .frame(maxWidth: .infinity)
     }
+
+    /// The table's widest extent — a phone's card is narrower, so this binds only
+    /// on a regular-width screen.
+    private static let tableMaxWidth: CGFloat = 420
 }
 
 /// The ⓘ explanation of xBA and hard-hit balls, at a FIXED width: a popover
