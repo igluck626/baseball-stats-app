@@ -112,7 +112,7 @@ private struct TeamStatsInfo: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("xBA (expected batting average)")
                 .font(.subheadline.weight(.semibold))
-            Text("The average a team's contact would usually produce. Each ball in play is rated by how often balls hit at that speed and angle fall for hits; strikeouts count as outs. An xBA above the team's AVG means its contact deserved more hits than it got.")
+            Text("The average a team's contact would usually produce. Each ball in play is rated by how often balls hit at that speed and angle fall for hits; strikeouts count as outs. An xBA above the team's AVG means its contact deserved more hits than it got. Early in a game, a single ball in play can move xBA a lot.")
             Text("Hit 95+ mph")
                 .font(.subheadline.weight(.semibold))
             Text("Balls hit 95 mph or harder off the bat — hard-hit balls.")
