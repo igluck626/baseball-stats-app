@@ -5,8 +5,8 @@ team-contact block as `stats` (see team_contact.py), on the live snapshot and fr
 
 Rows, in display order:
   avg       H / AB, from the box.
-  xba       the team-contact xBA (PA feed); shown under team_contact's own rule (each
-            side has an at-bat, and 90% of its balls in play are tracked).
+  xba       the team-contact xBA (PA feed); shown under team_contact's own rule (a side
+            has an at-bat, and 90% of each side's balls in play are tracked).
   hard_hit  balls hit 95+ mph (PA feed).
   hr, bb, so, sb, pitches   summed from the box.
   risp      hits and at-bats with runners in scoring position (PA feed + plays).

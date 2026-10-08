@@ -6,7 +6,8 @@
 //  game — computed by the backend (`team_contact.py`), never here, and shipped
 //  on the live snapshot (`team_contact`) and by `GET /games/{bdl_id}/team-contact`
 //  for a finished game. The server also decides whether it's worth showing:
-//  enough of each side's contact tracked, and, live, an at-bat for each side.
+//  enough of each side's contact tracked, and, live, an at-bat (each side's
+//  value shows from its own first; a side yet to bat reads "—").
 //
 
 import Foundation
@@ -96,14 +97,24 @@ struct TeamStats: Codable, Hashable {
         "dp": "Double plays", "pitches": "Pitches",
     ]
 
-    /// The rows to draw, in the server's order. A row whose value is missing for
-    /// either side is skipped rather than drawn with a blank.
+    /// The rows to draw, in the server's order. A side without a value — the home
+    /// side's AVG and xBA in the top of the 1st — reads "—"; a row with no value
+    /// for either side is skipped rather than drawn blank.
     var displayRows: [Row] {
         rows.compactMap { key in
-            guard let label = Self.labels[key],
-                  let a = Self.value(key, away), let h = Self.value(key, home) else { return nil }
-            return Row(key: key, label: label, away: a, home: h)
+            let a = Self.value(key, away), h = Self.value(key, home)
+            guard let label = Self.labels[key], a != nil || h != nil else { return nil }
+            return Row(key: key, label: label, away: a ?? "—", home: h ?? "—")
         }
+    }
+
+    /// The Team Stats card's gate: the stats to draw, or nil for no card. Nil
+    /// before first pitch (no block: a finished game's endpoint isn't asked, and
+    /// there's no live snapshot yet) and before the first plate appearance (the
+    /// server sends no rows); live from the first at-bat on, and at the final.
+    static func card(for contact: TeamContact?) -> TeamStats? {
+        guard let stats = contact?.stats, !stats.displayRows.isEmpty else { return nil }
+        return stats
     }
 
     static func value(_ key: String, _ s: Side) -> String? {

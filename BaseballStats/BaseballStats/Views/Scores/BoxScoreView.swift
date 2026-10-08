@@ -814,7 +814,7 @@ struct BoxScoreView: View {
                         // Team Stats, live and final, after the tables and before
                         // the individual leaders. The server picks the rows (none
                         // before the first plate appearance, so no card).
-                        if let stats = vm.teamContact?.stats, !stats.displayRows.isEmpty {
+                        if let stats = TeamStats.card(for: vm.teamContact) {
                             TeamStatsCard(stats: stats,
                                           awayAbbr: teamAbbr(bs.teams.away.team),
                                           homeAbbr: teamAbbr(bs.teams.home.team))
@@ -852,7 +852,7 @@ struct BoxScoreView: View {
                         // is the batting-slot fault in a more visible
                         // place. See the note in memory for the three
                         // conditions under which it could go live.
-                        if !isLiveNow, let leaders = gameLeaders(bs: bs) {
+                        if let leaders = GameLeadersCard.board(isLive: isLiveNow, build: { gameLeaders(bs: bs) }) {
                             let sides = gameLeadersByTeam(bs: bs)
                             GameLeadersCard(
                                 leaders:   leaders,

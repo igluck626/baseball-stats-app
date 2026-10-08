@@ -70,6 +70,14 @@ struct GameLeadersCard: View {
         }
     }
 
+    /// The card's gate: the board to draw, or nil for no card. FINAL ONLY — live
+    /// it would reorder about once every five minutes, and the live snapshot's
+    /// contact rows carry no pitch speeds (see the note at the call site in
+    /// `BoxScoreView`). `build` runs only when the board can show.
+    static func board(isLive: Bool, build: () -> GameLeaders?) -> GameLeaders? {
+        isLive ? nil : build()
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header

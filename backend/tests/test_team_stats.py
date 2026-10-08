@@ -170,8 +170,11 @@ check("final=False with 30+ at-bats a side: xBA still shown", "xba" in st["rows"
 top1 = [p for p in g["plate_appearances"] if p["inning"] == 1 and p["half_inning"].lower() == "top"]
 box_top1 = {"away": [{"plate_appearances": len(top1), "at_bats": len(top1), "hits": 0, "runs": 0}], "home": []}
 st = tc.team_contact(top1, final=False, box=box_top1, plays=g["plays"])["stats"]
-check("live, top of the 1st (the home side yet to bat): xBA hidden, reason 'no_data'",
-      "xba" not in st["rows"] and st["hidden"].get("xba") == "no_data")
+check("live, top of the 1st (the home side yet to bat): xBA shown, the home value None",
+      "xba" in st["rows"] and st["away"]["xba"] is not None and st["home"]["xba"] is None)
+st = tc.team_contact([], final=False, box={"away": [], "home": []}, plays=g["plays"])["stats"]
+check("before the first plate appearance: no rows, xBA 'no_data'",
+      st["rows"] == [] and st["hidden"].get("xba") == "no_data")
 first = [p for p in g["plate_appearances"] if p["inning"] == 1]
 box_first = {side: [{"plate_appearances": sum(1 for p in first if p["half_inning"].lower() == half),
                      "at_bats": 3, "hits": 0, "runs": 0}] for side, half in (("away", "top"), ("home", "bottom"))}

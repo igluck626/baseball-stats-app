@@ -263,6 +263,26 @@ struct InningJoinTests {
 @Suite("GameLeaders")
 struct GameLeadersTests {
 
+    /// When the card shows (states a-e). FINAL ONLY, by decision: live it would
+    /// reorder about once every five minutes, and the live snapshot's contact rows
+    /// carry no pitch speeds.
+    @Test func theBoardShowsAtTheFinalOnly() throws {
+        let fx = try fixture("stealAndSubs")
+        func board(live: Bool, _ pas: [BDLPlateAppearance]) -> GameLeaders? {
+            GameLeadersCard.board(isLive: live) {
+                GameLeaders.build(plateAppearances: pas, limit: 10, nameAndTeam: fx.nameAndTeam)
+            }
+        }
+        #expect(board(live: false, []) == nil, "a) pre-game: no plate appearances, no board")
+        #expect(board(live: true, []) == nil, "b) live, before the first plate appearance")
+        #expect(board(live: true, Array(fx.pas.prefix(1))) == nil, "c) live, after the first at-bat")
+        #expect(board(live: true, Array(fx.pas.prefix(fx.pas.count / 2))) == nil, "d) live, mid-game")
+        #expect(board(live: false, fx.pas) != nil, "e) final")
+        // The gate, not the data: the same rows build a board once the game is final.
+        #expect(GameLeaders.build(plateAppearances: Array(fx.pas.prefix(fx.pas.count / 2)), limit: 10,
+                                  nameAndTeam: fx.nameAndTeam) != nil)
+    }
+
     /// Ranking PITCHES, not plate appearances. Taking each PA's fastest
     /// and ranking those caps a pitcher at one row per batter faced, so
     /// three overpowering pitches to the same hitter would count once —

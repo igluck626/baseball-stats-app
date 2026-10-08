@@ -20,9 +20,10 @@ left out). AVG is unaffected — it is the real H / AB. `tracked_share` says how
 much of a side's contact the xBA rests on, and below `MIN_TRACKED_SHARE` the
 block isn't shown at all (2015-2017 games run 83-88%).
 
-Live, it shows as soon as each side has an at-bat (a side whose at-bats are all
-strikeouts reads .000). Early in a game one ball in play moves it a lot; the app's
-explanation says so rather than hiding the number.
+Live, each side's xBA shows from its own first at-bat (a side whose at-bats are all
+strikeouts reads .000); a side yet to bat has none, and the app draws "—". Early in
+a game one ball in play moves it a lot; the app's explanation says so rather than
+hiding the number.
 """
 from __future__ import annotations
 
@@ -130,8 +131,8 @@ def team_contact(pas: list[dict], final: bool, *, box: Optional[dict] = None,
     away, home = _side(halves["top"]), _side(halves["bottom"])
 
     reason: Optional[str] = None
-    if away["xba"] is None or home["xba"] is None:
-        reason = "no_data"          # a side without an at-bat (or only untracked ones)
+    if away["xba"] is None and home["xba"] is None:
+        reason = "no_data"          # neither side has an at-bat (or only untracked ones)
     elif any(s["tracked_share"] is not None and s["tracked_share"] < MIN_TRACKED_SHARE
              for s in (away, home)):
         reason = "untracked"

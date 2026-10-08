@@ -103,7 +103,8 @@ check("exactly 90% tracked is enough", tc.team_contact(game(10, 10, tracked_home
 # Live: shown as soon as each side has an at-bat (no wait for nine).
 check("live, one at-bat a side: shown", tc.team_contact(game(1, 1), final=False)["show"])
 b = tc.team_contact(game(3, 0), final=False)
-check("live, the home side yet to bat: hidden, reason 'no_data'", not b["show"] and b["reason"] == "no_data")
+check("live, the home side yet to bat: shown, the away xBA alone (home None)",
+      b["show"] and b["away"]["xba"] is not None and b["home"]["xba"] is None)
 ks = [pa("top", "Strikeout"), pa("top", "Strikeout"), pa("bottom", "Groundout", .2, 88)]
 b = tc.team_contact(ks, final=False)
 check("a side whose at-bats are all strikeouts reads .000, and shows", b["show"] and b["away"]["xba"] == 0.0)
@@ -112,8 +113,8 @@ check("live, a side 80% tracked: still hidden, reason 'untracked'",
 b = tc.team_contact([], final=True)
 check("no plate appearances: hidden, reason 'no_data', no crash", not b["show"] and b["reason"] == "no_data"
       and b["away"]["xba"] is None and b["home"]["avg"] is None)
-check("one side without a ball in play: 'no_data'",
-      tc.team_contact(game(10, 0), final=True)["reason"] == "no_data")
+check("one side without an at-bat: shown for the other side",
+      tc.team_contact(game(10, 0), final=True)["show"])
 
 print("finished-game fetch and cache")
 calls = []
