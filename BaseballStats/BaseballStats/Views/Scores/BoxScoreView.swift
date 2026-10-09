@@ -688,6 +688,9 @@ struct BoxScoreView: View {
     /// → use `defaultSide` (home for final, offensive team for
     /// live). The actual rendered side is `currentSide`.
     @State private var selectedSide: TeamSide?
+    /// The team card's inner width, which decides the name column (see
+    /// `nameColumnWidth(forCardInner:)`). 0 until first measured: 110pt.
+    @State private var teamCardInner: CGFloat = 0
 
     /// Which team's batting + pitching table to render. The view
     /// shows one team at a time instead of stacking both — toggled
@@ -1405,6 +1408,7 @@ struct BoxScoreView: View {
             battingTable(team: team)
             pitchingTable(team: team)
         }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { teamCardInner = $0 }
         .padding(.horizontal, 14)
         .padding(.vertical, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1519,7 +1523,7 @@ struct BoxScoreView: View {
             Text("Totals")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
-                .frame(width: BattingCol.name, alignment: .leading)
+                .frame(width: nameColumn, alignment: .leading)
             totalsCell(AB,  width: BattingCol.ab)
             totalsCell(R,   width: BattingCol.r)
             totalsCell(H,   width: BattingCol.h)
@@ -1541,6 +1545,26 @@ struct BoxScoreView: View {
     /// iPhone safe-width — `nameCol + sum(statCols)` should clear
     /// ~360pt with room for safe-area padding so OPS lands without
     /// horizontal scrolling.
+    /// The batting and pitching name column (shared, so IP sits under AB). 110pt
+    /// fits a short name with its position, but not with the current batter's
+    /// marker beside it: "M. Murakami 1B" truncated on iPad on 2026-10-08, where
+    /// text rounds to a 2x pixel grid, and a name like "J. Cronenworth 2B" would
+    /// on any device. Where the card has room — 406pt inside, so not a phone held
+    /// upright (iPhone 17: 342, Pro Max: 380) — it takes 30pt more.
+    static func nameColumnWidth(forCardInner inner: CGFloat) -> CGFloat {
+        inner >= 406 ? BattingCol.name + 30 : BattingCol.name
+    }
+
+    private var nameColumn: CGFloat { Self.nameColumnWidth(forCardInner: teamCardInner) }
+
+    /// What an empty pitching section says. Before the final it is simply too
+    /// early — in the top of the 1st the batting side hasn't pitched — so it
+    /// mustn't read as a gap in the record; a finished game with no pitching line
+    /// (a few hundred before 1910) still says so.
+    static func emptyPitchingNote(gameFinished: Bool) -> String {
+        gameFinished ? "Not recorded for this game." : "No pitching yet."
+    }
+
     private enum BattingCol {
         static let name: CGFloat = 110
         static let ab:   CGFloat = 24
@@ -1555,7 +1579,7 @@ struct BoxScoreView: View {
 
     private var battingHeader: some View {
         HStack(spacing: 0) {
-            Text("").frame(width: BattingCol.name, alignment: .leading)
+            Text("").frame(width: nameColumn, alignment: .leading)
             battingHeaderCell("AB",  width: BattingCol.ab)
             battingHeaderCell("R",   width: BattingCol.r)
             battingHeaderCell("H",   width: BattingCol.h)
@@ -1593,7 +1617,7 @@ struct BoxScoreView: View {
                     playerLabel(p, isPitcher: false)
                         .padding(.leading, Self.substitutionDepth(p) > 0 ? 12 : 0)
                 }
-                .frame(width: BattingCol.name, alignment: .leading)
+                .frame(width: nameColumn, alignment: .leading)
                 cell(b?.atBats,      width: BattingCol.ab)
                 cell(b?.runs,        width: BattingCol.r)
                 cell(b?.hits,        width: BattingCol.h)
@@ -1730,13 +1754,12 @@ struct BoxScoreView: View {
         full.split(separator: " ").last.map(String.init) ?? full
     }
 
-    /// Per-column widths for the pitching table. Name column matches
-    /// `BattingCol.name` so the IP column starts at the same x as
-    /// AB in the batting table — both tables read as a single wide
+    /// Per-column widths for the pitching table. The name column is the
+    /// batting table's (`nameColumn`) so the IP column starts at the same x
+    /// as AB in the batting table — both tables read as a single wide
     /// scoreboard. Stat-column widths are tuned to common values
     /// (IP "10.2", ERA "12.34", PC "123") at caption-monospaced.
     private enum PitchingCol {
-        static let name: CGFloat = BattingCol.name  // 110
         static let ip:   CGFloat = 34
         static let h:    CGFloat = 22
         static let r:    CGFloat = 22
@@ -1760,8 +1783,8 @@ struct BoxScoreView: View {
                 // gap in the record — which is the blank-instead-of-absent
                 // mistake this screen avoids everywhere else. Seen on
                 // 1898-09-25 PIT @ CHN, where the home side has no pitching
-                // line at all.
-                Text("Not recorded for this game.")
+                // line at all. Live or pre-game it is only too early.
+                Text(Self.emptyPitchingNote(gameFinished: !isLiveNow && vm.game.phase == .final))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1783,7 +1806,7 @@ struct BoxScoreView: View {
 
     private var pitchingHeader: some View {
         HStack(spacing: 0) {
-            Text("").frame(width: PitchingCol.name, alignment: .leading)
+            Text("").frame(width: nameColumn, alignment: .leading)
             pitchingHeaderCell("IP",  width: PitchingCol.ip)
             pitchingHeaderCell("H",   width: PitchingCol.h)
             pitchingHeaderCell("R",   width: PitchingCol.r)
@@ -1810,7 +1833,7 @@ struct BoxScoreView: View {
         return Button { tapPlayer(id: p.person.id, name: p.person.fullName, isPitcher: true) } label: {
             HStack(spacing: 0) {
                 pitcherLabel(p, decisionTag: decisionTag)
-                    .frame(width: PitchingCol.name, alignment: .leading)
+                    .frame(width: nameColumn, alignment: .leading)
                 Text(Self.formatPitcherIP(pit?.inningsPitched))
                     .font(.caption).monospacedDigit()
                     .frame(width: PitchingCol.ip, alignment: .trailing)
@@ -1949,7 +1972,7 @@ struct BoxScoreView: View {
             Text("Totals")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
-                .frame(width: PitchingCol.name, alignment: .leading)
+                .frame(width: nameColumn, alignment: .leading)
             Text(Self.decimalIPToBaseball(ipDec))
                 .font(.caption.weight(.semibold))
                 .monospacedDigit()
