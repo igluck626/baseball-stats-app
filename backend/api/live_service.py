@@ -34,6 +34,7 @@ from typing import Any, Optional
 
 import data_service
 import team_contact
+import team_stats
 from cache import cache as _cache
 from slot_codes import _slot_codes, _carried_codes, carry_forward
 
@@ -1030,8 +1031,12 @@ def _team_contact_live(pas: list[dict], stats: list[dict], plays: list[dict],
     on_base = None
     if status == "in_progress" and half in ("top", "bottom"):
         on_base = {"away" if half == "top" else "home": sum(1 for b in bases if b)}
-    return team_contact.team_contact(pas, final=status == "final", box=box, plays=plays,
-                                     on_base=on_base, game_id=game_id)
+    block = team_contact.team_contact(pas, final=status == "final", box=box, plays=plays,
+                                      on_base=on_base, game_id=game_id)
+    # Rows that drop out for a refresh or two (box and feed out of step) keep
+    # their last good value for a while; never at the final. See team_stats.
+    team_stats.hold_transient(game_id, block["stats"], final=status == "final")
+    return block
 
 
 def _summary_from_unified(u: dict) -> dict:

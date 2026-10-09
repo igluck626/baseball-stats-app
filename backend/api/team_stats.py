@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from typing import Optional
 
 import team_contact as tc
@@ -53,6 +54,15 @@ log = logging.getLogger(__name__)
 
 ROW_ORDER = ["avg", "xba", "xbh", "hr", "risp", "lob", "bb", "so", "sb", "dp"]
 PA_FEED_ROWS = {"xba", "risp", "dp"}
+
+# Live only: a row hidden for a reason that clears itself (the box and the feed out
+# of step for a refresh or two) keeps its last value that passed, for up to
+# HOLD_SECONDS — see `hold_transient`.
+HOLD_SECONDS = 180
+HOLDABLE = {"xba": ("xba",), "risp": ("risp_h", "risp_ab"), "dp": ("dp",), "xbh": ("xbh",)}
+TRANSIENT = {"pa_feed_mismatch", "box_incomplete"}
+_HELD: dict = {}      # game id -> {"good": {row: {side: values}}, "since": {row: t}, "seen": t}
+_WARNED: set = set()  # (game id, event text) already logged
 DP_WORDS = ("Double Play", "GIDP", "Triple Play")
 
 # --- the in-at-bat event classifier ------------------------------------------------
@@ -181,6 +191,78 @@ def _is_plate_appearance(result) -> bool:
     return bool(result) and not result.startswith(tc.BASERUNNING_PREFIXES)
 
 
+def _batting_rows(box: dict, side: str) -> list[dict]:
+    return [r for r in box.get(side, []) if r.get("at_bats") is not None or r.get("plate_appearances") is not None]
+
+
+def align_to_box(pas: list[dict], box: dict) -> tuple[list[dict], dict]:
+    """Live: the feed as of the box. balldontlie's plate-appearance feed records an
+    at-bat a refresh or two before its box score does (2026-10-08, CLE @ CHW: ahead
+    by one or two in 20 of 76 logged states, never behind). When a side's feed has
+    more true plate appearances than its box, keep only its first N — N the box's
+    count — so every PA-feed row describes the same plate appearances as the box.
+
+    Only when `pa_number` runs 1..n with no holes: it numbers the whole game in
+    order (API order, `pa_number` order and inning order agree in all 30 games
+    checked), so without holes anything the feed has beyond the box is its tail. A
+    hole is a plate appearance the feed dropped for good (5 of 30 finished games),
+    and then "the first N" would include one the box hasn't counted yet — so the
+    feed is left alone and the rows fall to the usual check. Returns the plate
+    appearances to use and how many were set aside per side."""
+    nums = [p.get("pa_number") for p in pas]
+    if not pas or None in nums or sorted(nums) != list(range(1, len(nums) + 1)):
+        return pas, {}
+    drop: set = set()
+    aside: dict = {}
+    for side, half in (("away", "top"), ("home", "bottom")):
+        rows = sorted((p for p in pas if (p.get("half_inning") or "").lower() == half),
+                      key=lambda p: p["pa_number"])
+        true = [p for p in rows if _is_plate_appearance(p.get("result"))]
+        n_box = _sum(_batting_rows(box, side), "plate_appearances")
+        if len(true) > n_box:
+            cut = true[n_box]["pa_number"]          # the first plate appearance the box hasn't counted
+            drop.update(p["pa_number"] for p in rows if p["pa_number"] >= cut)
+            aside[side] = len(true) - n_box
+    return [p for p in pas if p["pa_number"] not in drop], aside
+
+
+def hold_transient(game_id, stats: dict, *, final: bool, now: Optional[float] = None) -> dict:
+    """Live only: a PA-feed row (xBA, RISP, DP) hidden as `pa_feed_mismatch`, or XBH
+    hidden as `box_incomplete`, keeps its last value that passed in this game for up
+    to HOLD_SECONDS, listed under `held`; past that it hides as before. Any other
+    reason (no data, untracked, an unrecognised event) hides at once. A final game
+    is never held and clears the game's state. State is per process, in memory: a
+    restart starts fresh, and the first refresh after it behaves as before."""
+    if final:
+        _HELD.pop(game_id, None)
+        return stats
+    if game_id is None or not stats.get("rows"):
+        return stats
+    now = time.monotonic() if now is None else now
+    st = _HELD.setdefault(game_id, {"good": {}, "since": {}})
+    st["seen"] = now
+    held = {}
+    for row, fields in HOLDABLE.items():
+        reason = stats["hidden"].get(row)
+        if row in stats["rows"]:
+            st["good"][row] = {s: {f: stats[s].get(f) for f in fields} for s in ("away", "home")}
+            st["since"].pop(row, None)
+        elif reason in TRANSIENT and row in st["good"]:
+            since = st["since"].setdefault(row, now)
+            if now - since <= HOLD_SECONDS:
+                for s in ("away", "home"):
+                    stats[s].update(st["good"][row][s])
+                held[row] = {"reason": stats["hidden"].pop(row), "seconds": round(now - since)}
+        else:
+            st["since"].pop(row, None)
+    if held:
+        stats["rows"] = [k for k in ROW_ORDER if k in stats["rows"] or k in held]
+        stats["held"] = held
+    for g in [g for g, v in _HELD.items() if now - v.get("seen", now) > 6 * 3600]:
+        _HELD.pop(g, None)
+    return stats
+
+
 def _sum(rows: list[dict], key: str) -> int:
     return sum((r.get(key) or 0) for r in rows)
 
@@ -198,7 +280,7 @@ def team_stats(pas: list[dict], box: dict, plays: Optional[list[dict]], contact:
     feed_ok = True
     for side, half in halves.items():
         other = "home" if side == "away" else "away"
-        mine = [r for r in box.get(side, []) if r.get("at_bats") is not None or r.get("plate_appearances") is not None]
+        mine = _batting_rows(box, side)
         pitchers_theirs = box.get(other, [])
         side_pas = [p for p in pas if (p.get("half_inning") or "").lower() == half]
         # True plate appearances only: the feed also writes a row for an inning that
@@ -250,8 +332,13 @@ def team_stats(pas: list[dict], box: dict, plays: Optional[list[dict]], contact:
                 hidden["risp"] = "unrecognised_event"
                 for side in halves:
                     out[side]["risp_h"] = out[side]["risp_ab"] = None
-                log.warning("team stats: RISP hidden for game %s — unrecognised in-at-bat event(s): %s",
-                            game_id, unrecognised[:5])
+                # Once per game per distinct text: a live game recomputes every
+                # refresh, and the same event would otherwise log every 10 seconds.
+                fresh = [t for t in dict.fromkeys(unrecognised) if (game_id, t) not in _WARNED]
+                if fresh:
+                    _WARNED.update((game_id, t) for t in fresh)
+                    log.warning("team stats: RISP hidden for game %s — unrecognised in-at-bat event(s): %s",
+                                game_id, fresh[:5])
     if "xba" not in hidden and not contact.get("show"):
         hidden["xba"] = contact.get("reason") or "not_shown"
     any_pa = out["away"]["pa"] or out["home"]["pa"]

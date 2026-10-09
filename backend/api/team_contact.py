@@ -125,7 +125,12 @@ def team_contact(pas: list[dict], final: bool, *, box: Optional[dict] = None,
     With `box` ({"away"|"home": /stats rows}), the block also carries `stats`, the
     Team Stats rows (see team_stats.py); `plays` is the play stream RISP reads
     (None hides RISP) and `on_base` the live runners on base for the side batting.
+    Live, with a box, the feed is first cut back to the box (`team_stats.align_to_box`).
     """
+    aside: dict = {}
+    if box is not None and not final:
+        import team_stats   # here, not at the top: team_stats imports this module
+        pas, aside = team_stats.align_to_box(pas or [], box)
     halves: dict[str, list[dict]] = {"top": [], "bottom": []}
     for pa in pas or []:
         half = (pa.get("half_inning") or "").lower()
@@ -150,6 +155,8 @@ def team_contact(pas: list[dict], final: bool, *, box: Optional[dict] = None,
         import team_stats   # here, not at the top: team_stats imports this module
         block["stats"] = team_stats.team_stats(pas or [], box, plays, block, final,
                                                on_base=on_base, game_id=game_id)
+        if aside:
+            block["stats"]["feed_ahead"] = aside
     return block
 
 
