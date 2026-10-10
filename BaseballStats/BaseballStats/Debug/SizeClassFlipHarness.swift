@@ -4,8 +4,9 @@
 //
 //  DEBUG only — this whole file, and its two call sites (BaseballStatsApp,
 //  and the Ask cover in ContentView), compile out of Release builds. Lets a UI
-//  test flip the window's horizontal size class on command, to check that
-//  per-window state survives the flip. See `SceneStateFlipUITests`.
+//  test flip the window's horizontal size class on command, and its WIDTH, to
+//  check that per-window state survives the flip. See `SceneStateFlipUITests`
+//  and `BoxScoreWidthUITests`.
 //
 
 #if DEBUG
@@ -37,7 +38,16 @@ private final class SizeClassFlipState: ObservableObject {
     nonisolated static var enabled: Bool {
         ProcessInfo.processInfo.arguments.contains("-SizeClassFlipHarness")
     }
+    /// The width a narrowed window gets: `-SizeClassFlipHarnessNarrowWidth 900`,
+    /// else 430 (a large phone held upright).
+    nonisolated static var narrowWidth: CGFloat {
+        let args = ProcessInfo.processInfo.arguments
+        guard let i = args.firstIndex(of: "-SizeClassFlipHarnessNarrowWidth"), i + 1 < args.count,
+              let w = Double(args[i + 1]) else { return 430 }
+        return CGFloat(w)
+    }
     @Published var regular = false
+    @Published var narrow = false
 }
 
 private struct SizeClassFlipHarness: ViewModifier {
@@ -49,16 +59,32 @@ private struct SizeClassFlipHarness: ViewModifier {
             // A changed VALUE, not a branch: what's under test is whether the
             // app's own views keep their state when the size class changes.
             .environment(\.horizontalSizeClass, state.regular ? .regular : .compact)
+            // The width flip: the window's content drawn narrower, centred, the
+            // way a split view or a fold changes it. A changed value again — a
+            // nil width proposes the window's own — so nothing is rebuilt. The
+            // size class is left alone: layouts that follow width must follow
+            // the width.
+            .frame(width: state.narrow ? SizeClassFlipState.narrowWidth : nil)
+            .frame(maxWidth: .infinity)
             // Mid-height on the leading edge: clear of the nav and tab bars, and
             // above the keyboard while an Ask draft is being typed.
             .overlay(alignment: .leading) {
-                Button(state.regular ? "regular" : "compact") { state.regular.toggle() }
-                    .font(.caption.monospaced())
-                    .padding(6)
-                    .background(.yellow)
-                    .padding(.leading, 8)
-                    .accessibilityIdentifier(id)
+                VStack(alignment: .leading, spacing: 8) {
+                    Button(state.regular ? "regular" : "compact") { state.regular.toggle() }
+                        .accessibilityIdentifier(id)
+                    Button(state.narrow ? "narrow" : "full") { state.narrow.toggle() }
+                        .accessibilityIdentifier(id.replacingOccurrences(of: "flipSizeClass", with: "flipWidth"))
+                }
+                .font(.caption.monospaced())
+                .buttonStyle(HarnessButtonStyle())
+                .padding(.leading, 8)
             }
+    }
+}
+
+private struct HarnessButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.padding(6).background(.yellow)
     }
 }
 #endif

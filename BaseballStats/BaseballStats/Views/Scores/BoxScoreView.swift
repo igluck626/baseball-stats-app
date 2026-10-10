@@ -697,9 +697,30 @@ struct BoxScoreView: View {
     @State private var teamCardInner: CGFloat = 0
     /// The linescore card's inner width, which its stretched cells fill.
     @State private var linescoreInner: CGFloat = 0
-    /// The scroll content's width, inside the safe area: what decides whether
-    /// the tables stretch (`stretchesTables`). 0 until first measured.
+    /// The scroll content's width, inside the safe area: what decides the layout
+    /// (`layoutMode`). 0 until first measured, which reads as compact.
     @State private var contentWidth: CGFloat = 0
+    /// The card at the top of the screen when scrolling last came to rest
+    /// (`BoxScoreLayout.Block` ids, plus "header" and "situation"); nil at the
+    /// very top. What a resize scrolls back to.
+    @State private var topCard: String?
+    /// Each card's top edge in the visible area, and the bars' inset above it.
+    /// A plain reference, not state: it changes on every scrolled frame, and
+    /// nothing should re-render for that.
+    @State private var cardTops = CardTops()
+
+    final class CardTops {
+        var y: [String: CGFloat] = [:]
+        var inset: CGFloat = 0
+        var settle: Task<Void, Never>?
+        /// Set by a resize: the next rest is the box score's own scroll back to
+        /// `topCard`, not the reader's, and mustn't replace it — a layout too
+        /// short to bring that card to the top would otherwise hand the next
+        /// resize a different card.
+        var restoring = false
+        /// Each top measured from the bottom of the bars, where reading starts.
+        var relative: [String: CGFloat] { y.mapValues { $0 - inset } }
+    }
     @Environment(\.dynamicTypeSize) private var typeSize
 
     /// Which team's batting + pitching table to render. The view
@@ -782,6 +803,7 @@ struct BoxScoreView: View {
     }
 
     var body: some View {
+        ScrollViewReader { proxy in
         ScrollView {
             // Each card below applies its own `.glassEffect`. Grouping them in a
             // GlassEffectContainer renders the Liquid Glass in one pass so
@@ -793,89 +815,63 @@ struct BoxScoreView: View {
             GlassEffectContainer(spacing: 16) {
                 VStack(spacing: 16) {
                     headerCard
+                        .id("header")
+                        .onGeometryChange(for: CGFloat.self) { $0.frame(in: .scrollView).minY } action: { noteTop("header", $0) }
                     if let live = vm.live?.liveData {
                         liveSituationCard(live)
+                            .id("situation")
+                            .onGeometryChange(for: CGFloat.self) { $0.frame(in: .scrollView).minY } action: { noteTop("situation", $0) }
                     }
                     if vm.game.phase == .postponed {
                         postponedNotice
                     } else if let bs = vm.boxScore {
-                        // The historical suppression is GONE, deliberately.
-                        // It existed because neither game-log table carries
-                        // per-inning runs, so the grid would have drawn empty
-                        // columns under real headers. That was true of the
-                        // daybyday files and never true of Retrosheet's GAME
-                        // LOGS, which publish the linescore back to 1871 and
-                        // now fill `game.linescore` for these games.
-                        //
-                        // No era check replaces it: the guard that matters is
-                        // the data's own presence, and `linescoreCard` is only
-                        // reached when `vm.boxScore` exists while the card
-                        // itself reads a linescore that is null for any game
-                        // the ingest has not covered.
-                        if vm.displayLinescore != nil {
-                            linescoreCard
-                        }
-                        // Only when the order is NOT the real one. "lineup"
-                        // means the slots came through, and a note explaining
-                        // how to read the rows would then be a disclaimer over
-                        // data that needs none.
-                        if let ordering = vm.batterOrdering, ordering != "lineup" {
-                            historicalOrderingNote(ordering)
-                        }
-                        teamPicker(bs: bs)
-                        teamSection(side: currentSide, bs: bs)
-                        // Team Stats, live and final, after the tables and before
-                        // the individual leaders. The server picks the rows (none
-                        // before the first plate appearance, so no card).
-                        if let stats = TeamStats.card(for: vm.teamContact) {
-                            TeamStatsCard(stats: stats,
-                                          awayAbbr: teamAbbr(bs.teams.away.team),
-                                          homeAbbr: teamAbbr(bs.teams.home.team))
-                        }
-                        // Beneath the tables, above the plays list. A
-                        // block rather than a column, so it competes for
-                        // vertical room only — the tables' widths are
-                        // untouched. Absent, not empty, whenever the feed
-                        // carries no tracked measurements: every game
-                        // before 2015 (which ships no plate appearances
-                        // at all) and any modern game whose feed failed.
-                        // ⚠️ LIVE, THE SERVER'S TOP 3; AT THE FINAL, THE
-                        // FULL TEN BUILT HERE. Live, the snapshot's contact
-                        // blocks carry no pitch speeds, so the server ranks
-                        // the board (`game_leaders_live.py`) from completed
-                        // at-bats only, three rows per category, and never
-                        // withdraws a row — an event leaves only when a
-                        // better one passes it, never because the feed
-                        // dropped its plate appearance. Replayed on ten
-                        // finished games that is ~17 changes a game after it
-                        // fills; ten rows here, live, were ~30, the tenth
-                        // turning over constantly (the 33 and 22 measured on
-                        // 5059936 and 5059818). Both sides break ties to the
-                        // earlier event, so the last live top 3 and the
-                        // final's agree when nothing is missing.
-                        if let leaders = GameLeadersCard.board(
-                            isLive: isLiveNow,
-                            live:   { vm.liveLeaders.flatMap { GameLeaders.live($0, contactPAs: vm.plateAppearances) } },
-                            build:  { gameLeaders(bs: bs) },
-                        ) {
-                            let sides: (away: GameLeaders?, home: GameLeaders?) = isLiveNow ? (nil, nil) : gameLeadersByTeam(bs: bs)
-                            GameLeadersCard(
-                                leaders:   leaders,
-                                away:      sides.away,
-                                home:      sides.home,
-                                awayAbbr:  teamAbbr(bs.teams.away.team),
-                                homeAbbr:  teamAbbr(bs.teams.home.team),
-                                sentences: GameLeaders.sentences(
-                                    plays: vm.plays,
-                                    plateAppearances: vm.plateAppearances,
-                                ),
-                                pitchRows: GameLeaders.pitchRows(
-                                    plays: vm.plays,
-                                    plateAppearances: vm.plateAppearances,
-                                ),
-                                isLive:      isLiveNow,
-                                streamPlays: isLiveNow ? vm.plays : [],
-                            )
+                        // Computed once, for the block list and the cards.
+                        let stats = TeamStats.card(for: vm.teamContact)
+                        let leaders = leadersBoard(bs: bs)
+                        let order = BoxScoreLayout.blocks(
+                            linescore:      vm.displayLinescore != nil,
+                            note:           vm.batterOrdering.map { $0 != "lineup" } ?? false,
+                            statsOrLeaders: stats != nil || leaders != nil,
+                        )
+                        // One id per card, the same in every mode, so a card keeps
+                        // its state through a resize and the scroll position can
+                        // anchor to it (`topCard`). The order is the same in
+                        // every mode (`BoxScoreLayout.blocks`).
+                        ForEach(order.map(\.rawValue), id: \.self) { id in
+                            Group {
+                            switch BoxScoreLayout.Block(rawValue: id) {
+                            case .linescore:
+                                // The historical suppression is GONE, deliberately.
+                                // It existed because neither game-log table carries
+                                // per-inning runs, so the grid would have drawn empty
+                                // columns under real headers. That was true of the
+                                // daybyday files and never true of Retrosheet's GAME
+                                // LOGS, which publish the linescore back to 1871 and
+                                // now fill `game.linescore` for these games.
+                                //
+                                // No era check replaces it: the guard that matters is
+                                // the data's own presence, and `linescoreCard` is only
+                                // reached when `vm.boxScore` exists while the card
+                                // itself reads a linescore that is null for any game
+                                // the ingest has not covered.
+                                linescoreCard
+                            case .note:
+                                // Only when the order is NOT the real one. "lineup"
+                                // means the slots came through, and a note explaining
+                                // how to read the rows would then be a disclaimer over
+                                // data that needs none.
+                                if let ordering = vm.batterOrdering {
+                                    historicalOrderingNote(ordering)
+                                }
+                            case .teams:
+                                teamsBlock(bs: bs)
+                            case .statsAndLeaders:
+                                statsAndLeadersBlock(bs: bs, stats: stats, leaders: leaders)
+                            case nil:
+                                EmptyView()
+                            }
+                            }
+                            .onGeometryChange(for: CGFloat.self) { $0.frame(in: .scrollView).minY } action: { noteTop(id, $0) }
                         }
                     } else if vm.isLoading {
                         ProgressView().controlSize(.large)
@@ -895,12 +891,39 @@ struct BoxScoreView: View {
                         }
                     }
                 }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, BoxScoreLayout.columnPadding)
                 .padding(.vertical, 16)
             }
-            .readableContentWidth()
+            .readableContentWidth(BoxScoreLayout.columnCap(layoutMode))
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { contentWidth = $0 }
         }
+        // KEEP THE READER'S PLACE THROUGH A FOLD, ROTATION OR RESIZE. Every card
+        // below the one on screen reflows, so a kept pixel offset lands in some
+        // other card. The top card is noted once scrolling has come to rest
+        // (`noteTop`) — never in the middle of a resize, whose reflow would
+        // report the wrong one — and scrolled back to the top once the new
+        // width has laid out.
+        //
+        // ⚠️ NOT `.scrollPosition(id:)`, `.scrollTargetLayout()`,
+        // `.onScrollGeometryChange` OR `.onScrollPhaseChange`, the obvious tools:
+        // each shifted the Liquid Glass cards' edge pixels on an iPhone held
+        // upright, and that layout must stay pixel-identical. Card geometry and
+        // a ScrollViewReader don't.
+        .onChange(of: contentWidth) { old, _ in
+            guard old > 0, let id = topCard else { return }
+            cardTops.restoring = true
+            // Once now, and again when the new width's reflow has landed: the
+            // first pass can still see the old layout's offsets.
+            Task { @MainActor in
+                proxy.scrollTo(id, anchor: .top)
+                try? await Task.sleep(for: .milliseconds(150))
+                proxy.scrollTo(id, anchor: .top)
+            }
+        }
+        }
+        // The bars' height over the scroll view, where reading starts. Read on
+        // the reader, not the ScrollView: there it, too, moved the glass pixels.
+        .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.top } action: { cardTops.inset = $0 }
         .navigationTitle(navigationTitle)
         .navigationBarTitleDisplayMode(.inline)
         .task(id: vm.game.gamePk) {
@@ -1354,6 +1377,118 @@ struct BoxScoreView: View {
     /// active side reads cleanly at a glance; the segmented style
     /// matches the Recent Games window picker on the player
     /// profile so the control feels like part of the same family.
+    /// A card's top moved — scrolling, or a reflow. Once no card has moved for
+    /// 0.3s at an unchanged width, scrolling has come to rest: note the top card.
+    private func noteTop(_ id: String, _ y: CGFloat) {
+        cardTops.y[id] = y
+        cardTops.settle?.cancel()
+        let width = contentWidth
+        cardTops.settle = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled, width == contentWidth else { return }
+            if cardTops.restoring { cardTops.restoring = false; return }
+            topCard = BoxScoreLayout.topCard(cardTops.relative)
+        }
+    }
+
+    /// This window's layout (`BoxScoreLayout.Mode`): from the measured content
+    /// width and the text size, nothing else.
+    private var layoutMode: BoxScoreLayout.Mode {
+        BoxScoreLayout.mode(contentWidth: contentWidth, typeSize: typeSize)
+    }
+
+    /// The team picker and one team's tables; or, wide, both teams side by side
+    /// with no picker. The picked side is the view's state, not the picker's, so
+    /// it survives a trip through wide and back.
+    @ViewBuilder
+    private func teamsBlock(bs: BoxScoreResponse) -> some View {
+        if layoutMode == .wide {
+            HStack(alignment: .top, spacing: BoxScoreLayout.cardSpacing) {
+                // Away before home for VoiceOver: first in the tree, and by
+                // sort priority, which no test reads (BoxScoreWidthUITests).
+                teamSection(side: .away, bs: bs)
+                    .accessibilityElement(children: .contain)
+                    .accessibilitySortPriority(2)
+                    .accessibilityIdentifier("boxscore.team.away")
+                teamSection(side: .home, bs: bs)
+                    .accessibilityElement(children: .contain)
+                    .accessibilitySortPriority(1)
+                    .accessibilityIdentifier("boxscore.team.home")
+            }
+            .accessibilityElement(children: .contain)
+        } else {
+            VStack(spacing: 16) {
+                teamPicker(bs: bs)
+                teamSection(side: currentSide, bs: bs)
+            }
+        }
+    }
+
+    /// Team Stats and Game Leaders after the tables: stacked, or side by side
+    /// when wide. One layout whose axis changes (`AnyLayout`), so the
+    /// cards keep their identity — and Game Leaders its expanded state — across
+    /// the change.
+    private func statsAndLeadersBlock(bs: BoxScoreResponse, stats: TeamStats?, leaders: GameLeaders?) -> some View {
+        let wide = layoutMode == .wide
+        let layout = wide
+            ? AnyLayout(HStackLayout(alignment: .top, spacing: BoxScoreLayout.cardSpacing))
+            : AnyLayout(VStackLayout(spacing: 16))
+        return layout {
+            // Team Stats, live and final. The server picks the rows (none before
+            // the first plate appearance, so no card).
+            if let stats {
+                TeamStatsCard(stats: stats,
+                              awayAbbr: teamAbbr(bs.teams.away.team),
+                              homeAbbr: teamAbbr(bs.teams.home.team))
+                    .frame(maxWidth: wide ? .infinity : nil, alignment: .top)
+            }
+            // A block rather than a column, so it competes for vertical room
+            // only — the tables' widths are untouched. Absent, not empty,
+            // whenever the feed carries no tracked measurements: every game
+            // before 2015 (which ships no plate appearances at all) and any
+            // modern game whose feed failed.
+            if let leaders {
+                let sides: (away: GameLeaders?, home: GameLeaders?) = isLiveNow ? (nil, nil) : gameLeadersByTeam(bs: bs)
+                GameLeadersCard(
+                    leaders:   leaders,
+                    away:      sides.away,
+                    home:      sides.home,
+                    awayAbbr:  teamAbbr(bs.teams.away.team),
+                    homeAbbr:  teamAbbr(bs.teams.home.team),
+                    sentences: GameLeaders.sentences(
+                        plays: vm.plays,
+                        plateAppearances: vm.plateAppearances,
+                    ),
+                    pitchRows: GameLeaders.pitchRows(
+                        plays: vm.plays,
+                        plateAppearances: vm.plateAppearances,
+                    ),
+                    isLive:      isLiveNow,
+                    streamPlays: isLiveNow ? vm.plays : [],
+                )
+                .frame(maxWidth: wide ? .infinity : nil, alignment: .top)
+            }
+        }
+    }
+
+    /// ⚠️ LIVE, THE SERVER'S TOP 3; AT THE FINAL, THE FULL TEN BUILT HERE.
+    /// Live, the snapshot's contact blocks carry no pitch speeds, so the server
+    /// ranks the board (`game_leaders_live.py`) from completed at-bats only,
+    /// three rows per category, and never withdraws a row — an event leaves only
+    /// when a better one passes it, never because the feed dropped its plate
+    /// appearance. Replayed on ten finished games that is ~17 changes a game
+    /// after it fills; ten rows here, live, were ~30, the tenth turning over
+    /// constantly (the 33 and 22 measured on 5059936 and 5059818). Both sides
+    /// break ties to the earlier event, so the last live top 3 and the final's
+    /// agree when nothing is missing.
+    private func leadersBoard(bs: BoxScoreResponse) -> GameLeaders? {
+        GameLeadersCard.board(
+            isLive: isLiveNow,
+            live:   { vm.liveLeaders.flatMap { GameLeaders.live($0, contactPAs: vm.plateAppearances) } },
+            build:  { gameLeaders(bs: bs) },
+        )
+    }
+
     private func teamPicker(bs: BoxScoreResponse) -> some View {
         Picker(
             "Team",
@@ -1553,30 +1688,29 @@ struct BoxScoreView: View {
     /// marker beside it: "M. Murakami 1B" truncated on iPad on 2026-10-08, where
     /// text rounds to a 2x pixel grid, and a name like "J. Cronenworth 2B" would
     /// on any device. Where the card has room — 406pt inside, so not a phone held
-    /// upright (iPhone 17: 342, Pro Max: 380) — it takes 30pt more.
+    /// upright (iPhone 17: 342, Pro Max: 380) — it takes 30pt more. The compact
+    /// layout's rule; the wider ones start from 140 (`BoxScoreLayout.nameColumn`).
     static func nameColumnWidth(forCardInner inner: CGFloat) -> CGFloat {
         inner >= 406 ? 140 : 110
     }
 
-    /// Whether the tables widen to their cards. Not on a phone held upright, or
-    /// any content narrower than `BoxScoreLayout.compactBelow`: there the box
-    /// score is the layout it always was, to the pixel. Unmeasured (0) counts
-    /// as narrow, as `teamCardInner` does for the name column.
-    private var stretchesTables: Bool { contentWidth >= BoxScoreLayout.compactBelow }
-
     /// The batting and pitching columns (`BoxScoreLayout.swift`). Kept in one
-    /// place so header, rows and totals stay aligned. Narrow, the fixed widths
-    /// that clear a phone's ~342pt card with OPS in view; wider, the same
-    /// columns at the current text size, widened to fill the card.
+    /// place so header, rows and totals stay aligned. Compact — a phone held
+    /// upright, or anything under `BoxScoreLayout.compactBelow` — the fixed
+    /// widths that clear a phone's ~342pt card with OPS in view, exactly as
+    /// before. Otherwise the same columns at the current text size, from a 140pt
+    /// name, widened to fill the card. Only ever wider, in every mode.
     private var tableColumns: BoxTableColumns {
-        let name = Self.nameColumnWidth(forCardInner: teamCardInner)
-        guard stretchesTables else { return BoxTableColumns(name: name) }
-        return .fitted(to: teamCardInner, name: name, textScale: BoxScoreLayout.textScale(typeSize))
+        guard layoutMode != .compact else {
+            return BoxTableColumns(name: Self.nameColumnWidth(forCardInner: teamCardInner))
+        }
+        return .fitted(to: teamCardInner, name: BoxScoreLayout.nameColumn,
+                       textScale: BoxScoreLayout.textScale(typeSize))
     }
 
     /// The linescore's columns, on the same terms as `tableColumns`.
     private func linescoreColumns(innings: Int) -> LinescoreColumns {
-        guard stretchesTables else { return LinescoreColumns() }
+        guard layoutMode != .compact else { return LinescoreColumns() }
         return .fitted(to: linescoreInner, innings: innings, textScale: BoxScoreLayout.textScale(typeSize))
     }
 
