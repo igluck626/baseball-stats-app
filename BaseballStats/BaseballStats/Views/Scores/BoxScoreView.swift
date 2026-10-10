@@ -64,6 +64,9 @@ final class BoxScoreViewModel: ObservableObject {
     /// substitute placement consumes them inline; this holds the same
     /// slice rather than fetching it a second time.
     @Published var plateAppearances: [BDLPlateAppearance] = []
+    /// The server's live Game Leaders board (top 3 per category), from the
+    /// snapshot. Read only while the game is live; the final builds its own.
+    @Published var liveLeaders: LiveGameLeaders?
     /// Each team's Team Stats (AVG, xBA, XBH and the rest), from the backend: the
     /// live snapshot while the game is on, `/games/{id}/team-contact` once it's
     /// final. nil for a historical (Retrosheet-boxed) game and on any failure —
@@ -193,6 +196,7 @@ final class BoxScoreViewModel: ObservableObject {
         // — in the same shape, so everything downstream is unchanged.
         plateAppearances = detail.contactPlateAppearances
         teamContact = detail.teamContact
+        liveLeaders = detail.gameLeaders
         live      = detail.toLiveFeedResponse()
         boxScore  = detail.toBoxScoreResponse()
         error     = nil
@@ -829,34 +833,26 @@ struct BoxScoreView: View {
                         // carries no tracked measurements: every game
                         // before 2015 (which ships no plate appearances
                         // at all) and any modern game whose feed failed.
-                        // ⚠️ FINAL ONLY, and this is now a DELIBERATE gate
-                        // rather than the accident it used to be. Live,
-                        // `plateAppearances` is populated (the snapshot
-                        // carries contact blocks), so the board would
-                        // render — half of it, since those blocks carry
-                        // no pitch speeds, and reordering roughly once
-                        // every five minutes with the tenth row
-                        // flickering in and out.
-                        //
-                        // ⚠️ THE NUMBER TO USE IS 33 AND 22 — reorderings
-                        // after the board first fills, measured on games
-                        // 5059936 and 5059818 by replaying them plate
-                        // appearance by plate appearance. An earlier
-                        // measurement of "~6-7 across three hours" is
-                        // still quoted in places and is NOT this board:
-                        // it was taken when the board showed THREE rows.
-                        // A tenth slot has a far lower entry threshold
-                        // and turns over constantly, and the pitch board
-                        // fills in the first inning and churns for two
-                        // hours after. Do not reason about ten rows from
-                        // the three-row figure.
-                        //
-                        // A ranked row that appears and vanishes
-                        // is the batting-slot fault in a more visible
-                        // place. See the note in memory for the three
-                        // conditions under which it could go live.
-                        if let leaders = GameLeadersCard.board(isLive: isLiveNow, build: { gameLeaders(bs: bs) }) {
-                            let sides = gameLeadersByTeam(bs: bs)
+                        // ⚠️ LIVE, THE SERVER'S TOP 3; AT THE FINAL, THE
+                        // FULL TEN BUILT HERE. Live, the snapshot's contact
+                        // blocks carry no pitch speeds, so the server ranks
+                        // the board (`game_leaders_live.py`) from completed
+                        // at-bats only, three rows per category, and never
+                        // withdraws a row — an event leaves only when a
+                        // better one passes it, never because the feed
+                        // dropped its plate appearance. Replayed on ten
+                        // finished games that is ~17 changes a game after it
+                        // fills; ten rows here, live, were ~30, the tenth
+                        // turning over constantly (the 33 and 22 measured on
+                        // 5059936 and 5059818). Both sides break ties to the
+                        // earlier event, so the last live top 3 and the
+                        // final's agree when nothing is missing.
+                        if let leaders = GameLeadersCard.board(
+                            isLive: isLiveNow,
+                            live:   { vm.liveLeaders.flatMap { GameLeaders.live($0, contactPAs: vm.plateAppearances) } },
+                            build:  { gameLeaders(bs: bs) },
+                        ) {
+                            let sides: (away: GameLeaders?, home: GameLeaders?) = isLiveNow ? (nil, nil) : gameLeadersByTeam(bs: bs)
                             GameLeadersCard(
                                 leaders:   leaders,
                                 away:      sides.away,
@@ -871,6 +867,8 @@ struct BoxScoreView: View {
                                     plays: vm.plays,
                                     plateAppearances: vm.plateAppearances,
                                 ),
+                                isLive:      isLiveNow,
+                                streamPlays: isLiveNow ? vm.plays : [],
                             )
                         }
                     } else if vm.isLoading {

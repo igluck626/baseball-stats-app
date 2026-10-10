@@ -88,6 +88,11 @@ struct LiveGameDetail: Codable, Hashable {
     /// Team AVG / xBA / hard-hit with the server's show decision. Absent on an
     /// older backend, hence optional — the block then doesn't render.
     let teamContact: TeamContact?
+    /// The game's hardest-hit balls and fastest pitches so far, top 3 each,
+    /// ranked by the server (`game_leaders_live.py`). Absent on an older
+    /// backend, before the first tracked at-bat completes, and at the final
+    /// (which builds its own ten) — hence optional; the card then doesn't render.
+    let gameLeaders: LiveGameLeaders?
     let batting: LiveSidePlayers<LiveBatterRow>
     let pitching: LiveSidePlayers<LivePitcherRow>
 
@@ -100,7 +105,58 @@ struct LiveGameDetail: Codable, Hashable {
         case scoringPlays = "scoring_plays"
         case contactPAs = "contact_pas"
         case teamContact = "team_contact"
+        case gameLeaders = "game_leaders"
         case batting, pitching
+    }
+}
+
+/// The live Game Leaders board: per category, the top 3 events of the
+/// completed at-bats so far, never withdrawn (see `game_leaders_live.py`).
+/// Decoded by `APIClient`'s plain decoder, so every key is spelled out — see
+/// `LiveContactPA` for what happens otherwise.
+struct LiveGameLeaders: Codable, Hashable {
+    struct Entry: Codable, Hashable {
+        let playerId: Int
+        let name: String
+        /// The side's BDL team id: the batter's for a hit, the pitcher's for a pitch.
+        let teamId: Int?
+        let value: Double
+        /// The outcome for a hit ("Double"), the pitch type for a pitch.
+        let detail: String?
+        /// The at-bat's outcome, which titles the detail sheet.
+        let result: String?
+        let inning: Int
+        /// "top" / "bottom".
+        let half: String
+        let paNumber: Int
+        /// Which pitch of the at-bat.
+        let pitchIndex: Int
+        /// How many pitches the at-bat had in the plate-appearance feed.
+        let paPitches: Int?
+        /// The pitch's row in the play stream, where the two feeds agree on the
+        /// at-bat — what lets a tapped row open the sheet with its pitch marked.
+        let playOrder: Int?
+
+        enum CodingKeys: String, CodingKey {
+            case playerId = "player_id"
+            case name
+            case teamId = "team_id"
+            case value, detail, result, inning, half
+            case paNumber = "pa_number"
+            case pitchIndex = "pitch_index"
+            case paPitches = "pa_pitches"
+            case playOrder = "play_order"
+        }
+    }
+
+    let rows: Int?
+    let hardestHit: [Entry]
+    let fastestPitches: [Entry]
+
+    enum CodingKeys: String, CodingKey {
+        case rows
+        case hardestHit = "hardest_hit"
+        case fastestPitches = "fastest_pitches"
     }
 }
 

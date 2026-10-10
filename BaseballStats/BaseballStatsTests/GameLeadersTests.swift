@@ -263,24 +263,26 @@ struct InningJoinTests {
 @Suite("GameLeaders")
 struct GameLeadersTests {
 
-    /// When the card shows (states a-e). FINAL ONLY, by decision: live it would
-    /// reorder about once every five minutes, and the live snapshot's contact rows
-    /// carry no pitch speeds.
-    @Test func theBoardShowsAtTheFinalOnly() throws {
+    /// When the card shows (states a-e). Live, the SERVER's board, whatever the
+    /// feed here holds — the live snapshot's contact rows carry no pitch speeds;
+    /// at the final, the ten built from the feed.
+    @Test func liveShowsTheServersBoardAndTheFinalBuildsTen() throws {
         let fx = try fixture("stealAndSubs")
-        func board(live: Bool, _ pas: [BDLPlateAppearance]) -> GameLeaders? {
-            GameLeadersCard.board(isLive: live) {
+        let server = GameLeaders.build(plateAppearances: Array(fx.pas.prefix(20)), limit: 3,
+                                       nameAndTeam: fx.nameAndTeam)
+        func board(live: Bool, server: GameLeaders?, _ pas: [BDLPlateAppearance]) -> GameLeaders? {
+            GameLeadersCard.board(isLive: live, live: { server }) {
                 GameLeaders.build(plateAppearances: pas, limit: 10, nameAndTeam: fx.nameAndTeam)
             }
         }
-        #expect(board(live: false, []) == nil, "a) pre-game: no plate appearances, no board")
-        #expect(board(live: true, []) == nil, "b) live, before the first plate appearance")
-        #expect(board(live: true, Array(fx.pas.prefix(1))) == nil, "c) live, after the first at-bat")
-        #expect(board(live: true, Array(fx.pas.prefix(fx.pas.count / 2))) == nil, "d) live, mid-game")
-        #expect(board(live: false, fx.pas) != nil, "e) final")
-        // The gate, not the data: the same rows build a board once the game is final.
-        #expect(GameLeaders.build(plateAppearances: Array(fx.pas.prefix(fx.pas.count / 2)), limit: 10,
-                                  nameAndTeam: fx.nameAndTeam) != nil)
+        #expect(board(live: false, server: nil, []) == nil, "a) pre-game: no plate appearances, no board")
+        #expect(board(live: true, server: nil, fx.pas) == nil,
+                "b) live, before the first tracked at-bat completes: the server sends none, so no card")
+        #expect(board(live: true, server: server, fx.pas) == server,
+                "c/d) live: the server's three, not ten built from the feed here")
+        #expect(server?.hardestHit.count == 3 && server?.fastestPitches.count == 3)
+        #expect(board(live: false, server: server, fx.pas)?.fastestPitches.count == 10,
+                "e) final: the full ten, the live board ignored")
     }
 
     /// Ranking PITCHES, not plate appearances. Taking each PA's fastest

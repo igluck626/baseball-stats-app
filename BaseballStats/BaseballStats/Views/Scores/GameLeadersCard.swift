@@ -33,6 +33,14 @@ struct GameLeadersCard: View {
     /// sheet opened from here reads exactly as one opened from the
     /// plays list. Absent for a PA falls back to the PA's own pitches.
     var pitchRows: [String: [BDLPlay]] = [:]
+    /// A game in progress: the server's top 3 (`GameLeaders.live`), shown
+    /// with the LIVE tag and "Top 3 so far", overall only — the scope picker
+    /// appears at the final, with the full ten.
+    var isLive = false
+    /// The play stream, which a live row's detail sheet reads its at-bat
+    /// from (`GameLeaders.streamAtBat`) — a live plate appearance carries no
+    /// pitch list of its own.
+    var streamPlays: [BDLPlay] = []
 
     /// ⚠️ THREE-WAY, replacing an Overall / By Team toggle whose
     /// by-team state stacked BOTH sides — twenty rows where overall
@@ -63,6 +71,7 @@ struct GameLeadersCard: View {
     /// from the whole game rather than filtered out of the overall
     /// board, so a side that placed nowhere still shows its own best.
     private var board: GameLeaders? {
+        if isLive { return leaders }
         switch scope {
         case .overall: return leaders
         case .away:    return away
@@ -70,24 +79,31 @@ struct GameLeadersCard: View {
         }
     }
 
-    /// The card's gate: the board to draw, or nil for no card. FINAL ONLY — live
-    /// it would reorder about once every five minutes, and the live snapshot's
-    /// contact rows carry no pitch speeds (see the note at the call site in
-    /// `BoxScoreView`). `build` runs only when the board can show.
-    static func board(isLive: Bool, build: () -> GameLeaders?) -> GameLeaders? {
-        isLive ? nil : build()
+    /// The card's gate: the board to draw, or nil for no card. Live, the
+    /// server's board (`live`) — nil before the first tracked at-bat completes,
+    /// so no card; at the final, the full ten built from the feed (`build`).
+    /// Pre-game there is neither: no snapshot, and the finished-game path isn't
+    /// taken. Only the closure for the current phase runs.
+    static func board(isLive: Bool, live: () -> GameLeaders?, build: () -> GameLeaders?) -> GameLeaders? {
+        isLive ? live() : build()
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
             if isExpanded {
-                Picker("Scope", selection: $scope) {
-                    Text("Overall").tag(Scope.overall)
-                    Text(awayAbbr).tag(Scope.away)
-                    Text(homeAbbr).tag(Scope.home)
+                if isLive {
+                    Text("Top 3 so far")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Picker("Scope", selection: $scope) {
+                        Text("Overall").tag(Scope.overall)
+                        Text(awayAbbr).tag(Scope.away)
+                        Text(homeAbbr).tag(Scope.home)
+                    }
+                    .pickerStyle(.segmented)
                 }
-                .pickerStyle(.segmented)
 
                 if let board, !board.isEmpty {
                     category("HARDEST HIT", board.hardestHit, unit: "mph")
@@ -119,6 +135,19 @@ struct GameLeadersCard: View {
     private func detail(for e: GameLeaders.Entry) -> PlayDetail {
         let rows = e.pa.pitches ?? []
         let key = GameLeaders.paKey(e.pa)
+        // A live row: the at-bat's pitches and sentence from the stream, its
+        // own pitch marked by its stream row; the batted-ball metrics, for a
+        // hit, from the snapshot's contact row the entry carries.
+        if let order = e.playOrder, let ab = GameLeaders.streamAtBat(plays: streamPlays, containing: order) {
+            return PlayDetail(
+                id:       e.id,
+                title:    e.pa.result ?? "Play",
+                sentence: ab.sentence ?? sentences[key] ?? "",
+                contact:  rows.first { $0.exitVelocity != nil },
+                pitches:  PlayDetailSheet.pitches(stream: ab.rows, pa: []),
+                highlightIndex: ab.index,
+            )
+        }
         // Both feeds, each supplying what it is better at — the call
         // from the stream, the speed and pitch name from the plate
         // appearance. See `PlayDetailSheet.pitches(stream:pa:)`.
@@ -129,8 +158,17 @@ struct GameLeadersCard: View {
             sentence: sentences[key] ?? "",
             contact:  rows.first { $0.exitVelocity != nil },
             pitches:  pitches,
-            highlightIndex: e.pitchIndex,
+            // A live row without a stream match carries no full pitch list, so
+            // its index would point into nothing: mark none rather than guess.
+            highlightIndex: e.pa.sequenceComplete == false ? nil : e.pitchIndex,
         )
+    }
+
+    private var title: some View {
+        Text("GAME LEADERS")
+            .font(.caption.weight(.bold))
+            .tracking(0.8)
+            .foregroundStyle(.secondary)
     }
 
     private var header: some View {
@@ -138,10 +176,18 @@ struct GameLeadersCard: View {
             withAnimation(.easeInOut(duration: 0.2)) { isExpanded.toggle() }
         } label: {
             HStack {
-                Text("GAME LEADERS")
-                    .font(.caption.weight(.bold))
-                    .tracking(0.8)
-                    .foregroundStyle(.secondary)
+                // ⚠️ At the accessibility sizes the LIVE badge goes UNDER the
+                // title: beside it, the title had too little room and broke
+                // mid-word ("GAME LEAD-ERS") at AX5.
+                if typeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: 6) {
+                        title
+                        if isLive { LiveBadge() }
+                    }
+                } else {
+                    title
+                    if isLive { LiveBadge() }
+                }
                 Spacer(minLength: 8)
                 Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                     .font(.caption.weight(.semibold))

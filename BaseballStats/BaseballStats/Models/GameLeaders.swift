@@ -47,6 +47,10 @@ struct GameLeaders: Equatable {
         /// opening a sheet where that pitch isn't picked out would
         /// leave the reader to find it by eye.
         let pitchIndex: Int
+        /// The pitch's row in the play stream — set only on a LIVE row, whose
+        /// plate appearance carries no pitch list of its own; the sheet then
+        /// takes the at-bat's pitches from the stream (`streamAtBat`).
+        var playOrder: Int? = nil
     }
 
     let hardestHit: [Entry]
@@ -65,8 +69,87 @@ struct GameLeaders: Equatable {
     /// ten at all. That concentration IS the finding — a reliever came
     /// in and threw the hardest of anyone, repeatedly — and deduping
     /// hid it behind three tidy rows.
+    ///
+    /// Equal values: the EARLIER event first — inning, then half (top before
+    /// bottom), then `paNumber`, then pitch index. The server ranks the live
+    /// board by the same key (`game_leaders_live.rank_key`), so a game's last
+    /// live top 3 and its final top 3 agree when no event is missing; spelled
+    /// out rather than left to a stable sort over whatever order the feed
+    /// arrives in.
     private static func rank(_ all: [Entry], limit: Int) -> [Entry] {
-        Array(all.sorted { $0.value > $1.value }.prefix(limit))
+        Array(all.sorted { a, b in
+            if a.value != b.value { return a.value > b.value }
+            return earlier(a, b)
+        }.prefix(limit))
+    }
+
+    static func earlier(_ a: Entry, _ b: Entry) -> Bool {
+        func half(_ e: Entry) -> Int { (e.pa.halfInning ?? "").lowercased().hasPrefix("bot") ? 1 : 0 }
+        return (a.pa.inning, half(a), a.pa.paNumber, a.pitchIndex)
+            < (b.pa.inning, half(b), b.pa.paNumber, b.pitchIndex)
+    }
+
+    /// The board a LIVE game shows: the server's top 3 per category
+    /// (`LiveGameDetail.gameLeaders`), already ranked and never withdrawn, so
+    /// nothing is re-ranked here. Each row gets a plate appearance carrying
+    /// what the detail sheet needs: for a hit, the snapshot's contact row for
+    /// that at-bat (`contactPAs`, the batted-ball metrics); for a pitch, none —
+    /// its pitches come from the play stream by `playOrder`. nil when both
+    /// categories are empty, so no card.
+    static func live(_ board: LiveGameLeaders, contactPAs: [BDLPlateAppearance] = []) -> GameLeaders? {
+        let contact = Dictionary(contactPAs.map { (paKey($0), $0) }, uniquingKeysWith: { a, _ in a })
+        func entries(_ rows: [LiveGameLeaders.Entry], _ kind: Kind) -> [Entry] {
+            rows.map { r in
+                let key = "\(r.inning)-\(r.half)-\(r.paNumber)"
+                let pa = BDLPlateAppearance(
+                    batterId:  kind == .hit ? r.playerId : nil,
+                    inning:    r.inning,
+                    halfInning: r.half,
+                    paNumber:  r.paNumber,
+                    pitcherId: kind == .pitch ? r.playerId : nil,
+                    result:    r.result,
+                    pitches:   kind == .hit ? contact[key]?.pitches : nil,
+                    sequenceComplete: false,
+                )
+                return Entry(
+                    kind: kind, playerId: r.playerId, name: r.name, teamId: r.teamId ?? 0,
+                    value: r.value, detail: r.detail, pa: pa, pitchIndex: r.pitchIndex,
+                    playOrder: r.playOrder,
+                )
+            }
+        }
+        let leaders = GameLeaders(
+            hardestHit:     entries(board.hardestHit, .hit),
+            fastestPitches: entries(board.fastestPitches, .pitch),
+        )
+        return leaders.isEmpty ? nil : leaders
+    }
+
+    /// The at-bat in the play stream whose pitch rows include `order`: its
+    /// pitch rows, which of them `order` is, and its outcome sentence. Grouped
+    /// on the batter markers exactly as `pitchRows` groups them. nil when no
+    /// at-bat holds that row.
+    static func streamAtBat(plays: [BDLPlay], containing order: Int)
+        -> (rows: [BDLPlay], index: Int, sentence: String?)? {
+        var rows: [BDLPlay] = []
+        var sentence: String?
+        var found = false
+        func done() -> (rows: [BDLPlay], index: Int, sentence: String?)? {
+            guard found, let i = rows.firstIndex(where: { $0.order == order }) else { return nil }
+            return (rows, i, sentence)
+        }
+        for p in plays.sorted(by: { $0.order < $1.order }) {
+            if p.type == "Start Batter/Pitcher" {
+                if let hit = done() { return hit }
+                rows = []; sentence = nil
+            } else if (p.text ?? "").hasPrefix("Pitch ") {
+                rows.append(p)
+                if p.order == order { found = true }
+            } else if p.type == "Play Result", p.batterId != nil, sentence == nil {
+                sentence = p.text
+            }
+        }
+        return done()
     }
 
     /// Build from the two payloads the box score already holds.
