@@ -25,7 +25,7 @@ final class SceneStateFlipUITests: XCTestCase {
         app.launchArguments += ["-SizeClassFlipHarness"]
         app.launch()
 
-        app.tabBars.buttons["Scores"].tap()
+        tab(app, "Scores").tap()
 
         // Step back to the nearest earlier day with a finished game (an off day
         // has none), so the day on screen is not today's.
@@ -110,7 +110,7 @@ final class SceneStateFlipUITests: XCTestCase {
         app.launch()
 
         // Leaders: Career, then the first player.
-        app.tabBars.buttons["Leaders"].tap()
+        tab(app, "Leaders").tap()
         let career = app.buttons["Career"].firstMatch
         XCTAssertTrue(career.waitForExistence(timeout: 10))
         career.tap()
@@ -137,14 +137,14 @@ final class SceneStateFlipUITests: XCTestCase {
         XCTAssertTrue(gameLogs.isSelected)
 
         // Search: Award Voting.
-        app.tabBars.buttons["Search"].tap()
+        tab(app, "Search").tap()
         let awards = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Award Voting'")).firstMatch
         XCTAssertTrue(awards.waitForExistence(timeout: 10))
         awards.tap()
         let searchTitle = pushedTitle(app, root: "Search")
 
         // Home: the team's news list.
-        app.tabBars.buttons["Home"].tap()
+        tab(app, "Home").tap()
         let seeAll = app.buttons["See all"].firstMatch
         XCTAssertTrue(seeAll.waitForExistence(timeout: 20), "no news section on Home")
         for _ in 0..<8 where !seeAll.isHittable { app.swipeUp() }
@@ -157,22 +157,22 @@ final class SceneStateFlipUITests: XCTestCase {
             flip.tap()
             XCTAssertTrue(app.buttons[expected].firstMatch.waitForExistence(timeout: 5),
                           "harness didn't flip to \(expected)")
-            app.tabBars.buttons["Leaders"].tap()
+            tab(app, "Leaders").tap()
             XCTAssertTrue(app.staticTexts[name].firstMatch.waitForExistence(timeout: 5) && !leadersRoot.exists,
                           "Leaders lost \(name)'s profile after the flip to \(expected)")
             XCTAssertTrue(gameLogs.waitForExistence(timeout: 5) && gameLogs.isSelected,
                           "\(name)'s profile left Game Logs after the flip to \(expected)")
-            app.tabBars.buttons["Search"].tap()
+            tab(app, "Search").tap()
             XCTAssertTrue(app.navigationBars[searchTitle].waitForExistence(timeout: 5),
                           "Search lost \(searchTitle) after the flip to \(expected)")
-            app.tabBars.buttons["Home"].tap()
+            tab(app, "Home").tap()
             XCTAssertTrue(app.navigationBars[homeTitle].waitForExistence(timeout: 5),
                           "Home lost \(homeTitle) after the flip to \(expected)")
             attachScreenshot(app, "d\(i + 1) after flip to \(expected), on Home")
         }
 
         // The profile's Career tab: still on its Postseason table.
-        app.tabBars.buttons["Leaders"].tap()
+        tab(app, "Leaders").tap()
         app.buttons["Career"].firstMatch.tap()
         XCTAssertTrue(postseason.waitForExistence(timeout: 5) && postseason.isSelected,
                       "\(name)'s Career scope didn't survive the flips")
@@ -196,6 +196,34 @@ final class SceneStateFlipUITests: XCTestCase {
         }
         XCTFail("nothing was pushed (still \(bar.identifier))")
         return bar.identifier
+    }
+
+    /// A tab's button wherever the system draws the tabs: the tab bar at the
+    /// bottom in compact, or, in regular on an iPad, the floating bar at the
+    /// top — which XCUITest reports as a row of plain buttons, not a tab bar.
+    /// Fails the test if neither turns up.
+    private func tab(_ app: XCUIApplication, _ label: String,
+                     file: StaticString = #filePath, line: UInt = #line) -> XCUIElement {
+        let tabs = ["Home", "Scores", "Search", "Standings", "Leaders"]
+        let deadline = Date().addingTimeInterval(5)
+        repeat {
+            let inTabBar = app.tabBars.buttons[label]
+            if inTabBar.exists { return inTabBar }
+            // The floating bar: a button with this label near the top of the
+            // window, in a row with buttons labelled as at least three other tabs.
+            let candidates = app.buttons.matching(NSPredicate(format: "label == %@", label)).allElementsBoundByIndex
+                .filter { $0.exists && $0.frame.minY < 120 }
+            for c in candidates {
+                let row = tabs.filter { $0 != label }.filter { other in
+                    app.buttons.matching(NSPredicate(format: "label == %@", other)).allElementsBoundByIndex
+                        .contains { abs($0.frame.midY - c.frame.midY) < 2 }
+                }
+                if row.count >= 3 { return c }
+            }
+            usleep(200_000)
+        } while Date() < deadline
+        XCTFail("no \(label) tab in a tab bar or the floating top bar", file: file, line: line)
+        return app.tabBars.buttons[label]
     }
 
     private func attachScreenshot(_ app: XCUIApplication, _ name: String) {
