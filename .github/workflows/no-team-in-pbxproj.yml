@@ -1,0 +1,18 @@
+# .github/workflows/no-team-in-pbxproj.yml
+name: No signing team in the Xcode project
+on:
+  push:
+    paths: ['**/*.pbxproj', '.github/workflows/no-team-in-pbxproj.yml']
+  pull_request:
+    paths: ['**/*.pbxproj']
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: project.pbxproj carries no DEVELOPMENT_TEAM
+        run: |
+          if git ls-files -z '*.pbxproj' | xargs -0 grep -l 'DEVELOPMENT_TEAM'; then
+            echo "::error::DEVELOPMENT_TEAM found in the Xcode project above. The team belongs in Signing.xcconfig; delete the line(s)."
+            exit 1
+          fi
