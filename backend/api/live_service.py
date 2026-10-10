@@ -33,6 +33,7 @@ import urllib.error
 from typing import Any, Optional
 
 import data_service
+import game_leaders_live
 import team_contact
 import team_stats
 from cache import cache as _cache
@@ -366,6 +367,20 @@ def _exact_speeds(plays_sorted: list[dict], pas: list[dict]) -> dict[int, float]
     back to whole numbers and gain their decimal the moment the at-bat
     ends. That is the intended behaviour, not a gap.
     """
+    out: dict[int, float] = {}
+    for pa, rows in _agreeing_at_bats(plays_sorted, pas):
+        for row, pitch in zip(rows, pa.get("pitches") or []):
+            speed = pitch.get("release_speed")
+            if speed is not None and row.get("order") is not None:
+                out[row["order"]] = speed
+    return out
+
+
+def _agreeing_at_bats(plays_sorted: list[dict], pas: list[dict]) -> list[tuple[dict, list[dict]]]:
+    """Each plate appearance paired with its own pitch rows from the play stream,
+    only where the two feeds agree on the at-bat's pitch count — the join
+    `_exact_speeds` relies on (see its note), shared with the live Game Leaders
+    board, which marks a pitch by its stream row."""
     # The stream's pitch rows, grouped into at-bats by the batter markers.
     groups: list[tuple[tuple, list[dict]]] = []
     current: Optional[tuple] = None
@@ -386,7 +401,7 @@ def _exact_speeds(plays_sorted: list[dict], pas: list[dict]) -> dict[int, float]
         queues.setdefault(key, []).append(rows)
 
     cursor: dict[tuple, int] = {}
-    out: dict[int, float] = {}
+    out: list[tuple[dict, list[dict]]] = []
     for pa in sorted(pas, key=lambda x: (x.get("inning") or 0, x.get("pa_number") or 0)):
         if pa.get("batter_id") is None:
             continue
@@ -398,13 +413,9 @@ def _exact_speeds(plays_sorted: list[dict], pas: list[dict]) -> dict[int, float]
         rows = queues.get(key)
         if not rows or i >= len(rows):
             continue
-        pitches = pa.get("pitches") or []
-        if len(rows[i]) != len(pitches):
+        if len(rows[i]) != len(pa.get("pitches") or []):
             continue                      # ⚠️ skip the at-bat whole; never part-join
-        for row, pitch in zip(rows[i], pitches):
-            speed = pitch.get("release_speed")
-            if speed is not None and row.get("order") is not None:
-                out[row["order"]] = speed
+        out.append((pa, rows[i]))
     return out
 
 
@@ -916,7 +927,8 @@ def assemble_unified(game: dict, stats: list[dict],
                      plays: list[dict], pas: list[dict],
                      lineup: Optional[list[dict]] = None,
                      previous_codes: Optional[dict] = None,
-                     previous_contact: Optional[dict] = None) -> dict:
+                     previous_contact: Optional[dict] = None,
+                     previous_leaders: Optional[dict] = None) -> dict:
     """Thin orchestrator (§4): derive live state from PLAYS, then attach
     names/bases/lines/errors from their own feeds — ONE source per field.
 
@@ -1011,10 +1023,33 @@ def assemble_unified(game: dict, stats: list[dict],
         "team_contact":  _team_contact_live(pas, stats, plays, home_team, away_team, status,
                                             state["half"], (on_first, on_second, on_third),
                                             game.get("id")),
+        # The game's hardest-hit balls and fastest pitches so far, top 3 each,
+        # never withdrawn — see game_leaders_live.py. Additive: an older client
+        # ignores the key.
+        "game_leaders":  _game_leaders_live(pas, stats, plays_sorted, home_team, away_team,
+                                            status, previous_leaders),
         "scoring_plays": scoring,
         "batting":       batting,
         "pitching":      pitching,
     }
+
+
+def _game_leaders_live(pas: list[dict], stats: list[dict], plays_sorted: list[dict],
+                       home_team: dict, away_team: dict, status: str,
+                       previous: Optional[dict]) -> Optional[dict]:
+    """The live Game Leaders board, or None (at the final the client builds its own
+    from the full feed). Each pitch is marked by its play-stream row where the two
+    feeds agree on the at-bat (`_agreeing_at_bats`)."""
+    if status == "final":
+        return None
+    play_orders = {
+        (pa.get("inning"), "bottom" if "bot" in (pa.get("half_inning") or "").lower() else "top",
+         pa.get("pa_number")): [r.get("order") for r in rows]
+        for pa, rows in _agreeing_at_bats(plays_sorted, pas)
+    }
+    names = {pid: n for pid, n in _id_name_map(stats).items() if n}
+    return game_leaders_live.build(pas, names, away_id=away_team.get("id"), home_id=home_team.get("id"),
+                                   play_orders=play_orders, previous=previous)
 
 
 def _team_contact_live(pas: list[dict], stats: list[dict], plays: list[dict],
@@ -1146,9 +1181,11 @@ async def _refresh_cycle() -> int:
             snapshot = _cache.get(_game_key(gid))
             previous = _carried_codes(snapshot)
             prev_contact = _carried_contact(snapshot)
+            prev_leaders = (snapshot or {}).get("game_leaders")   # a row once shown stays
             unified = assemble_unified(games_by_id[gid], stats, plays, pas, lineup,
                                        previous_codes=previous,
-                                       previous_contact=prev_contact)
+                                       previous_contact=prev_contact,
+                                       previous_leaders=prev_leaders)
             _cache.set(_game_key(gid), unified, LIVE_CACHE_TTL_S)
             line_inputs[gid] = {"game": games_by_id[gid], "stats": stats}
             summaries.append(_summary_from_unified(unified))
