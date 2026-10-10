@@ -695,6 +695,12 @@ struct BoxScoreView: View {
     /// The team card's inner width, which decides the name column (see
     /// `nameColumnWidth(forCardInner:)`). 0 until first measured: 110pt.
     @State private var teamCardInner: CGFloat = 0
+    /// The linescore card's inner width, which its stretched cells fill.
+    @State private var linescoreInner: CGFloat = 0
+    /// The scroll content's width, inside the safe area: what decides whether
+    /// the tables stretch (`stretchesTables`). 0 until first measured.
+    @State private var contentWidth: CGFloat = 0
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     /// Which team's batting + pitching table to render. The view
     /// shows one team at a time instead of stacking both — toggled
@@ -893,6 +899,7 @@ struct BoxScoreView: View {
                 .padding(.vertical, 16)
             }
             .readableContentWidth()
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { contentWidth = $0 }
         }
         .navigationTitle(navigationTitle)
         .navigationBarTitleDisplayMode(.inline)
@@ -1243,12 +1250,13 @@ struct BoxScoreView: View {
         let innings = vm.displayLinescore?.innings ?? []
         let totals = vm.displayLinescore?.teams
         let inningCount = max(innings.count, vm.displayLinescore?.scheduledInnings ?? 9)
+        let cols = linescoreColumns(innings: inningCount)
         return VStack(alignment: .leading, spacing: 8) {
             Text("Linescore").font(.headline)
             ScrollView(.horizontal, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 4) {
                     linescoreRow(label: "", cells: (1...inningCount).map { String($0) },
-                                 totals: ["R", "H", "E"], bold: true, secondary: true)
+                                 totals: ["R", "H", "E"], bold: true, secondary: true, cols: cols)
                     Divider()
                     linescoreRow(
                         label: vm.game.teams.away.team.abbreviation ?? "AWAY",
@@ -1260,7 +1268,7 @@ struct BoxScoreView: View {
                             cellValue(totals?.away?.hits),
                             cellValue(totals?.away?.errors),
                         ],
-                        bold: false, secondary: false
+                        bold: false, secondary: false, cols: cols
                     )
                     linescoreRow(
                         label: vm.game.teams.home.team.abbreviation ?? "HOME",
@@ -1272,11 +1280,12 @@ struct BoxScoreView: View {
                             cellValue(totals?.home?.hits),
                             cellValue(totals?.home?.errors),
                         ],
-                        bold: false, secondary: false
+                        bold: false, secondary: false, cols: cols
                     )
                 }
                 .padding(.horizontal, 4)
             }
+            .onGeometryChange(for: CGFloat.self) { $0.size.width - 8 } action: { linescoreInner = $0 }
             // Live games render the plays expander inside the situation card
             // above this one; final / preview games get it here so it's always
             // reachable. Keyed off `isLiveNow` (an applied snapshot), so a game
@@ -1311,22 +1320,22 @@ struct BoxScoreView: View {
     }
 
     private func linescoreRow(label: String, cells: [String], totals: [String],
-                              bold: Bool, secondary: Bool) -> some View {
+                              bold: Bool, secondary: Bool, cols: LinescoreColumns) -> some View {
         HStack(spacing: 0) {
             Text(label)
                 .font(.caption.weight(bold ? .bold : .semibold))
-                .frame(width: 50, alignment: .leading)
+                .frame(width: cols.label, alignment: .leading)
             ForEach(cells.indices, id: \.self) { i in
                 Text(cells[i])
                     .font(.caption.weight(bold ? .bold : .regular))
-                    .frame(width: 22, alignment: .trailing)
+                    .frame(width: cols.cell, alignment: .trailing)
                     .monospacedDigit()
             }
-            Spacer().frame(width: 8)
+            Spacer().frame(width: cols.gap)
             ForEach(totals.indices, id: \.self) { i in
                 Text(totals[i])
                     .font(.caption.weight(.bold))
-                    .frame(width: 22, alignment: .trailing)
+                    .frame(width: cols.cell, alignment: .trailing)
                     .monospacedDigit()
             }
         }
@@ -1392,6 +1401,7 @@ struct BoxScoreView: View {
 
     private func teamSection(side: TeamSide, bs: BoxScoreResponse) -> some View {
         let team = side == .away ? bs.teams.away : bs.teams.home
+        let cols = tableColumns
         return VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 // Leads the club's full name, so 18pt against .headline.
@@ -1403,8 +1413,8 @@ struct BoxScoreView: View {
                 }
                 Text(team.team.name).font(.headline)
             }
-            battingTable(team: team)
-            pitchingTable(team: team)
+            battingTable(team: team, cols: cols)
+            pitchingTable(team: team, cols: cols)
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { teamCardInner = $0 }
         .padding(.horizontal, 14)
@@ -1415,7 +1425,7 @@ struct BoxScoreView: View {
     }
 
     @ViewBuilder
-    private func battingTable(team: BoxScoreTeam) -> some View {
+    private func battingTable(team: BoxScoreTeam, cols: BoxTableColumns) -> some View {
         let rows = team.batters.compactMap { id -> BoxPlayer? in
             team.players["ID\(id)"]
         }.filter { $0.stats?.batting?.atBats != nil || ($0.stats?.batting?.baseOnBalls ?? 0) > 0 }
@@ -1457,15 +1467,15 @@ struct BoxScoreView: View {
             Text("BATTING").font(.caption.weight(.bold)).foregroundStyle(.secondary)
             ScrollView(.horizontal, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 2) {
-                    battingHeader
+                    battingHeader(cols)
                     Divider().opacity(0.4)
                     ForEach(rows, id: \.person.id) { player in
                         battingRow(
-                            player, tint: tint, currentBatterId: currentBatterId,
+                            player, tint: tint, currentBatterId: currentBatterId, cols: cols,
                         )
                     }
                     Divider().opacity(0.6)
-                    battingTotalsRow(rows: rows)
+                    battingTotalsRow(rows: rows, cols: cols)
                 }
             }
             notableBlock(rows: rows)
@@ -1506,7 +1516,7 @@ struct BoxScoreView: View {
     /// (it weights the leadoff hitter's 5 PAs the same as the 9-hole
     /// hitter's 4), and team OPS needs OBP/SLG components the
     /// table's compact columns don't surface.
-    private func battingTotalsRow(rows: [BoxPlayer]) -> some View {
+    private func battingTotalsRow(rows: [BoxPlayer], cols: BoxTableColumns) -> some View {
         var AB = 0, R = 0, H = 0, RBI = 0, BB = 0, SO = 0
         for p in rows {
             guard let b = p.stats?.batting else { continue }
@@ -1521,28 +1531,23 @@ struct BoxScoreView: View {
             Text("Totals")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
-                .frame(width: nameColumn, alignment: .leading)
-            totalsCell(AB,  width: BattingCol.ab)
-            totalsCell(R,   width: BattingCol.r)
-            totalsCell(H,   width: BattingCol.h)
-            totalsCell(RBI, width: BattingCol.rbi)
-            totalsCell(BB,  width: BattingCol.bb)
-            totalsCell(SO,  width: BattingCol.so)
+                .frame(width: cols.name, alignment: .leading)
+            totalsCell(AB,  width: cols.batting.ab)
+            totalsCell(R,   width: cols.batting.r)
+            totalsCell(H,   width: cols.batting.h)
+            totalsCell(RBI, width: cols.batting.rbi)
+            totalsCell(BB,  width: cols.batting.bb)
+            totalsCell(SO,  width: cols.batting.so)
             // AVG / OPS deliberately blank — a row-sum team rate
             // weights every PA equally and rarely matches expectations.
             Text("")
-                .frame(width: BattingCol.avg, alignment: .trailing)
+                .frame(width: cols.batting.avg, alignment: .trailing)
             Text("")
-                .frame(width: BattingCol.ops, alignment: .trailing)
+                .frame(width: cols.batting.ops, alignment: .trailing)
         }
         .padding(.vertical, 2)
     }
 
-    /// Per-column widths for the batting table. Kept in one place
-    /// so header + row stay aligned and the total stays under the
-    /// iPhone safe-width — `nameCol + sum(statCols)` should clear
-    /// ~360pt with room for safe-area padding so OPS lands without
-    /// horizontal scrolling.
     /// The batting and pitching name column (shared, so IP sits under AB). 110pt
     /// fits a short name with its position, but not with the current batter's
     /// marker beside it: "M. Murakami 1B" truncated on iPad on 2026-10-08, where
@@ -1550,10 +1555,30 @@ struct BoxScoreView: View {
     /// on any device. Where the card has room — 406pt inside, so not a phone held
     /// upright (iPhone 17: 342, Pro Max: 380) — it takes 30pt more.
     static func nameColumnWidth(forCardInner inner: CGFloat) -> CGFloat {
-        inner >= 406 ? BattingCol.name + 30 : BattingCol.name
+        inner >= 406 ? 140 : 110
     }
 
-    private var nameColumn: CGFloat { Self.nameColumnWidth(forCardInner: teamCardInner) }
+    /// Whether the tables widen to their cards. Not on a phone held upright, or
+    /// any content narrower than `BoxScoreLayout.compactBelow`: there the box
+    /// score is the layout it always was, to the pixel. Unmeasured (0) counts
+    /// as narrow, as `teamCardInner` does for the name column.
+    private var stretchesTables: Bool { contentWidth >= BoxScoreLayout.compactBelow }
+
+    /// The batting and pitching columns (`BoxScoreLayout.swift`). Kept in one
+    /// place so header, rows and totals stay aligned. Narrow, the fixed widths
+    /// that clear a phone's ~342pt card with OPS in view; wider, the same
+    /// columns at the current text size, widened to fill the card.
+    private var tableColumns: BoxTableColumns {
+        let name = Self.nameColumnWidth(forCardInner: teamCardInner)
+        guard stretchesTables else { return BoxTableColumns(name: name) }
+        return .fitted(to: teamCardInner, name: name, textScale: BoxScoreLayout.textScale(typeSize))
+    }
+
+    /// The linescore's columns, on the same terms as `tableColumns`.
+    private func linescoreColumns(innings: Int) -> LinescoreColumns {
+        guard stretchesTables else { return LinescoreColumns() }
+        return .fitted(to: linescoreInner, innings: innings, textScale: BoxScoreLayout.textScale(typeSize))
+    }
 
     /// What an empty pitching section says. Before the final it is simply too
     /// early — in the top of the 1st the batting side hasn't pitched — so it
@@ -1563,29 +1588,17 @@ struct BoxScoreView: View {
         gameFinished ? "Not recorded for this game." : "No pitching yet."
     }
 
-    private enum BattingCol {
-        static let name: CGFloat = 110
-        static let ab:   CGFloat = 24
-        static let r:    CGFloat = 24
-        static let h:    CGFloat = 24
-        static let rbi:  CGFloat = 28
-        static let bb:   CGFloat = 24
-        static let so:   CGFloat = 24
-        static let avg:  CGFloat = 34
-        static let ops:  CGFloat = 34
-    }
-
-    private var battingHeader: some View {
+    private func battingHeader(_ cols: BoxTableColumns) -> some View {
         HStack(spacing: 0) {
-            Text("").frame(width: nameColumn, alignment: .leading)
-            battingHeaderCell("AB",  width: BattingCol.ab)
-            battingHeaderCell("R",   width: BattingCol.r)
-            battingHeaderCell("H",   width: BattingCol.h)
-            battingHeaderCell("RBI", width: BattingCol.rbi)
-            battingHeaderCell("BB",  width: BattingCol.bb)
-            battingHeaderCell("SO",  width: BattingCol.so)
-            battingHeaderCell("AVG", width: BattingCol.avg)
-            battingHeaderCell("OPS", width: BattingCol.ops)
+            Text("").frame(width: cols.name, alignment: .leading)
+            battingHeaderCell("AB",  width: cols.batting.ab)
+            battingHeaderCell("R",   width: cols.batting.r)
+            battingHeaderCell("H",   width: cols.batting.h)
+            battingHeaderCell("RBI", width: cols.batting.rbi)
+            battingHeaderCell("BB",  width: cols.batting.bb)
+            battingHeaderCell("SO",  width: cols.batting.so)
+            battingHeaderCell("AVG", width: cols.batting.avg)
+            battingHeaderCell("OPS", width: cols.batting.ops)
         }
     }
 
@@ -1598,7 +1611,7 @@ struct BoxScoreView: View {
     }
 
     private func battingRow(
-        _ p: BoxPlayer, tint: Color, currentBatterId: Int?,
+        _ p: BoxPlayer, tint: Color, currentBatterId: Int?, cols: BoxTableColumns,
     ) -> some View {
         let b = p.stats?.batting
         let avg = p.seasonStats?.batting?.avg ?? "—"
@@ -1615,18 +1628,18 @@ struct BoxScoreView: View {
                     playerLabel(p, isPitcher: false)
                         .padding(.leading, Self.substitutionDepth(p) > 0 ? 12 : 0)
                 }
-                .frame(width: nameColumn, alignment: .leading)
-                cell(b?.atBats,      width: BattingCol.ab)
-                cell(b?.runs,        width: BattingCol.r)
-                cell(b?.hits,        width: BattingCol.h)
-                cell(b?.rbi,         width: BattingCol.rbi)
-                cell(b?.baseOnBalls, width: BattingCol.bb)
-                cell(b?.strikeOuts,  width: BattingCol.so)
+                .frame(width: cols.name, alignment: .leading)
+                cell(b?.atBats,      width: cols.batting.ab)
+                cell(b?.runs,        width: cols.batting.r)
+                cell(b?.hits,        width: cols.batting.h)
+                cell(b?.rbi,         width: cols.batting.rbi)
+                cell(b?.baseOnBalls, width: cols.batting.bb)
+                cell(b?.strikeOuts,  width: cols.batting.so)
                 Text(avg)
                     .font(.caption)
                     .monospacedDigit()
                     .lineLimit(1)
-                    .frame(width: BattingCol.avg, alignment: .trailing)
+                    .frame(width: cols.batting.avg, alignment: .trailing)
                 // AVG never exceeds .999 (".399" / ".305" — 4 chars
                 // with the dropped leading zero), so no scaling. OPS
                 // can break 1.000 (".850" → "1.023" — 5 chars), so
@@ -1637,7 +1650,7 @@ struct BoxScoreView: View {
                     .monospacedDigit()
                     .lineLimit(1)
                     .minimumScaleFactor(ops.hasPrefix("1.") ? 0.85 : 1.0)
-                    .frame(width: BattingCol.ops, alignment: .trailing)
+                    .frame(width: cols.batting.ops, alignment: .trailing)
             }
             .padding(.vertical, 2)
             .bold(isCurrent)
@@ -1752,23 +1765,7 @@ struct BoxScoreView: View {
         full.split(separator: " ").last.map(String.init) ?? full
     }
 
-    /// Per-column widths for the pitching table. The name column is the
-    /// batting table's (`nameColumn`) so the IP column starts at the same x
-    /// as AB in the batting table — both tables read as a single wide
-    /// scoreboard. Stat-column widths are tuned to common values
-    /// (IP "10.2", ERA "12.34", PC "123") at caption-monospaced.
-    private enum PitchingCol {
-        static let ip:   CGFloat = 34
-        static let h:    CGFloat = 22
-        static let r:    CGFloat = 22
-        static let er:   CGFloat = 22
-        static let bb:   CGFloat = 22
-        static let so:   CGFloat = 22
-        static let era:  CGFloat = 38
-        static let pc:   CGFloat = 28
-    }
-
-    private func pitchingTable(team: BoxScoreTeam) -> some View {
+    private func pitchingTable(team: BoxScoreTeam, cols: BoxTableColumns) -> some View {
         let rows = team.pitchers.compactMap { id -> BoxPlayer? in
             team.players["ID\(id)"]
         }
@@ -1789,30 +1786,30 @@ struct BoxScoreView: View {
             } else {
             ScrollView(.horizontal, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 2) {
-                    pitchingHeader
+                    pitchingHeader(cols)
                     Divider().opacity(0.4)
                     ForEach(rows, id: \.person.id) { player in
-                        pitchingRow(player)
+                        pitchingRow(player, cols: cols)
                     }
                     Divider().opacity(0.6)
-                    pitchingTotalsRow(rows: rows)
+                    pitchingTotalsRow(rows: rows, cols: cols)
                 }
             }
             }
         }
     }
 
-    private var pitchingHeader: some View {
+    private func pitchingHeader(_ cols: BoxTableColumns) -> some View {
         HStack(spacing: 0) {
-            Text("").frame(width: nameColumn, alignment: .leading)
-            pitchingHeaderCell("IP",  width: PitchingCol.ip)
-            pitchingHeaderCell("H",   width: PitchingCol.h)
-            pitchingHeaderCell("R",   width: PitchingCol.r)
-            pitchingHeaderCell("ER",  width: PitchingCol.er)
-            pitchingHeaderCell("BB",  width: PitchingCol.bb)
-            pitchingHeaderCell("SO",  width: PitchingCol.so)
-            pitchingHeaderCell("ERA", width: PitchingCol.era)
-            pitchingHeaderCell("PC",  width: PitchingCol.pc)
+            Text("").frame(width: cols.name, alignment: .leading)
+            pitchingHeaderCell("IP",  width: cols.pitching.ip)
+            pitchingHeaderCell("H",   width: cols.pitching.h)
+            pitchingHeaderCell("R",   width: cols.pitching.r)
+            pitchingHeaderCell("ER",  width: cols.pitching.er)
+            pitchingHeaderCell("BB",  width: cols.pitching.bb)
+            pitchingHeaderCell("SO",  width: cols.pitching.so)
+            pitchingHeaderCell("ERA", width: cols.pitching.era)
+            pitchingHeaderCell("PC",  width: cols.pitching.pc)
         }
     }
 
@@ -1824,25 +1821,25 @@ struct BoxScoreView: View {
             .monospacedDigit()
     }
 
-    private func pitchingRow(_ p: BoxPlayer) -> some View {
+    private func pitchingRow(_ p: BoxPlayer, cols: BoxTableColumns) -> some View {
         let pit = p.stats?.pitching
         let era = p.seasonStats?.pitching?.era ?? "—"
         let decisionTag = pitcherDecisionTag(for: p)
         return Button { tapPlayer(id: p.person.id, name: p.person.fullName, isPitcher: true) } label: {
             HStack(spacing: 0) {
                 pitcherLabel(p, decisionTag: decisionTag)
-                    .frame(width: nameColumn, alignment: .leading)
+                    .frame(width: cols.name, alignment: .leading)
                 Text(Self.formatPitcherIP(pit?.inningsPitched))
                     .font(.caption).monospacedDigit()
-                    .frame(width: PitchingCol.ip, alignment: .trailing)
-                cell(pit?.hits,        width: PitchingCol.h)
-                cell(pit?.runs,        width: PitchingCol.r)
-                cell(pit?.earnedRuns,  width: PitchingCol.er)
-                cell(pit?.baseOnBalls, width: PitchingCol.bb)
-                cell(pit?.strikeOuts,  width: PitchingCol.so)
+                    .frame(width: cols.pitching.ip, alignment: .trailing)
+                cell(pit?.hits,        width: cols.pitching.h)
+                cell(pit?.runs,        width: cols.pitching.r)
+                cell(pit?.earnedRuns,  width: cols.pitching.er)
+                cell(pit?.baseOnBalls, width: cols.pitching.bb)
+                cell(pit?.strikeOuts,  width: cols.pitching.so)
                 Text(era).font(.caption).monospacedDigit()
-                    .frame(width: PitchingCol.era, alignment: .trailing)
-                cell(pit?.pitchCount,  width: PitchingCol.pc)
+                    .frame(width: cols.pitching.era, alignment: .trailing)
+                cell(pit?.pitchCount,  width: cols.pitching.pc)
             }
             .padding(.vertical, 2)
             .contentShape(Rectangle())
@@ -1951,7 +1948,7 @@ struct BoxScoreView: View {
     /// Counting-only — ERA is intentionally left "—". A row-sum
     /// "team ERA" weights mop-up relief equally with the starter's
     /// 6 IP, which is misleading more often than it's useful.
-    private func pitchingTotalsRow(rows: [BoxPlayer]) -> some View {
+    private func pitchingTotalsRow(rows: [BoxPlayer], cols: BoxTableColumns) -> some View {
         var ipDec: Double = 0
         var H = 0, R = 0, ER = 0, BB = 0, SO = 0
         var pcTotal = 0
@@ -1970,23 +1967,23 @@ struct BoxScoreView: View {
             Text("Totals")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
-                .frame(width: nameColumn, alignment: .leading)
+                .frame(width: cols.name, alignment: .leading)
             Text(Self.decimalIPToBaseball(ipDec))
                 .font(.caption.weight(.semibold))
                 .monospacedDigit()
-                .frame(width: PitchingCol.ip, alignment: .trailing)
-            totalsCell(H,  width: PitchingCol.h)
-            totalsCell(R,  width: PitchingCol.r)
-            totalsCell(ER, width: PitchingCol.er)
-            totalsCell(BB, width: PitchingCol.bb)
-            totalsCell(SO, width: PitchingCol.so)
+                .frame(width: cols.pitching.ip, alignment: .trailing)
+            totalsCell(H,  width: cols.pitching.h)
+            totalsCell(R,  width: cols.pitching.r)
+            totalsCell(ER, width: cols.pitching.er)
+            totalsCell(BB, width: cols.pitching.bb)
+            totalsCell(SO, width: cols.pitching.so)
             // ERA deliberately blank — see batting-totals comment.
             Text("")
-                .frame(width: PitchingCol.era, alignment: .trailing)
+                .frame(width: cols.pitching.era, alignment: .trailing)
             Text(pcAny ? String(pcTotal) : "—")
                 .font(.caption.weight(.semibold))
                 .monospacedDigit()
-                .frame(width: PitchingCol.pc, alignment: .trailing)
+                .frame(width: cols.pitching.pc, alignment: .trailing)
         }
         .padding(.vertical, 2)
     }
