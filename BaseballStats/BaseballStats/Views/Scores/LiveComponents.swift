@@ -192,6 +192,27 @@ struct LiveBadge: View {
 
 // MARK: - Plays
 
+/// When a live game's Plays section should open by itself: a scoring play
+/// has ARRIVED, i.e. more scoring plays than the last time we counted.
+struct ScoringPlayLatch {
+    private(set) var seen = 0
+
+    /// The plays already loaded when the section appears: counted, so the
+    /// scoring plays the game already had never count as arriving. Live,
+    /// the section appears with the first snapshot's plays, and `onChange`
+    /// doesn't fire for an initial value.
+    mutating func appear(_ plays: [BDLPlay]) {
+        seen = plays.filter(\.scoringPlay).count
+    }
+
+    /// A plays update. True when it brings a new scoring play.
+    mutating func refresh(_ plays: [BDLPlay]) -> Bool {
+        let count = plays.filter(\.scoringPlay).count
+        defer { seen = count }
+        return count > seen
+    }
+}
+
 /// Expandable plays section for the box score. Shows a `Plays ▾`
 /// header row that toggles between collapsed (just the header) and
 /// expanded (segmented Scoring/All picker + the play list).
@@ -244,9 +265,9 @@ struct PlaysView: View {
     /// after the half flips), preserving the user's manual collapse
     /// of any inning that doesn't change.
     @State private var lastAutoExpandedHalfInningKey: String?
-    /// Tracks the previous scoring-play count so we only react to
-    /// the LATCH from N → N+1, not to every plays update.
-    @State private var prevScoringCount = 0
+    /// Counts scoring plays across updates so we only react to the
+    /// LATCH from N → N+1, not to every plays update.
+    @State private var scoringLatch = ScoringPlayLatch()
     /// Drives the at-bat row's layout. At the accessibility sizes the
     /// trailing out count is moved BELOW the sentence rather than
     /// beside it — see `battedRow`.
@@ -317,9 +338,9 @@ struct PlaysView: View {
         .sheet(item: $selectedPlay) { detail in
             PlayDetailSheet(detail: detail)
         }
+        .onAppear { scoringLatch.appear(plays) }
         .onChange(of: plays) { _, new in
-            let newScoringCount = new.filter(\.scoringPlay).count
-            defer { prevScoringCount = newScoringCount }
+            let scoringArrived = scoringLatch.refresh(new)
             // Auto-expand the latest half-inning. Triggers on every
             // transition to a new half-inning so the action stays
             // on-screen without scrolling; same-inning updates do
@@ -338,7 +359,7 @@ struct PlaysView: View {
             // unless the user has already toggled the section.
             if autoExpandOnScoring,
                !hasUserToggled,
-               newScoringCount > prevScoringCount {
+               scoringArrived {
                 withAnimation(.easeInOut(duration: 0.2)) {
                     isExpanded = true
                     playsMode  = .scoring
