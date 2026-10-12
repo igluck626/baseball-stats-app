@@ -27,6 +27,7 @@ hiding the number.
 """
 from __future__ import annotations
 
+import time
 from typing import Optional
 
 MIN_TRACKED_SHARE = 0.90
@@ -125,12 +126,20 @@ def team_contact(pas: list[dict], final: bool, *, box: Optional[dict] = None,
     With `box` ({"away"|"home": /stats rows}), the block also carries `stats`, the
     Team Stats rows (see team_stats.py); `plays` is the play stream RISP reads
     (None hides RISP) and `on_base` the live runners on base for the side batting.
-    Live, with a box, the feed is first cut back to the box (`team_stats.align_to_box`).
+    With a box, an automatic intentional walk the feed has no row for gets a stand-in
+    where the play stream proves it (`team_stats.fill_automatic_ibbs`, counted under
+    `stats.stand_ins`); live, the feed is then cut back to the box
+    (`team_stats.align_to_box`).
     """
     aside: dict = {}
-    if box is not None and not final:
+    filled: dict = {}
+    if box is not None:
         import team_stats   # here, not at the top: team_stats imports this module
-        pas, aside = team_stats.align_to_box(pas or [], box)
+        # The feed has no row for an automatic intentional walk; a stand-in fills the
+        # hole where the play stream proves one (see team_stats.fill_automatic_ibbs).
+        pas, filled = team_stats.fill_automatic_ibbs(pas or [], plays, box, final=final)
+        if not final:
+            pas, aside = team_stats.align_to_box(pas, box)
     halves: dict[str, list[dict]] = {"top": [], "bottom": []}
     for pa in pas or []:
         half = (pa.get("half_inning") or "").lower()
@@ -157,6 +166,8 @@ def team_contact(pas: list[dict], final: bool, *, box: Optional[dict] = None,
                                                on_base=on_base, game_id=game_id)
         if aside:
             block["stats"]["feed_ahead"] = aside
+        if filled:
+            block["stats"]["stand_ins"] = filled
     return block
 
 
@@ -165,8 +176,13 @@ def team_contact(pas: list[dict], final: bool, *, box: Optional[dict] = None,
 # Finished games only, for the life of the process: a final game's plate
 # appearances don't change. A failed fetch raises and an empty one returns
 # `no_data` — neither is cached, so the next request tries again. Nor is a block
-# missing a part that failed to load (the box or the play stream).
-_FINAL_CACHE: dict[int, dict] = {}
+# missing a part that failed to load (the box or the play stream). A block whose
+# PA-feed rows are hidden for a mismatch (`pa_feed_mismatch`) is kept for only
+# MISMATCH_TTL seconds: balldontlie can still correct the feed or the box, and the
+# rows should come back without a restart.
+_FINAL_CACHE: dict[int, tuple[dict, Optional[float]]] = {}   # id -> (block, expires at; None: never)
+MISMATCH_TTL = 600
+_now = time.monotonic
 MAX_PLAY_PAGES = 12
 
 
@@ -192,7 +208,10 @@ def for_game(bdl_id: int, get_json) -> dict:
     or play-stream fetch leaves its rows out and the block uncached."""
     hit = _FINAL_CACHE.get(bdl_id)
     if hit is not None:
-        return hit
+        cached, expires = hit
+        if expires is None or _now() < expires:
+            return cached
+        del _FINAL_CACHE[bdl_id]
     game = (get_json(f"games/{bdl_id}", None) or {}).get("data") or {}
     status = (game.get("status") or "").upper()
     final = "FINAL" in status
@@ -210,5 +229,6 @@ def for_game(bdl_id: int, get_json) -> dict:
         plays, complete = None, False
     block = {"game_id": bdl_id, **team_contact(pas, final=final, box=box, plays=plays, game_id=bdl_id)}
     if final and pas and block["reason"] != "no_data" and complete:
-        _FINAL_CACHE[bdl_id] = block
+        mismatch = "pa_feed_mismatch" in ((block.get("stats") or {}).get("hidden") or {}).values()
+        _FINAL_CACHE[bdl_id] = (block, _now() + MISMATCH_TTL if mismatch else None)
     return block

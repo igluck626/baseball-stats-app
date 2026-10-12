@@ -159,6 +159,41 @@ except RuntimeError:
     raised = True
 check("a failed fetch raises (the endpoint returns 502) and caches nothing", raised and 3 not in tc._FINAL_CACHE)
 
+print("a final with rows hidden for a feed mismatch is cached for ten minutes only")
+AUTO = json.load(open(os.path.join(HERE, "fixtures", "auto_ibb_2026.json")))["games"]["15467418"]   # LAD @ MIL
+
+
+def fake_game(plays):
+    stats = [{**r, "team": {"id": tid}} for side, tid in (("away", 1), ("home", 2)) for r in AUTO["box"][side]]
+
+    def get(path, params):
+        calls.append(path)
+        if path.startswith("games/"):
+            return {"data": {"status": "STATUS_FINAL", "away_team": {"id": 1}, "home_team": {"id": 2}}}
+        return {"data": {"stats": stats, "plays": plays}.get(path, AUTO["plate_appearances"])}
+    return get
+
+
+clock = [1000.0]
+real_now, tc._now = getattr(tc, "_now", None), lambda: clock[0]
+tc._FINAL_CACHE.clear(); calls.clear()
+nowalk = [p for p in AUTO["plays"] if p["type"] != "Automatic Ball - IBB"]   # the walks unproven: rows hide
+b1 = tc.for_game(15467418, fake_game(nowalk))
+clock[0] += 599
+b2 = tc.for_game(15467418, fake_game(nowalk))
+check("hidden for a mismatch: served from the cache for up to ten minutes",
+      b1["stats"]["hidden"].get("xba") == "pa_feed_mismatch" and b1 is b2 and calls.count("plate_appearances") == 1)
+clock[0] += 2
+b3 = tc.for_game(15467418, fake_game(AUTO["plays"]))
+check("then fetched again, and a corrected feed shows every row",
+      calls.count("plate_appearances") == 2 and b3 is not b1 and "pa_feed_mismatch" not in b3["stats"]["hidden"].values())
+clock[0] += 86400
+b4 = tc.for_game(15467418, fake_game(AUTO["plays"]))
+check("a final with every row shown is cached as before, past ten minutes (a day later, no fetch)",
+      b4 is b3 and calls.count("plate_appearances") == 2)
+tc._now = real_now
+tc._FINAL_CACHE.clear()
+
 print("wired in")
 SRC = open(os.path.join(HERE, "..", "api", "live_service.py")).read()
 check("the live snapshot carries team_contact from the same function, with the box and plays",

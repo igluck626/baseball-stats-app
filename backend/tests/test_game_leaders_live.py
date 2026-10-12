@@ -81,7 +81,7 @@ check("before the first completed tracked at-bat: None", board([], names=SYN_NAM
 print("never withdrawn")
 b1 = board(PAS)
 b2 = board([p for p in PAS if p["pa_number"] != b1["hardest_hit"][0]["pa_number"]], previous=b1)
-check("the feed drops the hardest-hit at-bat: its row stays, in place", ids(b2, "hardest_hit") == ids(b1, "hardest_hit"))
+check("a later feed without the hardest-hit at-bat: its row stays, in place", ids(b2, "hardest_hit") == ids(b1, "hardest_hit"))
 check("and the board with no memory would have lost it (what the carry prevents)",
       ids(board([p for p in PAS if p["pa_number"] != b1["hardest_hit"][0]["pa_number"]]), "hardest_hit")
       != ids(b1, "hardest_hit"))

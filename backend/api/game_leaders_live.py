@@ -20,8 +20,10 @@ Three rules, measured on ten finished games replayed pitch by pitch (2026-10-09)
   * NEVER WITHDRAWN. The board is the top 3 of (this cycle's events ∪ the last
     board), carried through the previous snapshot exactly as `carry_forward`
     treats a batting slot. An event leaves only when a strictly better one
-    pushes it below third — never because the feed dropped its plate appearance,
-    which it does (see the `missingPARow` fixture). A revised reading of the
+    pushes it below third — never because its plate appearance is missing from
+    a later feed. (The `missingPARow` fixture, once read as the feed dropping a
+    row, is an automatic intentional walk, which the feed never writes; the
+    carry guards a withdrawal that isn't established.) A revised reading of the
     same event wins; memory only fills silence.
 
 Ties go to the EARLIER event — (inning, half, pa_number, pitch index), top before

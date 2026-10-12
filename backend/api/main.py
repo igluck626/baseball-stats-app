@@ -2940,8 +2940,9 @@ def game_team_contact(bdl_id: int):
     """Team AVG, expected batting average (xBA) and balls hit 95+ mph for one
     game, per side, from balldontlie's plate appearances — the same block the
     live snapshot carries as `team_contact` (see team_contact.py), with the
-    server's `show` decision. Finished games are cached for the process's life;
-    a failed or empty fetch is not cached."""
+    server's `show` decision. Finished games are cached for the process's life
+    (one with its PA-feed rows hidden for a mismatch, for ten minutes); a failed
+    or empty fetch is not cached."""
     try:
         return team_contact.for_game(bdl_id, data_service._bdl_get_json)
     except Exception as exc:  # noqa: BLE001 - balldontlie down / unknown id

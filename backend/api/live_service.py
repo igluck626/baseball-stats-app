@@ -441,14 +441,15 @@ def _contact_pas(pas: list[dict], previous: Optional[dict] = None) -> list[dict]
     the 309KB of `/plate_appearances` this is distilled from. Every other
     pitch and all fifty other fields are dropped.
 
-    ⚠️ CARRIED FORWARD, because this is NOT append-only, which is the
-    thing that is easy to assume and wrong. The metrics live on the PA
-    feed, and that feed DROPS ROWS — see the `missingPARow` fixture,
-    a finished game whose feed is missing a plate appearance outright. A
-    dropped row here would take a home run's exit velocity off a row that
-    showed it ten seconds earlier, which is the batting-slot failure in a
-    more visible place. Memory only fills silence; a fresh reading always
-    wins, exactly as `carry_forward` treats a batting slot.
+    ⚠️ CARRIED FORWARD, so that a row once shown can't vanish. The
+    `missingPARow` fixture, once read as the feed dropping a row, is an
+    automatic intentional walk — a plate appearance the feed never writes
+    (no pitch, so no metrics to carry either). Whether the feed ever
+    withdraws a row it has already served isn't established; if it does,
+    a home run's exit velocity would leave a row that showed it ten
+    seconds earlier, the batting-slot failure in a more visible place. The
+    carry is the cheap guard: memory only fills silence; a fresh reading
+    always wins, exactly as `carry_forward` treats a batting slot.
     """
     fresh: dict[str, dict] = {}
     for pa in pas:

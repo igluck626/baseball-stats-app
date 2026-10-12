@@ -34,8 +34,10 @@ played are not "left" yet and are subtracted too. Matches Baseball-Reference for
 six sides of the three games.
 
 PA-FEED ROWS (xba, risp, dp) hide when that side's completed plate
-appearances in the feed don't number the box's plate appearances: the feed drops a
-row now and then, and a count read from an incomplete feed would be quietly wrong.
+appearances in the feed don't number the box's plate appearances: a count read from
+an incomplete feed would be quietly wrong. The usual gap is no dropped row but an
+automatic intentional walk, which the feed never writes (no pitch is thrown); a
+stand-in fills it where the play stream proves one (`fill_automatic_ibbs`).
 Only TRUE plate appearances count — not the row the feed writes for an inning that
 ended on the bases (MIL @ SD 2026-10-06: Taylor's "Caught Stealing 2B", which hid
 these rows for the whole game). LOB's plate appearances come from the box, which
@@ -195,6 +197,127 @@ def _batting_rows(box: dict, side: str) -> list[dict]:
     return [r for r in box.get(side, []) if r.get("at_bats") is not None or r.get("plate_appearances") is not None]
 
 
+def _play_at_bats(plays: list[dict]) -> list[dict]:
+    """The play stream as at-bats, in game order: one per batter coming up, from his
+    "Start Batter/Pitcher" (repeated, for the same batter, after a pitching change) to
+    the next batter's. Each carries the rows it holds."""
+    at_bats: list[dict] = []
+    cur = None
+    for p in sorted(plays or [], key=lambda r: r.get("order") or 0):
+        half = (p.get("inning_type") or "").lower()
+        if p.get("type") == "Start Batter/Pitcher":
+            key = (p.get("inning"), half, p.get("batter_id"))
+            if cur is None or cur["key"] != key:
+                cur = {"key": key, "rows": []}
+                at_bats.append(cur)
+            continue
+        if p.get("type") == "End Inning":
+            cur = None
+        elif cur is not None:
+            cur["rows"].append(p)
+    return at_bats
+
+
+def _automatic_walk(at_bat: dict) -> Optional[dict]:
+    """The walk's result row when `at_bat` is an automatic intentional walk — no pitch
+    thrown: "Automatic Ball - IBB" rows, the batter's "intentionally walked" result, and
+    nothing else but substitution notes and the end marker. Else None."""
+    batter = at_bat["key"][2]
+    walk = None
+    automatic = 0
+    for p in at_bat["rows"]:
+        typ, text = p.get("type"), p.get("text") or ""
+        if typ == "Automatic Ball - IBB":
+            automatic += 1
+        elif typ == "End Batter/Pitcher":
+            continue
+        elif typ == "Play Result" and p.get("batter_id") == batter and "intentionally walked" in text and walk is None:
+            walk = p
+        elif typ == "Play Result" and p.get("batter_id") is None and _SUBSTITUTION.search(text):
+            continue
+        else:
+            return None
+    return walk if automatic and walk is not None else None
+
+
+def fill_automatic_ibbs(pas: list[dict], plays: Optional[list[dict]], box: dict, *,
+                        final: bool) -> tuple[list[dict], dict]:
+    """The feed with a stand-in for each automatic intentional walk it has no row for.
+
+    balldontlie's /plate_appearances writes no row for an automatic intentional walk —
+    one where no pitch is thrown — though it numbers the game's plate appearances as
+    if it had: `pa_number` skips one. (A walk after real pitches does get a row,
+    "Intent Walk", holding those pitches.) Every hole checked was one of these — the
+    2026 postseason's finals to 10-11 (four holes in three games) and the old
+    missingPARow game — so the side's feed counted one plate appearance fewer than its
+    box, and the PA-feed rows hid from that walk to the end of the game, live and final.
+
+    A hole is filled only when the play stream PROVES the walk: the feed's rows and the
+    play stream's at-bats are walked together in game order, pairing each row with the
+    at-bat of the same inning, half and batter; the at-bats passed over between two
+    paired rows must be exactly as many as the `pa_number`s missing between them, and
+    every one an automatic intentional walk (`_automatic_walk`). The stand-in carries
+    the batter, inning, half, `pa_number` and the play stream's outs, result
+    "Intent Walk" and no pitches — so no at-bat, hit, ball in play or double play. The
+    runners on base stay None: the play stream carries no base state, a walk is no
+    at-bat, and nothing that reads runners reads them off a walk.
+
+    Then, per side, every walked batter's box line must show more plate appearances
+    than the feed has rows for him, and the side's true plate appearances must number
+    its box: exactly at the final; live, at least — the feed runs a plate appearance
+    or two ahead of the box, and `align_to_box` cuts it back to exactly the box, which
+    it can only do once the holes are filled. A side that fails keeps its holes, and
+    its rows hide as before. Never changes `pas` itself (Game Leaders and the live
+    `contact_pas` read the real feed). Returns the plate appearances and the number of
+    stand-ins per side."""
+    nums = [p.get("pa_number") for p in pas or []]
+    if not pas or not plays or None in nums or len(set(nums)) != len(nums):
+        return pas, {}
+    if sorted(nums) == list(range(1, len(nums) + 1)):
+        return pas, {}                                  # no holes
+    rows = sorted(pas, key=lambda p: p["pa_number"])
+    at_bats = _play_at_bats(plays)
+    stand_ins: list[dict] = []
+    i, last = 0, 0
+    for row in rows:
+        key = (row.get("inning"), (row.get("half_inning") or "").lower(), row.get("batter_id"))
+        passed: list[dict] = []
+        while i < len(at_bats) and at_bats[i]["key"] != key:
+            passed.append(at_bats[i])
+            i += 1
+        if i == len(at_bats):
+            break                                       # a row the play stream doesn't have (yet): stop here
+        missing = list(range(last + 1, row["pa_number"]))
+        walks = [_automatic_walk(ab) for ab in passed]
+        if missing and len(passed) == len(missing) and all(walks):
+            for n, ab, walk in zip(missing, passed, walks):
+                inning, half, batter = ab["key"]
+                stand_ins.append({"pa_number": n, "inning": inning, "half_inning": half, "batter_id": batter,
+                                  "result": "Intent Walk", "outs": walk.get("outs"), "pitches": [],
+                                  "runner_on_first": None, "runner_on_second": None, "runner_on_third": None,
+                                  "stand_in": "automatic_intentional_walk"})
+        last = row["pa_number"]
+        i += 1
+    kept: list[dict] = []
+    filled: dict = {}
+    for side, half in (("away", "top"), ("home", "bottom")):
+        mine = [s for s in stand_ins if s["half_inning"] == half]
+        if not mine:
+            continue
+        lines = _batting_rows(box, side)
+        feed_rows = [p for p in pas if (p.get("half_inning") or "").lower() == half and _is_plate_appearance(p.get("result"))]
+        batters_ok = all(
+            _sum([r for r in lines if r.get("player_id") == b], "plate_appearances")
+            - sum(1 for p in feed_rows if p.get("batter_id") == b)
+            >= sum(1 for s in mine if s["batter_id"] == b)
+            for b in {s["batter_id"] for s in mine})
+        n_feed, n_box = len(feed_rows) + len(mine), _sum(lines, "plate_appearances")
+        if batters_ok and (n_feed == n_box if final else n_feed >= n_box):
+            kept += mine
+            filled[side] = len(mine)
+    return (pas + kept if kept else pas), filled
+
+
 def align_to_box(pas: list[dict], box: dict) -> tuple[list[dict], dict]:
     """Live: the feed as of the box. balldontlie's plate-appearance feed records an
     at-bat a refresh or two before its box score does (2026-10-08, CLE @ CHW: ahead
@@ -205,10 +328,12 @@ def align_to_box(pas: list[dict], box: dict) -> tuple[list[dict], dict]:
     Only when `pa_number` runs 1..n with no holes: it numbers the whole game in
     order (API order, `pa_number` order and inning order agree in all 30 games
     checked), so without holes anything the feed has beyond the box is its tail. A
-    hole is a plate appearance the feed dropped for good (5 of 30 finished games),
-    and then "the first N" would include one the box hasn't counted yet — so the
-    feed is left alone and the rows fall to the usual check. Returns the plate
-    appearances to use and how many were set aside per side."""
+    hole is a plate appearance the feed has no row for — an automatic intentional
+    walk, which it never writes, in every hole traced so far (5 of those 30 games
+    had one; `fill_automatic_ibbs` runs first and fills the ones the play stream
+    proves). With a hole left, "the first N" would include one the box hasn't
+    counted yet — so the feed is left alone and the rows fall to the usual check.
+    Returns the plate appearances to use and how many were set aside per side."""
     nums = [p.get("pa_number") for p in pas]
     if not pas or None in nums or sorted(nums) != list(range(1, len(nums) + 1)):
         return pas, {}
