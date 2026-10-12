@@ -215,7 +215,8 @@ def for_game(bdl_id: int, get_json) -> dict:
     game = (get_json(f"games/{bdl_id}", None) or {}).get("data") or {}
     status = (game.get("status") or "").upper()
     final = "FINAL" in status
-    pas = (get_json("plate_appearances", {"game_id": bdl_id, "per_page": 100}) or {}).get("data") or []
+    # Paged like the box and the play stream: a long extra-inning game passes 100 rows.
+    pas = _paged(get_json, "plate_appearances", {"game_id": bdl_id})
     complete = True
     try:
         rows = _paged(get_json, "stats", {"game_ids[]": bdl_id})
