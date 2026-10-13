@@ -85,7 +85,7 @@ struct LiveBracketView: View {
 
     var body: some View {
         if let layout = Self.layout(bracket, metrics: BracketMetrics.live.scaled(scale)) {
-            BracketTreeCanvas(layout: layout) { item in
+            BracketTreeCanvas(layout: layout, fitsWidth: true) { item in
                 Button { onSelect(item.cell) } label: {
                     SlotBox(slot: item.cell, isFinal: item.isFinal, width: layout.metrics.boxW,
                             height: layout.metrics.boxH)

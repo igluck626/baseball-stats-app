@@ -194,24 +194,66 @@ struct BracketTreeLayout<Cell> {
 /// in one absolute coordinate space inside a two-axis ScrollView.
 struct BracketTreeCanvas<Cell, Box: View>: View {
     let layout: BracketTreeLayout<Cell>
+    /// Shrink the whole bracket to the window's width when that keeps its
+    /// smallest text at `minimumTextSize` or more, otherwise draw it at full
+    /// size and scroll (see `fitScale`), with a button at each edge that has
+    /// more beyond it. Off for Playoff History, which keeps its chevron.
+    var fitsWidth = false
     @ViewBuilder let box: (BracketTreeLayout<Cell>.Placed) -> Box
     @Environment(\.colorScheme) private var colorScheme
 
     /// The scroll view's own measurements: how wide the window is, how wide
     /// the bracket is, and how far it has been scrolled sideways.
     @State private var scroll = HorizontalScroll()
+    @State private var position = ScrollPosition()
+    /// The vertical offset, for the edge buttons' scroll — kept out of `scroll`
+    /// so a vertical drag doesn't re-render the canvas.
+    @State private var vertical = VerticalOffset()
+    /// The smallest text in the bracket — headers, status lines, seeds — at the
+    /// reader's Dynamic Type size.
+    @ScaledMetric(relativeTo: .caption2) private var smallestText: CGFloat = 11
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    /// The smallest text is never drawn under this many points to make the
+    /// bracket fit; a window too narrow for that scrolls instead.
+    static var minimumTextSize: CGFloat { 9 }
+    static var padding: CGFloat { 20 }
 
     struct HorizontalScroll: Equatable {
         var container: CGFloat = 0
         var content: CGFloat = 0
         var offset: CGFloat = 0
+        /// The visible height, inside the safe area.
+        var height: CGFloat = 0
         /// The bracket is wider than the window, so part of it is off-screen.
         var overflows: Bool { content > container + 1 }
         /// Some of it is still to the right.
         var moreToTheRight: Bool { overflows && offset < content - container - 4 }
+        /// Some of it is to the left.
+        var moreToTheLeft: Bool { overflows && offset > 4 }
+    }
+
+    final class VerticalOffset { var y: CGFloat = 0 }
+
+    /// How much to shrink the bracket: 1 when it fits as drawn, when the reader
+    /// has chosen a text size above the default (a larger bracket to scroll is
+    /// what they asked for; shrinking it would hand back the size they turned
+    /// up — to about half at AX1), or when shrinking it to fit would take its
+    /// smallest text under `minimumTextSize` — a phone held upright keeps
+    /// today's full-size bracket and scrolls — and otherwise exactly enough to
+    /// fit the width. From the scroll view's measured width, never the device.
+    static func fitScale(container: CGFloat, natural: CGFloat, smallestText: CGFloat,
+                         typeSize: DynamicTypeSize = .large) -> CGFloat {
+        guard container > 0, natural > 0, typeSize <= .large else { return 1 }
+        let k = (container - 2 * padding) / natural
+        return k < 1 && k * smallestText >= minimumTextSize ? k : 1
     }
 
     var body: some View {
+        let k = fitsWidth
+            ? Self.fitScale(container: scroll.container, natural: layout.size.width, smallestText: smallestText,
+                            typeSize: typeSize)
+            : 1
         ScrollView([.horizontal, .vertical]) {
             ZStack(alignment: .topLeading) {
                 ForEach(layout.bands) { band in
@@ -264,34 +306,96 @@ struct BracketTreeCanvas<Cell, Box: View>: View {
                 }
             }
             .frame(width: layout.size.width, height: layout.size.height, alignment: .topLeading)
-            .padding(20)
+            .scaleEffect(k, anchor: .topLeading)
+            .frame(width: layout.size.width * k, height: layout.size.height * k, alignment: .topLeading)
+            .padding(Self.padding)
             // CENTRED WHEN IT FITS. A bracket narrower than the window used to
             // sit against the left edge with the right half of an iPad empty.
             // When it is wider, minWidth is the smaller number and changes nothing.
-            .frame(minWidth: scroll.container, alignment: .top)
+            // The Standings bracket is centred top to bottom as well: on a tall
+            // window it sat at the top with half the screen empty below it.
+            .frame(minWidth: scroll.container, minHeight: fitsWidth ? scroll.height : nil,
+                   alignment: fitsWidth ? .center : .top)
         }
+        .scrollPosition($position)
         .onScrollGeometryChange(for: HorizontalScroll.self) { geo in
             HorizontalScroll(container: geo.containerSize.width,
                              content: geo.contentSize.width,
-                             offset: geo.contentOffset.x)
+                             offset: geo.contentOffset.x,
+                             height: geo.containerSize.height - geo.contentInsets.top - geo.contentInsets.bottom)
         } action: { _, new in
             scroll = new
         }
-        // WHEN IT DOES NOT FIT, SAY SO. A two-axis canvas cut off at the right
-        // edge gave no sign that the Championship and World Series were there.
+        .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y } action: { _, y in
+            vertical.y = y
+        }
+        // WHEN IT DOES NOT FIT, SAY SO — AND OFFER THE WAY. A two-axis canvas cut
+        // off at the right edge gave no sign that the Championship and World
+        // Series were there, and a small decorative chevron was easy to miss.
+        // Each edge with more bracket beyond it carries a button that scrolls
+        // there; the canvas still scrolls under the fade beside it.
         .scrollIndicators(scroll.overflows ? .visible : .automatic, axes: .horizontal)
         .overlay(alignment: .trailing) {
             if scroll.moreToTheRight {
-                MoreToTheRightHint()
+                if fitsWidth {
+                    ScrollEdgeButton(edge: .trailing) { scrollTo(x: scroll.content - scroll.container) }
+                        .transition(.opacity)
+                } else {
+                    MoreToTheRightHint()
+                        .transition(.opacity)
+                }
+            }
+        }
+        .overlay(alignment: .leading) {
+            if fitsWidth && scroll.moreToTheLeft {
+                ScrollEdgeButton(edge: .leading) { scrollTo(x: 0) }
                     .transition(.opacity)
             }
         }
         .animation(.easeOut(duration: 0.2), value: scroll.moreToTheRight)
+        .animation(.easeOut(duration: 0.2), value: scroll.moreToTheLeft)
+    }
+
+    private func scrollTo(x: CGFloat) {
+        withAnimation(.easeInOut(duration: 0.35)) {
+            position.scrollTo(point: CGPoint(x: max(0, x), y: vertical.y))
+        }
     }
 }
 
-/// A fade and a chevron at the trailing edge of a canvas that scrolls sideways.
-/// Decoration only: it takes no touches, so the canvas scrolls beneath it.
+/// A fade and a round arrow button at an edge of a canvas that scrolls
+/// sideways: the arrow scrolls to that end, and only the arrow takes touches,
+/// so the canvas still scrolls under the fade.
+private struct ScrollEdgeButton: View {
+    let edge: HorizontalEdge
+    let action: () -> Void
+
+    var body: some View {
+        let trailing = edge == .trailing
+        ZStack(alignment: trailing ? .trailing : .leading) {
+            LinearGradient(colors: [Color(.systemBackground).opacity(0), Color(.systemBackground).opacity(0.85)],
+                           startPoint: trailing ? .leading : .trailing, endPoint: trailing ? .trailing : .leading)
+                .frame(width: 56)
+                .allowsHitTesting(false)
+            Button(action: action) {
+                Image(systemName: trailing ? "chevron.right" : "chevron.left")
+                    .font(.body.weight(.bold))
+                    .frame(width: 44, height: 44)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.primary)
+            .glassEffect(.regular.interactive(), in: Circle())
+            .padding(trailing ? .trailing : .leading, 8)
+            .accessibilityLabel(trailing ? "Scroll to the end of the bracket" : "Scroll to the start of the bracket")
+        }
+        .frame(maxHeight: .infinity)
+    }
+}
+
+/// A fade and a chevron at the trailing edge of a canvas that scrolls sideways
+/// (Playoff History). Decoration only: it takes no touches, so the canvas
+/// scrolls beneath it.
 private struct MoreToTheRightHint: View {
     var body: some View {
         ZStack(alignment: .trailing) {
