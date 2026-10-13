@@ -1476,8 +1476,10 @@ struct BoxScoreView: View {
     /// Live, the snapshot's contact blocks carry no pitch speeds, so the server
     /// ranks the board (`game_leaders_live.py`) from completed at-bats only,
     /// three rows per category, and never withdraws a row — an event leaves only
-    /// when a better one passes it, never because the feed dropped its plate
-    /// appearance. Replayed on ten finished games that is ~17 changes a game
+    /// when a better one passes it, never because its plate appearance is missing
+    /// from a later feed. (The rows once read as the feed dropping one are
+    /// automatic intentional walks, which balldontlie never writes and which carry
+    /// no pitch.) Replayed on ten finished games that is ~17 changes a game
     /// after it fills; ten rows here, live, were ~30, the tenth turning over
     /// constantly (the 33 and 22 measured on 5059936 and 5059818). Both sides
     /// break ties to the earlier event, so the last live top 3 and the final's

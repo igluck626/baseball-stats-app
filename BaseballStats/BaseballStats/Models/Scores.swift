@@ -1448,10 +1448,13 @@ private func substituteBattingOrders(
     // GATE 1 — the PA rows must reconcile exactly with the summed plate
     // appearances on this side's stat lines. Equality, not a surplus
     // check: measured over 116 sides (2026-09-06) the two disagree on
-    // about a fifth of them, and in BOTH directions — the feed DROPS
-    // rows slightly more often than it duplicates them (12 sides short,
-    // 9 long, plus 3 that reconcile here and still fail gate 2). A
-    // deficit shifts the slots after it exactly as a surplus does.
+    // about a fifth of them, and in BOTH directions — the feed is short
+    // slightly more often than it is long (12 sides short, 9 long, plus
+    // 3 that reconcile here and still fail gate 2). Short is balldontlie
+    // writing no plate-appearance row for an automatic intentional walk
+    // (no pitch thrown): it was every short side in the regular
+    // season's last two weeks, 184 finals checked 2026-10-13. A deficit
+    // shifts the slots after it exactly as a surplus does.
     //
     // GATE 2 — rotation consistency. Walk the sequence against a 1...9
     // rotation; every batter whose slot we already know must land where

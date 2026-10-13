@@ -348,8 +348,10 @@ private func gameForFixtureTeams(
 //  bucket). This is the one a reader sees under September 5, and the one
 //  reported from the device as placing nothing.
 //
-//  BDL drops Yandy Diaz's fifth plate appearance in the 10th: 40 PA rows
-//  against 41 counted, and the rotation breaks where slot 1 should be.
+//  Yandy Diaz's fifth plate appearance, in the 10th, is an automatic
+//  intentional walk, and balldontlie writes no plate-appearance row for one:
+//  40 PA rows against 41 counted, and the rotation breaks where slot 1
+//  should be.
 //  Both gates fire, so the side-wide walk refuses — and every one of the
 //  three substitutes still carries its own proof.
 //
