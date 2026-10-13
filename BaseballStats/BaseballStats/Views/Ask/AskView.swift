@@ -175,6 +175,7 @@ struct AskView: View {
                 .padding(.horizontal)
                 .padding(.top, 12)
                 .padding(.bottom, 12)
+                .readableContentWidth()
             }
             // Keep the newest exchange in view as it's added / resolves.
             .onChange(of: viewModel.exchanges.count) {
@@ -263,6 +264,7 @@ struct AskView: View {
             }
             .padding(.horizontal)
             .padding(.bottom, 12)
+            .readableContentWidth()
         }
     }
 
@@ -288,6 +290,7 @@ struct AskView: View {
             .disabled(!canSend)
         }
         .padding(.horizontal)
+        .readableContentWidth()   // the field and button; the bar still spans the window
         .padding(.vertical, 8)
         .background(.bar)
     }

@@ -218,6 +218,7 @@ struct LeaderboardsView: View {
             }
             .padding(.horizontal, 16)
             .padding(.top, 12)
+            .readableContentWidth()
 
             // ...but the list itself sits flush so the inset-grouped
             // card spans nearly the full screen, giving the player
@@ -430,6 +431,7 @@ struct LeaderboardsView: View {
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
+        .readableListWidth()
     }
 
     /// Footer row inside the inset-grouped card. A button styled to

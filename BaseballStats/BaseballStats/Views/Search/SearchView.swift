@@ -141,6 +141,7 @@ struct SearchView: View {
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
+        .readableListWidth()
     }
 
     // MARK: - Browse landing
@@ -179,6 +180,7 @@ struct SearchView: View {
             }
             .padding(.top, 16)
             .padding(.bottom, 24)
+            .readableContentWidth()
         }
         .scrollIndicators(.hidden)
     }
