@@ -722,6 +722,7 @@ struct BoxScoreView: View {
         var relative: [String: CGFloat] { y.mapValues { $0 - inset } }
     }
     @Environment(\.dynamicTypeSize) private var typeSize
+    @Environment(\.colorScheme) private var colorScheme
 
     /// Which team's batting + pitching table to render. The view
     /// shows one team at a time instead of stacking both — toggled
@@ -1564,7 +1565,7 @@ struct BoxScoreView: View {
         let rows = team.batters.compactMap { id -> BoxPlayer? in
             team.players["ID\(id)"]
         }.filter { $0.stats?.batting?.atBats != nil || ($0.stats?.batting?.baseOnBalls ?? 0) > 0 }
-        let tint = teamColor(for: team)
+        let tint = markerTint(for: team)
         // Live-feed batter id is BDL-keyed; lineup row ids
         // (`p.person.id`) are also BDL-keyed (see Scores.swift
         // synth), so a direct equality match in `battingRow` lands
@@ -1618,7 +1619,9 @@ struct BoxScoreView: View {
         }
     }
 
-    /// Resolve a `BoxScoreTeam`'s `TeamColors` tint. Matches by team
+    /// The current-batter marker's colour for a `BoxScoreTeam`: the club's
+    /// colour, moved just far enough to read against its row in this colour
+    /// scheme (`TeamColors.marker`). Matches by team
     /// abbreviation against the game's away/home sides — the box-
     /// score's MLBAM `team.id` ships as 0 on the BDL-synthesized
     /// shape, so an id comparison would never resolve. Once a side
@@ -1626,7 +1629,7 @@ struct BoxScoreView: View {
     /// Lahman → `TeamColors`. Falls back to `.accentColor` whenever
     /// any hop misses (no abbreviation on the payload, an unmapped
     /// BDL id, or a Lahman gap for a relocated franchise).
-    private func teamColor(for team: BoxScoreTeam) -> Color {
+    private func markerTint(for team: BoxScoreTeam) -> Color {
         guard let abbr = team.team.abbreviation?.uppercased(),
               !abbr.isEmpty else {
             return .accentColor
@@ -1642,7 +1645,7 @@ struct BoxScoreView: View {
         guard let bdlId, let lahman = bdlToLahmanTeamId[bdlId] else {
             return .accentColor
         }
-        return TeamColors.color(for: lahman) ?? .accentColor
+        return TeamColors.marker(for: lahman, dark: colorScheme == .dark) ?? .accentColor
     }
 
     /// Team totals row anchoring the bottom of the batting table.
@@ -1789,7 +1792,7 @@ struct BoxScoreView: View {
             .padding(.vertical, 2)
             .bold(isCurrent)
             .background(
-                isCurrent ? tint.opacity(0.15) : Color.clear,
+                isCurrent ? tint.opacity(TeamColors.markerWash) : Color.clear,
                 in: RoundedRectangle(cornerRadius: 6),
             )
             .contentShape(Rectangle())

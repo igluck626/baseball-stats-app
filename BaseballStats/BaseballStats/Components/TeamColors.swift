@@ -180,3 +180,145 @@ extension Color {
         )
     }
 }
+
+// MARK: - Current-batter marker
+//
+// The live box score marks the batter at the plate with a small glyph in the
+// team's colour, on a row washed with the same colour. Brand colours are tuned
+// for one surface: measured against the row the marker actually sits on, 27 of
+// the 30 fell below 3:1 in one mode or the other — the navies, dark greens, the
+// shared crimson and the White Sox's near-black in dark mode (DET 1.03:1), the
+// pale blues, Sedona sand and the oranges in light mode (ARI 1.38:1).
+//
+// The rule keeps the team's own hue and moves only as far as it must: a colour
+// that already reaches 3:1 (WCAG 2's minimum for graphics) against its row AS
+// DRAWN — the wash rounded to whole channels — with a 0.05 cushion is used as it
+// is; one that doesn't is darkened in light mode, or brightened — and then, if a
+// saturated blue still can't reach it at full brightness, eased toward white —
+// in dark mode, a step at a time, stopping at the first that does. Only a colour
+// no step can rescue falls back to the system accent; none of the 30 does.
+//
+// The cushion is measured, not taste: aiming at exactly 3.00 against the
+// unrounded row, the White Sox's dark-mode marker rendered at 2.99:1 — the screen
+// draws the row's wash in whole channels. One level of the row moves the ratio by
+// about 0.03, so 3.05 holds through a level either way.
+extension TeamColors {
+    /// An sRGB colour on 0...255 channels: what the contrast arithmetic and the
+    /// screen both see.
+    struct RGB: Equatable {
+        var r: Double, g: Double, b: Double
+
+        init(r: Double, g: Double, b: Double) { (self.r, self.g, self.b) = (r, g, b) }
+
+        init?(hex: String) {
+            var s = hex.trimmingCharacters(in: .whitespaces)
+            if s.hasPrefix("#") { s.removeFirst() }
+            guard s.count == 6, let v = UInt32(s, radix: 16) else { return nil }
+            self.init(r: Double(v >> 16 & 0xFF), g: Double(v >> 8 & 0xFF), b: Double(v & 0xFF))
+        }
+
+        var color: Color { Color(.sRGB, red: r / 255, green: g / 255, blue: b / 255) }
+
+        /// To whole channels, as the screen draws it.
+        var rounded: RGB { RGB(r: r.rounded(), g: g.rounded(), b: b.rounded()) }
+
+        /// WCAG 2 relative luminance.
+        var luminance: Double {
+            func lin(_ c: Double) -> Double {
+                let c = c / 255
+                return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
+            }
+            return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+        }
+
+        /// This colour at `opacity` over `base`.
+        func over(_ base: RGB, opacity: Double) -> RGB {
+            RGB(r: opacity * r + (1 - opacity) * base.r,
+                g: opacity * g + (1 - opacity) * base.g,
+                b: opacity * b + (1 - opacity) * base.b)
+        }
+
+        var hsv: (h: Double, s: Double, v: Double) {
+            let (r, g, b) = (r / 255, g / 255, b / 255)
+            let mx = max(r, g, b), mn = min(r, g, b), d = mx - mn
+            var h = 0.0
+            if d > 0 {
+                if mx == r { h = (g - b) / d } else if mx == g { h = 2 + (b - r) / d } else { h = 4 + (r - g) / d }
+                h /= 6
+                if h < 0 { h += 1 }
+            }
+            return (h, mx == 0 ? 0 : d / mx, mx)
+        }
+
+        /// From hue, saturation and value on 0...1, rounded to whole channels.
+        init(h: Double, s: Double, v: Double) {
+            let i = Int(h * 6) % 6, f = h * 6 - Double(Int(h * 6))
+            let p = v * (1 - s), q = v * (1 - s * f), t = v * (1 - s * (1 - f))
+            let (r, g, b): (Double, Double, Double) = [
+                (v, t, p), (q, v, p), (p, v, t), (p, q, v), (t, p, v), (v, p, q),
+            ][i]
+            self.init(r: (r * 255).rounded(), g: (g * 255).rounded(), b: (b * 255).rounded())
+        }
+    }
+
+    /// WCAG 2 contrast ratio, 1...21.
+    static func contrast(_ a: RGB, _ b: RGB) -> Double {
+        let (hi, lo) = (max(a.luminance, b.luminance), min(a.luminance, b.luminance))
+        return (hi + 0.05) / (lo + 0.05)
+    }
+
+    static let markerMinimumContrast = 3.0
+    /// What the rule aims for: the minimum plus the cushion described above.
+    static let markerTarget = 3.05
+    /// How much of the marker's colour washes its row (the box score's batting row).
+    static let markerWash = 0.15
+    /// The box score's glass team card as rendered — sampled from the 2026-10-10
+    /// simulator screenshots, where a 15% wash over these values reproduced the
+    /// marked rows' pixels exactly (CIN light 237,216,216; CHW dark 33,33,32).
+    static let markerCard = (light: RGB(r: 254, g: 254, b: 254), dark: RGB(r: 32, g: 32, b: 32))
+
+    /// The row behind a marker of colour `c`, as drawn: `c` washed over the card,
+    /// in whole channels.
+    static func markerRow(_ c: RGB, dark: Bool) -> RGB {
+        c.over(dark ? markerCard.dark : markerCard.light, opacity: markerWash).rounded
+    }
+
+    /// The marker's contrast against its own washed row, as drawn.
+    static func markerContrast(_ c: RGB, dark: Bool) -> Double {
+        contrast(c, markerRow(c, dark: dark))
+    }
+
+    /// The team's colour moved just far enough to reach `markerTarget` against its
+    /// row, or nil if no step can.
+    static func markerRGB(from base: RGB, dark: Bool) -> RGB? {
+        if markerContrast(base, dark: dark) >= markerTarget { return base }
+        let (h, s, v) = base.hsv
+        var candidates: [RGB] = []
+        if dark {
+            for i in 1...100 {
+                let nv = min(1, v + 0.01 * Double(i))
+                candidates.append(RGB(h: h, s: s, v: nv))
+                if nv >= 1 { break }
+            }
+            for i in 1...100 { candidates.append(RGB(h: h, s: max(0, s - 0.01 * Double(i)), v: 1)) }
+        } else {
+            for i in 1...100 { candidates.append(RGB(h: h, s: s, v: max(0, v - 0.01 * Double(i)))) }
+        }
+        return candidates.first { markerContrast($0, dark: dark) >= markerTarget }
+    }
+
+    /// The current-batter marker's colour for a club, or nil for a code that
+    /// doesn't resolve (the caller falls back to the system accent).
+    static func marker(for teamCode: String?, dark: Bool) -> Color? {
+        guard let teamCode, let hex = hexByCode[teamCode.uppercased()], let base = RGB(hex: hex) else { return nil }
+        return markerRGB(from: base, dark: dark)?.color
+    }
+
+    /// The 30 franchises' canonical codes, for tests that must cover every club.
+    static var canonicalCodes: [String] {
+        ["ARI", "ATL", "BAL", "BOS", "CHC", "CWS", "CIN", "CLE", "COL", "DET", "HOU", "KCR", "LAA", "LAD", "MIA",
+         "MIL", "MIN", "NYM", "NYY", "OAK", "PHI", "PIT", "SDP", "SFG", "SEA", "STL", "TBR", "TEX", "TOR", "WSN"]
+    }
+
+    static func hex(for teamCode: String) -> String? { hexByCode[teamCode.uppercased()] }
+}
