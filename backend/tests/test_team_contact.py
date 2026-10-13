@@ -164,13 +164,11 @@ AUTO = json.load(open(os.path.join(HERE, "fixtures", "auto_ibb_2026.json")))["ga
 
 
 def fake_game(plays):
-    stats = [{**r, "team": {"id": tid}} for side, tid in (("away", 1), ("home", 2)) for r in AUTO["box"][side]]
-
     def get(path, params):
         calls.append(path)
         if path.startswith("games/"):
-            return {"data": {"status": "STATUS_FINAL", "away_team": {"id": 1}, "home_team": {"id": 2}}}
-        return {"data": {"stats": stats, "plays": plays}.get(path, AUTO["plate_appearances"])}
+            return {"data": {**AUTO["game"], "status": "STATUS_FINAL"}}
+        return {"data": {"stats": AUTO["stats"], "plays": plays}.get(path, AUTO["plate_appearances"])}
     return get
 
 

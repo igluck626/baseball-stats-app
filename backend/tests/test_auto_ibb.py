@@ -7,9 +7,11 @@ balldontlie's /plate_appearances writes no row for an automatic intentional walk
 pitch thrown): pa_number skips one, the side's feed counts one plate appearance fewer
 than its box, and the PA-feed rows (xBA, RISP, DP) hid as "pa_feed_mismatch" from that
 walk to the end of the game. Real games (fixtures/auto_ibb_2026.json, made by
-testdata/make-auto-ibb-fixture.py): 10-07 CLE @ CHW, 10-10 CHW @ CLE, 10-11 LAD @ MIL
+testdata/make-auto-ibb-fixture.py, balldontlie's field names and nesting kept): 10-07 CLE @ CHW, 10-10 CHW @ CLE, 10-11 LAD @ MIL
 (two in one inning), and 5059902 (the old missingPARow game); 10-05 CHW @ CLE has a
-pitched intentional walk, which the feed does carry.
+pitched intentional walk, which the feed does carry. LAD @ MIL also runs end to end
+through team_contact.for_game on its /stats rows exactly as served
+(fixtures/bdl_stats_15467418.json).
 Run: python3 backend/tests/test_auto_ibb.py
 """
 import copy
@@ -40,9 +42,15 @@ HOLES = {   # game: {hole: (half, inning, walked batter)}
 SHORT = {"15467381": "away", "15467417": "home", "15467418": "home", "5059902": "away"}
 
 
+def box_of(g):
+    """The /stats rows by side, split on team.id as team_contact.for_game splits them."""
+    ids = {"away": g["game"]["away_team"]["id"], "home": g["game"]["home_team"]["id"]}
+    return {side: [r for r in g["stats"] if r["team"]["id"] == tid] for side, tid in ids.items()}
+
+
 def block(g, pas=None, plays=None, box=None, final=True):
     return tc.team_contact(g["plate_appearances"] if pas is None else pas, final=final,
-                           box=g["box"] if box is None else box,
+                           box=box_of(g) if box is None else box,
                            plays=g["plays"] if plays is None else plays, game_id=None)
 
 
@@ -58,7 +66,7 @@ print("the four games: every row shows, from the walks' stand-ins")
 for gid, holes in HOLES.items():
     g = G[gid]
     st = block(g)["stats"]
-    label = f'{g["away"]} @ {g["home"]} ({gid})'
+    label = f'{g["game"]["away_team"]["abbreviation"]} @ {g["game"]["home_team"]["abbreviation"]} ({gid})'
     check(f"{label}: nothing hidden for a feed mismatch (hidden {st['hidden']})",
           "pa_feed_mismatch" not in st["hidden"].values())
     check(f"{label}: xBA, RISP and DP are rows", {"xba", "risp", "dp"} <= set(st["rows"]))
@@ -70,7 +78,7 @@ for gid, holes in HOLES.items():
 
 print("the stand-ins are the walks, and change nothing but the count")
 g = G["15467418"]
-filled, n = ts.fill_automatic_ibbs(g["plate_appearances"], g["plays"], g["box"], final=True) \
+filled, n = ts.fill_automatic_ibbs(g["plate_appearances"], g["plays"], box_of(g), final=True) \
     if hasattr(ts, "fill_automatic_ibbs") else (g["plate_appearances"], {})
 new = [p for p in filled if p.get("stand_in")]
 got = {p["pa_number"]: ((p["half_inning"] or "").lower(), p["inning"], p["batter_id"]) for p in new}
@@ -86,7 +94,7 @@ check("MIL's contact block (AB, xBA, tracked share) is the same with or without 
 
 for gid in HOLES:
     g = G[gid]
-    before = tc.team_contact(g["plate_appearances"], final=True, box=g["box"], plays=None)
+    before = tc.team_contact(g["plate_appearances"], final=True, box=box_of(g), plays=None)
     after = block(g)
     for side in ("away", "home"):
         b, a = before["stats"][side], after["stats"][side]
@@ -113,7 +121,7 @@ check("all ten rows, feed and box agree on both sides",
       len(st["rows"]) == 10 and all(st[s]["feed_pa"] == st[s]["pa"] for s in ("away", "home")))
 check("identical to the block without the play stream's help, apart from RISP",
       {k: v for k, v in st["away"].items() if not k.startswith("risp")}
-      == {k: v for k, v in tc.team_contact(g["plate_appearances"], final=True, box=g["box"], plays=None)["stats"]["away"].items()
+      == {k: v for k, v in tc.team_contact(g["plate_appearances"], final=True, box=box_of(g), plays=None)["stats"]["away"].items()
           if not k.startswith("risp")})
 
 
@@ -155,9 +163,9 @@ st = block(g, plays=plays)["stats"]
 check("the at-bat's result something else (hit by pitch): rows hidden",
       st["hidden"].get("dp") == "pa_feed_mismatch" and not st.get("stand_ins"))
 
-box = copy.deepcopy(g["box"])
-next(r for r in box["home"] if r["player_id"] == 168)["plate_appearances"] += 1
-next(r for r in box["home"] if r["player_id"] == 274)["plate_appearances"] += 1
+box = copy.deepcopy(box_of(g))
+next(r for r in box["home"] if r["player"]["id"] == 168)["plate_appearances"] += 1
+next(r for r in box["home"] if r["player"]["id"] == 274)["plate_appearances"] += 1
 st = block(g, box=box)["stats"]
 check(f"filling still leaves MIL short of its box (33 + 2 = 35): rows hidden ({st['home']['feed_pa']}/{st['home']['pa']})",
       st["hidden"].get("xba") == "pa_feed_mismatch")
@@ -178,7 +186,7 @@ def pa(n, half, batter, result, on1=False, on2=False):
 
 
 def row(pid, pa_, ab, h=0, bb=0, k=0, outs=0):
-    return {"player_id": pid, "plate_appearances": pa_, "at_bats": ab, "hits": h, "bb": bb, "k": k, "runs": 0,
+    return {"player": {"id": pid}, "plate_appearances": pa_, "at_bats": ab, "hits": h, "bb": bb, "k": k, "runs": 0,
             "doubles": 0, "triples": 0, "hr": 0, "stolen_bases": 0, "pitching_outs": outs}
 
 
@@ -222,7 +230,7 @@ check(f"without the stand-in, 2's second at-bat reads as his first and misses it
 print("Game Leaders never sees a stand-in")
 import game_leaders_live as gl  # noqa: E402
 g = G["15467418"]
-filled, _ = ts.fill_automatic_ibbs(g["plate_appearances"], g["plays"], g["box"], final=True)
+filled, _ = ts.fill_automatic_ibbs(g["plate_appearances"], g["plays"], box_of(g), final=True)
 check("the live board from the feed with the stand-ins is the board from the feed alone (no pitch, no event)",
       gl.build(filled, {}, away_id=None, home_id=None) == gl.build(g["plate_appearances"], {}, away_id=None, home_id=None))
 
@@ -234,6 +242,28 @@ extra = {**g["plate_appearances"][-1], "pa_number": 71, "half_inning": "bottom",
 st = block(g, pas=g["plate_appearances"] + [extra], final=False)["stats"]
 check(f"a PA the box hasn't counted yet is set aside (feed_ahead {st.get('feed_ahead')}), rows shown",
       st.get("feed_ahead") == {"home": 1} and "pa_feed_mismatch" not in st["hidden"].values())
+
+print("LAD @ MIL end to end, on its /stats rows exactly as balldontlie serves them")
+RAW = json.load(open(os.path.join(HERE, "fixtures", "bdl_stats_15467418.json")))["data"]
+check(f"the fixture is untrimmed: {len(RAW)} rows of 59 fields, player.id and team.id nested, no player_id",
+      len(RAW) == 29 and all(r["player"]["id"] and r["team"]["id"] and "player_id" not in r and len(r) == 59 for r in RAW))
+g = G["15467418"]
+
+
+def bdl(path, params):
+    if path.startswith("games/"):
+        return {"data": {**g["game"], "status": "STATUS_FINAL"}}
+    return {"data": {"plate_appearances": g["plate_appearances"], "stats": RAW, "plays": g["plays"]}[path]}
+
+
+tc._FINAL_CACHE.clear()
+st = tc.for_game(15467418, bdl)["stats"]
+tc._FINAL_CACHE.clear()
+check(f"for_game: stand-ins for MIL's two walks (got {st.get('stand_ins')})", st.get("stand_ins") == {"home": 2})
+check(f"for_game: nothing hidden for a feed mismatch, xBA, RISP and DP shown (hidden {st['hidden']})",
+      "pa_feed_mismatch" not in st["hidden"].values() and {"xba", "risp", "dp"} <= set(st["rows"]))
+check(f"for_game: MIL's feed numbers its box ({st['home']['feed_pa']}/{st['home']['pa']})",
+      st["home"]["feed_pa"] == st["home"]["pa"] == 33)
 
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

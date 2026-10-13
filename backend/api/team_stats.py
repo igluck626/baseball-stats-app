@@ -307,7 +307,7 @@ def fill_automatic_ibbs(pas: list[dict], plays: Optional[list[dict]], box: dict,
         lines = _batting_rows(box, side)
         feed_rows = [p for p in pas if (p.get("half_inning") or "").lower() == half and _is_plate_appearance(p.get("result"))]
         batters_ok = all(
-            _sum([r for r in lines if r.get("player_id") == b], "plate_appearances")
+            _sum([r for r in lines if (r.get("player") or {}).get("id") == b], "plate_appearances")
             - sum(1 for p in feed_rows if p.get("batter_id") == b)
             >= sum(1 for s in mine if s["batter_id"] == b)
             for b in {s["batter_id"] for s in mine})
