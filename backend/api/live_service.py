@@ -209,27 +209,8 @@ async def _fetch_plays(game_id: int) -> list[dict]:
 
 
 async def _fetch_pas(game_id: int) -> list[dict]:
-    """The game's plate appearances. Cursor-paginated like /plays (100 a page): the
-    2026 postseason's games wrote 63-87 rows, inside one page, but a long
-    extra-inning game passes 100 and its last plate appearances would be cut off.
-    A game under 100 rows is still one call."""
-    rows: list[dict] = []
-    cursor: Optional[int] = None
-    for _page in range(MAX_PLAY_PAGES):
-        params: dict[str, Any] = {"game_id": game_id, "per_page": 100}
-        if cursor is not None:
-            params["cursor"] = cursor
-        data = await _bdl_call("plate_appearances", params)
-        chunk = data.get("data") or []
-        rows.extend(chunk)
-        cursor = (data.get("meta") or {}).get("next_cursor")
-        if not cursor or len(chunk) < 100:
-            break
-        await asyncio.sleep(BDL_PACING_S)
-    else:
-        log.warning("game %s exceeded %d plate-appearance pages — latest plate appearances "
-                    "truncated", game_id, MAX_PLAY_PAGES)
-    return rows
+    data = await _bdl_call("plate_appearances", {"game_id": game_id, "per_page": 100})
+    return data.get("data") or []
 
 
 async def _fetch_stats(game_id: int) -> list[dict]:
