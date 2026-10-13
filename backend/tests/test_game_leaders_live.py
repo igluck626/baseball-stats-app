@@ -131,7 +131,7 @@ check(f"a full game's board is under 1.5KB ({size} bytes)", size < 1500)
 print("wired into the live snapshot, no new balldontlie calls")
 import live_service as ls  # noqa: E402
 plays = sorted(G["plays"], key=lambda p: p.get("order") or 0)
-stats = [{"player": {"id": int(k), "full_name": v["name"], "team": {"id": v["teamId"]}}}
+stats = [{"player": {"id": int(k), "full_name": v["name"]}, "team": {"id": v["teamId"]}}
          for k, v in G["identity"].items()]
 game = {"id": G["gameId"], "status": "STATUS_IN_PROGRESS",
         "home_team": {"id": HOME, "display_name": "Home"}, "away_team": {"id": AWAY, "display_name": "Away"},

@@ -1,5 +1,5 @@
 {
- "note": "balldontlie data for four 2026 postseason finals, fetched 2026-10-08 and trimmed to the fields team_contact.py and team_stats.py read: plate appearances (the in-play pitch only, with the runners at the start), /stats rows split by side, and the play stream without its pitch rows. RISP and LOB were checked against Baseball-Reference's box scores. See test_team_contact.py and test_team_stats.py.",
+ "note": "balldontlie data for four 2026 postseason finals, fetched 2026-10-08 and trimmed to the fields team_contact.py and team_stats.py read: plate appearances (the in-play pitch only, with the runners at the start), /stats rows split by side, and the play stream without its pitch rows. Each /stats row keeps balldontlie's nesting (player.id, team.id), as served; converted 2026-10-13 from a flattened player_id, with a pitch_count balldontlie never sends dropped from the plate appearances. RISP and LOB were checked against Baseball-Reference's box scores. See test_team_contact.py and test_team_stats.py.",
  "games": {
   "15333798": {
    "date": "2026-10-06",
@@ -16,7 +16,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 7,
      "pitches": [
       {
        "call_name": "In Play",
@@ -35,7 +34,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": []
     },
     {
@@ -47,7 +45,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": [
       {
        "call_name": "In Play",
@@ -66,7 +63,6 @@
      "runner_on_first": true,
      "runner_on_second": true,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": []
     },
     {
@@ -78,7 +74,6 @@
      "runner_on_first": true,
      "runner_on_second": true,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": []
     },
     {
@@ -90,7 +85,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 6,
      "pitches": []
     },
     {
@@ -102,7 +96,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": []
     },
     {
@@ -114,7 +107,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": [
       {
        "call_name": "In Play",
@@ -133,7 +125,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 6,
      "pitches": []
     },
     {
@@ -145,7 +136,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": []
     },
     {
@@ -157,7 +147,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 1,
      "pitches": [
       {
        "call_name": "In Play",
@@ -176,7 +165,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 6,
      "pitches": []
     },
     {
@@ -188,7 +176,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": []
     },
     {
@@ -200,7 +187,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 3,
      "pitches": [
       {
        "call_name": "In Play",
@@ -219,7 +205,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": [
       {
        "call_name": "In Play",
@@ -238,7 +223,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": []
     },
     {
@@ -250,7 +234,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": [
       {
        "call_name": "In Play",
@@ -269,7 +252,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": [
       {
        "call_name": "In Play",
@@ -288,7 +270,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": [
       {
        "call_name": "In Play",
@@ -307,7 +288,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 3,
      "pitches": [
       {
        "call_name": "In Play",
@@ -326,7 +306,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": true,
-     "pitch_count": 3,
      "pitches": []
     },
     {
@@ -338,7 +317,6 @@
      "runner_on_first": true,
      "runner_on_second": true,
      "runner_on_third": true,
-     "pitch_count": 1,
      "pitches": [
       {
        "call_name": "In Play",
@@ -357,7 +335,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": []
     },
     {
@@ -369,7 +346,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 1,
      "pitches": [
       {
        "call_name": "In Play",
@@ -388,7 +364,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 6,
      "pitches": []
     },
     {
@@ -400,7 +375,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 2,
      "pitches": [
       {
        "call_name": "In Play",
@@ -419,7 +393,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": [
       {
        "call_name": "In Play",
@@ -438,7 +411,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 2,
      "pitches": [
       {
        "call_name": "In Play",
@@ -457,7 +429,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 6,
      "pitches": [
       {
        "call_name": "In Play",
@@ -476,7 +447,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 2,
      "pitches": [
       {
        "call_name": "In Play",
@@ -495,7 +465,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 2,
      "pitches": [
       {
        "call_name": "In Play",
@@ -514,7 +483,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 1,
      "pitches": [
       {
        "call_name": "In Play",
@@ -533,7 +501,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 2,
      "pitches": [
       {
        "call_name": "In Play",
@@ -552,7 +519,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": []
     },
     {
@@ -564,7 +530,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 6,
      "pitches": [
       {
        "call_name": "In Play",
@@ -583,7 +548,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": []
     },
     {
@@ -595,7 +559,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": [
       {
        "call_name": "In Play",
@@ -614,7 +577,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": [
       {
        "call_name": "In Play",
@@ -633,7 +595,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": [
       {
        "call_name": "In Play",
@@ -652,7 +613,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 1,
      "pitches": [
       {
        "call_name": "In Play",
@@ -671,7 +631,6 @@
      "runner_on_first": true,
      "runner_on_second": true,
      "runner_on_third": false,
-     "pitch_count": 2,
      "pitches": [
       {
        "call_name": "In Play",
@@ -690,7 +649,6 @@
      "runner_on_first": true,
      "runner_on_second": true,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": []
     },
     {
@@ -702,7 +660,6 @@
      "runner_on_first": true,
      "runner_on_second": true,
      "runner_on_third": true,
-     "pitch_count": 1,
      "pitches": [
       {
        "call_name": "In Play",
@@ -721,7 +678,6 @@
      "runner_on_first": false,
      "runner_on_second": true,
      "runner_on_third": true,
-     "pitch_count": 5,
      "pitches": [
       {
        "call_name": "In Play",
@@ -740,7 +696,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 2,
      "pitches": [
       {
        "call_name": "In Play",
@@ -759,7 +714,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 7,
      "pitches": []
     },
     {
@@ -771,7 +725,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": []
     },
     {
@@ -783,7 +736,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 3,
      "pitches": [
       {
        "call_name": "In Play",
@@ -802,7 +754,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 6,
      "pitches": []
     },
     {
@@ -814,7 +765,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 2,
      "pitches": [
       {
        "call_name": "In Play",
@@ -833,7 +783,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": [
       {
        "call_name": "In Play",
@@ -852,7 +801,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 3,
      "pitches": [
       {
        "call_name": "In Play",
@@ -871,7 +819,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 1,
      "pitches": [
       {
        "call_name": "In Play",
@@ -890,7 +837,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": []
     },
     {
@@ -902,7 +848,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 3,
      "pitches": [
       {
        "call_name": "In Play",
@@ -921,7 +866,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": []
     },
     {
@@ -933,7 +877,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": []
     },
     {
@@ -945,7 +888,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 7,
      "pitches": []
     },
     {
@@ -957,7 +899,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 3,
      "pitches": [
       {
        "call_name": "In Play",
@@ -976,7 +917,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": [
       {
        "call_name": "In Play",
@@ -995,7 +935,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 6,
      "pitches": [
       {
        "call_name": "In Play",
@@ -1014,7 +953,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 6,
      "pitches": []
     },
     {
@@ -1026,7 +964,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 2,
      "pitches": [
       {
        "call_name": "In Play",
@@ -1045,7 +982,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": []
     },
     {
@@ -1057,7 +993,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 6,
      "pitches": []
     },
     {
@@ -1069,7 +1004,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": [
       {
        "call_name": "In Play",
@@ -1088,7 +1022,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 8,
      "pitches": []
     },
     {
@@ -1100,7 +1033,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 6,
      "pitches": []
     },
     {
@@ -1112,7 +1044,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 3,
      "pitches": []
     },
     {
@@ -1124,7 +1055,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": [
       {
        "call_name": "In Play",
@@ -1143,7 +1073,6 @@
      "runner_on_first": false,
      "runner_on_second": true,
      "runner_on_third": false,
-     "pitch_count": 8,
      "pitches": [
       {
        "call_name": "In Play",
@@ -1162,7 +1091,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": true,
-     "pitch_count": 5,
      "pitches": [
       {
        "call_name": "In Play",
@@ -1181,7 +1109,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": true,
-     "pitch_count": 2,
      "pitches": [
       {
        "call_name": "In Play",
@@ -1212,9 +1139,16 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 130,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 130,
+       "full_name": "Freddie Freeman"
+      },
+      "team": {
+       "id": 14,
+       "abbreviation": "LAD"
+      }
      },
      {
       "at_bats": 3,
@@ -1234,9 +1168,16 @@
       "gidp": 0,
       "left_on_base": 3,
       "errors": 0,
-      "player_id": 156,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 156,
+       "full_name": "Miguel Rojas"
+      },
+      "team": {
+       "id": 14,
+       "abbreviation": "LAD"
+      }
      },
      {
       "at_bats": 4,
@@ -1256,9 +1197,16 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 1101,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 1101,
+       "full_name": "Enrique Hernandez"
+      },
+      "team": {
+       "id": 14,
+       "abbreviation": "LAD"
+      }
      },
      {
       "at_bats": 5,
@@ -1278,9 +1226,16 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 0,
-      "player_id": 118,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 118,
+       "full_name": "Mookie Betts"
+      },
+      "team": {
+       "id": 14,
+       "abbreviation": "LAD"
+      }
      },
      {
       "at_bats": 4,
@@ -1300,9 +1255,16 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 1098,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 1098,
+       "full_name": "Teoscar Hernandez"
+      },
+      "team": {
+       "id": 14,
+       "abbreviation": "LAD"
+      }
      },
      {
       "at_bats": 4,
@@ -1322,9 +1284,16 @@
       "gidp": 0,
       "left_on_base": 3,
       "errors": 0,
-      "player_id": 678,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 678,
+       "full_name": "Kyle Tucker"
+      },
+      "team": {
+       "id": 14,
+       "abbreviation": "LAD"
+      }
      },
      {
       "at_bats": 4,
@@ -1344,9 +1313,16 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 103,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 103,
+       "full_name": "Will Smith"
+      },
+      "team": {
+       "id": 14,
+       "abbreviation": "LAD"
+      }
      },
      {
       "at_bats": 2,
@@ -1366,9 +1342,16 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 208,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 208,
+       "full_name": "Shohei Ohtani"
+      },
+      "team": {
+       "id": 14,
+       "abbreviation": "LAD"
+      }
      },
      {
       "at_bats": 4,
@@ -1388,9 +1371,16 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 0,
-      "player_id": 176,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 176,
+       "full_name": "Andy Pages"
+      },
+      "team": {
+       "id": 14,
+       "abbreviation": "LAD"
+      }
      },
      {
       "at_bats": null,
@@ -1410,9 +1400,16 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 79,
       "doubles": null,
-      "triples": null
+      "triples": null,
+      "player": {
+       "id": 79,
+       "full_name": "Yoshinobu Yamamoto"
+      },
+      "team": {
+       "id": 14,
+       "abbreviation": "LAD"
+      }
      },
      {
       "at_bats": 1,
@@ -1432,9 +1429,16 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 0,
-      "player_id": 160,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 160,
+       "full_name": "Tommy Edman"
+      },
+      "team": {
+       "id": 14,
+       "abbreviation": "LAD"
+      }
      },
      {
       "at_bats": null,
@@ -1454,9 +1458,16 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 2898,
       "doubles": null,
-      "triples": null
+      "triples": null,
+      "player": {
+       "id": 2898,
+       "full_name": "Tanner Scott"
+      },
+      "team": {
+       "id": 14,
+       "abbreviation": "LAD"
+      }
      },
      {
       "at_bats": 1,
@@ -1476,9 +1487,16 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 0,
-      "player_id": 142,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 142,
+       "full_name": "Max Muncy"
+      },
+      "team": {
+       "id": 14,
+       "abbreviation": "LAD"
+      }
      },
      {
       "at_bats": null,
@@ -1498,9 +1516,16 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 184,
       "doubles": null,
-      "triples": null
+      "triples": null,
+      "player": {
+       "id": 184,
+       "full_name": "Edwin Diaz"
+      },
+      "team": {
+       "id": 14,
+       "abbreviation": "LAD"
+      }
      }
     ],
     "home": [
@@ -1522,9 +1547,16 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 736,
       "doubles": null,
-      "triples": null
+      "triples": null,
+      "player": {
+       "id": 736,
+       "full_name": "Chris Sale"
+      },
+      "team": {
+       "id": 2,
+       "abbreviation": "ATL"
+      }
      },
      {
       "at_bats": 4,
@@ -1544,9 +1576,16 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 0,
-      "player_id": 856,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 856,
+       "full_name": "Matt Olson"
+      },
+      "team": {
+       "id": 2,
+       "abbreviation": "ATL"
+      }
      },
      {
       "at_bats": 4,
@@ -1566,9 +1605,16 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 0,
-      "player_id": 825,
       "doubles": 1,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 825,
+       "full_name": "Ozzie Albies"
+      },
+      "team": {
+       "id": 2,
+       "abbreviation": "ATL"
+      }
      },
      {
       "at_bats": 3,
@@ -1588,9 +1634,16 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 863,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 863,
+       "full_name": "Austin Riley"
+      },
+      "team": {
+       "id": 2,
+       "abbreviation": "ATL"
+      }
      },
      {
       "at_bats": 4,
@@ -1610,9 +1663,16 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 628,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 628,
+       "full_name": "Mauricio Dubon"
+      },
+      "team": {
+       "id": 2,
+       "abbreviation": "ATL"
+      }
      },
      {
       "at_bats": 3,
@@ -1632,9 +1692,16 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 1835,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 1835,
+       "full_name": "Ronald Acuna Jr."
+      },
+      "team": {
+       "id": 2,
+       "abbreviation": "ATL"
+      }
      },
      {
       "at_bats": 3,
@@ -1654,9 +1721,16 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 0,
-      "player_id": 1048,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 1048,
+       "full_name": "Lane Thomas"
+      },
+      "team": {
+       "id": 2,
+       "abbreviation": "ATL"
+      }
      },
      {
       "at_bats": 4,
@@ -1676,9 +1750,16 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 874,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 874,
+       "full_name": "Michael Harris II"
+      },
+      "team": {
+       "id": 2,
+       "abbreviation": "ATL"
+      }
      },
      {
       "at_bats": 1,
@@ -1698,9 +1779,16 @@
       "gidp": 0,
       "left_on_base": 0,
       "errors": 1,
-      "player_id": 406,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 406,
+       "full_name": "Ha-Seong Kim"
+      },
+      "team": {
+       "id": 2,
+       "abbreviation": "ATL"
+      }
      },
      {
       "at_bats": 4,
@@ -1720,9 +1808,16 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 1,
-      "player_id": 114368,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 114368,
+       "full_name": "Drake Baldwin"
+      },
+      "team": {
+       "id": 2,
+       "abbreviation": "ATL"
+      }
      },
      {
       "at_bats": 0,
@@ -1742,9 +1837,16 @@
       "gidp": 0,
       "left_on_base": 0,
       "errors": 0,
-      "player_id": 2025,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 2025,
+       "full_name": "Rowdy Tellez"
+      },
+      "team": {
+       "id": 2,
+       "abbreviation": "ATL"
+      }
      },
      {
       "at_bats": 1,
@@ -1764,9 +1866,16 @@
       "gidp": 0,
       "left_on_base": 0,
       "errors": 0,
-      "player_id": 302,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 302,
+       "full_name": "Brewer Hicklen"
+      },
+      "team": {
+       "id": 2,
+       "abbreviation": "ATL"
+      }
      },
      {
       "at_bats": null,
@@ -1786,9 +1895,16 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 630,
       "doubles": null,
-      "triples": null
+      "triples": null,
+      "player": {
+       "id": 630,
+       "full_name": "Dylan Dodd"
+      },
+      "team": {
+       "id": 2,
+       "abbreviation": "ATL"
+      }
      },
      {
       "at_bats": null,
@@ -1808,9 +1924,16 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 703,
       "doubles": null,
-      "triples": null
+      "triples": null,
+      "player": {
+       "id": 703,
+       "full_name": "Dylan Lee"
+      },
+      "team": {
+       "id": 2,
+       "abbreviation": "ATL"
+      }
      },
      {
       "at_bats": null,
@@ -1830,9 +1953,16 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 706,
       "doubles": null,
-      "triples": null
+      "triples": null,
+      "player": {
+       "id": 706,
+       "full_name": "Brent Suter"
+      },
+      "team": {
+       "id": 2,
+       "abbreviation": "ATL"
+      }
      },
      {
       "at_bats": null,
@@ -1852,9 +1982,16 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 667,
       "doubles": null,
-      "triples": null
+      "triples": null,
+      "player": {
+       "id": 667,
+       "full_name": "Raisel Iglesias"
+      },
+      "team": {
+       "id": 2,
+       "abbreviation": "ATL"
+      }
      },
      {
       "at_bats": 1,
@@ -1874,9 +2011,16 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 0,
-      "player_id": 167,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 167,
+       "full_name": "Mike Yastrzemski"
+      },
+      "team": {
+       "id": 2,
+       "abbreviation": "ATL"
+      }
      }
     ]
    },
@@ -4082,7 +4226,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 2,
      "pitches": [
       {
        "call_name": "In Play",
@@ -4101,7 +4244,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 3,
      "pitches": [
       {
        "call_name": "In Play",
@@ -4120,7 +4262,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 3,
      "pitches": []
     },
     {
@@ -4132,7 +4273,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 2,
      "pitches": [
       {
        "call_name": "In Play",
@@ -4151,7 +4291,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 1,
      "pitches": [
       {
        "call_name": "In Play",
@@ -4170,7 +4309,6 @@
      "runner_on_first": true,
      "runner_on_second": true,
      "runner_on_third": false,
-     "pitch_count": 7,
      "pitches": [
       {
        "call_name": "In Play",
@@ -4189,7 +4327,6 @@
      "runner_on_first": false,
      "runner_on_second": true,
      "runner_on_third": false,
-     "pitch_count": 3,
      "pitches": []
     },
     {
@@ -4201,7 +4338,6 @@
      "runner_on_first": true,
      "runner_on_second": true,
      "runner_on_third": false,
-     "pitch_count": 2,
      "pitches": [
       {
        "call_name": "In Play",
@@ -4220,7 +4356,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": true,
-     "pitch_count": 4,
      "pitches": [
       {
        "call_name": "In Play",
@@ -4239,7 +4374,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 2,
      "pitches": [
       {
        "call_name": "In Play",
@@ -4258,7 +4392,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 3,
      "pitches": [
       {
        "call_name": "In Play",
@@ -4277,7 +4410,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 9,
      "pitches": []
     },
     {
@@ -4289,7 +4421,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 3,
      "pitches": [
       {
        "call_name": "In Play",
@@ -4308,7 +4439,6 @@
      "runner_on_first": false,
      "runner_on_second": true,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": [
       {
        "call_name": "In Play",
@@ -4327,7 +4457,6 @@
      "runner_on_first": false,
      "runner_on_second": true,
      "runner_on_third": false,
-     "pitch_count": 3,
      "pitches": [
       {
        "call_name": "In Play",
@@ -4346,7 +4475,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": true,
-     "pitch_count": 8,
      "pitches": []
     },
     {
@@ -4358,7 +4486,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": true,
-     "pitch_count": 4,
      "pitches": [
       {
        "call_name": "In Play",
@@ -4377,7 +4504,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 2,
      "pitches": [
       {
        "call_name": "In Play",
@@ -4396,7 +4522,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 7,
      "pitches": []
     },
     {
@@ -4408,7 +4533,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": [
       {
        "call_name": "In Play",
@@ -4427,7 +4551,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 2,
      "pitches": [
       {
        "call_name": "In Play",
@@ -4446,7 +4569,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 2,
      "pitches": [
       {
        "call_name": "In Play",
@@ -4465,7 +4587,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 3,
      "pitches": [
       {
        "call_name": "In Play",
@@ -4484,7 +4605,6 @@
      "runner_on_first": true,
      "runner_on_second": true,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": [
       {
        "call_name": "In Play",
@@ -4503,7 +4623,6 @@
      "runner_on_first": true,
      "runner_on_second": true,
      "runner_on_third": false,
-     "pitch_count": 1,
      "pitches": [
       {
        "call_name": "In Play",
@@ -4522,7 +4641,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": [
       {
        "call_name": "In Play",
@@ -4541,7 +4659,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": [
       {
        "call_name": "In Play",
@@ -4560,7 +4677,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 1,
      "pitches": [
       {
        "call_name": "In Play",
@@ -4579,7 +4695,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 2,
      "pitches": [
       {
        "call_name": "In Play",
@@ -4598,7 +4713,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 2,
      "pitches": [
       {
        "call_name": "In Play",
@@ -4617,7 +4731,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 3,
      "pitches": []
     },
     {
@@ -4629,7 +4742,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": []
     },
     {
@@ -4641,7 +4753,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 1,
      "pitches": [
       {
        "call_name": "In Play",
@@ -4660,7 +4771,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 3,
      "pitches": [
       {
        "call_name": "In Play",
@@ -4679,7 +4789,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 1,
      "pitches": [
       {
        "call_name": "In Play",
@@ -4698,7 +4807,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": [
       {
        "call_name": "In Play",
@@ -4717,7 +4825,6 @@
      "runner_on_first": false,
      "runner_on_second": true,
      "runner_on_third": false,
-     "pitch_count": 7,
      "pitches": []
     },
     {
@@ -4729,7 +4836,6 @@
      "runner_on_first": true,
      "runner_on_second": true,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": []
     },
     {
@@ -4741,7 +4847,6 @@
      "runner_on_first": true,
      "runner_on_second": true,
      "runner_on_third": true,
-     "pitch_count": 3,
      "pitches": [
       {
        "call_name": "In Play",
@@ -4760,7 +4865,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": [
       {
        "call_name": "In Play",
@@ -4779,7 +4883,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 1,
      "pitches": [
       {
        "call_name": "In Play",
@@ -4798,7 +4901,6 @@
      "runner_on_first": false,
      "runner_on_second": true,
      "runner_on_third": true,
-     "pitch_count": 2,
      "pitches": [
       {
        "call_name": "In Play",
@@ -4817,7 +4919,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": true,
-     "pitch_count": 6,
      "pitches": [
       {
        "call_name": "In Play",
@@ -4836,7 +4937,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 3,
      "pitches": []
     },
     {
@@ -4848,7 +4948,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 3,
      "pitches": [
       {
        "call_name": "In Play",
@@ -4867,7 +4966,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": true,
-     "pitch_count": 8,
      "pitches": [
       {
        "call_name": "In Play",
@@ -4886,7 +4984,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": [
       {
        "call_name": "In Play",
@@ -4905,7 +5002,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 6,
      "pitches": [
       {
        "call_name": "In Play",
@@ -4924,7 +5020,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 6,
      "pitches": []
     },
     {
@@ -4936,7 +5031,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": []
     },
     {
@@ -4948,7 +5042,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 7,
      "pitches": []
     },
     {
@@ -4960,7 +5053,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": [
       {
        "call_name": "In Play",
@@ -4979,7 +5071,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": [
       {
        "call_name": "In Play",
@@ -4998,7 +5089,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 3,
      "pitches": [
       {
        "call_name": "In Play",
@@ -5017,7 +5107,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 2,
      "pitches": [
       {
        "call_name": "In Play",
@@ -5036,7 +5125,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": []
     },
     {
@@ -5048,7 +5136,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": [
       {
        "call_name": "In Play",
@@ -5067,7 +5154,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 1,
      "pitches": [
       {
        "call_name": "In Play",
@@ -5086,7 +5172,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 7,
      "pitches": []
     },
     {
@@ -5098,7 +5183,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 3,
      "pitches": [
       {
        "call_name": "In Play",
@@ -5117,7 +5201,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 6,
      "pitches": [
       {
        "call_name": "In Play",
@@ -5136,7 +5219,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 2,
      "pitches": [
       {
        "call_name": "In Play",
@@ -5155,7 +5237,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 2,
      "pitches": [
       {
        "call_name": "In Play",
@@ -5174,7 +5255,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 6,
      "pitches": []
     },
     {
@@ -5186,7 +5266,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 7,
      "pitches": [
       {
        "call_name": "In Play",
@@ -5205,7 +5284,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 2,
      "pitches": [
       {
        "call_name": "In Play",
@@ -5224,7 +5302,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 2,
      "pitches": [
       {
        "call_name": "In Play",
@@ -5243,7 +5320,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 1,
      "pitches": [
       {
        "call_name": "In Play",
@@ -5262,7 +5338,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 6,
      "pitches": [
       {
        "call_name": "In Play",
@@ -5281,7 +5356,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 2,
      "pitches": [
       {
        "call_name": "In Play",
@@ -5300,7 +5374,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 1,
      "pitches": [
       {
        "call_name": "In Play",
@@ -5331,9 +5404,16 @@
       "gidp": 0,
       "left_on_base": 0,
       "errors": 1,
-      "player_id": 123,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 123,
+       "full_name": "Ryan McMahon"
+      },
+      "team": {
+       "id": 19,
+       "abbreviation": "NYY"
+      }
      },
      {
       "at_bats": 4,
@@ -5353,9 +5433,16 @@
       "gidp": 0,
       "left_on_base": 3,
       "errors": 0,
-      "player_id": 920,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 920,
+       "full_name": "Cody Bellinger"
+      },
+      "team": {
+       "id": 19,
+       "abbreviation": "NYY"
+      }
      },
      {
       "at_bats": 3,
@@ -5375,9 +5462,16 @@
       "gidp": 0,
       "left_on_base": 0,
       "errors": 0,
-      "player_id": 551,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 551,
+       "full_name": "Trent Grisham"
+      },
+      "team": {
+       "id": 19,
+       "abbreviation": "NYY"
+      }
      },
      {
       "at_bats": 4,
@@ -5397,9 +5491,16 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 0,
-      "player_id": 125,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 125,
+       "full_name": "Luis Garcia Jr."
+      },
+      "team": {
+       "id": 19,
+       "abbreviation": "NYY"
+      }
      },
      {
       "at_bats": 4,
@@ -5419,9 +5520,16 @@
       "gidp": 0,
       "left_on_base": 0,
       "errors": 1,
-      "player_id": 518,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 518,
+       "full_name": "Jazz Chisholm Jr."
+      },
+      "team": {
+       "id": 19,
+       "abbreviation": "NYY"
+      }
      },
      {
       "at_bats": 3,
@@ -5441,9 +5549,16 @@
       "gidp": 0,
       "left_on_base": 0,
       "errors": 1,
-      "player_id": 506,
       "doubles": 1,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 506,
+       "full_name": "Austin Wells"
+      },
+      "team": {
+       "id": 19,
+       "abbreviation": "NYY"
+      }
      },
      {
       "at_bats": 4,
@@ -5463,9 +5578,16 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 0,
-      "player_id": 4668097,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 4668097,
+       "full_name": "Spencer Jones"
+      },
+      "team": {
+       "id": 19,
+       "abbreviation": "NYY"
+      }
      },
      {
       "at_bats": 3,
@@ -5485,9 +5607,16 @@
       "gidp": 0,
       "left_on_base": 0,
       "errors": 0,
-      "player_id": 4480,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 4480,
+       "full_name": "Ben Rice"
+      },
+      "team": {
+       "id": 19,
+       "abbreviation": "NYY"
+      }
      },
      {
       "at_bats": null,
@@ -5507,9 +5636,16 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 2183925,
       "doubles": null,
-      "triples": null
+      "triples": null,
+      "player": {
+       "id": 2183925,
+       "full_name": "Cam Schlittler"
+      },
+      "team": {
+       "id": 19,
+       "abbreviation": "NYY"
+      }
      },
      {
       "at_bats": 4,
@@ -5529,9 +5665,16 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 1,
-      "player_id": 4838771,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 4838771,
+       "full_name": "George Lombard Jr."
+      },
+      "team": {
+       "id": 19,
+       "abbreviation": "NYY"
+      }
      },
      {
       "at_bats": null,
@@ -5551,9 +5694,16 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 765,
       "doubles": null,
-      "triples": null
+      "triples": null,
+      "player": {
+       "id": 765,
+       "full_name": "Brent Headrick"
+      },
+      "team": {
+       "id": 19,
+       "abbreviation": "NYY"
+      }
      },
      {
       "at_bats": 1,
@@ -5573,9 +5723,16 @@
       "gidp": 0,
       "left_on_base": 0,
       "errors": 0,
-      "player_id": 1439,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 1439,
+       "full_name": "Paul Goldschmidt"
+      },
+      "team": {
+       "id": 19,
+       "abbreviation": "NYY"
+      }
      },
      {
       "at_bats": null,
@@ -5595,9 +5752,16 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 4443,
       "doubles": null,
-      "triples": null
+      "triples": null,
+      "player": {
+       "id": 4443,
+       "full_name": "Paul Blackburn"
+      },
+      "team": {
+       "id": 19,
+       "abbreviation": "NYY"
+      }
      },
      {
       "at_bats": null,
@@ -5617,9 +5781,16 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 556,
       "doubles": null,
-      "triples": null
+      "triples": null,
+      "player": {
+       "id": 556,
+       "full_name": "David Bednar"
+      },
+      "team": {
+       "id": 19,
+       "abbreviation": "NYY"
+      }
      },
      {
       "at_bats": null,
@@ -5639,9 +5810,16 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 61,
       "doubles": null,
-      "triples": null
+      "triples": null,
+      "player": {
+       "id": 61,
+       "full_name": "John Schreiber"
+      },
+      "team": {
+       "id": 19,
+       "abbreviation": "NYY"
+      }
      },
      {
       "at_bats": null,
@@ -5661,9 +5839,16 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 414,
       "doubles": null,
-      "triples": null
+      "triples": null,
+      "player": {
+       "id": 414,
+       "full_name": "Ryan Weathers"
+      },
+      "team": {
+       "id": 19,
+       "abbreviation": "NYY"
+      }
      },
      {
       "at_bats": 0,
@@ -5683,9 +5868,16 @@
       "gidp": null,
       "left_on_base": null,
       "errors": null,
-      "player_id": 72,
       "doubles": null,
-      "triples": null
+      "triples": null,
+      "player": {
+       "id": 72,
+       "full_name": "Jose Caballero"
+      },
+      "team": {
+       "id": 19,
+       "abbreviation": "NYY"
+      }
      }
     ],
     "home": [
@@ -5707,9 +5899,16 @@
       "gidp": 0,
       "left_on_base": 0,
       "errors": 0,
-      "player_id": 92,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 92,
+       "full_name": "Yandy Diaz"
+      },
+      "team": {
+       "id": 27,
+       "abbreviation": "TB"
+      }
      },
      {
       "at_bats": null,
@@ -5729,9 +5928,16 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 114,
       "doubles": null,
-      "triples": null
+      "triples": null,
+      "player": {
+       "id": 114,
+       "full_name": "Freddy Peralta"
+      },
+      "team": {
+       "id": 27,
+       "abbreviation": "TB"
+      }
      },
      {
       "at_bats": 4,
@@ -5751,9 +5957,16 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 161,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 161,
+       "full_name": "Taylor Walls"
+      },
+      "team": {
+       "id": 27,
+       "abbreviation": "TB"
+      }
      },
      {
       "at_bats": 5,
@@ -5773,9 +5986,16 @@
       "gidp": 0,
       "left_on_base": 3,
       "errors": 0,
-      "player_id": 58,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 58,
+       "full_name": "Jonathan Aranda"
+      },
+      "team": {
+       "id": 27,
+       "abbreviation": "TB"
+      }
      },
      {
       "at_bats": 4,
@@ -5795,9 +6015,16 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 0,
-      "player_id": 129,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 129,
+       "full_name": "Richie Palacios"
+      },
+      "team": {
+       "id": 27,
+       "abbreviation": "TB"
+      }
      },
      {
       "at_bats": 4,
@@ -5817,9 +6044,16 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 653217,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 653217,
+       "full_name": "Chandler Simpson"
+      },
+      "team": {
+       "id": 27,
+       "abbreviation": "TB"
+      }
      },
      {
       "at_bats": 3,
@@ -5839,9 +6073,16 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 12163,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 12163,
+       "full_name": "Liam Hicks"
+      },
+      "team": {
+       "id": 27,
+       "abbreviation": "TB"
+      }
      },
      {
       "at_bats": 4,
@@ -5861,9 +6102,16 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 0,
-      "player_id": 88,
       "doubles": 1,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 88,
+       "full_name": "Junior Caminero"
+      },
+      "team": {
+       "id": 27,
+       "abbreviation": "TB"
+      }
      },
      {
       "at_bats": 3,
@@ -5883,9 +6131,16 @@
       "gidp": 0,
       "left_on_base": 5,
       "errors": 0,
-      "player_id": 573,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 573,
+       "full_name": "Victor Mesa Jr."
+      },
+      "team": {
+       "id": 27,
+       "abbreviation": "TB"
+      }
      },
      {
       "at_bats": 4,
@@ -5905,9 +6160,16 @@
       "gidp": 0,
       "left_on_base": 4,
       "errors": 0,
-      "player_id": 182,
       "doubles": 1,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 182,
+       "full_name": "Jonny DeLuca"
+      },
+      "team": {
+       "id": 27,
+       "abbreviation": "TB"
+      }
      },
      {
       "at_bats": null,
@@ -5927,9 +6189,16 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 222,
       "doubles": null,
-      "triples": null
+      "triples": null,
+      "player": {
+       "id": 222,
+       "full_name": "Cam Booser"
+      },
+      "team": {
+       "id": 27,
+       "abbreviation": "TB"
+      }
      },
      {
       "at_bats": 0,
@@ -5949,9 +6218,16 @@
       "gidp": null,
       "left_on_base": null,
       "errors": null,
-      "player_id": 1311,
       "doubles": null,
-      "triples": null
+      "triples": null,
+      "player": {
+       "id": 1311,
+       "full_name": "Jorge Mateo"
+      },
+      "team": {
+       "id": 27,
+       "abbreviation": "TB"
+      }
      },
      {
       "at_bats": null,
@@ -5971,9 +6247,16 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 1602862,
       "doubles": null,
-      "triples": null
+      "triples": null,
+      "player": {
+       "id": 1602862,
+       "full_name": "Ian Seymour"
+      },
+      "team": {
+       "id": 27,
+       "abbreviation": "TB"
+      }
      },
      {
       "at_bats": null,
@@ -5993,9 +6276,16 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 624,
       "doubles": null,
-      "triples": null
+      "triples": null,
+      "player": {
+       "id": 624,
+       "full_name": "Bryan Baker"
+      },
+      "team": {
+       "id": 27,
+       "abbreviation": "TB"
+      }
      }
     ]
    },
@@ -8137,7 +8427,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 3,
      "pitches": [
       {
        "call_name": "In Play",
@@ -8156,7 +8445,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": []
     },
     {
@@ -8168,7 +8456,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": []
     },
     {
@@ -8180,7 +8467,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": []
     },
     {
@@ -8192,7 +8478,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": [
       {
        "call_name": "In Play",
@@ -8211,7 +8496,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 6,
      "pitches": []
     },
     {
@@ -8223,7 +8507,6 @@
      "runner_on_first": true,
      "runner_on_second": true,
      "runner_on_third": false,
-     "pitch_count": 7,
      "pitches": [
       {
        "call_name": "In Play",
@@ -8242,7 +8525,6 @@
      "runner_on_first": false,
      "runner_on_second": true,
      "runner_on_third": true,
-     "pitch_count": 2,
      "pitches": []
     },
     {
@@ -8254,7 +8536,6 @@
      "runner_on_first": true,
      "runner_on_second": true,
      "runner_on_third": true,
-     "pitch_count": 1,
      "pitches": [
       {
        "call_name": "In Play",
@@ -8273,7 +8554,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": true,
-     "pitch_count": 3,
      "pitches": []
     },
     {
@@ -8285,7 +8565,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": true,
-     "pitch_count": 8,
      "pitches": []
     },
     {
@@ -8297,7 +8576,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": []
     },
     {
@@ -8309,7 +8587,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 6,
      "pitches": []
     },
     {
@@ -8321,7 +8598,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": []
     },
     {
@@ -8333,7 +8609,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 6,
      "pitches": []
     },
     {
@@ -8345,7 +8620,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 7,
      "pitches": [
       {
        "call_name": "In Play",
@@ -8364,7 +8638,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": [
       {
        "call_name": "In Play",
@@ -8383,7 +8656,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": []
     },
     {
@@ -8395,7 +8667,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 6,
      "pitches": []
     },
     {
@@ -8407,7 +8678,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 8,
      "pitches": [
       {
        "call_name": "In Play",
@@ -8426,7 +8696,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 6,
      "pitches": [
       {
        "call_name": "In Play",
@@ -8445,7 +8714,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 3,
      "pitches": [
       {
        "call_name": "In Play",
@@ -8464,7 +8732,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 6,
      "pitches": []
     },
     {
@@ -8476,7 +8743,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": []
     },
     {
@@ -8488,7 +8754,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": [
       {
        "call_name": "In Play",
@@ -8507,7 +8772,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": []
     },
     {
@@ -8519,7 +8783,6 @@
      "runner_on_first": true,
      "runner_on_second": true,
      "runner_on_third": false,
-     "pitch_count": 6,
      "pitches": [
       {
        "call_name": "In Play",
@@ -8538,7 +8801,6 @@
      "runner_on_first": true,
      "runner_on_second": true,
      "runner_on_third": false,
-     "pitch_count": 3,
      "pitches": []
     },
     {
@@ -8550,7 +8812,6 @@
      "runner_on_first": true,
      "runner_on_second": true,
      "runner_on_third": false,
-     "pitch_count": 1,
      "pitches": [
       {
        "call_name": "In Play",
@@ -8569,7 +8830,6 @@
      "runner_on_first": true,
      "runner_on_second": true,
      "runner_on_third": false,
-     "pitch_count": 6,
      "pitches": []
     },
     {
@@ -8581,7 +8841,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 7,
      "pitches": [
       {
        "call_name": "In Play",
@@ -8600,7 +8859,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": []
     },
     {
@@ -8612,7 +8870,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 2,
      "pitches": [
       {
        "call_name": "In Play",
@@ -8631,7 +8888,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": [
       {
        "call_name": "In Play",
@@ -8650,7 +8906,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 2,
      "pitches": [
       {
        "call_name": "In Play",
@@ -8669,7 +8924,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": []
     },
     {
@@ -8681,7 +8935,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 7,
      "pitches": []
     },
     {
@@ -8693,7 +8946,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 3,
      "pitches": []
     },
     {
@@ -8705,7 +8957,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": [
       {
        "call_name": "In Play",
@@ -8724,7 +8975,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": []
     },
     {
@@ -8736,7 +8986,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 7,
      "pitches": [
       {
        "call_name": "In Play",
@@ -8755,7 +9004,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 7,
      "pitches": [
       {
        "call_name": "In Play",
@@ -8774,7 +9022,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 1,
      "pitches": [
       {
        "call_name": "In Play",
@@ -8793,7 +9040,6 @@
      "runner_on_first": false,
      "runner_on_second": true,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": []
     },
     {
@@ -8805,7 +9051,6 @@
      "runner_on_first": true,
      "runner_on_second": true,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": [
       {
        "call_name": "In Play",
@@ -8824,7 +9069,6 @@
      "runner_on_first": false,
      "runner_on_second": true,
      "runner_on_third": true,
-     "pitch_count": 1,
      "pitches": [
       {
        "call_name": "In Play",
@@ -8843,7 +9087,6 @@
      "runner_on_first": false,
      "runner_on_second": true,
      "runner_on_third": false,
-     "pitch_count": 3,
      "pitches": [
       {
        "call_name": "In Play",
@@ -8862,7 +9105,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": []
     },
     {
@@ -8874,7 +9116,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": []
     },
     {
@@ -8886,7 +9127,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": [
       {
        "call_name": "In Play",
@@ -8905,7 +9145,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": []
     },
     {
@@ -8917,7 +9156,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": [
       {
        "call_name": "In Play",
@@ -8936,7 +9174,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": [
       {
        "call_name": "In Play",
@@ -8955,7 +9192,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 6,
      "pitches": [
       {
        "call_name": "In Play",
@@ -8974,7 +9210,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": [
       {
        "call_name": "In Play",
@@ -8993,7 +9228,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 1,
      "pitches": [
       {
        "call_name": "In Play",
@@ -9012,7 +9246,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 3,
      "pitches": [
       {
        "call_name": "In Play",
@@ -9031,7 +9264,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 1,
      "pitches": [
       {
        "call_name": "In Play",
@@ -9050,7 +9282,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": []
     },
     {
@@ -9062,7 +9293,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": [
       {
        "call_name": "In Play",
@@ -9081,7 +9311,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": [
       {
        "call_name": "In Play",
@@ -9100,7 +9329,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": []
     },
     {
@@ -9112,7 +9340,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": [
       {
        "call_name": "In Play",
@@ -9131,7 +9358,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 1,
      "pitches": [
       {
        "call_name": "In Play",
@@ -9150,7 +9376,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": true,
-     "pitch_count": 1,
      "pitches": [
       {
        "call_name": "In Play",
@@ -9169,7 +9394,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 2,
      "pitches": [
       {
        "call_name": "In Play",
@@ -9188,7 +9412,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 1,
      "pitches": [
       {
        "call_name": "In Play",
@@ -9207,7 +9430,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 2,
      "pitches": [
       {
        "call_name": "In Play",
@@ -9226,7 +9448,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 2,
      "pitches": [
       {
        "call_name": "In Play",
@@ -9245,7 +9466,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 1,
      "pitches": [
       {
        "call_name": "In Play",
@@ -9264,7 +9484,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 2,
      "pitches": [
       {
        "call_name": "In Play",
@@ -9295,9 +9514,16 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 788,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 788,
+       "full_name": "Andrew Benintendi"
+      },
+      "team": {
+       "id": 6,
+       "abbreviation": "CHW"
+      }
      },
      {
       "at_bats": null,
@@ -9317,9 +9543,16 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 6032,
       "doubles": null,
-      "triples": null
+      "triples": null,
+      "player": {
+       "id": 6032,
+       "full_name": "Anthony Kay"
+      },
+      "team": {
+       "id": 6,
+       "abbreviation": "CHW"
+      }
      },
      {
       "at_bats": 2,
@@ -9339,9 +9572,16 @@
       "gidp": 0,
       "left_on_base": 0,
       "errors": 0,
-      "player_id": 771,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 771,
+       "full_name": "Miguel Vargas"
+      },
+      "team": {
+       "id": 6,
+       "abbreviation": "CHW"
+      }
      },
      {
       "at_bats": 4,
@@ -9361,9 +9601,16 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 0,
-      "player_id": 1567927,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 1567927,
+       "full_name": "Kyle Teel"
+      },
+      "team": {
+       "id": 6,
+       "abbreviation": "CHW"
+      }
      },
      {
       "at_bats": 4,
@@ -9383,9 +9630,16 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 4667586,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 4667586,
+       "full_name": "Munetaka Murakami"
+      },
+      "team": {
+       "id": 6,
+       "abbreviation": "CHW"
+      }
      },
      {
       "at_bats": 3,
@@ -9405,9 +9659,16 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 2094850,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 2094850,
+       "full_name": "Colson Montgomery"
+      },
+      "team": {
+       "id": 6,
+       "abbreviation": "CHW"
+      }
      },
      {
       "at_bats": 4,
@@ -9427,9 +9688,16 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 4838836,
       "doubles": 1,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 4838836,
+       "full_name": "Braden Montgomery"
+      },
+      "team": {
+       "id": 6,
+       "abbreviation": "CHW"
+      }
      },
      {
       "at_bats": 2,
@@ -9449,9 +9717,16 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 2752091,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 2752091,
+       "full_name": "Tristan Peters"
+      },
+      "team": {
+       "id": 6,
+       "abbreviation": "CHW"
+      }
      },
      {
       "at_bats": 4,
@@ -9471,9 +9746,16 @@
       "gidp": 0,
       "left_on_base": 0,
       "errors": 0,
-      "player_id": 519799,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 519799,
+       "full_name": "Chase Meidroth"
+      },
+      "team": {
+       "id": 6,
+       "abbreviation": "CHW"
+      }
      },
      {
       "at_bats": 4,
@@ -9493,9 +9775,16 @@
       "gidp": 1,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 4839465,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 4839465,
+       "full_name": "Sam Antonacci"
+      },
+      "team": {
+       "id": 6,
+       "abbreviation": "CHW"
+      }
      },
      {
       "at_bats": null,
@@ -9515,9 +9804,16 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 1,
-      "player_id": 2274,
       "doubles": null,
-      "triples": null
+      "triples": null,
+      "player": {
+       "id": 2274,
+       "full_name": "Sean Newcomb"
+      },
+      "team": {
+       "id": 6,
+       "abbreviation": "CHW"
+      }
      },
      {
       "at_bats": null,
@@ -9537,9 +9833,16 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 534,
       "doubles": null,
-      "triples": null
+      "triples": null,
+      "player": {
+       "id": 534,
+       "full_name": "Sean Burke"
+      },
+      "team": {
+       "id": 6,
+       "abbreviation": "CHW"
+      }
      },
      {
       "at_bats": 1,
@@ -9559,9 +9862,16 @@
       "gidp": 0,
       "left_on_base": 0,
       "errors": 0,
-      "player_id": 1445,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 1445,
+       "full_name": "Randal Grichuk"
+      },
+      "team": {
+       "id": 6,
+       "abbreviation": "CHW"
+      }
      },
      {
       "at_bats": 1,
@@ -9581,9 +9891,16 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 1263,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 1263,
+       "full_name": "Tommy Pham"
+      },
+      "team": {
+       "id": 6,
+       "abbreviation": "CHW"
+      }
      },
      {
       "at_bats": 1,
@@ -9603,9 +9920,16 @@
       "gidp": 0,
       "left_on_base": 0,
       "errors": 0,
-      "player_id": 220,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 220,
+       "full_name": "Brenton Doyle"
+      },
+      "team": {
+       "id": 6,
+       "abbreviation": "CHW"
+      }
      },
      {
       "at_bats": null,
@@ -9625,9 +9949,16 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 1645455,
       "doubles": null,
-      "triples": null
+      "triples": null,
+      "player": {
+       "id": 1645455,
+       "full_name": "Grant Taylor"
+      },
+      "team": {
+       "id": 6,
+       "abbreviation": "CHW"
+      }
      }
     ],
     "home": [
@@ -9649,9 +9980,16 @@
       "gidp": 0,
       "left_on_base": 0,
       "errors": 0,
-      "player_id": 965,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 965,
+       "full_name": "Jose Ramirez"
+      },
+      "team": {
+       "id": 8,
+       "abbreviation": "CLE"
+      }
      },
      {
       "at_bats": 4,
@@ -9671,9 +10009,16 @@
       "gidp": 0,
       "left_on_base": 3,
       "errors": 0,
-      "player_id": 195,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 195,
+       "full_name": "Nathaniel Lowe"
+      },
+      "team": {
+       "id": 8,
+       "abbreviation": "CLE"
+      }
      },
      {
       "at_bats": 3,
@@ -9693,9 +10038,16 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 0,
-      "player_id": 1501,
       "doubles": 0,
-      "triples": 1
+      "triples": 1,
+      "player": {
+       "id": 1501,
+       "full_name": "Jo Adell"
+      },
+      "team": {
+       "id": 8,
+       "abbreviation": "CLE"
+      }
      },
      {
       "at_bats": 3,
@@ -9715,9 +10067,16 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 0,
-      "player_id": 970,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 970,
+       "full_name": "Brayan Rocchio"
+      },
+      "team": {
+       "id": 8,
+       "abbreviation": "CLE"
+      }
      },
      {
       "at_bats": 4,
@@ -9737,9 +10096,16 @@
       "gidp": 0,
       "left_on_base": 0,
       "errors": 0,
-      "player_id": 1007,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 1007,
+       "full_name": "Steven Kwan"
+      },
+      "team": {
+       "id": 8,
+       "abbreviation": "CLE"
+      }
      },
      {
       "at_bats": 4,
@@ -9759,9 +10125,16 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 1018,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 1018,
+       "full_name": "Angel Martinez"
+      },
+      "team": {
+       "id": 8,
+       "abbreviation": "CLE"
+      }
      },
      {
       "at_bats": null,
@@ -9781,9 +10154,16 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 879,
       "doubles": null,
-      "triples": null
+      "triples": null,
+      "player": {
+       "id": 879,
+       "full_name": "Gavin Williams"
+      },
+      "team": {
+       "id": 8,
+       "abbreviation": "CLE"
+      }
      },
      {
       "at_bats": 4,
@@ -9803,9 +10183,16 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 0,
-      "player_id": 977,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 977,
+       "full_name": "Patrick Bailey"
+      },
+      "team": {
+       "id": 8,
+       "abbreviation": "CLE"
+      }
      },
      {
       "at_bats": 4,
@@ -9825,9 +10212,16 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 3781026,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 3781026,
+       "full_name": "Chase DeLauter"
+      },
+      "team": {
+       "id": 8,
+       "abbreviation": "CLE"
+      }
      },
      {
       "at_bats": 3,
@@ -9847,9 +10241,16 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 4839339,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 4839339,
+       "full_name": "Travis Bazzana"
+      },
+      "team": {
+       "id": 8,
+       "abbreviation": "CLE"
+      }
      },
      {
       "at_bats": null,
@@ -9869,9 +10270,16 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 835,
       "doubles": null,
-      "triples": null
+      "triples": null,
+      "player": {
+       "id": 835,
+       "full_name": "Erik Sabrowski"
+      },
+      "team": {
+       "id": 8,
+       "abbreviation": "CLE"
+      }
      },
      {
       "at_bats": null,
@@ -9891,9 +10299,16 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 1,
-      "player_id": 764,
       "doubles": null,
-      "triples": null
+      "triples": null,
+      "player": {
+       "id": 764,
+       "full_name": "Hunter Gaddis"
+      },
+      "team": {
+       "id": 8,
+       "abbreviation": "CLE"
+      }
      },
      {
       "at_bats": null,
@@ -9913,9 +10328,16 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 4300,
       "doubles": null,
-      "triples": null
+      "triples": null,
+      "player": {
+       "id": 4300,
+       "full_name": "Shawn Armstrong"
+      },
+      "team": {
+       "id": 8,
+       "abbreviation": "CLE"
+      }
      },
      {
       "at_bats": null,
@@ -9935,9 +10357,16 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 841,
       "doubles": null,
-      "triples": null
+      "triples": null,
+      "player": {
+       "id": 841,
+       "full_name": "Cade Smith"
+      },
+      "team": {
+       "id": 8,
+       "abbreviation": "CLE"
+      }
      }
     ]
    },
@@ -12071,7 +12500,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": [
       {
        "call_name": "In Play",
@@ -12090,7 +12518,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 9,
      "pitches": []
     },
     {
@@ -12102,7 +12529,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 3,
      "pitches": [
       {
        "call_name": "In Play",
@@ -12121,7 +12547,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 2,
      "pitches": [
       {
        "call_name": "In Play",
@@ -12140,7 +12565,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 6,
      "pitches": []
     },
     {
@@ -12152,7 +12576,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": []
     },
     {
@@ -12164,7 +12587,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 1,
      "pitches": [
       {
        "call_name": "In Play",
@@ -12183,7 +12605,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 10,
      "pitches": []
     },
     {
@@ -12195,7 +12616,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 3,
      "pitches": [
       {
        "call_name": "In Play",
@@ -12214,7 +12634,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 1,
      "pitches": [
       {
        "call_name": "In Play",
@@ -12233,7 +12652,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 3,
      "pitches": [
       {
        "call_name": "In Play",
@@ -12252,7 +12670,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 6,
      "pitches": []
     },
     {
@@ -12264,7 +12681,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": []
     },
     {
@@ -12276,7 +12692,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 7,
      "pitches": [
       {
        "call_name": "In Play",
@@ -12295,7 +12710,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 2,
      "pitches": [
       {
        "call_name": "In Play",
@@ -12314,7 +12728,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": [
       {
        "call_name": "In Play",
@@ -12333,7 +12746,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 2,
      "pitches": [
       {
        "call_name": "In Play",
@@ -12352,7 +12764,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 3,
      "pitches": []
     },
     {
@@ -12364,7 +12775,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": [
       {
        "call_name": "In Play",
@@ -12383,7 +12793,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 3,
      "pitches": [
       {
        "call_name": "In Play",
@@ -12408,7 +12817,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": true,
-     "pitch_count": 3,
      "pitches": [
       {
        "call_name": "In Play",
@@ -12427,7 +12835,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 1,
      "pitches": [
       {
        "call_name": "In Play",
@@ -12446,7 +12853,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 3,
      "pitches": [
       {
        "call_name": "In Play",
@@ -12465,7 +12871,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 2,
      "pitches": [
       {
        "call_name": "In Play",
@@ -12484,7 +12889,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": [
       {
        "call_name": "In Play",
@@ -12503,7 +12907,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": [
       {
        "call_name": "In Play",
@@ -12522,7 +12925,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": [
       {
        "call_name": "In Play",
@@ -12541,7 +12943,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": []
     },
     {
@@ -12553,7 +12954,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": []
     },
     {
@@ -12565,7 +12965,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 6,
      "pitches": [
       {
        "call_name": "In Play",
@@ -12584,7 +12983,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": []
     },
     {
@@ -12596,7 +12994,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 2,
      "pitches": [
       {
        "call_name": "In Play",
@@ -12615,7 +13012,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 3,
      "pitches": [
       {
        "call_name": "In Play",
@@ -12634,7 +13030,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 3,
      "pitches": [
       {
        "call_name": "In Play",
@@ -12653,7 +13048,6 @@
      "runner_on_first": true,
      "runner_on_second": true,
      "runner_on_third": false,
-     "pitch_count": 1,
      "pitches": [
       {
        "call_name": "In Play",
@@ -12672,7 +13066,6 @@
      "runner_on_first": false,
      "runner_on_second": true,
      "runner_on_third": true,
-     "pitch_count": 5,
      "pitches": [
       {
        "call_name": "In Play",
@@ -12691,7 +13084,6 @@
      "runner_on_first": false,
      "runner_on_second": true,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": []
     },
     {
@@ -12703,7 +13095,6 @@
      "runner_on_first": true,
      "runner_on_second": true,
      "runner_on_third": false,
-     "pitch_count": 3,
      "pitches": [
       {
        "call_name": "In Play",
@@ -12722,7 +13113,6 @@
      "runner_on_first": true,
      "runner_on_second": true,
      "runner_on_third": true,
-     "pitch_count": 4,
      "pitches": [
       {
        "call_name": "In Play",
@@ -12741,7 +13131,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 1,
      "pitches": [
       {
        "call_name": "In Play",
@@ -12760,7 +13149,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 8,
      "pitches": []
     },
     {
@@ -12772,7 +13160,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 9,
      "pitches": [
       {
        "call_name": "In Play",
@@ -12791,7 +13178,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 1,
      "pitches": [
       {
        "call_name": "In Play",
@@ -12810,7 +13196,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": []
     },
     {
@@ -12822,7 +13207,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": []
     },
     {
@@ -12834,7 +13218,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": [
       {
        "call_name": "In Play",
@@ -12853,7 +13236,6 @@
      "runner_on_first": true,
      "runner_on_second": true,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": [
       {
        "call_name": "In Play",
@@ -12872,7 +13254,6 @@
      "runner_on_first": false,
      "runner_on_second": true,
      "runner_on_third": true,
-     "pitch_count": 6,
      "pitches": [
       {
        "call_name": "In Play",
@@ -12891,7 +13272,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": []
     },
     {
@@ -12903,7 +13283,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 7,
      "pitches": [
       {
        "call_name": "In Play",
@@ -12922,7 +13301,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 2,
      "pitches": [
       {
        "call_name": "In Play",
@@ -12941,7 +13319,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 9,
      "pitches": [
       {
        "call_name": "In Play",
@@ -12960,7 +13337,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 2,
      "pitches": []
     },
     {
@@ -12972,7 +13348,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 3,
      "pitches": []
     },
     {
@@ -12984,7 +13359,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": []
     },
     {
@@ -12996,7 +13370,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 1,
      "pitches": [
       {
        "call_name": "In Play",
@@ -13015,7 +13388,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 1,
      "pitches": [
       {
        "call_name": "In Play",
@@ -13034,7 +13406,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": true,
-     "pitch_count": 2,
      "pitches": [
       {
        "call_name": "In Play",
@@ -13053,7 +13424,6 @@
      "runner_on_first": true,
      "runner_on_second": true,
      "runner_on_third": false,
-     "pitch_count": 4,
      "pitches": []
     },
     {
@@ -13065,7 +13435,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 3,
      "pitches": [
       {
        "call_name": "In Play",
@@ -13090,7 +13459,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 2,
      "pitches": [
       {
        "call_name": "In Play",
@@ -13109,7 +13477,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 7,
      "pitches": [
       {
        "call_name": "In Play",
@@ -13128,7 +13495,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 6,
      "pitches": []
     },
     {
@@ -13140,7 +13506,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 7,
      "pitches": [
       {
        "call_name": "In Play",
@@ -13159,7 +13524,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 3,
      "pitches": [
       {
        "call_name": "In Play",
@@ -13178,7 +13542,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 7,
      "pitches": [
       {
        "call_name": "In Play",
@@ -13197,7 +13560,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 2,
      "pitches": [
       {
        "call_name": "In Play",
@@ -13216,7 +13578,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 3,
      "pitches": [
       {
        "call_name": "In Play",
@@ -13235,7 +13596,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 3,
      "pitches": [
       {
        "call_name": "In Play",
@@ -13254,7 +13614,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 1,
      "pitches": [
       {
        "call_name": "In Play",
@@ -13273,7 +13632,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 5,
      "pitches": []
     },
     {
@@ -13285,7 +13643,6 @@
      "runner_on_first": false,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 9,
      "pitches": []
     },
     {
@@ -13297,7 +13654,6 @@
      "runner_on_first": true,
      "runner_on_second": false,
      "runner_on_third": false,
-     "pitch_count": 6,
      "pitches": []
     },
     {
@@ -13309,7 +13665,6 @@
      "runner_on_first": true,
      "runner_on_second": true,
      "runner_on_third": false,
-     "pitch_count": 1,
      "pitches": [
       {
        "call_name": "In Play",
@@ -13340,9 +13695,16 @@
       "gidp": 1,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 1956,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 1956,
+       "full_name": "Christian Yelich"
+      },
+      "team": {
+       "id": 16,
+       "abbreviation": "MIL"
+      }
      },
      {
       "at_bats": 4,
@@ -13362,9 +13724,16 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 0,
-      "player_id": 207,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 207,
+       "full_name": "Jake Bauers"
+      },
+      "team": {
+       "id": 16,
+       "abbreviation": "MIL"
+      }
      },
      {
       "at_bats": 4,
@@ -13384,9 +13753,16 @@
       "gidp": 0,
       "left_on_base": 0,
       "errors": 0,
-      "player_id": 168,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 168,
+       "full_name": "William Contreras"
+      },
+      "team": {
+       "id": 16,
+       "abbreviation": "MIL"
+      }
      },
      {
       "at_bats": null,
@@ -13406,9 +13782,16 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 6133,
       "doubles": null,
-      "triples": null
+      "triples": null,
+      "player": {
+       "id": 6133,
+       "full_name": "Dustin May"
+      },
+      "team": {
+       "id": 16,
+       "abbreviation": "MIL"
+      }
      },
      {
       "at_bats": 4,
@@ -13428,9 +13811,16 @@
       "gidp": 0,
       "left_on_base": 3,
       "errors": 0,
-      "player_id": 266,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 266,
+       "full_name": "Brice Turang"
+      },
+      "team": {
+       "id": 16,
+       "abbreviation": "MIL"
+      }
      },
      {
       "at_bats": 2,
@@ -13450,9 +13840,16 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 260,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 260,
+       "full_name": "Joey Ortiz"
+      },
+      "team": {
+       "id": 16,
+       "abbreviation": "MIL"
+      }
      },
      {
       "at_bats": 4,
@@ -13472,9 +13869,16 @@
       "gidp": 0,
       "left_on_base": 4,
       "errors": 0,
-      "player_id": 318,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 318,
+       "full_name": "Garrett Mitchell"
+      },
+      "team": {
+       "id": 16,
+       "abbreviation": "MIL"
+      }
      },
      {
       "at_bats": 4,
@@ -13494,9 +13898,16 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 297,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 297,
+       "full_name": "Sal Frelick"
+      },
+      "team": {
+       "id": 16,
+       "abbreviation": "MIL"
+      }
      },
      {
       "at_bats": 4,
@@ -13516,9 +13927,16 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 274,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 274,
+       "full_name": "Jackson Chourio"
+      },
+      "team": {
+       "id": 16,
+       "abbreviation": "MIL"
+      }
      },
      {
       "at_bats": 4,
@@ -13538,9 +13956,16 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 1,
-      "player_id": 4838818,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 4838818,
+       "full_name": "Cooper Pratt"
+      },
+      "team": {
+       "id": 16,
+       "abbreviation": "MIL"
+      }
      },
      {
       "at_bats": null,
@@ -13560,9 +13985,16 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 312,
       "doubles": null,
-      "triples": null
+      "triples": null,
+      "player": {
+       "id": 312,
+       "full_name": "JoJo Romero"
+      },
+      "team": {
+       "id": 16,
+       "abbreviation": "MIL"
+      }
      },
      {
       "at_bats": null,
@@ -13582,9 +14014,16 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 63,
       "doubles": null,
-      "triples": null
+      "triples": null,
+      "player": {
+       "id": 63,
+       "full_name": "Antonio Senzatela"
+      },
+      "team": {
+       "id": 16,
+       "abbreviation": "MIL"
+      }
      },
      {
       "at_bats": null,
@@ -13604,9 +14043,16 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 1056,
       "doubles": null,
-      "triples": null
+      "triples": null,
+      "player": {
+       "id": 1056,
+       "full_name": "DL Hall"
+      },
+      "team": {
+       "id": 16,
+       "abbreviation": "MIL"
+      }
      },
      {
       "at_bats": 1,
@@ -13626,9 +14072,16 @@
       "gidp": 0,
       "left_on_base": 0,
       "errors": 0,
-      "player_id": 448,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 448,
+       "full_name": "David Hamilton"
+      },
+      "team": {
+       "id": 16,
+       "abbreviation": "MIL"
+      }
      },
      {
       "at_bats": null,
@@ -13648,9 +14101,16 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 135,
       "doubles": null,
-      "triples": null
+      "triples": null,
+      "player": {
+       "id": 135,
+       "full_name": "Abner Uribe"
+      },
+      "team": {
+       "id": 16,
+       "abbreviation": "MIL"
+      }
      },
      {
       "at_bats": 0,
@@ -13670,9 +14130,16 @@
       "gidp": null,
       "left_on_base": null,
       "errors": null,
-      "player_id": 4838816,
       "doubles": null,
-      "triples": null
+      "triples": null,
+      "player": {
+       "id": 4838816,
+       "full_name": "Luis Lara"
+      },
+      "team": {
+       "id": 16,
+       "abbreviation": "MIL"
+      }
      }
     ],
     "home": [
@@ -13694,9 +14161,16 @@
       "gidp": 0,
       "left_on_base": 0,
       "errors": 0,
-      "player_id": 412,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 412,
+       "full_name": "Manny Machado"
+      },
+      "team": {
+       "id": 23,
+       "abbreviation": "SD"
+      }
      },
      {
       "at_bats": 3,
@@ -13716,9 +14190,16 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 0,
-      "player_id": 388,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 388,
+       "full_name": "Xander Bogaerts"
+      },
+      "team": {
+       "id": 23,
+       "abbreviation": "SD"
+      }
      },
      {
       "at_bats": 4,
@@ -13738,9 +14219,16 @@
       "gidp": 0,
       "left_on_base": 2,
       "errors": 0,
-      "player_id": 1471,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 1471,
+       "full_name": "Ty France"
+      },
+      "team": {
+       "id": 23,
+       "abbreviation": "SD"
+      }
      },
      {
       "at_bats": 4,
@@ -13760,9 +14248,16 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 0,
-      "player_id": 492,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 492,
+       "full_name": "Fernando Tatis Jr."
+      },
+      "team": {
+       "id": 23,
+       "abbreviation": "SD"
+      }
      },
      {
       "at_bats": null,
@@ -13782,9 +14277,16 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 5161,
       "doubles": null,
-      "triples": null
+      "triples": null,
+      "player": {
+       "id": 5161,
+       "full_name": "Nick Pivetta"
+      },
+      "team": {
+       "id": 23,
+       "abbreviation": "SD"
+      }
      },
      {
       "at_bats": 2,
@@ -13804,9 +14306,16 @@
       "gidp": 0,
       "left_on_base": 0,
       "errors": 0,
-      "player_id": 403,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 403,
+       "full_name": "Jake Cronenworth"
+      },
+      "team": {
+       "id": 23,
+       "abbreviation": "SD"
+      }
      },
      {
       "at_bats": 3,
@@ -13826,9 +14335,16 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 0,
-      "player_id": 610,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 610,
+       "full_name": "Samad Taylor"
+      },
+      "team": {
+       "id": 23,
+       "abbreviation": "SD"
+      }
      },
      {
       "at_bats": 4,
@@ -13848,9 +14364,16 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 0,
-      "player_id": 480,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 480,
+       "full_name": "Jackson Merrill"
+      },
+      "team": {
+       "id": 23,
+       "abbreviation": "SD"
+      }
      },
      {
       "at_bats": 2,
@@ -13870,9 +14393,16 @@
       "gidp": 0,
       "left_on_base": 1,
       "errors": 0,
-      "player_id": 254,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 254,
+       "full_name": "Dustin Harris"
+      },
+      "team": {
+       "id": 23,
+       "abbreviation": "SD"
+      }
      },
      {
       "at_bats": 3,
@@ -13892,9 +14422,16 @@
       "gidp": 0,
       "left_on_base": 0,
       "errors": 0,
-      "player_id": 4838709,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 4838709,
+       "full_name": "Ethan Salas"
+      },
+      "team": {
+       "id": 23,
+       "abbreviation": "SD"
+      }
      },
      {
       "at_bats": null,
@@ -13914,9 +14451,16 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 215,
       "doubles": null,
-      "triples": null
+      "triples": null,
+      "player": {
+       "id": 215,
+       "full_name": "Jason Adam"
+      },
+      "team": {
+       "id": 23,
+       "abbreviation": "SD"
+      }
      },
      {
       "at_bats": null,
@@ -13936,9 +14480,16 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 303,
       "doubles": null,
-      "triples": null
+      "triples": null,
+      "player": {
+       "id": 303,
+       "full_name": "Yuki Matsui"
+      },
+      "team": {
+       "id": 23,
+       "abbreviation": "SD"
+      }
      },
      {
       "at_bats": null,
@@ -13958,9 +14509,16 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 1441293,
       "doubles": null,
-      "triples": null
+      "triples": null,
+      "player": {
+       "id": 1441293,
+       "full_name": "Bradgley Rodriguez"
+      },
+      "team": {
+       "id": 23,
+       "abbreviation": "SD"
+      }
      },
      {
       "at_bats": 1,
@@ -13980,9 +14538,16 @@
       "gidp": 0,
       "left_on_base": 0,
       "errors": 0,
-      "player_id": 590,
       "doubles": 0,
-      "triples": 0
+      "triples": 0,
+      "player": {
+       "id": 590,
+       "full_name": "Miguel Andujar"
+      },
+      "team": {
+       "id": 23,
+       "abbreviation": "SD"
+      }
      },
      {
       "at_bats": 0,
@@ -14002,9 +14567,16 @@
       "gidp": null,
       "left_on_base": null,
       "errors": null,
-      "player_id": 4839022,
       "doubles": null,
-      "triples": null
+      "triples": null,
+      "player": {
+       "id": 4839022,
+       "full_name": "Jase Bowen"
+      },
+      "team": {
+       "id": 23,
+       "abbreviation": "SD"
+      }
      },
      {
       "at_bats": null,
@@ -14024,9 +14596,16 @@
       "gidp": null,
       "left_on_base": null,
       "errors": 0,
-      "player_id": 291,
       "doubles": null,
-      "triples": null
+      "triples": null,
+      "player": {
+       "id": 291,
+       "full_name": "Michael King"
+      },
+      "team": {
+       "id": 23,
+       "abbreviation": "SD"
+      }
      }
     ]
    },
