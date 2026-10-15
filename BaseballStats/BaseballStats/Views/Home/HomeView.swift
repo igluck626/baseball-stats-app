@@ -336,11 +336,18 @@ struct HomeView: View {
         }
     }
 
+    /// Home's measured content width, which decides one column or two.
+    @State private var homeWidth: CGFloat = 0
+
     @ViewBuilder
     private func loadedContent(entry: MLBTeamCatalog.Entry) -> some View {
         let tint = TeamColors.color(for: entry.lahmanCode) ?? .accentColor
+        let twoColumns = HomeColumns.twoColumns(width: homeWidth)
+        let columns = HomeColumns.layout(twoColumns: twoColumns)
         ScrollView {
-            VStack(spacing: 14) {
+            // One column on a phone, in the order written; two on a wide window,
+            // News and Leaders on the right (`HomeColumns`).
+            columns {
                 TeamHeroCard(
                     entry:        entry,
                     record:       vm.teamRecord,
@@ -368,6 +375,7 @@ struct HomeView: View {
                         onTapArticle:   { article in selectedArticle = article },
                         onSeeAll:       { scope in pushNewsList(scope: scope) },
                     )
+                    .homeColumn(.right)
                 }
 
                 TeamLeadersSection(
@@ -379,6 +387,7 @@ struct HomeView: View {
                         stack.path.append(player)
                     },
                 )
+                .homeColumn(.right)
 
                 // Roster / Injury / History — three nav entries grouped into
                 // one card. The injury row is omitted when there are none.
@@ -404,8 +413,9 @@ struct HomeView: View {
             }
             .padding(.top, 12)
             .padding(.bottom, 16)
-            .readableContentWidth()
+            .readableContentWidth(HomeColumns.contentCap(twoColumns: twoColumns))
         }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { homeWidth = $0 }
         .refreshable {
             if let bdlId = store.bdlTeamId {
                 await vm.load(bdlTeamId: bdlId)
