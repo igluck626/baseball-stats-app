@@ -19848,6 +19848,10 @@ def news(
     team_code, title, summary, url, published_at."""
     if not connection.db_available():
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    # ⚠️ THE ATHLETICS ARE STORED AS "OAK" (news_service._TEAM_SLUGS) and the
+    # app asks for "ATH", its catalog's code, so without the alias their news
+    # came back empty and Home hid the section. Same alias as /leaderboards.
+    team = data_service._resolve_team_alias(team)
     return {"articles": news_service.get_news(team=team, limit=limit)}
 
 
