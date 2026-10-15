@@ -32,6 +32,10 @@ FLOOR = 1901  # the app's historical floor; 19th-century code collisions are moo
 _SHORT_TO_BR = {
     "AZ": "ARI", "KC": "KCR", "SF": "SFG", "SD": "SDP", "TB": "TBR",
     "WSH": "WSN", "CWS": "CHW", "ATH": "OAK",
+    # balldontlie still abbreviates the Athletics "OAK", and the in-progress
+    # season's gamelog opponent column stores balldontlie's abbreviations, so a
+    # 2026 opponent filter built from "ATH" alone matched none of their games.
+    "OAK": "OAK",
 }
 
 # Nickname -> Lahman teamID seed (mirrors data_service._BDL_TEAM_NAME_TO_LAHMAN,

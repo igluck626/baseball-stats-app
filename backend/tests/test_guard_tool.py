@@ -297,6 +297,10 @@ for _city in ("New York", "Chicago", "Washington"):
 # (2) franchise span — the Dodgers fold Brooklyn (BRO) with both retro (LAN) and modern (LAD) codes.
 check("[opp: Dodgers franchise span folds BRO+LAD+LAN]",
       {"BRO", "LAD", "LAN"}.issubset(set(_resolve_opponent_codes("dodgers"))), True)
+# (2b) the in-progress season's opponent column holds balldontlie's abbreviations, and balldontlie
+# still calls the Athletics "OAK": a 2026-scoped filter on "ATH" alone matched none of their games.
+check("[opp: Athletics in 2026 resolve to ATH and OAK]",
+      {"ATH", "OAK"}.issubset(set(_resolve_opponent_codes("athletics", 2026, 2026))), True)
 # (3) 'lefties' is NOT a club -> None -> the base keeps the 'against' clause and the model sets
 # batter_side (never mis-read as an opponent).
 check("[opp: 'against lefties' is not an opponent -> None]",
