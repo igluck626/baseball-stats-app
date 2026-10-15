@@ -178,7 +178,8 @@ _CHADWICK_RETRO_CSV = os.path.join(
 # That asymmetry is currently correct, by accident rather than design, and this
 # comment exists so the next person does not have to rediscover it. The
 # `form_baseline:*` entry here is a count of games played BEFORE the recent
-# window — it changes only when the window boundary moves, i.e. once a day —
+# window, plus each team's last ten results there — it changes only when the
+# window boundary moves, i.e. once a day —
 # so the nightly clearing it would throw away a 30-request fetch to rebuild an
 # identical number. The payload cache SHOULD be cleared by the nightly, because
 # the standings rows underneath it really did just change.
@@ -8564,26 +8565,42 @@ def recent_team_form(season: int, today: Optional[datetime.date] = None) -> dict
     a day and keyed on the boundary date; everything INSIDE the window is
     re-fetched live. `games_played` is the sum, so it stays exact while the
     per-request cost is three calls rather than thirty.
+
+    ⚠️ L10 IS THE LAST TEN GAMES, NOT THE LAST TEN IN THE WINDOW. The baseline
+    also keeps each team's last ten results before the boundary, and L10 is the
+    tail of baseline-then-window. Once the regular season ends the window
+    empties out game by game: on 2026-10-15 it held one to three games per team,
+    so the Dodgers read 3-0 and the Rockies 1-1 where the truth was 8-2 and 2-8,
+    and the app shows this L10 in place of the standings table's own whenever
+    it counted any games.
+    The postseason is not counted (`_decided_regular_finals`), so through
+    October L10 stays the regular season's last ten.
     """
     today = today or datetime.datetime.utcnow().date()
     window = _form_window_dates(today)
     boundary = window[-1]                       # oldest date in the window
 
     # --- baseline: decided regular finals strictly before the window ---
+    # Games played per team, and each team's last ten results (oldest first),
+    # both counted before the boundary and so fixed once it has passed.
     def _build_baseline() -> dict:
         season_games = _bdl_games_page_all({"seasons[]": season})
-        out: dict[str, int] = {}
+        played: dict[int, int] = {}
+        tail: dict[int, list[bool]] = {}
         for r in _decided_regular_finals(season_games):
             if (r["date"] or "")[:10] >= boundary:
                 continue
-            out[r["home_id"]] = out.get(r["home_id"], 0) + 1
-            out[r["away_id"]] = out.get(r["away_id"], 0) + 1
-        return out
+            for team_id, won in ((r["home_id"], r["home_runs"] > r["away_runs"]),
+                                 (r["away_id"], r["away_runs"] > r["home_runs"])):
+                played[team_id] = played.get(team_id, 0) + 1
+                tail[team_id] = (tail.get(team_id, []) + [won])[-_LAST_N:]
+        return {"played": played, "tail": tail}
 
     # Keyed on the boundary date, so the day's roll invalidates it naturally
     # rather than on a timer that could straddle two boundaries.
     baseline = _cached(f"form_baseline:{season}:{boundary}",
                        _build_baseline, ttl=_TTL_HISTORICAL)
+    played, tail = baseline["played"], baseline["tail"]
 
     # --- the live window ---
     window_games = _bdl_games_page_all({"dates[]": window})
@@ -8608,9 +8625,9 @@ def recent_team_form(season: int, today: Optional[datetime.date] = None) -> dict
         per.setdefault(r["away_id"], []).append(r["away_runs"] > r["home_runs"])
 
     teams: dict[str, dict] = {}
-    for team_id in set(per) | set(baseline):
+    for team_id in set(per) | set(played):
         seq = per.get(team_id, [])
-        last = seq[-_LAST_N:]
+        last = (tail.get(team_id, []) + seq)[-_LAST_N:]
         wins = sum(1 for w in last if w)
         # JSON object keys are strings; the value is a BDL team id and every
         # consumer already holds one, so `int(key)` is the round trip.
@@ -8618,7 +8635,7 @@ def recent_team_form(season: int, today: Optional[datetime.date] = None) -> dict
             # The count the absorption compares against the standings row's
             # `games_played`. Their difference is how many games the base is
             # missing — a count, not an inference from a clock.
-            "games_played":   baseline.get(team_id, 0) + len(seq),
+            "games_played":   played.get(team_id, 0) + len(seq),
             "last_ten_w":     wins,
             "last_ten_l":     len(last) - wins,
             # ⚠️ THE DENOMINATOR, because it is not always ten. Early in a

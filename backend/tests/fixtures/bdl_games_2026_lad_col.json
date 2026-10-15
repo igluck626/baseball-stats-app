@@ -1,0 +1,8475 @@
+{
+"_source": "balldontlie GET /mlb/v1/games?seasons[]=2026&team_ids[]=14 and team_ids[]=9, all pages, fetched 2026-10-15 ~19:40Z. Trimmed by dropping fields only; nesting kept.",
+"data": [
+{
+"id": 5043941,
+"date": "2026-02-20T20:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 1,
+"abbreviation": "ARI"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5043958,
+"date": "2026-02-21T20:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 13,
+"abbreviation": "LAA"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 15
+}
+},
+{
+"id": 5043955,
+"date": "2026-02-21T20:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 1,
+"abbreviation": "ARI"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 11
+}
+},
+{
+"id": 5043971,
+"date": "2026-02-22T20:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 28,
+"abbreviation": "TEX"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 9
+},
+"away_team_data": {
+"runs": 5
+}
+},
+{
+"id": 5043974,
+"date": "2026-02-22T20:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 23,
+"abbreviation": "SD"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 1
+},
+"away_team_data": {
+"runs": 5
+}
+},
+{
+"id": 5043983,
+"date": "2026-02-23T20:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 25,
+"abbreviation": "SEA"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 0
+}
+},
+{
+"id": 5043985,
+"date": "2026-02-23T20:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 6,
+"abbreviation": "CHW"
+},
+"home_team_data": {
+"runs": 5
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 5043999,
+"date": "2026-02-24T20:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 8,
+"abbreviation": "CLE"
+},
+"home_team_data": {
+"runs": 11
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5044001,
+"date": "2026-02-24T20:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 13,
+"abbreviation": "LAA"
+},
+"home_team_data": {
+"runs": 7
+},
+"away_team_data": {
+"runs": 5
+}
+},
+{
+"id": 5044012,
+"date": "2026-02-25T20:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 5,
+"abbreviation": "CHC"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 7
+},
+"away_team_data": {
+"runs": 14
+}
+},
+{
+"id": 5044016,
+"date": "2026-02-25T20:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 1,
+"abbreviation": "ARI"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 7
+},
+"away_team_data": {
+"runs": 10
+}
+},
+{
+"id": 5044030,
+"date": "2026-02-26T20:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 6,
+"abbreviation": "CHW"
+},
+"home_team_data": {
+"runs": 7
+},
+"away_team_data": {
+"runs": 6
+}
+},
+{
+"id": 5044031,
+"date": "2026-02-26T20:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 24,
+"abbreviation": "SF"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 11
+}
+},
+{
+"id": 5044047,
+"date": "2026-02-27T20:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 24,
+"abbreviation": "SF"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 12
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 5044048,
+"date": "2026-02-27T20:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 23,
+"abbreviation": "SD"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5044062,
+"date": "2026-02-28T20:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 5,
+"abbreviation": "CHC"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 6
+}
+},
+{
+"id": 5044063,
+"date": "2026-02-28T20:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 28,
+"abbreviation": "TEX"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 7
+},
+"away_team_data": {
+"runs": 6
+}
+},
+{
+"id": 5044064,
+"date": "2026-02-28T20:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 12,
+"abbreviation": "KC"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 16
+}
+},
+{
+"id": 5044079,
+"date": "2026-03-01T20:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 13,
+"abbreviation": "LAA"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5044077,
+"date": "2026-03-01T20:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 8,
+"abbreviation": "CLE"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 8
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5044092,
+"date": "2026-03-02T20:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 5
+},
+"away_team_data": {
+"runs": 7
+}
+},
+{
+"id": 5044098,
+"date": "2026-03-03T20:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 8,
+"abbreviation": "CLE"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 5
+}
+},
+{
+"id": 5044113,
+"date": "2026-03-05T20:00:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 7,
+"abbreviation": "CIN"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 14
+},
+"away_team_data": {
+"runs": 13
+}
+},
+{
+"id": 5044114,
+"date": "2026-03-05T20:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 16,
+"abbreviation": "MIL"
+},
+"home_team_data": {
+"runs": 8
+},
+"away_team_data": {
+"runs": 10
+}
+},
+{
+"id": 5044124,
+"date": "2026-03-06T20:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 20,
+"abbreviation": "OAK"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 11
+}
+},
+{
+"id": 5044133,
+"date": "2026-03-07T01:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 12,
+"abbreviation": "KC"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 0
+}
+},
+{
+"id": 5044151,
+"date": "2026-03-08T01:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 6
+}
+},
+{
+"id": 5044161,
+"date": "2026-03-08T20:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 20,
+"abbreviation": "OAK"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 11
+},
+"away_team_data": {
+"runs": 7
+}
+},
+{
+"id": 5044166,
+"date": "2026-03-08T20:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 8,
+"abbreviation": "CLE"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 5044174,
+"date": "2026-03-09T20:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 6,
+"abbreviation": "CHW"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 12
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5044179,
+"date": "2026-03-09T20:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 16,
+"abbreviation": "MIL"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 5044192,
+"date": "2026-03-10T20:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 1,
+"abbreviation": "ARI"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 1
+}
+},
+{
+"id": 5044194,
+"date": "2026-03-10T20:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 7,
+"abbreviation": "CIN"
+},
+"home_team_data": {
+"runs": 1
+},
+"away_team_data": {
+"runs": 8
+}
+},
+{
+"id": 5044207,
+"date": "2026-03-11T20:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 25,
+"abbreviation": "SEA"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 7
+},
+"away_team_data": {
+"runs": 11
+}
+},
+{
+"id": 5044215,
+"date": "2026-03-12T20:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 1,
+"abbreviation": "ARI"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 13
+}
+},
+{
+"id": 5044219,
+"date": "2026-03-13T01:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 7,
+"abbreviation": "CIN"
+},
+"home_team_data": {
+"runs": 9
+},
+"away_team_data": {
+"runs": 5
+}
+},
+{
+"id": 5044228,
+"date": "2026-03-13T20:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 28,
+"abbreviation": "TEX"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 9
+}
+},
+{
+"id": 5044238,
+"date": "2026-03-14T01:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 25,
+"abbreviation": "SEA"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 7
+},
+"away_team_data": {
+"runs": 10
+}
+},
+{
+"id": 5044246,
+"date": "2026-03-14T20:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 6,
+"abbreviation": "CHW"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 7
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5044250,
+"date": "2026-03-14T20:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 5,
+"abbreviation": "CHC"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5044252,
+"date": "2026-03-14T20:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 16,
+"abbreviation": "MIL"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 8
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 5044263,
+"date": "2026-03-15T20:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 5,
+"abbreviation": "CHC"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 8
+},
+"away_team_data": {
+"runs": 14
+}
+},
+{
+"id": 5044266,
+"date": "2026-03-15T20:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 28,
+"abbreviation": "TEX"
+},
+"home_team_data": {
+"runs": 5
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5044269,
+"date": "2026-03-15T20:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 13,
+"abbreviation": "LAA"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 5
+}
+},
+{
+"id": 5044277,
+"date": "2026-03-16T20:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 16,
+"abbreviation": "MIL"
+},
+"home_team_data": {
+"runs": 9
+},
+"away_team_data": {
+"runs": 24
+}
+},
+{
+"id": 5044292,
+"date": "2026-03-17T20:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 25,
+"abbreviation": "SEA"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 10
+}
+},
+{
+"id": 5044296,
+"date": "2026-03-18T01:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 12,
+"abbreviation": "KC"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 10
+}
+},
+{
+"id": 5044302,
+"date": "2026-03-18T20:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 24,
+"abbreviation": "SF"
+},
+"home_team_data": {
+"runs": 5
+},
+"away_team_data": {
+"runs": 1
+}
+},
+{
+"id": 5044301,
+"date": "2026-03-18T20:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 7,
+"abbreviation": "CIN"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 8
+}
+},
+{
+"id": 5044315,
+"date": "2026-03-20T01:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 24,
+"abbreviation": "SF"
+},
+"home_team_data": {
+"runs": 11
+},
+"away_team_data": {
+"runs": 14
+}
+},
+{
+"id": 5044339,
+"date": "2026-03-21T01:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 23,
+"abbreviation": "SD"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5044340,
+"date": "2026-03-21T01:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 23,
+"abbreviation": "SD"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 9
+}
+},
+{
+"id": 5044350,
+"date": "2026-03-21T18:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 20,
+"abbreviation": "OAK"
+},
+"home_team_data": {
+"runs": 5
+},
+"away_team_data": {
+"runs": 5
+}
+},
+{
+"id": 5044349,
+"date": "2026-03-21T19:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 12,
+"abbreviation": "KC"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 5
+}
+},
+{
+"id": 5044366,
+"date": "2026-03-22T20:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 20,
+"abbreviation": "OAK"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 5
+}
+},
+{
+"id": 5044368,
+"date": "2026-03-23T01:07:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 13,
+"abbreviation": "LAA"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 5
+},
+"away_team_data": {
+"runs": 13
+}
+},
+{
+"id": 5044379,
+"date": "2026-03-24T01:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 13,
+"abbreviation": "LAA"
+},
+"home_team_data": {
+"runs": 7
+},
+"away_team_data": {
+"runs": 7
+}
+},
+{
+"id": 5044378,
+"date": "2026-03-24T01:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 10,
+"abbreviation": "DET"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 5
+}
+},
+{
+"id": 5044385,
+"date": "2026-03-24T19:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 10,
+"abbreviation": "DET"
+},
+"home_team_data": {
+"runs": 8
+},
+"away_team_data": {
+"runs": 11
+}
+},
+{
+"id": 5044388,
+"date": "2026-03-25T00:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "spring_training",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 13,
+"abbreviation": "LAA"
+},
+"home_team_data": {
+"runs": 0
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5057781,
+"date": "2026-03-27T00:30:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 1,
+"abbreviation": "ARI"
+},
+"home_team_data": {
+"runs": 8
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5057785,
+"date": "2026-03-27T23:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 15,
+"abbreviation": "MIA"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 1
+}
+},
+{
+"id": 5057790,
+"date": "2026-03-28T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 1,
+"abbreviation": "ARI"
+},
+"home_team_data": {
+"runs": 5
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 5057797,
+"date": "2026-03-28T20:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 15,
+"abbreviation": "MIA"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5057804,
+"date": "2026-03-29T01:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 1,
+"abbreviation": "ARI"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5057811,
+"date": "2026-03-29T17:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 15,
+"abbreviation": "MIA"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5057823,
+"date": "2026-03-30T23:07:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 29,
+"abbreviation": "TOR"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 5
+},
+"away_team_data": {
+"runs": 14
+}
+},
+{
+"id": 5057831,
+"date": "2026-03-31T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 8,
+"abbreviation": "CLE"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 5057837,
+"date": "2026-03-31T23:07:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 29,
+"abbreviation": "TOR"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 5
+},
+"away_team_data": {
+"runs": 1
+}
+},
+{
+"id": 5057846,
+"date": "2026-04-01T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 8,
+"abbreviation": "CLE"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 1
+}
+},
+{
+"id": 5057851,
+"date": "2026-04-01T17:07:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 29,
+"abbreviation": "TOR"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 1
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5057861,
+"date": "2026-04-02T00:20:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 8,
+"abbreviation": "CLE"
+},
+"home_team_data": {
+"runs": 1
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 5057866,
+"date": "2026-04-03T17:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 30,
+"abbreviation": "WSH"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 13
+}
+},
+{
+"id": 5057873,
+"date": "2026-04-03T20:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 21,
+"abbreviation": "PHI"
+},
+"home_team_data": {
+"runs": 1
+},
+"away_team_data": {
+"runs": 10
+}
+},
+{
+"id": 5057883,
+"date": "2026-04-04T20:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 30,
+"abbreviation": "WSH"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 5
+},
+"away_team_data": {
+"runs": 10
+}
+},
+{
+"id": 5057892,
+"date": "2026-04-05T00:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 21,
+"abbreviation": "PHI"
+},
+"home_team_data": {
+"runs": 1
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5057896,
+"date": "2026-04-05T17:35:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 30,
+"abbreviation": "WSH"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 8
+}
+},
+{
+"id": 5057904,
+"date": "2026-04-05T19:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 21,
+"abbreviation": "PHI"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 1
+}
+},
+{
+"id": 5057916,
+"date": "2026-04-06T23:07:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 29,
+"abbreviation": "TOR"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 14
+}
+},
+{
+"id": 5057920,
+"date": "2026-04-07T00:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 11,
+"abbreviation": "HOU"
+},
+"home_team_data": {
+"runs": 9
+},
+"away_team_data": {
+"runs": 7
+}
+},
+{
+"id": 5057930,
+"date": "2026-04-07T23:07:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 29,
+"abbreviation": "TOR"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 1
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 5057935,
+"date": "2026-04-08T00:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 11,
+"abbreviation": "HOU"
+},
+"home_team_data": {
+"runs": 5
+},
+"away_team_data": {
+"runs": 1
+}
+},
+{
+"id": 5057943,
+"date": "2026-04-08T19:07:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 29,
+"abbreviation": "TOR"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5057944,
+"date": "2026-04-08T19:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 11,
+"abbreviation": "HOU"
+},
+"home_team_data": {
+"runs": 9
+},
+"away_team_data": {
+"runs": 1
+}
+},
+{
+"id": 5057958,
+"date": "2026-04-10T01:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 23,
+"abbreviation": "SD"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 7
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5057971,
+"date": "2026-04-11T01:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 23,
+"abbreviation": "SD"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 5
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5057973,
+"date": "2026-04-11T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 28,
+"abbreviation": "TEX"
+},
+"home_team_data": {
+"runs": 8
+},
+"away_team_data": {
+"runs": 7
+}
+},
+{
+"id": 5057986,
+"date": "2026-04-12T00:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 23,
+"abbreviation": "SD"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 9
+},
+"away_team_data": {
+"runs": 5
+}
+},
+{
+"id": 5057987,
+"date": "2026-04-12T01:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 28,
+"abbreviation": "TEX"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5058002,
+"date": "2026-04-12T20:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 28,
+"abbreviation": "TEX"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 5
+}
+},
+{
+"id": 5058000,
+"date": "2026-04-12T20:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 23,
+"abbreviation": "SD"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 7
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5058013,
+"date": "2026-04-14T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 18,
+"abbreviation": "NYM"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 0
+}
+},
+{
+"id": 5058025,
+"date": "2026-04-15T00:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 11,
+"abbreviation": "HOU"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 7
+},
+"away_team_data": {
+"runs": 6
+}
+},
+{
+"id": 5058028,
+"date": "2026-04-15T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 18,
+"abbreviation": "NYM"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 1
+}
+},
+{
+"id": 5058040,
+"date": "2026-04-16T00:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 11,
+"abbreviation": "HOU"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 1
+}
+},
+{
+"id": 5058043,
+"date": "2026-04-16T02:00:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 18,
+"abbreviation": "NYM"
+},
+"home_team_data": {
+"runs": 8
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5058052,
+"date": "2026-04-17T00:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 11,
+"abbreviation": "HOU"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5058064,
+"date": "2026-04-18T00:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 1
+},
+"away_team_data": {
+"runs": 7
+}
+},
+{
+"id": 5058081,
+"date": "2026-04-19T00:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5058093,
+"date": "2026-04-19T19:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 9
+},
+"away_team_data": {
+"runs": 6
+}
+},
+{
+"id": 5058106,
+"date": "2026-04-21T00:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 12
+}
+},
+{
+"id": 5058119,
+"date": "2026-04-22T00:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 23,
+"abbreviation": "SD"
+},
+"home_team_data": {
+"runs": 0
+},
+"away_team_data": {
+"runs": 1
+}
+},
+{
+"id": 5058123,
+"date": "2026-04-22T01:45:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 24,
+"abbreviation": "SF"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 1
+}
+},
+{
+"id": 5058136,
+"date": "2026-04-23T00:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 23,
+"abbreviation": "SD"
+},
+"home_team_data": {
+"runs": 8
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5058138,
+"date": "2026-04-23T01:45:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 24,
+"abbreviation": "SF"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 0
+}
+},
+{
+"id": 5058142,
+"date": "2026-04-23T19:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 23,
+"abbreviation": "SD"
+},
+"home_team_data": {
+"runs": 8
+},
+"away_team_data": {
+"runs": 10
+}
+},
+{
+"id": 5058144,
+"date": "2026-04-23T19:45:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 24,
+"abbreviation": "SF"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 0
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5058151,
+"date": "2026-04-24T23:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 18,
+"abbreviation": "NYM"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 5058160,
+"date": "2026-04-25T02:15:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 5,
+"abbreviation": "CHC"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 6
+}
+},
+{
+"id": 5058166,
+"date": "2026-04-25T20:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_POSTPONED",
+"home_team": {
+"id": 18,
+"abbreviation": "NYM"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 0
+},
+"away_team_data": {
+"runs": 0
+}
+},
+{
+"id": 5058176,
+"date": "2026-04-25T23:15:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 5,
+"abbreviation": "CHC"
+},
+"home_team_data": {
+"runs": 12
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 5058180,
+"date": "2026-04-26T17:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 18,
+"abbreviation": "NYM"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 1
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5058190,
+"date": "2026-04-26T20:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 5,
+"abbreviation": "CHC"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 0
+}
+},
+{
+"id": 6978332,
+"date": "2026-04-26T20:55:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 18,
+"abbreviation": "NYM"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 0
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5058199,
+"date": "2026-04-28T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 15,
+"abbreviation": "MIA"
+},
+"home_team_data": {
+"runs": 5
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 5058202,
+"date": "2026-04-28T22:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 7,
+"abbreviation": "CIN"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 7
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5058214,
+"date": "2026-04-29T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 15,
+"abbreviation": "MIA"
+},
+"home_team_data": {
+"runs": 1
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5058220,
+"date": "2026-04-29T19:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 15,
+"abbreviation": "MIA"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5058223,
+"date": "2026-04-29T22:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 7,
+"abbreviation": "CIN"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 13
+}
+},
+{
+"id": 5058233,
+"date": "2026-04-30T16:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 7,
+"abbreviation": "CIN"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 5058248,
+"date": "2026-05-02T00:15:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 26,
+"abbreviation": "STL"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 7
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5058249,
+"date": "2026-05-02T00:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 2,
+"abbreviation": "ATL"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 8
+}
+},
+{
+"id": 5058264,
+"date": "2026-05-02T23:15:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 26,
+"abbreviation": "STL"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5058265,
+"date": "2026-05-03T00:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 2,
+"abbreviation": "ATL"
+},
+"home_team_data": {
+"runs": 1
+},
+"away_team_data": {
+"runs": 9
+}
+},
+{
+"id": 5058276,
+"date": "2026-05-03T18:15:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 26,
+"abbreviation": "STL"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 1
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 5058278,
+"date": "2026-05-03T19:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 2,
+"abbreviation": "ATL"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 11
+}
+},
+{
+"id": 5058292,
+"date": "2026-05-04T21:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 18,
+"abbreviation": "NYM"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 5058291,
+"date": "2026-05-05T00:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 11,
+"abbreviation": "HOU"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 8
+}
+},
+{
+"id": 5058305,
+"date": "2026-05-06T00:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 11,
+"abbreviation": "HOU"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 1
+}
+},
+{
+"id": 5058306,
+"date": "2026-05-06T00:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_POSTPONED",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 18,
+"abbreviation": "NYM"
+},
+"home_team_data": {
+"runs": 0
+},
+"away_team_data": {
+"runs": 0
+}
+},
+{
+"id": 5058313,
+"date": "2026-05-06T18:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 11,
+"abbreviation": "HOU"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 12
+}
+},
+{
+"id": 5058314,
+"date": "2026-05-07T01:20:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 18,
+"abbreviation": "NYM"
+},
+"home_team_data": {
+"runs": 5
+},
+"away_team_data": {
+"runs": 10
+}
+},
+{
+"id": 7612500,
+"date": "2026-05-07T19:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 18,
+"abbreviation": "NYM"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5058335,
+"date": "2026-05-08T22:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 21,
+"abbreviation": "PHI"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 7
+},
+"away_team_data": {
+"runs": 9
+}
+},
+{
+"id": 5058348,
+"date": "2026-05-09T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 2,
+"abbreviation": "ATL"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 1
+}
+},
+{
+"id": 5058355,
+"date": "2026-05-09T22:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 21,
+"abbreviation": "PHI"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 9
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5058364,
+"date": "2026-05-10T01:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 2,
+"abbreviation": "ATL"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 7
+}
+},
+{
+"id": 5058367,
+"date": "2026-05-10T17:35:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 21,
+"abbreviation": "PHI"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 0
+}
+},
+{
+"id": 5058376,
+"date": "2026-05-10T20:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 2,
+"abbreviation": "ATL"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 7
+}
+},
+{
+"id": 5058385,
+"date": "2026-05-12T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 24,
+"abbreviation": "SF"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 9
+}
+},
+{
+"id": 5058388,
+"date": "2026-05-12T22:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 22,
+"abbreviation": "PIT"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 1
+}
+},
+{
+"id": 5058400,
+"date": "2026-05-13T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 24,
+"abbreviation": "SF"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 6
+}
+},
+{
+"id": 5058403,
+"date": "2026-05-13T22:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 22,
+"abbreviation": "PIT"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 10
+}
+},
+{
+"id": 5058415,
+"date": "2026-05-14T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 24,
+"abbreviation": "SF"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 0
+}
+},
+{
+"id": 5058416,
+"date": "2026-05-14T16:35:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 22,
+"abbreviation": "PIT"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 7
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5058426,
+"date": "2026-05-15T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 24,
+"abbreviation": "SF"
+},
+"home_team_data": {
+"runs": 5
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5058438,
+"date": "2026-05-16T00:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 1,
+"abbreviation": "ARI"
+},
+"home_team_data": {
+"runs": 1
+},
+"away_team_data": {
+"runs": 9
+}
+},
+{
+"id": 5058439,
+"date": "2026-05-16T01:38:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 13,
+"abbreviation": "LAA"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 0
+},
+"away_team_data": {
+"runs": 6
+}
+},
+{
+"id": 5058444,
+"date": "2026-05-16T19:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 1,
+"abbreviation": "ARI"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5058455,
+"date": "2026-05-17T01:38:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 13,
+"abbreviation": "LAA"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 15
+}
+},
+{
+"id": 5868568,
+"date": "2026-05-17T19:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 1,
+"abbreviation": "ARI"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 8
+}
+},
+{
+"id": 5868570,
+"date": "2026-05-17T20:07:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 13,
+"abbreviation": "LAA"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 1
+},
+"away_team_data": {
+"runs": 10
+}
+},
+{
+"id": 5058481,
+"date": "2026-05-19T00:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 28,
+"abbreviation": "TEX"
+},
+"home_team_data": {
+"runs": 7
+},
+"away_team_data": {
+"runs": 6
+}
+},
+{
+"id": 5058484,
+"date": "2026-05-19T01:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 23,
+"abbreviation": "SD"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 1
+},
+"away_team_data": {
+"runs": 0
+}
+},
+{
+"id": 5058496,
+"date": "2026-05-20T00:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 28,
+"abbreviation": "TEX"
+},
+"home_team_data": {
+"runs": 0
+},
+"away_team_data": {
+"runs": 10
+}
+},
+{
+"id": 5058499,
+"date": "2026-05-20T01:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 23,
+"abbreviation": "SD"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 5
+}
+},
+{
+"id": 5058504,
+"date": "2026-05-20T19:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 28,
+"abbreviation": "TEX"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 5
+}
+},
+{
+"id": 5058514,
+"date": "2026-05-21T00:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 23,
+"abbreviation": "SD"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 0
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 5058522,
+"date": "2026-05-22T01:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 1,
+"abbreviation": "ARI"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 1
+}
+},
+{
+"id": 5058532,
+"date": "2026-05-22T23:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 16,
+"abbreviation": "MIL"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 5
+},
+"away_team_data": {
+"runs": 1
+}
+},
+{
+"id": 5058536,
+"date": "2026-05-23T01:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 1,
+"abbreviation": "ARI"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5058549,
+"date": "2026-05-23T23:15:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 16,
+"abbreviation": "MIL"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 11
+}
+},
+{
+"id": 5058552,
+"date": "2026-05-24T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 1,
+"abbreviation": "ARI"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 5
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 5058560,
+"date": "2026-05-24T18:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 16,
+"abbreviation": "MIL"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 1
+},
+"away_team_data": {
+"runs": 5
+}
+},
+{
+"id": 5058566,
+"date": "2026-05-24T20:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 1,
+"abbreviation": "ARI"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 9
+},
+"away_team_data": {
+"runs": 1
+}
+},
+{
+"id": 5058579,
+"date": "2026-05-26T01:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 5
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5058595,
+"date": "2026-05-27T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 15
+},
+"away_team_data": {
+"runs": 6
+}
+},
+{
+"id": 5058610,
+"date": "2026-05-28T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 1
+}
+},
+{
+"id": 5058628,
+"date": "2026-05-30T00:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 24,
+"abbreviation": "SF"
+},
+"home_team_data": {
+"runs": 8
+},
+"away_team_data": {
+"runs": 6
+}
+},
+{
+"id": 5058631,
+"date": "2026-05-30T02:15:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 21,
+"abbreviation": "PHI"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5058643,
+"date": "2026-05-31T01:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 24,
+"abbreviation": "SF"
+},
+"home_team_data": {
+"runs": 8
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5058646,
+"date": "2026-05-31T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 21,
+"abbreviation": "PHI"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 5058657,
+"date": "2026-05-31T19:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 24,
+"abbreviation": "SF"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 19
+}
+},
+{
+"id": 5058660,
+"date": "2026-05-31T20:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 21,
+"abbreviation": "PHI"
+},
+"home_team_data": {
+"runs": 9
+},
+"away_team_data": {
+"runs": 1
+}
+},
+{
+"id": 5058668,
+"date": "2026-06-02T01:38:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 13,
+"abbreviation": "LAA"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 8
+},
+"away_team_data": {
+"runs": 9
+}
+},
+{
+"id": 5058669,
+"date": "2026-06-02T01:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 1,
+"abbreviation": "ARI"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 1
+}
+},
+{
+"id": 5058683,
+"date": "2026-06-03T01:38:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 13,
+"abbreviation": "LAA"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 8
+}
+},
+{
+"id": 5058684,
+"date": "2026-06-03T01:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 1,
+"abbreviation": "ARI"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 5
+},
+"away_team_data": {
+"runs": 6
+}
+},
+{
+"id": 5058699,
+"date": "2026-06-04T01:38:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 13,
+"abbreviation": "LAA"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 11
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 5058700,
+"date": "2026-06-04T01:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 1,
+"abbreviation": "ARI"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 0
+},
+"away_team_data": {
+"runs": 7
+}
+},
+{
+"id": 5058709,
+"date": "2026-06-05T01:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 1,
+"abbreviation": "ARI"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5058721,
+"date": "2026-06-06T00:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 16,
+"abbreviation": "MIL"
+},
+"home_team_data": {
+"runs": 7
+},
+"away_team_data": {
+"runs": 9
+}
+},
+{
+"id": 5058724,
+"date": "2026-06-06T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 13,
+"abbreviation": "LAA"
+},
+"home_team_data": {
+"runs": 1
+},
+"away_team_data": {
+"runs": 0
+}
+},
+{
+"id": 5058737,
+"date": "2026-06-07T01:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 16,
+"abbreviation": "MIL"
+},
+"home_team_data": {
+"runs": 1
+},
+"away_team_data": {
+"runs": 7
+}
+},
+{
+"id": 5058738,
+"date": "2026-06-07T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 13,
+"abbreviation": "LAA"
+},
+"home_team_data": {
+"runs": 9
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5058750,
+"date": "2026-06-07T19:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 16,
+"abbreviation": "MIL"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 12
+}
+},
+{
+"id": 5058752,
+"date": "2026-06-07T20:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 13,
+"abbreviation": "LAA"
+},
+"home_team_data": {
+"runs": 5
+},
+"away_team_data": {
+"runs": 13
+}
+},
+{
+"id": 5058766,
+"date": "2026-06-09T22:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 22,
+"abbreviation": "PIT"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 12
+}
+},
+{
+"id": 5058773,
+"date": "2026-06-10T00:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 5,
+"abbreviation": "CHC"
+},
+"home_team_data": {
+"runs": 7
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5058784,
+"date": "2026-06-10T22:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 22,
+"abbreviation": "PIT"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 9
+},
+"away_team_data": {
+"runs": 8
+}
+},
+{
+"id": 5058790,
+"date": "2026-06-11T00:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 5,
+"abbreviation": "CHC"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5058797,
+"date": "2026-06-11T19:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 5,
+"abbreviation": "CHC"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 9
+}
+},
+{
+"id": 5058798,
+"date": "2026-06-11T22:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 22,
+"abbreviation": "PIT"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 8
+}
+},
+{
+"id": 5058809,
+"date": "2026-06-12T23:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 6,
+"abbreviation": "CHW"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 8
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5058814,
+"date": "2026-06-13T02:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 20,
+"abbreviation": "OAK"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 5058825,
+"date": "2026-06-13T20:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 6,
+"abbreviation": "CHW"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 1
+},
+"away_team_data": {
+"runs": 7
+}
+},
+{
+"id": 5058829,
+"date": "2026-06-14T02:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 20,
+"abbreviation": "OAK"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 7
+},
+"away_team_data": {
+"runs": 5
+}
+},
+{
+"id": 5058839,
+"date": "2026-06-14T18:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 6,
+"abbreviation": "CHW"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 5058842,
+"date": "2026-06-14T19:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 20,
+"abbreviation": "OAK"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 9
+},
+"away_team_data": {
+"runs": 23
+}
+},
+{
+"id": 5058850,
+"date": "2026-06-16T00:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 5,
+"abbreviation": "CHC"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 5
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 5058855,
+"date": "2026-06-16T02:00:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 27,
+"abbreviation": "TB"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5058864,
+"date": "2026-06-17T00:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 5,
+"abbreviation": "CHC"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 5
+}
+},
+{
+"id": 5058870,
+"date": "2026-06-17T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 27,
+"abbreviation": "TB"
+},
+"home_team_data": {
+"runs": 1
+},
+"away_team_data": {
+"runs": 0
+}
+},
+{
+"id": 5058876,
+"date": "2026-06-17T19:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 27,
+"abbreviation": "TB"
+},
+"home_team_data": {
+"runs": 5
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 5058882,
+"date": "2026-06-18T00:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 5,
+"abbreviation": "CHC"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 8
+},
+"away_team_data": {
+"runs": 6
+}
+},
+{
+"id": 5058903,
+"date": "2026-06-20T00:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 22,
+"abbreviation": "PIT"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5058906,
+"date": "2026-06-20T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 3,
+"abbreviation": "BAL"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 5
+}
+},
+{
+"id": 5058917,
+"date": "2026-06-21T01:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 22,
+"abbreviation": "PIT"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 1
+}
+},
+{
+"id": 5058919,
+"date": "2026-06-21T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 3,
+"abbreviation": "BAL"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5058931,
+"date": "2026-06-21T19:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 22,
+"abbreviation": "PIT"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 8
+}
+},
+{
+"id": 5058934,
+"date": "2026-06-21T20:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 3,
+"abbreviation": "BAL"
+},
+"home_team_data": {
+"runs": 1
+},
+"away_team_data": {
+"runs": 12
+}
+},
+{
+"id": 5058945,
+"date": "2026-06-22T23:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 17,
+"abbreviation": "MIN"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 1
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5058947,
+"date": "2026-06-23T00:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 4,
+"abbreviation": "BOS"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5058959,
+"date": "2026-06-23T23:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 17,
+"abbreviation": "MIN"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 12
+}
+},
+{
+"id": 5058961,
+"date": "2026-06-24T00:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 4,
+"abbreviation": "BOS"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 5
+}
+},
+{
+"id": 5058967,
+"date": "2026-06-24T19:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 4,
+"abbreviation": "BOS"
+},
+"home_team_data": {
+"runs": 8
+},
+"away_team_data": {
+"runs": 6
+}
+},
+{
+"id": 5058976,
+"date": "2026-06-24T23:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 17,
+"abbreviation": "MIN"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 5058999,
+"date": "2026-06-27T00:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 17,
+"abbreviation": "MIN"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 9
+},
+"away_team_data": {
+"runs": 8
+}
+},
+{
+"id": 5059002,
+"date": "2026-06-27T01:45:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 23,
+"abbreviation": "SD"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 7
+},
+"away_team_data": {
+"runs": 1
+}
+},
+{
+"id": 5059014,
+"date": "2026-06-27T23:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 17,
+"abbreviation": "MIN"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 5
+},
+"away_team_data": {
+"runs": 8
+}
+},
+{
+"id": 5059016,
+"date": "2026-06-28T00:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 23,
+"abbreviation": "SD"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 15
+}
+},
+{
+"id": 5059027,
+"date": "2026-06-28T18:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 17,
+"abbreviation": "MIN"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5059032,
+"date": "2026-06-28T20:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 23,
+"abbreviation": "SD"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 5059043,
+"date": "2026-06-30T00:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 15,
+"abbreviation": "MIA"
+},
+"home_team_data": {
+"runs": 7
+},
+"away_team_data": {
+"runs": 10
+}
+},
+{
+"id": 5059045,
+"date": "2026-06-30T01:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 20,
+"abbreviation": "OAK"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 9
+}
+},
+{
+"id": 5059058,
+"date": "2026-07-01T00:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 15,
+"abbreviation": "MIA"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 14
+}
+},
+{
+"id": 5059060,
+"date": "2026-07-01T01:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 20,
+"abbreviation": "OAK"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 9
+}
+},
+{
+"id": 5059073,
+"date": "2026-07-02T00:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 15,
+"abbreviation": "MIA"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5059074,
+"date": "2026-07-02T01:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 20,
+"abbreviation": "OAK"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 7
+},
+"away_team_data": {
+"runs": 1
+}
+},
+{
+"id": 5059078,
+"date": "2026-07-02T19:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 15,
+"abbreviation": "MIA"
+},
+"home_team_data": {
+"runs": 14
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 5059084,
+"date": "2026-07-03T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 23,
+"abbreviation": "SD"
+},
+"home_team_data": {
+"runs": 12
+},
+"away_team_data": {
+"runs": 7
+}
+},
+{
+"id": 5059092,
+"date": "2026-07-04T00:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 24,
+"abbreviation": "SF"
+},
+"home_team_data": {
+"runs": 15
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5059096,
+"date": "2026-07-04T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 23,
+"abbreviation": "SD"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5059108,
+"date": "2026-07-05T00:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 24,
+"abbreviation": "SF"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 6
+}
+},
+{
+"id": 5059112,
+"date": "2026-07-05T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 23,
+"abbreviation": "SD"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 0
+}
+},
+{
+"id": 9543881,
+"date": "2026-07-05T20:00:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 24,
+"abbreviation": "SF"
+},
+"home_team_data": {
+"runs": 7
+},
+"away_team_data": {
+"runs": 6
+}
+},
+{
+"id": 9543885,
+"date": "2026-07-05T23:20:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 23,
+"abbreviation": "SD"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 5
+}
+},
+{
+"id": 5059135,
+"date": "2026-07-07T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 8
+},
+"away_team_data": {
+"runs": 7
+}
+},
+{
+"id": 5059150,
+"date": "2026-07-08T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 5059165,
+"date": "2026-07-09T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5059178,
+"date": "2026-07-10T01:45:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 24,
+"abbreviation": "SF"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 8
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5059192,
+"date": "2026-07-11T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 1,
+"abbreviation": "ARI"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 9
+}
+},
+{
+"id": 5059193,
+"date": "2026-07-11T02:15:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 24,
+"abbreviation": "SF"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 5059197,
+"date": "2026-07-11T20:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 24,
+"abbreviation": "SF"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5059208,
+"date": "2026-07-12T01:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 1,
+"abbreviation": "ARI"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 9
+}
+},
+{
+"id": 5059221,
+"date": "2026-07-12T20:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 24,
+"abbreviation": "SF"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 1
+}
+},
+{
+"id": 5059222,
+"date": "2026-07-12T20:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 1,
+"abbreviation": "ARI"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 5
+}
+},
+{
+"id": 5059226,
+"date": "2026-07-17T23:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 19,
+"abbreviation": "NYY"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 1
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5059235,
+"date": "2026-07-18T00:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 7,
+"abbreviation": "CIN"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 7
+}
+},
+{
+"id": 5059242,
+"date": "2026-07-18T19:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 7,
+"abbreviation": "CIN"
+},
+"home_team_data": {
+"runs": 10
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5059251,
+"date": "2026-07-19T00:08:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_POSTPONED",
+"home_team": {
+"id": 19,
+"abbreviation": "NYY"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 0
+},
+"away_team_data": {
+"runs": 0
+}
+},
+{
+"id": 10887406,
+"date": "2026-07-19T16:35:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 19,
+"abbreviation": "NYY"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 8
+}
+},
+{
+"id": 5059264,
+"date": "2026-07-19T19:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 7,
+"abbreviation": "CIN"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 9
+}
+},
+{
+"id": 5059269,
+"date": "2026-07-19T23:20:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 19,
+"abbreviation": "NYY"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 1
+}
+},
+{
+"id": 5059274,
+"date": "2026-07-20T23:00:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 21,
+"abbreviation": "PHI"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 10
+},
+"away_team_data": {
+"runs": 7
+}
+},
+{
+"id": 5059281,
+"date": "2026-07-21T00:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 30,
+"abbreviation": "WSH"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 7
+}
+},
+{
+"id": 5059285,
+"date": "2026-07-21T22:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 21,
+"abbreviation": "PHI"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 1
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5059296,
+"date": "2026-07-22T00:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 30,
+"abbreviation": "WSH"
+},
+"home_team_data": {
+"runs": 8
+},
+"away_team_data": {
+"runs": 7
+}
+},
+{
+"id": 5059303,
+"date": "2026-07-22T19:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 30,
+"abbreviation": "WSH"
+},
+"home_team_data": {
+"runs": 0
+},
+"away_team_data": {
+"runs": 8
+}
+},
+{
+"id": 5059307,
+"date": "2026-07-22T22:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 21,
+"abbreviation": "PHI"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 5
+},
+"away_team_data": {
+"runs": 9
+}
+},
+{
+"id": 10209277,
+"date": "2026-07-24T20:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 16,
+"abbreviation": "MIL"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 5
+}
+},
+{
+"id": 10209284,
+"date": "2026-07-24T23:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 18,
+"abbreviation": "NYM"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 5059344,
+"date": "2026-07-25T23:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 16,
+"abbreviation": "MIL"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 8
+},
+"away_team_data": {
+"runs": 5
+}
+},
+{
+"id": 5059346,
+"date": "2026-07-25T23:15:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 18,
+"abbreviation": "NYM"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 5059355,
+"date": "2026-07-26T17:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 18,
+"abbreviation": "NYM"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 8
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5059358,
+"date": "2026-07-26T18:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 16,
+"abbreviation": "MIL"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 11
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 9544180,
+"date": "2026-07-29T01:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 23,
+"abbreviation": "SD"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 8
+},
+"away_team_data": {
+"runs": 7
+}
+},
+{
+"id": 9544182,
+"date": "2026-07-29T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 25,
+"abbreviation": "SEA"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 7
+}
+},
+{
+"id": 9470138,
+"date": "2026-07-29T20:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 23,
+"abbreviation": "SD"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 1
+}
+},
+{
+"id": 9470146,
+"date": "2026-07-30T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 25,
+"abbreviation": "SEA"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5059415,
+"date": "2026-07-31T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 25,
+"abbreviation": "SEA"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5059425,
+"date": "2026-08-01T00:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 12,
+"abbreviation": "KC"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 1
+}
+},
+{
+"id": 5059429,
+"date": "2026-08-01T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 4,
+"abbreviation": "BOS"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 9
+}
+},
+{
+"id": 5059441,
+"date": "2026-08-02T00:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 12,
+"abbreviation": "KC"
+},
+"home_team_data": {
+"runs": 12
+},
+"away_team_data": {
+"runs": 6
+}
+},
+{
+"id": 5059443,
+"date": "2026-08-02T01:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 4,
+"abbreviation": "BOS"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5059455,
+"date": "2026-08-02T19:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 12,
+"abbreviation": "KC"
+},
+"home_team_data": {
+"runs": 8
+},
+"away_team_data": {
+"runs": 1
+}
+},
+{
+"id": 5059460,
+"date": "2026-08-02T23:20:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 4,
+"abbreviation": "BOS"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 8
+}
+},
+{
+"id": 5059464,
+"date": "2026-08-04T00:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 5,
+"abbreviation": "CHC"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 10
+},
+"away_team_data": {
+"runs": 5
+}
+},
+{
+"id": 5059467,
+"date": "2026-08-04T00:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 27,
+"abbreviation": "TB"
+},
+"home_team_data": {
+"runs": 9
+},
+"away_team_data": {
+"runs": 13
+}
+},
+{
+"id": 5059478,
+"date": "2026-08-05T00:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 5,
+"abbreviation": "CHC"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 5
+},
+"away_team_data": {
+"runs": 1
+}
+},
+{
+"id": 5059481,
+"date": "2026-08-05T00:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 27,
+"abbreviation": "TB"
+},
+"home_team_data": {
+"runs": 7
+},
+"away_team_data": {
+"runs": 9
+}
+},
+{
+"id": 5059485,
+"date": "2026-08-05T18:20:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 5,
+"abbreviation": "CHC"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 7
+},
+"away_team_data": {
+"runs": 6
+}
+},
+{
+"id": 5059487,
+"date": "2026-08-05T19:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 27,
+"abbreviation": "TB"
+},
+"home_team_data": {
+"runs": 0
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 9491173,
+"date": "2026-08-08T00:15:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 26,
+"abbreviation": "STL"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 9491175,
+"date": "2026-08-08T01:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 1,
+"abbreviation": "ARI"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5059534,
+"date": "2026-08-08T23:15:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 26,
+"abbreviation": "STL"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 8
+}
+},
+{
+"id": 5059537,
+"date": "2026-08-09T00:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 1,
+"abbreviation": "ARI"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 1
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5059548,
+"date": "2026-08-09T18:15:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 26,
+"abbreviation": "STL"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 7
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 5059551,
+"date": "2026-08-09T20:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 1,
+"abbreviation": "ARI"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5059559,
+"date": "2026-08-11T01:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 1,
+"abbreviation": "ARI"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 9
+},
+"away_team_data": {
+"runs": 0
+}
+},
+{
+"id": 5059563,
+"date": "2026-08-11T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 12,
+"abbreviation": "KC"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 5
+}
+},
+{
+"id": 5059574,
+"date": "2026-08-12T01:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 1,
+"abbreviation": "ARI"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5059578,
+"date": "2026-08-12T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 12,
+"abbreviation": "KC"
+},
+"home_team_data": {
+"runs": 5
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 5059582,
+"date": "2026-08-12T19:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 1,
+"abbreviation": "ARI"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 6
+}
+},
+{
+"id": 5059592,
+"date": "2026-08-13T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 12,
+"abbreviation": "KC"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5059602,
+"date": "2026-08-14T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 16,
+"abbreviation": "MIL"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 5
+}
+},
+{
+"id": 5059615,
+"date": "2026-08-15T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 16,
+"abbreviation": "MIL"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 1
+}
+},
+{
+"id": 5059616,
+"date": "2026-08-15T02:15:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 24,
+"abbreviation": "SF"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 5
+}
+},
+{
+"id": 5059620,
+"date": "2026-08-15T20:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 24,
+"abbreviation": "SF"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 7
+},
+"away_team_data": {
+"runs": 1
+}
+},
+{
+"id": 5059629,
+"date": "2026-08-15T23:15:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 16,
+"abbreviation": "MIL"
+},
+"home_team_data": {
+"runs": 1
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 5059642,
+"date": "2026-08-16T20:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 24,
+"abbreviation": "SF"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 7
+},
+"away_team_data": {
+"runs": 13
+}
+},
+{
+"id": 5059645,
+"date": "2026-08-16T20:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 16,
+"abbreviation": "MIL"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 6
+}
+},
+{
+"id": 5059656,
+"date": "2026-08-18T00:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 5
+},
+"away_team_data": {
+"runs": 11
+}
+},
+{
+"id": 5059671,
+"date": "2026-08-19T00:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 7
+}
+},
+{
+"id": 5059686,
+"date": "2026-08-20T00:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 6
+}
+},
+{
+"id": 5059705,
+"date": "2026-08-22T00:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 8,
+"abbreviation": "CLE"
+},
+"home_team_data": {
+"runs": 1
+},
+"away_team_data": {
+"runs": 9
+}
+},
+{
+"id": 5059709,
+"date": "2026-08-22T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 22,
+"abbreviation": "PIT"
+},
+"home_team_data": {
+"runs": 5
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 5059723,
+"date": "2026-08-22T23:15:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 22,
+"abbreviation": "PIT"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5059720,
+"date": "2026-08-23T00:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 8,
+"abbreviation": "CLE"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 5059734,
+"date": "2026-08-23T19:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 8,
+"abbreviation": "CLE"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 7
+}
+},
+{
+"id": 5059738,
+"date": "2026-08-23T20:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 22,
+"abbreviation": "PIT"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 0
+}
+},
+{
+"id": 11378819,
+"date": "2026-08-24T22:45:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 30,
+"abbreviation": "WSH"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 13
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5059752,
+"date": "2026-08-25T22:45:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 30,
+"abbreviation": "WSH"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 1
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5059756,
+"date": "2026-08-25T23:15:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 2,
+"abbreviation": "ATL"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5059772,
+"date": "2026-08-26T22:45:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 30,
+"abbreviation": "WSH"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 1
+},
+"away_team_data": {
+"runs": 13
+}
+},
+{
+"id": 5059776,
+"date": "2026-08-26T23:15:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 2,
+"abbreviation": "ATL"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 5
+}
+},
+{
+"id": 5059780,
+"date": "2026-08-27T17:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 30,
+"abbreviation": "WSH"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 7
+},
+"away_team_data": {
+"runs": 1
+}
+},
+{
+"id": 5059785,
+"date": "2026-08-27T23:15:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 2,
+"abbreviation": "ATL"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 1
+},
+"away_team_data": {
+"runs": 0
+}
+},
+{
+"id": 5059788,
+"date": "2026-08-28T22:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 10,
+"abbreviation": "DET"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 1
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5059795,
+"date": "2026-08-28T23:15:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 2,
+"abbreviation": "ATL"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 5059802,
+"date": "2026-08-29T17:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 10,
+"abbreviation": "DET"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 1
+}
+},
+{
+"id": 5059808,
+"date": "2026-08-29T20:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 2,
+"abbreviation": "ATL"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 1
+}
+},
+{
+"id": 5059819,
+"date": "2026-08-30T17:35:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 2,
+"abbreviation": "ATL"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5059822,
+"date": "2026-08-30T17:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 10,
+"abbreviation": "DET"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 1
+},
+"away_team_data": {
+"runs": 6
+}
+},
+{
+"id": 5059840,
+"date": "2026-09-01T00:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 3,
+"abbreviation": "BAL"
+},
+"home_team_data": {
+"runs": 1
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5059854,
+"date": "2026-09-02T00:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 3,
+"abbreviation": "BAL"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5059857,
+"date": "2026-09-02T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 26,
+"abbreviation": "STL"
+},
+"home_team_data": {
+"runs": 8
+},
+"away_team_data": {
+"runs": 13
+}
+},
+{
+"id": 5059861,
+"date": "2026-09-02T19:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 3,
+"abbreviation": "BAL"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 5
+}
+},
+{
+"id": 5059872,
+"date": "2026-09-03T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 26,
+"abbreviation": "STL"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 8
+}
+},
+{
+"id": 5059881,
+"date": "2026-09-04T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 26,
+"abbreviation": "STL"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5059893,
+"date": "2026-09-05T00:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 26,
+"abbreviation": "STL"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 7
+}
+},
+{
+"id": 5059896,
+"date": "2026-09-05T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 30,
+"abbreviation": "WSH"
+},
+"home_team_data": {
+"runs": 5
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5059908,
+"date": "2026-09-06T00:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 26,
+"abbreviation": "STL"
+},
+"home_team_data": {
+"runs": 10
+},
+"away_team_data": {
+"runs": 7
+}
+},
+{
+"id": 5059910,
+"date": "2026-09-06T01:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 30,
+"abbreviation": "WSH"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 5
+}
+},
+{
+"id": 5059922,
+"date": "2026-09-06T19:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 26,
+"abbreviation": "STL"
+},
+"home_team_data": {
+"runs": 8
+},
+"away_team_data": {
+"runs": 10
+}
+},
+{
+"id": 5059926,
+"date": "2026-09-07T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 30,
+"abbreviation": "WSH"
+},
+"home_team_data": {
+"runs": 7
+},
+"away_team_data": {
+"runs": 5
+}
+},
+{
+"id": 5059936,
+"date": "2026-09-08T01:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 7,
+"abbreviation": "CIN"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5059943,
+"date": "2026-09-08T23:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 19,
+"abbreviation": "NYY"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 5
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5059952,
+"date": "2026-09-09T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 7,
+"abbreviation": "CIN"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5059961,
+"date": "2026-09-09T23:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 19,
+"abbreviation": "NYY"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 1
+}
+},
+{
+"id": 5059967,
+"date": "2026-09-10T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 7,
+"abbreviation": "CIN"
+},
+"home_team_data": {
+"runs": 14
+},
+"away_team_data": {
+"runs": 1
+}
+},
+{
+"id": 5059971,
+"date": "2026-09-10T23:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 19,
+"abbreviation": "NYY"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 10
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5059974,
+"date": "2026-09-11T22:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 10,
+"abbreviation": "DET"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5059980,
+"date": "2026-09-11T23:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 15,
+"abbreviation": "MIA"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 6
+}
+},
+{
+"id": 5059988,
+"date": "2026-09-12T17:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 10,
+"abbreviation": "DET"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 11
+},
+"away_team_data": {
+"runs": 7
+}
+},
+{
+"id": 5059995,
+"date": "2026-09-12T20:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 15,
+"abbreviation": "MIA"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5060008,
+"date": "2026-09-13T16:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 10,
+"abbreviation": "DET"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 8
+},
+"away_team_data": {
+"runs": 1
+}
+},
+{
+"id": 5060010,
+"date": "2026-09-13T17:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 15,
+"abbreviation": "MIA"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 5060019,
+"date": "2026-09-14T22:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 7,
+"abbreviation": "CIN"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 1
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 5060025,
+"date": "2026-09-15T00:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 23,
+"abbreviation": "SD"
+},
+"home_team_data": {
+"runs": 7
+},
+"away_team_data": {
+"runs": 8
+}
+},
+{
+"id": 5060030,
+"date": "2026-09-15T22:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 7,
+"abbreviation": "CIN"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 0
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 5060040,
+"date": "2026-09-16T00:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 23,
+"abbreviation": "SD"
+},
+"home_team_data": {
+"runs": 9
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5060048,
+"date": "2026-09-16T22:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 7,
+"abbreviation": "CIN"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5060055,
+"date": "2026-09-17T00:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 23,
+"abbreviation": "SD"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 9
+}
+},
+{
+"id": 5060059,
+"date": "2026-09-17T16:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 7,
+"abbreviation": "CIN"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 8
+}
+},
+{
+"id": 5060061,
+"date": "2026-09-17T19:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 23,
+"abbreviation": "SD"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 9
+}
+},
+{
+"id": 5060076,
+"date": "2026-09-19T00:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 25,
+"abbreviation": "SEA"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 5
+}
+},
+{
+"id": 5060081,
+"date": "2026-09-19T02:15:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 24,
+"abbreviation": "SF"
+},
+"home_team_data": {
+"runs": 8
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5060092,
+"date": "2026-09-20T00:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 25,
+"abbreviation": "SEA"
+},
+"home_team_data": {
+"runs": 5
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 5060095,
+"date": "2026-09-20T01:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 24,
+"abbreviation": "SF"
+},
+"home_team_data": {
+"runs": 10
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 5060106,
+"date": "2026-09-20T19:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 25,
+"abbreviation": "SEA"
+},
+"home_team_data": {
+"runs": 1
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5060110,
+"date": "2026-09-20T20:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 24,
+"abbreviation": "SF"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 1
+}
+},
+{
+"id": 5060125,
+"date": "2026-09-23T00:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 1,
+"abbreviation": "ARI"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 7
+}
+},
+{
+"id": 5060129,
+"date": "2026-09-23T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 23,
+"abbreviation": "SD"
+},
+"home_team_data": {
+"runs": 7
+},
+"away_team_data": {
+"runs": 0
+}
+},
+{
+"id": 5060141,
+"date": "2026-09-24T00:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 1,
+"abbreviation": "ARI"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 5
+}
+},
+{
+"id": 5060144,
+"date": "2026-09-24T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 23,
+"abbreviation": "SD"
+},
+"home_team_data": {
+"runs": 1
+},
+"away_team_data": {
+"runs": 5
+}
+},
+{
+"id": 5060149,
+"date": "2026-09-24T19:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"away_team": {
+"id": 1,
+"abbreviation": "ARI"
+},
+"home_team_data": {
+"runs": 8
+},
+"away_team_data": {
+"runs": 12
+}
+},
+{
+"id": 5060156,
+"date": "2026-09-25T02:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 23,
+"abbreviation": "SD"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 5060165,
+"date": "2026-09-25T23:40:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 6,
+"abbreviation": "CHW"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 1
+}
+},
+{
+"id": 5060171,
+"date": "2026-09-26T02:15:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 24,
+"abbreviation": "SF"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 0
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 5060175,
+"date": "2026-09-26T20:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 24,
+"abbreviation": "SF"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 3
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 5060181,
+"date": "2026-09-26T23:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 6,
+"abbreviation": "CHW"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 6
+},
+"away_team_data": {
+"runs": 9
+}
+},
+{
+"id": 5060191,
+"date": "2026-09-27T19:05:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 24,
+"abbreviation": "SF"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 1
+},
+"away_team_data": {
+"runs": 5
+}
+},
+{
+"id": 5060196,
+"date": "2026-09-27T19:10:00.000Z",
+"season": 2026,
+"postseason": false,
+"season_type": "regular",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 6,
+"abbreviation": "CHW"
+},
+"away_team": {
+"id": 9,
+"abbreviation": "COL"
+},
+"home_team_data": {
+"runs": 4
+},
+"away_team_data": {
+"runs": 2
+}
+},
+{
+"id": 15467373,
+"date": "2026-10-03T20:00:00.000Z",
+"season": 2026,
+"postseason": true,
+"season_type": "postseason",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 2,
+"abbreviation": "ATL"
+},
+"home_team_data": {
+"runs": 5
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 15467375,
+"date": "2026-10-05T00:00:00.000Z",
+"season": 2026,
+"postseason": true,
+"season_type": "postseason",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 2,
+"abbreviation": "ATL"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 15333798,
+"date": "2026-10-06T22:00:00.000Z",
+"season": 2026,
+"postseason": true,
+"season_type": "postseason",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 2,
+"abbreviation": "ATL"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 1
+},
+"away_team_data": {
+"runs": 3
+}
+},
+{
+"id": 15467383,
+"date": "2026-10-07T22:00:00.000Z",
+"season": 2026,
+"postseason": true,
+"season_type": "postseason",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 2,
+"abbreviation": "ATL"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 1
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 15467418,
+"date": "2026-10-12T00:00:00.000Z",
+"season": 2026,
+"postseason": true,
+"season_type": "postseason",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 16,
+"abbreviation": "MIL"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 1
+}
+},
+{
+"id": 15467420,
+"date": "2026-10-12T21:00:00.000Z",
+"season": 2026,
+"postseason": true,
+"season_type": "postseason",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 16,
+"abbreviation": "MIL"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 7
+},
+"away_team_data": {
+"runs": 4
+}
+},
+{
+"id": 15467422,
+"date": "2026-10-15T00:00:00.000Z",
+"season": 2026,
+"postseason": true,
+"season_type": "postseason",
+"status": "STATUS_FINAL",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 16,
+"abbreviation": "MIL"
+},
+"home_team_data": {
+"runs": 2
+},
+"away_team_data": {
+"runs": 6
+}
+},
+{
+"id": 15467424,
+"date": "2026-10-16T00:00:00.000Z",
+"season": 2026,
+"postseason": true,
+"season_type": "postseason",
+"status": "STATUS_SCHEDULED",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 16,
+"abbreviation": "MIL"
+},
+"home_team_data": {
+"runs": 0
+},
+"away_team_data": {
+"runs": 0
+}
+},
+{
+"id": 15467426,
+"date": "2026-10-17T01:00:00.000Z",
+"season": 2026,
+"postseason": true,
+"season_type": "postseason",
+"status": "STATUS_SCHEDULED",
+"home_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"away_team": {
+"id": 16,
+"abbreviation": "MIL"
+},
+"home_team_data": {
+"runs": 0
+},
+"away_team_data": {
+"runs": 0
+}
+},
+{
+"id": 15467428,
+"date": "2026-10-19T00:00:00.000Z",
+"season": 2026,
+"postseason": true,
+"season_type": "postseason",
+"status": "STATUS_SCHEDULED",
+"home_team": {
+"id": 16,
+"abbreviation": "MIL"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 0
+},
+"away_team_data": {
+"runs": 0
+}
+},
+{
+"id": 15467430,
+"date": "2026-10-20T00:00:00.000Z",
+"season": 2026,
+"postseason": true,
+"season_type": "postseason",
+"status": "STATUS_SCHEDULED",
+"home_team": {
+"id": 16,
+"abbreviation": "MIL"
+},
+"away_team": {
+"id": 14,
+"abbreviation": "LAD"
+},
+"home_team_data": {
+"runs": 0
+},
+"away_team_data": {
+"runs": 0
+}
+}
+]
+}
