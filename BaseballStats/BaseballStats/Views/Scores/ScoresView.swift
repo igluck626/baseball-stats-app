@@ -584,15 +584,20 @@ struct ScoresView: View {
     /// What the picker is currently showing, BEFORE the user commits it.
     /// Seeded from `vm.selectedDate` each time the sheet opens.
     @State private var draftDate = Date()
+    /// The screen's measured content width, which sets how many game cards sit
+    /// side by side (`ScoresGrid`).
+    @State private var contentWidth: CGFloat = 0
+    private var columns: Int { ScoresGrid.columns(width: contentWidth) }
 
     var body: some View {
         NavigationStack(path: $scores.path) {
             VStack(spacing: 0) {
-                // Same reading width as the cards below, so on a wide window the
-                // ◀ ▶ arrows sit over the column rather than at the window edges.
-                dateBar.readableContentWidth()
+                // Same width as the cards below, so on a wide window the ◀ ▶
+                // arrows sit over the cards rather than at the window edges.
+                dateBar.readableContentWidth(ScoresGrid.contentCap(columns: columns))
                 content
             }
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { contentWidth = $0 }
             .navigationTitle("Scores")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -933,52 +938,39 @@ struct ScoresView: View {
             }
         // `isOver`, not `phase == .final` — a game that left `liveList` belongs
         // here the moment it does, not whenever the provider catches up. This
-        // is also what makes the card REDRAW: moving between sections gives the
-        // row a new view identity, so a FinalGameCard is constructed and its
-        // body evaluated. Recomputing a value inside a card that never
-        // re-renders would have left the same stale pixels on screen.
+        // is also what makes the card REDRAW: once `isOver`, `GameRowCard`
+        // takes its FinalGameCard branch — a new view, constructed and its body
+        // evaluated — while the row itself keeps its identity (one ForEach, see
+        // below). Recomputing a value inside a card that never re-renders would
+        // have left the same stale pixels on screen.
         let completed = notLive
             .filter { vm.isOver($0) }
             .sorted { ($0.startDate ?? .distantPast) > ($1.startDate ?? .distantPast) }
 
+        let n = columns
         return ScrollView {
-            LazyVStack(spacing: 12) {
+            // ONE GRID, ONE FOREACH. On a wide window the cards sit side by side
+            // (`ScoresGrid`); on a phone this is one column, laid out as the
+            // single list always was. The headers are entries of the same
+            // sequence as the games (`ScoresGrid.rows`), so a game that moves
+            // from Live to Completed keeps its identity.
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: ScoresGrid.gap, alignment: .top),
+                                     count: n),
+                      alignment: .leading, spacing: 12) {
                 // EVERY section builds the SAME view type. That is the fix for
                 // a finished game drawing its last inning under the Completed
-                // header: a row keeps one identity across a section move (so
-                // the move can animate), and a stable identity whose type
-                // changed leaves SwiftUI holding the old rendering. The
-                // branching — including whether a NavigationLink wraps the card
-                // at all — lives inside `GameRowCard`.
-                if !live.isEmpty {
-                    sectionHeader("Live")
-                    ForEach(live) { game in
-                        GameRowCard(
-                            game:      game,
-                            record:    vm.gameRecords[game.gamePk],
-                            standings: vm.teamStandings,
-                            isOver:    vm.isOver(game),
-                            path:      $scores.path,
-                            expandedGames: $scores.expandedGames,
-                        )
-                    }
-                }
-                if !upcoming.isEmpty {
-                    sectionHeader("Upcoming")
-                    ForEach(upcoming) { game in
-                        GameRowCard(
-                            game:      game,
-                            record:    vm.gameRecords[game.gamePk],
-                            standings: vm.teamStandings,
-                            isOver:    vm.isOver(game),
-                            path:      $scores.path,
-                            expandedGames: $scores.expandedGames,
-                        )
-                    }
-                }
-                if !completed.isEmpty {
-                    sectionHeader("Completed")
-                    ForEach(completed) { game in
+                // header: a stable identity whose VIEW TYPE changed leaves
+                // SwiftUI holding the old rendering. The branching — including
+                // whether a NavigationLink wraps the card at all — lives inside
+                // `GameRowCard`.
+                ForEach(ScoresGrid.rows(sections: [("Live", live), ("Upcoming", upcoming), ("Completed", completed)],
+                                        columns: n)) { row in
+                    switch row {
+                    case .header(let title):
+                        sectionHeader(title)
+                    case .spacer:
+                        Color.clear.frame(height: 0)
+                    case .item(let game):
                         GameRowCard(
                             game:      game,
                             record:    vm.gameRecords[game.gamePk],
@@ -997,7 +989,7 @@ struct ScoresView: View {
             // slides smoothly instead of snapping. `Game.id` (gamePk) identity
             // keeps rows stable across the section move.
             .animation(.default, value: liveIds)
-            .readableContentWidth()
+            .readableContentWidth(ScoresGrid.contentCap(columns: n))
         }
         .refreshable {
             await vm.refresh()
