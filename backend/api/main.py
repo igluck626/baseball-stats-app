@@ -12,6 +12,7 @@ import time
 import traceback
 import unicodedata
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from urllib.parse import urlparse
 
@@ -41,6 +42,7 @@ import postseason_stats
 import season_phase
 import team_contact
 import team_crosswalk
+import team_page
 from cache import cache as _cache
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -1871,6 +1873,185 @@ def team_standings(year: int = Query(..., description="Season year, e.g. 2024"))
 
     payload = {"year": year, "last_updated": last_updated,
                "recent_form": recent_form, "standings": rows}
+    _cache.set(key, payload, ttl_seconds=300)
+    return payload
+
+
+# ---------------------------------------------------------------------------
+# Team page — any club's season games and roster, read here so the app makes no
+# balldontlie call of its own for them (team_page.py has the rules).
+# ---------------------------------------------------------------------------
+
+_TEAM_PAGE_IDS = set(data_service._BDL_TEAM_ID_MAP.values())
+
+
+def _team_page_id(bdl_id: int) -> int:
+    if bdl_id not in _TEAM_PAGE_IDS:
+        raise HTTPException(status_code=404, detail=f"No team with balldontlie id {bdl_id}")
+    return bdl_id
+
+
+def _team_games(bdl_id: int, season: int) -> list[dict]:
+    """One team's games for a season, every page. Rows that don't include the
+    team are dropped: balldontlie honours `team_ids[]` on /games today, and an
+    endpoint that silently stopped would otherwise fill a team page with the
+    whole league's schedule."""
+    games = data_service._bdl_games_page_all({"seasons[]": season, "team_ids[]": bdl_id})
+    return [g for g in games
+            if bdl_id in ((g.get("home_team") or {}).get("id"), (g.get("away_team") or {}).get("id"))]
+
+
+@app.get("/teams/{bdl_id}/schedule")
+def team_schedule(
+    bdl_id: int,
+    season: int = Query(..., description="Season year, e.g. 2026"),
+    fresh: bool = Query(False, description="Skip a cached copy older than 10 seconds "
+                                          "(the app's live-to-final refresh)."),
+):
+    """A team's season: its games in balldontlie's shape (spring training
+    included, placeholder postseason games dropped), how the season stands
+    (`season_result`, see team_page.season_result), and next season's first
+    regular-season game once balldontlie lists it. Cached a minute while the
+    team has a game today, five minutes otherwise."""
+    _team_page_id(bdl_id)
+    key = f"team_schedule:{bdl_id}:{season}"
+    cached = _cache.get(key)
+    if cached is not None and not (fresh and time.time() - cached["_fetched"] > 10):
+        return {k: v for k, v in cached.items() if k != "_fetched"}
+    try:
+        games = team_page.schedule_games(_team_games(bdl_id, season))
+    except Exception as exc:
+        log.warning("team_schedule(%s, %s): balldontlie fetch failed: %s", bdl_id, season, exc)
+        raise HTTPException(status_code=503, detail="The schedule is unavailable right now")
+    abbreviation = next((side["abbreviation"] for g in games
+                         for side in (g.get("home_team") or {}, g.get("away_team") or {})
+                         if side.get("id") == bdl_id), None)
+    regular_over = team_page.regular_season_over(games)
+    bracket = None
+    if regular_over and season >= postseason_series.BRACKET_FIRST_SEASON:
+        try:
+            bracket = postseason_series.build_bracket(*_postseason_inputs(season), season)
+        except Exception as exc:
+            log.warning("team_schedule(%s, %s): bracket unavailable: %s", bdl_id, season, exc)
+    result = team_page.season_result(bracket, abbreviation, regular_over)
+    next_first = None
+    if result["state"] not in ("in_progress", "alive"):
+        nkey = f"team_next_season:{bdl_id}:{season + 1}"
+        nxt = _cache.get(nkey)
+        if nxt is None:
+            try:
+                nxt = {"game": team_page.first_regular_game(_team_games(bdl_id, season + 1))}
+                _cache.set(nkey, nxt, ttl_seconds=86400)
+            except Exception as exc:
+                log.warning("team_schedule(%s): next season unavailable: %s", bdl_id, exc)
+                nxt = {"game": None}
+        next_first = nxt["game"]
+    today = datetime.datetime.now(team_page._EASTERN).date()
+    payload = {
+        "team_id": bdl_id, "season": season, "abbreviation": abbreviation,
+        "fetched_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "games": games, "season_result": result, "next_season_first_game": next_first,
+    }
+    _cache.set(key, {**payload, "_fetched": time.time()},
+               ttl_seconds=60 if team_page.has_game_today(games, today) else 300)
+    return payload
+
+
+def _roster_rows(players: list[tuple[int, bool]], year: int) -> tuple[dict, dict]:
+    """The season row and the stint rows for each (player_id, is_pitcher), in
+    four queries for the whole roster rather than several per player. A season
+    row is the same dict `get_current_stats` / `get_current_pitching_stats`
+    build their payload from, so the line shown is the one the roster showed."""
+    from database.models import PitcherSeason, PlayerSeason
+    bat = [pid for pid, pitcher in players if not pitcher]
+    pit = [pid for pid, pitcher in players if pitcher]
+    seasons: dict = {}
+    stints: dict = {}
+    with connection.get_session() as db:
+        for ids, model, convert, table, pitcher in (
+                (bat, PlayerSeason, data_service._db_row_to_season, "player_season_stints", False),
+                (pit, PitcherSeason, data_service._db_pitcher_row_to_season, "pitcher_season_stints", True)):
+            if not ids:
+                continue
+            for r in db.query(model).filter(model.player_id.in_(ids), model.year == year):
+                seasons[(r.player_id, pitcher)] = convert(r)
+            for r in db.execute(_sa_text(f"SELECT * FROM {table} WHERE year = :y AND player_id = ANY(:ids)"),
+                                {"y": year, "ids": ids}).mappings():
+                stints.setdefault((r["player_id"], pitcher), []).append(dict(r))
+    return seasons, stints
+
+
+def _bdl_team_list(path: str, bdl_id: int) -> list[dict]:
+    """Every page of a team-filtered balldontlie list, rows for other teams dropped."""
+    out, cursor = [], None
+    for _ in range(5):
+        params: dict = {"team_ids[]": bdl_id, "per_page": 100}
+        if cursor is not None:
+            params["cursor"] = cursor
+        page = data_service._bdl_get_json(path, params)
+        out.extend(page.get("data") or [])
+        cursor = (page.get("meta") or {}).get("next_cursor")
+        if not cursor:
+            break
+    team_of = (lambda r: (r.get("team") or {}).get("id")) if path == "players/active" else \
+              (lambda r: ((r.get("player") or {}).get("team") or {}).get("id"))
+    return [r for r in out if team_of(r) == bdl_id]
+
+
+@app.get("/teams/{bdl_id}/roster")
+def team_roster(bdl_id: int):
+    """The current active roster, each player with his line FOR THIS TEAM where
+    it can be trusted (`scope: "team"`) or his whole season (`scope:
+    "all_teams"`) — team_page.roster_stats has the rule — and the team's injury
+    list, every player resolved to our id. Cached five minutes."""
+    _team_page_id(bdl_id)
+    key = f"team_roster:{bdl_id}"
+    cached = _cache.get(key)
+    if cached is not None:
+        return cached
+    try:
+        active = _bdl_team_list("players/active", bdl_id)
+        injuries = _bdl_team_list("player_injuries", bdl_id)
+    except Exception as exc:
+        log.warning("team_roster(%s): balldontlie fetch failed: %s", bdl_id, exc)
+        raise HTTPException(status_code=503, detail="The roster is unavailable right now")
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    abbreviation = next(((r.get("team") or {}).get("abbreviation") for r in active), None)
+    team = team_page.retro_code(abbreviation) if abbreviation else None
+    year = data_service._current_year()
+    # Our id for every balldontlie player on the page — the same lookup the
+    # app made one request at a time — a few at once.
+    bdl_ids = sorted({p["id"] for p in active} | {(r.get("player") or {}).get("id") for r in injuries} - {None})
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        resolved = dict(zip(bdl_ids, pool.map(data_service.get_player_by_bdl_id, bdl_ids)))
+    pitchers = {p["id"]: team_page.is_pitcher(p.get("position")) for p in active}
+    seasons, stints = _roster_rows([(resolved[b]["player_id"], pitchers[b])
+                                    for b in pitchers if resolved.get(b)], year)
+    players = []
+    for p in active:
+        player, pitcher = resolved.get(p["id"]), pitchers[p["id"]]
+        scope = stats = None
+        if player and team:
+            row = seasons.get((player["player_id"], pitcher))
+            scope, stats = team_page.roster_stats(
+                team, stints.get((player["player_id"], pitcher), []),
+                {"standard": row, "advanced": row} if row else None, pitcher)
+        players.append({"bdl_id": p["id"], "name": p.get("full_name"), "position": p.get("position"),
+                        "jersey": p.get("jersey"), "is_pitcher": pitcher, "player": player,
+                        "scope": scope, "stats": stats})
+    payload = {
+        "team_id": bdl_id, "season": year, "team_code": team,
+        "players": players,
+        "injuries": [{
+            "bdl_id": (r.get("player") or {}).get("id"),
+            "name": (r.get("player") or {}).get("full_name"),
+            "position": (r.get("player") or {}).get("position"),
+            "status": r.get("status"), "type": r.get("type"),
+            "return_date": r.get("return_date"),
+            "player": resolved.get((r.get("player") or {}).get("id")),
+        } for r in injuries],
+    }
     _cache.set(key, payload, ttl_seconds=300)
     return payload
 
