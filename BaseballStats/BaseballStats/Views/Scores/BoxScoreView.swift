@@ -739,6 +739,7 @@ struct BoxScoreView: View {
         owningTab: AppNavigation.Tab,
         navigation: AppNavigation,
         liveStore: LiveGameStore,
+        rootTeamId: Int? = nil,
     ) {
         _vm = StateObject(wrappedValue: BoxScoreViewModel(game: game))
         self.teamStandings = teamStandings
@@ -746,7 +747,11 @@ struct BoxScoreView: View {
         self.owningTab = owningTab
         self.navigation = navigation
         self.liveStore = liveStore
+        self.rootTeamId = rootTeamId
     }
+
+    /// See `BoxScoreContext.rootTeamId`.
+    private let rootTeamId: Int?
 
     /// Whether the shared store currently considers this game live — the
     /// backend's definition (present in `liveList`), independent of the frozen
@@ -1161,6 +1166,21 @@ struct BoxScoreView: View {
         return bdlTeamId.flatMap { bdlToLahmanTeamId[$0] }
     }
 
+    /// The team's mark and abbreviation open its page, when it is a club
+    /// balldontlie knows (every current club; a historical game's departed
+    /// clubs have no id and stay plain text).
+    @ViewBuilder
+    private func teamLink<Label: View>(bdlTeamId: Int?, name: String,
+                                       @ViewBuilder label: () -> Label) -> some View {
+        if let id = bdlTeamId, MLBTeamCatalog.entry(forBDLId: id) != nil {
+            Button { TeamLink.open(id, path: $path, rootTeamId: rootTeamId) } label: { label() }
+                .buttonStyle(.plain)
+                .accessibilityHint("Opens the \(name) team page")
+        } else {
+            label()
+        }
+    }
+
     private func teamHeader(side: GameTeam, score: Int?, bdlTeamId: Int?, isHome: Bool) -> some View {
         // Two stacked sub-lines under the score:
         //   line 1: "(21-27)"  — the record as of this game (after it once
@@ -1184,17 +1204,19 @@ struct BoxScoreView: View {
             // .title score reads as a stray tick — so it moves onto the
             // abbreviation's line and leads it, as everywhere else. 16pt to
             // match .subheadline.bold rather than the 18 used against larger text.
-            HStack(spacing: 5) {
-                // ABSENT, NOT GREY. A club we hold no colour for used to draw
-                // the same grey bar the app shows when a modern club fails to
-                // resolve, so a 1912 card read as "the colours didn't load"
-                // rather than "there is no colour for this club". Same
-                // principle as the linescore that declines to draw itself.
-                if let code = lahmanCode(for: side.team, bdlTeamId: bdlTeamId) {
-                    TeamColorSwatch(code: code, height: 16)
+            teamLink(bdlTeamId: bdlTeamId, name: side.team.name) {
+                HStack(spacing: 5) {
+                    // ABSENT, NOT GREY. A club we hold no colour for used to draw
+                    // the same grey bar the app shows when a modern club fails to
+                    // resolve, so a 1912 card read as "the colours didn't load"
+                    // rather than "there is no colour for this club". Same
+                    // principle as the linescore that declines to draw itself.
+                    if let code = lahmanCode(for: side.team, bdlTeamId: bdlTeamId) {
+                        TeamColorSwatch(code: code, height: 16)
+                    }
+                    Text(side.team.abbreviation ?? String(side.team.name.prefix(3)).uppercased())
+                        .font(.subheadline.weight(.bold))
                 }
-                Text(side.team.abbreviation ?? String(side.team.name.prefix(3)).uppercased())
-                    .font(.subheadline.weight(.bold))
             }
             Text(score.map(String.init) ?? "—")
                 .font(.title.weight(.bold))

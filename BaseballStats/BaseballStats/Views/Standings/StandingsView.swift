@@ -1019,6 +1019,27 @@ private struct FrozenIdentityCell: View {
     var isFavorite: Bool = false
 
     var body: some View {
+        teamLink {
+            identity
+        }
+    }
+
+    /// The row's team opens its page — any season's row, since the page is the
+    /// club's — when the code is one of today's 30 (`lahmanToBDLTeamId`); a
+    /// departed club's row (MON, BRO) stays plain. A value link pushes onto the
+    /// Standings stack's path, where `TeamDestination` is registered.
+    @ViewBuilder
+    private func teamLink<Label: View>(@ViewBuilder label: () -> Label) -> some View {
+        if let code = team.team_id, let id = lahmanToBDLTeamId[code] {
+            NavigationLink(value: TeamDestination(bdlTeamId: id)) { label() }
+                .buttonStyle(.plain)
+                .accessibilityHint("Opens the team page")
+        } else {
+            label()
+        }
+    }
+
+    private var identity: some View {
         HStack(spacing: 6) {
             teamLogo
             Text(abbreviation)
@@ -1044,6 +1065,8 @@ private struct FrozenIdentityCell: View {
         .padding(.leading, 14)
         .padding(.trailing, 4)
         .frame(height: StandingsLayout.rowHeight)
+        // The whole cell is the tap target, its empty stretch included.
+        .contentShape(Rectangle())
     }
 
     /// Team mark. The club's logo until 2026-08-15, then a circle of the

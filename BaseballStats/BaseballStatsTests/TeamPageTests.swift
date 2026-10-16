@@ -2,8 +2,8 @@
 //  TeamPageTests.swift
 //  BaseballStatsTests
 //
-//  The team page's two server reads, `/teams/{id}/schedule` and
-//  `/teams/{id}/roster`, as the app decodes and uses them.
+//  The team page for every club: the two server reads it is built on, and
+//  the link that opens a team's page.
 //
 //  Fixtures are the server's own responses, from the backend run locally
 //  against balldontlie and the database on 2026-10-15:
@@ -13,6 +13,7 @@
 //
 
 import Foundation
+import SwiftUI
 import Testing
 @testable import BaseballStats
 
@@ -93,5 +94,41 @@ struct TeamRosterTests {
         #expect(RosterSheet.secondaryLine(player(nil, "all_teams")) == "All teams")
         #expect(RosterSheet.secondaryLine(player("7", "team")) == "#7")
         #expect(RosterSheet.secondaryLine(player(nil, "team")) == nil)
+    }
+}
+
+@MainActor
+struct TeamLinkTests {
+
+    @Test func aTeamLinkPushesItsPage() {
+        var path = NavigationPath()
+        let binding = Binding(get: { path }, set: { path = $0 })
+        TeamLink.open(14, path: binding, rootTeamId: nil)
+        #expect(path.count == 1)
+    }
+
+    /// On Home the root is the favourite's page; a link to that team goes back
+    /// to it rather than stacking a second copy on top.
+    @Test func aLinkToTheRootsOwnTeamGoesBackToIt() {
+        var path = NavigationPath()
+        let binding = Binding(get: { path }, set: { path = $0 })
+        TeamLink.open(14, path: binding, rootTeamId: 19)       // the Dodgers, from the Yankees' Home
+        path.append(TeamDestination(bdlTeamId: 26))
+        TeamLink.open(19, path: binding, rootTeamId: 19)       // back to the Yankees
+        #expect(path.isEmpty)
+    }
+
+    @Test func aStackWithATeamPageRoundTrips() throws {
+        var path = NavigationPath()
+        path.append(TeamDestination(bdlTeamId: 14))
+        path.append(TeamNewsDestination(scope: .league, lahmanCode: nil, teamName: nil, tintCode: "LAN"))
+        let data = try #require(SceneRestoration.encode(path))
+        let back = try #require(SceneRestoration.path(stored: data, storedLaunch: "run-1", currentLaunch: "run-1"))
+        #expect(back.count == 2)
+        #expect(SceneRestoration.encode(back) == data)
+        let items = try #require(try JSONSerialization.jsonObject(with: data) as? [String])
+        #expect(items.contains("BaseballStats.TeamDestination"))
+        #expect(items.contains { $0.contains("\"bdlTeamId\":14") })
+        #expect(items.contains { $0.contains("\"tintCode\":\"LAN\"") })
     }
 }

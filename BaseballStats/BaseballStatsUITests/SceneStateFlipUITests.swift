@@ -97,7 +97,8 @@ final class SceneStateFlipUITests: XCTestCase {
         XCTAssertEqual(field.value as? String, draft, "the Ask draft didn't survive Done and reopen")
     }
 
-    /// Push something on Leaders (after changing a filter), Search and Home, then
+    /// Push something on Leaders (after changing a filter), Search, Standings (a
+    /// team's page) and Home, then
     /// flip the size class four times, visiting every tab after each flip: each
     /// tab still shows what was pushed, the Leaders filter is still set, and the
     /// profile opened from Leaders keeps its tab and its Career scope.
@@ -143,6 +144,17 @@ final class SceneStateFlipUITests: XCTestCase {
         awards.tap()
         let searchTitle = pushedTitle(app, root: "Search")
 
+        // Standings: a team's page, from its row. The Red Sox, not the favourite
+        // Yankees, whose page is Home's.
+        tab(app, "Standings").tap()
+        let standingsMode = app.segmentedControls.buttons["Standings"]
+        if standingsMode.waitForExistence(timeout: 5) { standingsMode.tap() }
+        let teamRow = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'BOS'")).firstMatch
+        XCTAssertTrue(teamRow.waitForExistence(timeout: 20), "no Red Sox row in Standings")
+        teamRow.tap()
+        let standingsTitle = pushedTitle(app, root: "Standings")
+        XCTAssertEqual(standingsTitle, "Boston Red Sox", "the row didn't open the Red Sox' page")
+
         // Home: the team's news list.
         tab(app, "Home").tap()
         let seeAll = app.buttons["See all"].firstMatch
@@ -165,6 +177,9 @@ final class SceneStateFlipUITests: XCTestCase {
             tab(app, "Search").tap()
             XCTAssertTrue(app.navigationBars[searchTitle].waitForExistence(timeout: 5),
                           "Search lost \(searchTitle) after the flip to \(expected)")
+            tab(app, "Standings").tap()
+            XCTAssertTrue(app.navigationBars[standingsTitle].waitForExistence(timeout: 5),
+                          "Standings lost the \(standingsTitle) page after the flip to \(expected)")
             tab(app, "Home").tap()
             XCTAssertTrue(app.navigationBars[homeTitle].waitForExistence(timeout: 5),
                           "Home lost \(homeTitle) after the flip to \(expected)")

@@ -20,14 +20,16 @@ enum NewsScope: String, Hashable, Codable {
     case league
 }
 
-/// Value-based navigation destination for the news list. Pushed onto Home's
-/// `navigationPath`. For `.team` it carries the team's Lahman code + display
-/// name; for `.league` those are nil (the title is fixed and the tint/badge
-/// are derived per-article).
+/// Value-based navigation destination for the news list, pushed from any team
+/// page and registered in `StackDestinations`. For `.team` it carries the
+/// team's Lahman code + display name; for `.league` those are nil (the title is
+/// fixed and the badges are derived per-article). `tintCode` is the Lahman code
+/// of the page it was opened from, whose colour the list takes in both scopes.
 struct TeamNewsDestination: Hashable, Codable {
     let scope: NewsScope
     let lahmanCode: String?
     let teamName: String?
+    var tintCode: String? = nil
 }
 
 /// Small team chip — a team-colored capsule with the app's CONVENTIONAL

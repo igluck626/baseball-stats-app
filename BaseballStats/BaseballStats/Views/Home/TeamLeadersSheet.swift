@@ -330,7 +330,7 @@ struct TeamLeadersSheet: View {
         isLoading = true
         let playerType: String = role == .batting ? "batter" : "pitcher"
         leaders = await vm.loadTeamLeaderboard(
-            stat: stat, playerType: playerType,
+            bdlTeamId: entry.bdlTeamId, stat: stat, playerType: playerType,
             mode: mode.rawValue,
             // Year applies only in Season mode; all-time / career run
             // unbounded over the full franchise history.

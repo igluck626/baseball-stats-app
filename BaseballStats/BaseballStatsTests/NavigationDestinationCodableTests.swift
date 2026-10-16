@@ -51,9 +51,10 @@ struct NavigationDestinationCodableTests {
 
         let types = Set(Self.matches(#"navigationDestination\(\s*for:\s*([A-Za-z_][A-Za-z0-9_.]*)\.self"#, in: all)
             .map { $0[1].components(separatedBy: ".").last! })
-        // Today: Game, PlayerSearchResult, TeamNewsDestination,
+        // Today: Game, PlayerSearchResult, TeamNewsDestination, TeamDestination,
         // AwardVotingBrowserDestination, PostseasonBracketDestination.
-        #expect(types.count >= 5, "destinations found: \(types.sorted())")
+        #expect(types.count >= 6, "destinations found: \(types.sorted())")
+        #expect(types.contains("TeamDestination"), "the team page must be a pushed, saved destination")
 
         for type in types.sorted() {
             let name = NSRegularExpression.escapedPattern(for: type)

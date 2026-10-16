@@ -475,10 +475,22 @@ struct PlayerProfileScreen: View {
                     .minimumScaleFactor(0.7)
 
                 if let subtitle = headerSubtitle {
-                    Text(subtitle)
+                    let line = Text(subtitle)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+                    // "RF · New York Yankees" opens the Yankees' page, for a
+                    // player still playing (a retired man's last club isn't
+                    // "his team") and only where this stack can push one.
+                    if let teamId = currentTeamBDLId, let context = boxScoreContext {
+                        Button {
+                            TeamLink.open(teamId, path: context.path, rootTeamId: context.rootTeamId)
+                        } label: { line }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("Opens the team page")
+                    } else {
+                        line
+                    }
                 }
 
                 if let detail = headerDetail {
@@ -572,6 +584,12 @@ struct PlayerProfileScreen: View {
         case let (nil, t?): return t
         default: return nil
         }
+    }
+
+    /// His current club's balldontlie id, while he is active.
+    private var currentTeamBDLId: Int? {
+        guard isActive, let code = nonEmpty(player.teamCode) else { return nil }
+        return lahmanToBDLTeamId[code]
     }
 
     /// "Bats: R · Throws: R · Active"

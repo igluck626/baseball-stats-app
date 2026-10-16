@@ -667,19 +667,18 @@ final class HomeViewModel: ObservableObject {
     }
 
     /// Fetch the top-10 leaderboard rows for a single stat, scoped to
-    /// the user's favorite team (same Lahman code resolution the
-    /// hero-card team-leaders fetch uses). Used by the See-All sheet
-    /// — returns an empty list when there's no favorite team set,
-    /// the Lahman code can't be resolved, or the backend ships no
-    /// qualifying rows. ERA does NOT get the special IP-floor walk
+    /// `bdlTeamId` — the page's team, which on Home is the favourite (same
+    /// Lahman code resolution the hero-card team-leaders fetch uses). Used
+    /// by the See-All sheet — returns an empty list when the Lahman code
+    /// can't be resolved or the backend ships no qualifying rows. It read
+    /// the favourite itself until every team had a page. ERA does NOT get the special IP-floor walk
     /// the top-1 card path uses; a 10-row list surfaces the leaders
     /// at a glance and the user can judge minimums in-context.
     func loadTeamLeaderboard(
-        stat: String, playerType: String, mode: String = "season",
+        bdlTeamId: Int, stat: String, playerType: String, mode: String = "season",
         year: Int? = nil, yearFrom: Int? = nil, yearTo: Int? = nil,
     ) async -> [LeaderCard] {
-        guard let bdlTeamId = FavoriteTeamStore.shared.bdlTeamId,
-              let lahmanCode = bdlToLahmanTeamId[bdlTeamId] else {
+        guard let lahmanCode = bdlToLahmanTeamId[bdlTeamId] else {
             return []
         }
         // `year` only matters in season mode (a specific season's team

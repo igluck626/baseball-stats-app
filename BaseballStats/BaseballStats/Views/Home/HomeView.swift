@@ -22,19 +22,9 @@ struct HomeView: View {
     @ObservedObject private var favoritesStore = FavoritePlayersStore.shared
     @EnvironmentObject private var navigation: AppNavigation
     @EnvironmentObject private var liveStore: LiveGameStore
-    /// Stable token for this tab's refcounted hold on the shared list loop, so
-    /// Home↔Scores switching can't cancel a loop the other tab still needs.
-    @State private var listSubscriberID = LiveGameStore.SubscriberID()
     @State private var showingSettings = false
     @State private var showingAddPlayer = false
-    @State private var showingSchedule = false
-    @State private var showingLeadersSheet = false
-    @State private var showingRosterSheet = false
-    @State private var showingHistorySheet = false
-    @State private var showingInjurySheet = false
     @State private var isEditingFavorites = false
-    /// Tapped news article — drives the in-app Safari reader sheet.
-    @State private var selectedArticle: NewsArticle?
 
     var body: some View { 
         NavigationStack(path: $stack.path) {
@@ -50,15 +40,10 @@ struct HomeView: View {
                 navigation: navigation,
                 liveStore: liveStore,
                 teamStandings: vm.teamStandings,
+                // Home's root is the favourite's page: a link to that team
+                // goes back to it rather than pushing a copy (TeamLink).
+                rootTeamId: store.bdlTeamId,
             ))
-            .navigationDestination(for: TeamNewsDestination.self) { dest in
-                TeamNewsListView(
-                    scope:      dest.scope,
-                    lahmanCode: dest.lahmanCode,
-                    teamName:   dest.teamName,
-                    tint:       teamColor,
-                )
-            }
             .sheet(isPresented: $showingSettings) {
                 SettingsView()
             }
@@ -67,83 +52,17 @@ struct HomeView: View {
                     favoritesStore.add(picked.player_id)
                 }
             }
-            .sheet(isPresented: $showingSchedule) {
-                if let bdlId = store.bdlTeamId,
-                   let entry = MLBTeamCatalog.entry(forBDLId: bdlId) {
-                    ScheduleSheet(
-                        favorite:      entry,
-                        teamStandings: vm.teamStandings,
-                        navigation:    navigation,
-                        liveStore:     liveStore,
-                    )
-                }
-            }
-            .sheet(isPresented: $showingLeadersSheet) { leadersSheet }
-            .sheet(isPresented: $showingRosterSheet) { rosterSheet }
-            .sheet(isPresented: $showingHistorySheet) { historySheet }
-            .sheet(isPresented: $showingInjurySheet) { injurySheet }
-            // In-app Safari reader for a tapped news article. `item:` keys
-            // the sheet to the exact tapped article so its url opens.
-            .sheet(item: $selectedArticle) { article in
-                if let url = URL(string: article.url) {
-                    SafariView(url: url)
-                        .ignoresSafeArea()
-                        .appearanceOverride()
-                }
-            }
         }
         // The window keeps this path across a resize or a fold (see SceneState).
         .scenePathPersistence(stack, key: "home")
-        .task(id: store.bdlTeamId) {
-            guard let bdlId = store.bdlTeamId else { return }
-            await vm.load(bdlTeamId: bdlId)
-            await vm.loadInjuries(bdlTeamId: bdlId)
-            await vm.loadTeamLeaders(bdlTeamId: bdlId)
-            await vm.loadRoster(bdlTeamId: bdlId)
-            await vm.loadTeamHistory(bdlTeamId: bdlId)
-            await vm.loadNews(bdlTeamId: bdlId)
-            await vm.loadLeagueNews()
-        }
+        // The favourite's loads and live polling, here at the stack rather than
+        // inside the page, so pushing a game or a player on Home's stack doesn't
+        // cancel and restart them (a stack's root view disappears under a push).
+        .teamPageLifecycle(bdlTeamId: store.bdlTeamId, vm: vm, owningTab: .home,
+                           navigation: navigation, liveStore: liveStore)
         .task(id: favoritesStore.playerIds) {
             await vm.loadFavoritePlayers(ids: favoritesStore.playerIds)
         }
-        // Hold the SHARED LiveGameStore list loop while the Home tab is visible,
-        // gated by shouldPoll(.home). Refcounted by `listSubscriberID` (like the
-        // Scores tab), so a Home↔Scores switch can't cancel a loop the other tab
-        // still holds regardless of .onChange ordering.
-        .task {
-            if navigation.shouldPoll(on: .home) { liveStore.subscribeList(owner: listSubscriberID) }
-        }
-        // Re-read the favourite's games while Home is visible. NOT behind
-        // `hasLiveGame` — `applyLiveList` is, and that is exactly why the hero
-        // card could freeze: once the view model stopped believing a game was
-        // live, the only path that updated it stopped running. This one keeps
-        // going regardless, which is the point.
-        .periodicRefresh(
-            every: RefreshCadence.slate,
-            isActive: navigation.shouldPoll(on: .home),
-        ) {
-            if let bdlId = store.bdlTeamId {
-                await vm.load(bdlTeamId: bdlId, quiet: true)
-            }
-        }
-        // Fold each fresh /live/games snapshot from the store into the hero strip
-        // (score / inning) — the merge the deleted refreshLive loop used to do,
-        // now sourced from the store's shared list instead of a self-fetch.
-        .onChange(of: liveStore.liveList) { _, list in
-            guard let bdlId = store.bdlTeamId else { return }
-            Task { await vm.applyLiveList(list, bdlTeamId: bdlId) }
-        }
-        // Pause the store list loop on background / switch away from Home;
-        // resume with an immediate refresh on return.
-        .onChange(of: navigation.shouldPoll(on: .home)) { _, canPoll in
-            if canPoll {
-                liveStore.subscribeList(owner: listSubscriberID)
-            } else {
-                liveStore.unsubscribeList(owner: listSubscriberID)
-            }
-        }
-        .onDisappear { liveStore.unsubscribeList(owner: listSubscriberID) }
     }
 
     // MARK: - Chrome
@@ -163,124 +82,13 @@ struct HomeView: View {
         return color
     }
 
-    /// Push the full news list for the given scope. Team scope uses the exact
-    /// same Lahman code the carousel/news fetch already uses
-    /// (`bdlToLahmanTeamId`) plus the team's display name for the nav title;
-    /// league scope needs neither (per-article badges + a fixed title).
-    private func pushNewsList(scope: NewsScope) {
-        switch scope {
-        case .team:
-            guard let bdlId = store.bdlTeamId,
-                  let lahmanCode = bdlToLahmanTeamId[bdlId] else { return }
-            let teamName = MLBTeamCatalog.entry(forBDLId: bdlId)?.fullName
-            stack.path.append(
-                TeamNewsDestination(scope: .team, lahmanCode: lahmanCode, teamName: teamName)
-            )
-        case .league:
-            stack.path.append(
-                TeamNewsDestination(scope: .league, lahmanCode: nil, teamName: nil)
-            )
-        }
-    }
-
     /// Subtle team-color wash that only paints the top ~40% of the
     /// screen and fades to clear. The `Color(.systemBackground)` base
     /// shows through below the fade — so the lower half of the tab
     /// reads as plain system surface (and the glass cards on top look
     /// like genuine glass against it).
-    @ViewBuilder
-    private var leadersSheet: some View {
-            if let bdlId = store.bdlTeamId,
-               let entry = MLBTeamCatalog.entry(forBDLId: bdlId) {
-                TeamLeadersSheet(entry: entry, vm: vm,
-                                 navigation: navigation, liveStore: liveStore)
-                    .presentationDetents([.large])
-                    // iPad: room for the tables. A phone ignores sizing (always full width).
-                    .presentationSizing(.page)
-            }
-    }
-
-    @ViewBuilder
-    private var rosterSheet: some View {
-            if let bdlId = store.bdlTeamId,
-               let entry = MLBTeamCatalog.entry(forBDLId: bdlId) {
-                RosterSheet(
-                    entry:      entry,
-                    roster:     vm.roster,
-                    isLoading:  vm.isLoadingRoster,
-                    navigation: navigation,
-                    liveStore:  liveStore,
-                )
-                .presentationDetents([.large])
-                // iPad: room for the tables. A phone ignores sizing (always full width).
-                .presentationSizing(.page)
-            }
-    }
-
-    @ViewBuilder
-    private var injurySheet: some View {
-            if let bdlId = store.bdlTeamId,
-               let entry = MLBTeamCatalog.entry(forBDLId: bdlId) {
-                InjuryReportSheet(
-                    entry:      entry,
-                    players:    vm.injuredPlayers,
-                    resolved:   vm.injuredPlayersResolved,
-                    isLoading:  vm.isLoadingInjuries,
-                    navigation: navigation,
-                    liveStore:  liveStore,
-                )
-                .presentationDetents([.large])
-                // iPad: room for the tables. A phone ignores sizing (always full width).
-                .presentationSizing(.page)
-            }
-    }
-
-    /// Extracted from the `.sheet` chain: adding a sixth argument to the
-    /// destinations modifier pushed `body` past the compiler's type-checking
-    /// budget ("unable to type-check this expression in reasonable time"). A
-    /// SwiftUI view builder is one expression, so every modifier added to it
-    /// costs inference time for the whole chain — pulling a branch into its own
-    /// property is the standard remedy and changes nothing at runtime.
-    @ViewBuilder
-    private var historySheet: some View {
-        if let bdlId = store.bdlTeamId,
-           let entry = MLBTeamCatalog.entry(forBDLId: bdlId) {
-            TeamHistorySheet(
-                entry:            entry,
-                vm:               vm,
-                history:          vm.teamHistory,
-                postseasonByYear: vm.postseasonByYear,
-                isLoading:        vm.isLoadingHistory,
-                navigation:       navigation,
-                liveStore:        liveStore,
-            )
-            .presentationDetents([.large])
-            // iPad: room for the tables. A phone ignores sizing (always full width).
-            .presentationSizing(.page)
-        }
-    }
-
     private var backgroundGradient: some View {
-        ZStack {
-            // Grouped background so the solid white/dark cards float with
-            // clear separation (matches the player-profile surface).
-            Color(.systemGroupedBackground)
-                .ignoresSafeArea()
-            LinearGradient(
-                colors: [
-                    // ~50% stronger than the previous 0.25 / 0.08 so the
-                    // team color reads clearly (was too pale). Kept global —
-                    // every team uses the same values; content sits on opaque
-                    // cards so dark-team primaries stay legible.
-                    teamColor.opacity(0.375),
-                    teamColor.opacity(0.12),
-                    Color.clear,
-                ],
-                startPoint: .top,
-                endPoint: .init(x: 0.5, y: 0.4),
-            )
-            .ignoresSafeArea()
-        }
+        TeamPageBackground(tint: teamColor)
     }
 
     @ToolbarContentBuilder
@@ -288,23 +96,7 @@ struct HomeView: View {
         ToolbarItem(placement: .principal) {
             if let bdlId = store.bdlTeamId,
                let entry = MLBTeamCatalog.entry(forBDLId: bdlId) {
-                HStack(spacing: 8) {
-                    // Colour, not a circle of letters: the club's full name is
-                    // the very next thing in the header, so "LAD" beside "Los
-                    // Angeles Dodgers" said the same thing twice. Same
-                    // treatment the score surfaces took. 17pt matches the
-                    // .headline line it leads.
-                    //
-                    // The five Home SHEETS keep their badges deliberately:
-                    // their titles are "Injury Report", "2026 Roster",
-                    // "Season History" and the like, so there the mark is the
-                    // only thing naming the club and removing it would leave
-                    // the header not saying whose.
-                    TeamColorSwatch(team: entry.teamInfo, height: 17)
-                    Text(entry.fullName)
-                        .font(.headline.weight(.semibold))
-                        .lineLimit(1)
-                }
+                TeamPageTitle(entry: entry)
             }
         }
         // Ask, at the leading edge — the trailing slot holds Settings.
@@ -336,13 +128,76 @@ struct HomeView: View {
         }
     }
 
-    /// Home's measured content width, which decides one column or two.
-    @State private var homeWidth: CGFloat = 0
-
     @ViewBuilder
     private func loadedContent(entry: MLBTeamCatalog.Entry) -> some View {
         let tint = TeamColors.color(for: entry.lahmanCode) ?? .accentColor
-        let twoColumns = HomeColumns.twoColumns(width: homeWidth)
+        // The team page every club has, with My Players added: Home is the
+        // favourite's team page.
+        TeamPageLayout(entry: entry, vm: vm, path: $stack.path,
+                       navigation: navigation, liveStore: liveStore) {
+            FavoritePlayersSection(
+                favorites:    vm.favoritePlayers,
+                isLoading:    vm.isLoadingFavorites,
+                isEditing:    $isEditingFavorites,
+                tint:         tint,
+                onAdd:        { showingAddPlayer = true },
+                onRemove:     { id in favoritesStore.remove(id) },
+                onTapPlayer:  { player in
+                    stack.path.append(player)
+                },
+            )
+        }
+    }
+
+    private var loadingSkeleton: some View {
+        VStack(spacing: 14) {
+            RoundedRectangle(cornerRadius: 18)
+                .fill(Color(.systemGray5))
+                .frame(height: 340)
+                .padding(.horizontal, 16)
+            RoundedRectangle(cornerRadius: 18)
+                .fill(Color(.systemGray5))
+                .frame(height: 280)
+                .padding(.horizontal, 16)
+            Spacer()
+        }
+        .padding(.top, 12)
+    }
+}
+
+// MARK: - Team page
+
+/// One club's page: the hero card, Team News, Team Leaders and Roster /
+/// Injuries / History, with their sheets, in one column or two (`HomeColumns`).
+/// Home is this page for the favourite team with My Players added (`extra`);
+/// every other team's page is `TeamPageView`, the same layout pushed onto a
+/// tab's stack. One view for both, so the two can't drift apart.
+///
+/// Loads and live polling are NOT in here — see `TeamPageLifecycle`.
+struct TeamPageLayout<Extra: View>: View {
+    let entry: MLBTeamCatalog.Entry
+    @ObservedObject var vm: HomeViewModel
+    /// The stack this page is on: games and players tapped here are pushed onto it.
+    let path: Binding<NavigationPath>
+    /// Passed, not read from the environment: the sheets below are hosted apart
+    /// from their presenter (see `StackDestinations`).
+    @ObservedObject var navigation: AppNavigation
+    @ObservedObject var liveStore: LiveGameStore
+    @ViewBuilder let extra: () -> Extra
+
+    @State private var showingSchedule = false
+    @State private var showingLeadersSheet = false
+    @State private var showingRosterSheet = false
+    @State private var showingHistorySheet = false
+    @State private var showingInjurySheet = false
+    /// Tapped news article — drives the in-app Safari reader sheet.
+    @State private var selectedArticle: NewsArticle?
+    /// The page's measured content width, which decides one column or two.
+    @State private var pageWidth: CGFloat = 0
+
+    var body: some View {
+        let tint = TeamColors.color(for: entry.lahmanCode) ?? .accentColor
+        let twoColumns = HomeColumns.twoColumns(width: pageWidth)
         let columns = HomeColumns.layout(twoColumns: twoColumns)
         ScrollView {
             // One column on a phone, in the order written; two on a wide window,
@@ -361,7 +216,7 @@ struct HomeView: View {
                     stripGames:   vm.recentAndUpcoming,
                     endedGames:   vm.endedLocally,
                     onSchedule:   { showingSchedule = true },
-                    onTapStripGame: { game in stack.path.append(game) },
+                    onTapStripGame: { game in path.wrappedValue.append(game) },
                 )
 
                 // Team News — nice-to-have, so it only appears once
@@ -384,7 +239,7 @@ struct HomeView: View {
                     tint:        tint,
                     onSeeAll:    { showingLeadersSheet = true },
                     onTapPlayer: { player in
-                        stack.path.append(player)
+                        path.wrappedValue.append(player)
                     },
                 )
                 .homeColumn(.right)
@@ -399,43 +254,246 @@ struct HomeView: View {
                     onHistory:   { showingHistorySheet = true },
                 )
 
-                FavoritePlayersSection(
-                    favorites:    vm.favoritePlayers,
-                    isLoading:    vm.isLoadingFavorites,
-                    isEditing:    $isEditingFavorites,
-                    tint:         tint,
-                    onAdd:        { showingAddPlayer = true },
-                    onRemove:     { id in favoritesStore.remove(id) },
-                    onTapPlayer:  { player in
-                        stack.path.append(player)
-                    },
-                )
+                extra()
             }
             .padding(.top, 12)
             .padding(.bottom, 16)
             .readableContentWidth(HomeColumns.contentCap(twoColumns: twoColumns))
         }
-        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { homeWidth = $0 }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { pageWidth = $0 }
         .refreshable {
-            if let bdlId = store.bdlTeamId {
-                await vm.load(bdlTeamId: bdlId)
+            await vm.load(bdlTeamId: entry.bdlTeamId)
+        }
+        .sheet(isPresented: $showingSchedule) {
+            ScheduleSheet(
+                favorite:      entry,
+                teamStandings: vm.teamStandings,
+                navigation:    navigation,
+                liveStore:     liveStore,
+            )
+        }
+        .sheet(isPresented: $showingLeadersSheet) { leadersSheet }
+        .sheet(isPresented: $showingRosterSheet) { rosterSheet }
+        .sheet(isPresented: $showingHistorySheet) { historySheet }
+        .sheet(isPresented: $showingInjurySheet) { injurySheet }
+        // In-app Safari reader for a tapped news article. `item:` keys
+        // the sheet to the exact tapped article so its url opens.
+        .sheet(item: $selectedArticle) { article in
+            if let url = URL(string: article.url) {
+                SafariView(url: url)
+                    .ignoresSafeArea()
+                    .appearanceOverride()
             }
         }
     }
 
-    private var loadingSkeleton: some View {
-        VStack(spacing: 14) {
-            RoundedRectangle(cornerRadius: 18)
-                .fill(Color(.systemGray5))
-                .frame(height: 340)
-                .padding(.horizontal, 16)
-            RoundedRectangle(cornerRadius: 18)
-                .fill(Color(.systemGray5))
-                .frame(height: 280)
-                .padding(.horizontal, 16)
-            Spacer()
+    /// Push the full news list for the given scope. Team scope uses the exact
+    /// same Lahman code the carousel/news fetch already uses
+    /// (`bdlToLahmanTeamId`) plus the team's display name for the nav title;
+    /// league scope needs neither (per-article badges + a fixed title).
+    private func pushNewsList(scope: NewsScope) {
+        switch scope {
+        case .team:
+            guard let lahmanCode = bdlToLahmanTeamId[entry.bdlTeamId] else { return }
+            path.wrappedValue.append(
+                TeamNewsDestination(scope: .team, lahmanCode: lahmanCode, teamName: entry.fullName,
+                                    tintCode: entry.lahmanCode)
+            )
+        case .league:
+            path.wrappedValue.append(
+                TeamNewsDestination(scope: .league, lahmanCode: nil, teamName: nil,
+                                    tintCode: entry.lahmanCode)
+            )
         }
-        .padding(.top, 12)
+    }
+
+    private var leadersSheet: some View {
+        TeamLeadersSheet(entry: entry, vm: vm,
+                         navigation: navigation, liveStore: liveStore)
+            .presentationDetents([.large])
+            // iPad: room for the tables. A phone ignores sizing (always full width).
+            .presentationSizing(.page)
+    }
+
+    private var rosterSheet: some View {
+        RosterSheet(
+            entry:      entry,
+            roster:     vm.roster,
+            isLoading:  vm.isLoadingRoster,
+            navigation: navigation,
+            liveStore:  liveStore,
+        )
+        .presentationDetents([.large])
+        // iPad: room for the tables. A phone ignores sizing (always full width).
+        .presentationSizing(.page)
+    }
+
+    private var injurySheet: some View {
+        InjuryReportSheet(
+            entry:      entry,
+            players:    vm.injuredPlayers,
+            resolved:   vm.injuredPlayersResolved,
+            isLoading:  vm.isLoadingInjuries,
+            navigation: navigation,
+            liveStore:  liveStore,
+        )
+        .presentationDetents([.large])
+        // iPad: room for the tables. A phone ignores sizing (always full width).
+        .presentationSizing(.page)
+    }
+
+    /// Extracted from the `.sheet` chain: a long modifier chain on one view
+    /// builder costs the compiler's type-checking budget for the whole chain
+    /// ("unable to type-check this expression in reasonable time"), and
+    /// pulling a branch into its own property is the standard remedy.
+    private var historySheet: some View {
+        TeamHistorySheet(
+            entry:            entry,
+            vm:               vm,
+            history:          vm.teamHistory,
+            postseasonByYear: vm.postseasonByYear,
+            isLoading:        vm.isLoadingHistory,
+            navigation:       navigation,
+            liveStore:        liveStore,
+        )
+        .presentationDetents([.large])
+        // iPad: room for the tables. A phone ignores sizing (always full width).
+        .presentationSizing(.page)
+    }
+}
+
+/// A team page's backdrop: the grouped background with the team's colour
+/// washing the top ~40% of the screen.
+struct TeamPageBackground: View {
+    let tint: Color
+
+    var body: some View {
+        ZStack {
+            // Grouped background so the solid white/dark cards float with
+            // clear separation (matches the player-profile surface).
+            Color(.systemGroupedBackground)
+                .ignoresSafeArea()
+            LinearGradient(
+                colors: [
+                    // ~50% stronger than the previous 0.25 / 0.08 so the
+                    // team color reads clearly (was too pale). Kept global —
+                    // every team uses the same values; content sits on opaque
+                    // cards so dark-team primaries stay legible.
+                    tint.opacity(0.375),
+                    tint.opacity(0.12),
+                    Color.clear,
+                ],
+                startPoint: .top,
+                endPoint: .init(x: 0.5, y: 0.4),
+            )
+            .ignoresSafeArea()
+        }
+    }
+}
+
+/// A team page's navigation title: the club's colour and full name.
+struct TeamPageTitle: View {
+    let entry: MLBTeamCatalog.Entry
+
+    var body: some View {
+        HStack(spacing: 8) {
+            // Colour, not a circle of letters: the club's full name is
+            // the very next thing in the header, so "LAD" beside "Los
+            // Angeles Dodgers" said the same thing twice. Same
+            // treatment the score surfaces took. 17pt matches the
+            // .headline line it leads.
+            //
+            // The five team SHEETS keep their badges deliberately:
+            // their titles are "Injury Report", "2026 Roster",
+            // "Season History" and the like, so there the mark is the
+            // only thing naming the club and removing it would leave
+            // the header not saying whose.
+            TeamColorSwatch(team: entry.teamInfo, height: 17)
+            Text(entry.fullName)
+                .font(.headline.weight(.semibold))
+                .lineLimit(1)
+        }
+    }
+}
+
+/// A team page's loads and live polling, as a modifier, because where it sits
+/// matters. Home applies it at its NavigationStack: a stack's root view
+/// disappears under a push, so on the page itself, opening a game from Home
+/// would cancel these and Back would restart every load. A pushed
+/// `TeamPageView` has no stack of its own and applies it at its root, with
+/// `reloadsOnReturn: false` so coming back from a game doesn't reload it all.
+struct TeamPageLifecycle: ViewModifier {
+    let bdlTeamId: Int?
+    @ObservedObject var vm: HomeViewModel
+    /// Gates polling: only while this tab is on screen and the app is active.
+    let owningTab: AppNavigation.Tab
+    @ObservedObject var navigation: AppNavigation
+    @ObservedObject var liveStore: LiveGameStore
+    var reloadsOnReturn = true
+    /// Stable token for this page's refcounted hold on the shared list loop, so
+    /// Home↔Scores switching can't cancel a loop the other tab still needs.
+    @State private var listSubscriberID = LiveGameStore.SubscriberID()
+
+    func body(content: Content) -> some View {
+        content
+            .task(id: bdlTeamId) {
+                guard let bdlId = bdlTeamId else { return }
+                if !reloadsOnReturn && vm.didLoad { return }
+                await vm.load(bdlTeamId: bdlId)
+                await vm.loadInjuries(bdlTeamId: bdlId)
+                await vm.loadTeamLeaders(bdlTeamId: bdlId)
+                await vm.loadRoster(bdlTeamId: bdlId)
+                await vm.loadTeamHistory(bdlTeamId: bdlId)
+                await vm.loadNews(bdlTeamId: bdlId)
+                await vm.loadLeagueNews()
+            }
+            // Hold the SHARED LiveGameStore list loop while the tab is visible,
+            // gated by shouldPoll(owningTab). Refcounted by `listSubscriberID`
+            // (like the Scores tab), so a tab switch can't cancel a loop another
+            // tab still holds regardless of .onChange ordering.
+            .task {
+                if navigation.shouldPoll(on: owningTab) { liveStore.subscribeList(owner: listSubscriberID) }
+            }
+            // Re-read the team's games while the tab is visible. NOT behind
+            // `hasLiveGame` — `applyLiveList` is, and that is exactly why the hero
+            // card could freeze: once the view model stopped believing a game was
+            // live, the only path that updated it stopped running. This one keeps
+            // going regardless, which is the point.
+            .periodicRefresh(
+                every: RefreshCadence.slate,
+                isActive: navigation.shouldPoll(on: owningTab),
+            ) {
+                if let bdlId = bdlTeamId {
+                    await vm.load(bdlTeamId: bdlId, quiet: true)
+                }
+            }
+            // Fold each fresh /live/games snapshot from the store into the hero strip
+            // (score / inning) — the merge the deleted refreshLive loop used to do,
+            // now sourced from the store's shared list instead of a self-fetch.
+            .onChange(of: liveStore.liveList) { _, list in
+                guard let bdlId = bdlTeamId else { return }
+                Task { await vm.applyLiveList(list, bdlTeamId: bdlId) }
+            }
+            // Pause the store list loop on background / switch away from the tab;
+            // resume with an immediate refresh on return.
+            .onChange(of: navigation.shouldPoll(on: owningTab)) { _, canPoll in
+                if canPoll {
+                    liveStore.subscribeList(owner: listSubscriberID)
+                } else {
+                    liveStore.unsubscribeList(owner: listSubscriberID)
+                }
+            }
+            .onDisappear { liveStore.unsubscribeList(owner: listSubscriberID) }
+    }
+}
+
+extension View {
+    func teamPageLifecycle(bdlTeamId: Int?, vm: HomeViewModel, owningTab: AppNavigation.Tab,
+                           navigation: AppNavigation, liveStore: LiveGameStore,
+                           reloadsOnReturn: Bool = true) -> some View {
+        modifier(TeamPageLifecycle(bdlTeamId: bdlTeamId, vm: vm, owningTab: owningTab,
+                                   navigation: navigation, liveStore: liveStore,
+                                   reloadsOnReturn: reloadsOnReturn))
     }
 }
 

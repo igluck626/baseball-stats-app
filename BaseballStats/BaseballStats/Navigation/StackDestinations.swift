@@ -79,6 +79,10 @@ struct BoxScoreContext {
     /// "3rd AL East" sub-line. (The "(W-L)" line is the box score's own: it
     /// loads the record as of that game from `/games/records`.)
     var teamStandings: [Int: TeamStandingInfo] = [:]
+    /// The team whose page is this stack's root — the favourite, on Home — so
+    /// a link to that team goes back to it instead of pushing a copy
+    /// (`TeamLink`). nil everywhere else.
+    var rootTeamId: Int? = nil
 }
 
 // ⚠️ ONE STACK IS DELIBERATELY NOT COVERED: AskView. It is a
@@ -128,6 +132,21 @@ struct StackDestinations: ViewModifier {
                     owningTab:      context.owningTab,
                     navigation:     context.navigation,
                     liveStore:      context.liveStore,
+                    rootTeamId:     context.rootTeamId,
+                )
+            }
+            // Any club's page, from a Standings row, a box score's header or a
+            // player's team; and the team news list a team page opens.
+            .navigationDestination(for: TeamDestination.self) { team in
+                TeamPageView(bdlTeamId: team.bdlTeamId, context: context)
+            }
+            .navigationDestination(for: TeamNewsDestination.self) { dest in
+                TeamNewsListView(
+                    scope:      dest.scope,
+                    lahmanCode: dest.lahmanCode,
+                    teamName:   dest.teamName,
+                    tint:       (dest.tintCode ?? dest.lahmanCode).flatMap { TeamColors.color(for: $0) }
+                                    ?? .accentColor,
                 )
             }
     }
