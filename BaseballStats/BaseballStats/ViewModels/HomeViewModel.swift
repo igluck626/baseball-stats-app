@@ -32,6 +32,9 @@ final class HomeViewModel: ObservableObject {
     @Published var teamStreakCode: String?
     @Published var teamLastTenW: Int?
     @Published var teamLastTenL: Int?
+    /// How the team's season stands — over (and how it ended) or not. The hero
+    /// shows it once there's nothing left to play. nil before the first load.
+    @Published var seasonResult: SeasonResult?
     @Published var isLoading: Bool = false
     /// In-flight `finalize` retry chain — a later game ending supersedes an
     /// earlier chase instead of running two refreshes at once.
@@ -208,15 +211,31 @@ final class HomeViewModel: ObservableObject {
         // same ±5 Eastern days the per-day calls covered.
         var fetched: [Game] = []
         var seen: Set<Int> = []
+        var seasonGames: [BDLGame] = []
+        var result: SeasonResult?
+        var opener: BDLGame?
         if let season = try? await schedule.getTeamSchedule(bdlTeamId: bdlTeamId, season: year,
                                                             fresh: bypassCache) {
+            seasonGames = season.games.filter { !$0.hasPlaceholderTeam }
+            result = season.seasonResult
+            opener = season.nextSeasonFirstGame
             let window = Set(dates)
-            for g in season.games where !seen.contains(g.id) && !g.hasPlaceholderTeam {
+            for g in seasonGames where !seen.contains(g.id) {
                 guard let day = BallDontLieClient.easternDateString(for: g),
                       window.contains(day) else { continue }
                 seen.insert(g.id)
                 fetched.append(g.toGame())
             }
+        }
+        // Before Opening Day this year's schedule holds no finished game, so
+        // the hero shows how last season ended, and this season's opener next.
+        var lastSeasonGames: [BDLGame] = []
+        if !seasonGames.contains(where: { $0.status == "STATUS_FINAL" }),
+           let last = try? await schedule.getTeamSchedule(bdlTeamId: bdlTeamId, season: year - 1,
+                                                          fresh: false) {
+            lastSeasonGames = last.games.filter { !$0.hasPlaceholderTeam }
+            result = last.seasonResult
+            opener = Self.firstRegularGame(seasonGames) ?? last.nextSeasonFirstGame
         }
         let sorted = fetched.sorted {
             ($0.startDate ?? .distantFuture) < ($1.startDate ?? .distantFuture)
@@ -231,11 +250,17 @@ final class HomeViewModel: ObservableObject {
         }
         let finals = sorted.filter { $0.phase == .final }
         let liveOrPreview = sorted.filter { $0.phase != .final }
-        self.lastGame = finals.last
-        // `nextGame` prioritizes live > earliest upcoming. Falls back
-        // to nil when the season's over.
+        // The last game in the five-day window, else the season's last — so an
+        // eliminated team, or one on a long break, still shows its last result.
+        self.lastGame = finals.last ?? Self.lastFinal(seasonGames + lastSeasonGames)
+        // `nextGame` prioritizes live > earliest upcoming in the window, then the
+        // season's next game to be played, then — once the season is over — next
+        // season's opener, if balldontlie lists it.
         self.nextGame = liveOrPreview.first(where: { $0.phase == .live })
             ?? liveOrPreview.first
+            ?? Self.nextToPlay(seasonGames)
+            ?? ((result?.isOver ?? false) ? opener?.toGame() : nil)
+        self.seasonResult = result
         self.recentAndUpcoming = Self.buildStrip(
             finals: finals, liveOrPreview: liveOrPreview,
         )
@@ -415,6 +440,26 @@ final class HomeViewModel: ObservableObject {
     /// 4 from the live/upcoming slice. Bias toward upcoming when
     /// the team has more in front of them than behind (cold start
     /// in March / preseason).
+    /// The season's last finished game.
+    nonisolated static func lastFinal(_ games: [BDLGame]) -> Game? {
+        games.filter { $0.status == "STATUS_FINAL" }
+            .max { ($0.startDate ?? .distantPast) < ($1.startDate ?? .distantPast) }?
+            .toGame()
+    }
+
+    /// The season's next game still to be played: not finished, not postponed
+    /// or cancelled for good, not yet started.
+    nonisolated static func nextToPlay(_ games: [BDLGame], now: Date = Date()) -> Game? {
+        games.filter { $0.status == "STATUS_SCHEDULED" && ($0.startDate ?? .distantPast) > now }
+            .min { ($0.startDate ?? .distantFuture) < ($1.startDate ?? .distantFuture) }?
+            .toGame()
+    }
+
+    nonisolated static func firstRegularGame(_ games: [BDLGame]) -> BDLGame? {
+        games.filter(\.isRegularSeason)
+            .min { ($0.startDate ?? .distantFuture) < ($1.startDate ?? .distantFuture) }
+    }
+
     private static func buildStrip(
         finals: [Game], liveOrPreview: [Game],
     ) -> [Game] {

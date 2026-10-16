@@ -2,8 +2,8 @@
 //  TeamPageTests.swift
 //  BaseballStatsTests
 //
-//  The team page for every club: the two server reads it is built on, and
-//  the link that opens a team's page.
+//  The team page for every club: the two server reads it is built on, the
+//  hero's answer once a season is over, and the link that opens a team's page.
 //
 //  Fixtures are the server's own responses, from the backend run locally
 //  against balldontlie and the database on 2026-10-15:
@@ -36,6 +36,30 @@ private func roster() throws -> TeamRosterResponse {
     try JSONDecoder().decode(TeamRosterResponse.self, from: fixture("team-roster-lad.json"))
 }
 
+/// Serves schedules in order, one per call, the last repeating — and records
+/// which seasons were asked for.
+private final class FakeSchedule: TeamScheduleProviding, @unchecked Sendable {
+    private let responses: [TeamScheduleResponse]
+    private(set) var seasons: [Int] = []
+    private let lock = NSLock()
+
+    init(_ responses: [TeamScheduleResponse]) { self.responses = responses }
+
+    func getTeamSchedule(bdlTeamId: Int, season: Int, fresh: Bool) async throws -> TeamScheduleResponse {
+        lock.withLock {
+            seasons.append(season)
+            return responses[min(seasons.count - 1, responses.count - 1)]
+        }
+    }
+}
+
+private func noGames(season: Int) -> TeamScheduleResponse {
+    TeamScheduleResponse(teamId: 9, season: season, abbreviation: "COL", games: [],
+                         seasonResult: SeasonResult(state: .inProgress, roundName: nil, wins: nil,
+                                                    losses: nil, opponent: nil),
+                         nextSeasonFirstGame: nil)
+}
+
 @MainActor
 struct TeamScheduleTests {
 
@@ -47,6 +71,65 @@ struct TeamScheduleTests {
         let lad = try schedule("team-schedule-lad-2026.json")
         #expect(lad.seasonResult.state == .alive && !lad.seasonResult.isOver)
         #expect(lad.games.contains { $0.seasonType == "postseason" })
+    }
+
+    /// The Rockies' season ended on 09-27, far outside the five-day window the
+    /// hero reads: the card used to say "No recent games / Season schedule TBA"
+    /// for them, and would have for every club from November.
+    @Test func anEliminatedTeamsHeroShowsItsLastGameAndHowTheSeasonEnded() async throws {
+        let col = try schedule("team-schedule-col-2026.json")
+        let vm = HomeViewModel(schedule: FakeSchedule([col]), finalizeDelays: [0])
+        await vm.load(bdlTeamId: 9)
+        let last = try #require(col.games.filter { $0.status == "STATUS_FINAL" }
+            .max { ($0.startDate ?? .distantPast) < ($1.startDate ?? .distantPast) })
+        #expect(vm.lastGame?.gamePk == last.id, "the season's last game, not nothing")
+        #expect(vm.seasonResult?.state == .missedPostseason)
+        #expect(vm.nextGame == nil, "nothing to play and no 2027 game listed yet")
+    }
+
+    @Test func onceTheSeasonIsOverNextSeasonsOpenerIsTheNextGame() async throws {
+        var col = try schedule("team-schedule-col-2026.json")
+        let opener = try #require(col.games.first { $0.isRegularSeason })
+        col = TeamScheduleResponse(teamId: 9, season: 2026, abbreviation: "COL", games: col.games,
+                                   seasonResult: col.seasonResult, nextSeasonFirstGame: opener)
+        let vm = HomeViewModel(schedule: FakeSchedule([col]), finalizeDelays: [0])
+        await vm.load(bdlTeamId: 9)
+        #expect(vm.nextGame?.gamePk == opener.id)
+    }
+
+    /// Before Opening Day the year's schedule has no finished game: the hero
+    /// reads last season's, so January doesn't blank every team's card.
+    @Test func beforeOpeningDayTheHeroShowsLastSeasonsEnding() async throws {
+        let col = try schedule("team-schedule-col-2026.json")
+        let fake = FakeSchedule([noGames(season: 2027), col])
+        let vm = HomeViewModel(schedule: fake, finalizeDelays: [0])
+        await vm.load(bdlTeamId: 9)
+        #expect(fake.seasons.count == 2 && fake.seasons[1] == fake.seasons[0] - 1,
+                "asks for this season, then the one before: \(fake.seasons)")
+        #expect(vm.seasonResult?.state == .missedPostseason)
+        #expect(vm.lastGame != nil)
+    }
+
+    @Test func aSeasonWithFinishedGamesDoesNotLookBack() async throws {
+        let col = try schedule("team-schedule-col-2026.json")
+        let fake = FakeSchedule([col])
+        let vm = HomeViewModel(schedule: fake, finalizeDelays: [0])
+        await vm.load(bdlTeamId: 9)
+        #expect(fake.seasons.count == 1)
+    }
+
+    @Test func theSeasonResultReadsAsALine() {
+        func line(_ state: SeasonResult.State, _ round: String? = nil, _ w: Int? = nil, _ l: Int? = nil,
+                  _ opp: String? = nil) -> String {
+            HomeGameUtils.seasonResultLine(SeasonResult(state: state, roundName: round, wins: w,
+                                                        losses: l, opponent: opp))
+        }
+        #expect(line(.missedPostseason) == "Season over · Missed the postseason")
+        #expect(line(.eliminated, "NLCS", 0, 4, "MIL") == "Season over · Lost the NLCS 0-4 to MIL")
+        #expect(line(.champion, "World Series", 4, 3, "TOR") == "World Series champions · 4-3 over TOR")
+        #expect(line(.eliminated, "AL Wild Card", 1, 2, "OAK") == "Season over · Lost the AL Wild Card 1-2 to ATH",
+                "balldontlie's OAK reads as the app shows the Athletics everywhere")
+        #expect(line(.seasonOver) == "Season over")
     }
 
     @Test func anUnknownStateDecodesRatherThanFailingTheSchedule() throws {

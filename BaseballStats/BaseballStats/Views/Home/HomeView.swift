@@ -214,6 +214,7 @@ struct TeamPageLayout<Extra: View>: View {
                     nextGame:     vm.nextGame,
                     liveGame:     vm.liveGame,
                     stripGames:   vm.recentAndUpcoming,
+                    seasonResult: vm.seasonResult,
                     endedGames:   vm.endedLocally,
                     onSchedule:   { showingSchedule = true },
                     onTapStripGame: { game in path.wrappedValue.append(game) },
@@ -561,6 +562,9 @@ private struct TeamHeroCard: View {
     /// (away logo + score · LIVE + inning · home logo + score).
     let liveGame: Game?
     let stripGames: [Game]
+    /// How the season stands. Once it's over, the card says how it ended where
+    /// the next game would be, and next season's opener follows when known.
+    let seasonResult: SeasonResult?
     /// Games this session watched leave the live list — see
     /// `HomeViewModel.endedLocally`. Passed as a value rather than a closure so
     /// SwiftUI can diff it and actually redraw when a game ends.
@@ -642,6 +646,10 @@ private struct TeamHeroCard: View {
             Divider().opacity(0.4)
             if let live = liveGame {
                 liveScoreRow(game: live)
+            } else if let result = seasonResult, result.isOver {
+                lastGameRow
+                seasonResultRow(result)
+                if nextGame != nil { nextGameRow }
             } else {
                 lastGameRow
                 nextGameRow
@@ -1068,6 +1076,22 @@ private struct TeamHeroCard: View {
         }
     }
 
+    /// "Season over · Lost the NLCS 0-4 to MIL", in the next game's place
+    /// once there's nothing left to play (`HomeGameUtils.seasonResultLine`).
+    private func seasonResultRow(_ result: SeasonResult) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: result.state == .champion ? "trophy.fill" : "flag.checkered")
+                .font(.body.weight(.semibold))
+                .foregroundStyle(teamColor)
+                .frame(width: 26, height: 26)
+                .background(Circle().fill(teamColor.opacity(0.12)))
+            Text(HomeGameUtils.seasonResultLine(result))
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.primary)
+            Spacer(minLength: 0)
+        }
+    }
+
     /// Compact horizontal scroll of recent/upcoming games (live or
     /// final or upcoming). On first appearance, scrolls to the
     /// most relevant card (live → next upcoming → most recent
@@ -1351,6 +1375,25 @@ enum HomeGameUtils {
             return "\(when) \(time) \(timezoneAbbreviation()) \(venue) \(opp)"
         case .final:
             return "Recent · \(venue) \(opp)"
+        }
+    }
+
+    /// How a finished season ended, in a line: "Season over · Missed the
+    /// postseason", "Season over · Lost the NLCS 0-4 to MIL", "World Series
+    /// champions · 4-3 over TOR". The opponent is balldontlie's abbreviation,
+    /// shown as the app shows it everywhere ("OAK" reads "ATH").
+    static func seasonResultLine(_ result: SeasonResult) -> String {
+        let opponent = result.opponent.map { teamAbbreviation(for: $0) } ?? ""
+        let series = "\(result.wins ?? 0)-\(result.losses ?? 0)"
+        switch result.state {
+        case .missedPostseason:
+            return "Season over · Missed the postseason"
+        case .eliminated:
+            return "Season over · Lost the \(result.roundName ?? "postseason") \(series) to \(opponent)"
+        case .champion:
+            return "World Series champions · \(series) over \(opponent)"
+        case .seasonOver, .inProgress, .alive, .unknown:
+            return "Season over"
         }
     }
 
