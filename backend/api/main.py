@@ -828,6 +828,27 @@ def _run_nightly_update() -> None:
         except Exception as exc:
             log.error(f"[nightly] discover phase FAILED (non-fatal): {exc}")
 
+        # Phase 5c' — Chadwick mapping for players the discover phase left
+        # awaiting an MLBAM id. Writes ACCEPTs only (Isaac's standing approval),
+        # each read back; every HOLD is logged for him. Non-fatal.
+        log.info("[nightly] starting chadwick phase")
+        try:
+            import chadwick_daily
+            cs = chadwick_daily.run(current_year)
+            log.info(
+                "[nightly] chadwick phase: %d unmapped, %d written, %d stored, register %s",
+                cs.get("unmapped", 0), cs.get("written", 0), cs.get("stored", 0),
+                cs.get("register", "-"),
+            )
+            for m in cs.get("mapped", []):
+                log.info("[nightly] chadwick mapped %s", m)
+            for cls, names in (cs.get("holds") or {}).items():
+                log.info("[nightly] chadwick HOLD (%s): %s", cls, "; ".join(names))
+            if cs.get("written") and not cs.get("ok"):
+                log.error("[nightly] chadwick phase: STORED != SUBMITTED — investigate")
+        except Exception as exc:
+            log.error(f"[nightly] chadwick phase FAILED (non-fatal): {exc}")
+
         # Phase 5d — same-season gamelog backfill for newly-discovered
         # players. Only fires when Phase 5c actually inserted at least
         # one new bio — the operation walks every BDL final from
