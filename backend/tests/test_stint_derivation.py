@@ -38,7 +38,8 @@ for node in TREE.body:
     if isinstance(node, ast.Assign) and any(
             isinstance(t, ast.Name) and t.id in {"_STINT_BAT_SQL", "_STINT_PIT_SQL",
                                                  "_STINT_BAT_COLS", "_STINT_PIT_COLS"}
-            for t in node.targets):
+            for t in node.targets) or (isinstance(node, ast.FunctionDef)
+                                       and node.name == "_ip_from_outs"):
         exec(compile(ast.Module(body=[node], type_ignores=[]), NIGHTLY, "exec"), ns)
 BAT, PIT = ns["_STINT_BAT_SQL"], ns["_STINT_PIT_SQL"]
 
@@ -85,6 +86,9 @@ bat(3, "g4", "2026-04-04", "BOS"); bat(2, "g4", "2026-04-04", "NYY")
 pit(3, "g5", "2026-04-05", "BOS", ip=1.0); bat(2, "g5", "2026-04-05", "NYY")
 # g6: player 1, traded to TOR, faces NYY; batting lines for TOR only.
 bat(1, "g6", "2026-04-06", "NYY"); pit(30, "g6", "2026-04-06", "NYY"); pit(10, "g6", "2026-04-06", "TOR")
+# g7-g9: player 40, a Red Sox reliever, records one out, two outs, and seven (2.333 IP).
+for _g, _ip in (("g7", 0.333), ("g8", 0.667), ("g9", 2.333)):
+    pit(40, _g, "2026-04-07", "NYY", ip=_ip); bat(5, _g, "2026-04-07", "BOS")
 
 b_rows = db.execute(BAT, {"yr": 2026}).fetchall()
 bstints = {(r[0], r[1]): r for r in b_rows}
@@ -119,6 +123,11 @@ check("a pitcher in a one-sided PITCHING game (g3) is kept: player 20 BOS G = 3,
 check("pitching G counts pitching games only: player 3 G = 1", pstints.get((3, "NYY"), _NONE)[3] == 1)
 check("both sides of g6 are kept: player 10 NYY G = 3, player 30 TOR G = 1",
       pstints.get((10, "NYY"), _NONE)[3] == 3 and pstints.get((30, "TOR"), _NONE)[3] == 1)
+ip_outs = 3 + ns["_STINT_PIT_COLS"].index("ip_outs")
+check("innings are summed as outs from the gamelogs' thirds: 0.333 + 0.667 + 2.333 = 10 outs",
+      pstints.get((40, "BOS"), _NONE)[ip_outs] == 10)
+check("and written back as decimal thirds, the stint tables' convention: 10 outs = 3.333, 3 = 1.0",
+      ns["_ip_from_outs"](10) == 3.333 and ns["_ip_from_outs"](3) == 1.0 and ns["_ip_from_outs"](0) == 0.0)
 
 print("the contract _derive_stints relies on")
 

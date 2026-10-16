@@ -1331,9 +1331,19 @@ SELECT player_id, raw_team, min(gd) AS first_date, count(*) AS "G",
        count(*) FILTER (WHERE result = 'S') "SV",
        sum("H") "H", sum("R") "R", sum("ER") "ER", sum("BB") "BB", sum("SO") "SO",
        sum("HR") "HR", sum("HBP") "HBP", sum("WP") "WP",
-       sum(floor(ip) * 3 + round((ip - floor(ip)) * 10))::int AS ip_outs
+       -- "IP" stores thirds as .333 / .667, so outs are IP x 3, rounded
+       sum(round(ip * 3))::int AS ip_outs
 FROM per_game GROUP BY player_id, raw_team
 """
+
+
+def _ip_from_outs(outs):
+    """Outs -> the stint tables' IP: decimal thirds (.333 / .667), the convention
+    the gamelogs, the season tables and the Retrosheet stints all use. Writing
+    baseball notation (.1 / .2) here, as this once did, put 6.1 beside 6.333 in
+    the same column, and reading the gamelogs' .333 as if it were .3 turned a
+    third of an inning into three outs."""
+    return round(outs / 3.0, 3)
 
 
 def _derive_stints(db, year, is_pitch):
@@ -1372,7 +1382,7 @@ def _derive_stints(db, year, is_pitch):
             if is_pitch:
                 outs = acc["ip_outs"]
                 row.update({"G": acc["G"], "W": acc["W"], "L": acc["L"], "SV": acc["SV"],
-                            "IP": round(outs // 3 + (outs % 3) / 10.0, 1),
+                            "IP": _ip_from_outs(outs),
                             "H": acc["H"], "R": acc["R"], "ER": acc["ER"], "BB": acc["BB"],
                             "SO": acc["SO"], "HR": acc["HR"], "HBP": acc["HBP"], "WP": acc["WP"]})
             else:
