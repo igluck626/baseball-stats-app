@@ -457,14 +457,7 @@ def _run_backfill_gamelogs(
         # Auto-dedup tail — same gate as the sync endpoint. Non-fatal:
         # backfill rows have already committed, so log + continue.
         try:
-            connection.dedupe_gamelog_duplicates(
-                "batting_gamelogs",
-                connection._BATTING_GAMELOGS_QUALITY_COLUMNS,
-            )
-            connection.dedupe_gamelog_duplicates(
-                "pitching_gamelogs",
-                connection._PITCHING_GAMELOGS_QUALITY_COLUMNS,
-            )
+            _dedupe_gamelogs_with_evidence()
         except Exception as exc:
             log.error(f"async backfill auto-dedup FAILED (non-fatal): {exc}")
     except Exception as exc:
@@ -799,26 +792,18 @@ def _run_nightly_update() -> None:
             f"pitchers_failed={gl['pitchers_failed']}"
         )
 
-        # Auto-dedup. The gamelogs phase often surfaces cross-format
-        # duplicates — same logical game written once under an MLB
-        # Stats API id and once under a BDL id. The dedup helper's
-        # `min_game_id < 1_000_000` gate is what spares legitimate
-        # BDL-only doubleheaders. Running this nightly removes the
-        # need for manual `/admin/dedupe-gamelogs` after most ingests.
+        # Auto-dedup: the same game stored once under a legacy MLB gamePk
+        # and once under a balldontlie id. A row is deleted only when
+        # balldontlie's schedule shows the opponent played one game that
+        # day, so a doubleheader game is never removed.
         log.info("[nightly] starting dedup phase")
         try:
-            bat_removed = connection.dedupe_gamelog_duplicates(
-                "batting_gamelogs",
-                connection._BATTING_GAMELOGS_QUALITY_COLUMNS,
-            )
-            pit_removed = connection.dedupe_gamelog_duplicates(
-                "pitching_gamelogs",
-                connection._PITCHING_GAMELOGS_QUALITY_COLUMNS,
-            )
+            d = _dedupe_gamelogs_with_evidence()
             log.info(
                 f"[nightly] dedup phase done: "
-                f"batting_removed={bat_removed} "
-                f"pitching_removed={pit_removed}"
+                f"batting_removed={d['batting_removed']} "
+                f"pitching_removed={d['pitching_removed']} "
+                f"kept_unproven={d['batting_kept']}/{d['pitching_kept']}"
             )
         except Exception as exc:
             # Non-fatal — the nightly's stat-write phases already
@@ -1255,6 +1240,37 @@ if not _ADMIN_TOKEN:
         "ADMIN_TOKEN is not set — every /admin route will return 404. "
         "Set it in the environment before expecting the nightly to run.")
 
+
+
+def _dedupe_gamelogs_with_evidence() -> dict:
+    """Run the cross-format gamelog dedup on both tables, deleting only where
+    balldontlie's schedule proves the two rows are one game (see
+    connection.dedupe_gamelog_duplicates). Candidate dates are read first;
+    their schedule (and the next day's, for late games that cross midnight UTC)
+    is fetched; if any fetch fails, nothing is deleted. Returns
+    {"batting_removed", "pitching_removed", "batting_kept", "pitching_kept"}."""
+    tables = (("batting", "batting_gamelogs", connection._BATTING_GAMELOGS_QUALITY_COLUMNS),
+              ("pitching", "pitching_gamelogs", connection._PITCHING_GAMELOGS_QUALITY_COLUMNS))
+    found = {k: connection.dedupe_gamelog_duplicates(t, q) for k, t, q in tables}
+    dates = sorted({d for f in found.values() for d in f["candidate_dates"]})
+    out = {f"{k}_removed": 0 for k, _, _ in tables}
+    out.update({f"{k}_kept": found[k]["candidates"] for k, _, _ in tables})
+    if not dates:
+        return out
+    games: list[dict] = []
+    try:
+        for d in dates:
+            nxt = (datetime.date.fromisoformat(d) + datetime.timedelta(days=1)).isoformat()
+            games += data_service._bdl_get_json("games", {"dates[]": [d, nxt], "per_page": 100}).get("data") or []
+    except Exception as exc:
+        log.error(f"gamelog dedup: schedule fetch failed, nothing deleted: {exc}")
+        return out
+    evidence = connection.single_game_team_dates(games)
+    for k, t, q in tables:
+        r = connection.dedupe_gamelog_duplicates(t, q, single_game_dates=evidence)
+        out[f"{k}_removed"] = r["deleted"]
+        out[f"{k}_kept"] = r["candidates"] - r["deleted"]
+    return out
 
 @app.middleware("http")
 async def _require_admin_token(request: Request, call_next):
@@ -5634,19 +5650,12 @@ def admin_backfill_bdl_gamelogs(
     # Auto-dedup tail. Runs once after the full backfill (date or
     # multi-season) finishes — calling per-iteration in season mode
     # would just repeat O(table) work without finding new dupes.
-    # Doubleheaders (two BDL ids on the same date) are preserved by
-    # the helper's `min_game_id < 1_000_000` gate.
+    # A doubleheader game is never removed: a row goes only when
+    # balldontlie's schedule proves the pair is one game.
     try:
-        bat_removed = connection.dedupe_gamelog_duplicates(
-            "batting_gamelogs",
-            connection._BATTING_GAMELOGS_QUALITY_COLUMNS,
-        )
-        pit_removed = connection.dedupe_gamelog_duplicates(
-            "pitching_gamelogs",
-            connection._PITCHING_GAMELOGS_QUALITY_COLUMNS,
-        )
-        result["batting_dedup_removed"]  = bat_removed
-        result["pitching_dedup_removed"] = pit_removed
+        d = _dedupe_gamelogs_with_evidence()
+        result["batting_dedup_removed"]  = d["batting_removed"]
+        result["pitching_dedup_removed"] = d["pitching_removed"]
     except Exception as exc:
         # Non-fatal — the backfill rows already committed. Log and
         # surface so the caller knows the dedup tail didn't run.
@@ -6053,30 +6062,15 @@ def admin_dedup_gamelogs():
     paths (MLB Stats API gamePks vs. BDL game ids for the same
     logical game).
 
-    Mirrors what `init_db()` already runs at startup, so calling
-    this is only useful when you don't want to wait for the next
-    deploy. Idempotent — re-runs are no-ops once each table is
-    clean. After deduping, run `POST /admin/backfill-bdl-gamelogs`
-    to fill any gaps the duplicate cleanup left behind.
+    Deletes only pairs balldontlie's schedule proves are one game
+    (`_dedupe_gamelogs_with_evidence`); unproven pairs are kept and
+    counted. `init_db()` only counts them. Idempotent.
 
-    Postgres-only — the helper bails (returns 0) on SQLite where
-    the dev DB rarely accumulates duplicates anyway.
+    Postgres-only — the helper reports nothing on SQLite.
     """
     if not connection.db_available():
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
-    batting_removed = connection.dedupe_gamelog_duplicates(
-        "batting_gamelogs",
-        connection._BATTING_GAMELOGS_QUALITY_COLUMNS,
-    )
-    pitching_removed = connection.dedupe_gamelog_duplicates(
-        "pitching_gamelogs",
-        connection._PITCHING_GAMELOGS_QUALITY_COLUMNS,
-    )
-    return {
-        "status":            "ok",
-        "batting_removed":   batting_removed,
-        "pitching_removed":  pitching_removed,
-    }
+    return {"status": "ok", **_dedupe_gamelogs_with_evidence()}
 
 
 @app.post("/admin/remove-spring-training-gamelogs")

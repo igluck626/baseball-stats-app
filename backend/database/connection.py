@@ -460,9 +460,11 @@ def init_db() -> dict:
         ("batting_gamelogs",  _BATTING_GAMELOGS_QUALITY_COLUMNS),
         ("pitching_gamelogs", _PITCHING_GAMELOGS_QUALITY_COLUMNS),
     ):
-        removed = dedupe_gamelog_duplicates(tbl_name, quality_cols)
-        if removed:
-            summary.setdefault("deduped", {})[tbl_name] = removed
+        # Report-only at deploy time: no schedule evidence, so nothing is
+        # deleted (see dedupe_gamelog_duplicates).
+        found = dedupe_gamelog_duplicates(tbl_name, quality_cols)
+        if found["candidates"]:
+            summary.setdefault("dedup_candidates", {})[tbl_name] = found["candidates"]
         added_pk = _ensure_gamelog_primary_key(tbl_name)
         if added_pk:
             summary.setdefault("pks_added", []).append(tbl_name)
@@ -540,84 +542,106 @@ def _ensure_seasons_primary_key(table: str) -> bool:
     return True
 
 
-def dedupe_gamelog_duplicates(table: str, quality_columns: list[str]) -> int:
-    """Delete duplicate `(player_id, game_date)` rows from `table`,
-    keeping the row with the most non-NULL stat columns among
-    `quality_columns`. Ties broken deterministically by Postgres
-    `ctid` so the operation is repeatable.
+def single_game_team_dates(games: list[dict]) -> set[tuple[str, str]]:
+    """{(Eastern date, team abbreviation or full name)} for every team that played exactly
+    ONE game that day, from balldontlie /games rows — the evidence
+    `dedupe_gamelog_duplicates` needs before it may delete anything. A team
+    with a doubleheader that day is never in the set."""
+    from zoneinfo import ZoneInfo
+    import datetime as _dt
+    eastern = ZoneInfo("America/New_York")
+    counts: dict[tuple[str, str], set] = {}
+    for g in games:
+        try:
+            day = _dt.datetime.fromisoformat(g["date"].replace("Z", "+00:00")).astimezone(eastern).date().isoformat()
+        except (KeyError, ValueError, AttributeError):
+            continue
+        if g.get("status") in ("STATUS_POSTPONED", "STATUS_CANCELED", "STATUS_CANCELLED"):
+            continue
+        for side in ("home_team", "away_team"):
+            team = g.get(side) or {}
+            # Our opponent column holds full names before 2026-05-19 and
+            # abbreviations after, so the evidence answers to both.
+            for name in {team.get("abbreviation"), team.get("display_name")} - {None}:
+                counts.setdefault((day, name), set()).add(g.get("id"))
+    return {k for k, ids in counts.items() if len(ids) == 1}
 
-    Partition is `(player_id, game_date)` rather than
-    `(player_id, game_id)` so the dedupe catches the cross-format
-    case: the same logical game ingested once via MLB Stats API
-    (`game_id = "775296"`) and again via BallDontLie
-    (`game_id = "5058484"`). A pure `(player_id, game_id)` partition
-    would treat those as distinct and leave both rows.
 
-    **Safety filter — `game_id ~ '^[0-9]+$'`**: only rows whose
-    `game_id` is purely numeric enter the partition. Lahman-style
-    string ids (e.g. `"ANA200203310"`) are excluded entirely so
-    historical rows can never be touched, and a doubleheader row
-    written under a Lahman id won't get accidentally compared
-    against a modern numeric id for the same date.
+def dedupe_gamelog_duplicates(table: str, quality_columns: list[str],
+                              single_game_dates: set | None = None) -> dict:
+    """Remove the same game stored twice for one player — once under a legacy
+    MLB gamePk (below 1,000,000) and once under a balldontlie id — keeping the
+    row with the most non-NULL stat columns. Returns {"candidates", "deleted",
+    "candidate_dates"}.
 
-    **Doubleheader gate — `min_game_id < 1_000_000`**: the dedupe
-    DELETE only fires on partitions where the smallest numeric
-    game_id is below one million. MLB Stats API ids are ~6 digits
-    (e.g. `"775296"`); BDL ids are ~7 digits and well above 4M
-    (e.g. `"5058484"`). So a partition with at least one Stats API
-    id and at least one BDL id is the cross-format duplicate we
-    want to collapse, while a partition containing two BDL ids
-    (a true doubleheader — both games ingested via BDL) keeps
-    both rows untouched. Two Stats API ids on the same date
-    (a doubleheader ingested entirely pre-BDL) still get collapsed
-    by the original-quality keep — that's the pre-existing
-    behavior and the operator can re-fetch via the backfill
-    endpoint if needed.
+    ⚠️ IT MUST NEVER DELETE A DOUBLEHEADER GAME, and it once did: it used to
+    collapse every same-day pair whose smallest id was a gamePk, which deleted
+    three real second games in 2026 (Collins 04-04, Kayfus 04-05, Shugart
+    04-30). So now:
 
-    Postgres-only — relies on `ctid` + `num_nonnulls()` + the
-    POSIX-regex `~` operator. SQLite skips, same convention as
-    `_dedupe_season_duplicates`.
+      • Only a player-day holding EXACTLY two rows, one gamePk and one
+        balldontlie id, is a candidate. Two gamePks, two balldontlie ids, or
+        three rows are different games and are never touched.
+      • A candidate is deleted only with evidence: `single_game_dates`, built
+        by `single_game_team_dates` from balldontlie's schedule, must show the
+        balldontlie row's opponent played exactly one game that day, so the
+        two rows can only be the same game. Without that evidence (the
+        deploy-time call passes none) nothing is deleted; the candidates are
+        only counted, for the log. Everything else that dedups goes through
+        main._dedupe_gamelogs_with_evidence, which fetches the schedule.
 
-    Public (no leading underscore) so the matching admin endpoint
-    can drive an on-demand dedup pass — the init-time call below
-    handles the deploy-time case automatically.
+    Only purely numeric game ids are considered; Retrosheet ids never are.
+    Postgres-only (`num_nonnulls`, `~`); elsewhere it reports nothing.
     """
+    empty = {"candidates": 0, "deleted": 0, "candidate_dates": []}
     if _engine is None or _engine.dialect.name != "postgresql":
-        return 0
+        return empty
     inspector = inspect(_engine)
     if table not in inspector.get_table_names():
-        return 0
+        return empty
     columns = {c["name"] for c in inspector.get_columns(table)}
-    if "player_id" not in columns or "game_id" not in columns \
-            or "game_date" not in columns:
-        return 0
+    if not {"player_id", "game_id", "game_date", "opponent"} <= columns:
+        return empty
     relevant = [c for c in quality_columns if c in columns]
     quality_expr = (
         "num_nonnulls(" + ", ".join(f'"{c}"' for c in relevant) + ")"
         if relevant else "0"
     )
-    sql = text(f"""
-        WITH ranked AS (
-            SELECT ctid,
-                   ROW_NUMBER() OVER (
-                       PARTITION BY player_id, game_date
-                       ORDER BY {quality_expr} DESC, ctid ASC
-                   ) AS rn,
-                   MIN(CAST(game_id AS BIGINT)) OVER (
-                       PARTITION BY player_id, game_date
-                   ) AS min_game_id
+    find = text(f"""
+        WITH pairs AS (
+            SELECT player_id, game_date
             FROM {table}
             WHERE game_id ~ '^[0-9]+$'
+            GROUP BY player_id, game_date
+            HAVING count(*) = 2
+               AND min(CAST(game_id AS BIGINT)) <  1000000
+               AND max(CAST(game_id AS BIGINT)) >= 1000000
         )
-        DELETE FROM {table} t
-        USING ranked r
-        WHERE t.ctid = r.ctid
-          AND r.rn > 1
-          AND r.min_game_id < 1000000
+        SELECT t.player_id, t.game_date, t.game_id, t.opponent, {quality_expr} AS quality
+        FROM {table} t JOIN pairs p USING (player_id, game_date)
+        WHERE t.game_id ~ '^[0-9]+$'
+        ORDER BY t.player_id, t.game_date, t.game_id
     """)
     with _engine.begin() as conn:
-        result = conn.execute(sql)
-        return result.rowcount or 0
+        rows = conn.execute(find).fetchall()
+        by_day: dict = {}
+        for r in rows:
+            by_day.setdefault((r.player_id, r.game_date), []).append(r)
+        doomed = []
+        for (pid, day), pair in by_day.items():
+            legacy = next(r for r in pair if int(r.game_id) < 1_000_000)
+            bdl = next(r for r in pair if int(r.game_id) >= 1_000_000)
+            if single_game_dates is None or (str(day), bdl.opponent) not in single_game_dates:
+                continue                       # no evidence it's one game: keep both
+            loser = legacy if bdl.quality >= legacy.quality else bdl
+            doomed.append((pid, loser.game_id))
+        for pid, gid in doomed:
+            n = conn.execute(text(f"DELETE FROM {table} WHERE player_id = :p AND game_id = :g"),
+                             {"p": pid, "g": gid}).rowcount
+            if n != 1:
+                raise RuntimeError(f"dedupe {table}: expected to delete 1 row for {pid}/{gid}, got {n}")
+        return {"candidates": len(by_day), "deleted": len(doomed),
+                "candidate_dates": sorted({str(day) for (_, day) in by_day})}
 
 
 def _ensure_gamelog_primary_key(table: str) -> bool:
