@@ -76,10 +76,9 @@ final class HomeViewModel: ObservableObject {
     /// first fetch completes; the Home tab hides the whole Injury
     /// Report section in either case.
     @Published var injuredPlayers: [InjuredPlayer] = []
-    /// `{bdl_id → resolved PlayerSearchResult}`. Populated in
-    /// parallel with the injury fetch via `bdl.resolveBDLPlayerId`.
-    /// Missing entries mean the lookup failed — the corresponding
-    /// row is rendered as non-tappable.
+    /// `{bdl_id → resolved PlayerSearchResult}`, resolved by the server in
+    /// `/teams/{id}/roster`. Missing entries mean the lookup failed — the
+    /// corresponding row is rendered as non-tappable.
     @Published var injuredPlayersResolved: [Int: PlayerSearchResult] = [:]
     @Published var isLoadingInjuries: Bool = false
 
@@ -157,34 +156,36 @@ final class HomeViewModel: ObservableObject {
 
     private let bdl: BallDontLieClient
     private let api: APIClient
-    /// JUST the slate reads — see the note in `ScoresViewModel` and
-    /// LiveSeams.swift. Everything else still goes through `bdl`.
-    private let slate: SlateProviding
+    /// The team's season from our server (`/teams/{id}/schedule`) — the read
+    /// that says a game is final, so it sits behind a seam (LiveSeams.swift)
+    /// the live→final tests can drive. Everything else goes through `bdl` and
+    /// `api`.
+    private let schedule: TeamScheduleProviding
 
     private let finalizeDelays: [UInt64]
 
     init(
         bdl: BallDontLieClient = .shared,
         api: APIClient = .shared,
-        slate: SlateProviding? = nil,
+        schedule: TeamScheduleProviding? = nil,
         finalizeDelays: [UInt64] = LiveFinalize.defaultDelays,
     ) {
         self.bdl = bdl
         self.api = api
-        self.slate = slate ?? bdl
+        self.schedule = schedule ?? api
         self.finalizeDelays = finalizeDelays
     }
 
     /// Full reload: ±5 days of team games + standings. Cheap on
-    /// repeat calls — BDL responses are cached for 30s per date.
-    /// `bypassCache` is set only by `finalize` — see there. Every other
-    /// caller wants the shared 30s slate cache.
+    /// repeat calls — the server caches the team's season for a minute
+    /// while it has a game today. `bypassCache` is set only by `finalize` —
+    /// see there; it asks the server for a copy no older than ten seconds.
     /// - Parameter quiet: run as a background refresh — no loading spinner, and
     ///   a fetch that comes back empty leaves the previous games on screen
-    ///   instead of blanking the hero card. The per-day fetches below swallow
-    ///   their errors with `try?`, so a total network failure is indistinguishable
-    ///   from "this team has no games", and assigning that would wipe the card on
-    ///   a single dropped request. Set by `periodicRefresh`; never by a user
+    ///   instead of blanking the hero card. The schedule fetch below swallows
+    ///   its error with `try?`, so a network failure is indistinguishable from
+    ///   "this team has no games", and assigning that would wipe the card on a
+    ///   single dropped request. Set by `periodicRefresh`; never by a user
     ///   action, where an empty result IS the answer.
     func load(bdlTeamId: Int, bypassCache: Bool = false, quiet: Bool = false) async {
         if !quiet {
@@ -202,24 +203,19 @@ final class HomeViewModel: ObservableObject {
                 .map { ScoresViewModel.iso($0) }
         }
 
-        // Fan out the per-day fetches in parallel — sequential would
-        // be ~11×latency in the worst case. Each call hits a 30s BDL
-        // cache so subsequent loads (auto-refresh, tab re-entry) are
-        // mostly free.
+        // The team's season from our server — one request where the hero
+        // used to make eleven balldontlie calls, one per day — cut to the
+        // same ±5 Eastern days the per-day calls covered.
         var fetched: [Game] = []
         var seen: Set<Int> = []
-        await withTaskGroup(of: [BDLGame].self) { group in
-            for d in dates {
-                group.addTask { [slate] in
-                    (try? await slate.getTeamGames(date: d, teamId: bdlTeamId,
-                                                   bypassCache: bypassCache)) ?? []
-                }
-            }
-            for await items in group {
-                for g in items where !seen.contains(g.id) {
-                    seen.insert(g.id)
-                    fetched.append(g.toGame())
-                }
+        if let season = try? await schedule.getTeamSchedule(bdlTeamId: bdlTeamId, season: year,
+                                                            fresh: bypassCache) {
+            let window = Set(dates)
+            for g in season.games where !seen.contains(g.id) && !g.hasPlaceholderTeam {
+                guard let day = BallDontLieClient.easternDateString(for: g),
+                      window.contains(day) else { continue }
+                seen.insert(g.id)
+                fetched.append(g.toGame())
             }
         }
         let sorted = fetched.sorted {
@@ -748,42 +744,47 @@ final class HomeViewModel: ObservableObject {
 
     // MARK: - Injuries
 
-    /// Fetch the favorite team's injury list, sort by severity, and
-    /// resolve each BDL id to its MLBAM bio in parallel so tap
-    /// targets light up as soon as the resolutions land. Severity
-    /// order is least-severe first: Day-To-Day → 10-Day IL →
-    /// 15-Day IL → 60-Day IL. The list reads bottom-up — heaviest
-    /// IL stints sit at the bottom of the sheet's scroll.
+    /// The team's injury list from `/teams/{id}/roster`, each player already
+    /// resolved to our id, sorted by severity. Severity order is least-severe
+    /// first: Day-To-Day → 10-Day IL → 15-Day IL → 60-Day IL. The list reads
+    /// bottom-up — heaviest IL stints sit at the bottom of the sheet's scroll.
     func loadInjuries(bdlTeamId: Int) async {
         isLoadingInjuries = true
-        let raw = (try? await bdl.getTeamInjuries(bdlTeamId: bdlTeamId)) ?? []
-        let sorted = raw.sorted {
-            Self.severityRank($0.status) < Self.severityRank($1.status)
-        }
-        self.injuredPlayers = sorted
-
-        // Resolve all in parallel. Misses stay absent from the dict
-        // and the UI just renders the row without a tap target.
-        let pairs = await withTaskGroup(of: (Int, PlayerSearchResult?).self) { group in
-            for player in sorted {
-                let bdlId = player.bdl_id
-                group.addTask { [bdl] in
-                    let resolved = try? await bdl.resolveBDLPlayerId(bdlId)
-                    return (bdlId, resolved)
-                }
-            }
-            var pairs: [(Int, PlayerSearchResult)] = []
-            for await (bdlId, resolved) in group {
-                if let r = resolved { pairs.append((bdlId, r)) }
-            }
-            return pairs
-        }
-        var resolved: [Int: PlayerSearchResult] = [:]
-        for (bdlId, r) in pairs {
-            resolved[bdlId] = r
-        }
+        let (players, resolved) = Self.injuries(await teamRoster(bdlTeamId)?.injuries ?? [])
+        self.injuredPlayers = players
         self.injuredPlayersResolved = resolved
         self.isLoadingInjuries = false
+    }
+
+    /// The injury list, least severe first, and our player for each id the
+    /// server resolved — a player it couldn't map has no entry, and the UI
+    /// renders his row without a tap target.
+    nonisolated static func injuries(_ entries: [TeamInjuryEntry])
+        -> ([InjuredPlayer], [Int: PlayerSearchResult]) {
+        let players = entries.compactMap { e -> InjuredPlayer? in
+            guard let id = e.bdl_id else { return nil }
+            return InjuredPlayer(bdl_id: id, name: e.name ?? e.player?.name ?? "",
+                                 position: e.position, status: e.status ?? "Day-To-Day")
+        }
+        var resolved: [Int: PlayerSearchResult] = [:]
+        for e in entries {
+            if let id = e.bdl_id, let player = e.player { resolved[id] = player }
+        }
+        return (players.sorted { severityRank($0.status) < severityRank($1.status) }, resolved)
+    }
+
+    /// `/teams/{id}/roster` serves both the roster and the injury list, and
+    /// Home loads the two one after the other, so the response is kept for a
+    /// minute rather than fetched twice.
+    private var rosterCache: (teamId: Int, at: Date, response: TeamRosterResponse)?
+
+    private func teamRoster(_ bdlTeamId: Int) async -> TeamRosterResponse? {
+        if let c = rosterCache, c.teamId == bdlTeamId, Date().timeIntervalSince(c.at) < 60 {
+            return c.response
+        }
+        guard let response = try? await api.getTeamRoster(bdlTeamId: bdlTeamId) else { return nil }
+        rosterCache = (bdlTeamId, Date(), response)
+        return response
     }
 
     /// Sort key — lower number = less severe so the list reads
@@ -804,101 +805,33 @@ final class HomeViewModel: ObservableObject {
 
     // MARK: - Roster
 
-    /// Fetch the favorite team's active roster from BDL, then in
-    /// parallel resolve each player's MLBAM id via our backend and
-    /// hydrate their current-season stat line. Pitchers go through
-    /// `getPitcherCurrentStats`; everyone else uses
-    /// `getPlayerCurrentStats`. Players whose BDL → MLBAM resolution
-    /// fails still appear in the list with an empty stat line — the
-    /// bio is the operator's signal that something didn't map
-    /// cleanly, and the UI shows them as "—" rather than dropping
-    /// them entirely.
+    /// The team's active roster from `/teams/{id}/roster`: each player
+    /// resolved to our id, with his line for this team (or his whole season,
+    /// labelled, where that can't be trusted). Players whose balldontlie id
+    /// doesn't map still appear, with an empty stat line — the UI shows them
+    /// as "—" rather than dropping them.
     func loadRoster(bdlTeamId: Int) async {
         isLoadingRoster = true
-        let bdlPlayers = (try? await bdl.getActivePlayers(teamId: bdlTeamId)) ?? []
-        let players = await withTaskGroup(of: (Int, RosterPlayer?).self) { group in
-            for (i, bp) in bdlPlayers.enumerated() {
-                let capturedIdx = i
-                let capturedBp  = bp
-                group.addTask { [bdl, api] in
-                    let rp = await Self.hydrateRosterPlayer(
-                        bp: capturedBp, bdl: bdl, api: api,
-                    )
-                    return (capturedIdx, rp)
-                }
-            }
-            var pairs: [(Int, RosterPlayer)] = []
-            for await (i, rp) in group {
-                if let rp { pairs.append((i, rp)) }
-            }
-            return pairs.sorted { $0.0 < $1.0 }.map { $0.1 }
-        }
-        self.roster = players
+        self.roster = Self.rosterPlayers(await teamRoster(bdlTeamId)?.players ?? [])
         isLoadingRoster = false
     }
 
-    nonisolated private static func hydrateRosterPlayer(
-        bp: BDLPlayer, bdl: BallDontLieClient, api: APIClient,
-    ) async -> RosterPlayer? {
-        let position = bp.position ?? ""
-        let isPitcher = Self.bdlPositionIsPitcher(position)
-        // Resolve BDL → MLBAM. Failures yield a stub roster entry —
-        // we'd rather show the player with "—" stats than silently
-        // drop them.
-        let resolved = try? await bdl.resolveBDLPlayerId(bp.id)
-        let mlbamId = resolved?.player_id ?? 0
-        let name = resolved?.name ?? bp.fullName
-        guard mlbamId > 0 else {
-            return RosterPlayer(
-                player_id:    0,
-                name:         name,
-                bdl_id:       bp.id,
-                position:     position,
-                jersey:       bp.jersey,
-                resolved:     nil,
-                currentStats: nil,
+    nonisolated static func rosterPlayers(_ entries: [TeamRosterEntry]) -> [RosterPlayer] {
+        entries.map { e in
+            RosterPlayer(
+                player_id:    e.player?.player_id ?? 0,
+                name:         e.player?.name ?? e.name ?? "",
+                bdl_id:       e.bdl_id,
+                position:     e.position ?? "",
+                jersey:       e.jersey,
+                resolved:     e.player,
+                currentStats: e.stats.map {
+                    PlayerStatLine(avg: $0.avg, hr: $0.hr, rbi: $0.rbi, ops: $0.ops,
+                                   era: $0.era, w: $0.w, so: $0.so, whip: $0.whip,
+                                   g: $0.g, war: $0.war)
+                },
+                scope:        e.scope,
             )
-        }
-        let stats: PlayerStatLine?
-        if isPitcher {
-            let raw = (try? await api.getPitcherCurrentStats(playerId: mlbamId)) ?? nil
-            let s = raw?.standard
-            let a = raw?.advanced
-            stats = PlayerStatLine(
-                avg: nil, hr: nil, rbi: nil, ops: nil,
-                era: s?.ERA, w: s?.W, so: s?.SO, whip: s?.WHIP,
-                g: s?.G,
-                war: a?.WAR,
-            )
-        } else {
-            let raw = (try? await api.getPlayerCurrentStats(playerId: mlbamId)) ?? nil
-            let s = raw?.standard
-            let a = raw?.advanced
-            stats = PlayerStatLine(
-                avg: s?.BA, hr: s?.HR, rbi: s?.RBI, ops: s?.OPS,
-                era: nil, w: nil, so: nil, whip: nil,
-                g: nil,
-                war: a?.WAR,
-            )
-        }
-        return RosterPlayer(
-            player_id:    mlbamId,
-            name:         name,
-            bdl_id:       bp.id,
-            position:     position,
-            jersey:       bp.jersey,
-            resolved:     resolved,
-            currentStats: stats,
-        )
-    }
-
-    /// Position-string → pitcher? heuristic. BDL surfaces "SP" /
-    /// "RP" / "P" for pitchers and conventional position abbrevs
-    /// otherwise. Bare "P" defaults to pitcher.
-    nonisolated static func bdlPositionIsPitcher(_ raw: String) -> Bool {
-        switch raw.uppercased() {
-        case "P", "SP", "RP", "CL": return true
-        default:                    return false
         }
     }
 
@@ -1060,13 +993,20 @@ struct RosterPlayer: Identifiable, Hashable {
     /// Uniform number from BDL (`BDLPlayer.jersey`); nil/blank when BDL
     /// doesn't carry one. Rendered as the leading anchor on each row.
     let jersey: String?
-    /// The full `PlayerSearchResult` from `resolveBDLPlayerId` —
+    /// Our `PlayerSearchResult` for him, from the server —
     /// needed to push the profile destination on tap (the existing
     /// nav route takes a `PlayerSearchResult`). nil when resolution
     /// failed.
     let resolved: PlayerSearchResult?
     let currentStats: PlayerStatLine?
+    /// "team": `currentStats` is his line for this team. "all_teams": his
+    /// whole season, because his line for this team couldn't be trusted (his
+    /// stints don't add up to his season). The server decides; see
+    /// `team_page.roster_stats`.
+    var scope: String? = nil
     var id: Int { bdl_id }
+
+    var isAllTeams: Bool { scope == "all_teams" }
 }
 
 /// Canonical short form of a position string, whichever way BDL spelled it.

@@ -165,10 +165,26 @@ struct RosterSheet: View {
                             }
                         }
                     }
+                    if !roster.isEmpty {
+                        Text(Self.footnote(teamName: entry.fullName))
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 16)
+                            .padding(.top, 16)
+                    }
                 }
                 .padding(.bottom, 24)
             }
         }
+    }
+
+    /// What the numbers are, since a traded player's line is now his line for
+    /// this team rather than his season's.
+    static func footnote(teamName: String) -> String {
+        "Stats are for the \(teamName) only. \"All teams\" marks a player whose "
+            + "line couldn't be split by team; his whole season is shown. WAR isn't "
+            + "kept by team, so it shows \u{2014} for a player who also played elsewhere."
     }
 
     /// Per-section column legend — repeats under every position
@@ -255,8 +271,10 @@ struct RosterSheet: View {
                     .foregroundStyle(.primary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
-                if let jersey = player.jersey, !jersey.isEmpty {
-                    Text("#\(jersey)")
+                // One Text, " · "-joined: an HStack of Texts breaks apart at
+                // the accessibility sizes.
+                if let secondary = Self.secondaryLine(player) {
+                    Text(secondary)
                         .font(.caption.weight(.medium))
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
@@ -276,6 +294,16 @@ struct RosterSheet: View {
         .padding(.horizontal, 16)
         .frame(minHeight: 50)
         .contentShape(Rectangle())
+    }
+
+    /// "#7", "#7 · All teams", "All teams", or nil. "All teams" marks a line
+    /// that is the player's whole season rather than this team's: the server
+    /// couldn't trust a split (see `RosterPlayer.scope`).
+    static func secondaryLine(_ player: RosterPlayer) -> String? {
+        var parts: [String] = []
+        if let jersey = player.jersey, !jersey.isEmpty { parts.append("#\(jersey)") }
+        if player.isAllTeams { parts.append("All teams") }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     /// Position cell: team-tinted bold abbreviation, or a muted em-dash

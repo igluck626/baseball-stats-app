@@ -24,12 +24,13 @@ private func makeTeam(_ id: Int, _ abbr: String) -> BDLTeam {
 
 /// A slate row. `status` is what the whole thing turns on: BDL ships
 /// "STATUS_IN_PROGRESS" until it decides the game is over, then "STATUS_FINAL".
-private func makeGame(id: Int, status: String, inning: Int? = 9) -> BDLGame {
+private func makeGame(id: Int, status: String, inning: Int? = 9,
+                      date: String = "2026-08-17T00:40:00.000Z") -> BDLGame {
     BDLGame(
         id: id,
         homeTeam: makeTeam(1, "NYY"), awayTeam: makeTeam(2, "BOS"),
         homeTeamData: nil, awayTeamData: nil,
-        date: "2026-08-17T00:40:00.000Z",
+        date: date,
         status: status, venue: nil, period: inning, displayClock: nil,
         scoringSummary: nil, season: 2026, seasonType: "regular",
         postseason: false, homeTeamName: "Yankees", awayTeamName: "Red Sox",
@@ -77,8 +78,24 @@ private final class FakeSlate: SlateProviding, @unchecked Sendable {
     func getGames(date: String, bypassCache: Bool) async throws -> [BDLGame] {
         next(date: date, bypassCache: bypassCache)
     }
-    func getTeamGames(date: String, teamId: Int, bypassCache: Bool) async throws -> [BDLGame] {
-        next(date: date, bypassCache: bypassCache)
+}
+
+/// The team page's hero reads its team's season from our server and keeps the
+/// games within five days of today, so the fake serves the same game dated now.
+extension FakeSlate: TeamScheduleProviding {
+    func getTeamSchedule(bdlTeamId: Int, season: Int, fresh: Bool) async throws -> TeamScheduleResponse {
+        let status = next(date: "season", bypassCache: fresh)[0].status
+        let f = DateFormatter()                       // balldontlie's shape: ...T00:40:00.000Z
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(identifier: "UTC")
+        f.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'"
+        let now = f.string(from: Date())
+        return TeamScheduleResponse(
+            teamId: bdlTeamId, season: season, abbreviation: "NYY",
+            games: [makeGame(id: gameId, status: status, date: now)],
+            seasonResult: SeasonResult(state: .inProgress, roundName: nil, wins: nil,
+                                       losses: nil, opponent: nil),
+            nextSeasonFirstGame: nil)
     }
 }
 
@@ -292,7 +309,7 @@ struct HomeEndedGameTests {
             "STATUS_IN_PROGRESS", "STATUS_IN_PROGRESS", "STATUS_IN_PROGRESS",
             "STATUS_IN_PROGRESS", "STATUS_IN_PROGRESS", "STATUS_IN_PROGRESS",
         ])
-        let vm = HomeViewModel(slate: slate, finalizeDelays: Self.noDelays)
+        let vm = HomeViewModel(schedule: slate, finalizeDelays: Self.noDelays)
         await vm.load(bdlTeamId: 1)
 
         let live = try #require(vm.recentAndUpcoming.first { $0.phase == .live })
@@ -316,7 +333,7 @@ struct HomeEndedGameTests {
     @Test func favouriteNeverInTheListIsNotOver() async throws {
         let gameId = 5059646
         let slate = FakeSlate(gameId: gameId, statusSequence: ["STATUS_IN_PROGRESS"])
-        let vm = HomeViewModel(slate: slate, finalizeDelays: Self.noDelays)
+        let vm = HomeViewModel(schedule: slate, finalizeDelays: Self.noDelays)
         await vm.load(bdlTeamId: 1)
         await vm.applyLiveList([:], bdlTeamId: 1)
         try await Task.sleep(nanoseconds: 300_000_000)

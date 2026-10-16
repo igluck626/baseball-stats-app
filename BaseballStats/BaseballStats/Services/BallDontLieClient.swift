@@ -10,7 +10,7 @@
 //
 //  Endpoints in use:
 //    • /mlb/v1/games?dates[]=YYYY-MM-DD         — scores list
-//    • /mlb/v1/games?dates[]=...&team_ids[]=... — team-scoped schedule
+//    • /mlb/v1/games?dates[]=...&team_ids[]=... — one team's day (player overlay)
 //    • /mlb/v1/stats?game_ids[]={id}            — per-player box-score lines
 //    • /mlb/v1/lineups?game_id={id}             — starting lineup + DH
 //    • /mlb/v1/plays?game_id={id}               — live play stream
@@ -180,7 +180,7 @@ final class BallDontLieClient: @unchecked Sendable {
         return f
     }()
 
-    private static func easternDateString(for game: BDLGame) -> String? {
+    static func easternDateString(for game: BDLGame) -> String? {
         guard let parsed = game.startDate else {
             // BDL response was unparseable — fall back to the
             // UTC date prefix so the game still surfaces somewhere.
@@ -229,32 +229,6 @@ final class BallDontLieClient: @unchecked Sendable {
         }
         storeInCache(key, filtered, ttl: 30)
         return filtered
-    }
-
-    /// Full regular-season schedule for one team. Walks `/games`
-    /// with `seasons[]=X & team_ids[]=Y` paginated via `next_cursor`
-    /// and filters spring training / postseason / exhibition out
-    /// client-side. Cached for 5 minutes — the schedule is
-    /// essentially static once the season is set, and the Schedule
-    /// sheet is the only consumer right now.
-    func getTeamSeasonGames(
-        season: Int, teamId: Int, bypassCache: Bool = false,
-    ) async throws -> [BDLGame] {
-        let key = "team_season_games:\(season):\(teamId)"
-        if !bypassCache, let cached: [BDLGame] = cachedValue(key) {
-            return cached
-        }
-        let items: [URLQueryItem] = [
-            URLQueryItem(name: "seasons[]",  value: String(season)),
-            URLQueryItem(name: "team_ids[]", value: String(teamId)),
-            URLQueryItem(name: "per_page",   value: "100"),
-        ]
-        let games: [BDLGame] = try await fetchAllPages(
-            path: "/mlb/v1/games", baseQuery: items,
-        )
-        let regular = games.filter { $0.isRegularSeason && !$0.hasPlaceholderTeam }
-        storeInCache(key, regular, ttl: 300)
-        return regular
     }
 
     // MARK: - Box score
@@ -453,60 +427,6 @@ final class BallDontLieClient: @unchecked Sendable {
         return result
     }
 
-    // MARK: - Active roster
-
-    /// `GET /mlb/v1/players/active?team_ids[]={teamId}&per_page=100`.
-    /// Returns the team's active roster — pitchers, position players,
-    /// and bench/IL combined into a single list (BDL doesn't surface
-    /// IL on this endpoint, so it's a clean active 26+ shape).
-    /// Paginates via `meta.next_cursor`; per_page=100 means a single
-    /// page suffices for a typical MLB roster (~26-40 players).
-    func getActivePlayers(teamId: Int) async throws -> [BDLPlayer] {
-        let key = "active-players:\(teamId)"
-        if let cached: [BDLPlayer] = cachedValue(key) { return cached }
-        let items: [URLQueryItem] = [
-            URLQueryItem(name: "team_ids[]", value: String(teamId)),
-            URLQueryItem(name: "per_page",   value: "100"),
-        ]
-        let result: [BDLPlayer] = try await fetchAllPages(
-            path: "/mlb/v1/players/active", baseQuery: items,
-        )
-        // 5-minute cache: rosters don't change often within a session,
-        // and a freshly opened Home tab + roster sheet would otherwise
-        // refetch on every entry.
-        storeInCache(key, result, ttl: 300)
-        return result
-    }
-
-    // MARK: - Injuries
-
-    /// `GET /mlb/v1/player_injuries?team_ids[]={teamId}&per_page=100`.
-    /// Returns a flat list of injured players for a team — BDL nests
-    /// the player bio inside each row alongside `status` ("60-Day-
-    /// IL" / "15-Day-IL" / "10-Day-IL" / "Day-To-Day"). 5-minute
-    /// cache (the injury list churns slowly within a session).
-    func getTeamInjuries(bdlTeamId: Int) async throws -> [InjuredPlayer] {
-        let key = "team-injuries:\(bdlTeamId)"
-        if let cached: [InjuredPlayer] = cachedValue(key) { return cached }
-        let items: [URLQueryItem] = [
-            URLQueryItem(name: "team_ids[]", value: String(bdlTeamId)),
-            URLQueryItem(name: "per_page",   value: "100"),
-        ]
-        let raw: [BDLPlayerInjuryRaw] = try await fetchAllPages(
-            path: "/mlb/v1/player_injuries", baseQuery: items,
-        )
-        let result = raw.map { r in
-            InjuredPlayer(
-                bdl_id:   r.player.id,
-                name:     r.player.fullName,
-                position: r.player.position,
-                status:   r.status ?? "Day-To-Day",
-            )
-        }
-        storeInCache(key, result, ttl: 300)
-        return result
-    }
-
     // MARK: - Player resolver
 
     /// Resolve a BDL player id to our backend's player payload
@@ -645,10 +565,9 @@ enum BallDontLieError: LocalizedError {
 
 // MARK: - Injury models
 
-/// Flat injury record surfaced to the Home tab. Decoded from BDL's
-/// nested `{player: {...}, status: "..."}` shape via
-/// `BDLPlayerInjuryRaw` so callers don't have to dig through the
-/// wire format.
+/// Flat injury record surfaced to the team page, built from
+/// `/teams/{id}/roster`'s injury list (which the server reads from
+/// balldontlie's `/player_injuries`).
 struct InjuredPlayer: Codable, Hashable, Identifiable {
     let bdl_id: Int
     let name: String
@@ -657,16 +576,3 @@ struct InjuredPlayer: Codable, Hashable, Identifiable {
     var id: Int { bdl_id }
 }
 
-/// Wire shape of `/mlb/v1/player_injuries` rows. Kept private — the
-/// public surface is `InjuredPlayer`, which collapses the nested
-/// player block into flat fields.
-private struct BDLPlayerInjuryRaw: Decodable {
-    let player: BDLPlayer
-    let status: String?
-    /// Free-text description ("Strained left hamstring", etc.) —
-    /// BDL ships this on injuries but the Home card doesn't render
-    /// it today. Decoded so the field doesn't trip strict decoders
-    /// down the line if we ever turn one on.
-    let description: String?
-    let returnDate: String?
-}

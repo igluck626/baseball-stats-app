@@ -58,10 +58,15 @@ final class APIClient {
 
     private let session: URLSession
     private let decoder: JSONDecoder
+    /// For payloads that embed balldontlie's own rows (`/teams/{id}/schedule`),
+    /// which `BDLGame` reads with snake_case conversion, as BallDontLieClient does.
+    private let snakeCaseDecoder: JSONDecoder
 
     init(session: URLSession = .shared) {
         self.session = session
         self.decoder = JSONDecoder()
+        self.snakeCaseDecoder = JSONDecoder()
+        snakeCaseDecoder.keyDecodingStrategy = .convertFromSnakeCase
     }
 
     // MARK: Endpoints
@@ -438,6 +443,24 @@ final class APIClient {
         return try await getOptional(url)
     }
 
+    /// `GET /teams/{bdl_id}/schedule?season=` — a team's season of games, how
+    /// the season stands and next season's opener (see `TeamScheduleResponse`).
+    /// `fresh` skips a server copy older than ten seconds, for the live→final
+    /// moment when the cached schedule still says "in progress".
+    func getTeamSchedule(bdlTeamId: Int, season: Int, fresh: Bool = false) async throws -> TeamScheduleResponse {
+        var query = [URLQueryItem(name: "season", value: String(season))]
+        if fresh { query.append(URLQueryItem(name: "fresh", value: "true")) }
+        let url = try buildURL(path: "/teams/\(bdlTeamId)/schedule", query: query)
+        return try await get(url, using: snakeCaseDecoder)
+    }
+
+    /// `GET /teams/{bdl_id}/roster` — the active roster with each player's line
+    /// for this team, and the injury list (see `TeamRosterResponse`).
+    func getTeamRoster(bdlTeamId: Int) async throws -> TeamRosterResponse {
+        let url = try buildURL(path: "/teams/\(bdlTeamId)/roster")
+        return try await get(url)
+    }
+
     /// `GET /teams/{team_id}/history`. Returns nil on 404 — happens
     /// only for codes the franchise-resolution can't map to any
     /// `team_seasons` row (extreme historical typos, etc.).
@@ -562,6 +585,10 @@ final class APIClient {
 
     /// Generic GET that decodes the response body into `T` or throws.
     private func get<T: Decodable>(_ url: URL) async throws -> T {
+        try await get(url, using: decoder)
+    }
+
+    private func get<T: Decodable>(_ url: URL, using decoder: JSONDecoder) async throws -> T {
         let (data, response) = try await dataTask(for: url)
 
         guard let http = response as? HTTPURLResponse else {

@@ -12,8 +12,9 @@
 //
 //  They are DELIBERATELY the smallest thing that does that job. Neither is an
 //  abstraction over its client: the view models still hold a concrete
-//  `BallDontLieClient` for standings, rosters, lineups and everything else, and
-//  only the two slate reads go through `SlateProviding`. Resist widening these
+//  `BallDontLieClient` for standings, lineups and everything else; Scores' slate
+//  read goes through `SlateProviding`, and the team page's season read through
+//  `TeamScheduleProviding`. Resist widening these
 //  to "all of BDL" or "all of our API" — a protocol that mirrors a whole client
 //  is a maintenance cost with no test to show for it.
 //
@@ -30,10 +31,18 @@ import Foundation
 /// value each caller passed.
 protocol SlateProviding: Sendable {
     func getGames(date: String, bypassCache: Bool) async throws -> [BDLGame]
-    func getTeamGames(date: String, teamId: Int, bypassCache: Bool) async throws -> [BDLGame]
 }
 
 extension BallDontLieClient: SlateProviding {}
+
+/// One team's season from our server, which is where the team page's hero now
+/// reads "is it over?" for that team's games — the slate seam's job, for the
+/// one read that left balldontlie. `fresh` plays `bypassCache`'s part.
+protocol TeamScheduleProviding: Sendable {
+    func getTeamSchedule(bdlTeamId: Int, season: Int, fresh: Bool) async throws -> TeamScheduleResponse
+}
+
+extension APIClient: TeamScheduleProviding {}
 
 /// Our backend's live proxy, as `LiveGameStore` consumes it.
 ///

@@ -4,8 +4,8 @@
 //  balldontlie pre-lists postseason games whose teams aren't known yet,
 //  as team "UNK" (id -1). Listed, a bye team's Home card read "vs UNK".
 //  Every game list the client builds — `getGames` (Scores, Standings),
-//  `getTeamGames` (Home hero and strip, the overlay) and
-//  `getTeamSeasonGames` (the schedule) — drops them.
+//  `getTeamGames` (the player overlay) and the team page's schedule from
+//  our server (which drops them too, team_page.schedule_games) — drops them.
 //
 //  `testdata/placeholder-games.json` is balldontlie's real `/games` response
 //  for 2026-10-02..04, fetched 2026-09-30: two real Wild Card Game 3s and

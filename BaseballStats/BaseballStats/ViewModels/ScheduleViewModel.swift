@@ -2,11 +2,11 @@
 //  ScheduleViewModel.swift
 //  BaseballStats
 //
-//  Drives the Home tab's Schedule sheet. Fetches the full regular-
-//  season schedule for the favorite team in one paginated call
-//  via `BallDontLieClient.getTeamSeasonGames(season:teamId:)`,
-//  then groups the result by month so the sheet can render the
-//  list with one sticky header per month.
+//  Drives the team page's Schedule sheet. Fetches the team's season from
+//  our server (`/teams/{id}/schedule`, which pages through balldontlie
+//  once for every user), keeps the regular season, then groups the result
+//  by month so the sheet can render the list with one sticky header per
+//  month.
 //
 
 import Combine
@@ -26,10 +26,10 @@ final class ScheduleViewModel: ObservableObject {
     @Published var didLoad: Bool = false
     @Published var error: String?
 
-    private let bdl: BallDontLieClient
+    private let api: APIClient
 
-    init(bdl: BallDontLieClient = .shared) {
-        self.bdl = bdl
+    init(api: APIClient = .shared) {
+        self.api = api
     }
 
     func load(bdlTeamId: Int) async {
@@ -37,9 +37,10 @@ final class ScheduleViewModel: ObservableObject {
         error = nil
         let year = Calendar.current.component(.year, from: Date())
         do {
-            let bdlGames = try await bdl.getTeamSeasonGames(
-                season: year, teamId: bdlTeamId,
-            )
+            // Regular season only, as `getTeamSeasonGames` filtered it: the
+            // record walk below depends on it (see `walkRecord`).
+            let bdlGames = try await api.getTeamSchedule(bdlTeamId: bdlTeamId, season: year).games
+                .filter { $0.isRegularSeason && !$0.hasPlaceholderTeam }
             let games = bdlGames
                 .map { $0.toGame() }
                 .sorted {
@@ -60,14 +61,13 @@ final class ScheduleViewModel: ObservableObject {
     /// calendar and return ordered (month-name, [Game]) pairs.
     /// Year+month composite key — covers the (unlikely but
     /// theoretical) case of a postseason wrap straddling the new
-    /// year, even though `getTeamSeasonGames` filters to regular
-    /// season only.
+    /// year, even though `load` keeps the regular season only.
     /// Running "W-L after this game" for every completed game, in date order.
     ///
     /// TWO THINGS HERE ARE LOAD-BEARING AND BOTH LOOK OPTIONAL.
     ///
-    /// 1. `games` must already be REGULAR SEASON ONLY. `getTeamSeasonGames`
-    ///    filters to the regular season (`isRegularSeason`) inside the client, and this walk
+    /// 1. `games` must already be REGULAR SEASON ONLY. `load` filters to the
+    ///    regular season (`isRegularSeason`) before calling it, and this walk
     ///    depends on that having happened. BDL returns spring training in the
     ///    same season query — 194 rows for 2026 against 163 regular ones — so
     ///    walking the unfiltered set produces a record that is wrong by the
