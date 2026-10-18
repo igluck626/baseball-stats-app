@@ -437,11 +437,25 @@ def get_batting_gamelogs(
     return q.all()
 
 
+def _keep_known(db: Session, model, row: dict) -> dict:
+    """⚠️ NEVER REPLACE A KNOWN VALUE WITH NULL (Isaac, 2026-10-18). balldontlie
+    can re-ship a game's line without the detail it had before (Connor Joe
+    06-19: PA 2 -> null), and the nightly re-reads recent dates, the catch-up
+    re-reads doubleheader dates and the backfills re-read any range. A NULL
+    arriving for a column the stored row already has keeps the stored value; a
+    real value still replaces it (a scoring correction)."""
+    existing = db.get(model, (row["player_id"], row["game_id"]))
+    if existing is None:
+        return row
+    return {k: (getattr(existing, k) if v is None and getattr(existing, k, None) is not None else v)
+            for k, v in row.items()}
+
+
 def save_batting_gamelogs(db: Session, player_id: int, games: list[dict]) -> None:
     for g in games:
         # Allow callers to pass dicts that already contain player_id; trust the
         # arg over the dict to keep things consistent.
-        merged = {**g, "player_id": player_id}
+        merged = _keep_known(db, BattingGameLog, {**g, "player_id": player_id})
         db.merge(BattingGameLog(**merged))
 
 
@@ -480,7 +494,7 @@ def get_pitching_gamelogs(
 
 def save_pitching_gamelogs(db: Session, player_id: int, games: list[dict]) -> None:
     for g in games:
-        merged = {**g, "player_id": player_id}
+        merged = _keep_known(db, PitchingGameLog, {**g, "player_id": player_id})
         db.merge(PitchingGameLog(**merged))
 
 
