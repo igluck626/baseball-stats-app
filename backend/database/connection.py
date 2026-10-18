@@ -127,6 +127,13 @@ _BATTING_GAMELOGS_QUALITY_COLUMNS: list[str] = [
 _PITCHING_GAMELOGS_NEW_COLUMNS: list[tuple[str, str]] = [
     ("slot", "INTEGER"),
     ("seq",  "INTEGER"),
+    # decisions, one column each (see PitchingGameLog) — nullable, additive
+    ("W",   "INTEGER"),
+    ("L",   "INTEGER"),
+    ("SV",  "INTEGER"),
+    ("HLD", "INTEGER"),
+    ("BS",  "INTEGER"),
+    ("GS",  "INTEGER"),
 ]
 
 _PITCHING_GAMELOGS_QUALITY_COLUMNS: list[str] = [

@@ -535,6 +535,17 @@ class PitchingGameLog(Base):
     # the outcome gate dropped relievers who never came to the plate.
     slot        = Column(Integer, nullable=True)
     seq         = Column(Integer, nullable=True)
+    # Decisions, one column each, as balldontlie ships them on /stats (wins,
+    # losses, saves, holds, blown_saves, games_started). A pitcher can take two
+    # at once — a blown save AND the loss, a hold AND the loss — which the single
+    # `result` string cannot hold; per-team W/L/SV count from these. NULL when
+    # not shipped (Retrosheet history, rows not yet re-parsed).
+    W           = Column(Integer, nullable=True)
+    L           = Column(Integer, nullable=True)
+    SV          = Column(Integer, nullable=True)
+    HLD         = Column(Integer, nullable=True)
+    BS          = Column(Integer, nullable=True)
+    GS          = Column(Integer, nullable=True)
 
 
 # ---------------------------------------------------------------------------
@@ -731,6 +742,17 @@ class StagingPitchingGameLog(Base):
     # the outcome gate dropped relievers who never came to the plate.
     slot        = Column(Integer, nullable=True)
     seq         = Column(Integer, nullable=True)
+    # Decisions, one column each, as balldontlie ships them on /stats (wins,
+    # losses, saves, holds, blown_saves, games_started). A pitcher can take two
+    # at once — a blown save AND the loss, a hold AND the loss — which the single
+    # `result` string cannot hold; per-team W/L/SV count from these. NULL when
+    # not shipped (Retrosheet history, rows not yet re-parsed).
+    W           = Column(Integer, nullable=True)
+    L           = Column(Integer, nullable=True)
+    SV          = Column(Integer, nullable=True)
+    HLD         = Column(Integer, nullable=True)
+    BS          = Column(Integer, nullable=True)
+    GS          = Column(Integer, nullable=True)
 
 
 class PlayerHof(Base):

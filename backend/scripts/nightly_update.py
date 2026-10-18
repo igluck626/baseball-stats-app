@@ -1338,7 +1338,8 @@ LEFT JOIN bat_line b ON b.player_id = p.player_id AND b.game_id = p.game_id
 GROUP BY p.player_id, p.raw_team
 """
 
-# Pitching: W/L/SV counted from `result`; IP summed as OUTS (6.2 = 6⅔) so the
+# Pitching: W/L/SV counted from the decision columns (falling back to `result`
+# for a row not yet re-parsed); IP summed as OUTS (6.2 = 6⅔) so the
 # decimal-innings notation adds up correctly. GS/CG/SHO/etc. aren't in the
 # gamelog and stay NULL (the team board ranks by W/L/SV/SO/ER, all derivable).
 _STINT_PIT_COLS = ["G", "W", "L", "SV", "H", "R", "ER", "BB", "SO", "HR", "HBP", "WP", "ip_outs"]
@@ -1351,6 +1352,12 @@ WITH game_team AS (   -- both teams of every game, from BOTH logs (see _STINT_BA
 per_game AS (
   SELECT g.player_id, g.game_id, MIN(gt.team) AS raw_team, MAX(g.game_date) AS gd,
          MAX(g.result) AS result, MAX(g."IP") AS ip,
+         -- decisions from their own columns (a loss is never hidden behind a
+         -- hold or a blown save); a row not yet re-parsed has none, so it
+         -- falls back to its result string
+         MAX(COALESCE(g."W", CASE WHEN g.result = 'W' THEN 1 ELSE 0 END)) AS w,
+         MAX(COALESCE(g."L", CASE WHEN g.result = 'L' THEN 1 ELSE 0 END)) AS l,
+         MAX(COALESCE(g."SV", CASE WHEN g.result = 'S' THEN 1 ELSE 0 END)) AS sv,
          MAX(g."H") "H", MAX(g."R") "R", MAX(g."ER") "ER", MAX(g."BB") "BB",
          MAX(g."SO") "SO", MAX(g."HR") "HR", MAX(g."HBP") "HBP", MAX(g."WP") "WP"
   FROM pitching_gamelogs g
@@ -1359,9 +1366,9 @@ per_game AS (
   GROUP BY g.player_id, g.game_id
 )
 SELECT player_id, raw_team, min(gd) AS first_date, count(*) AS "G",
-       count(*) FILTER (WHERE result = 'W') "W",
-       count(*) FILTER (WHERE result = 'L') "L",
-       count(*) FILTER (WHERE result = 'S') "SV",
+       sum(w) "W",
+       sum(l) "L",
+       sum(sv) "SV",
        sum("H") "H", sum("R") "R", sum("ER") "ER", sum("BB") "BB", sum("SO") "SO",
        sum("HR") "HR",
        -- every pitching game is activity: one unknown HBP / WP makes the stint's NULL

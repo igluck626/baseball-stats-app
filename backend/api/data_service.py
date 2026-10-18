@@ -5495,13 +5495,20 @@ def _parse_bdl_pitching_gamelog(stat: dict, ctx: dict) -> Optional[dict]:
     is_home = side == "home"
     opp_abbr = ctx["away_team_abbr"] if is_home else ctx["home_team_abbr"]
 
-    # Decision priority — same shape the MLB Stats API parser used.
-    # BS (blown save) is not derivable from BDL; falls through to ND.
-    if   _to_int(stat.get("saves")):   result = "S"
-    elif _to_int(stat.get("holds")):   result = "H"
-    elif _to_int(stat.get("wins")):    result = "W"
-    elif _to_int(stat.get("losses")):  result = "L"
-    else:                                result = "ND"
+    # Decisions arrive as SEPARATE fields, and a pitcher can take two at once:
+    # 2026 has 235 loss + blown save, 68 win + blown save, 25 loss + hold. Each
+    # is stored in its own column (W/L/SV/HLD/BS/GS, NULL when not shipped);
+    # `result` is only the display string, and a win or loss is never hidden
+    # behind a hold or a blown save: W > L > S > H > BS > ND.
+    dec = {col: _to_int(stat.get(f)) for col, f in (
+        ("W", "wins"), ("L", "losses"), ("SV", "saves"), ("HLD", "holds"),
+        ("BS", "blown_saves"), ("GS", "games_started"))}
+    if   dec["W"]:   result = "W"
+    elif dec["L"]:   result = "L"
+    elif dec["SV"]:  result = "S"
+    elif dec["HLD"]: result = "H"
+    elif dec["BS"]:  result = "BS"
+    else:            result = "ND"
 
     return {
         "game_id":   ctx["game_id"],
@@ -5527,6 +5534,7 @@ def _parse_bdl_pitching_gamelog(stat: dict, ctx: dict) -> Optional[dict]:
         "WP":        _to_int(stat.get("wild_pitches")),
         "pitches":   _to_int(stat.get("pitch_count")),
         "strikes":   _to_int(stat.get("strikes")),
+        **dec,
     }
 
 
