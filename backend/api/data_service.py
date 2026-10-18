@@ -6166,6 +6166,10 @@ def _aggregate_batting_window(games: list[dict]) -> dict:
     s = {k: sum((g.get(k) or 0) for g in games) for k in
          ("AB", "R", "H", "doubles", "triples", "HR", "RBI",
           "BB", "SO", "SB", "HBP", "SF")}
+    # ⚠️ ACTIVITY RULE: a cell left NULL (not shipped) on a game with AB or BB
+    # makes that window total — and every rate on it — unknown ("—"), never short.
+    unknown = {k for g in games if (g.get("AB") or 0) > 0 or (g.get("BB") or 0) > 0
+               for k in ("doubles", "triples", "SB", "HBP", "SF") if g.get(k) is None}
     ab, h, hr, bb, hbp, sf = s["AB"], s["H"], s["HR"], s["BB"], s["HBP"], s["SF"]
     doubles, triples = s["doubles"], s["triples"]
     singles = h - doubles - triples - hr
@@ -6174,6 +6178,12 @@ def _aggregate_batting_window(games: list[dict]) -> dict:
     obp_den = ab + bb + hbp + sf
     obp = round((h + bb + hbp) / obp_den, 3) if obp_den > 0 else None
     slg = round((singles + 2 * doubles + 3 * triples + 4 * hr) / ab, 3) if ab > 0 else None
+    if unknown & {"HBP", "SF"}:
+        obp = None
+    if unknown & {"doubles", "triples"}:
+        slg = None
+    if "SB" in unknown:
+        s["SB"] = None
     ops = round(obp + slg, 3) if (obp is not None and slg is not None) else None
 
     return {
@@ -7768,6 +7778,13 @@ def _compute_batter_heat(
     def total(attr: str) -> int:
         return sum((getattr(g, attr) or 0) for g in logs)
 
+    # ⚠️ ACTIVITY RULE: an unknown PA/2B/3B/IBB/HBP/SF/SB/CS on a game in the
+    # window (with AB or BB) would skew wOBA, K% and the PA gate — no reading.
+    if any(((g.AB or 0) > 0 or (g.BB or 0) > 0)
+           and any(getattr(g, a) is None for a in ("PA", "doubles", "triples", "IBB", "HBP", "SF", "SB", "CS"))
+           for g in logs):
+        return (None, None, None)
+
     pa = total("PA")
     if pa < 30:
         return (None, None, None)
@@ -7849,6 +7866,8 @@ def _compute_pitcher_heat(
     ip = sum((getattr(gl, "IP", None) or 0.0) for gl in logs)
     if ip < min_ip or ip <= 0:
         return (None, None, None)
+    if any(gl.HBP is None for gl in logs):
+        return (None, None, None)          # unknown HBP: window FIP can't be known
     er  = sum((gl.ER or 0) for gl in logs)
     h   = sum((gl.H or 0) for gl in logs)
     bb  = sum((gl.BB or 0) for gl in logs)

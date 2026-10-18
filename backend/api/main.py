@@ -1750,6 +1750,8 @@ def player_batter_stats_at_date(
                 BattingGameLog.doubles,
                 BattingGameLog.triples,
                 BattingGameLog.game_date,
+                BattingGameLog.AB,
+                BattingGameLog.BB,
             )
               .filter(BattingGameLog.player_id == player_id)
               .filter(BattingGameLog.season    == season)
@@ -1759,6 +1761,11 @@ def player_batter_stats_at_date(
     home_runs = sum((r.HR      or 0) for r in rows)
     doubles   = sum((r.doubles or 0) for r in rows)
     triples   = sum((r.triples or 0) for r in rows)
+    # ⚠️ ACTIVITY RULE: a NULL double/triple on a game with AB or BB makes the
+    # season count unknown. Installed apps decode `doubles`/`triples` as a
+    # non-optional Int, so the numbers stay (null would fail the whole
+    # response); the `*_unknown` flags let a current app show "—" instead.
+    active = [r for r in rows if (r.AB or 0) > 0 or (r.BB or 0) > 0]
     includes_today = _includes_today(rows, game_date)
     return {
         "player_id":      player_id,
@@ -1766,6 +1773,8 @@ def player_batter_stats_at_date(
         "home_runs":      home_runs,
         "doubles":        doubles,
         "triples":        triples,
+        "doubles_unknown": any(r.doubles is None for r in active),
+        "triples_unknown": any(r.triples is None for r in active),
         "includes_today": includes_today,
         # `gamelog_games` is the DEDUPED count an older installed build
         # reads; left as it was so its arithmetic does not shift under it.
@@ -9050,11 +9059,42 @@ def _pretty_date(d) -> str:
         return str(d)
 
 
+# ⚠️ AN UNKNOWN CELL IS NOT A ZERO (Isaac's "activity" rule, 2026-10-16). A game-
+# log cell is NULL when balldontlie didn't ship it. On a game with ACTIVITY (AB or
+# BB above 0) such a NULL could hide a real count, so every answer built on it is
+# incomplete or "—", never a short number. On a no-AB/no-BB game it reads as 0.
+# `_UNKNOWN_SQL` names, per game, the fields that are unknown on a game with
+# activity ("2B,HBP"); loaders turn it into g["unknown"] while still coalescing
+# the numbers to 0 for arithmetic.
+_UNKNOWN_SQL = (
+    """CASE WHEN COALESCE("AB",0) > 0 OR COALESCE("BB",0) > 0 THEN concat_ws(',', """
+    """CASE WHEN "PA" IS NULL THEN 'PA' END, CASE WHEN doubles IS NULL THEN '2B' END, """
+    """CASE WHEN triples IS NULL THEN '3B' END, CASE WHEN "HBP" IS NULL THEN 'HBP' END, """
+    """CASE WHEN "SF" IS NULL THEN 'SF' END, CASE WHEN "SH" IS NULL THEN 'SH' END, """
+    """CASE WHEN "IBB" IS NULL THEN 'IBB' END, CASE WHEN "SB" IS NULL THEN 'SB' END, """
+    """CASE WHEN "CS" IS NULL THEN 'CS' END) ELSE '' END"""
+)
+# The fields each daily event is built from, among those that can be unknown.
+_EVENT_UNKNOWN = {"1B": {"2B", "3B"}, "2B": {"2B"}, "3B": {"3B"}, "TB": {"2B", "3B"},
+                  "HBP": {"HBP"}, "SB": {"SB"}}
+
+
+def _unknown_set(v) -> frozenset:
+    return frozenset(x for x in (v or "").split(",") if x)
+
+
+def _unknown_games(games, fields) -> list:
+    """The games whose value for any of `fields` is unknown (activity rule)."""
+    fields = set(fields or ())
+    return [g for g in games if fields & g.get("unknown", frozenset())] if fields else []
+
+
 def _daily_games(mlbam_id, season=None):
     """One row per REGULAR-SEASON game the player batted in, from batting_gamelogs,
     ordered chronologically (game_date, game_id — game_id's trailing digit is the
     doubleheader number, so this splits doubleheaders correctly). Numerics
-    coalesced to 0. Batter game logs are regular-season only."""
+    coalesced to 0, with g["unknown"] naming the fields that are unknown on a
+    game with activity (see _UNKNOWN_SQL). Batter game logs are regular-season only."""
     where = ["player_id = :pid"]
     params: dict = {"pid": int(mlbam_id)}
     if season is not None:
@@ -9063,7 +9103,7 @@ def _daily_games(mlbam_id, season=None):
            'COALESCE("AB",0), COALESCE("H",0), COALESCE(doubles,0), COALESCE(triples,0), '
            'COALESCE("HR",0), COALESCE("RBI",0), COALESCE("BB",0), COALESCE("SO",0), '
            'COALESCE("HBP",0), COALESCE("SF",0), COALESCE("SH",0), COALESCE("IBB",0), '
-           'COALESCE("R",0), COALESCE("SB",0) '
+           'COALESCE("R",0), COALESCE("SB",0), ' + _UNKNOWN_SQL + ' '
            f"FROM batting_gamelogs WHERE {' AND '.join(where)} "
            "ORDER BY game_date, game_id")
     with connection.get_session() as db:
@@ -9074,6 +9114,7 @@ def _daily_games(mlbam_id, season=None):
         "AB": r[5], "H": r[6], "2B": r[7], "3B": r[8], "HR": r[9],
         "RBI": r[10], "BB": r[11], "SO": r[12], "HBP": r[13],
         "SF": r[14], "SH": r[15], "IBB": r[16], "R": r[17], "SB": r[18],
+        "unknown": _unknown_set(r[19]),
     } for r in rows]
 
 
@@ -9161,6 +9202,13 @@ def _stat_line(games):
     avg = round(H / AB, 3) if AB else None
     obp = round((H + BB + HBP) / obp_den, 3) if obp_den else None
     slg = round(TB / AB, 3) if AB else None
+    # An unknown double/triple (or HBP/SF) in any game makes the totals and rates
+    # built on it unknown — "—", not a short number.
+    unk = frozenset().union(*(g.get("unknown", frozenset()) for g in games))
+    if unk & {"2B", "3B"}:
+        d2 = d3 = slg = None
+    if unk & {"HBP", "SF"}:
+        obp = None
     ops = round(obp + slg, 3) if (obp is not None and slg is not None) else None
     return {"G": len(games), "AB": AB, "H": H, "2B": d2, "3B": d3, "HR": HR,
             "RBI": RBI, "BB": BB, "SO": SO, "AVG": avg, "OBP": obp, "SLG": slg, "OPS": ops}
@@ -9216,6 +9264,13 @@ def _run_milestone(player, event, n, season=None, game_type=None):
             f"No game logs for '{resolved['name']}'"
             + (f" in {season}" if season is not None else "")))
 
+    unk = _unknown_games(games, _EVENT_UNKNOWN.get(ev))
+    if unk:
+        return {"resolved": True, "declined": True, "source": "daily", "player": player_block,
+                "milestone": None, "game_coverage": {"complete": False},
+                "reason": (f"{len(unk)} of {resolved['name']}'s games don't record their "
+                           f"{_DAILY_EVENT_PLURAL.get(ev, label + 's')}, so I can't say exactly "
+                           "when that milestone was reached.")}
     total = sum(valfn(g) for g in games)
     play_hi = max(g["season"] for g in games)
 
@@ -9325,6 +9380,33 @@ def _streak_classify(kind, H, HR, AB, reached, PA, SF=0, season=None):
     if kind == "multi_hit":
         return "extend" if H >= 2 else "break"
     return "break"
+
+
+def _streak_hinges(g, kind) -> bool:
+    """True when this game's EXTEND/BREAK/SKIP depends on an unknown field: an
+    on-base game with at-bats but no hit and no walk and an unknown HBP, or a
+    hitting game with no at-bat, no hit, a walk and an unknown SF (a sac fly
+    ends a hitting streak, rule 9.23). Other kinds never depend on them."""
+    unk = g.get("unknown", frozenset())
+    if kind == "on_base":
+        return g["H"] == 0 and g["BB"] == 0 and g["AB"] > 0 and "HBP" in unk
+    if kind == "hitting":
+        return g["H"] == 0 and g["AB"] == 0 and g["BB"] > 0 and "SF" in unk
+    return False
+
+
+def _longest_streak_bounds(games, kind):
+    """(low, high, exact): _longest_streak with every hinge game decided against
+    the streak, and with every one decided for it. The longest streak can only
+    grow as games flip from break to carry, so the true one lies between the
+    two; when they agree the unknowns can't change it (exact)."""
+    hinges = [_streak_hinges(g, kind) for g in games]
+    if not any(hinges):
+        res = _longest_streak(games, kind)
+        return res, res, True
+    lo = _longest_streak([dict(g, HBP=0, SF=1) if h else g for g, h in zip(games, hinges)], kind)
+    hi = _longest_streak([dict(g, HBP=1, SF=0) if h else g for g, h in zip(games, hinges)], kind)
+    return lo, hi, lo[:3] == hi[:3]
 
 
 def _longest_streak(games, kind):
@@ -9714,6 +9796,12 @@ def _run_game_achievement(stat, threshold=None, player=None, game_type=None,
                 "reason": "These come from regular-season game logs; postseason isn't available."}
 
     role = "bat" if is_cycle else _GAME_ACH_STAT[stat][0]
+    # Doubles/triples can be unknown on a game with AB or BB (activity rule): such a
+    # game could hold the feat, so an answer that relies on them says so.
+    _act = '(COALESCE("AB",0) > 0 OR COALESCE("BB",0) > 0)'
+    unknown_crit = (f"(doubles IS NULL OR triples IS NULL) AND {_act}" if is_cycle
+                    else f"doubles IS NULL AND {_act}" if stat == "2B"
+                    else f"triples IS NULL AND {_act}" if stat == "3B" else None)
     table = "batting_gamelogs" if role == "bat" else "pitching_gamelogs"
     extra_col = '"PA"' if role == "bat" else '"IP"'
     subject = "pitcher" if role == "pit" else "batter"
@@ -9784,7 +9872,16 @@ def _run_game_achievement(stat, threshold=None, player=None, game_type=None,
             rows = db.execute(_sa_text(
                 f"SELECT game_date, opponent, {vsel} v, {extra_col} x FROM {table} "
                 f"WHERE player_id = :pid AND {where}{scope} ORDER BY game_date"), params).fetchall()
+            unk_n = (db.execute(_sa_text(
+                f"SELECT COUNT(*) FROM {table} WHERE player_id = :pid AND {unknown_crit}{scope}"),
+                {"pid": int(mlbam), **scope_params}).scalar() or 0) if unknown_crit else 0
         ach = "hit for the cycle" if is_cycle else phrase_fmt.format(n=n)
+        unk_noun = "doubles and triples" if is_cycle else noun
+        if unk_n and (not rows or (n is not None and n <= 0)):
+            return {"resolved": True, "player": pblock, "source": "game_logs",
+                    "game_coverage": {"complete": False}, "answer":
+                    (f"Not in any game that records it — but {unk_n} of {name}'s games{scope_label} "
+                     f"don't record {unk_noun}, so I can't say for certain.")}
         if not rows or (n is not None and n <= 0):
             return {"resolved": True, "player": pblock, "answer":
                     f"No — {name} has never {ach} in a game{scope_label}.", "source": "game_logs"}
@@ -9797,6 +9894,11 @@ def _run_game_achievement(stat, threshold=None, player=None, game_type=None,
         shown = occ if len(occ) <= 5 else occ[-5:]
         lead = "" if len(occ) <= 5 else "most recently "
         ans = f"Yes — {name} has {ach} in a game{scope_label} {times}: {lead}{'; '.join(shown)}."
+        if unk_n:
+            ans += (f" ({unk_n} more of their games don't record {unk_noun}, so there may be "
+                    "others — or a higher mark.)")
+            return {"resolved": True, "player": pblock, "answer": ans, "source": "game_logs",
+                    "game_coverage": {"complete": False}}
         return {"resolved": True, "player": pblock, "answer": ans, "source": "game_logs"}
 
     # ---------------- no player: roster (threshold/cycle) or record ----------
@@ -9812,6 +9914,9 @@ def _run_game_achievement(stat, threshold=None, player=None, game_type=None,
                 f"SELECT player_id, {vexpr} v, MAX(game_date) recent, COUNT(*) cnt "
                 f"FROM {table} WHERE {where} GROUP BY player_id "
                 f"ORDER BY recent DESC LIMIT {_GAME_ACH_ROSTER_CAP}"), params).fetchall()
+            unk_n = (db.execute(_sa_text(
+                f"SELECT COUNT(*) FROM {table} WHERE {unknown_crit}{scope}"), scope_params).scalar() or 0
+                     ) if unknown_crit else 0
         if total == 0:   # empty-but-correct — say the zero, don't render a blank card
             msg = (f"No player hit for the cycle{scope_label}." if is_cycle
                    else f"No player has {phrase_fmt.format(n=threshold)} in a game{scope_label}.")
@@ -9825,9 +9930,12 @@ def _run_game_achievement(stat, threshold=None, player=None, game_type=None,
         else:
             head = f"{threshold}+ {noun} in a game{scope_label} — {total} player" + ("s" if total != 1 else "")
         more = f" (showing {_GAME_ACH_ROSTER_CAP})" if total > _GAME_ACH_ROSTER_CAP else ""
+        unk_noun = "doubles and triples" if is_cycle else noun
         return {"resolved": True, "source": "game_logs", "roster": True,
                 "roster_headline": head + more, "roster_count": total, "leaders": leaders,
-                "game_coverage": {"complete": True}}
+                "game_coverage": ({"complete": False, "note": (
+                    f"{unk_n} games don't record {unk_noun}, so there may be more.")}
+                    if unk_n else {"complete": True})}
 
     # "most X in a game" — each player's single-game best, ranked; roster if the
     # record is shared by >= _ROSTER_MIN_TIE.
@@ -9836,7 +9944,7 @@ def _run_game_achievement(stat, threshold=None, player=None, game_type=None,
         rows = db.execute(_sa_text(
             f"SELECT player_id, game_date, opponent, v, x FROM ("
             f"  SELECT DISTINCT ON (player_id) player_id, game_date, opponent, "
-            f"         {col} v, {extra_col} x FROM {table} WHERE 1=1{scope} "
+            f"         {col} v, {extra_col} x FROM {table} WHERE {col} IS NOT NULL{scope} "
             f"  ORDER BY player_id, {col} DESC, game_date"
             f") t ORDER BY v DESC, player_id LIMIT 25"), scope_params).fetchall()
         if not rows:
@@ -9846,6 +9954,11 @@ def _run_game_achievement(stat, threshold=None, player=None, game_type=None,
         n_at_record = db.execute(_sa_text(
             f"SELECT COUNT(DISTINCT player_id) FROM {table} WHERE {col} = :v{scope}"),
             {"v": record, **scope_params}).scalar() or 0
+        rec_unk = (db.execute(_sa_text(
+            f"SELECT COUNT(*) FROM {table} WHERE {unknown_crit}{scope}"), scope_params).scalar() or 0
+                   ) if unknown_crit else 0
+    rec_cov = ({"complete": False, "note": f"{rec_unk} games don't record {noun}, so the record "
+                                           "could be higher."} if rec_unk else {"complete": True})
     names = _lb_resolve_names([r[0] for r in rows])
 
     def _sub(gd, x):
@@ -9869,13 +9982,13 @@ def _run_game_achievement(stat, threshold=None, player=None, game_type=None,
         return {"resolved": True, "source": "game_logs", "roster": True,
                 "roster_headline": f"{record} {noun} in a game{scope_label} — shared by {len(holders)} players",
                 "roster_count": len(holders), "leaders": holders,
-                "game_coverage": {"complete": True}}
+                "game_coverage": rec_cov}
     leaders = [{"player_name": names.get(r[0]) or f"mlbam:{r[0]}", "mlbam_id": r[0],
                 "value": int(r[3]), "subtitle": _sub(r[1], r[4])} for r in rows]
     _rank_with_ties(leaders, "value")
     return {"resolved": True, "source": "game_logs", "leaders": leaders,
             "leaderboard_title": title, "answer": None,
-            "game_coverage": {"complete": True}}
+            "game_coverage": rec_cov}
 
 
 def _run_streak(player, streak_type, season=None, game_type=None):
@@ -9939,12 +10052,21 @@ def _run_streak(player, streak_type, season=None, game_type=None):
     # longest run WITHIN each complete season — never across an offseason
     best = (0, None, None, [])
     best_season = None
+    best_hi = 0
     for s in usable:
         gs = [g for g in games if g["season"] == s]
-        length, start, end, run_games = _longest_streak(gs, kind)
-        if length > best[0]:
-            best = (length, start, end, run_games)
+        lo, hi, _exact = _longest_streak_bounds(gs, kind)
+        best_hi = max(best_hi, hi[0])
+        if lo[0] > best[0]:
+            best = lo
             best_season = s
+    if best_hi != best[0]:
+        unknown_n = sum(1 for g in games if g["season"] in usable and _streak_hinges(g, kind))
+        return {"resolved": True, "declined": True, "source": "daily", "player": player_block,
+                "streak": None, "game_coverage": {"complete": False},
+                "reason": (f"{unknown_n} of {resolved['name']}'s games are missing a stat that decides "
+                           f"whether they extend this streak, so it's somewhere between {best[0]} and "
+                           f"{best_hi} games — I can't give the exact length.")}
 
     length, start, end, run_games = best
     excluded = [] if season is not None else [s for s in player_seasons if s not in complete]
@@ -10069,6 +10191,12 @@ def _run_span(player, event, window, season=None, game_type=None):
     # maximal runs of consecutive COMPLETE seasons — a window may cross a season
     # boundary within a run, never bridge an incomplete season. (Shared with the
     # leaderboard precompute so the two never diverge.)
+    unk = _unknown_games([g for g in games if g["season"] in usable], _EVENT_UNKNOWN.get(ev))
+    if unk:
+        return {"resolved": True, "declined": True, "source": "daily", "player": player_block,
+                "span": None, "game_coverage": {"complete": False},
+                "reason": (f"{len(unk)} of {resolved['name']}'s games don't record their {label}, "
+                           f"so I can't give the most {label} in any {window} games exactly.")}
     best, longest_run_games = _best_span(games, usable, window, valfn)
 
     if best is None:
@@ -11710,8 +11838,15 @@ def _leaderboard_rows(mlbam, games, complete):
         for kind, metric in _LB_STREAK_METRIC.items():
             if metric in _PLAYS_DERIVED_BAT_METRICS:
                 continue   # AB-unit, plays-derived; own backfills, not the daily one
-            length, start, end, _run = _longest_streak(gs, kind)
-            if length >= 1:
+            lo, hi, exact = _longest_streak_bounds(gs, kind)
+            length, start, end, _run = lo
+            if not exact:
+                # Unknown games could change it: stored with value NULL, which the
+                # board readers leave out of the ranking and name in a note.
+                rows.append({"player_id": mlbam, "role": "bat", "metric": metric, "window": 0,
+                             "season": s, "event": "", "value": None,
+                             "start_date": None, "end_date": None})
+            elif length >= 1:
                 rows.append({"player_id": mlbam, "role": "bat", "metric": metric, "window": 0,
                              "season": s, "event": "", "value": int(length),
                              "start_date": start, "end_date": end})
@@ -11721,6 +11856,11 @@ def _leaderboard_rows(mlbam, games, complete):
     for window in _LB_SPAN_WINDOWS:
         for ev in _LB_SPAN_EVENTS:
             valfn = _DAILY_EVENT[ev][0]
+            if _unknown_games([g for g in games if g["season"] in complete], _EVENT_UNKNOWN.get(ev)):
+                rows.append({"player_id": mlbam, "role": "bat", "metric": "span", "window": window,
+                             "season": 0, "event": ev, "value": None,
+                             "start_date": None, "end_date": None})
+                continue
             best, _longest = _best_span(games, complete, window, valfn)
             if best is not None:
                 total, wg = best
@@ -12640,11 +12780,36 @@ def _run_season_leaderboard(event=None, role="bat", season=None, season_start=No
             where.append(f"{ycol} <= :ye"); p["ye"] = int(season_end)
     sql = (f"SELECT player_id, SUM({col}) AS n FROM {table} WHERE {' AND '.join(where)} "
            f"GROUP BY player_id HAVING SUM({col}) > 0 ORDER BY n DESC, player_id LIMIT :lim")
+    unknown_ids: list = []
     with connection.get_session() as db:
         if gt == "P":
             p.update(postseason_stats.source_params(db))
         rows = db.execute(_sa_text(sql), p).fetchall()
         ids = [r[0] for r in rows]
+        # ⚠️ ACTIVITY RULE: a CURRENT-season value can be NULL because a game
+        # behind it doesn't record the stat. SUM skips it and HAVING drops the
+        # player, so name who is left out; if nobody's is known (2026 WP, which
+        # balldontlie never ships), decline. Past-season NULLs mean "not
+        # recorded" and are not flagged.
+        cy = data_service._current_year()
+        reaches_cy = (season is not None and int(season) >= cy) or (
+            season is None and (season_end is None or int(season_end) >= cy))
+        if gt != "P" and reaches_cy:
+            played = '"AB" IS NOT NULL' if role != "pit" else '"IP" IS NOT NULL'
+            cur_where = " AND ".join(where) + f" AND {ycol} >= :cy AND {played}"
+            n_cur, n_null = db.execute(_sa_text(
+                f"SELECT COUNT(*), COUNT(*) FILTER (WHERE {col} IS NULL) FROM {table} "
+                f"WHERE {cur_where}"), {**p, "cy": cy}).fetchone()
+            only_cy = (season is not None) or (season_start is not None and int(season_start) >= cy)
+            if n_cur and n_null == n_cur and only_cy:
+                _lbl = _COMPARE_STAT_LABEL.get(canon or (event or "").upper()) or (event or "").lower()
+                return {"resolved": True, "declined": True, "source": "season_stats_leaderboard",
+                        "leaders": [], "game_coverage": {"complete": False},
+                        "reason": f"{_lbl.capitalize()} isn't recorded for {cy} games, so I can't rank it."}
+            if n_null:
+                unknown_ids = [r[0] for r in db.execute(_sa_text(
+                    f"SELECT DISTINCT player_id FROM {table} WHERE {cur_where} AND {col} IS NULL"),
+                    {**p, "cy": cy}).fetchall()]
         names = {}
         if ids:
             for pid, nm in db.execute(_sa_text(
@@ -12667,6 +12832,9 @@ def _run_season_leaderboard(event=None, role="bat", season=None, season_start=No
             gc = {"complete": False, "note": _note}
     if ps_note:
         gc = {"complete": False, "note": ps_note}      # postseason coverage (1903 on)
+    if unknown_ids:
+        unote = _lb_unknown_note(unknown_ids)
+        gc = {"complete": False, "note": f"{gc['note']} {unote}" if gc.get("note") else unote}
     return {"resolved": True, "source": "season_stats_leaderboard",
             "filters": {"event": canon, "role": role, "season": season,
                         "season_start": season_start, "season_end": season_end,
@@ -18485,6 +18653,18 @@ _SCORELESS_LB_NOTE = ("Consecutive scoreless innings, reconstructed from "
 _PITCHER_SPAN_LB_EVENT_LABEL = {"K": "strikeouts", "W": "wins", "SV": "saves"}
 
 
+def _lb_unknown_note(ids) -> str:
+    """The note for players a game-unit board leaves out because an unknown
+    game-log cell could change their value (stored with value NULL)."""
+    if not ids:
+        return ""
+    names = _lb_resolve_names(list(ids))
+    shown = [names.get(i) or f"mlbam:{i}" for i in ids][:6]
+    more = f" and {len(ids) - 6} more" if len(ids) > 6 else ""
+    return (f"Left out: {', '.join(shown)}{more} — some of their games are missing a stat "
+            "this ranking needs, so their value can't be known exactly.")
+
+
 def _run_streak_leaderboard(streak_type, season=None, season_start=None, season_end=None,
                             limit=15, role="bat"):
     """Top players by longest game-unit streak — a fast READ of the precomputed
@@ -18541,8 +18721,10 @@ def _run_streak_leaderboard(streak_type, season=None, season_start=None, season_
         params["yr"] = int(season)
         sql = ("SELECT player_id, value, season, start_date, end_date "
                "FROM game_unit_leaderboard "
-               "WHERE metric = :m AND role = :role AND season = :yr "
+               "WHERE metric = :m AND role = :role AND season = :yr AND value IS NOT NULL "
                "ORDER BY value DESC, player_id LIMIT :n")
+        unk_sql = ("SELECT DISTINCT player_id FROM game_unit_leaderboard "
+                   "WHERE metric = :m AND role = :role AND season = :yr AND value IS NULL")
         title = f"{label} in {int(season)}"
     else:
         # each player's BEST streak (optionally only since a season): DISTINCT ON
@@ -18562,11 +18744,14 @@ def _run_streak_leaderboard(streak_type, season=None, season_start=None, season_
         sql = ("SELECT player_id, value, season, start_date, end_date FROM ("
                "  SELECT DISTINCT ON (player_id) player_id, value, season, "
                "         start_date, end_date "
-               "  FROM game_unit_leaderboard WHERE " + inner +
+               "  FROM game_unit_leaderboard WHERE " + inner + " AND value IS NOT NULL"
                "  ORDER BY player_id, value DESC, season DESC"
                ") t ORDER BY value DESC, player_id LIMIT :n")
+        unk_sql = ("SELECT DISTINCT player_id FROM game_unit_leaderboard WHERE " + inner +
+                   " AND value IS NULL")
     with connection.get_session() as db:
         rows = db.execute(_sa_text(sql), params).fetchall()
+        unknown_ids = [r[0] for r in db.execute(_sa_text(unk_sql), params).fetchall()]
     names = _lb_resolve_names([r[0] for r in rows])
     leaders = [{
         "rank": i + 1,
@@ -18591,6 +18776,9 @@ def _run_streak_leaderboard(streak_type, season=None, season_start=None, season_
                "consecutive_doubles": _AB_LB_NOTE, "consecutive_triples": _AB_LB_NOTE,
                "consecutive_xbh": _AB_LB_NOTE, "consecutive_sb": _AB_LB_NOTE,
                "consecutive_pitcher_k": _AB_LB_NOTE}.get(metric, _LB_COVERAGE_NOTE)
+    if unknown_ids:
+        unote = _lb_unknown_note(unknown_ids)
+        lb_note = f"{lb_note} {unote}" if lb_note else unote
     # Plays-derived boards are frozen at the plays store's last season (the daily
     # boards refresh nightly and are NOT labelled). Derived from the store, so a
     # future rebuild updates the year automatically.
@@ -18671,9 +18859,13 @@ def _run_span_leaderboard(event, window, limit=15, role="bat"):
     n = max(1, min(int(limit or 15), 25))
     sql = ("SELECT player_id, value, start_date, end_date FROM game_unit_leaderboard "
            "WHERE metric = 'span' AND role = :role AND \"window\" = :w AND event = :ev "
-           "ORDER BY value DESC, player_id LIMIT :n")
+           "AND value IS NOT NULL ORDER BY value DESC, player_id LIMIT :n")
     with connection.get_session() as db:
         rows = db.execute(_sa_text(sql), {"w": w, "ev": ev, "n": n, "role": role}).fetchall()
+        unknown_ids = [r[0] for r in db.execute(_sa_text(
+            "SELECT DISTINCT player_id FROM game_unit_leaderboard WHERE metric = 'span' "
+            "AND role = :role AND \"window\" = :w AND event = :ev AND value IS NULL"),
+            {"w": w, "ev": ev, "role": role}).fetchall()]
     names = _lb_resolve_names([r[0] for r in rows])
 
     def _sub(sd, ed):
@@ -18695,7 +18887,8 @@ def _run_span_leaderboard(event, window, limit=15, role="bat"):
     return {"resolved": True, "source": "game_unit_leaderboard",
             "leaderboard_title": f"Most {label_map.get(ev, ev)} in any {w} games",
             "leaders": leaders,
-            "game_coverage": {"complete": False, "note": _LB_COVERAGE_NOTE}}
+            "game_coverage": {"complete": False, "note": (
+                f"{_LB_COVERAGE_NOTE} {_lb_unknown_note(unknown_ids)}".strip())}}
 
 
 # Player-id batch size for the bulk backfill: each batch bulk-loads its players'
@@ -18786,14 +18979,15 @@ def _backfill_leaderboard_core(confirm, limit, job_id=None):
                     "SELECT player_id, game_date, game_id, season, "
                     'COALESCE("AB",0), COALESCE("H",0), COALESCE(doubles,0), COALESCE(triples,0), '
                     'COALESCE("HR",0), COALESCE("RBI",0), COALESCE("BB",0), COALESCE("SO",0), '
-                    'COALESCE("HBP",0), COALESCE("SF",0), COALESCE("SH",0), COALESCE("IBB",0) '
+                    'COALESCE("HBP",0), COALESCE("SF",0), COALESCE("SH",0), COALESCE("IBB",0), '
+                    + _UNKNOWN_SQL + ' '
                     "FROM batting_gamelogs WHERE player_id = ANY(:ids) "
                     "ORDER BY player_id, game_date, game_id"), {"ids": chunk}).fetchall():
                 games_by[r[0]].append({
                     "game_date": r[1], "game_id": r[2], "season": r[3],
                     "AB": r[4], "H": r[5], "2B": r[6], "3B": r[7], "HR": r[8],
                     "RBI": r[9], "BB": r[10], "SO": r[11], "HBP": r[12],
-                    "SF": r[13], "SH": r[14], "IBB": r[15],
+                    "SF": r[13], "SH": r[14], "IBB": r[15], "unknown": _unknown_set(r[16]),
                 })
             for pid_, s_, c_ in db.execute(_sa_text(
                     "SELECT player_id, season, COUNT(*) FROM batting_gamelogs "
@@ -18963,12 +19157,12 @@ def leaderboard_preview():
             "SELECT COUNT(*), COUNT(DISTINCT player_id) FROM game_unit_leaderboard")).fetchone()
         hit = db.execute(_sa_text(
             "SELECT player_id, value, season, start_date, end_date "
-            "FROM game_unit_leaderboard WHERE metric = 'hitting_streak' "
+            "FROM game_unit_leaderboard WHERE metric = 'hitting_streak' AND value IS NOT NULL "
             "ORDER BY value DESC, player_id LIMIT 20")).fetchall()
         spans = db.execute(_sa_text(
             "SELECT player_id, value, start_date, end_date "
             "FROM game_unit_leaderboard WHERE metric = 'span' AND \"window\" = 162 "
-            "AND event = 'HR' ORDER BY value DESC, player_id LIMIT 10")).fetchall()
+            "AND event = 'HR' AND value IS NOT NULL ORDER BY value DESC, player_id LIMIT 10")).fetchall()
     names = _lb_resolve_names({r[0] for r in hit} | {r[0] for r in spans})
 
     def _nm(pid):
