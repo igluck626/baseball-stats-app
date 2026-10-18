@@ -1308,19 +1308,23 @@ bat_line AS (   -- that game's batting line, when there is one
 )
 SELECT p.player_id, p.raw_team, min(p.gd) AS first_date, count(*) AS "G",
        count(*) FILTER (WHERE p.batted) AS "G_batted",
-       -- Columns in _STINT_BAT_COLS order (read by position). ⚠️ ACTIVITY RULE:
+       -- Columns in _STINT_BAT_COLS order (read by position). The plain sums are
+       -- COALESCEd: a team group with no batting lines at all (a pitcher's
+       -- pitching-only games) has nothing to sum and that is 0. A bare SUM
+       -- would be NULL and _derive_stints carries NULL as "unknown" into the
+       -- whole fold (it blanked Ohtani's Dodgers AB). ⚠️ ACTIVITY RULE:
        -- doubles/triples/SB/CS/IBB/HBP/SF/SH/GIDP/PA can be NULL ("not shipped").
        -- On a game with AB or BB above 0 that makes the stint's value unknown
        -- (NULL); on a no-AB/no-BB game it reads as 0. See _derive_stints.
-       sum(b."AB") "AB",
-       sum(b."R") "R",
-       sum(b."H") "H",
+       COALESCE(sum(b."AB"), 0) "AB",
+       COALESCE(sum(b."R"), 0) "R",
+       COALESCE(sum(b."H"), 0) "H",
        CASE WHEN bool_or(b.doubles IS NULL AND (COALESCE(b."AB", 0) > 0 OR COALESCE(b."BB", 0) > 0)) THEN NULL ELSE sum(COALESCE(b.doubles, 0)) END doubles,
        CASE WHEN bool_or(b.triples IS NULL AND (COALESCE(b."AB", 0) > 0 OR COALESCE(b."BB", 0) > 0)) THEN NULL ELSE sum(COALESCE(b.triples, 0)) END triples,
-       sum(b."HR") "HR",
-       sum(b."RBI") "RBI",
-       sum(b."BB") "BB",
-       sum(b."SO") "SO",
+       COALESCE(sum(b."HR"), 0) "HR",
+       COALESCE(sum(b."RBI"), 0) "RBI",
+       COALESCE(sum(b."BB"), 0) "BB",
+       COALESCE(sum(b."SO"), 0) "SO",
        CASE WHEN bool_or(b."SB" IS NULL AND (COALESCE(b."AB", 0) > 0 OR COALESCE(b."BB", 0) > 0)) THEN NULL ELSE sum(COALESCE(b."SB", 0)) END "SB",
        CASE WHEN bool_or(b."CS" IS NULL AND (COALESCE(b."AB", 0) > 0 OR COALESCE(b."BB", 0) > 0)) THEN NULL ELSE sum(COALESCE(b."CS", 0)) END "CS",
        CASE WHEN bool_or(b."IBB" IS NULL AND (COALESCE(b."AB", 0) > 0 OR COALESCE(b."BB", 0) > 0)) THEN NULL ELSE sum(COALESCE(b."IBB", 0)) END "IBB",

@@ -9,6 +9,9 @@ under Isaac's "activity" rule (2026-10-16).
     Guardians row HBP 0 and WP 0.
   • An unknown on a no-AB/no-BB game reads as 0 (Billy Cook keeps a number).
   • TB is unknown when doubles or triples are.
+  • A team group with no batting lines (a pitcher's pitching-only games) sums
+    to 0, never NULL — a bare SUM's NULL once blanked 930 rows' AB, Ohtani's
+    Dodgers row among them.
   • The roster: a team line with an unknown, or a season row with one, never
     "adds up" — it falls back to "All teams", never a number on a silent 0.
 
@@ -80,6 +83,9 @@ else:
     check("Heuer: WP, never shipped by balldontlie, is unknown (was 0)",
           heu and all(r["WP"] is None for r in heu), [(r["team"], r["WP"]) for r in heu])
     check("Heuer: innings and earned runs still sum", heu and all(r["IP"] is not None and r["ER"] is not None for r in heu))
+    hb = [r for r in bat if r["player_id"] == HEUER]
+    check("Heuer's batting row (pitching games only, no batting lines): AB and H are 0, not unknown",
+          hb and all(r["AB"] == 0 and r["H"] == 0 and r["PA"] == 0 for r in hb), [(r["team"], r["AB"], r["PA"]) for r in hb])
 
     print("roster team-only lines")
     std = lambda **kw: {"standard": {"AB": 100, "H": 30, "doubles": 5, "triples": 1, "HR": 4, "RBI": 12,
