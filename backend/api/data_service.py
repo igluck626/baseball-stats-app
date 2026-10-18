@@ -1355,8 +1355,14 @@ def _batting_career_totals(seasons: list[dict]) -> dict:
     if ab > 0:
         totals["AVG"] = round(h / ab, 3)
         totals["SLG"] = round(tb / ab, 3) if tb else None
+    # A CURRENT-season HBP or SF left NULL by the activity rule is unknown, so
+    # career OBP (and OPS) is too — never computed from a short denominator.
+    # Past-season NULLs are "not recorded" and keep reading as 0.
+    cy = _current_year()
+    unknown_obp = any((s.get("year") or 0) >= cy and (s.get("HBP") is None or s.get("SF") is None)
+                      for s in seasons_with_counting)
     obp_den = ab + bb + hbp + sf
-    if obp_den > 0:
+    if obp_den > 0 and not unknown_obp:
         totals["OBP"] = round((h + bb + hbp) / obp_den, 3)
     if totals.get("OBP") is not None and totals.get("SLG") is not None:
         totals["OPS"] = round(totals["OBP"] + totals["SLG"], 3)
@@ -5192,11 +5198,26 @@ def _apply_counting_aggregation(
     if player_id is not None:
         params["player_id"] = player_id
 
+    # ⚠️ AN UNKNOWN CELL IS NOT A ZERO (Isaac's "activity" rule, 2026-10-16).
+    # A game-log cell is NULL when balldontlie didn't ship the value. On a row
+    # with ACTIVITY — a batting row with AB or BB above 0, or any pitching row
+    # (every one is a game pitched) — that NULL could hide a real count, so the
+    # player's season field becomes NULL ("—") rather than a short sum. On a
+    # batting row with no AB and no BB (a defensive substitute or pinch runner)
+    # it counts as 0. balldontlie's season stats ship none of these fields
+    # (checked 2026-10-16), so there is no better source to fall back to.
+    activity = ('(COALESCE(g."AB", 0) > 0 OR COALESCE(g."BB", 0) > 0)'
+                if gamelog_table == "batting_gamelogs" else "TRUE")
+
     def _sum(f: str) -> str:
         return (
+            f"(CASE WHEN EXISTS (SELECT 1 FROM {gamelog_table} g "
+            f"WHERE g.player_id = {season_table}.player_id "
+            f'AND g.season = {season_table}.year AND g."{f}" IS NULL AND {activity}) '
+            f"THEN NULL ELSE "
             f'(SELECT SUM(COALESCE(g."{f}", 0)) FROM {gamelog_table} g '
             f"WHERE g.player_id = {season_table}.player_id "
-            f"AND g.season = {season_table}.year)"
+            f"AND g.season = {season_table}.year) END)"
         )
 
     exists = (
@@ -5316,8 +5337,16 @@ def recalculate_batting_rates(db, season: int, player_id: Optional[int] = None) 
     if player_id is not None:
         q = q.filter(_PlayerSeason.player_id == player_id)
 
+    # For the current season an unknown component (NULL from the counting
+    # aggregation's activity rule) makes every rate built on it unknown — never
+    # a rate over a short denominator. Past seasons keep their stored rates.
+    current = season >= _current_year()
     updated = 0
     for r in q.all():
+        if r.PA is None and current:
+            r.K_pct = r.BB_pct = r.wOBA = None
+            updated += 1
+            continue
         pa = r.PA or 0
         if pa <= 0:
             continue
@@ -5328,6 +5357,10 @@ def recalculate_batting_rates(db, season: int, player_id: Optional[int] = None) 
         if r.SLG is not None and r.BA is not None:
             r.ISO = round(r.SLG - r.BA, 3)
 
+        if current and None in (r.IBB, r.HBP, r.SF):
+            r.wOBA = None
+            updated += 1
+            continue
         ab  = r.AB or 0
         ubb = (r.BB or 0) - (r.IBB or 0)
         hbp = r.HBP or 0
@@ -7046,6 +7079,18 @@ def _cached_leaderboard_career(
     return result
 
 
+def _career_sum_known(table, col):
+    """SUM(col) over a player's seasons — or NULL when his CURRENT season's
+    value is unknown. Phase 4b leaves a current-season PA/HBP/SF/IBB NULL only
+    when a game he played in has it unknown (the activity rule); summing past
+    it would give a silently short career total. A NULL in a PAST season is
+    "not recorded" (SF before 1954, say), which careers have always read as 0,
+    so those still sum as before. Portable SQL (no Postgres-only bool_or)."""
+    played = table.H.isnot(None) if table is _PlayerSeason else table.IP.isnot(None)
+    unknown = func.max(case((and_(table.year >= _current_year(), played, col.is_(None)), 1), else_=0))
+    return case((unknown == 1, None), else_=func.sum(col))
+
+
 def _leaderboard_career(
     stat: str, is_batter: bool, limit: int,
     league: Optional[str], team: Optional[str],
@@ -7091,13 +7136,13 @@ def _leaderboard_career(
                 func.sum(_PlayerSeason.SB).label("SB"),
                 func.sum(_PlayerSeason.BB).label("BB"),
                 func.sum(_PlayerSeason.SO).label("SO"),
-                func.sum(_PlayerSeason.PA).label("PA"),
+                _career_sum_known(_PlayerSeason, _PlayerSeason.PA).label("PA"),
                 func.sum(_PlayerSeason.AB).label("AB"),
                 func.sum(_PlayerSeason.doubles).label("doubles"),
                 func.sum(_PlayerSeason.triples).label("triples"),
-                func.sum(_PlayerSeason.HBP).label("HBP"),
-                func.sum(_PlayerSeason.SF).label("SF"),
-                func.sum(_PlayerSeason.IBB).label("IBB"),   # for career wOBA (uBB = BB - IBB)
+                _career_sum_known(_PlayerSeason, _PlayerSeason.HBP).label("HBP"),
+                _career_sum_known(_PlayerSeason, _PlayerSeason.SF).label("SF"),
+                _career_sum_known(_PlayerSeason, _PlayerSeason.IBB).label("IBB"),   # for career wOBA (uBB = BB - IBB)
                 # max(year) gives us the player's most-recent season —
                 # used downstream to surface a "current team" label.
                 func.max(_PlayerSeason.year).label("last_year"),
@@ -7116,7 +7161,7 @@ def _leaderboard_career(
                 func.sum(_PitcherSeason.CG).label("CG"),
                 func.sum(_PitcherSeason.SHO).label("SHO"),
                 func.sum(_PitcherSeason.ER).label("ER"),
-                func.sum(_PitcherSeason.HBP).label("HBP"),   # for career FIP
+                _career_sum_known(_PitcherSeason, _PitcherSeason.HBP).label("HBP"),   # for career FIP
                 func.max(_PitcherSeason.year).label("last_year"),
             ]
 

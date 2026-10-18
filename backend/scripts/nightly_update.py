@@ -215,7 +215,20 @@ def _apply_season_pa(db, player_id: int, year: int, entry: dict) -> None:
     game-log PA is available yet (cold start, or the day's gamelogs
     haven't been ingested), we fall back to deriving PA from the
     season counting components (AB + BB + HBP + SF). Leaves `entry`
-    untouched when neither source yields a positive total."""
+    untouched when neither source yields a positive total.
+
+    ⚠️ Activity rule: if any game where he batted (AB or BB above 0) has an
+    unknown PA, his season PA is unknown — None, never the short sum. Phase
+    4b applies the same rule; this keeps the two in step if 4b fails."""
+    unknown = db.query(BattingGameLog.player_id).filter(
+        BattingGameLog.player_id == player_id,
+        BattingGameLog.season == year,
+        BattingGameLog.PA.is_(None),
+        (_sql_func.coalesce(BattingGameLog.AB, 0) > 0) | (_sql_func.coalesce(BattingGameLog.BB, 0) > 0),
+    ).first()
+    if unknown is not None:
+        entry["PA"] = None
+        return
     pa_total = db.query(_sql_func.sum(BattingGameLog.PA)).filter(
         BattingGameLog.player_id == player_id,
         BattingGameLog.season == year,

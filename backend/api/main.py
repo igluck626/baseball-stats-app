@@ -3556,7 +3556,7 @@ def admin_reset_player_season(
 def admin_recalculate_pa(
     season: int | None = Query(
         None,
-        description="Season year to backfill PA for. Defaults to the current season.",
+        description="Completed season year to backfill PA for (the current season is refused).",
     ),
 ):
     """Backfill plate appearances (PA) for `season`.
@@ -3583,8 +3583,17 @@ def admin_recalculate_pa(
     if not connection.db_available():
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
 
-    if season is None:
-        season = data_service._current_year()
+    # ⚠️ NEVER THE CURRENT SEASON. A NULL PA in a current-season game log
+    # means balldontlie didn't ship it, and the activity rule reads that as
+    # UNKNOWN ("—"), not as AB + BB + HBP + SF (which also omits SH). This
+    # endpoint would overwrite those markers with an undercount and write it
+    # into the season row. It is for completed seasons only.
+    if season is None or season >= data_service._current_year():
+        raise HTTPException(
+            status_code=409,
+            detail="recalculate-pa refuses the current season: its NULL PA cells mean "
+                   "'unknown' and must not be filled from components",
+        )
 
     gamelog_sql = _sa_text(
         """

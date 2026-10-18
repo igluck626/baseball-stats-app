@@ -230,7 +230,9 @@ class TestRecalculatePitchingCounting(unittest.TestCase):
         for sql in cap.sqls:
             self.assertIn("IS NULL", sql)                          # WHERE null-guard
             self.assertNotIn("COALESCE(pitcher_seasons", sql)      # NOT the broken self-ref SET
-            self.assertRegex(sql, r'SET\s+"\w+"\s*=\s*\(SELECT SUM')  # bare-subquery SET
+            # SET reads only the game logs (`g."F"`), never the target row — the
+            # activity rule wraps the sum in CASE WHEN EXISTS(... unknown ...).
+            self.assertRegex(sql, r'SET\s+"\w+"\s*=\s*\(CASE WHEN EXISTS \(SELECT 1 FROM pitching_gamelogs g')
 
     def test_overwrite_sql_is_single_combined_unchanged(self):
         self.con.execute('INSERT INTO pitcher_seasons VALUES (1, 2026, NULL, NULL)')
@@ -241,7 +243,7 @@ class TestRecalculatePitchingCounting(unittest.TestCase):
 
         self.assertEqual(len(cap.sqls), 1)               # single combined UPDATE
         sql = cap.sqls[0]
-        self.assertNotIn("IS NULL", sql)                 # no per-field null-guard
+        self.assertNotRegex(sql, r'AND\s+"\w+"\s+IS NULL')  # no per-field row null-guard
         self.assertNotIn("COALESCE(pitcher_seasons", sql)  # bare subquery, no self-ref
 
 
@@ -255,7 +257,7 @@ class TestBattingCountingSharesFix(unittest.TestCase):
         ds._current_year = lambda: 2026
         self.con = sqlite3.connect(":memory:")
         self.con.execute('CREATE TABLE player_seasons (player_id INT, year INT, "IBB" INT, "GIDP" INT, "SF" INT, "PA" INT, "H" INT, "HBP" INT, "CS" INT, "SH" INT)')
-        self.con.execute('CREATE TABLE batting_gamelogs (player_id INT, game_id TEXT, season INT, "IBB" INT, "GIDP" INT, "SF" INT, "PA" INT, "H" INT, "HBP" INT, "CS" INT, "SH" INT)')
+        self.con.execute('CREATE TABLE batting_gamelogs (player_id INT, game_id TEXT, season INT, "IBB" INT, "GIDP" INT, "SF" INT, "PA" INT, "H" INT, "HBP" INT, "CS" INT, "SH" INT, "AB" INT, "BB" INT)')
 
     def tearDown(self):
         ds._current_year = self._orig
@@ -263,7 +265,7 @@ class TestBattingCountingSharesFix(unittest.TestCase):
 
     def test_batting_fillnull_sql_is_bare_subquery_no_self_coalesce(self):
         self.con.execute('INSERT INTO player_seasons VALUES (1, 2024, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)')
-        self.con.execute('INSERT INTO batting_gamelogs VALUES (1, "g1", 2024, 2, 1, 0, 4, 1, 0, 0, 0)')
+        self.con.execute('INSERT INTO batting_gamelogs VALUES (1, "g1", 2024, 2, 1, 0, 4, 1, 0, 0, 0, 3, 1)')
         cap = _CapturingSqliteDB(self.con)
 
         ds.recalculate_batting_counting(cap, 2024)  # past -> fill-null
@@ -272,10 +274,26 @@ class TestBattingCountingSharesFix(unittest.TestCase):
         for sql in cap.sqls:
             self.assertIn("IS NULL", sql)
             self.assertNotIn("COALESCE(player_seasons", sql)  # NOT the broken self-ref
-            self.assertRegex(sql, r'SET\s+"\w+"\s*=\s*\(SELECT SUM')
+            self.assertRegex(sql, r'SET\s+"\w+"\s*=\s*\(CASE WHEN EXISTS \(SELECT 1 FROM batting_gamelogs g')
         # and it actually fills the null IBB from the gamelog sum in sqlite
         ibb = self.con.execute('SELECT "IBB" FROM player_seasons WHERE player_id=1').fetchone()[0]
         self.assertEqual(ibb, 2)
+
+    def test_current_season_activity_rule(self):
+        """An unknown cell on a game with AB/BB makes the season field NULL; on a
+        no-AB/no-BB game it counts as 0 (Isaac's activity rule, 2026-10-16)."""
+        self.con.execute('INSERT INTO player_seasons VALUES (1, 2026, 9, 9, 9, 9, 9, 9, 9, 9)')
+        self.con.execute('INSERT INTO player_seasons VALUES (2, 2026, 9, 9, 9, 9, 9, 9, 9, 9)')
+        # player 1: one game with an AB and an unknown PA
+        self.con.execute('INSERT INTO batting_gamelogs VALUES (1, "g1", 2026, 0, 0, 0, 4, 1, 0, 0, 0, 4, 0)')
+        self.con.execute('INSERT INTO batting_gamelogs VALUES (1, "g2", 2026, 0, 0, 0, NULL, 1, 0, 0, 0, 3, 0)')
+        # player 2: the unknown PA is on a pinch-running game (no AB, no BB)
+        self.con.execute('INSERT INTO batting_gamelogs VALUES (2, "g1", 2026, 0, 0, 0, 4, 1, 0, 0, 0, 4, 0)')
+        self.con.execute('INSERT INTO batting_gamelogs VALUES (2, "g2", 2026, 0, 0, 0, NULL, 0, 0, 0, 0, 0, 0)')
+        ds.recalculate_batting_counting(_SqliteDB(self.con), 2026)
+        pa = dict(self.con.execute('SELECT player_id, "PA" FROM player_seasons').fetchall())
+        self.assertIsNone(pa[1])      # unknown, not the short 4
+        self.assertEqual(pa[2], 4)    # the no-activity unknown reads as 0
 
 
 if __name__ == "__main__":
