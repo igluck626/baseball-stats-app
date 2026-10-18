@@ -5443,8 +5443,10 @@ def _parse_bdl_batting_gamelog(stat: dict, ctx: dict) -> Optional[dict]:
         "SF":         _to_int(stat.get("sac_flies")),
         "GIDP":       _to_int(stat.get("gidp")),
         "SH":         _to_int(stat.get("sac_bunts")),
-        # BDL doesn't ship LOB on /stats — stays null.
-        "LOB":        None,
+        # ⚠️ BDL DOES ship it (`left_on_base`, measured 2026-10-17 on every
+        # detailed line); this was hardcoded None on a wrong assumption. Null
+        # when balldontlie hasn't the detailed box score for the game.
+        "LOB":        _to_int(stat.get("left_on_base")),
     }
 
 
@@ -5519,11 +5521,12 @@ def _parse_bdl_pitching_gamelog(stat: dict, ctx: dict) -> Optional[dict]:
         "SO":        _to_int(stat.get("p_k")),
         "HR":        _to_int(stat.get("p_hr")),
         "HBP":       _bdl_pitching_hbp(stat),
-        # BDL doesn't ship WP on the pitching side of /stats.
-        "WP":        None,
+        # ⚠️ BDL DOES ship `wild_pitches` and `strikes` on /stats (every line of
+        # every game sampled 2026-10-17); both were hardcoded None on a wrong
+        # assumption, which left every balldontlie-sourced row without them.
+        "WP":        _to_int(stat.get("wild_pitches")),
         "pitches":   _to_int(stat.get("pitch_count")),
-        # BDL doesn't ship strikes-thrown either.
-        "strikes":   None,
+        "strikes":   _to_int(stat.get("strikes")),
     }
 
 
