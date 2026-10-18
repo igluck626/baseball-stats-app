@@ -5017,6 +5017,36 @@ def _without_shared_bdl_ids(id_map: dict, shared: set[int], label: str = "") -> 
     return {pid: b for pid, b in id_map.items() if not (b is not None and int(b) in shared)}
 
 
+_BDL_ALIASES_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                 "data", "bdl_id_aliases.json")
+
+
+def _bdl_aliases() -> dict[int, int]:
+    """{alias_bdl_id: bdl_id} from data/bdl_id_aliases.json — a second balldontlie
+    record of a player we already map (Seth Halvorsen: 1015 -> 5868766)."""
+    try:
+        with open(_BDL_ALIASES_PATH) as f:
+            return {int(a["alias_bdl_id"]): int(a["bdl_id"]) for a in json.load(f).get("aliases", [])}
+    except FileNotFoundError:
+        return {}
+
+
+def _gamelog_bdl_map(db) -> dict[int, int]:
+    """_bdl_to_mlbam_map plus the aliases, for reading GAME LINES only: an
+    alias's line lands on the player its id is an alias of. fetch_bdl_game_stats
+    then keeps one line per player per game. An alias that is itself mapped to
+    someone, or whose target isn't mapped, is ignored."""
+    m = _bdl_to_mlbam_map(db)
+    for alias, target in _bdl_aliases().items():
+        if alias not in m and target in m:
+            m[alias] = m[target]
+    return m
+
+
+def _known_count(row: dict) -> int:
+    return sum(1 for v in row.values() if v is not None)
+
+
 def _bdl_to_mlbam_map(db) -> dict[int, int]:
     """{bdl_id: mlbam_player_id} from both bio tables. Two-way
     players (Ohtani: same bdl_id stamped on both tables) end up
@@ -5624,6 +5654,12 @@ def fetch_bdl_game_stats(
         cursor = (data.get("meta") or {}).get("next_cursor")
         if cursor is None:
             break
+    # One appearance per player per game: an aliased player (two balldontlie
+    # records) can arrive twice — keep the line with more known fields, never sum.
+    for by in (bat_by_pid, pit_by_pid):
+        for pid, rows in by.items():
+            if len(rows) > 1:
+                by[pid] = [max(rows, key=_known_count)]
     if not _decisions_shipped(all_lines):
         log.warning("fetch_bdl_game_stats(%d): no winner or loser on any line — "
                     "decisions not shipped, stored as NULL", game_id)
@@ -5713,7 +5749,7 @@ def save_bdl_gamelogs_for_date(
     )
 
     with connection.get_session() as db:
-        bdl_to_mlbam = _bdl_to_mlbam_map(db)
+        bdl_to_mlbam = _gamelog_bdl_map(db)   # aliases included: game lines only
     log.info(
         "save_bdl_gamelogs_for_date(%s): %d BDL→MLBAM mappings loaded",
         date_str, len(bdl_to_mlbam),

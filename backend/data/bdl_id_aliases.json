@@ -1,0 +1,11 @@
+{
+  "_about": "balldontlie ids that are a second record of a player we already map. Used ONLY to read game lines (save_bdl_gamelogs_for_date): an alias's line lands on the same player, and when both ids have a line for the same game it counts as ONE appearance, taken from the line with more known fields (never summed). Season stats and every other mapping ignore this file.",
+  "aliases": [
+    {
+      "alias_bdl_id": 1015,
+      "bdl_id": 5868766,
+      "name": "Seth Halvorsen",
+      "why": "1015 is his Colorado record (21 games 2026-04-23..07-01, full detail). 5868766, the id we map, carries all 32 games but its 21 Colorado lines lack HBP, WP and decisions. Checked 2026-10-18: same name and birth date (2000-02-18); no other player maps to 1015."
+    }
+  ]
+}

@@ -180,7 +180,8 @@ def run_save(date_str, games, **kw):
 
     ds.update(connection=_Conn, _get_bdl_key=lambda: "k",
               fetch_bdl_games_for_date=fetch_games, fetch_bdl_game_stats=fetch_stats,
-              _bdl_to_mlbam_map=lambda db: {}, time=type("T", (), {"sleep": staticmethod(lambda s: None)}),
+              _bdl_to_mlbam_map=lambda db: {}, _gamelog_bdl_map=lambda db: {},
+              time=type("T", (), {"sleep": staticmethod(lambda s: None)}),
               _BDL_RATE_LIMIT_SLEEP=0)
     out = ds["save_bdl_gamelogs_for_date"](date_str, **kw)
     return out, fetched_dates, fetched_games
