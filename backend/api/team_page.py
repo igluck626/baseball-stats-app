@@ -159,9 +159,17 @@ def outs(ip) -> int:
 
 
 def _counts(row: dict, pitcher: bool) -> dict:
+    """The adds-up columns of a season or team row. An unknown value (NULL —
+    balldontlie didn't ship it, see the activity rule) stays None, so a line
+    with one can never "add up" and falls back to the season row ("All teams")
+    instead of showing a number built on a silent 0."""
+    def v(c):
+        x = row.get(c)
+        return None if x is None else int(x)
     if pitcher:
-        return {"outs": outs(row.get("IP")), **{c: int(row.get(c) or 0) for c in _PIT_CHECK if c != "outs"}}
-    return {c: int(row.get(c) or 0) for c in _BAT_CHECK}
+        return {"outs": None if row.get("IP") is None else outs(row.get("IP")),
+                **{c: v(c) for c in _PIT_CHECK if c != "outs"}}
+    return {c: v(c) for c in _BAT_CHECK}
 
 
 def _div(a, b):
@@ -222,8 +230,11 @@ def roster_stats(team: str, stints: list[dict], season: Optional[dict], pitcher:
     total: dict = {}
     for s in stints:
         for k, v in _counts(s, pitcher).items():
-            total[k] = total.get(k, 0) + v
-    adds_up = bool(stints) and total == _counts(standard, pitcher)
+            have = total.get(k, 0)
+            total[k] = None if v is None or have is None else have + v
+    season_counts = _counts(standard, pitcher)
+    adds_up = (bool(stints) and None not in total.values() and None not in season_counts.values()
+               and total == season_counts)
     if mine and adds_up:
         if len({s.get("team") for s in stints}) == 1:
             return "team", _season_line(standard, advanced, pitcher)

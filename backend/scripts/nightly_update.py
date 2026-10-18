@@ -1308,11 +1308,27 @@ bat_line AS (   -- that game's batting line, when there is one
 )
 SELECT p.player_id, p.raw_team, min(p.gd) AS first_date, count(*) AS "G",
        count(*) FILTER (WHERE p.batted) AS "G_batted",
-       sum(b."AB") "AB", sum(b."R") "R", sum(b."H") "H", sum(b.doubles) doubles,
-       sum(b.triples) triples, sum(b."HR") "HR", sum(b."RBI") "RBI", sum(b."BB") "BB",
-       sum(b."SO") "SO", sum(b."SB") "SB", sum(b."CS") "CS", sum(b."IBB") "IBB",
-       sum(b."HBP") "HBP", sum(b."SF") "SF", sum(b."SH") "SH", sum(b."GIDP") "GIDP",
-       sum(b."PA") "PA"
+       -- Columns in _STINT_BAT_COLS order (read by position). ⚠️ ACTIVITY RULE:
+       -- doubles/triples/SB/CS/IBB/HBP/SF/SH/GIDP/PA can be NULL ("not shipped").
+       -- On a game with AB or BB above 0 that makes the stint's value unknown
+       -- (NULL); on a no-AB/no-BB game it reads as 0. See _derive_stints.
+       sum(b."AB") "AB",
+       sum(b."R") "R",
+       sum(b."H") "H",
+       CASE WHEN bool_or(b.doubles IS NULL AND (COALESCE(b."AB", 0) > 0 OR COALESCE(b."BB", 0) > 0)) THEN NULL ELSE sum(COALESCE(b.doubles, 0)) END doubles,
+       CASE WHEN bool_or(b.triples IS NULL AND (COALESCE(b."AB", 0) > 0 OR COALESCE(b."BB", 0) > 0)) THEN NULL ELSE sum(COALESCE(b.triples, 0)) END triples,
+       sum(b."HR") "HR",
+       sum(b."RBI") "RBI",
+       sum(b."BB") "BB",
+       sum(b."SO") "SO",
+       CASE WHEN bool_or(b."SB" IS NULL AND (COALESCE(b."AB", 0) > 0 OR COALESCE(b."BB", 0) > 0)) THEN NULL ELSE sum(COALESCE(b."SB", 0)) END "SB",
+       CASE WHEN bool_or(b."CS" IS NULL AND (COALESCE(b."AB", 0) > 0 OR COALESCE(b."BB", 0) > 0)) THEN NULL ELSE sum(COALESCE(b."CS", 0)) END "CS",
+       CASE WHEN bool_or(b."IBB" IS NULL AND (COALESCE(b."AB", 0) > 0 OR COALESCE(b."BB", 0) > 0)) THEN NULL ELSE sum(COALESCE(b."IBB", 0)) END "IBB",
+       CASE WHEN bool_or(b."HBP" IS NULL AND (COALESCE(b."AB", 0) > 0 OR COALESCE(b."BB", 0) > 0)) THEN NULL ELSE sum(COALESCE(b."HBP", 0)) END "HBP",
+       CASE WHEN bool_or(b."SF" IS NULL AND (COALESCE(b."AB", 0) > 0 OR COALESCE(b."BB", 0) > 0)) THEN NULL ELSE sum(COALESCE(b."SF", 0)) END "SF",
+       CASE WHEN bool_or(b."SH" IS NULL AND (COALESCE(b."AB", 0) > 0 OR COALESCE(b."BB", 0) > 0)) THEN NULL ELSE sum(COALESCE(b."SH", 0)) END "SH",
+       CASE WHEN bool_or(b."GIDP" IS NULL AND (COALESCE(b."AB", 0) > 0 OR COALESCE(b."BB", 0) > 0)) THEN NULL ELSE sum(COALESCE(b."GIDP", 0)) END "GIDP",
+       CASE WHEN bool_or(b."PA" IS NULL AND (COALESCE(b."AB", 0) > 0 OR COALESCE(b."BB", 0) > 0)) THEN NULL ELSE sum(COALESCE(b."PA", 0)) END "PA"
 FROM per_game p
 LEFT JOIN bat_line b ON b.player_id = p.player_id AND b.game_id = p.game_id
 GROUP BY p.player_id, p.raw_team
@@ -1343,7 +1359,10 @@ SELECT player_id, raw_team, min(gd) AS first_date, count(*) AS "G",
        count(*) FILTER (WHERE result = 'L') "L",
        count(*) FILTER (WHERE result = 'S') "SV",
        sum("H") "H", sum("R") "R", sum("ER") "ER", sum("BB") "BB", sum("SO") "SO",
-       sum("HR") "HR", sum("HBP") "HBP", sum("WP") "WP",
+       sum("HR") "HR",
+       -- every pitching game is activity: one unknown HBP / WP makes the stint's NULL
+       CASE WHEN bool_or("HBP" IS NULL) THEN NULL ELSE sum("HBP") END "HBP",
+       CASE WHEN bool_or("WP" IS NULL) THEN NULL ELSE sum("WP") END "WP",
        -- "IP" stores thirds as .333 / .667, so outs are IP x 3, rounded
        sum(round(ip * 3))::int AS ip_outs
 FROM per_game GROUP BY player_id, raw_team
@@ -1381,7 +1400,9 @@ def _derive_stints(db, year, is_pitch):
         if first_date is not None and (acc["_first"] is None or first_date < acc["_first"]):
             acc["_first"] = first_date
         for i, c in enumerate(cols):
-            acc[c] = acc.get(c, 0) + int(r[3 + i] or 0)
+            # An unknown (NULL) value stays unknown through the fold — never 0.
+            v, have = r[3 + i], acc.get(c, 0)
+            acc[c] = None if v is None or have is None else have + int(v)
     # assign stint_order per player by first appearance, and build the row dicts
     by_player: dict = {}
     for (pid, retro), acc in accum.items():
@@ -1400,7 +1421,8 @@ def _derive_stints(db, year, is_pitch):
                             "SO": acc["SO"], "HR": acc["HR"], "HBP": acc["HBP"], "WP": acc["WP"]})
             else:
                 row.update({c: acc[c] for c in _STINT_BAT_COLS})
-                row["TB"] = acc["H"] + acc["doubles"] + 2 * acc["triples"] + 3 * acc["HR"]
+                parts = (acc["H"], acc["doubles"], acc["triples"], acc["HR"])
+                row["TB"] = None if None in parts else parts[0] + parts[1] + 2 * parts[2] + 3 * parts[3]
             out_rows.append(row)
     return out_rows, unmapped
 
