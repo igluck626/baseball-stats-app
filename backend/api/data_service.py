@@ -5538,6 +5538,30 @@ def _parse_bdl_pitching_gamelog(stat: dict, ctx: dict) -> Optional[dict]:
     }
 
 
+_DECISION_COLS = ("W", "L", "SV", "HLD", "BS")
+
+
+def _decisions_shipped(stat_lines) -> bool:
+    """Whether a FINAL game's /stats lines carry its decisions: some pitcher —
+    mapped by us or not — has a win or a loss. ⚠️ balldontlie ships 0, not
+    null, when it hasn't the decisions: 12 games of 2026-05-01..07 credit no
+    win, loss or save to anyone, while its team totals and standings count
+    them. A final game always has a winner and a loser, so none at all means
+    the decisions were not shipped."""
+    pit = [s for s in stat_lines if s.get("ip") is not None]
+    return not pit or any((_to_int(s.get("wins")) or 0) > 0 or (_to_int(s.get("losses")) or 0) > 0
+                          for s in pit)
+
+
+def _unship_decisions(rows) -> None:
+    """Decisions not shipped: W/L/SV/HLD/BS and the result become NULL
+    (unknown), never the 0 balldontlie sent. GS is not a decision and stays."""
+    for r in rows:
+        for c in _DECISION_COLS:
+            r[c] = None
+        r["result"] = None
+
+
 def fetch_bdl_game_stats(
     game_id: int, bdl_to_mlbam: dict[int, int], ctx: dict,
 ) -> tuple[dict[int, list[dict]], dict[int, list[dict]]]:
@@ -5553,6 +5577,7 @@ def fetch_bdl_game_stats(
     cursor: Optional[int] = None
     total_rows = 0
     page = 0
+    all_lines: list[dict] = []
     while True:
         page += 1
         # BDL silently ignores `game_id` (singular) on /stats — the
@@ -5582,6 +5607,7 @@ def fetch_bdl_game_stats(
             break
         rows = data.get("data") or []
         total_rows += len(rows)
+        all_lines.extend(rows)
         for stat in rows:
             bdl_pid = (stat.get("player") or {}).get("id")
             if bdl_pid is None:
@@ -5598,6 +5624,10 @@ def fetch_bdl_game_stats(
         cursor = (data.get("meta") or {}).get("next_cursor")
         if cursor is None:
             break
+    if not _decisions_shipped(all_lines):
+        log.warning("fetch_bdl_game_stats(%d): no winner or loser on any line — "
+                    "decisions not shipped, stored as NULL", game_id)
+        _unship_decisions([r for rs in pit_by_pid.values() for r in rs])
     log.info(
         "fetch_bdl_game_stats(%d): %d total stat rows across %d page(s) "
         "→ %d mapped batter rows, %d mapped pitcher rows",

@@ -68,7 +68,7 @@ def bat(pid, gid, d, opp, ab=4, h=1, hr=0, r=0, sb=0, pa=4):
                (pid, gid, d, opp, ab, r, h, hr, sb, pa))
 
 
-def pit(pid, gid, d, opp, ip=1.0, so=1, result=None):
+def pit(pid, gid, d, opp, ip=1.0, so=1, result="ND"):
     db.execute("INSERT INTO pitching_gamelogs (player_id, game_id, game_date, season, opponent, result, "
                '"IP", "H", "R", "ER", "BB", "SO", "HR", "HBP", "WP") '
                "VALUES (?,?,?,2026,?,?,?,0,0,0,0,?,0,0,0)",
@@ -103,7 +103,8 @@ def pit_dec(pid, gid, d, opp, result, w=None, l=None, sv=None):
 pit_dec(60, "g10", "2026-04-10", "NYY", "H", w=0, l=1, sv=0)     # a loss + a hold, stored as 'H'
 pit_dec(60, "g11", "2026-04-11", "NYY", "BS", w=1, l=0, sv=0)    # a win + a blown save, stored as 'BS'
 pit_dec(60, "g12", "2026-04-12", "NYY", "S")                     # not yet re-parsed: no columns
-for _g in ("g10", "g11", "g12"):
+pit_dec(70, "g13", "2026-04-13", "NYY", None)                    # decisions not shipped: all NULL
+for _g in ("g10", "g11", "g12", "g13"):
     bat(5, _g, "2026-04-10", "BOS")
 
 b_rows = db.execute(BAT, {"yr": 2026}).fetchall()
@@ -144,6 +145,9 @@ check("W/L/SV count from the decision columns: a loss stored as 'H' and a win st
       "both count — player 60 W = 1, L = 1", p60[4] == 1 and p60[5] == 1)
 check("a row not yet re-parsed (no columns) still counts from its result: player 60 SV = 1",
       p60[6] == 1)
+p70 = pstints.get((70, "BOS"), _NONE)
+check("a game whose decisions weren't shipped (columns and result NULL) makes W/L/SV unknown, not 0",
+      p70[3] == 1 and p70[4] is None and p70[5] is None and p70[6] is None)
 ip_outs = 3 + ns["_STINT_PIT_COLS"].index("ip_outs")
 check("innings are summed as outs from the gamelogs' thirds: 0.333 + 0.667 + 2.333 = 10 outs",
       pstints.get((40, "BOS"), _NONE)[ip_outs] == 10)

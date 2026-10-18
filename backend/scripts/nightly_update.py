@@ -1354,10 +1354,11 @@ per_game AS (
          MAX(g.result) AS result, MAX(g."IP") AS ip,
          -- decisions from their own columns (a loss is never hidden behind a
          -- hold or a blown save); a row not yet re-parsed has none, so it
-         -- falls back to its result string
-         MAX(COALESCE(g."W", CASE WHEN g.result = 'W' THEN 1 ELSE 0 END)) AS w,
-         MAX(COALESCE(g."L", CASE WHEN g.result = 'L' THEN 1 ELSE 0 END)) AS l,
-         MAX(COALESCE(g."SV", CASE WHEN g.result = 'S' THEN 1 ELSE 0 END)) AS sv,
+         -- falls back to its result string; a game whose decisions balldontlie
+         -- didn't ship has neither (NULL) and makes the stint's value unknown
+         MAX(COALESCE(g."W", CASE WHEN g.result IS NULL THEN NULL WHEN g.result = 'W' THEN 1 ELSE 0 END)) AS w,
+         MAX(COALESCE(g."L", CASE WHEN g.result IS NULL THEN NULL WHEN g.result = 'L' THEN 1 ELSE 0 END)) AS l,
+         MAX(COALESCE(g."SV", CASE WHEN g.result IS NULL THEN NULL WHEN g.result = 'S' THEN 1 ELSE 0 END)) AS sv,
          MAX(g."H") "H", MAX(g."R") "R", MAX(g."ER") "ER", MAX(g."BB") "BB",
          MAX(g."SO") "SO", MAX(g."HR") "HR", MAX(g."HBP") "HBP", MAX(g."WP") "WP"
   FROM pitching_gamelogs g
@@ -1366,9 +1367,9 @@ per_game AS (
   GROUP BY g.player_id, g.game_id
 )
 SELECT player_id, raw_team, min(gd) AS first_date, count(*) AS "G",
-       sum(w) "W",
-       sum(l) "L",
-       sum(sv) "SV",
+       CASE WHEN bool_or(w IS NULL) THEN NULL ELSE sum(w) END "W",
+       CASE WHEN bool_or(l IS NULL) THEN NULL ELSE sum(l) END "L",
+       CASE WHEN bool_or(sv IS NULL) THEN NULL ELSE sum(sv) END "SV",
        sum("H") "H", sum("R") "R", sum("ER") "ER", sum("BB") "BB", sum("SO") "SO",
        sum("HR") "HR",
        -- every pitching game is activity: one unknown HBP / WP makes the stint's NULL
