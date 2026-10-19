@@ -958,6 +958,15 @@ def _run_nightly_update() -> None:
         except Exception as exc:
             log.error(f"[nightly] team-stints phase FAILED (non-fatal): {exc}")
 
+        # Team-totals drift check: our per-team sums (the stints just rewritten)
+        # against balldontlie's team season totals, which the Season Stats card
+        # shows. Logs every club/stat beyond the threshold; a stat we can't
+        # compute (an unknown cell) is reported as incomplete, never as drift.
+        try:
+            _team_totals_drift(current_year)
+        except Exception as exc:
+            log.error(f"[nightly] team-totals drift check FAILED (non-fatal): {exc}")
+
         # Phase 8 — game-log reconciliation. LAST, because it asserts against
         # the settled state every phase above produced. Compares each player's
         # game-log H sum to their season row, splits the disagreements by
@@ -2054,6 +2063,30 @@ def team_roster(bdl_id: int):
     }
     _cache.set(key, payload, ttl_seconds=300)
     return payload
+
+
+def _team_totals_drift(season: int) -> dict:
+    """Our per-team sums vs balldontlie's team totals, logged. See
+    team_season_stats.drift for the thresholds."""
+    theirs, _teams = team_season_stats.bdl_totals(_bdl_team_season_rows(season))
+    with connection.get_session() as db:
+        bat = [dict(r) for r in db.execute(_sa_text(
+            'SELECT team, "PA", "AB", "R", "H", doubles, triples, "HR", "RBI", "BB", "SO", "SB", "HBP", "SF" '
+            "FROM player_season_stints WHERE year = :y"), {"y": season}).mappings()]
+        pit = [dict(r) for r in db.execute(_sa_text(
+            'SELECT team, "IP", "H", "ER", "BB", "SO", "HR", "SV", "W", "L" '
+            "FROM pitcher_season_stints WHERE year = :y"), {"y": season}).mappings()]
+    ours_retro = team_season_stats.team_totals(bat, pit)
+    ours = {a: ours_retro[team_page.retro_code(a)] for a in theirs if team_page.retro_code(a) in ours_retro}
+    d = team_season_stats.drift(ours, theirs)
+    log.info("[nightly] team-totals drift: %d beyond threshold, %d incomplete, %d clubs missing",
+             len(d["drift"]), len(d["incomplete"]), len(d["missing_team"]))
+    for team, stat, o, t in d["drift"]:
+        log.info("[nightly] team-totals drift %s %s: ours %s, balldontlie %s", team, stat, o, t)
+    if d["incomplete"]:
+        log.info("[nightly] team-totals incomplete (unknown cells): %s",
+                 ", ".join(f"{t} {k}" for t, k in d["incomplete"]))
+    return d
 
 
 def _bdl_team_season_rows(season: int) -> list[dict]:

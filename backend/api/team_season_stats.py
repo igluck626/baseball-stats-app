@@ -4,7 +4,8 @@ team page's Season Stats card.
 SOURCE: balldontlie's team season totals (`/teams/season_stats`), Isaac's call
 2026-10-16. They agree with balldontlie's standings on W, L and runs for all 30
 clubs and with the sum of its own box lines on AB, HR and R; our per-team sums
-run short wherever a game line is missing or a cell is unknown.
+run short wherever a game line is missing or a cell is unknown. Ours become the
+nightly DRIFT CHECK instead (`drift`).
 
 ⚠️ THE ENDPOINT'S TRAPS, measured 2026-10-16:
   • `team_ids[]` is SILENTLY IGNORED — it returns all 60 rows. Never use it;
@@ -86,8 +87,81 @@ def bdl_totals(rows: list[dict]) -> tuple[dict[str, dict], dict[str, dict]]:
     return totals, teams
 
 
+# Drift thresholds: counting stats |ours - theirs| > max(2, 1%); rates by an
+# absolute margin. Small enough to catch a lost game, big enough to ignore a
+# float32 rounding in balldontlie's rates.
+COUNT_TOL = (2, 0.01)
+RATE_TOL = {"AVG": 0.003, "OBP": 0.003, "SLG": 0.003, "OPS": 0.005, "ERA": 0.03, "WHIP": 0.01}
+
+
+def drift(ours: dict[str, dict], theirs: dict[str, dict]) -> dict:
+    """Compare our per-team sums (keyed like `theirs`) with balldontlie's totals,
+    stat by stat for the card's STATS. Returns {"drift": [(team, stat, ours,
+    theirs)], "incomplete": [(team, stat)], "missing_team": [team]}. A stat we
+    can't compute (an unknown cell somewhere in it) is INCOMPLETE, never drift
+    and never compared as 0. Pure."""
+    out = {"drift": [], "incomplete": [], "missing_team": []}
+    for team in sorted(theirs):
+        if team not in ours:
+            out["missing_team"].append(team)
+            continue
+        for key, _label, side, _low in STATS:
+            o, t = ours[team][side].get(key), theirs[team][side].get(key)
+            if t is None:
+                continue
+            if o is None:
+                out["incomplete"].append((team, key))
+                continue
+            if key in RATE_TOL:
+                bad = abs(o - t) > RATE_TOL[key]
+            else:
+                bad = abs(o - t) > max(COUNT_TOL[0], COUNT_TOL[1] * abs(t))
+            if bad:
+                out["drift"].append((team, key, o, t))
+    return out
+
+
 def _div(a, b):
     return a / b if b else None
+
+
+def team_totals(bat_rows: list[dict], pit_rows: list[dict]) -> dict[str, dict]:
+    """{retro team: {"bat": {...}, "pit": {...}}} summed from per-team stint rows.
+    A missing value is left out of its sum (never read as 0); a total built from
+    any missing value is None, so no rate is computed from a partial count."""
+    out: dict[str, dict] = {}
+
+    def add(acc, row, cols):
+        for c in cols:
+            v = row.get(c)
+            if v is None or acc.get(c, 0) is None:
+                acc[c] = None
+            else:
+                acc[c] = acc.get(c, 0) + v
+
+    for r in bat_rows:
+        t = out.setdefault(r["team"], {"bat": {}, "pit": {}})
+        add(t["bat"], r, ("PA", "AB", "R", "H", "doubles", "triples", "HR", "RBI", "BB", "SO", "SB",
+                          "HBP", "SF"))
+    for r in pit_rows:
+        t = out.setdefault(r["team"], {"bat": {}, "pit": {}})
+        add(t["pit"], {**r, "outs": None if r.get("IP") is None else int(round(float(r["IP"]) * 3))},
+            ("outs", "H", "ER", "BB", "SO", "HR", "SV", "W", "L"))
+    for team, t in out.items():
+        b, p = t["bat"], t["pit"]
+        h, ab, bb, hbp, sf = b.get("H"), b.get("AB"), b.get("BB"), b.get("HBP"), b.get("SF")
+        tb = (h + b["doubles"] + 2 * b["triples"] + 3 * b["HR"]) if None not in (
+            h, b.get("doubles"), b.get("triples"), b.get("HR")) else None
+        b["AVG"] = _div(h, ab) if None not in (h, ab) else None
+        b["OBP"] = _div(h + bb + hbp, ab + bb + hbp + sf) if None not in (h, ab, bb, hbp, sf) else None
+        b["SLG"] = _div(tb, ab) if None not in (tb, ab) else None
+        b["OPS"] = (b["OBP"] + b["SLG"]) if None not in (b["OBP"], b["SLG"]) else None
+        o = p.get("outs")
+        p["IP"] = None if o is None else round(o / 3.0, 3)
+        p["ERA"] = _div(27.0 * p["ER"], o) if None not in (p.get("ER"), o) else None
+        p["WHIP"] = _div(3.0 * (p["H"] + p["BB"]), o) if None not in (p.get("H"), p.get("BB"), o) else None
+        p["HRA"] = p.get("HR")
+    return out
 
 
 def rank(values: dict[str, Optional[float]], lower_is_better: bool) -> dict[str, tuple[int, bool]]:
