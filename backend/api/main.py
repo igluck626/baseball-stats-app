@@ -43,6 +43,7 @@ import season_phase
 import team_contact
 import team_crosswalk
 import team_page
+import team_season_stats
 from cache import cache as _cache
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -2052,6 +2053,48 @@ def team_roster(bdl_id: int):
         } for r in injuries],
     }
     _cache.set(key, payload, ttl_seconds=300)
+    return payload
+
+
+def _bdl_team_season_rows(season: int) -> list[dict]:
+    """balldontlie's team season totals, every club in one call. `season=`
+    ONLY: this endpoint silently ignores `team_ids[]` (it returns all 60 rows)
+    and rejects `seasons[]` — see team_season_stats."""
+    return data_service._bdl_get_json("teams/season_stats", {"season": season}).get("data") or []
+
+
+@app.get("/teams/season-stats")
+def teams_season_stats(season: int = Query(..., description="Season year, e.g. 2026")):
+    """Every club's batting and pitching totals for a season, each with its MLB
+    and league rank (ties marked) — the team page's Season Stats card. From
+    balldontlie's team season totals, regular season only; one call, cached an
+    hour. If balldontlie can't be reached, the last good copy is served with
+    `stale: true` rather than nothing."""
+    key = f"teams_season_stats:{season}"
+    cached = _cache.get(key)
+    if cached is not None:
+        return cached
+    try:
+        rows = _bdl_team_season_rows(season)
+    except Exception as exc:
+        last = _cache.get(key + ":last")
+        log.warning("teams_season_stats(%s): balldontlie fetch failed: %s", season, exc)
+        if last is not None:
+            return {**last, "stale": True}
+        raise HTTPException(status_code=503, detail="Team totals are unavailable right now")
+    totals, teams = team_season_stats.bdl_totals(rows)
+    if not totals:
+        raise HTTPException(status_code=404, detail=f"No team totals for {season}")
+    if len(totals) != 30:
+        log.warning("teams_season_stats(%s): %d clubs in balldontlie's totals, expected 30", season, len(totals))
+    leagues = {a: (teams[a].get("league") or None) for a in teams}
+    ranked = team_season_stats.payload(totals, leagues)
+    payload = {"season": season, "source": "balldontlie team season totals (regular season)", "teams": [
+        {"team": a, "bdl_id": teams[a].get("id"), "name": teams[a].get("display_name"),
+         "league": ranked[a]["league"], "stats": ranked[a]["stats"]}
+        for a in sorted(totals)]}
+    _cache.set(key, payload, ttl_seconds=3600)
+    _cache.set(key + ":last", payload, ttl_seconds=7 * 24 * 3600)
     return payload
 
 
