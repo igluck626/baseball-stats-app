@@ -11572,12 +11572,14 @@ def _run_head_to_head(team_a, team_b, season=None, season_start=None, season_end
     """Head-to-head W-L between two FRANCHISES, from batting_gamelogs. Both sides
     resolve through _team_scope_codes — franchise-correct across relocations (Dodgers
     -> BRO+LAN, Braves -> BSN+MLN+ATL), and an ambiguous city ('Chicago') declines
-    with the standard clarify. GRAIN: DISTINCT game_id, HOME rows only — the game_id
-    prefix is the home club's Retrosheet code and `opponent` the away code, so home
-    rows cover every game exactly once (no ambiguous away-side lookup, no double
-    count). Coverage is stated from MIN(season), never hardcoded — our per-player
-    gamelogs begin ~1901, short of Retrosheet's own 1871 team logs, so an all-time
-    record says 'since <first year present>'. Returns a resolved dict or {declined}."""
+    with the standard clarify. GRAIN: DISTINCT game_id, HOME rows only, so every
+    game counts exactly once; a home row's `opponent` is the away club. The HOME
+    club comes from the game_id prefix on a Retrosheet id ('retro-NYA2025…'), and
+    on a balldontlie id (2026 on, a bare number with no club in it) from the same
+    game's AWAY rows, whose `opponent` is the home club. Coverage is stated from
+    MIN(season), never hardcoded — our per-player gamelogs begin ~1901, short of
+    Retrosheet's own 1871 team logs, so an all-time record says 'since <first year
+    present>'. Returns a resolved dict or {declined}."""
     lo = season or season_start
     hi = season or season_end
     ra = _team_scope_codes(team_a, lo, hi)
@@ -11593,21 +11595,28 @@ def _run_head_to_head(team_a, team_b, season=None, season_start=None, season_end
                 "reason": f"The {a_disp} can't play themselves — name two different clubs."}
     if not connection.db_available():
         return {"declined": True, "reason": "The game logs aren't available right now."}
-    where = ["home_away = 'H'", "result IN ('W','L','T')",
-             "((substr(game_id, 7, 3) = ANY(:a) AND opponent = ANY(:b))"
-             " OR (substr(game_id, 7, 3) = ANY(:b) AND opponent = ANY(:a)))"]
-    p = {"a": a_codes, "b": b_codes}
+    p = {"a": a_codes, "b": b_codes, "ab": a_codes + b_codes}
+    yrs = []
     if season is not None:
-        where.append("season = :yr"); p["yr"] = int(season)
+        yrs.append("season = :yr"); p["yr"] = int(season)
     else:
         if season_start is not None:
-            where.append("season >= :ys"); p["ys"] = int(season_start)
+            yrs.append("season >= :ys"); p["ys"] = int(season_start)
         if season_end is not None:
-            where.append("season <= :ye"); p["ye"] = int(season_end)
+            yrs.append("season <= :ye"); p["ye"] = int(season_end)
+    yr = "".join(f" AND {w}" for w in yrs)
     sql = (
-        "WITH g AS (SELECT DISTINCT game_id, substr(game_id, 7, 3) AS home, "
-        "result, season FROM batting_gamelogs "
-        f"WHERE {' AND '.join(where)}) "
+        "WITH h AS (SELECT DISTINCT game_id, opponent AS away, result, season "
+        "FROM batting_gamelogs WHERE home_away = 'H' AND result IN ('W','L','T') "
+        f"AND opponent = ANY(:ab){yr}), "
+        "a AS (SELECT DISTINCT game_id, opponent AS home FROM batting_gamelogs "
+        "WHERE home_away = 'A' AND game_id NOT LIKE 'retro-%' "
+        f"AND opponent = ANY(:ab){yr}), "
+        "hg AS (SELECT h.game_id, CASE WHEN h.game_id LIKE 'retro-%' "
+        "THEN substr(h.game_id, 7, 3) ELSE a.home END AS home, h.away, h.result, "
+        "h.season FROM h LEFT JOIN a ON a.game_id = h.game_id), "
+        "g AS (SELECT * FROM hg WHERE (home = ANY(:a) AND away = ANY(:b)) "
+        "OR (home = ANY(:b) AND away = ANY(:a))) "
         "SELECT "
         "SUM(CASE WHEN home = ANY(:a) AND result='W' THEN 1 "
         "         WHEN home = ANY(:b) AND result='L' THEN 1 ELSE 0 END) AS a_w, "
