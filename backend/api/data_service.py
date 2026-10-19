@@ -5104,6 +5104,34 @@ def _steal_events(plays: list[dict]) -> dict:
     return events
 
 
+_STEAL_PLAY_TYPES = {"stolen base", "caught stealing", "pickoff caught stealing"}
+
+
+def _name_tokens(s) -> set:
+    """Folded word tokens, hyphenated names split: "Kiner-Falefa" -> kiner, falefa."""
+    import re as _re
+    return set(_re.findall(r"[a-z0-9']+", _fold_name(s).replace("-", " ")))
+
+
+def _steal_play_tokens(plays: list[dict]) -> set:
+    """Every word in any play that could hold a steal or a caught stealing: one
+    typed as such, or whose text says "stole" / "steal". Deliberately loose —
+    the whole text, not just the runner the pattern reads, overturned calls
+    included — because it only ever withholds a 0."""
+    toks: set = set()
+    for p in plays:
+        t = _fold_name(p.get("text"))
+        if _fold_name(p.get("type")) in _STEAL_PLAY_TYPES or "stole" in t or "steal" in t:
+            toks |= _name_tokens(t)
+    return toks
+
+
+def _surname_tokens(name) -> set:
+    """A surname's tokens, accents folded and Jr./Sr./II-IV set aside, every word
+    of a multi-word surname kept: "De La Cruz" -> de, la, cruz."""
+    return {w for w in _name_tokens(name) if w not in _SURNAME_SUFFIXES}
+
+
 def _plays_complete(plays: list[dict], game: dict) -> bool:
     """The feed is provably whole: its highest scores equal the game's final
     score, and every half-inning the game had is present (the home half of the
@@ -5126,11 +5154,17 @@ def _plays_complete(plays: list[dict], game: dict) -> bool:
 
 def _fill_sb_cs_from_plays(game_id: int, all_lines: list[dict], chosen: list, game: dict) -> int:
     """⚠️ For lines balldontlie shipped WITHOUT detail only: SB and CS from its
-    own play-by-play. `chosen` is the list of (batting row, its /stats line). A
-    value — 0 included — is filled only when ALL hold: the plays could be read;
-    the feed is provably complete (_plays_complete); the runner's last name
-    belongs to exactly ONE player among every line of the game; and no
-    overturned call names him. Otherwise SB/CS stay NULL. Returns rows filled."""
+    own play-by-play. `chosen` is the list of (batting row, its /stats line).
+    Nothing is filled unless the plays could be read and the feed is provably
+    complete (_plays_complete). Then:
+      • a steal is CREDITED only when the runner's last name belongs to exactly
+        ONE player among every line of the game, and no overturned call names
+        the runner;
+      • 0 is written — for every player, a shared last name included (Isaac,
+        2026-10-18) — only when no steal or caught-stealing play could
+        plausibly be the player: no token of the surname appears in any such play
+        (_steal_play_tokens / _surname_tokens, accent- and suffix-blind).
+    Otherwise SB/CS stay NULL. Returns rows filled."""
     targets = [(row, line) for row, line in chosen if _no_detail(line)]
     if not targets:
         return 0
@@ -5153,20 +5187,25 @@ def _fill_sb_cs_from_plays(game_id: int, all_lines: list[dict], chosen: list, ga
         log.info("plays for game %d not provably complete, SB/CS left NULL", game_id)
         return 0
     events = _steal_events(plays)
+    in_steal_plays = _steal_play_tokens(plays)
     names: dict = {}
     for ln in all_lines:
         names.setdefault(_surname_key((ln.get("player") or {}).get("last_name")), set()).add(
             (ln.get("player") or {}).get("id"))
     filled = 0
     for row, line in targets:
-        last = _surname_key((line.get("player") or {}).get("last_name"))
-        if not last or len(names.get(last, ())) != 1:
+        surname = (line.get("player") or {}).get("last_name")
+        last = _surname_key(surname)
+        if not last:
             continue
         ev = events.get(last, set())
-        if ev is None:
+        if ev and len(names.get(last, ())) == 1:
+            row["SB"] = sum(1 for e in ev if e[2] == "SB")
+            row["CS"] = sum(1 for e in ev if e[2] == "CS")
+        elif ev is not None and not (_surname_tokens(surname) & in_steal_plays):
+            row["SB"], row["CS"] = 0, 0
+        else:
             continue
-        row["SB"] = sum(1 for e in ev if e[2] == "SB")
-        row["CS"] = sum(1 for e in ev if e[2] == "CS")
         filled += 1
     return filled
 

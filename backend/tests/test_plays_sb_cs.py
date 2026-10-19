@@ -7,14 +7,20 @@
     reach the final score and every half-inning is there;
   • repeats collapse by PLAY IDENTITY, not text: an echo (even one carrying a
     review note) is one steal, and two separate steals by one runner are two;
-  • filled only when the runner's last name belongs to exactly ONE player in the
-    game's lines; otherwise SB/CS stay NULL; likewise if the plays can't be
-    read, or a call naming the runner was overturned.
+  • a steal is credited only when the runner's last name belongs to exactly ONE
+    player in the game's lines; SB/CS stay NULL if the plays can't be read, or
+    a call naming the runner was overturned;
+  • 0 is written, a shared last name included, only when no steal or
+    caught-stealing play could plausibly be the player: no token of the surname
+    (accents folded, Jr./Sr./II-IV set aside, every word of a multi-word
+    surname) appears in any such play (Isaac, 2026-10-18).
 Real data (fixtures/bdl_plays_sb_cs.json): James Outman and Tyler Tolbert stole
 second in game 5057862; Jonny DeLuca was caught stealing in 5057791; Taylor
 Walls stole second, then third on a double steal, in one half-inning of 5059245; Jorge Mateo's
 steal in 9470135 was overturned; 5058236's plays overshoot its final score;
-Myles Straw's steal in 9470134 was upheld on review.
+Myles Straw's steal in 9470134 was upheld on review. Two Martinezes played
+5058380 (plays spell "Martínez"), De La Cruz and Cruz 5059491, Victor Scott II
+and Tanner Scott 5059872 — no steal by any of them.
 Standalone, no pytest. Run: <backend python> backend/tests/test_plays_sb_cs.py
 """
 import copy
@@ -78,7 +84,8 @@ extra = copy.deepcopy(next(s for s in twin["data"] if s["player"]["last_name"] =
 extra["player"]["id"] = 1; extra["player"]["first_name"] = "Other"   # a second "Outman" in the game
 twin["data"].append(extra)
 rows = run("5057862", stats=twin)
-check("a last name two players share: SB/CS stay NULL", rows["Outman"]["SB"] is None and rows["Outman"]["CS"] is None,
+check("a last name two players share, and a steal by that name: not credited, no 0 — SB/CS stay NULL",
+      rows["Outman"]["SB"] is None and rows["Outman"]["CS"] is None,
       (rows["Outman"]["SB"], rows["Outman"]["CS"]))
 rows = run("5057862", fail_plays=True)
 check("plays unavailable: SB/CS stay NULL", rows["Outman"]["SB"] is None)
@@ -116,6 +123,70 @@ cut = copy.deepcopy(FX["5059245"]["plays_page"])
 cut["data"] = [p for p in cut["data"] if not (p.get("inning") == 9 and p.get("inning_type") == "Top")]
 rows = run("5059245", plays=cut)
 check("a half-inning missing from the feed: SB/CS stay NULL", rows["Walls"]["SB"] is None, rows["Walls"]["SB"])
+
+print("certain zeros: a shared last name in no steal play")
+
+
+def by_id(gid, stats=None, plays=None):
+    """run(), keyed by balldontlie player id — two players here share a last name."""
+    case = FX[gid]
+    stats = stats or case["stats_page"]
+    plays = plays or case["plays_page"]
+    orig = ds._bdl_get_json
+    ds._bdl_get_json = lambda path, params=None: plays if path == "plays" else stats
+    try:
+        mapping = {int(s["player"]["id"]): int(s["player"]["id"]) for s in stats["data"]}
+        bat, _ = ds.fetch_bdl_game_stats(int(gid), mapping, ds._bdl_game_ctx(case["game"]))
+        return {pid: rows[0] for pid, rows in bat.items()}
+    finally:
+        ds._bdl_get_json = orig
+
+
+def with_text(gid, old, new):
+    """The game's real plays with one steal text replaced (event row and echo)."""
+    pl = copy.deepcopy(FX[gid]["plays_page"])
+    n = 0
+    for p in pl["data"]:
+        if p.get("text") == old:
+            p["text"] = new
+            n += 1
+    assert n, old
+    return pl
+
+
+ANGEL, OMAR = 1018, 4839602
+m_plays = [p["text"] for p in FX["5058380"]["plays_page"]["data"] if "Mart" in (p.get("text") or "")]
+check("5058380's plays spell the name with the accent ('Martínez'), the lines without",
+      m_plays and all("Martínez" in t for t in m_plays), m_plays)
+rows = by_id("5058380")
+check("Angel and Omar Martinez (no detail, no Martinez in any steal play): both SB 0, CS 0",
+      all((rows[i]["SB"], rows[i]["CS"]) == (0, 0) for i in (ANGEL, OMAR)),
+      [(rows[i]["SB"], rows[i]["CS"]) for i in (ANGEL, OMAR)])
+rows = by_id("5058380", plays=with_text("5058380", "Rocchio stole second.", "Martínez stole second."))
+check("the same game with a steal by 'Martínez' (accented): not credited (shared name), no 0 — both NULL",
+      all(rows[i]["SB"] is None and rows[i]["CS"] is None for i in (ANGEL, OMAR)),
+      [(rows[i]["SB"], rows[i]["CS"]) for i in (ANGEL, OMAR)])
+DLC = 790
+rows = by_id("5059491")
+check("Bryan De La Cruz (shares 'Cruz' with Yovanny Cruz, no Cruz in any steal play): SB 0, CS 0",
+      (rows[DLC]["SB"], rows[DLC]["CS"]) == (0, 0), (rows[DLC]["SB"], rows[DLC]["CS"]))
+for text in ("Cruz stole second.", "De La Cruz stole second.", "Hill stole third, De La Rosa to second."):
+    rows = by_id("5059491", plays=with_text("5059491", "Hill stole third.", text))
+    check(f"...a steal play reading {text!r}: De La Cruz stays NULL (any surname token matches)",
+          rows[DLC]["SB"] is None and rows[DLC]["CS"] is None, (rows[DLC]["SB"], rows[DLC]["CS"]))
+SCOTT = 508
+rows = by_id("5059872")
+check("Victor Scott II (shares 'Scott' with Tanner Scott, the II set aside): SB 0, CS 0",
+      (rows[SCOTT]["SB"], rows[SCOTT]["CS"]) == (0, 0), (rows[SCOTT]["SB"], rows[SCOTT]["CS"]))
+rows = by_id("5059872", plays=with_text("5059872", "Tucker stole second.", "Scott stole second."))
+check("...a steal play reading 'Scott stole second.': Victor Scott II stays NULL",
+      rows[SCOTT]["SB"] is None and rows[SCOTT]["CS"] is None, (rows[SCOTT]["SB"], rows[SCOTT]["CS"]))
+rows = by_id("5059872", plays=with_text("5059872", "Tucker stole second.", "Harris II stole second."))
+check("...and stays 0 when another runner's 'II' is in a steal play (a suffix is no surname token)",
+      (rows[SCOTT]["SB"], rows[SCOTT]["CS"]) == (0, 0), (rows[SCOTT]["SB"], rows[SCOTT]["CS"]))
+rows = by_id("5058236")
+check("an incomplete feed still writes no 0, shared names included",
+      all(r["SB"] is None for r in rows.values() if r["PA"] is None))
 
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
