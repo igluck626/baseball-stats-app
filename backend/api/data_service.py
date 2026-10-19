@@ -5043,6 +5043,134 @@ def _gamelog_bdl_map(db) -> dict[int, int]:
     return m
 
 
+def _fold_name(s) -> str:
+    import unicodedata as _ud
+    return "".join(ch for ch in _ud.normalize("NFKD", s or "") if not _ud.combining(ch)).lower().strip()
+
+
+_NAME_SUFFIXES = {"jr.", "jr", "sr.", "sr", "ii", "iii", "iv"}
+
+
+def _surname_key(name) -> str:
+    """The last word of a surname, folded, with a Jr./Sr./II-IV suffix dropped:
+    "Wade Jr." -> "wade", "Kiner-Falefa" -> "kiner-falefa"."""
+    words = [w for w in _fold_name(name).replace(",", " ").split() if w not in _NAME_SUFFIXES]
+    return words[-1] if words else ""
+
+
+def _no_detail(stat: dict) -> bool:
+    """A /stats line balldontlie shipped without its detailed box score."""
+    return all(stat.get(k) is None for k in ("plate_appearances", "doubles", "stolen_bases"))
+
+
+_BASES = {"second": 2, "2nd": 2, "third": 3, "3rd": 3, "home": 4}
+
+
+def _steal_events(plays: list[dict]) -> dict:
+    """{folded last name: set of steal events} from balldontlie's play-by-play.
+
+    ⚠️ COLLAPSED BY PLAY IDENTITY, NOT BY TEXT. A standalone steal arrives twice
+    — a "Stolen Base" / "Caught Stealing" row and a "Play Result" echo with the
+    same text — while a steal inside another play ("Kwan stole second" in a
+    strikeout's result) arrives once, as the Play Result. Rows carry no play id,
+    and `outs` differs between an event and its echo (Abrams 2026-04-14: 0 on
+    the pickoff row, 3 on the strikeout that holds it). So every row is read,
+    and an event is (inning, half, runner, SB or CS, base): the echo collapses
+    onto its event, and two separate steals by one runner — second then third,
+    or in two innings — stay two. (One runner stealing the SAME base twice in
+    one half-inning would need the order to bat around; it would read as one.)
+    An OVERTURNED call marks its runners unreadable (`None`) rather than
+    guessing what stood; an upheld challenge stands (its echo row just carries
+    the note, and collapses onto the event like any other echo)."""
+    import re as _re
+    events: dict = {}
+    pat = _re.compile(r"([a-z][a-z.'\- ]*?) (stole|steals \(\d+\)|(?:picked off and )?caught stealing) "
+                      r"(second|third|home|2nd|3rd)")
+    for p in plays:
+        t = _fold_name(p.get("text"))
+        if not t:
+            continue
+        reviewed = "overturned" in t
+        for m in pat.finditer(t):
+            runner = _surname_key(m.group(1).split(",")[-1])
+            if reviewed:
+                events[runner] = None
+                continue
+            if events.get(runner, set()) is None:
+                continue
+            kind = "CS" if "caught" in m.group(2) else "SB"
+            events.setdefault(runner, set()).add(
+                (p.get("inning"), p.get("inning_type"), kind, _BASES[m.group(3)]))
+    return events
+
+
+def _plays_complete(plays: list[dict], game: dict) -> bool:
+    """The feed is provably whole: its highest scores equal the game's final
+    score, and every half-inning the game had is present (the home half of the
+    last inning only if the home team batted in it)."""
+    away, home = (game.get("away_team_data") or {}), (game.get("home_team_data") or {})
+    if not plays or away.get("runs") is None or home.get("runs") is None:
+        return False
+    if max(p.get("away_score") or 0 for p in plays) != away["runs"] or \
+            max(p.get("home_score") or 0 for p in plays) != home["runs"]:
+        return False
+    halves = {(p.get("inning"), p.get("inning_type")) for p in plays}
+    a_inn, h_inn = away.get("inning_scores") or [], home.get("inning_scores") or []
+    for i in range(1, len(a_inn) + 1):
+        if (i, "Top") not in halves:
+            return False
+        if i <= len(h_inn) and h_inn[i - 1] not in (None, "X", "x") and (i, "Bottom") not in halves:
+            return False
+    return bool(a_inn)
+
+
+def _fill_sb_cs_from_plays(game_id: int, all_lines: list[dict], chosen: list, game: dict) -> int:
+    """⚠️ For lines balldontlie shipped WITHOUT detail only: SB and CS from its
+    own play-by-play. `chosen` is the list of (batting row, its /stats line). A
+    value — 0 included — is filled only when ALL hold: the plays could be read;
+    the feed is provably complete (_plays_complete); the runner's last name
+    belongs to exactly ONE player among every line of the game; and no
+    overturned call names him. Otherwise SB/CS stay NULL. Returns rows filled."""
+    targets = [(row, line) for row, line in chosen if _no_detail(line)]
+    if not targets:
+        return 0
+    plays: list[dict] = []
+    cursor = None
+    try:
+        while True:
+            params: dict = {"game_id": game_id, "per_page": 100}   # /plays filters on the singular
+            if cursor is not None:
+                params["cursor"] = cursor
+            page = _bdl_get_json("plays", params)
+            plays.extend(page.get("data") or [])
+            cursor = (page.get("meta") or {}).get("next_cursor")
+            if cursor is None:
+                break
+    except Exception as exc:
+        log.warning("plays for game %d unavailable, SB/CS left NULL: %s", game_id, exc)
+        return 0
+    if not _plays_complete(plays, game):
+        log.info("plays for game %d not provably complete, SB/CS left NULL", game_id)
+        return 0
+    events = _steal_events(plays)
+    names: dict = {}
+    for ln in all_lines:
+        names.setdefault(_surname_key((ln.get("player") or {}).get("last_name")), set()).add(
+            (ln.get("player") or {}).get("id"))
+    filled = 0
+    for row, line in targets:
+        last = _surname_key((line.get("player") or {}).get("last_name"))
+        if not last or len(names.get(last, ())) != 1:
+            continue
+        ev = events.get(last, set())
+        if ev is None:
+            continue
+        row["SB"] = sum(1 for e in ev if e[2] == "SB")
+        row["CS"] = sum(1 for e in ev if e[2] == "CS")
+        filled += 1
+    return filled
+
+
 def _known_count(row: dict) -> int:
     return sum(1 for v in row.values() if v is not None)
 
@@ -5115,6 +5243,7 @@ def _bdl_game_ctx(game: dict, fallback_date: Optional[str] = None) -> dict:
     away_data = game.get("away_team_data") or {}
     return {
         "game_id":         str(game.get("id")),
+        "_game":           game,     # the record itself (final score, inning scores)
         "game_date":       game_date,
         "season":          _to_int(game.get("season")) or (game_date.year if game_date else None),
         "home_team_id":    home.get("id"),
@@ -5608,6 +5737,7 @@ def fetch_bdl_game_stats(
     total_rows = 0
     page = 0
     all_lines: list[dict] = []
+    line_of: dict = {}
     while True:
         page += 1
         # BDL silently ignores `game_id` (singular) on /stats — the
@@ -5648,6 +5778,7 @@ def fetch_bdl_game_stats(
             bat = _parse_bdl_batting_gamelog(stat, ctx)
             if bat is not None:
                 bat_by_pid.setdefault(mlbam, []).append(bat)
+                line_of[id(bat)] = stat
             pit = _parse_bdl_pitching_gamelog(stat, ctx)
             if pit is not None:
                 pit_by_pid.setdefault(mlbam, []).append(pit)
@@ -5660,6 +5791,11 @@ def fetch_bdl_game_stats(
         for pid, rows in by.items():
             if len(rows) > 1:
                 by[pid] = [max(rows, key=_known_count)]
+    chosen = [(r, line_of[id(r)]) for rows in bat_by_pid.values() for r in rows if id(r) in line_of]
+    n_sb = _fill_sb_cs_from_plays(game_id, all_lines, chosen, ctx.get("_game") or {})
+    if n_sb:
+        log.info("fetch_bdl_game_stats(%d): SB/CS read from the plays for %d line(s) without detail",
+                 game_id, n_sb)
     if not _decisions_shipped(all_lines):
         log.warning("fetch_bdl_game_stats(%d): no winner or loser on any line — "
                     "decisions not shipped, stored as NULL", game_id)

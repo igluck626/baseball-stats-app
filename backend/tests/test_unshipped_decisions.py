@@ -37,7 +37,7 @@ def run(gid):
     case = FX[gid]
     page = case["page"]
     orig = ds._bdl_get_json
-    ds._bdl_get_json = lambda path, params=None: page
+    ds._bdl_get_json = lambda path, params=None: page if path == "stats" else {"data": [], "meta": {}}
     try:
         mapping = {int(s["player"]["id"]): 100000 + i for i, s in enumerate(page["data"])}
         return ds.fetch_bdl_game_stats(int(gid), mapping, ds._bdl_game_ctx(case["game"]))
