@@ -1648,6 +1648,22 @@ def _includes_today(rows, game_date) -> bool:
     return any(r.game_date == game_date for r in rows)
 
 
+_RESULT_OF = {"W": "W", "L": "L", "SV": "S"}
+
+
+def _decision(row, col):
+    """1 / 0 for a pitching row's W, L or SV, or None when the decision is
+    unknown (balldontlie didn't ship it). The column when the row has it; a
+    row from before the decision columns reads its `result` string."""
+    v = getattr(row, col, None) if not isinstance(row, dict) else row.get(col)
+    if v is not None:
+        return int(v)
+    res = getattr(row, "result", None) if not isinstance(row, dict) else row.get("result")
+    if res is None or res == "":
+        return None
+    return 1 if res == _RESULT_OF[col] else 0
+
+
 @app.get("/players/{player_id}/pitcher-record-at-date")
 def player_pitcher_record_at_date(
     player_id: int,
@@ -1687,15 +1703,22 @@ def player_pitcher_record_at_date(
     season = game_date.year
     with connection.get_session() as db:
         rows = (
-            db.query(PitchingGameLog.result, PitchingGameLog.game_date)
+            db.query(PitchingGameLog.result, PitchingGameLog.game_date,
+                     PitchingGameLog.W, PitchingGameLog.L, PitchingGameLog.SV)
               .filter(PitchingGameLog.player_id == player_id)
               .filter(PitchingGameLog.season    == season)
               .filter(PitchingGameLog.game_date <= game_date)
               .all()
         )
-    wins   = sum(1 for r in rows if r.result == "W")
-    losses = sum(1 for r in rows if r.result == "L")
-    saves  = sum(1 for r in rows if r.result == "S")
+    # ⚠️ A DECISION BALLDONTLIE DIDN'T SHIP is NULL in both `result` and the
+    # W/L/SV columns: unknown, not "no decision". Installed apps (build 17)
+    # decode wins/losses/saves as a non-optional Int, so the numbers stay —
+    # the known games' count — and the `*_unknown` flags let a current app
+    # show "—" instead, as with `doubles_unknown` on the batter endpoint.
+    wins   = sum(1 for r in rows if _decision(r, "W") == 1)
+    losses = sum(1 for r in rows if _decision(r, "L") == 1)
+    saves  = sum(1 for r in rows if _decision(r, "SV") == 1)
+    unknown = any(_decision(r, "W") is None for r in rows)
     includes_today = _includes_today(rows, game_date)
     return {
         "player_id":      player_id,
@@ -1703,6 +1726,9 @@ def player_pitcher_record_at_date(
         "wins":           wins,
         "losses":         losses,
         "saves":          saves,
+        "wins_unknown":   unknown,
+        "losses_unknown": unknown,
+        "saves_unknown":  unknown,
         "includes_today": includes_today,
         # `gamelog_games` is the DEDUPED count an older installed build
         # reads; left as it was so its arithmetic does not shift under it.
@@ -10250,6 +10276,8 @@ _PITCHER_EVENT = {
     "ER": (lambda g: g["ER"], '"ER"', '"ER"', "earned run"),
     "H":  (lambda g: g["H"], '"H"', '"H"', "hit allowed"),
 }
+# The pitching events an unknown decision can change (see _pitching_game).
+_PITCHER_EVENT_UNKNOWN = {"W": {"W"}, "L": {"L"}, "SV": {"SV"}}
 _PITCHER_EVENT_PLURAL = {
     "K": "strikeouts", "W": "wins", "L": "losses", "SV": "saves", "BB": "walks",
     "HR": "home runs allowed", "ER": "earned runs", "H": "hits allowed",
@@ -10277,17 +10305,29 @@ def _daily_pitching_games(mlbam_id, season=None):
         where.append("season = :yr"); params["yr"] = int(season)
     sql = ("SELECT game_date, game_id, season, opponent, home_away, result, "
            'COALESCE("IP",0), COALESCE("H",0), COALESCE("R",0), COALESCE("ER",0), '
-           'COALESCE("BB",0), COALESCE("SO",0), COALESCE("HR",0), COALESCE("HBP",0) '
-           f"FROM pitching_gamelogs WHERE {' AND '.join(where)} "
+           'COALESCE("BB",0), COALESCE("SO",0), COALESCE("HR",0), COALESCE("HBP",0), '
+           f'"GS", "W" FROM pitching_gamelogs WHERE {" AND ".join(where)} '
            "ORDER BY game_date, game_id")
     with connection.get_session() as db:
         rows = db.execute(_sa_text(sql), params).fetchall()
-    return [{
+    return [_pitching_game(r) for r in rows]
+
+
+def _pitching_game(r):
+    """One pitching_gamelogs row (the _daily_pitching_games column order) -> the
+    game dict. g["unknown"] holds W/L/SV when the decision is unknown —
+    balldontlie didn't ship it, so `result` and W are both NULL; `result` still
+    reads "" there, so a caller that ignores "unknown" counts it as no decision,
+    and every W/L/SV reader below checks it. g["GS"] is 1/0, or None on a row
+    not yet re-parsed with the decision columns."""
+    unknown = r[5] is None and r[15] is None
+    return {
         "game_date": r[0], "game_id": r[1], "season": r[2], "opponent": r[3],
         "home_away": r[4], "result": r[5] or "",
         "IP": float(r[6] or 0), "H": r[7], "R": r[8], "ER": r[9], "BB": r[10],
-        "SO": r[11], "HR": r[12], "HBP": r[13],
-    } for r in rows]
+        "SO": r[11], "HR": r[12], "HBP": r[13], "GS": r[14],
+        "unknown": frozenset(("W", "L", "SV")) if unknown else frozenset(),
+    }
 
 
 def _pitcher_season_sums(mlbam_id, daily_expr, auth_expr):
@@ -10351,6 +10391,8 @@ def _pitcher_stat_line(games):
     W = sum(1 for g in games if g["result"] == "W")
     L = sum(1 for g in games if g["result"] == "L")
     SV = sum(1 for g in games if g["result"] == "S")
+    if any(g.get("unknown") for g in games):
+        W = L = SV = None      # an unknown decision: "—", never a short count
     era = round(ER * 27 / outs, 2) if outs else None      # ER*9 / (outs/3)
     whip = round((H + BB) * 3 / outs, 3) if outs else None  # (H+BB) / (outs/3)
     so9 = round(SO * 27 / outs, 1) if outs else None        # SO*9 / (outs/3)
@@ -10619,6 +10661,12 @@ def _run_pitcher_span(player, event, window, season=None, game_type=None):
                 "player": player_block, "span": None,
                 "game_coverage": {"complete": False}}
 
+    unk = _unknown_games([g for g in games if g["season"] in usable], _PITCHER_EVENT_UNKNOWN.get(ev))
+    if unk:
+        return {"resolved": True, "declined": True, "source": "daily", "player": player_block,
+                "span": None, "game_coverage": {"complete": False},
+                "reason": (f"{len(unk)} of {resolved['name']}'s games don't record their decision, "
+                           f"so I can't give the most {label} in any {window} games exactly.")}
     best, longest_run_games = _best_span(games, usable, window, valfn)
     if best is None:
         note = (f"{resolved['name']} hasn't pitched {window} consecutive games within "
@@ -10650,21 +10698,30 @@ def _run_pitcher_span(player, event, window, season=None, game_type=None):
 def _pitcher_streak_classify(kind, g):
     """One pitching game -> EXTEND / BREAK / SKIP under one pitcher streak type.
       win           : W extends, L breaks, everything else (ND/S/H/BS) is neutral.
-      quality_start : a relief outing (S/H/BS) is skipped; a START extends on
-                      IP>=6 & ER<=3 and breaks otherwise. 'Start' is inferred as a
-                      non-relief-decision appearance (the daily table carries no GS
-                      flag) — exact for pure starters, approximate for swingmen.
+                      ⚠️ An UNKNOWN decision breaks: the streak stops there,
+                      never runs through a game that may have been a loss.
+      quality_start : a relief outing is skipped; a START extends on IP>=6 &
+                      ER<=3 and breaks otherwise. A start is GS = 1. A row not yet
+                      re-parsed with GS falls back to inferring it as a
+                      non-relief-decision appearance (S/H/BS skipped) — exact for
+                      pure starters, approximate for swingmen.
       high_k        : >= _HIGH_K_THRESHOLD strikeouts extends, otherwise breaks."""
     res = g.get("result") or ""
     if kind == "win":
+        if "W" in g.get("unknown", ()):
+            return "break"
         if res == "W":
             return "extend"
         if res == "L":
             return "break"
         return "skip"
     if kind == "quality_start":
-        if res in ("S", "H", "BS"):
-            return "skip"   # relief appearance — not a start
+        gs = g.get("GS")
+        if gs is not None:
+            if not gs:
+                return "skip"   # GS = 0: a relief appearance
+        elif res in ("S", "H", "BS"):
+            return "skip"   # no GS on this row yet: relief inferred from the decision
         return "extend" if (g["IP"] >= 6 and g["ER"] <= 3) else "break"
     if kind == "high_k":
         return "extend" if g["SO"] >= _HIGH_K_THRESHOLD else "break"
@@ -11892,6 +11949,12 @@ def _pitcher_leaderboard_rows(mlbam, games, complete):
     for window in _LB_SPAN_WINDOWS:
         for ev in _LB_PITCHER_SPAN_EVENTS:
             valfn = _PITCHER_EVENT[ev][0]
+            if _unknown_games([g for g in games if g["season"] in complete], _PITCHER_EVENT_UNKNOWN.get(ev)):
+                # left out of the ranking and named, as the batting boards do
+                rows.append({"player_id": mlbam, "role": "pit", "metric": "span", "window": window,
+                             "season": 0, "event": ev, "value": None,
+                             "start_date": None, "end_date": None})
+                continue
             best, _longest = _best_span(games, complete, window, valfn)
             if best is not None:
                 total, wg = best
@@ -19006,15 +19069,10 @@ def _backfill_leaderboard_core(confirm, limit, job_id=None):
             for r in db.execute(_sa_text(
                     "SELECT player_id, game_date, game_id, season, opponent, home_away, result, "
                     'COALESCE("IP",0), COALESCE("H",0), COALESCE("R",0), COALESCE("ER",0), '
-                    'COALESCE("BB",0), COALESCE("SO",0), COALESCE("HR",0), COALESCE("HBP",0) '
-                    "FROM pitching_gamelogs WHERE player_id = ANY(:ids) "
+                    'COALESCE("BB",0), COALESCE("SO",0), COALESCE("HR",0), COALESCE("HBP",0), '
+                    '"GS", "W" FROM pitching_gamelogs WHERE player_id = ANY(:ids) '
                     "ORDER BY player_id, game_date, game_id"), {"ids": chunk}).fetchall():
-                pgames_by[r[0]].append({
-                    "game_date": r[1], "game_id": r[2], "season": r[3], "opponent": r[4],
-                    "home_away": r[5], "result": r[6] or "", "IP": float(r[7] or 0),
-                    "H": r[8], "R": r[9], "ER": r[10], "BB": r[11], "SO": r[12],
-                    "HR": r[13], "HBP": r[14],
-                })
+                pgames_by[r[0]].append(_pitching_game(r[1:]))
             for pid_, s_, c_ in db.execute(_sa_text(
                     "SELECT player_id, season, COUNT(*) FROM pitching_gamelogs "
                     "WHERE player_id = ANY(:ids) GROUP BY player_id, season"), {"ids": chunk}).fetchall():
