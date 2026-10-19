@@ -778,10 +778,20 @@ def _ids_with_current_season(season_model, current_year: int) -> list[int]:
     return [r.player_id for r in rows]
 
 
+# ⚠️ Official scoring changes reach balldontlie days after a game (2026: a hit
+# ruled an error, runs ruled unearned — Kyle Harrison 08-11, 8 ER -> 3), so the
+# nightly re-reads the last 30 days of finals, not just last night. Every save
+# goes through crud's keep-known rule: a correction (value -> value) lands, a
+# line re-shipped without its detail never blanks a stored value. About one
+# /stats call per game (~450 at the height of the season) against a 600-a-minute
+# limit; nothing extra in the offseason.
+_REREAD_DAYS = 30
+
+
 def _update_gamelogs(current_year: int) -> dict:
-    """Refresh per-game logs for last night's finals via the BDL
-    game-centric path. Queries BOTH `yesterday_utc` and `today_utc`
-    because BDL buckets games by UTC start time — a single MLB
+    """Refresh per-game logs for the last 30 days of finals (see
+    _REREAD_DAYS) via the BDL game-centric path. The window includes
+    `today_utc` because BDL buckets games by UTC start time — a single MLB
     schedule night spans two UTC dates (ET evening games cross
     midnight UTC; PT evening games start fully into UTC tomorrow).
     Overlap is safe via the gamelog PK.
@@ -805,8 +815,8 @@ def _update_gamelogs(current_year: int) -> dict:
     # (player_id, game_id) PK on the gamelog tables makes any duplicate
     # row a no-op upsert.
     today_utc     = datetime.date.today()
-    yesterday_utc = today_utc - datetime.timedelta(days=1)
-    target_dates  = [yesterday_utc.isoformat(), today_utc.isoformat()]
+    target_dates  = [(today_utc - datetime.timedelta(days=n)).isoformat()
+                     for n in range(_REREAD_DAYS, -1, -1)]     # the last 30 days + today
     log.info(f"  BDL gamelogs target dates: {target_dates}")
 
     bat_rows = 0
