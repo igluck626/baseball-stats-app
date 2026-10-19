@@ -13,6 +13,9 @@ Season Stats card (api/team_season_stats.py).
     in baseball notation become outs; rates from the counts; OBP as shipped.
   • The drift check: beyond the threshold is drift; a stat we can't compute is
     INCOMPLETE, never compared as 0.
+  • Run differential: runs scored minus runs allowed from OUR standings
+    (fixtures/standings_2026.json, a real response), ranked by the same rule;
+    left out of the drift check (balldontlie's team totals have no runs allowed).
 
 Standalone, no pytest. Run: <backend python> backend/tests/test_team_season_stats.py
 """
@@ -108,6 +111,46 @@ check("an unknown OBP is incomplete, never drift", ("NYY", "OBP") in d["incomple
 check("a missing stat is incomplete too", ("COL", "ERA") in d["incomplete"])
 d = T.drift({"LAD": ours["LAD"]}, tot)
 check("a club we have no rows for is listed as missing", d["missing_team"] == ["COL", "NYY"])
+
+print("run differential (our standings)")
+STAND = json.load(open(os.path.join(HERE, "fixtures", "standings_2026.json")))["response"]["standings"]
+# balldontlie team id -> Lahman code, as data_service._BDL_TO_LAHMAN_TEAM_MAP has it (all 30).
+LAHMAN = {1: "ARI", 2: "ATL", 3: "BAL", 4: "BOS", 5: "CHN", 6: "CHA", 7: "CIN", 8: "CLE", 9: "COL",
+          10: "DET", 11: "HOU", 12: "KCA", 13: "LAA", 14: "LAN", 15: "MIA", 16: "MIL", 17: "MIN",
+          18: "NYN", 19: "NYA", 20: "ATH", 21: "PHI", 22: "PIT", 23: "SDN", 24: "SFN", 25: "SEA",
+          26: "SLN", 27: "TBA", 28: "TEX", 29: "TOR", 30: "WAS"}
+check("four standings rows carry no bdl_id (KCR, TBD, SDP, SFG): the join can't use it",
+      sorted(r["franch_id"] for r in STAND if r.get("bdl_id") is None) == ["KCR", "SDP", "SFG", "TBD"])
+tot, teams = T.bdl_totals(ROWS)
+T.with_run_differential(tot, teams, STAND, LAHMAN)
+check("Yankees +138 (739 - 601), Dodgers +201, Rockies -192",
+      (tot["NYY"]["team"]["RD"], tot["LAD"]["team"]["RD"], tot["COL"]["team"]["RD"]) == (138, 201, -192),
+      {a: tot[a]["team"] for a in tot})
+d = T.drift(tot, tot)
+check("left out of the drift check", not any(k == "RD" for _, k, *_ in d["drift"])
+      and not any(k == "RD" for _, k in d["incomplete"]))
+by_code = {code: bid for bid, code in LAHMAN.items()}
+everyone = {r["franch_id"]: {"bat": {}, "pit": {}} for r in STAND}
+ids = {r["franch_id"]: {"id": by_code[r["team_id"]]} for r in STAND}
+T.with_run_differential(everyone, ids, STAND, LAHMAN)
+check("every one of the 30 gets a run differential", all(everyone[a]["team"]["RD"] is not None for a in everyone))
+pay = T.payload(everyone, {r["franch_id"]: r["league"] for r in STAND})
+rd = {a: pay[a]["stats"]["RD"] for a in pay}
+check("all 30: the Yankees' +138 is 4th, not tied (MIL +214, LAD +201, CHC +147 ahead)",
+      (rd["NYY"]["mlb_rank"], rd["NYY"]["mlb_tied"]) == (4, False), rd["NYY"])
+check("Twins and Mariners both -58: the same rank, both marked tied",
+      rd["MIN"]["mlb_rank"] == rd["SEA"]["mlb_rank"] and rd["MIN"]["mlb_tied"] and rd["SEA"]["mlb_tied"],
+      (rd["MIN"], rd["SEA"]))
+check("  ...ranked 1 + the clubs strictly better",
+      rd["MIN"]["mlb_rank"] == 1 + sum(1 for r in STAND if r["runs_scored"] - r["runs_allowed"] > -58))
+check("label 'Run differential', value an integer", rd["NYY"]["label"] == "Run differential" and rd["NYY"]["value"] == 138)
+tot, teams = T.bdl_totals(ROWS)
+T.with_run_differential(tot, teams, [r for r in STAND if r["franch_id"] != "COL"], LAHMAN)
+pay = T.payload(tot, {a: teams[a].get("league") for a in teams})
+check("a club missing from the standings: no value and no rank, never 0",
+      pay["COL"]["stats"]["RD"]["value"] is None and pay["COL"]["stats"]["RD"]["mlb_rank"] is None)
+T.with_run_differential(tot, teams, [dict(r, runs_allowed=None) if r["franch_id"] == "NYY" else r for r in STAND], LAHMAN)
+check("runs allowed missing: no run differential", tot["NYY"]["team"]["RD"] is None)
 
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

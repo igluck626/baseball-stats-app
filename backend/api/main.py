@@ -2101,8 +2101,9 @@ def teams_season_stats(season: int = Query(..., description="Season year, e.g. 2
     """Every club's batting and pitching totals for a season, each with its MLB
     and league rank (ties marked) — the team page's Season Stats card. From
     balldontlie's team season totals, regular season only; one call, cached an
-    hour. If balldontlie can't be reached, the last good copy is served with
-    `stale: true` rather than nothing."""
+    hour. Run differential comes from our standings (runs scored minus runs
+    allowed), ranked the same way. If balldontlie can't be reached, the last
+    good copy is served with `stale: true` rather than nothing."""
     key = f"teams_season_stats:{season}"
     cached = _cache.get(key)
     if cached is not None:
@@ -2120,9 +2121,16 @@ def teams_season_stats(season: int = Query(..., description="Season year, e.g. 2
         raise HTTPException(status_code=404, detail=f"No team totals for {season}")
     if len(totals) != 30:
         log.warning("teams_season_stats(%s): %d clubs in balldontlie's totals, expected 30", season, len(totals))
+    try:
+        standings = data_service.get_team_standings(season)
+    except Exception as exc:
+        log.warning("teams_season_stats(%s): standings unavailable, no run differential: %s", season, exc)
+        standings = []
+    team_season_stats.with_run_differential(totals, teams, standings, data_service._BDL_TO_LAHMAN_TEAM_MAP)
     leagues = {a: (teams[a].get("league") or None) for a in teams}
     ranked = team_season_stats.payload(totals, leagues)
-    payload = {"season": season, "source": "balldontlie team season totals (regular season)", "teams": [
+    payload = {"season": season, "source": "balldontlie team season totals (regular season); "
+                                           "run differential from our standings", "teams": [
         {"team": a, "bdl_id": teams[a].get("id"), "name": teams[a].get("display_name"),
          "league": ranked[a]["league"], "stats": ranked[a]["stats"]}
         for a in sorted(totals)]}

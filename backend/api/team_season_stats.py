@@ -16,6 +16,9 @@ nightly DRIFT CHECK instead (`drift`).
     `season_type == "regular"` only.
   • Innings come in baseball notation ("1435.2" = 1435⅔).
   • No PA, HBP, SF, CS or IBB: OBP is taken as balldontlie ships it.
+  • No runs allowed. Run differential comes from OUR standings instead
+    (runs scored minus runs allowed, `with_run_differential`), which the
+    nightly writes from balldontlie's standings.
 
 Pure functions; main.py fetches, caches and serves.
 """
@@ -24,8 +27,10 @@ from __future__ import annotations
 from typing import Optional
 
 
-# (key, label, side, lower_is_better)
+# (key, label, side, lower_is_better). Side "team" is Run differential, from
+# our standings, not balldontlie's team totals.
 STATS = [
+    ("RD", "Run differential", "team", False),
     ("R", "Runs", "bat", False),
     ("AVG", "AVG", "bat", False),
     ("OBP", "OBP", "bat", False),
@@ -39,6 +44,24 @@ STATS = [
     ("SV", "Saves", "pit", False),
     ("HRA", "Home runs allowed", "pit", True),
 ]
+
+
+def with_run_differential(totals: dict[str, dict], teams: dict[str, dict],
+                          standings: list[dict], lahman_of: dict[int, str]) -> dict[str, dict]:
+    """Each club's run differential, runs scored minus runs allowed, from our
+    standings rows. A club without both numbers gets None (no rank). Returns
+    `totals` with a "team" side. Pure.
+
+    ⚠️ MATCHED ON THE LAHMAN CODE, never the standings' `bdl_id`: four 2026
+    rows (KCR, TBD, SDP, SFG) carry none. `lahman_of` is balldontlie team id ->
+    Lahman code (data_service._BDL_TO_LAHMAN_TEAM_MAP); the standings' team_id
+    is the Lahman code ('LAA', not Retrosheet's 'ANA')."""
+    by_code = {r.get("team_id"): r for r in standings if r.get("team_id")}
+    for abbr, t in totals.items():
+        row = by_code.get(lahman_of.get((teams.get(abbr) or {}).get("id"))) or {}
+        rs, ra = row.get("runs_scored"), row.get("runs_allowed")
+        t["team"] = {"RD": (rs - ra) if None not in (rs, ra) else None}
+    return totals
 
 
 def outs_from_bdl_ip(v) -> Optional[int]:
@@ -106,6 +129,8 @@ def drift(ours: dict[str, dict], theirs: dict[str, dict]) -> dict:
             out["missing_team"].append(team)
             continue
         for key, _label, side, _low in STATS:
+            if side == "team":
+                continue        # Run differential: balldontlie's team totals have no runs allowed
             o, t = ours[team][side].get(key), theirs[team][side].get(key)
             if t is None:
                 continue
@@ -180,7 +205,7 @@ def payload(totals: dict[str, dict], leagues: dict[str, str]) -> dict[str, dict]
     """Each team's stats with its MLB rank and its league rank."""
     out = {t: {"league": leagues.get(t), "stats": {}} for t in totals}
     for key, label, side, low in STATS:
-        vals = {t: totals[t][side].get(key) for t in totals}
+        vals = {t: totals[t].get(side, {}).get(key) for t in totals}
         mlb = rank(vals, low)
         by_league: dict[str, dict] = {}
         for lg in set(leagues.values()):
