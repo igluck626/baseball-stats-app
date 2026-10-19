@@ -5048,13 +5048,13 @@ def _fold_name(s) -> str:
     return "".join(ch for ch in _ud.normalize("NFKD", s or "") if not _ud.combining(ch)).lower().strip()
 
 
-_NAME_SUFFIXES = {"jr.", "jr", "sr.", "sr", "ii", "iii", "iv"}
+_SURNAME_SUFFIXES = {"jr.", "jr", "sr.", "sr", "ii", "iii", "iv"}
 
 
 def _surname_key(name) -> str:
     """The last word of a surname, folded, with a Jr./Sr./II-IV suffix dropped:
     "Wade Jr." -> "wade", "Kiner-Falefa" -> "kiner-falefa"."""
-    words = [w for w in _fold_name(name).replace(",", " ").split() if w not in _NAME_SUFFIXES]
+    words = [w for w in _fold_name(name).replace(",", " ").split() if w not in _SURNAME_SUFFIXES]
     return words[-1] if words else ""
 
 
