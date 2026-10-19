@@ -9,7 +9,8 @@ under Isaac's "activity" rule (2026-10-16).
     becomes NULL ("—"), never a short sum. Isaac Collins (9 such games) used to
     get season PA 484 this way.
   • On a batting row with no AB and no BB (defensive sub, pinch runner) a NULL
-    counts as 0: Billy Cook's 28 such games leave his season PA a number.
+    counts as 0: Billy Cook's 28 such games leave his season PA a number —
+    except CS (and SB), unknown on any row (Isaac, 2026-10-18).
   • K%, BB% and wOBA are NULL when the PA (or HBP / SF / IBB) they need is.
   • A pitcher's unknown HBP makes his season HBP NULL (Codi Heuer read 0).
   • Careers: an unknown CURRENT-season value makes the career total (and the
@@ -99,6 +100,8 @@ else:
                          {"p": COOK}).scalar()
     check("Billy Cook: 28 unknown cells, all on no-AB/no-BB games — PA stays a number", cook["PA"] == want and want > 0,
           (cook["PA"], want))
+    check("Billy Cook: CS unknown — a NULL CS is unknown on any row, pinch-runner games included",
+          cook["CS"] is None, cook["CS"])
     check("Billy Cook: his rates are computed (K% = SO / PA)",
           cook["K_pct"] is not None and abs(cook["K_pct"] - round(cook["SO"] / cook["PA"], 3)) < 1e-9)
     heu = season(HEUER, "pitcher_seasons")

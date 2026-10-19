@@ -7,7 +7,9 @@ under Isaac's "activity" rule (2026-10-16).
     shows activity (AB or BB above 0; every pitching game). It used to be the
     silent 0 of `int(x or 0)`: Collins's Royals row read PA 484, Heuer's
     Guardians row HBP 0 and WP 0.
-  • An unknown on a no-AB/no-BB game reads as 0 (Billy Cook keeps a number).
+  • An unknown on a no-AB/no-BB game reads as 0 (Billy Cook keeps a number),
+    except SB and CS, unknown on any batting line (Isaac, 2026-10-18) — but a
+    pitching-only team group, with no batting line at all, still sums to 0.
   • TB is unknown when doubles or triples are.
   • A team group with no batting lines (a pitcher's pitching-only games) sums
     to 0, never NULL — a bare SUM's NULL once blanked 930 rows' AB, Ohtani's
@@ -77,6 +79,8 @@ else:
     want = sum((r["PA"] or 0) for r in FX["own_batting"] if r["player_id"] == COOK)
     check("Cook (Pirates): his unknowns are all on no-AB/no-BB games — PA is a number",
           cook is not None and cook["PA"] is not None and cook["PA"] <= want, (cook and cook["PA"], want))
+    check("Cook: SB and CS unknown — NULL on his pinch-runner games",
+          cook["SB"] is None and cook["CS"] is None, (cook["SB"], cook["CS"]))
     heu = [r for r in pit if r["player_id"] == HEUER]
     check("Heuer: an unknown HBP in a game he pitched makes his team row's HBP unknown (was 0)",
           heu and all(r["HBP"] is None for r in heu), [(r["team"], r["HBP"]) for r in heu])
@@ -86,6 +90,8 @@ else:
     hb = [r for r in bat if r["player_id"] == HEUER]
     check("Heuer's batting row (pitching games only, no batting lines): AB and H are 0, not unknown",
           hb and all(r["AB"] == 0 and r["H"] == 0 and r["PA"] == 0 for r in hb), [(r["team"], r["AB"], r["PA"]) for r in hb])
+    check("...and SB and CS are 0 there too: no batting line, nothing unknown",
+          hb and all(r["SB"] == 0 and r["CS"] == 0 for r in hb), [(r["team"], r["SB"], r["CS"]) for r in hb])
 
     print("roster team-only lines")
     std = lambda **kw: {"standard": {"AB": 100, "H": 30, "doubles": 5, "triples": 1, "HR": 4, "RBI": 12,

@@ -13,6 +13,8 @@ game-unit boards, and the Game Logs splits.
   • The stored span boards hold value NULL for a player whose games leave the
     event unknown; the readers leave that player out and name him.
   • The Game Logs splits null SB / OBP / SLG over a window with an unknown.
+  • SB and CS are the exception to "no AB/BB reads as 0" (Isaac, 2026-10-18):
+    a pinch runner's row has neither, so a NULL SB or CS is unknown on ANY game.
 
 Real rows (fixtures/season_counting_activity.json): Isaac Collins (9 games with
 AB/BB and unknown 2B/SB/HBP/SF/PA) and Billy Cook (unknowns only on no-AB/no-BB
@@ -87,8 +89,11 @@ else:
         check(f"Collins: every game with AB/BB and any unknown field is flagged ({len(act_null)}), "
               f"{len(pa_unknown)} of them with PA unknown",
               len(flagged) == len(act_null) and len(pa_unknown) == 9, (len(flagged), len(act_null), len(pa_unknown)))
-        check("Cook: his unknowns are all on no-AB/no-BB games — none flagged",
-              not any(g["unknown"] for g in cook) and any(r["PA"] is None for r in ROWS if r["player_id"] == COOK))
+        flagged_cook = [g for g in cook if g["unknown"]]
+        check("Cook: on his no-AB/no-BB games only SB and CS are flagged (28 games); PA etc. read as 0",
+              len(flagged_cook) == 28 and all(g["unknown"] <= {"SB", "CS"} for g in flagged_cook)
+              and any(r["PA"] is None for r in ROWS if r["player_id"] == COOK),
+              (len(flagged_cook), {f for g in flagged_cook for f in g["unknown"]}))
 
         print("stat lines")
         line = main._stat_line(col)
@@ -133,7 +138,8 @@ else:
           w["SB"] is None and w["OBP"] is None and w["SLG"] is None and w["OPS"] is None, w)
     check("...while AB, H, HR, AVG stand", w["AB"] and w["H"] is not None and w["BA"] is not None)
     rc = ds._aggregate_batting_window([dict(r) for r in ROWS if r["player_id"] == COOK])
-    check("Cook's window is complete", rc["SB"] is not None and rc["OBP"] is not None, rc)
+    check("Cook's window: SB unknown (NULL SB on pinch-runner games), OBP and SLG stand",
+          rc["SB"] is None and rc["OBP"] is not None and rc["SLG"] is not None, rc)
     eng.dispose()
 
 print(f"\n{sum(results)}/{len(results)} passed")

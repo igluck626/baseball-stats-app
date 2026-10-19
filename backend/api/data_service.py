@@ -5321,6 +5321,10 @@ def _resolve_side(stat: dict, ctx: dict) -> Optional[str]:
 # (`/admin/backfill-bdl-gamelogs`, which overwrites via `db.merge`).
 _BATTING_COUNTING_FIELDS = ("PA", "HBP", "SF", "CS", "IBB", "GIDP", "SH")
 
+# Batting fields whose NULL is unknown on ANY row, activity or not: a steal
+# happens on a pinch runner's row, which has no AB and no BB (Isaac, 2026-10-18).
+_ANY_ROW_UNKNOWN = ("SB", "CS")
+
 
 def _apply_counting_aggregation(
     db, *, season: int, player_id: Optional[int],
@@ -5363,16 +5367,20 @@ def _apply_counting_aggregation(
     # (every one is a game pitched) — that NULL could hide a real count, so the
     # player's season field becomes NULL ("—") rather than a short sum. On a
     # batting row with no AB and no BB (a defensive substitute or pinch runner)
-    # it counts as 0. balldontlie's season stats ship none of these fields
-    # (checked 2026-10-16), so there is no better source to fall back to.
-    activity = ('(COALESCE(g."AB", 0) > 0 OR COALESCE(g."BB", 0) > 0)'
-                if gamelog_table == "batting_gamelogs" else "TRUE")
+    # it counts as 0 — EXCEPT SB and CS (Isaac, 2026-10-18): a pinch runner's
+    # row has no AB and no BB and is exactly where a steal happens, so a NULL
+    # SB or CS is unknown on ANY row. balldontlie's season stats ship none of
+    # these fields (checked 2026-10-16), so there is no better source.
+    def activity(f: str) -> str:
+        if gamelog_table != "batting_gamelogs" or f in _ANY_ROW_UNKNOWN:
+            return "TRUE"
+        return '(COALESCE(g."AB", 0) > 0 OR COALESCE(g."BB", 0) > 0)'
 
     def _sum(f: str) -> str:
         return (
             f"(CASE WHEN EXISTS (SELECT 1 FROM {gamelog_table} g "
             f"WHERE g.player_id = {season_table}.player_id "
-            f'AND g.season = {season_table}.year AND g."{f}" IS NULL AND {activity}) '
+            f'AND g.season = {season_table}.year AND g."{f}" IS NULL AND {activity(f)}) '
             f"THEN NULL ELSE "
             f'(SELECT SUM(COALESCE(g."{f}", 0)) FROM {gamelog_table} g '
             f"WHERE g.player_id = {season_table}.player_id "
@@ -6381,8 +6389,10 @@ def _aggregate_batting_window(games: list[dict]) -> dict:
           "BB", "SO", "SB", "HBP", "SF")}
     # ⚠️ ACTIVITY RULE: a cell left NULL (not shipped) on a game with AB or BB
     # makes that window total — and every rate on it — unknown ("—"), never short.
+    # SB is unknown on any game (_ANY_ROW_UNKNOWN).
     unknown = {k for g in games if (g.get("AB") or 0) > 0 or (g.get("BB") or 0) > 0
                for k in ("doubles", "triples", "SB", "HBP", "SF") if g.get(k) is None}
+    unknown |= {k for g in games for k in _ANY_ROW_UNKNOWN if k in s and g.get(k) is None}
     ab, h, hr, bb, hbp, sf = s["AB"], s["H"], s["HR"], s["BB"], s["HBP"], s["SF"]
     doubles, triples = s["doubles"], s["triples"]
     singles = h - doubles - triples - hr

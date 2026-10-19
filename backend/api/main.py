@@ -9092,13 +9092,15 @@ def _pretty_date(d) -> str:
 # `_UNKNOWN_SQL` names, per game, the fields that are unknown on a game with
 # activity ("2B,HBP"); loaders turn it into g["unknown"] while still coalescing
 # the numbers to 0 for arithmetic.
+# SB and CS are unknown on ANY game, activity or not: a steal happens on a pinch
+# runner's row, which has no AB and no BB (Isaac, 2026-10-18).
 _UNKNOWN_SQL = (
-    """CASE WHEN COALESCE("AB",0) > 0 OR COALESCE("BB",0) > 0 THEN concat_ws(',', """
+    """concat_ws(',', CASE WHEN COALESCE("AB",0) > 0 OR COALESCE("BB",0) > 0 THEN concat_ws(',', """
     """CASE WHEN "PA" IS NULL THEN 'PA' END, CASE WHEN doubles IS NULL THEN '2B' END, """
     """CASE WHEN triples IS NULL THEN '3B' END, CASE WHEN "HBP" IS NULL THEN 'HBP' END, """
     """CASE WHEN "SF" IS NULL THEN 'SF' END, CASE WHEN "SH" IS NULL THEN 'SH' END, """
-    """CASE WHEN "IBB" IS NULL THEN 'IBB' END, CASE WHEN "SB" IS NULL THEN 'SB' END, """
-    """CASE WHEN "CS" IS NULL THEN 'CS' END) ELSE '' END"""
+    """CASE WHEN "IBB" IS NULL THEN 'IBB' END) END, """
+    """CASE WHEN "SB" IS NULL THEN 'SB' END, CASE WHEN "CS" IS NULL THEN 'CS' END)"""
 )
 # The fields each daily event is built from, among those that can be unknown.
 _EVENT_UNKNOWN = {"1B": {"2B", "3B"}, "2B": {"2B"}, "3B": {"3B"}, "TB": {"2B", "3B"},
