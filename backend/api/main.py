@@ -833,6 +833,7 @@ def _run_nightly_update() -> None:
         # awaiting an MLBAM id. Writes ACCEPTs only (Isaac's standing approval),
         # each read back; every HOLD is logged for him. Non-fatal.
         log.info("[nightly] starting chadwick phase")
+        cs: dict = {}
         try:
             import chadwick_daily
             cs = chadwick_daily.run(current_year)
@@ -850,39 +851,20 @@ def _run_nightly_update() -> None:
         except Exception as exc:
             log.error(f"[nightly] chadwick phase FAILED (non-fatal): {exc}")
 
-        # Phase 5d — same-season gamelog backfill for newly-discovered
-        # players. Only fires when Phase 5c actually inserted at least
-        # one new bio — the operation walks every BDL final from
-        # March 25 through today, too expensive to run on quiet nights.
-        # Idempotent (PK upsert), with an auto-dedup tail inside
-        # `backfill_bdl_gamelogs`.
-        new_bios = (
-            dc.get("new_players_created",  0)
-            + dc.get("new_pitchers_created", 0)
-        )
-        if new_bios > 0:
-            try:
-                today_et = datetime.datetime.now(
-                    data_service._MLB_LOCAL_TZ,
-                ).date().isoformat()
-                start_date = f"{current_year}-03-25"
-                log.info(
-                    "[nightly] new player gamelog backfill: "
-                    "%d new bios → walking %s..%s",
-                    new_bios, start_date, today_et,
-                )
-                bf = data_service.backfill_bdl_gamelogs(start_date, today_et)
-                log.info(
-                    "[nightly] new player game log backfill: "
-                    "%d games, %d bat_rows, %d pit_rows",
-                    bf.get("total_games",    0),
-                    bf.get("total_bat_rows", 0),
-                    bf.get("total_pit_rows", 0),
-                )
-            except Exception as exc:
-                log.error(
-                    f"[nightly] new-player gamelog backfill FAILED (non-fatal): {exc}"
-                )
+        # Phase 5d — catch-up for players the Chadwick step mapped tonight: their
+        # games from before the mapping, which no re-read reaches. Only this
+        # player's missing rows are saved (catch_up_player_gamelogs). Non-fatal.
+        log.info("[nightly] starting catch-up phase")
+        try:
+            cu = data_service.catch_up_player_gamelogs(cs.get("mapped_ids") or [], current_year)
+            log.info(
+                "[nightly] catch-up phase: %d newly mapped, %d lines, %d games filled, "
+                "%d bat_rows, %d pit_rows, %d pre-cutover games skipped",
+                cu.get("players", 0), cu.get("lines", 0), cu.get("games_filled", 0),
+                cu.get("bat_rows", 0), cu.get("pit_rows", 0), cu.get("skipped_pre_cutover", 0),
+            )
+        except Exception as exc:
+            log.error(f"[nightly] catch-up phase FAILED (non-fatal): {exc}")
 
         # Phase 5c — game-unit leaderboard. Recompute streak/span leaderboard
         # rows for ACTIVE players only (a batting_gamelogs OR pitching_gamelogs row

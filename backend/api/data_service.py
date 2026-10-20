@@ -6106,6 +6106,88 @@ def save_bdl_gamelogs_for_date(
     }
 
 
+def catch_up_player_gamelogs(pairs: list[tuple[int, int]], season: int) -> dict:
+    """⚠️ THE CATCH-UP for players mapped tonight. A game line is saved only for a
+    mapped player, so a mapping that arrives after a player's first games (the
+    Chadwick step, `chadwick_daily`) leaves those games unfetched: the nightly
+    re-reads 30 days, and nothing else ever goes back (Hector and Jose Rodriguez,
+    mapped 2026-10-17: 41 batting and 4 pitching lines). Phase 5d was meant to
+    cover this, but it only fired when the discover phase created a bio, which
+    it no longer does.
+
+    `pairs` is [(balldontlie id, our player id)]. For each: the player's season
+    lines from `/stats?player_ids[]=&seasons[]=` (the player's alias ids too,
+    `_gamelog_bdl_map`), then, for every regular-season final where a table
+    lacks this player's row, the game's own sheet through `fetch_bdl_game_stats`
+    — the nightly's parser, plays and all — saving ONLY this player's missing
+    rows, through crud's keep-known save. A row we hold is never touched.
+
+    Pre-cutover games are included: the legacy MLB-id rows the 05-19 cutover
+    guarded are gone. If this player still holds one (a six-digit gamePk), the
+    pre-cutover games are skipped and logged rather than doubled. Returns counts
+    for the nightly log."""
+    from database.models import BattingGameLog, PitchingGameLog
+    out = {"players": len(pairs), "lines": 0, "games_filled": 0, "bat_rows": 0, "pit_rows": 0,
+           "skipped_pre_cutover": 0}
+    if not pairs or not connection.db_available():
+        return out
+    with connection.get_session() as db:
+        full = _gamelog_bdl_map(db)
+    for bdl_id, mlbam in pairs:
+        ids = sorted({b for b, m in full.items() if m == mlbam} | {int(bdl_id)})
+        lines: list[dict] = []
+        cursor = None
+        while True:
+            params: dict = {"player_ids[]": ids, "seasons[]": [season], "per_page": 100}
+            if cursor is not None:
+                params["cursor"] = cursor
+            page = _bdl_get_json("stats", params)
+            lines.extend(ln for ln in (page.get("data") or [])
+                         if (ln.get("player") or {}).get("id") in ids)
+            cursor = (page.get("meta") or {}).get("next_cursor")
+            if cursor is None:
+                break
+        out["lines"] += len(lines)
+        with connection.get_session() as db:
+            held = {m.__tablename__: {str(r[0]) for r in db.query(m.game_id).filter(
+                        m.player_id == mlbam, m.season == season).all()}
+                    for m in (BattingGameLog, PitchingGameLog)}
+        legacy = any(len(g) == 6 and g.isdigit() for t in held.values() for g in t)
+        # A game is worth a fetch when we hold no row of this player's for it, or
+        # the line has a pitching line and we hold no pitching row.
+        pitched = {int(ln["game_id"]) for ln in lines if ln.get("ip") is not None and ln.get("game_id") is not None}
+        game_ids = sorted({int(ln["game_id"]) for ln in lines if ln.get("game_id") is not None})
+        missing = [g for g in game_ids
+                   if (str(g) not in held["batting_gamelogs"] and str(g) not in held["pitching_gamelogs"])
+                   or (g in pitched and str(g) not in held["pitching_gamelogs"])]
+        for gid in missing:
+            game = _bdl_get_json(f"games/{gid}", {})
+            game = game.get("data", game)
+            if game.get("season_type") != "regular" or game.get("status") != "STATUS_FINAL":
+                continue
+            ctx = _bdl_game_ctx(game)
+            if legacy and ctx.get("game_date") and _before_bdl_cutover(ctx["game_date"]):
+                out["skipped_pre_cutover"] += 1
+                continue
+            bat, pit = fetch_bdl_game_stats(gid, {i: mlbam for i in ids}, ctx)
+            bat_rows = [r for r in bat.get(mlbam, []) if r["game_id"] not in held["batting_gamelogs"]]
+            pit_rows = [r for r in pit.get(mlbam, []) if r["game_id"] not in held["pitching_gamelogs"]]
+            if not (bat_rows or pit_rows):
+                continue
+            out["games_filled"] += 1
+            with connection.get_session() as db:
+                if bat_rows:
+                    crud.save_batting_gamelogs(db, mlbam, bat_rows)
+                if pit_rows:
+                    crud.save_pitching_gamelogs(db, mlbam, pit_rows)
+            out["bat_rows"] += len(bat_rows)
+            out["pit_rows"] += len(pit_rows)
+            time.sleep(_BDL_RATE_LIMIT_SLEEP)
+        log.info("catch_up_player_gamelogs: bdl %s -> %s: %d lines, %d games checked",
+                 ids, mlbam, len(lines), len(missing))
+    return out
+
+
 def backfill_bdl_gamelogs(
     start_date: str, end_date: str, *, allow_pre_cutover: bool = False,
 ) -> dict:

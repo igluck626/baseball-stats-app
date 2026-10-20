@@ -24,8 +24,8 @@ What it does, each run:
 ⚠️ Nothing but ACCEPT is ever written. A HOLD — including "not in the register
 yet" — is listed for Isaac and waits.
 
-The newly mapped players' earlier games are not backfilled here; that is the
-catch-up backfill in the 2a batch.
+The newly mapped players' earlier games are not fetched here: `mapped_ids` in
+the summary goes to the nightly's catch-up phase (`catch_up_player_gamelogs`).
 """
 from __future__ import annotations
 
@@ -141,5 +141,6 @@ def run(season: int) -> dict:
         summary["stored"] = sum(1 for e in act if e.get("stored"))
         summary["ok"] = rc == 0
         summary["mapped"] = [f"bdl {e['bdl_id']} -> {e['mlbam']} ({e.get('result')})" for e in act]
+        summary["mapped_ids"] = [(int(e["bdl_id"]), int(e["mlbam"])) for e in act if e.get("stored")]
     con.close()
     return summary
