@@ -866,6 +866,10 @@ def _run_nightly_update() -> None:
         except Exception as exc:
             log.error(f"[nightly] catch-up phase FAILED (non-fatal): {exc}")
 
+        # A player mapped tonight may already have postseason lines, stored with
+        # player_id NULL; attribute them now, in any month. Non-fatal.
+        postseason_ingest.resolve_safely("nightly")
+
         # Phase 5c — game-unit leaderboard. Recompute streak/span leaderboard
         # rows for ACTIVE players only (a batting_gamelogs OR pitching_gamelogs row
         # this season); historical players' streaks are immutable. BOTH tables: a

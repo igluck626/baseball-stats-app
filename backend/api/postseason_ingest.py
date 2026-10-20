@@ -11,9 +11,17 @@ tables the Retrosheet ingest fills — never the regular-season ones.
     and a guessed round is worse than a late row. Postponed and cancelled
     games never get a number there, so they never arrive here.
   • An UNMAPPED player is kept: `player_id` NULL, `bdl_player_id` always
-    set, resolved at read time once a mapping lands. The unique index on
+    set. Once a mapping lands, `resolve_unmapped` sets `player_id` on those
+    rows: at the start of every refresh, and every night after the Chadwick
+    step in any month (`resolve_safely`), since a mapping can land after the
+    postseason ends. The unique index on
     (game_id, bdl_player_id) holds whether or not the row is mapped, so a
     re-run after a mapping lands can't store the appearance twice.
+  • Ids map through the aliases (`_gamelog_bdl_map`), like the regular
+    ingest: an alias's line lands on the player it is an alias of. When a
+    player's own id and an alias both have a line in one game, the line with
+    more known fields is attributed and the other is stored with `player_id`
+    NULL — one appearance, never summed, nothing deleted.
   • Rows are built by the nightly's own per-game parsers, so a batting line
     follows the regular ingest's admission rules (a pitcher's empty batting
     line is not a batting appearance). Team and opponent are Lahman codes from
@@ -79,7 +87,55 @@ def build_rows(game: dict, round_code: str, stats: list[dict],
             pit.append(row)
     for row in bat + pit:
         row["game_id"] = str(row["game_id"])
+    for rows in (bat, pit):
+        _one_line_per_player(rows)
     return bat, pit, unmapped
+
+
+def _one_line_per_player(rows: list[dict]) -> None:
+    """One attributed line per player per game: when a player's own id and an
+    alias both have a line, keep `player_id` on the line with more known fields
+    and set it to None on the other (still stored, under its bdl_player_id)."""
+    by = collections.defaultdict(list)
+    for r in rows:
+        if r["player_id"] is not None:
+            by[(r["game_id"], r["player_id"])].append(r)
+    for same in by.values():
+        if len(same) > 1:
+            keep = max(same, key=data_service._known_count)
+            for r in same:
+                if r is not keep:
+                    r["player_id"] = None
+
+
+_TABLES = ("postseason_batting_gamelogs", "postseason_pitching_gamelogs")
+
+
+def resolve_unmapped(db, bdl_to_mlbam: dict[int, int]) -> dict:
+    """Set `player_id` on stored rows that were written unmapped and whose
+    balldontlie id (or an alias of it) is mapped now. A row is skipped when its
+    player already has an attributed row in that game, so an alias line never
+    makes a second appearance. Returns {table: rows resolved}. Idempotent."""
+    from sqlalchemy import text
+    out = {}
+    for table in _TABLES:
+        n = 0
+        rows = db.execute(text(f"SELECT game_id, bdl_player_id FROM {table} "
+                               "WHERE player_id IS NULL AND bdl_player_id IS NOT NULL "
+                               "ORDER BY game_id, bdl_player_id")).fetchall()
+        for game_id, bdl_pid in rows:
+            pid = bdl_to_mlbam.get(int(bdl_pid))
+            if pid is None:
+                continue
+            taken = db.execute(text(f"SELECT 1 FROM {table} WHERE game_id = :g AND player_id = :p"),
+                               {"g": game_id, "p": pid}).first()
+            if taken:
+                continue
+            n += db.execute(text(f"UPDATE {table} SET player_id = :p WHERE game_id = :g "
+                                 "AND bdl_player_id = :b AND player_id IS NULL"),
+                            {"p": pid, "g": game_id, "b": bdl_pid}).rowcount
+        out[table] = n
+    return out
 
 
 def _fetch_inputs(season: int) -> tuple[list[dict], list[dict]]:
@@ -121,7 +177,7 @@ def collect(season: int) -> dict:
     rounds = rounds_by_game(series)
     by_id = {g["id"]: g for g in games}
     with connection.get_session() as db:
-        bdl_to_mlbam = data_service._bdl_to_mlbam_map(db)
+        bdl_to_mlbam = data_service._gamelog_bdl_map(db)   # aliases included
     bat, pit, unmapped = [], [], set()
     report = collections.Counter()
     withheld, empty = [], []
@@ -286,13 +342,16 @@ def refresh(season: int, today: Optional[datetime.date] = None, revise: bool = F
     tables = (("bat", PostseasonBattingGameLog, "postseason_batting_gamelogs", BAT_STATS),
               ("pit", PostseasonPitchingGameLog, "postseason_pitching_gamelogs", PIT_STATS))
     with connection.get_session() as db:
-        bdl_to_mlbam = data_service._bdl_to_mlbam_map(db)
+        bdl_to_mlbam = data_service._gamelog_bdl_map(db)   # aliases included
+        resolved = resolve_unmapped(db, bdl_to_mlbam)
         stored_games = {r[0]: r[1] for r in db.execute(text(
             "SELECT game_id, max(game_date) FROM postseason_batting_gamelogs "
             "WHERE source = 'bdl' AND season = :s GROUP BY 1 UNION "
             "SELECT game_id, max(game_date) FROM postseason_pitching_gamelogs "
             "WHERE source = 'bdl' AND season = :s GROUP BY 1"), {"s": season})}
     summary = collections.Counter()
+    summary["bat_resolved"] = resolved["postseason_batting_gamelogs"]
+    summary["pit_resolved"] = resolved["postseason_pitching_gamelogs"]
     changes_log: list[str] = []
     for gid, rnd in sorted(rounds.items()):
         g = by_id.get(gid) or {}
@@ -354,6 +413,25 @@ def run_safely(trigger: str, now: Optional[datetime.datetime] = None,
             return result
     except Exception as exc:                      # noqa: BLE001 — must never fail its caller
         log.error("[postseason] %s FAILED (non-fatal): %s", trigger, exc)
+        return None
+
+
+def resolve_safely(trigger: str, lock=_AdvisoryLock) -> Optional[dict]:
+    """`resolve_unmapped` on its own, in any month, under the same advisory
+    lock as a refresh. The nightly calls it after the Chadwick step. Never raises."""
+    try:
+        with lock() as held:
+            if not held.acquired:
+                log.info("[postseason] %s resolve: skipped — another run holds the lock", trigger)
+                return None
+            from database import connection
+            with connection.get_session() as db:
+                out = resolve_unmapped(db, data_service._gamelog_bdl_map(db))
+            log.info("[postseason] %s resolve: %d batting / %d pitching row(s) attributed", trigger,
+                     out["postseason_batting_gamelogs"], out["postseason_pitching_gamelogs"])
+            return out
+    except Exception as exc:                      # noqa: BLE001 — must never fail its caller
+        log.error("[postseason] %s resolve FAILED (non-fatal): %s", trigger, exc)
         return None
 
 
