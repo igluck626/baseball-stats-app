@@ -9,7 +9,8 @@ different things, and only the stat row itself can tell them apart:
   • a pitching line   → a pitcher's pitching-only game. MLB's game log leaves
     it out, so we drop it (Ohtani without the DH).
 A pitching line with IP 0 is kept when the pitcher faced a batter (Milner
-06-25: BF 3), and dropped when he faced nobody.
+06-25: BF 3). A line with nothing on it is not kept by the parser alone: the
+game's plays decide it (test_zero_inning_pitchers.py).
 
 The fixtures are real BDL `/stats` rows, trimmed to the fields the parsers
 read.
@@ -65,7 +66,7 @@ def check(label, ok, detail=""):
 # ---------------------------------------------------------------------------
 ds = extract(DATA_SERVICE, {
     "_to_int", "_ip_str_to_decimal", "_batted", "_resolve_side",
-    "_bdl_pitching_hbp", "_parse_bdl_batting_gamelog", "_parse_bdl_pitching_gamelog",
+    "_bdl_pitching_hbp", "_parse_bdl_batting_gamelog", "_parse_bdl_pitching_gamelog", "_pitching_line_evidence",
     "_BDL_INGEST_CUTOVER", "_before_bdl_cutover", "save_bdl_gamelogs_for_date",
     "_bdl_game_ctx",
 }, {"datetime": datetime, "Optional": Optional, "log": logging.getLogger("t"),
@@ -129,12 +130,13 @@ r = pit(milner, ctx("New York Mets", "Chicago Cubs", "2026-06-25"))
 check("Milner 06-25 (IP 0, BF 3) kept", r is not None)
 check("  ...with IP 0 and his three hits", r is not None and r["IP"] == 0 and r["H"] == 3, r)
 
-# Milner, BDL game 5058015, CHC @ PHI 04-14: a pitching line on which he faced
-# nobody — IP 0, BF null, every count zero or null. A true defensive-only line.
+# Milner, BDL game 5058015, CHC @ PHI 04-14: IP 0, BF null, every count zero or
+# null. The line alone can't show an appearance, so the parser drops it; the
+# plays then admit it ("Milner relieved Rea" — test_zero_inning_pitchers.py).
 phantom = {"team_name": "Chicago Cubs", "ip": 0, "pitching_outs": None,
            "batters_faced": None, "p_k": 0, "p_hits": 0, "p_bb": 0, "p_runs": 0,
            "er": 0, "p_hr": 0, "plate_appearances": None, "at_bats": None, "bb": None}
-check("defensive-only pitcher line (IP 0, BF null) dropped from pitching",
+check("a pitcher line with nothing on it (IP 0, BF null) dropped by the parser alone",
       pit(phantom, ctx("Philadelphia Phillies", "Chicago Cubs", "2026-04-14")) is None)
 check("  ...and from batting (it carries a pitching line)",
       bat(phantom, ctx("Philadelphia Phillies", "Chicago Cubs", "2026-04-14")) is None)

@@ -5152,7 +5152,83 @@ def _plays_complete(plays: list[dict], game: dict) -> bool:
     return bool(a_inn)
 
 
-def _fill_sb_cs_from_plays(game_id: int, all_lines: list[dict], chosen: list, game: dict) -> int:
+def _fetch_bdl_plays(game_id: int) -> list[dict]:
+    """Every play of a game, in order (raises if balldontlie can't be read)."""
+    plays: list[dict] = []
+    cursor = None
+    while True:
+        params: dict = {"game_id": game_id, "per_page": 100}   # /plays filters on the singular
+        if cursor is not None:
+            params["cursor"] = cursor
+        page = _bdl_get_json("plays", params)
+        plays.extend(page.get("data") or [])
+        cursor = (page.get("meta") or {}).get("next_cursor")
+        if cursor is None:
+            return plays
+
+
+def _pitchers_named_in_plays(plays: list[dict]) -> set:
+    """Folded last names the plays name as pitching: either side of "A relieved
+    B", and A in "A pitches to B". A name says nothing on its own about WHICH
+    player — the caller applies the exactly-one-player rule."""
+    import re as _re
+    named: set = set()
+    for p in plays:
+        t = (p.get("text") or "").strip().rstrip(".")
+        m = _re.match(r"(.+?) relieved (.+)$", t)
+        if m:
+            named |= {_surname_key(m.group(1)), _surname_key(m.group(2))}
+        m = _re.match(r"(.+?) pitches to ", t)
+        if m:
+            named.add(_surname_key(m.group(1)))
+    named.discard("")
+    return named
+
+
+def _admit_named_pitchers(game_id: int, all_lines: list[dict], unproven: list, ctx: dict,
+                          plays_of, pit_by_pid: dict, bdl_to_mlbam: dict) -> int:
+    """⚠️ A pitching line with no evidence in it (`_pitching_line_evidence`) is
+    admitted only when the game's plays show the pitcher:
+      • a play's `pitcher_id` is the line's balldontlie id, or an alias of the
+        same player (`bdl_to_mlbam`) — the pitcher on the mound: across 1,060
+        games of 2026 plays it is A in every "A pitches to B" (80,404) and the
+        incoming pitcher in every "A relieved B" (7,144), always on the fielding
+        team; or
+      • the plays name the pitcher AND that last name belongs to exactly ONE
+        player among every line of the game — the steals rule.
+    Plays that can't be read admit no one. `unproven` is the list of (our
+    player id, /stats line). Returns rows admitted."""
+    if not unproven:
+        return 0
+    try:
+        plays = plays_of()
+        named = _pitchers_named_in_plays(plays)
+        on_mound = {p.get("pitcher_id") for p in plays if p.get("pitcher_id") is not None}
+    except Exception as exc:
+        log.warning("plays for game %d unavailable, %d pitching line(s) without evidence dropped: %s",
+                    game_id, len(unproven), exc)
+        return 0
+    owners: dict = {}
+    for ln in all_lines:
+        owners.setdefault(_surname_key((ln.get("player") or {}).get("last_name")), set()).add(
+            (ln.get("player") or {}).get("id"))
+    admitted = 0
+    for mlbam, stat in unproven:
+        last = _surname_key((stat.get("player") or {}).get("last_name"))
+        ids = {b for b, m in bdl_to_mlbam.items() if m == mlbam} | {(stat.get("player") or {}).get("id")}
+        if (ids & on_mound) or (last and last in named and len(owners.get(last, ())) == 1):
+            pit = _parse_bdl_pitching_gamelog(stat, ctx, named_in_plays=True)
+            if pit is not None:
+                pit_by_pid.setdefault(mlbam, []).append(pit)
+                admitted += 1
+        else:
+            log.info("fetch_bdl_game_stats(%d): %s's pitching line has no evidence and no play "
+                     "shows the pitcher — dropped", game_id, (stat.get("player") or {}).get("full_name"))
+    return admitted
+
+
+def _fill_sb_cs_from_plays(game_id: int, all_lines: list[dict], chosen: list, game: dict,
+                           plays_of=None) -> int:
     """⚠️ For lines balldontlie shipped WITHOUT detail only: SB and CS from its
     own play-by-play. `chosen` is the list of (batting row, its /stats line).
     Nothing is filled unless the plays could be read and the feed is provably
@@ -5168,18 +5244,8 @@ def _fill_sb_cs_from_plays(game_id: int, all_lines: list[dict], chosen: list, ga
     targets = [(row, line) for row, line in chosen if _no_detail(line)]
     if not targets:
         return 0
-    plays: list[dict] = []
-    cursor = None
     try:
-        while True:
-            params: dict = {"game_id": game_id, "per_page": 100}   # /plays filters on the singular
-            if cursor is not None:
-                params["cursor"] = cursor
-            page = _bdl_get_json("plays", params)
-            plays.extend(page.get("data") or [])
-            cursor = (page.get("meta") or {}).get("next_cursor")
-            if cursor is None:
-                break
+        plays = (plays_of or (lambda: _fetch_bdl_plays(game_id)))()
     except Exception as exc:
         log.warning("plays for game %d unavailable, SB/CS left NULL: %s", game_id, exc)
         return 0
@@ -5669,7 +5735,20 @@ def _bdl_pitching_hbp(stat: dict) -> Optional[int]:
     return _to_int(raw)
 
 
-def _parse_bdl_pitching_gamelog(stat: dict, ctx: dict) -> Optional[dict]:
+def _pitching_line_evidence(stat: dict, ip_dec: float) -> bool:
+    """The line itself shows the pitcher pitched: an out, a batter faced, or any
+    pitch, hit, walk, run, hit batter or strikeout. ⚠️ balldontlie ships some real
+    appearances with NONE of it — 0 IP, `batters_faced` null, every count 0
+    (Kerkering 2026-08-02, "Orion Kerkering pitches to Pete Alonso") — and some
+    lines for pitchers who never appeared at all (Hurter 2026-04-15: no play
+    names the pitcher). Those are decided by the plays (`_admit_named_pitchers`)."""
+    bf = _to_int(stat.get("batters_faced"))
+    return bool((bf and bf > 0) or ip_dec > 0 or any(
+        (_to_int(stat.get(f)) or 0) > 0
+        for f in ("p_k", "pitch_count", "p_hits", "p_bb", "p_runs", "pitching_hbp")))
+
+
+def _parse_bdl_pitching_gamelog(stat: dict, ctx: dict, *, named_in_plays: bool = False) -> Optional[dict]:
     """BDL `/stats` row → `pitching_gamelogs` row dict. Returns
     None when the row has no pitching activity (IP is null) or
     the IP string can't be parsed.
@@ -5688,11 +5767,10 @@ def _parse_bdl_pitching_gamelog(stat: dict, ctx: dict) -> Optional[dict]:
     ip_dec = _ip_str_to_decimal(ip)
     if ip_dec is None:
         return None
-    # A pitcher who recorded no out still pitched if he faced a batter —
-    # Milner 06-25: IP 0, three hits, BF 3. `batters_faced` is the direct
-    # evidence; the IP/K test only decides rows that don't ship it.
-    bf = _to_int(stat.get("batters_faced"))
-    if not (bf and bf > 0) and ip_dec <= 0 and (_to_int(stat.get("p_k")) or 0) == 0:
+    # A pitcher who recorded no out still pitched if the line shows anything
+    # else (Milner 06-25: IP 0, three hits, BF 3), or if the game's plays show
+    # the pitcher (`named_in_plays`, decided in fetch_bdl_game_stats).
+    if not named_in_plays and not _pitching_line_evidence(stat, ip_dec):
         return None
 
     side = _resolve_side(stat, ctx)
@@ -5785,6 +5863,7 @@ def fetch_bdl_game_stats(
     page = 0
     all_lines: list[dict] = []
     line_of: dict = {}
+    unproven: list = []        # (our id, line): pitched per the IP field, no evidence in the line
     while True:
         page += 1
         # BDL silently ignores `game_id` (singular) on /stats — the
@@ -5829,9 +5908,24 @@ def fetch_bdl_game_stats(
             pit = _parse_bdl_pitching_gamelog(stat, ctx)
             if pit is not None:
                 pit_by_pid.setdefault(mlbam, []).append(pit)
+            elif stat.get("ip") is not None and _ip_str_to_decimal(stat.get("ip")) is not None \
+                    and not _pitching_line_evidence(stat, _ip_str_to_decimal(stat.get("ip"))):
+                unproven.append((mlbam, stat))
         cursor = (data.get("meta") or {}).get("next_cursor")
         if cursor is None:
             break
+    # The plays are read at most once per game, for whichever needs them first.
+    plays_memo: list = []
+
+    def plays_of() -> list[dict]:
+        if not plays_memo:
+            plays_memo.append(_fetch_bdl_plays(game_id))
+        return plays_memo[0]
+
+    n_named = _admit_named_pitchers(game_id, all_lines, unproven, ctx, plays_of, pit_by_pid, bdl_to_mlbam)
+    if n_named:
+        log.info("fetch_bdl_game_stats(%d): %d pitching line(s) without evidence admitted — "
+                 "the plays show the pitcher", game_id, n_named)
     # One appearance per player per game: an aliased player (two balldontlie
     # records) can arrive twice — keep the line with more known fields, never sum.
     for by in (bat_by_pid, pit_by_pid):
@@ -5839,7 +5933,7 @@ def fetch_bdl_game_stats(
             if len(rows) > 1:
                 by[pid] = [max(rows, key=_known_count)]
     chosen = [(r, line_of[id(r)]) for rows in bat_by_pid.values() for r in rows if id(r) in line_of]
-    n_sb = _fill_sb_cs_from_plays(game_id, all_lines, chosen, ctx.get("_game") or {})
+    n_sb = _fill_sb_cs_from_plays(game_id, all_lines, chosen, ctx.get("_game") or {}, plays_of)
     if n_sb:
         log.info("fetch_bdl_game_stats(%d): SB/CS read from the plays for %d line(s) without detail",
                  game_id, n_sb)
