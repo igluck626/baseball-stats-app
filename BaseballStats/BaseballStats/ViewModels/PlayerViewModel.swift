@@ -140,6 +140,9 @@ final class PlayerViewModel: ObservableObject {
     @Published var careerBatting: PlayerCareerStats?
     @Published var currentPitching: PitcherCurrentStats?
     @Published var careerPitching: PitcherCareerStats?
+    /// Each traded season's clubs (`/season-teams`). nil until it lands, or
+    /// on an older backend — the career table then reads as before.
+    @Published var seasonTeams: SeasonTeamsResponse?
     /// Career-wide awards + vote-share data — keyed lookups built off
     /// `awards?.career_by_year` drive the per-season chiclets in the
     /// frozen pane and the headline-counts row in the header card.
@@ -380,13 +383,14 @@ final class PlayerViewModel: ObservableObject {
         async let careerBattingDone:   Void = loadCareerBatting()
         async let currentPitchingDone: Void = loadCurrentPitching()
         async let careerPitchingDone:  Void = loadCareerPitching()
+        async let seasonTeamsDone:     Void = loadSeasonTeams()
         async let awardsDone:          Void = loadAwards()
         async let postseasonDone:      Void = loadPostseason()
         async let hotColdDone:         Void = loadHotColdSeason()
 
         _ = await (
             currentBattingDone, careerBattingDone,
-            currentPitchingDone, careerPitchingDone,
+            currentPitchingDone, careerPitchingDone, seasonTeamsDone,
             awardsDone, postseasonDone, hotColdDone
         )
 
@@ -1130,6 +1134,11 @@ final class PlayerViewModel: ObservableObject {
             recordError(error)
         }
         isLoadingCurrentPitching = false
+    }
+
+    /// Best-effort: a failure leaves the table as it was, with no error shown.
+    private func loadSeasonTeams() async {
+        seasonTeams = (try? await api.getSeasonTeams(playerId: player.player_id)) ?? nil
     }
 
     private func loadCareerPitching() async {

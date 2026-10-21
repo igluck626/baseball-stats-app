@@ -236,6 +236,14 @@ final class APIClient {
         return try await get(url, using: snakeCaseDecoder)
     }
 
+    /// `GET /players/{id}/season-teams` — each traded season's clubs, for the
+    /// career table's "All teams" row and the club rows under it. nil on 404
+    /// (an older backend without the endpoint: the table reads as before).
+    func getSeasonTeams(playerId: Int) async throws -> SeasonTeamsResponse? {
+        let url = try buildURL(path: "/players/\(playerId)/season-teams")
+        return try await getOptional(url)
+    }
+
     /// `GET /players/{id}/pitching/current`. Returns nil on 404 — the
     /// player has no current-season pitching line (the common case for
     /// position players).
