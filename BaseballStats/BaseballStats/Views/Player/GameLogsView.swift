@@ -1180,6 +1180,7 @@ private struct BattingFrozenGameRow: View {
             if let onTap {
                 Button { onTap(game) } label: { content }
                     .buttonStyle(.plain)
+                    .accessibilityIdentifier("gameLogs.row")
             } else {
                 content
             }
@@ -1446,6 +1447,7 @@ private struct PitchingFrozenGameRow: View {
             if let onTap {
                 Button { onTap(game) } label: { content }
                     .buttonStyle(.plain)
+                    .accessibilityIdentifier("gameLogs.row")
             } else {
                 content
             }

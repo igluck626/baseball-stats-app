@@ -97,6 +97,12 @@ struct PlayerProfileScreen: View {
     // optional column the user wants to show; core columns (WAR/G/PA/AB
     // for batting, WAR/G for pitching) are always rendered regardless.
     @State private var showingColumnFilter = false
+    /// Traded seasons whose club rows are showing, keyed by role and year
+    /// (`tradedKey`). Collapsed by default. View state, deliberately not part of
+    /// `ProfileUIState`: it survives a push from this page (a box score and
+    /// back) because the page stays in the stack, and dies when the page is
+    /// popped — never restored, never carried to a later visit.
+    @State private var expandedTraded: Set<String> = []
     /// Career tab: regular-season table or the postseason one. Offered only
     /// when the side being shown has a postseason; otherwise it is ignored.
     private var careerScope: CareerScope {
@@ -1492,15 +1498,37 @@ struct PlayerProfileScreen: View {
         .padding(.horizontal, 4)
     }
 
+    private func tradedKey(_ role: String, _ year: Int) -> String { "\(role)-\(year)" }
+
+    private func isTradedExpanded(_ role: String, _ year: Int) -> Bool {
+        expandedTraded.contains(tradedKey(role, year))
+    }
+
+    /// Both panes read the same set, so the frozen and scrolling halves of a
+    /// club row appear and disappear together.
+    private func toggleTraded(_ role: String, _ year: Int) {
+        let key = tradedKey(role, year)
+        withAnimation(.easeInOut(duration: 0.2)) {
+            if expandedTraded.contains(key) { expandedTraded.remove(key) } else { expandedTraded.insert(key) }
+        }
+    }
+
     private func battingCareerTable(seasons: [CareerSeason], totals: CareerTotals?) -> some View {
         let sorted = sortBatting(seasons, by: battingSort)
         let agg = BattingCareerAgg.compute(seasons: seasons)
+        // Traded seasons (`/season-teams`): the season row reads "All teams" and
+        // its clubs follow. The Team column widens to fit the label only for a
+        // player who has one.
+        let traded = viewModel.seasonTeams?.battingByYear ?? [:]
+        let hasTraded = seasons.contains { $0.year.map { traded[$0] != nil } ?? false }
+        let teamWidth = TradedLayout.teamWidth(base: BattingCareerColumn.team, traded: hasTraded)
+        let paneWidth = careerFrozenPaneWidth - BattingCareerColumn.team + teamWidth
         return HStack(spacing: 0) {
             // Frozen section — Year, Age, Team. Stays put while the
             // stat columns to the right scroll horizontally. Subtle
             // shadow on the right edge separates it from the scroller.
             VStack(spacing: 0) {
-                BattingCareerFrozenHeader(sort: $ui.battingSort)
+                BattingCareerFrozenHeader(sort: $ui.battingSort, teamWidth: teamWidth)
                 Divider()
                 ForEach(Array(sorted.enumerated()), id: \.offset) { index, season in
                     let isSelected = season.year.map(selectedSeasons.contains) ?? false
@@ -1513,16 +1541,27 @@ struct PlayerProfileScreen: View {
                         isSelected: isSelected,
                         tint:       selectionTint,
                         onTapYearCell:  { season.year.map(jumpToGameLogs(year:)) },
-                        onSelectToggle: { season.year.map(toggleSeasonSelection) }
+                        onSelectToggle: { season.year.map(toggleSeasonSelection) },
+                        teamWidth: teamWidth,
+                        allTeams: season.year.map { traded[$0] != nil } ?? false,
+                        expanded: season.year.map { isTradedExpanded("batting", $0) } ?? false,
+                        clubCount: season.year.flatMap { traded[$0]?.teams.count } ?? 0,
+                        onToggleExpand: { season.year.map { toggleTraded("batting", $0) } }
                     )
+                    if let y = season.year, isTradedExpanded("batting", y), let t = traded[y] {
+                        ForEach(Array(t.teams.enumerated()), id: \.offset) { _, club in
+                            Divider().opacity(0.2)
+                            CareerFrozenClubRow(team: club.team, teamWidth: teamWidth)
+                        }
+                    }
                     if index != sorted.indices.last {
                         Divider().opacity(0.4)
                     }
                 }
                 Divider()
-                BattingCareerFrozenTotalsRow()
+                BattingCareerFrozenTotalsRow(teamWidth: teamWidth)
             }
-            .frame(width: careerFrozenPaneWidth)
+            .frame(width: paneWidth)
             .background(.ultraThinMaterial)
             .shadow(color: .black.opacity(0.08), radius: 4, x: 2, y: 0)
             .zIndex(1)
@@ -1544,6 +1583,12 @@ struct PlayerProfileScreen: View {
                             onSelectToggle: { season.year.map(toggleSeasonSelection) },
                             onAwardTap: { presentingVoting = $0 }
                         )
+                        if let y = season.year, isTradedExpanded("batting", y), let t = traded[y] {
+                            ForEach(Array(t.teams.enumerated()), id: \.offset) { _, club in
+                                Divider().opacity(0.2)
+                                BattingCareerScrollableClubRow(club: club, visible: visibleBattingColumns)
+                            }
+                        }
                         if index != sorted.indices.last {
                             Divider().opacity(0.4)
                         }
@@ -1564,12 +1609,19 @@ struct PlayerProfileScreen: View {
     private func pitchingCareerTable(seasons: [PitcherCareerSeason], totals: PitcherCareerTotals?) -> some View {
         let sorted = sortPitching(seasons, by: pitchingSort)
         let agg = PitchingCareerAgg.compute(seasons: seasons)
+        // Traded seasons (`/season-teams`): the season row reads "All teams" and
+        // its clubs follow. The Team column widens to fit the label only for a
+        // player who has one.
+        let traded = viewModel.seasonTeams?.pitchingByYear ?? [:]
+        let hasTraded = seasons.contains { $0.year.map { traded[$0] != nil } ?? false }
+        let teamWidth = TradedLayout.teamWidth(base: PitchingCareerColumn.team, traded: hasTraded)
+        let paneWidth = careerFrozenPaneWidth - PitchingCareerColumn.team + teamWidth
         return HStack(spacing: 0) {
             // Frozen section — Year, Age, Team. Matches the batting
             // table's split-pane structure: stays put while WAR/W/L/…
             // scroll horizontally to the right.
             VStack(spacing: 0) {
-                PitchingCareerFrozenHeader(sort: $ui.pitchingSort)
+                PitchingCareerFrozenHeader(sort: $ui.pitchingSort, teamWidth: teamWidth)
                 Divider()
                 ForEach(Array(sorted.enumerated()), id: \.offset) { index, season in
                     let isSelected = season.year.map(selectedSeasons.contains) ?? false
@@ -1582,16 +1634,27 @@ struct PlayerProfileScreen: View {
                         isSelected: isSelected,
                         tint:       selectionTint,
                         onTapYearCell:  { season.year.map(jumpToGameLogs(year:)) },
-                        onSelectToggle: { season.year.map(toggleSeasonSelection) }
+                        onSelectToggle: { season.year.map(toggleSeasonSelection) },
+                        teamWidth: teamWidth,
+                        allTeams: season.year.map { traded[$0] != nil } ?? false,
+                        expanded: season.year.map { isTradedExpanded("pitching", $0) } ?? false,
+                        clubCount: season.year.flatMap { traded[$0]?.teams.count } ?? 0,
+                        onToggleExpand: { season.year.map { toggleTraded("pitching", $0) } }
                     )
+                    if let y = season.year, isTradedExpanded("pitching", y), let t = traded[y] {
+                        ForEach(Array(t.teams.enumerated()), id: \.offset) { _, club in
+                            Divider().opacity(0.2)
+                            CareerFrozenClubRow(team: club.team, teamWidth: teamWidth)
+                        }
+                    }
                     if index != sorted.indices.last {
                         Divider().opacity(0.4)
                     }
                 }
                 Divider()
-                PitchingCareerFrozenTotalsRow()
+                PitchingCareerFrozenTotalsRow(teamWidth: teamWidth)
             }
-            .frame(width: careerFrozenPaneWidth)
+            .frame(width: paneWidth)
             .background(.ultraThinMaterial)
             .shadow(color: .black.opacity(0.08), radius: 4, x: 2, y: 0)
             .zIndex(1)
@@ -1613,6 +1676,12 @@ struct PlayerProfileScreen: View {
                             onSelectToggle: { season.year.map(toggleSeasonSelection) },
                             onAwardTap: { presentingVoting = $0 }
                         )
+                        if let y = season.year, isTradedExpanded("pitching", y), let t = traded[y] {
+                            ForEach(Array(t.teams.enumerated()), id: \.offset) { _, club in
+                                Divider().opacity(0.2)
+                                PitchingCareerScrollableClubRow(club: club, visible: visiblePitchingColumns)
+                            }
+                        }
                         if index != sorted.indices.last {
                             Divider().opacity(0.4)
                         }
@@ -2067,6 +2136,8 @@ private func displayTeamCode(_ raw: String?, league: String? = nil) -> String {
 
 private struct BattingCareerFrozenHeader: View {
     @Binding var sort: CareerSort
+    /// Widened to fit "All teams" when the player has a traded season (TradedLayout).
+    var teamWidth: CGFloat = BattingCareerColumn.team
     var body: some View {
         HStack(spacing: 0) {
             CareerHeaderCell(label: "Year", width: BattingCareerColumn.year,
@@ -2076,7 +2147,7 @@ private struct BattingCareerFrozenHeader: View {
             // Explicit Color.clear gap so right-aligned Age and
             // left-aligned Team don't touch ("34LAA" → "34   LAA").
             Color.clear.frame(width: BattingCareerColumn.ageTeamGap)
-            CareerHeaderCell(label: "Team", width: BattingCareerColumn.team,
+            CareerHeaderCell(label: "Team", width: teamWidth,
                              alignment: .leading,  sort: $sort)
         }
         .font(.system(size: 11, weight: .semibold))
@@ -2456,6 +2527,14 @@ private struct BattingCareerFrozenSeasonRow: View {
     /// Team cell tap (and every non-Year/Age cell across the row).
     /// Toggles this year in the parent's selection set.
     let onSelectToggle: () -> Void
+    /// Widened to fit "All teams" when the player has a traded season (TradedLayout).
+    var teamWidth: CGFloat = BattingCareerColumn.team
+    /// A traded season: the row is the season total, labelled "All teams",
+    /// and its Team cell expands and collapses its club rows.
+    var allTeams: Bool = false
+    var expanded: Bool = false
+    var clubCount: Int = 0
+    var onToggleExpand: () -> Void = {}
 
     var body: some View {
         HStack(spacing: 0) {
@@ -2479,13 +2558,19 @@ private struct BattingCareerFrozenSeasonRow: View {
             // for two-team cities ("Los Angeles" + AL → "LAA" vs +NL
             // → "LAD"). Anything outside the dict (already-modern
             // codes, ancient teams) passes through.
-            Text(displayTeamCode(season.team, league: season.league))
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(width: BattingCareerColumn.team, alignment: .leading)
-                .padding(.horizontal, 2)
-                .contentShape(Rectangle())
-                .onTapGesture { onSelectToggle() }
+            if allTeams {
+                TradedDisclosure(expanded: expanded, clubCount: clubCount, onToggle: onToggleExpand)
+                    .frame(width: teamWidth, alignment: .leading)
+                    .padding(.horizontal, 2)
+            } else {
+                Text(displayTeamCode(season.team, league: season.league))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(width: teamWidth, alignment: .leading)
+                    .padding(.horizontal, 2)
+                    .contentShape(Rectangle())
+                    .onTapGesture { onSelectToggle() }
+            }
         }
         .font(.system(size: 11))
         .padding(.leading, 12)
@@ -2498,6 +2583,8 @@ private struct BattingCareerFrozenSeasonRow: View {
 }
 
 private struct BattingCareerFrozenTotalsRow: View {
+    /// Widened to fit "All teams" when the player has a traded season (TradedLayout).
+    var teamWidth: CGFloat = BattingCareerColumn.team
     var body: some View {
         HStack(spacing: 0) {
             Text("Career").frame(width: BattingCareerColumn.year, alignment: .leading)
@@ -2505,7 +2592,7 @@ private struct BattingCareerFrozenTotalsRow: View {
             Color.clear.frame(width: BattingCareerColumn.age)
                 .padding(.horizontal, 2)
             Color.clear.frame(width: BattingCareerColumn.ageTeamGap)
-            Color.clear.frame(width: BattingCareerColumn.team)
+            Color.clear.frame(width: teamWidth)
                 .padding(.horizontal, 2)
         }
         .font(.system(size: 9.5, weight: .semibold))
@@ -2759,6 +2846,8 @@ private enum PitchingCareerColumn {
 
 private struct PitchingCareerFrozenHeader: View {
     @Binding var sort: CareerSort
+    /// Widened to fit "All teams" when the player has a traded season (TradedLayout).
+    var teamWidth: CGFloat = PitchingCareerColumn.team
     var body: some View {
         HStack(spacing: 0) {
             CareerHeaderCell(label: "Year", width: PitchingCareerColumn.year,
@@ -2766,7 +2855,7 @@ private struct PitchingCareerFrozenHeader: View {
             CareerHeaderCell(label: "Age",  width: PitchingCareerColumn.age,
                              alignment: .trailing, sort: $sort)
             Color.clear.frame(width: PitchingCareerColumn.ageTeamGap)
-            CareerHeaderCell(label: "Team", width: PitchingCareerColumn.team,
+            CareerHeaderCell(label: "Team", width: teamWidth,
                              alignment: .leading,  sort: $sort)
         }
         .font(.system(size: 11, weight: .semibold))
@@ -2787,6 +2876,14 @@ private struct PitchingCareerFrozenSeasonRow: View {
     let tint: Color
     let onTapYearCell: () -> Void
     let onSelectToggle: () -> Void
+    /// Widened to fit "All teams" when the player has a traded season (TradedLayout).
+    var teamWidth: CGFloat = PitchingCareerColumn.team
+    /// A traded season: the row is the season total, labelled "All teams",
+    /// and its Team cell expands and collapses its club rows.
+    var allTeams: Bool = false
+    var expanded: Bool = false
+    var clubCount: Int = 0
+    var onToggleExpand: () -> Void = {}
 
     var body: some View {
         HStack(spacing: 0) {
@@ -2806,13 +2903,19 @@ private struct PitchingCareerFrozenSeasonRow: View {
             .onTapGesture { onTapYearCell() }
 
             Color.clear.frame(width: PitchingCareerColumn.ageTeamGap)
-            Text(displayTeamCode(season.team, league: season.league))
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(width: PitchingCareerColumn.team, alignment: .leading)
-                .padding(.horizontal, 2)
-                .contentShape(Rectangle())
-                .onTapGesture { onSelectToggle() }
+            if allTeams {
+                TradedDisclosure(expanded: expanded, clubCount: clubCount, onToggle: onToggleExpand)
+                    .frame(width: teamWidth, alignment: .leading)
+                    .padding(.horizontal, 2)
+            } else {
+                Text(displayTeamCode(season.team, league: season.league))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(width: teamWidth, alignment: .leading)
+                    .padding(.horizontal, 2)
+                    .contentShape(Rectangle())
+                    .onTapGesture { onSelectToggle() }
+            }
         }
         .font(.system(size: 11))
         .padding(.leading, 12)
@@ -2825,6 +2928,8 @@ private struct PitchingCareerFrozenSeasonRow: View {
 }
 
 private struct PitchingCareerFrozenTotalsRow: View {
+    /// Widened to fit "All teams" when the player has a traded season (TradedLayout).
+    var teamWidth: CGFloat = PitchingCareerColumn.team
     var body: some View {
         HStack(spacing: 0) {
             Text("Career").frame(width: PitchingCareerColumn.year, alignment: .leading)
@@ -2832,7 +2937,7 @@ private struct PitchingCareerFrozenTotalsRow: View {
             Color.clear.frame(width: PitchingCareerColumn.age)
                 .padding(.horizontal, 2)
             Color.clear.frame(width: PitchingCareerColumn.ageTeamGap)
-            Color.clear.frame(width: PitchingCareerColumn.team)
+            Color.clear.frame(width: teamWidth)
                 .padding(.horizontal, 2)
         }
         .font(.system(size: 9.5, weight: .semibold))
@@ -3057,6 +3162,192 @@ private struct PitchingCareerScrollableTotalsRow: View {
         .frame(height: 28)
         .background(Color(.systemGray5).opacity(0.7))
         .overlay(alignment: .top) { Divider() }
+    }
+}
+
+// MARK: - Traded seasons (club rows)
+
+/// Layout for a traded season in the career tables: the season row reads
+/// "All teams" behind a disclosure chevron, collapsed by default; expanded,
+/// each club follows as a smaller, indented row in both panes.
+enum TradedLayout {
+    static let allTeamsLabel = "All teams"
+    /// The table's fixed 11pt type (it doesn't follow Dynamic Type).
+    static let rowFont = UIFont.systemFont(ofSize: 11)
+    /// The disclosure chevron ahead of the label: its glyph size, the slot it
+    /// rotates in, and the gap before the label.
+    static let chevronSize: CGFloat = 8
+    static let chevronWidth: CGFloat = 9
+    static let chevronGap: CGFloat = 2
+    /// Chevron plus "All teams" measured in that type — the Team column's width
+    /// for a player with a traded season (30pt fits a three-letter code, not this).
+    static let allTeamsWidth: CGFloat = chevronWidth + chevronGap + ceil((allTeamsLabel as NSString)
+        .size(withAttributes: [.font: rowFont]).width)
+    /// The Team column's width: measured, never narrower than the code column.
+    static func teamWidth(base: CGFloat, traded: Bool) -> CGFloat {
+        traded ? max(base, allTeamsWidth) : base
+    }
+    /// Club rows are shorter than season rows, in both panes alike.
+    static let clubRowHeight: CGFloat = 24
+    /// Clubs sit under the label, a step in from it (past the chevron).
+    static let clubIndent: CGFloat = chevronWidth + chevronGap + 4
+}
+
+/// The Team cell of a traded season: a chevron and "All teams", and its own
+/// tap target. A season row already has two — Year/Age opens that season's
+/// game logs, every other cell toggles the season's selection — so on a
+/// traded row this cell expands instead of selecting; the stat cells still
+/// select.
+///
+/// SwiftUI has no expanded-state accessibility API in this SDK (UIKit's
+/// `accessibilityExpandedStatus` has no SwiftUI counterpart), so VoiceOver
+/// hears the state as the value: "All teams, 2 clubs, Collapsed, Button".
+private struct TradedDisclosure: View {
+    let expanded: Bool
+    let clubCount: Int
+    let onToggle: () -> Void
+    var body: some View {
+        Button(action: onToggle) {
+            HStack(spacing: TradedLayout.chevronGap) {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: TradedLayout.chevronSize, weight: .bold))
+                    .foregroundStyle(.tint)
+                    .rotationEffect(.degrees(expanded ? 90 : 0))
+                    .frame(width: TradedLayout.chevronWidth)
+                Text(TradedLayout.allTeamsLabel)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("All teams, \(clubCount) clubs")
+        .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+        .accessibilityHint(expanded ? "Hides each club's line." : "Shows each club's line.")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityIdentifier("tradedDisclosure")
+    }
+}
+
+/// A club's Year/Age/Team cells: Year and Age blank, the club's code
+/// indented in secondary type.
+private struct CareerFrozenClubRow: View {
+    let team: String
+    let teamWidth: CGFloat
+    var body: some View {
+        HStack(spacing: 0) {
+            Color.clear.frame(width: BattingCareerColumn.year).padding(.horizontal, 2)
+            Color.clear.frame(width: BattingCareerColumn.age).padding(.horizontal, 2)
+            Color.clear.frame(width: BattingCareerColumn.ageTeamGap)
+            Text(displayTeamCode(team))
+                .lineLimit(1)
+                .padding(.leading, TradedLayout.clubIndent)
+                .frame(width: teamWidth, alignment: .leading)
+                .padding(.horizontal, 2)
+        }
+        .font(.system(size: 10))
+        .foregroundStyle(.secondary)
+        .padding(.leading, 12)
+        .frame(height: TradedLayout.clubRowHeight)
+    }
+}
+
+/// One stat cell of a club row — the season row's frame, without the
+/// leader tint (league leaders are a season-total fact).
+private func clubCell(_ value: String, _ width: CGFloat) -> some View {
+    Text(value)
+        .monospacedDigit()
+        .frame(width: width, alignment: .trailing)
+        .padding(.horizontal, 2)
+}
+
+private struct BattingCareerScrollableClubRow: View {
+    let club: ClubLine
+    let visible: Set<String>
+    var body: some View {
+        let c = club
+        HStack(spacing: 0) {
+            clubCell("—", BattingCareerColumn.war)                       // WAR: per season only
+            clubCell(formatCount(c.int("G")),  BattingCareerColumn.g)
+            clubCell(formatCount(c.int("PA")), BattingCareerColumn.pa)
+            clubCell(formatCount(c.int("AB")), BattingCareerColumn.ab)
+            if visible.contains("R")    { clubCell(formatCount(c.int("R")),       BattingCareerColumn.r) }
+            if visible.contains("H")    { clubCell(formatCount(c.int("H")),       BattingCareerColumn.h) }
+            if visible.contains("2B")   { clubCell(formatCount(c.int("doubles")), BattingCareerColumn.doubles) }
+            if visible.contains("3B")   { clubCell(formatCount(c.int("triples")), BattingCareerColumn.triples) }
+            if visible.contains("HR")   { clubCell(formatCount(c.int("HR")),      BattingCareerColumn.hr) }
+            if visible.contains("RBI")  { clubCell(formatCount(c.int("RBI")),     BattingCareerColumn.rbi) }
+            if visible.contains("SB")   { clubCell(formatCount(c.int("SB")),      BattingCareerColumn.sb) }
+            if visible.contains("CS")   { clubCell(formatCount(c.int("CS")),      BattingCareerColumn.cs) }
+            if visible.contains("BB")   { clubCell(formatCount(c.int("BB")),      BattingCareerColumn.bb) }
+            if visible.contains("SO")   { clubCell(formatCount(c.int("SO")),      BattingCareerColumn.so) }
+            if visible.contains("AVG")  { clubCell(format3(c.avg),  BattingCareerColumn.ba) }
+            if visible.contains("OBP")  { clubCell(format3(c.obp),  BattingCareerColumn.obp) }
+            if visible.contains("SLG")  { clubCell(format3(c.slg),  BattingCareerColumn.slg) }
+            if visible.contains("OPS")  { clubCell(format3(c.ops),  BattingCareerColumn.ops) }
+            if visible.contains("OPS+") { clubCell("—",             BattingCareerColumn.opsPlus) }  // per season only
+            if visible.contains("wOBA") { clubCell(format3(c.woba), BattingCareerColumn.woba) }
+            if visible.contains("K%")   { clubCell(formatPct(c.kPct),  BattingCareerColumn.kPct) }
+            if visible.contains("BB%")  { clubCell(formatPct(c.bbPct), BattingCareerColumn.bbPct) }
+            if visible.contains("TB")   { clubCell(formatCount(c.tb),           BattingCareerColumn.tb) }
+            if visible.contains("GIDP") { clubCell(formatCount(c.int("GIDP")),  BattingCareerColumn.gidp) }
+            if visible.contains("HBP")  { clubCell(formatCount(c.int("HBP")),   BattingCareerColumn.hbp) }
+            if visible.contains("SH")   { clubCell(formatCount(c.int("SH")),    BattingCareerColumn.sh) }
+            if visible.contains("SF")   { clubCell(formatCount(c.int("SF")),    BattingCareerColumn.sf) }
+            if visible.contains("IBB")  { clubCell(formatCount(c.int("IBB")),   BattingCareerColumn.ibb) }
+            Color.clear.frame(width: careerAwardsCellWidth)
+        }
+        .font(.system(size: 10))
+        .foregroundStyle(.secondary)
+        .padding(.trailing, 12)
+        .frame(height: TradedLayout.clubRowHeight)
+    }
+}
+
+private struct PitchingCareerScrollableClubRow: View {
+    let club: ClubLine
+    let visible: Set<String>
+    var body: some View {
+        let c = club
+        HStack(spacing: 0) {
+            clubCell("—", PitchingCareerColumn.war)                      // WAR: per season only
+            if visible.contains("W")     { clubCell(formatCount(c.int("W")), PitchingCareerColumn.w) }
+            if visible.contains("L")     { clubCell(formatCount(c.int("L")), PitchingCareerColumn.l) }
+            if visible.contains("W-L%")  { clubCell(formatWinPctValue(c.winPct), PitchingCareerColumn.wlPct) }
+            if visible.contains("ERA")   { clubCell(format2(c.era), PitchingCareerColumn.era) }
+            clubCell(formatCount(c.int("G")), PitchingCareerColumn.g)
+            if visible.contains("GS")    { clubCell(formatCount(c.int("GS")),  PitchingCareerColumn.gs) }
+            if visible.contains("GF")    { clubCell(formatCount(c.int("GF")),  PitchingCareerColumn.gf) }
+            if visible.contains("CG")    { clubCell(formatCount(c.int("CG")),  PitchingCareerColumn.cg) }
+            if visible.contains("SHO")   { clubCell(formatCount(c.int("SHO")), PitchingCareerColumn.sho) }
+            if visible.contains("SV")    { clubCell(formatCount(c.int("SV")),  PitchingCareerColumn.sv) }
+            if visible.contains("IP")    { clubCell(formatIP(c.double("IP")),  PitchingCareerColumn.ip) }
+            if visible.contains("H")     { clubCell(formatCount(c.int("H")),   PitchingCareerColumn.h) }
+            if visible.contains("R")     { clubCell(formatCount(c.int("R")),   PitchingCareerColumn.r) }
+            if visible.contains("ER")    { clubCell(formatCount(c.int("ER")),  PitchingCareerColumn.er) }
+            if visible.contains("HR")    { clubCell(formatCount(c.int("HR")),  PitchingCareerColumn.hr) }
+            if visible.contains("BB")    { clubCell(formatCount(c.int("BB")),  PitchingCareerColumn.bb) }
+            if visible.contains("IBB")   { clubCell(formatCount(c.int("IBB")), PitchingCareerColumn.ibb) }
+            if visible.contains("SO")    { clubCell(formatCount(c.int("SO")),  PitchingCareerColumn.so) }
+            if visible.contains("HBP")   { clubCell(formatCount(c.int("HBP")), PitchingCareerColumn.hbp) }
+            if visible.contains("BK")    { clubCell(formatCount(c.int("BK")),  PitchingCareerColumn.bk) }
+            if visible.contains("WP")    { clubCell(formatCount(c.int("WP")),  PitchingCareerColumn.wp) }
+            if visible.contains("BF")    { clubCell(formatCount(c.int("BFP")), PitchingCareerColumn.bf) }
+            if visible.contains("ERA+")  { clubCell("—", PitchingCareerColumn.eraPlus) }  // per season only
+            if visible.contains("FIP")   { clubCell(format2(c.fip),    PitchingCareerColumn.fip) }
+            if visible.contains("WHIP")  { clubCell(format2(c.whip),   PitchingCareerColumn.whip) }
+            if visible.contains("H/9")   { clubCell(format1(c.hPer9),  PitchingCareerColumn.hPer9) }
+            if visible.contains("HR/9")  { clubCell(format2(c.hrPer9), PitchingCareerColumn.hrPer9) }
+            if visible.contains("BB/9")  { clubCell(format1(c.bbPer9), PitchingCareerColumn.bbPer9) }
+            if visible.contains("SO/9")  { clubCell(format1(c.soPer9), PitchingCareerColumn.soPer9) }
+            if visible.contains("SO/BB") { clubCell(format2(c.soBB),   PitchingCareerColumn.soBB) }
+            Color.clear.frame(width: careerAwardsCellWidth)
+        }
+        .font(.system(size: 10))
+        .foregroundStyle(.secondary)
+        .padding(.trailing, 12)
+        .frame(height: TradedLayout.clubRowHeight)
     }
 }
 
