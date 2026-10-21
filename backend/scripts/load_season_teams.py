@@ -35,6 +35,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LAHMAN = os.path.join(HERE, "..", "data", "lahman")
+JUDGMENTS = os.path.join(HERE, "..", "data", "lahman_bridge_judgments.json")
 LAST_LOADED_SEASON = 2025          # finished seasons only; the current one is live
 
 # The columns a club row shows — what "adds up" is checked on.
@@ -124,15 +125,31 @@ def _row(cols, values, role):
     return out
 
 
-def load_sources(cur, role):
+def lahman_bridge():
+    """Lahman playerID -> our player id: lahman_load's judged bridge, plus the
+    hand judgments in data/lahman_bridge_judgments.json for ids the judge holds.
+    Never People's bbrefID: along a few chains Lahman shifted it onto the next
+    man, so keying by it files one man's club rows under his namesake."""
+    sys.path.insert(0, HERE)
+    import lahman_load
+    bridge = dict(lahman_load._load_chadwick_bridge())
+    for j in json.load(open(JUDGMENTS))["judgments"]:
+        have = bridge.get(j["playerID"])
+        if have is not None and have != j["mlbam"]:
+            raise SystemExit(f"judgment {j['playerID']} -> {j['mlbam']} contradicts the judged bridge ({have})")
+        bridge[j["playerID"]] = j["mlbam"]
+    return bridge
+
+
+def load_sources(cur, role, bridge=None):
     t = TABLES[role]
     store = STORE[role]
+    bridge = lahman_bridge() if bridge is None else bridge
     cur.execute(f"SELECT s.player_id, b.bbref_id, s.year, s.source, {_q(store)} "
                 f"FROM {t['season']} s JOIN {t['bio']} b USING (player_id) ORDER BY s.player_id, s.year")
-    seasons, by_bbref = {}, {}
+    seasons = {}
     for r in cur.fetchall():
         seasons[(r[0], r[2])] = (r[1], r[3], _row(store, r[4:], role))
-        by_bbref.setdefault((r[1], r[2]), r[0])
     cur.execute(f"SELECT player_id, year, team, stint_order, source, {_q(store)} "
                 f"FROM {t['stints']} ORDER BY player_id, year, stint_order, team")
     stints = collections.defaultdict(list)
@@ -140,12 +157,10 @@ def load_sources(cur, role):
         row = _row(store, r[5:], role)
         row.update(_team=r[2], _order=r[3], _source=r[4])
         stints[(r[0], r[1])].append(row)
-    people = {p["playerID"]: p["bbrefID"] or p["playerID"]
-              for p in csv.DictReader(open(os.path.join(LAHMAN, "People.csv")))}
     lahman = collections.defaultdict(list)
     for r in csv.DictReader(open(os.path.join(LAHMAN, t["lahman"]))):
-        pid = by_bbref.get((people.get(r["playerID"], r["playerID"]), int(r["yearID"])))
-        if pid is None:
+        pid = bridge.get(r["playerID"])
+        if pid is None or (pid, int(r["yearID"])) not in seasons:
             continue
         row = {c: num(r[lc]) for c, lc in t["lmap"].items()}
         row["PA"] = None if role == "bat" else row.get("PA")
@@ -157,8 +172,9 @@ def load_sources(cur, role):
 def build(cur):
     """Every role's rows to store, and the coverage table, from the current sources."""
     rows, coverage = {}, {}
+    bridge = lahman_bridge()
     for role in ("bat", "pit"):
-        seasons, stints, lahman = load_sources(cur, role)
+        seasons, stints, lahman = load_sources(cur, role, bridge)
         cov = collections.defaultdict(collections.Counter)
         out = []
         traded = {k for k, v in stints.items() if len(v) > 1} | {k for k, v in lahman.items() if len(v) > 1}
@@ -209,10 +225,9 @@ def source_checksums(cur):
             for r in cur.fetchall():
                 h.update(repr(tuple(r)).encode())
             out[f"{role}_{name}"] = h.hexdigest()
-        cur.execute(f"SELECT player_id, bbref_id FROM {t['bio']} ORDER BY 1")
-        out[f"{role}_bio"] = hashlib.sha256(repr(cur.fetchall()).encode()).hexdigest()
-    for f in ("People.csv", "Batting.csv", "Pitching.csv"):
+    for f in ("People.csv", "Batting.csv", "Pitching.csv", "chadwick_mlb.csv"):
         out[f] = hashlib.sha256(open(os.path.join(LAHMAN, f), "rb").read()).hexdigest()
+    out["lahman_bridge_judgments.json"] = hashlib.sha256(open(JUDGMENTS, "rb").read()).hexdigest()
     return out
 
 

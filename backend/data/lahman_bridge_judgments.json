@@ -1,0 +1,20 @@
+{
+ "_about": "Lahman playerIDs judged by hand, where lahman_load.judge_lahman_ids holds the id because Lahman's own shifted retroID fails to confirm. Approved by Isaac 2026-10-19 (2c). Each is checked by birth date against the Chadwick register; a judgment never overrides a mapping the judge made itself.",
+ "judgments": [
+  {
+   "playerID": "harribi05",
+   "mlbam": 819165,
+   "why": "Bill Harris b. 1908-12-25 Calhoun AL; Chadwick bridge 819165 = retro harrb115 = Lahman harribi05; played 1931-37 per Chadwick, = harribi05's seasons. The other Bill Harris (harribi06, retro harrb117, 1929-31) has no MLBAM id."
+  },
+  {
+   "playerID": "williro02",
+   "mlbam": 816544,
+   "why": "Roy S. Williams b. 1907-07-24 in both Lahman and Chadwick; Lahman's retroID willr106 is shifted (it is Roy K. Williams's)."
+  },
+  {
+   "playerID": "fabelju01",
+   "mlbam": 819598,
+   "why": "Julián Fabelo b. 1890-03-19 in both Lahman and Chadwick; Lahman's retroID fabri101 is shifted (it is Isidro Fabré's)."
+  }
+ ]
+}
