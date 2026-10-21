@@ -1752,13 +1752,9 @@ private struct FinalGameCard: View {
             // `includesToday` gate matches the box-score's
             // `pitcherDecisionTag`: bump only when this is today's
             // game AND the gamelog ingest hasn't reached today yet.
+            // "—" in place of the record when the server flags it unknown.
             let recBump = SeasonType.regularSeasonBump(1, includesToday: rec.includesToday, game: game)
-            switch tag {
-            case "W":  return "(\(rec.wins + recBump)-\(rec.losses))"
-            case "L":  return "(\(rec.wins)-\(rec.losses + recBump))"
-            case "SV": return "(\(rec.saves + recBump))"
-            default:   return nil
-            }
+            return rec.figure(for: tag, bump: recBump).map { "(\($0))" }
         }()
         // On a postseason game this is a REGULAR-season record — left off.
         let recordText = SeasonType.regularSeasonFigure(seasonRecord, in: game)

@@ -1878,15 +1878,16 @@ struct BoxScoreView: View {
             // rows up to this game's date. Bump only when the game
             // is today AND the log hasn't absorbed today yet
             // (`includesToday=false`), mirroring the pitcher path.
+            // "—" when the server flags the total unknown (`figure`).
             if let stats = vm.batterStatsAtDate[bp.person.id] {
-                let atDate: Int
-                if      totalKey == \BoxBatting.homeRuns { atDate = stats.homeRuns }
-                else if totalKey == \BoxBatting.doubles  { atDate = stats.doubles }
-                else if totalKey == \BoxBatting.triples  { atDate = stats.triples }
-                else                                     { atDate = 0 }
+                let total: BatterStatsAtDate.Total
+                if      totalKey == \BoxBatting.homeRuns { total = .homeRuns }
+                else if totalKey == \BoxBatting.doubles  { total = .doubles }
+                else if totalKey == \BoxBatting.triples  { total = .triples }
+                else                                     { return prefix }
                 let bump = SeasonType.regularSeasonBump(gameCount, includesToday: stats.includesToday,
                                                         game: vm.game)
-                return "\(prefix) (\(atDate + bump))"
+                return "\(prefix) (\(stats.figure(total, bump: bump)))"
             }
             // Historical: the contextual endpoint is never called for
             // these games — it resolves through BDL ids they never
@@ -2064,15 +2065,16 @@ struct BoxScoreView: View {
             // tracks the latter; flip the bump off as soon as the
             // catch-up writes today's gamelog row so the displayed
             // record doesn't double-count this decision.
+            // "—" in place of the record when the server flags it unknown.
             let bump = SeasonType.regularSeasonBump(1, includesToday: rec.includesToday, game: vm.game)
-            if (game?.wins ?? 0) > 0 {
-                return "(W \(rec.wins + bump)-\(rec.losses))"
+            if (game?.wins ?? 0) > 0, let f = rec.figure(for: "W", bump: bump) {
+                return "(W \(f))"
             }
-            if (game?.losses ?? 0) > 0 {
-                return "(L \(rec.wins)-\(rec.losses + bump))"
+            if (game?.losses ?? 0) > 0, let f = rec.figure(for: "L", bump: bump) {
+                return "(L \(f))"
             }
-            if (game?.saves ?? 0) > 0 {
-                return "(SV \(rec.saves + bump))"
+            if (game?.saves ?? 0) > 0, let f = rec.figure(for: "SV", bump: bump) {
+                return "(SV \(f))"
             }
             return nil
         }

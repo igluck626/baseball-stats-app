@@ -2945,7 +2945,9 @@ private struct PitchingCareerScrollableSeasonRow: View {
             if visible.contains("BB")    { leaderCell(formatCount(season.BB),       label: "BB",    leaders: l, width: PitchingCareerColumn.bb) }
             if visible.contains("IBB")   { leaderCell(formatCount(season.IBB),      label: "IBB",   leaders: l, width: PitchingCareerColumn.ibb) }
             if visible.contains("SO")    { leaderCell(formatCount(season.SO),       label: "SO",    leaders: l, width: PitchingCareerColumn.so) }
-            if visible.contains("HBP")   { leaderCell(formatCountOrZero(season.HBP), label: "HBP",  leaders: l, width: PitchingCareerColumn.hbp) }
+            // A CURRENT season's NULL HBP is unknown (a game balldontlie shipped
+            // without it), not the "pybaseball never had the column" 0 — "—".
+            if visible.contains("HBP")   { leaderCell((season.year ?? 0) >= UnknownRule.currentSeason ? formatCount(season.HBP) : formatCountOrZero(season.HBP), label: "HBP",  leaders: l, width: PitchingCareerColumn.hbp) }
             if visible.contains("BK")    { leaderCell(formatCountOrZero(season.BK),  label: "BK",    leaders: l, width: PitchingCareerColumn.bk) }
             if visible.contains("WP")    { leaderCell(formatCountOrZero(season.WP),  label: "WP",    leaders: l, width: PitchingCareerColumn.wp) }
             if visible.contains("BF")    { leaderCell(formatCount(season.BFP),      label: "BF",    leaders: l, width: PitchingCareerColumn.bf) }
@@ -3450,7 +3452,7 @@ private struct MultiYearSummarySheet: View {
             return [
                 local1(agg.war / n),
                 local1(Double(agg.g)    / n),
-                local1(Double(agg.pa)   / n),
+                local1(agg.pa.map { Double($0)   / n }),
                 local1(Double(agg.ab)   / n),
                 local1(Double(agg.r)    / n),
                 local1(Double(agg.h)    / n),
@@ -3459,7 +3461,7 @@ private struct MultiYearSummarySheet: View {
                 local1(Double(agg.hr)   / n),
                 local1(Double(agg.rbi)  / n),
                 local1(Double(agg.sb)   / n),
-                local1(Double(agg.cs)   / n),
+                local1(agg.cs.map { Double($0)   / n }),
                 local1(Double(agg.bb)   / n),
                 local1(Double(agg.so)   / n),
                 format3(agg.avg),
@@ -3468,11 +3470,11 @@ private struct MultiYearSummarySheet: View {
                 format3(agg.ops),
                 "—",                        // OPS+
                 local1(Double(agg.tb)   / n),
-                local1(Double(agg.gidp) / n),
-                local1(Double(agg.hbp)  / n),
-                local1(Double(agg.sh)   / n),
-                local1(Double(agg.sf)   / n),
-                local1(Double(agg.ibb)  / n),
+                local1(agg.gidp.map { Double($0) / n }),
+                local1(agg.hbp.map { Double($0)  / n }),
+                local1(agg.sh.map { Double($0)   / n }),
+                local1(agg.sf.map { Double($0)   / n }),
+                local1(agg.ibb.map { Double($0)  / n }),
             ]
         } else {
             let agg = pitchingAgg
@@ -3490,13 +3492,13 @@ private struct MultiYearSummarySheet: View {
                 local1(Double(agg.sv)  / n),
                 local1(agg.ip / n),
                 local1(Double(agg.h)   / n),
-                local1(Double(agg.r)   / n),
+                local1(agg.r.map { Double($0)   / n }),
                 local1(Double(agg.er)  / n),
                 local1(Double(agg.hr)  / n),
                 local1(Double(agg.bb)  / n),
                 local1(Double(agg.ibb) / n),
                 local1(Double(agg.so)  / n),
-                local1(Double(agg.hbp) / n),
+                local1(agg.hbp.map { Double($0) / n }),
                 local1(Double(agg.bk)  / n),
                 local1(Double(agg.wp)  / n),
                 local1(Double(agg.bf)  / n),
@@ -3524,7 +3526,7 @@ private struct MultiYearSummarySheet: View {
             return [
                 local1(agg.war * s),
                 local1(Double(agg.g)    * s),     // always 162.0
-                local1(Double(agg.pa)   * s),
+                local1(agg.pa.map { Double($0)   * s }),
                 local1(Double(agg.ab)   * s),
                 local1(Double(agg.r)    * s),
                 local1(Double(agg.h)    * s),
@@ -3533,7 +3535,7 @@ private struct MultiYearSummarySheet: View {
                 local1(Double(agg.hr)   * s),
                 local1(Double(agg.rbi)  * s),
                 local1(Double(agg.sb)   * s),
-                local1(Double(agg.cs)   * s),
+                local1(agg.cs.map { Double($0)   * s }),
                 local1(Double(agg.bb)   * s),
                 local1(Double(agg.so)   * s),
                 format3(agg.avg),
@@ -3542,11 +3544,11 @@ private struct MultiYearSummarySheet: View {
                 format3(agg.ops),
                 "—",                              // OPS+
                 local1(Double(agg.tb)   * s),
-                local1(Double(agg.gidp) * s),
-                local1(Double(agg.hbp)  * s),
-                local1(Double(agg.sh)   * s),
-                local1(Double(agg.sf)   * s),
-                local1(Double(agg.ibb)  * s),
+                local1(agg.gidp.map { Double($0) * s }),
+                local1(agg.hbp.map { Double($0)  * s }),
+                local1(agg.sh.map { Double($0)   * s }),
+                local1(agg.sf.map { Double($0)   * s }),
+                local1(agg.ibb.map { Double($0)  * s }),
             ]
         } else {
             let agg = pitchingAgg
@@ -3570,13 +3572,13 @@ private struct MultiYearSummarySheet: View {
                 local1(Double(agg.sv)  * s),
                 local1(agg.ip * s),               // always 162.0
                 local1(Double(agg.h)   * s),
-                local1(Double(agg.r)   * s),
+                local1(agg.r.map { Double($0)   * s }),
                 local1(Double(agg.er)  * s),
                 local1(Double(agg.hr)  * s),
                 local1(Double(agg.bb)  * s),
                 local1(Double(agg.ibb) * s),
                 local1(Double(agg.so)  * s),
-                local1(Double(agg.hbp) * s),
+                local1(agg.hbp.map { Double($0) * s }),
                 local1(Double(agg.bk)  * s),
                 local1(Double(agg.wp)  * s),
                 local1(Double(agg.bf)  * s),
@@ -3613,6 +3615,11 @@ private struct MultiYearSummarySheet: View {
     // which has different nil-handling semantics.
     private func local1(_ value: Double) -> String {
         String(format: "%.1f", value)
+    }
+
+    /// An unknown total (nil) reads "—", never a rate on a short count.
+    private func local1(_ value: Double?) -> String {
+        value.map { String(format: "%.1f", $0) } ?? "—"
     }
 }
 
@@ -3815,7 +3822,7 @@ private func formatPct(_ value: Double?) -> String {
 /// folded in when applicable. The grid builder reads these instead
 /// of `currentBatting.standard.*` so the same render path works
 /// whether or not the player has appeared today.
-fileprivate struct EffectiveBatting {
+struct EffectiveBatting {
     let WAR: Double?
     let AVG: Double?
     let OBP: Double?
@@ -3828,7 +3835,7 @@ fileprivate struct EffectiveBatting {
     let PA:  Int?
 }
 
-fileprivate struct EffectivePitching {
+struct EffectivePitching {
     let WAR:    Double?
     let W:      Int?
     let L:      Int?
@@ -3849,7 +3856,7 @@ fileprivate struct EffectivePitching {
 /// (AVG / OBP / SLG / OPS) are recomputed off the merged H / AB /
 /// BB / HBP / SF / TB so the third-decimal display is accurate.
 /// WAR isn't updated — box scores don't ship game WAR.
-fileprivate func makeEffectiveBatting(
+func makeEffectiveBatting(
     overnight stats: PlayerCurrentStats,
     recent: BoxBattingLine?,
     usesBDLDirectStats: Bool = false
@@ -3874,15 +3881,24 @@ fileprivate func makeEffectiveBatting(
     let H   = (s?.H   ?? 0) + recent.H
     let AB  = (s?.AB  ?? 0) + recent.AB
     let BB  = (s?.BB  ?? 0) + recent.BB
-    let HBP = (s?.HBP ?? 0) + recent.HBP
-    let SF  = (s?.SF  ?? 0) + recent.SF
-    let d2  = (s?.doubles ?? 0) + recent.doubles
-    let d3  = (s?.triples ?? 0) + recent.triples
     let HR  = (s?.HR  ?? 0) + recent.HR
+    // ⚠️ UNKNOWN STAYS UNKNOWN. A season value the server left NULL (no
+    // row at all reads as 0), or a field today's line shipped empty
+    // (`recent.unknown`), makes the merged figure nil — "—", never the
+    // known part passed off as the whole (UnknownRule).
+    func season(_ v: Int?) -> Int? { s == nil ? 0 : v }
+    func today(_ v: Int, _ name: String) -> Int? { recent.unknown.contains(name) ? nil : v }
+    let HBP = UnknownRule.plus(season(s?.HBP), today(recent.HBP, "HBP"))
+    let SF  = UnknownRule.plus(season(s?.SF), today(recent.SF, "SF"))
+    let d2  = UnknownRule.plus(season(s?.doubles), today(recent.doubles, "doubles"))
+    let d3  = UnknownRule.plus(season(s?.triples), today(recent.triples, "triples"))
+    let SB  = UnknownRule.plus(season(s?.SB), today(recent.SB, "SB"))
+    let recentPA: Int? = (HBP == nil || SF == nil) ? nil : recent.PA
+    let PA  = UnknownRule.plus(season(s?.PA), recentPA)
     // TB = singles + 2*doubles + 3*triples + 4*HR
     //    = (H - 2B - 3B - HR) + 2*2B + 3*3B + 4*HR
     //    = H + 2B + 2*3B + 3*HR
-    let TB  = H + d2 + 2 * d3 + 3 * HR
+    let TB: Int? = (d2 != nil && d3 != nil) ? H + d2! + 2 * d3! + 3 * HR : nil
     // Rate stats: prefer BDL's own season-to-date numbers when
     // present on the recent line. BDL computes them off their
     // server-side season counts (which already include today's
@@ -3892,16 +3908,13 @@ fileprivate func makeEffectiveBatting(
     // the integer-count formula when BDL didn't ship the rate
     // (early-season cold start, or qualifying gates not met).
     let computedAVG: Double? = AB > 0 ? Double(H) / Double(AB) : nil
-    let obpNum = H + BB + HBP
-    let obpDen = AB + BB + HBP + SF
-    let computedOBP: Double? = obpDen > 0 ? Double(obpNum) / Double(obpDen) : nil
-    let computedSLG: Double? = AB > 0 ? Double(TB) / Double(AB) : nil
+    let computedOBP: Double? = {
+        guard let HBP, let SF else { return nil }
+        let den = AB + BB + HBP + SF
+        return den > 0 ? Double(H + BB + HBP) / Double(den) : nil
+    }()
+    let computedSLG: Double? = (AB > 0 && TB != nil) ? Double(TB!) / Double(AB) : nil
     let computedOPS: Double? = {
-        if AB > 0, obpDen > 0 {
-            let obpPart = Double(H + BB + HBP) / Double(obpDen)
-            let slgPart = Double(H + d2 + 2 * d3 + 3 * HR) / Double(AB)
-            return obpPart + slgPart
-        }
         guard let computedOBP, let computedSLG else { return nil }
         return computedOBP + computedSLG
     }()
@@ -3915,8 +3928,8 @@ fileprivate func makeEffectiveBatting(
         G:   (s?.G   ?? 0) + recent.games,
         HR:  HR,
         RBI: (s?.RBI ?? 0) + recent.RBI,
-        SB:  (s?.SB  ?? 0) + recent.SB,
-        PA:  (s?.PA  ?? 0) + recent.PA
+        SB:  SB,
+        PA:  PA
     )
 }
 
@@ -3925,7 +3938,7 @@ fileprivate func makeEffectiveBatting(
 /// off the merged ER / H / BB / SO / IP. W-L and SV aren't touched —
 /// decisions arrive late in a game and updating them mid-game would
 /// assert an outcome that isn't yet final.
-fileprivate func makeEffectivePitching(
+func makeEffectivePitching(
     overnight stats: PitcherCurrentStats,
     recent: BoxPitchingLine?,
     usesBDLDirectStats: Bool = false
@@ -3960,14 +3973,19 @@ fileprivate func makeEffectivePitching(
     // — zero for everyone except the actual decision pitchers, so
     // summing them in is safe for live games too (the values stay
     // zero until MLB records the decision at game end).
+    // A final whose decisions balldontlie didn't ship leaves them unknown:
+    // "—", never the season's figure passed off as current (UnknownRule).
+    func decision(_ season: Int?, _ today: Int, _ name: String) -> Int? {
+        recent.unknown.contains(name) ? nil : (season ?? 0) + today
+    }
     return EffectivePitching(
         WAR: war,
-        W:  (s?.W  ?? 0) + recent.W,
-        L:  (s?.L  ?? 0) + recent.L,
+        W:  decision(s?.W, recent.W, "W"),
+        L:  decision(s?.L, recent.L, "L"),
         ERA: era, WHIP: whip, K_per9: k9,
         G:  (s?.G ?? 0) + recent.games,
         GS: usesBDLDirectStats ? recent.GS : stats.standard?.GS,
-        SV: (s?.SV ?? 0) + recent.SV,
+        SV: decision(s?.SV, recent.SV, "SV"),
         IP: IP, SO: SO, BB: BB
     )
 }
@@ -4003,8 +4021,8 @@ private func formatAge(seasonYear: Int?, birthYear: Int?, birthMonth: Int?, birt
 /// Per-season total bases — the backend doesn't ship TB directly so
 /// we derive it the same way Baseball Reference does:
 ///   TB = 1·1B + 2·2B + 3·3B + 4·HR, simplified to h + 2B + 2·3B + 3·HR
-/// since 1B = h − 2B − 3B − HR. Returns nil when H is missing (older
-/// Lahman seasons sometimes lack any batting counting stats).
+/// since 1B = h − 2B − 3B − HR. Returns nil when H, 2B or 3B is missing
+/// (older Lahman seasons sometimes lack batting counting stats).
 private func seasonTB(_ s: CareerSeason) -> Int? {
     // Prefer the stored value from the backend so it stays in sync
     // with the league-leader detection (which reads `player_seasons.TB`
@@ -4012,9 +4030,8 @@ private func seasonTB(_ s: CareerSeason) -> Int? {
     // responses that predate the TB column or for cases where the
     // backfill hasn't reached a particular row.
     if let stored = s.TB { return stored }
-    guard let h = s.H else { return nil }
-    let dbl = s.doubles ?? 0
-    let trp = s.triples ?? 0
+    // A missing double or triple is not a zero: no TB rather than a short one.
+    guard let h = s.H, let dbl = s.doubles, let trp = s.triples else { return nil }
     let hr  = s.HR ?? 0
     return h + dbl + 2 * trp + 3 * hr
 }
@@ -4522,15 +4539,20 @@ private struct HeaderBioRow: View {
 /// backend's `career_totals` payload omits AB / SB / AVG / OBP / SLG,
 /// so we sum on-device. Mirrors the same formulas used elsewhere in
 /// the app (matches `WindowSnapshot.computeBatting` in GameLogsView).
-private struct BattingCareerAgg {
+struct BattingCareerAgg {
     /// Career plate appearances — summed from seasons because
     /// CareerTotals doesn't ship a PA total.
-    let pa: Int
+    ///
+    /// ⚠️ nil = unknown. PA, HBP, SF, CS, GIDP, SH and IBB come from the
+    /// game logs for the current season, and a game balldontlie shipped
+    /// without detail leaves the season's value unknown; summing past it
+    /// gave a short career total. See UnknownRule.careerSum.
+    let pa: Int?
     let ab: Int
     let h: Int
     let bb: Int
-    let hbp: Int
-    let sf: Int
+    let hbp: Int?
+    let sf: Int?
     let dbl: Int
     let trp: Int
     let hr: Int
@@ -4539,11 +4561,11 @@ private struct BattingCareerAgg {
     let g:    Int
     let r:    Int
     let rbi:  Int
-    let cs:   Int
+    let cs:   Int?
     let so:   Int
-    let gidp: Int
-    let sh:   Int
-    let ibb:  Int
+    let gidp: Int?
+    let sh:   Int?
+    let ibb:  Int?
     let war:  Double
 
     var avg: Double? {
@@ -4551,6 +4573,7 @@ private struct BattingCareerAgg {
     }
 
     var obp: Double? {
+        guard let hbp, let sf else { return nil }
         let den = ab + bb + hbp + sf
         return den > 0 ? Double(h + bb + hbp) / Double(den) : nil
     }
@@ -4574,12 +4597,13 @@ private struct BattingCareerAgg {
         h + dbl + 2 * trp + 3 * hr
     }
 
-    var kPct:  Double? { pa > 0 ? Double(so) / Double(pa) : nil }
-    var bbPct: Double? { pa > 0 ? Double(bb) / Double(pa) : nil }
+    var kPct:  Double? { pa.flatMap { $0 > 0 ? Double(so) / Double($0) : nil } }
+    var bbPct: Double? { pa.flatMap { $0 > 0 ? Double(bb) / Double($0) : nil } }
 
     /// Career wOBA from summed components — standard linear weights
     /// (uBB = BB - IBB, singles), matching the backend.
     var woba: Double? {
+        guard let ibb, let sf, let hbp else { return nil }
         let ubb = bb - ibb
         let den = ab + ubb + sf + hbp
         guard den > 0 else { return nil }
@@ -4589,14 +4613,20 @@ private struct BattingCareerAgg {
         return num / Double(den)
     }
 
-    static func compute(seasons: [CareerSeason]) -> BattingCareerAgg {
-        BattingCareerAgg(
-            pa:   seasons.reduce(0) { $0 + ($1.PA ?? 0) },
+    static func compute(seasons: [CareerSeason],
+                        currentSeason: Int = UnknownRule.currentSeason) -> BattingCareerAgg {
+        // The columns the server can leave unknown for a current season.
+        func sum(_ key: KeyPath<CareerSeason, Int?>, _ name: String) -> Int? {
+            UnknownRule.careerSum(seasons, unknownable: UnknownRule.battingSeasonUnknownable.contains(name),
+                                  currentSeason: currentSeason, year: \.year, played: { $0.H != nil }, value: { $0[keyPath: key] })
+        }
+        return BattingCareerAgg(
+            pa:   sum(\.PA, "PA"),
             ab:   seasons.reduce(0) { $0 + ($1.AB ?? 0) },
             h:    seasons.reduce(0) { $0 + ($1.H ?? 0) },
             bb:   seasons.reduce(0) { $0 + ($1.BB ?? 0) },
-            hbp:  seasons.reduce(0) { $0 + ($1.HBP ?? 0) },
-            sf:   seasons.reduce(0) { $0 + ($1.SF ?? 0) },
+            hbp:  sum(\.HBP, "HBP"),
+            sf:   sum(\.SF, "SF"),
             dbl:  seasons.reduce(0) { $0 + ($1.doubles ?? 0) },
             trp:  seasons.reduce(0) { $0 + ($1.triples ?? 0) },
             hr:   seasons.reduce(0) { $0 + ($1.HR ?? 0) },
@@ -4604,11 +4634,11 @@ private struct BattingCareerAgg {
             g:    seasons.reduce(0) { $0 + ($1.G ?? 0) },
             r:    seasons.reduce(0) { $0 + ($1.R ?? 0) },
             rbi:  seasons.reduce(0) { $0 + ($1.RBI ?? 0) },
-            cs:   seasons.reduce(0) { $0 + ($1.CS ?? 0) },
+            cs:   sum(\.CS, "CS"),
             so:   seasons.reduce(0) { $0 + ($1.SO ?? 0) },
-            gidp: seasons.reduce(0) { $0 + ($1.GIDP ?? 0) },
-            sh:   seasons.reduce(0) { $0 + ($1.SH ?? 0) },
-            ibb:  seasons.reduce(0) { $0 + ($1.IBB ?? 0) },
+            gidp: sum(\.GIDP, "GIDP"),
+            sh:   sum(\.SH, "SH"),
+            ibb:  sum(\.IBB, "IBB"),
             war:  seasons.reduce(0.0) { $0 + ($1.WAR ?? 0) }
         )
     }
@@ -4618,16 +4648,18 @@ private struct BattingCareerAgg {
 /// but not ER/GS/SV/G, so we sum from seasons. ERA is computed as the
 /// IP-weighted equivalent: sum(ER)*9 / sum(IP), which is exactly the
 /// rate over the entire career.
-private struct PitchingCareerAgg {
+struct PitchingCareerAgg {
     let ip: Double
     let er: Int
     let h: Int
-    let r: Int
+    /// ⚠️ nil = unknown: R and HBP come from the game logs for the current
+    /// season (UnknownRule.careerSum).
+    let r: Int?
     let bb: Int
     let ibb: Int
     let so: Int
     let hr: Int
-    let hbp: Int
+    let hbp: Int?
     let bk: Int
     let wp: Int
     let bf: Int
@@ -4689,21 +4721,27 @@ private struct PitchingCareerAgg {
     /// FIP — fielding-independent pitching. Constant 3.10 matches the
     /// backend's `_fip` helper in data_service.py.
     var fip: Double? {
-        guard ip > 0 else { return nil }
+        guard ip > 0, let hbp else { return nil }
         return (13.0 * Double(hr) + 3.0 * Double(bb + hbp) - 2.0 * Double(so)) / ip + 3.10
     }
 
-    static func compute(seasons: [PitcherCareerSeason]) -> PitchingCareerAgg {
-        PitchingCareerAgg(
+    static func compute(seasons: [PitcherCareerSeason],
+                        currentSeason: Int = UnknownRule.currentSeason) -> PitchingCareerAgg {
+        // The columns the server can leave unknown for a current season.
+        func sum(_ key: KeyPath<PitcherCareerSeason, Int?>, _ name: String) -> Int? {
+            UnknownRule.careerSum(seasons, unknownable: UnknownRule.pitchingSeasonUnknownable.contains(name),
+                                  currentSeason: currentSeason, year: \.year, played: { $0.IP != nil }, value: { $0[keyPath: key] })
+        }
+        return PitchingCareerAgg(
             ip:  seasons.reduce(0.0) { $0 + ($1.IP  ?? 0) },
             er:  seasons.reduce(0)   { $0 + ($1.ER  ?? 0) },
             h:   seasons.reduce(0)   { $0 + ($1.H   ?? 0) },
-            r:   seasons.reduce(0)   { $0 + ($1.R   ?? 0) },
+            r:   sum(\.R, "R"),
             bb:  seasons.reduce(0)   { $0 + ($1.BB  ?? 0) },
             ibb: seasons.reduce(0)   { $0 + ($1.IBB ?? 0) },
             so:  seasons.reduce(0)   { $0 + ($1.SO  ?? 0) },
             hr:  seasons.reduce(0)   { $0 + ($1.HR  ?? 0) },
-            hbp: seasons.reduce(0)   { $0 + ($1.HBP ?? 0) },
+            hbp: sum(\.HBP, "HBP"),
             bk:  seasons.reduce(0)   { $0 + ($1.BK  ?? 0) },
             wp:  seasons.reduce(0)   { $0 + ($1.WP  ?? 0) },
             bf:  seasons.reduce(0)   { $0 + ($1.BFP ?? 0) },

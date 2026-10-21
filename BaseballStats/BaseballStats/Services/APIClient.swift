@@ -162,12 +162,24 @@ final class APIClient {
         guard let resp: BatterStatsAtDateResponse = try await getOptional(url) else {
             return nil
         }
-        return BatterStatsAtDate(
+        return Self.batterStatsAtDate(resp)
+    }
+
+    /// The response bytes → `BatterStatsAtDate`, the step the fetch takes —
+    /// exposed so tests can run a real server response through it.
+    static func batterStatsAtDate(from data: Data) throws -> BatterStatsAtDate {
+        batterStatsAtDate(try JSONDecoder().decode(BatterStatsAtDateResponse.self, from: data))
+    }
+
+    private static func batterStatsAtDate(_ resp: BatterStatsAtDateResponse) -> BatterStatsAtDate {
+        BatterStatsAtDate(
             homeRuns:      resp.home_runs,
             doubles:       resp.doubles,
             triples:       resp.triples,
             includesToday: resp.includes_today,
             gamelogRows:   resp.gamelog_rows ?? resp.gamelog_games,
+            doublesUnknown: resp.doubles_unknown ?? false,
+            triplesUnknown: resp.triples_unknown ?? false,
         )
     }
 
@@ -188,12 +200,25 @@ final class APIClient {
         guard let resp: PitcherRecordResponse = try await getOptional(url) else {
             return nil
         }
-        return PitcherRecord(
+        return Self.pitcherRecord(resp)
+    }
+
+    /// The response bytes → `PitcherRecord`, the step the fetch takes —
+    /// exposed so tests can run a real server response through it.
+    static func pitcherRecord(from data: Data) throws -> PitcherRecord {
+        pitcherRecord(try JSONDecoder().decode(PitcherRecordResponse.self, from: data))
+    }
+
+    private static func pitcherRecord(_ resp: PitcherRecordResponse) -> PitcherRecord {
+        PitcherRecord(
             wins:          resp.wins,
             losses:        resp.losses,
             saves:         resp.saves,
             includesToday: resp.includes_today,
             gamelogRows:   resp.gamelog_rows ?? resp.gamelog_games,
+            winsUnknown:   resp.wins_unknown ?? false,
+            lossesUnknown: resp.losses_unknown ?? false,
+            savesUnknown:  resp.saves_unknown ?? false,
         )
     }
 
@@ -716,6 +741,13 @@ struct PitcherRecord: Codable, Hashable {
     /// such a player read short of a row that was current. Absent on an
     /// older backend, hence optional; callers fall back to the boolean.
     let gamelogRows: Int?
+    /// ⚠️ The count above is the KNOWN games' when this is true: a game
+    /// whose decisions balldontlie didn't ship is unknown, not "no
+    /// decision", so the record shows "—". Absent on an older backend
+    /// (decoded as false).
+    var winsUnknown:   Bool = false
+    var lossesUnknown: Bool = false
+    var savesUnknown:  Bool = false
 }
 
 /// Raw shape `GET /players/{id}/pitcher-record-at-date` returns.
@@ -733,6 +765,10 @@ private struct PitcherRecordResponse: Decodable {
     /// Optional: an older backend doesn't send it.
     let gamelog_games:  Int?
     let gamelog_rows:   Int?
+    /// Optional: an older backend doesn't send them.
+    let wins_unknown:   Bool?
+    let losses_unknown: Bool?
+    let saves_unknown:  Bool?
 }
 
 /// Sister to `PitcherRecord` — batter's cumulative HR / 2B / 3B
@@ -755,6 +791,12 @@ struct BatterStatsAtDate: Codable, Hashable {
     /// such a player read short of a row that was current. Absent on an
     /// older backend, hence optional; callers fall back to the boolean.
     let gamelogRows: Int?
+    /// ⚠️ The count above is the KNOWN games' when this is true: a NULL
+    /// double (triple) on a game with AB or BB makes the season figure
+    /// unknown, and the line shows "—". Absent on an older backend
+    /// (decoded as false).
+    var doublesUnknown: Bool = false
+    var triplesUnknown: Bool = false
 }
 
 /// Raw shape `GET /players/{id}/batter-stats-at-date` returns.
@@ -770,6 +812,9 @@ private struct BatterStatsAtDateResponse: Decodable {
     /// Optional: an older backend doesn't send it.
     let gamelog_games:  Int?
     let gamelog_rows:   Int?
+    /// Optional: an older backend doesn't send them.
+    let doubles_unknown: Bool?
+    let triples_unknown: Bool?
 }
 
 /// Response from `GET /teams/{team_id}/postseason` — every series

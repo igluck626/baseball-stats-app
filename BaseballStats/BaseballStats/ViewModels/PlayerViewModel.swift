@@ -53,6 +53,12 @@ struct BoxBattingLine: Hashable {
     var seasonSLG: Double? = nil
     var seasonOPS: Double? = nil
 
+    /// ⚠️ Fields this line leaves UNKNOWN ("doubles", "triples", "HBP",
+    /// "SF", "SB") — balldontlie shipped them empty, so the 0 stored above
+    /// is a placeholder, not a count. The merge onto the season row shows
+    /// "—" for anything built on one (UnknownRule's activity rule).
+    var unknown: Set<String> = []
+
     /// Plate appearances — approximated as AB + BB + HBP + SF. SH
     /// (sacrifice bunts) is omitted; rare enough at modern usage
     /// that the one-PA imprecision is acceptable for this overlay.
@@ -76,6 +82,7 @@ struct BoxBattingLine: Hashable {
         doubles += o.doubles; triples += o.triples; HR += o.HR
         RBI += o.RBI; BB += o.BB; SO += o.SO; SB += o.SB
         HBP += o.HBP; SF += o.SF
+        unknown.formUnion(o.unknown)
         if let v = o.seasonAVG { seasonAVG = v }
         if let v = o.seasonOBP { seasonOBP = v }
         if let v = o.seasonSLG { seasonSLG = v }
@@ -105,6 +112,10 @@ struct BoxPitchingLine: Hashable {
     /// (`BDLSeasonStat.pitchingGs`); per-game stats rows ship the
     /// flag too but the existing overlay path doesn't propagate it.
     var GS: Int    = 0
+    /// ⚠️ Decisions this line leaves UNKNOWN ("W", "L", "SV"): a final whose
+    /// decisions balldontlie didn't ship (UnknownRule.decisionUnknowns). The 0
+    /// above is then a placeholder, and the merged record shows "—".
+    var unknown: Set<String> = []
 
     var appeared: Bool { IP > 0 }
 
@@ -114,6 +125,7 @@ struct BoxPitchingLine: Hashable {
         H  += o.H;  R  += o.R;  ER += o.ER
         BB += o.BB; SO += o.SO; HR += o.HR
         W  += o.W;  L  += o.L;  SV += o.SV
+        unknown.formUnion(o.unknown)
         GS += o.GS
     }
 }
@@ -842,7 +854,8 @@ final class PlayerViewModel: ObservableObject {
                                 if var existing = bat { existing.add(line); bat = existing }
                                 else                  { bat = line }
                             }
-                            if let line = Self.bdlPitchingLine(r) {
+                            if var line = Self.bdlPitchingLine(r) {
+                                line.unknown = UnknownRule.decisionUnknowns(gameLines: rows, isLive: live)
                                 if var existing = pit { existing.add(line); pit = existing }
                                 else                  { pit = line }
                             }
@@ -901,7 +914,14 @@ final class PlayerViewModel: ObservableObject {
         let opsValue: Double? = (s.obp != nil && s.slg != nil)
             ? (s.obp! + s.slg!)
             : nil
-        return BoxBattingLine(
+        // The activity rule, as the server applies it to the same line.
+        var unknown: Set<String> = []
+        for (name, value) in [("doubles", s.doubles), ("triples", s.triples), ("HBP", s.hitByPitch),
+                              ("SF", s.sacFlies), ("SB", s.stolenBases)]
+        where UnknownRule.battingUnknown(name, value: value, ab: ab, bb: bb) {
+            unknown.insert(name)
+        }
+        var line = BoxBattingLine(
             games:   1,
             AB:      ab,
             R:       s.runs           ?? 0,
@@ -920,11 +940,13 @@ final class PlayerViewModel: ObservableObject {
             seasonSLG: s.slg,
             seasonOPS: opsValue
         )
+        line.unknown = unknown
+        return line
     }
 
     /// BDL `BDLPlayerStat` → pitching line. Returns nil when the
     /// row has no pitching activity.
-    nonisolated private static func bdlPitchingLine(_ s: BDLPlayerStat) -> BoxPitchingLine? {
+    nonisolated static func bdlPitchingLine(_ s: BDLPlayerStat) -> BoxPitchingLine? {
         // BDL's per-game `ip` is a baseball-notation string ("5.2"
         // = 5⅔, "0.1" = ⅓), NOT a decimal — parse to true decimal
         // before any arithmetic. Skip the row when the pitcher
@@ -1138,8 +1160,8 @@ extension BDLSeasonStat {
     /// the FULL season counts (not a delta). Used by the
     /// `usesBDLDirectStats` path when BDL is ahead of the DB and
     /// the renderer needs to replace overnight stats. BDL doesn't
-    /// ship HBP / SF; they're left at 0 (PA derivation downstream
-    /// is forced to use AB + BB only).
+    /// ship HBP / SF; they're left at 0 and marked unknown, so PA and any
+    /// rate the merge would build on them show "—".
     func toBattingLine() -> BoxBattingLine {
         var line = BoxBattingLine()
         line.games   = battingGp  ?? 0
@@ -1155,6 +1177,7 @@ extension BDLSeasonStat {
         line.SB      = battingSb  ?? 0
         line.HBP     = 0
         line.SF      = 0
+        line.unknown = ["HBP", "SF"]
         line.seasonAVG = battingAvg
         line.seasonOBP = battingObp
         line.seasonSLG = battingSlg
