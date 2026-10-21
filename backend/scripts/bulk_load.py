@@ -3,11 +3,10 @@
 
 Pipeline:
   Phase 0 — Lahman load    (1871 → last completed season, local CSVs)
-  Phase 1 — WAR backfill   (joins null-WAR rows to bwar_bat / bwar_pitch)
-  Phase 2 — Current season (pulls in-flight season from pybaseball)
+  Phase 1 — Current season (BDL season stats for the in-flight season)
 
-Phases 0 and 1 are local CSV / cached fetches; phase 2 hits Baseball
-Reference once for the current year. Total runtime is minutes, not hours.
+No WAR step: WAR is stored, never fetched (no Baseball-Reference fetch).
+Total runtime is minutes, not hours.
 
 Usage:
     DATABASE_URL=... backend/venv/bin/python backend/scripts/bulk_load.py
@@ -31,7 +30,6 @@ sys.path.insert(0, _SCRIPTS_DIR)
 sys.path.insert(0, os.path.join(_BACKEND_DIR, "api"))
 sys.path.insert(0, _BACKEND_DIR)
 
-import backfill_war                                       # noqa: E402
 import lahman_load                                        # noqa: E402
 import nightly_update                                     # noqa: E402
 from database import connection                           # noqa: E402
@@ -46,7 +44,7 @@ log = logging.getLogger(__name__)
 
 def parse_args() -> argparse.Namespace:
     return argparse.ArgumentParser(
-        description="Bulk-populate PostgreSQL: Lahman + WAR backfill + current season."
+        description="Bulk-populate PostgreSQL: Lahman + current season."
     ).parse_args()
 
 
@@ -65,12 +63,7 @@ def main() -> None:
     lahman_load.run()
 
     log.info("=" * 52)
-    log.info("Phase 1: WAR backfill via bwar_bat / bwar_pitch")
-    log.info("=" * 52)
-    backfill_war.run()
-
-    log.info("=" * 52)
-    log.info(f"Phase 2: Current season ({current_year}) — pybaseball")
+    log.info(f"Phase 1: Current season ({current_year}) — BDL")
     log.info("=" * 52)
     bat_updated, bat_skipped, bat_failed = nightly_update._update_batters(current_year)
     pit_updated, pit_skipped, pit_failed = nightly_update._update_pitchers(current_year)
@@ -78,8 +71,8 @@ def main() -> None:
     bar = "=" * 52
     print(f"\n{bar}")
     print("Bulk load complete")
-    print(f"  Phase 2 batters  — updated: {bat_updated:>5}  skipped: {bat_skipped:>5}  failed: {len(bat_failed):>5}")
-    print(f"  Phase 2 pitchers — updated: {pit_updated:>5}  skipped: {pit_skipped:>5}  failed: {len(pit_failed):>5}")
+    print(f"  Phase 1 batters  — updated: {bat_updated:>5}  skipped: {bat_skipped:>5}  failed: {len(bat_failed):>5}")
+    print(f"  Phase 1 pitchers — updated: {pit_updated:>5}  skipped: {pit_skipped:>5}  failed: {len(pit_failed):>5}")
     print(bar)
 
 

@@ -61,10 +61,9 @@ from database.models import (                                # noqa: E402
     StagingBattingGameLog, StagingPitchingGameLog, TeamSeason,
 )
 
-# scripts/ holds the Lahman loader, WAR backfill, and nightly update logic;
-# expose them so /admin endpoints can drive the same pipeline as the CLI.
+# scripts/ holds the Lahman loader and nightly update logic; expose them so
+# /admin endpoints can drive the same pipeline as the CLI.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
-import backfill_war                                         # noqa: E402
 import lahman_load                                          # noqa: E402
 import nightly_update                                       # noqa: E402
 import reset_db                                             # noqa: E402
@@ -79,17 +78,16 @@ PORT = int(os.getenv("PORT", "8000"))
 # ---------------------------------------------------------------------------
 # Bulk-load state (shared between background thread and status endpoint)
 # ---------------------------------------------------------------------------
-# Top-level "phase" tracks where we are in the three-step pipeline:
+# Top-level "phase" tracks where we are in the two-step pipeline:
 #   "lahman"          → Phase 0: Lahman archive (every completed season)
-#   "war_backfill"    → Phase 1: bwar_bat / bwar_pitch fills WAR / OPS+ / etc.
-#   "current_season"  → Phase 2: pybaseball pulls the in-flight season
+#   "current_season"  → Phase 1: BDL season stats for the in-flight season
 #   "done"
-# The nested "lahman" / "war" dicts get the live progress from the sub-runners.
+# No WAR step: WAR is stored, never fetched (no Baseball-Reference fetch).
+# The nested "lahman" dict gets the live progress from its sub-runner.
 _bulk_state: dict = {
     "running":  False,
     "phase":    None,
     "lahman":   {},
-    "war":      {},
     "current":  {},
     "error":    None,
     "last_run": None,
@@ -246,11 +244,11 @@ def _run_stage_retrosheet_gamelogs(year_from: int, year_to: int) -> None:
 
 
 def _run_bulk_load() -> None:
-    """Background thread: Lahman → WAR backfill → current-season fetch."""
+    """Background thread: Lahman → current-season fetch."""
     with _bulk_lock:
         _bulk_state.update(
             running=True, phase=None,
-            lahman={}, war={}, current={},
+            lahman={}, current={},
             error=None,
         )
 
@@ -258,10 +256,6 @@ def _run_bulk_load() -> None:
         with _bulk_lock:
             _bulk_state["phase"] = "lahman"
         lahman_load.run(state=_bulk_state["lahman"], lock=_bulk_lock)
-
-        with _bulk_lock:
-            _bulk_state["phase"] = "war_backfill"
-        backfill_war.run(state=_bulk_state["war"], lock=_bulk_lock)
 
         with _bulk_lock:
             _bulk_state["phase"] = "current_season"
@@ -335,46 +329,6 @@ def _run_lahman_load() -> None:
         with _lahman_lock:
             _lahman_state["running"]  = False
             _lahman_state["last_run"] = datetime.datetime.utcnow().isoformat() + "Z"
-
-
-# ---------------------------------------------------------------------------
-# WAR-backfill state (shared between background thread and status endpoint)
-# ---------------------------------------------------------------------------
-# Phases: "bridge" → "batting_lookup" → "batting" → "pitching_lookup" → "pitching" → "done"
-_war_state: dict = {
-    "running":  False,
-    "phase":    None,
-    "batting_total":    0,
-    "batting_updated":  0,
-    "batting_no_match": 0,
-    "pitching_total":    0,
-    "pitching_updated":  0,
-    "pitching_no_match": 0,
-    "error":    None,
-    "last_run": None,
-}
-_war_lock = threading.Lock()
-
-
-def _run_backfill_war() -> None:
-    """Background thread: run the WAR backfill, reporting progress to _war_state."""
-    with _war_lock:
-        _war_state.update(
-            running=True, phase=None,
-            batting_total=0, batting_updated=0, batting_no_match=0,
-            pitching_total=0, pitching_updated=0, pitching_no_match=0,
-            error=None,
-        )
-
-    try:
-        backfill_war.run(state=_war_state, lock=_war_lock)
-    except Exception as exc:
-        with _war_lock:
-            _war_state["error"] = str(exc)
-    finally:
-        with _war_lock:
-            _war_state["running"]  = False
-            _war_state["last_run"] = datetime.datetime.utcnow().isoformat() + "Z"
 
 
 # ---------------------------------------------------------------------------
@@ -498,7 +452,7 @@ _nightly_lock = threading.Lock()
 
 # Auto-reset the running flag if it's been set this long without
 # completion. Threshold is generous — a cold-cache full run including
-# pybaseball fetches and 30k+ DB upserts is typically <30 min, so
+# the BDL fetches and 30k+ DB upserts is typically <30 min, so
 # anything past 3h is almost certainly a SIGKILL'd thread that never
 # reached the finally block.
 _NIGHTLY_STALE_AFTER = datetime.timedelta(hours=3)
@@ -524,7 +478,6 @@ _CATCHUP_STALE_AFTER = datetime.timedelta(minutes=30)
 
 
 def _nightly_phase(
-    fetch_bwar_all,
     get_ids,
     save_seasons,
     build_entry,
@@ -536,10 +489,10 @@ def _nightly_phase(
     """One phase of the nightly update (batters or pitchers).
 
     Pre-fetches BDL season_stats for every BDL-mapped player in a
-    single batched HTTP run, then iterates players locally. bwar
-    provides the full-history WAR / OPS+ layer. `build_entry` is
-    the script-module function which merges the two and falls back
-    to MLB Stats API for rows without a `bdl_id`. `bio_model` is
+    single batched HTTP run, then iterates players locally.
+    `build_entry` is the script-module function that turns a BDL row
+    into the season entry. No WAR: WAR and the WAR-derived columns are
+    stored values, never refreshed (no Baseball-Reference fetch). `bio_model` is
     `Player` / `Pitcher` (used for the bdl_id-map SELECT);
     `parse_bdl_row` is `data_service._parse_bdl_batter_row` /
     `_parse_bdl_pitcher_row` (different normalization per side).
@@ -553,30 +506,6 @@ def _nightly_phase(
     # doesn't drain the rate budget with MLB Stats API fallbacks
     # before anyone notices.
     data_service._get_bdl_key()
-
-    # bref WAR is non-critical for the nightly — BDL ships the
-    # current-season counting stats, and WAR / OPS+ / ERA+ only
-    # come from `pybaseball.bwar_*`. If baseball-reference.com is
-    # down (its read endpoint times out intermittently),
-    # `fetch_bwar_all` will have already retried 3× and tried to
-    # serve the previous run's cached value. If even that fails —
-    # first nightly after a fresh deploy with bref still down —
-    # log a warning and degrade to an empty DataFrame so the rest
-    # of the phase (BDL stat ingestion) still runs.
-    try:
-        bwar_df = fetch_bwar_all()
-    except Exception as exc:
-        log.warning(
-            "bref WAR download failed after 3 attempts — continuing with empty "
-            "WAR data: %s", exc,
-        )
-        bwar_df = pd.DataFrame()
-    if bwar_df.empty or "year_ID" not in bwar_df.columns:
-        # Same empty-frame fall-through downstream — `build_entry`
-        # handles a no-WAR match per-player.
-        bwar_current = bwar_df
-    else:
-        bwar_current = bwar_df[bwar_df["year_ID"] == current_year]
 
     with connection.get_session() as db:
         ids: list[int] = get_ids(db)
@@ -609,7 +538,7 @@ def _nightly_phase(
             bdl_id = bdl_id_map.get(player_id)
             bdl_stats = bdl_stats_by_bdl_id.get(bdl_id) if bdl_id else None
             entry = build_entry(
-                player_id, bdl_id, bwar_current, current_year,
+                player_id, bdl_id, current_year,
                 bdl_stats=bdl_stats,
                 mlb_debut=debut_map.get(player_id),
             )
@@ -649,7 +578,6 @@ def _run_nightly_update() -> None:
         current_year = data_service._current_year()
         log.info(f"[nightly] starting batters phase, year={current_year}")
         _nightly_phase(
-            data_service._bwar_bat_all,
             crud.get_all_player_ids,
             crud.save_player_seasons,
             nightly_update._build_current_batter_entry,
@@ -668,7 +596,6 @@ def _run_nightly_update() -> None:
 
         log.info("[nightly] starting pitchers phase")
         _nightly_phase(
-            data_service._bwar_pitch_all,
             crud.get_all_pitcher_ids,
             crud.save_pitcher_seasons,
             nightly_update._build_current_pitcher_entry,
@@ -5929,61 +5856,6 @@ def admin_discover_from_rosters():
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
     current_year = datetime.datetime.utcnow().year
     return data_service.sync_all_player_teams_from_rosters(current_year)
-
-
-@app.get("/admin/bref-war-status")
-def admin_bref_war_status():
-    """Snapshot of the bref WAR CSV state per side. Surfaces the
-    download timestamp, row count, content hash, and a sample of
-    the most-recent year's data so an operator can confirm whether
-    bref has updated since the morning nightly. The
-    `updated_since_last_seen` flag compares the just-fetched hash
-    against the module-level `_last_war_hashes` snapshot taken
-    BEFORE this call — useful to verify that the next catch-up
-    will actually refresh WAR rather than skip it.
-    """
-    def _side_status(side: str, fetch_meta) -> dict:
-        prior_hash = data_service.get_last_war_hash(side)
-        try:
-            meta = fetch_meta()
-        except Exception as exc:
-            return {"status": "error", "error": str(exc), "prior_hash": prior_hash}
-        df = meta["df"]
-        recent_entry = None
-        recent_year_rows = None
-        if "year_ID" in df.columns and not df.empty:
-            try:
-                recent_year = int(df["year_ID"].max())
-                recent_slice = df[df["year_ID"] == recent_year]
-                recent_year_rows = int(len(recent_slice))
-                if not recent_slice.empty:
-                    r = recent_slice.iloc[0]
-                    recent_entry = {
-                        "year_ID":     recent_year,
-                        "name_common": str(r["name_common"]) if "name_common" in df.columns else None,
-                        "team_ID":     str(r["team_ID"]) if "team_ID" in df.columns else None,
-                        "PA":          (int(r["PA"]) if "PA" in df.columns and pd.notna(r["PA"]) else None),
-                        "WAR":         (float(r["WAR"]) if "WAR" in df.columns and pd.notna(r["WAR"]) else None),
-                    }
-            except (ValueError, TypeError) as exc:
-                # Defensive — surface the failure rather than 500
-                # the whole endpoint if a column has unexpected dtype.
-                recent_entry = {"error": f"recent-entry probe failed: {exc}"}
-        return {
-            "status":                 "ok",
-            "downloaded_at":          meta.get("downloaded_at"),
-            "hash":                   meta.get("hash"),
-            "rows":                   meta.get("rows"),
-            "recent_entry":           recent_entry,
-            "recent_year_rows":       recent_year_rows,
-            "prior_hash":             prior_hash,
-            "updated_since_last_seen": (prior_hash is None) or (prior_hash != meta.get("hash")),
-        }
-
-    return {
-        "batting":  _side_status("bat",   data_service._bwar_bat_all_meta),
-        "pitching": _side_status("pitch", data_service._bwar_pitch_all_meta),
-    }
 
 
 @app.get("/admin/check-gamelog-duplicates")
@@ -20010,26 +19882,6 @@ def bulk_load_status():
         state = dict(_bulk_state)
 
     return {"counts": counts, **state}
-
-
-@app.post("/admin/backfill-war")
-def start_backfill_war():
-    with _war_lock:
-        if _war_state["running"]:
-            return {"status": "already_running", **_war_state}
-
-    if not connection.db_available():
-        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
-
-    t = threading.Thread(target=_run_backfill_war, daemon=True)
-    t.start()
-    return {"status": "started"}
-
-
-@app.get("/admin/backfill-war/status")
-def backfill_war_status():
-    with _war_lock:
-        return dict(_war_state)
 
 
 @app.post("/admin/lahman-load")

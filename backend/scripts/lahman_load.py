@@ -2,7 +2,7 @@
 """Load Lahman historical batting/pitching stats into PostgreSQL.
 
 Lahman is the canonical source for every completed season. We load every
-year STRICTLY less than the current year — pybaseball handles the in-flight
+year STRICTLY less than the current year — BDL handles the in-flight
 season via nightly_update.py. After each season ends, Lahman is re-released
 with the just-completed year and this loader picks it up on the next run.
 
@@ -55,7 +55,7 @@ HOF_CSV                 = os.path.join(LAHMAN_DIR, "HallOfFame.csv")
 SERIES_POST_CSV         = os.path.join(LAHMAN_DIR, "SeriesPost.csv")
 
 # Load Lahman data only for years STRICTLY less than this — i.e. every
-# completed season. Pybaseball owns the current season; after it ends, Lahman
+# completed season. BDL owns the current season; after it ends, Lahman
 # is re-released with the new year and the cutoff naturally rolls forward.
 CUTOFF_YEAR = datetime.date.today().year
 _SAVE_BATCH = 200    # players per DB transaction during the save loops

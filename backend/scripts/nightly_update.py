@@ -17,14 +17,15 @@ phases in ONE place: `_run_nightly_update` in `api/main.py`.
 
 The per-phase notes below document what each FUNCTION does.
 
-Phase 1 (batters): fetches bwar_bat once for the WAR/OPS+ layer, then
-per-player BallDontLie season_stats for standard counting + rate stats,
-and upserts the current-year row in player_seasons.
+Phase 1 (batters): per-player BallDontLie season_stats for standard counting
++ rate stats, upserted into the current-year row in player_seasons.
 
-Phase 2 (pitchers): fetches bwar_pitch once for the WAR/ERA+ layer, then
-per-player BallDontLie season_stats for standard counting + rate stats
-(plus FIP and K/9 from BDL), and upserts the current-year row in
-pitcher_seasons.
+Phase 2 (pitchers): per-player BallDontLie season_stats for standard counting
++ rate stats (plus FIP and K/9 from BDL), upserted into the current-year row
+in pitcher_seasons.
+
+Neither phase writes WAR or the WAR-derived columns: those are stored values,
+kept as they are and never refreshed (no Baseball-Reference fetch).
 
 Phase 3 (standings): fetches the MLB Stats API standings endpoint and upserts the
 current-season row in team_seasons for each team.
@@ -45,7 +46,7 @@ addition to the `baseball-stats-app` API service):
 
 Seasonal workflow
 -----------------
-BDL + bwar are the source of truth for the in-flight current season.
+BDL is the source of truth for the in-flight current season.
 After each season ends (typically late October), the Lahman archive is
 re-released with the just-completed year. Re-running lahman_load.py
 permanently overwrites the current-season standings rows with
@@ -67,7 +68,6 @@ _BACKEND_DIR = os.path.dirname(_SCRIPTS_DIR)
 sys.path.insert(0, os.path.join(_BACKEND_DIR, "api"))
 sys.path.insert(0, _BACKEND_DIR)
 
-import pybaseball                                     # noqa: E402
 from sqlalchemy import func as _sql_func              # noqa: E402
 
 import data_service                                   # noqa: E402
@@ -112,7 +112,6 @@ def _safe_tb(br) -> int | None:
 def _build_current_batter_entry(
     player_id: int,
     bdl_id: int | None,
-    bwar_current,
     current_year: int,
     bdl_stats: dict | None = None,
     mlb_debut: int | None = None,
@@ -129,11 +128,10 @@ def _build_current_batter_entry(
     gates the unmapped-row warning — pre-2002 debuts predate BDL's
     coverage window and will never have a bdl_id, so logging them
     every nightly is pure noise. Modern (>=2002) debuts get the
-    warning because they SHOULD be mapped."""
-    player_war = (
-        bwar_current[bwar_current["mlb_ID"] == float(player_id)]
-        .sort_values("stint_ID")
-    )
+    warning because they SHOULD be mapped.
+
+    Never WAR or the WAR-derived columns, and no team / league: the upsert
+    is column-additive, so the stored values stay as they are."""
 
     # Caller is expected to pre-fetch in a batch and pass it
     # through. If bdl_stats is None and the row has no bdl_id at
@@ -152,36 +150,15 @@ def _build_current_batter_entry(
             )
         return None
 
-    if player_war.empty and bdl_stats is None:
+    if bdl_stats is None:
         return None
 
     entry: dict = {"year": current_year}
 
-    if not player_war.empty:
-        group = player_war
-        total_pa = group["PA"].sum()
-        ops_plus = (
-            float((group["OPS_plus"] * group["PA"]).sum() / total_pa)
-            if total_pa > 0 and not group["OPS_plus"].dropna().empty
-            else None
-        )
-        raw_team = str(group.iloc[-1]["team_ID"])
-        entry.update({
-            "team":           data_service._TEAM_DISPLAY.get(raw_team, raw_team),
-            "league":         str(group.iloc[-1]["lg_ID"]),
-            "WAR":            round(float(group["WAR"].sum()), 2),
-            "WAR_off":        round(float(group["WAR_off"].sum()), 2),
-            "WAR_def":        round(float(group["WAR_def"].sum()), 2),
-            "WAA":            round(float(group["WAA"].sum()), 2),
-            "OPS_plus":       round(ops_plus, 1) if ops_plus is not None else None,
-            "runs_above_avg": round(float(group["runs_above_avg"].sum()), 2),
-            "runs_above_rep": round(float(group["runs_above_rep"].sum()), 2),
-        })
-
     if bdl_stats:
         # Standard counting + rate stats from BDL (or MLB Stats API
-        # fallback). Iterate so None values don't clobber whatever
-        # bwar provided above. PA / CS / IBB / HBP / SF / SH / GIDP
+        # fallback). Iterate so None values don't clobber stored
+        # values. PA / CS / IBB / HBP / SF / SH / GIDP
         # are absent from BDL — they'll remain whatever the previous
         # nightly wrote, or NULL on a fresh row.
         for key in ("G", "AB", "R", "H", "doubles", "triples", "HR",
@@ -194,11 +171,6 @@ def _build_current_batter_entry(
             value = bdl_stats.get(key)
             if value is not None:
                 entry[key] = value
-        # WAR fallback — only fill from BDL when bwar didn't.
-        if "WAR" not in entry:
-            war = bdl_stats.get("WAR")
-            if war is not None:
-                entry["WAR"] = war
 
     return entry
 
@@ -247,8 +219,7 @@ def _apply_season_pa(db, player_id: int, year: int, entry: dict) -> None:
 def _update_batters(current_year: int) -> tuple[int, int, list[int]]:
     """Phase 1: walk every batter and refresh their current-season
     row. BDL is the per-player stats source (rate-limited to ≈4.5
-    req/sec); bwar provides the WAR/OPS+ layer in one bulk fetch.
-    Rookie discovery happens later in Phase 5 (active-roster walk)
+    req/sec). Rookie discovery happens later in Phase 5 (active-roster walk)
     — without bref's batting page scrape there's no equivalent
     pre-loop discovery here. Phase 5's coverage is strictly better
     for active players anyway."""
@@ -256,21 +227,6 @@ def _update_batters(current_year: int) -> tuple[int, int, list[int]]:
     # is missing it, before iterating thousands of players and
     # silently falling back to MLB Stats API on every one of them.
     data_service._get_bdl_key()
-
-    log.info("Fetching bwar_bat...")
-    bwar_df = data_service._bwar_bat_all()
-    # Copy out only the current-year slice (~750 rows). The full
-    # bwar_bat archive is hundreds of MB; holding it across a 22k-player
-    # iteration was the dominant memory pressure that triggered OOM
-    # kills on Railway. .copy() detaches the slice from the parent so
-    # the parent can actually be released.
-    bwar_current = bwar_df[bwar_df["year_ID"] == current_year].copy()
-    del bwar_df
-    # data_service caches the parent DataFrame; evict so the GC can
-    # actually reclaim it. Cost is one re-fetch on the next request
-    # (~30s), worth it for the memory headroom during this run.
-    data_service._store.pop("bwar_bat_all", None)
-    gc.collect()
 
     # Pre-load the bdl_id + mlb_debut maps in one query so the
     # per-player loop doesn't issue a SELECT for each row.
@@ -329,7 +285,6 @@ def _update_batters(current_year: int) -> tuple[int, int, list[int]]:
                 entry = _build_current_batter_entry(
                     player_id,
                     bdl_id,
-                    bwar_current,
                     current_year,
                     bdl_stats=bdl_stats,
                     mlb_debut=debut_map.get(player_id),
@@ -368,11 +323,6 @@ def _update_batters(current_year: int) -> tuple[int, int, list[int]]:
                 f"updated={updated}, skipped={skipped}, failed={len(failed)}"
             )
 
-    # Done with this phase's bwar slice — drop it before phase 2 starts
-    # accumulating its own dataframes.
-    del bwar_current
-    gc.collect()
-
     return updated, skipped, failed
 
 
@@ -383,7 +333,6 @@ def _update_batters(current_year: int) -> tuple[int, int, list[int]]:
 def _build_current_pitcher_entry(
     player_id: int,
     bdl_id: int | None,
-    bwar_current,
     current_year: int,
     bdl_stats: dict | None = None,
     mlb_debut: int | None = None,
@@ -391,13 +340,8 @@ def _build_current_pitcher_entry(
     """Build a pitcher_seasons row for the current year. Same shape
     as the batter builder — caller passes pre-fetched BDL stats
     in via `bdl_stats`. `mlb_debut` gates the unmapped-row warning
-    so pre-2002 debuts (outside BDL coverage) skip silently."""
-    player_war = (
-        bwar_current[bwar_current["mlb_ID"] == float(player_id)]
-        .sort_values("stint_ID")
-        if "stint_ID" in bwar_current.columns
-        else bwar_current[bwar_current["mlb_ID"] == float(player_id)]
-    )
+    so pre-2002 debuts (outside BDL coverage) skip silently. Never WAR
+    or the WAR-derived columns (see `_build_pitcher_season_entry`)."""
 
     override = bdl_stats
     if override is None and bdl_id is None:
@@ -407,38 +351,24 @@ def _build_current_pitcher_entry(
             )
         return None
 
-    if player_war.empty and override is None:
+    if override is None:
         return None
 
-    # `_build_pitcher_season_entry` was extended to recognize
-    # FIP / K_per9 / WAR keys in the override dict — they flow
-    # through cleanly from BDL without a separate call path.
-    # bref_df is None now that we've dropped the page scrape;
-    # the function tolerates a None / empty frame by skipping
-    # the bref-fed branch.
+    # `_build_pitcher_season_entry` recognizes FIP / K_per9 keys in
+    # the override dict — they flow through cleanly from BDL.
     return data_service._build_pitcher_season_entry(
         player_id,
         current_year,
-        player_war,
-        None,
         mlb_api_stats=override,
     )
 
 
 def _update_pitchers(current_year: int) -> tuple[int, int, list[int]]:
     """Phase 2: pitcher counterpart to `_update_batters`. BDL is the
-    per-pitcher stats source (including FIP and K/9); bwar is the
-    WAR / ERA+ bulk-fetch layer. Discovery deferred to Phase 5."""
+    per-pitcher stats source (including FIP and K/9). Discovery
+    deferred to Phase 5."""
     # Pre-flight the BDL key — same fail-fast pattern as Phase 1.
     data_service._get_bdl_key()
-
-    log.info("Fetching bwar_pitch...")
-    bwar_df = data_service._bwar_pitch_all()
-    # Same memory pattern as batters — slice + detach + evict cache.
-    bwar_current = bwar_df[bwar_df["year_ID"] == current_year].copy()
-    del bwar_df
-    data_service._store.pop("bwar_pitch_all", None)
-    gc.collect()
 
     with connection.get_session() as db:
         pitcher_ids = crud.get_all_pitcher_ids(db)
@@ -487,7 +417,6 @@ def _update_pitchers(current_year: int) -> tuple[int, int, list[int]]:
                 entry = _build_current_pitcher_entry(
                     player_id,
                     bdl_id,
-                    bwar_current,
                     current_year,
                     bdl_stats=bdl_stats,
                     mlb_debut=debut_map.get(player_id),
@@ -519,9 +448,6 @@ def _update_pitchers(current_year: int) -> tuple[int, int, list[int]]:
                 f"updated={updated}, skipped={skipped}, failed={len(failed)}"
             )
 
-    del bwar_current
-    gc.collect()
-
     return updated, skipped, failed
 
 
@@ -530,7 +456,7 @@ def _update_pitchers(current_year: int) -> tuple[int, int, list[int]]:
 # ---------------------------------------------------------------------------
 # Sourced from the MLB Stats API standings endpoint — see
 # `_update_standings` below for the full payload and field map. The
-# previous pybaseball-scrape path is gone; it only ever produced
+# previous scrape path is gone; it only ever produced
 # W/L/win_pct/rank, and the new path covers those plus streak / L10 /
 # home / away / run differential / clinch indicators / magic /
 # elimination numbers.
@@ -924,12 +850,12 @@ def run_catchup_update() -> dict:
     players (Ohtani) are processed once per side and each side
     is independently advanced.
 
-    Keeps the bref WAR refresh and doubleheader catch-up phases
-    intact; only the stats-update phase is rewritten.
+    Keeps the doubleheader catch-up phase. Never fetches or writes
+    WAR (stored values, no Baseball-Reference fetch).
 
     Returns counts: `{active_batters_checked,
     active_pitchers_checked, updated, already_current, no_bdl_data,
-    failed, war_updated, doubleheader_dates_checked,
+    failed, doubleheader_dates_checked,
     doubleheader_dates_backfilled}`.
     """
     if not connection.db_available():
@@ -938,8 +864,6 @@ def run_catchup_update() -> dict:
     # nightly so a misconfigured cron service doesn't burn through
     # mlb-stats-api fallbacks before anyone notices.
     data_service._get_bdl_key()
-
-    import pandas as _pd
 
     current_year = data_service._current_year()
 
@@ -950,7 +874,6 @@ def run_catchup_update() -> dict:
         "already_current":                 0,
         "no_bdl_data":                     0,
         "failed":                          0,
-        "war_updated":                     0,
         "doubleheader_dates_checked":      0,
         "doubleheader_dates_backfilled":   0,
     }
@@ -995,81 +918,6 @@ def run_catchup_update() -> dict:
                 log.warning(
                     f"[catchup] doubleheader backfill {d_str} failed: {exc}"
                 )
-
-    # bref WAR — by 2pm PT, baseball-reference.com has consistently
-    # updated the WAR CSVs from the previous night's games. Before
-    # downloading, snapshot the hash from the last successful fetch
-    # (set by the morning nightly, typically) so we can detect
-    # whether bref has shipped new data since then. If the hash is
-    # unchanged, applying a "fresh" WAR is a no-op write — skip it.
-    log.info("[catchup] fetching bref WAR CSVs...")
-    prior_bat_hash   = data_service.get_last_war_hash("bat")
-    prior_pitch_hash = data_service.get_last_war_hash("pitch")
-
-    bat_meta: dict | None = None
-    pit_meta: dict | None = None
-    try:
-        bat_meta = data_service._bwar_bat_all_meta()
-    except Exception as exc:
-        log.warning(f"[catchup] bwar_bat fetch failed, continuing with empty: {exc}")
-    try:
-        pit_meta = data_service._bwar_pitch_all_meta()
-    except Exception as exc:
-        log.warning(f"[catchup] bwar_pitch fetch failed, continuing with empty: {exc}")
-
-    def _war_updated(prior: str | None, meta: dict | None) -> bool:
-        """A side counts as 'updated' when bref's current hash
-        differs from the hash recorded by the last successful
-        fetch — OR when there's no prior hash to compare against
-        (first run after restart; assume the data is fresh)."""
-        if meta is None:
-            return False
-        if prior is None:
-            return True
-        return prior != meta["hash"]
-
-    bat_updated   = _war_updated(prior_bat_hash,   bat_meta)
-    pitch_updated = _war_updated(prior_pitch_hash, pit_meta)
-    if not bat_updated and not pitch_updated:
-        log.info("[catchup] bref WAR CSV not yet updated — skipping WAR refresh in catch-up")
-    else:
-        log.info(
-            "[catchup] bref WAR fresh: bat=%s pitch=%s",
-            "yes" if bat_updated else "no",
-            "yes" if pitch_updated else "no",
-        )
-
-    empty_bwar = _pd.DataFrame(columns=["mlb_ID", "year_ID", "stint_ID"])
-
-    def _slice_current(df):
-        if "year_ID" in df.columns and not df.empty:
-            return df[df["year_ID"] == current_year]
-        return df
-
-    # Per-side WAR slice: real bref data only when that side's CSV
-    # has actually moved since the prior baseline. Otherwise the
-    # build helpers see an empty DataFrame and leave WAR fields
-    # untouched (preserving whatever the morning nightly wrote).
-    bwar_bat_current = (
-        _slice_current(bat_meta["df"]) if bat_updated and bat_meta is not None
-        else empty_bwar
-    )
-    bwar_pitch_current = (
-        _slice_current(pit_meta["df"]) if pitch_updated and pit_meta is not None
-        else empty_bwar
-    )
-
-    def _covered_pids(df) -> set[int]:
-        if "mlb_ID" not in df.columns or df.empty:
-            return set()
-        return set(int(x) for x in df["mlb_ID"].dropna().astype(int))
-
-    bwar_bat_pids   = _covered_pids(bwar_bat_current)
-    bwar_pitch_pids = _covered_pids(bwar_pitch_current)
-    log.info(
-        f"[catchup] bwar covers {len(bwar_bat_pids)} batters and "
-        f"{len(bwar_pitch_pids)} pitchers for {current_year}"
-    )
 
     # 1. Pull every bdl-mapped active player from the DB. Active =
     #    `mlb_last_season IS NULL` (same retired flag iOS reads).
@@ -1169,7 +1017,7 @@ def run_catchup_update() -> dict:
                     if bdl_g > db_g:
                         try:
                             entry = _build_current_batter_entry(
-                                player_id, bdl_id, bwar_bat_current,
+                                player_id, bdl_id,
                                 current_year,
                                 bdl_stats=bdl_stats,
                                 mlb_debut=bat_debut_map.get(player_id),
@@ -1177,8 +1025,6 @@ def run_catchup_update() -> dict:
                             if entry is not None:
                                 crud.save_player_seasons(db, player_id, [entry])
                                 counts["updated"] += 1
-                                if player_id in bwar_bat_pids:
-                                    counts["war_updated"] += 1
                             else:
                                 counts["failed"] += 1
                         except Exception as exc:
@@ -1198,7 +1044,7 @@ def run_catchup_update() -> dict:
                     if bdl_g > db_g:
                         try:
                             entry = _build_current_pitcher_entry(
-                                player_id, bdl_id, bwar_pitch_current,
+                                player_id, bdl_id,
                                 current_year,
                                 bdl_stats=bdl_stats,
                                 mlb_debut=pit_debut_map.get(player_id),
@@ -1206,8 +1052,6 @@ def run_catchup_update() -> dict:
                             if entry is not None:
                                 crud.save_pitcher_seasons(db, player_id, [entry])
                                 counts["updated"] += 1
-                                if player_id in bwar_pitch_pids:
-                                    counts["war_updated"] += 1
                             else:
                                 counts["failed"] += 1
                         except Exception as exc:

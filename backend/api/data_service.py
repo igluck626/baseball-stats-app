@@ -2,16 +2,15 @@
 
 Public API functions (search_player, get_current_stats, get_career_stats,
 get_current_pitching_stats, get_career_pitching_stats) read ONLY from
-PostgreSQL. There are no pybaseball calls at request time.
+PostgreSQL.
 
-The fetch_and_save_* helpers below pull from pybaseball and persist to the DB.
-They are used by bulk_load.py and nightly_update.py only.
+Nothing here fetches from Baseball-Reference: WAR and the WAR-derived columns
+are stored values, kept as they are and never refreshed
+(tests/test_no_baseball_reference.py).
 """
 
 import csv
 import datetime
-import hashlib
-import io
 import json
 import logging
 import math
@@ -34,8 +33,6 @@ from zoneinfo import ZoneInfo
 _MLB_LOCAL_TZ = ZoneInfo("America/New_York")
 
 import pandas as pd
-import pybaseball
-import requests
 from dotenv import load_dotenv
 
 log = logging.getLogger(__name__)
@@ -125,14 +122,12 @@ def _bio_dict(row, db=None) -> dict:
         out["hof_year"] = None
     return out
 
-pybaseball.cache.enable()
-
 # Historical seasons never change; current season updates throughout the day.
 _TTL_HISTORICAL = int(os.getenv("CACHE_TTL_HISTORICAL", str(24 * 3600)))  # 24 h
 _TTL_CURRENT    = int(os.getenv("CACHE_TTL_CURRENT",    str(30 * 60)))    # 30 min
 
-# bwar_bat uses Baseball Reference franchise codes; map to full display names
-# so team names are consistent whether or not the bref standard-stats merge succeeds.
+# Baseball Reference franchise codes (as stored on older rows) -> full display
+# names.
 _TEAM_DISPLAY: dict[str, str] = {
     "ARI": "Arizona",       "ATL": "Atlanta",        "BAL": "Baltimore",
     "BOS": "Boston",        "CHC": "Chicago",        "CHW": "Chicago",
@@ -283,9 +278,7 @@ def _cached(
     `fall_back_to_stale_on_error=True` adds one extra branch: if
     `fn()` raises, and a previous (now-expired) cached value still
     exists in `_store`, return that previous value rather than
-    propagating the exception. Used for bref WAR fetches where
-    baseball-reference.com timeouts are common — better to serve
-    yesterday's WAR than to blank everyone's WAR column.
+    propagating the exception.
     """
     entry = _store.get(key)
     if entry and (time.monotonic() - entry["ts"]) < ttl:
@@ -336,178 +329,12 @@ def _cached(
         return result
 
 
-def _fetch_with_retry(fn, retries: int = 2, delay: float = 3.0):
-    for attempt in range(retries + 1):
-        try:
-            return fn()
-        except Exception:
-            if attempt == retries:
-                raise
-            time.sleep(delay)
-
-
-def _bref_war_with_retry(fn, label: str):
-    """Retry a baseball-reference.com WAR fetch up to 3 times, with
-    a 30-second sleep between attempts. Catches network-level
-    failures (`ReadTimeout`, `ConnectionError`) that pybaseball
-    surfaces from its underlying `requests` calls — the bref site
-    intermittently hangs the connection during nightly runs and the
-    default behavior of pybaseball is to wait indefinitely. Other
-    exception types fall straight through (no retry, since they
-    usually indicate a schema / parsing issue that re-attempts
-    won't fix).
-    """
-    last_exc: Exception | None = None
-    for attempt in range(3):
-        try:
-            return fn()
-        except (
-            requests.exceptions.ReadTimeout,
-            requests.exceptions.ConnectionError,
-        ) as exc:
-            last_exc = exc
-            log.warning(
-                "bref %s fetch attempt %d/3 failed: %s",
-                label, attempt + 1, exc,
-            )
-            if attempt < 2:
-                time.sleep(30)
-    # All three attempts exhausted — re-raise the last network
-    # error so `_cached` (with fall_back_to_stale_on_error) can
-    # serve the previous run's value, and `_nightly_phase` can
-    # degrade to an empty DataFrame as a last resort.
-    raise last_exc if last_exc is not None else RuntimeError(
-        f"bref {label} fetch failed after 3 attempts",
-    )
-
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 def _current_year() -> int:
     return datetime.date.today().year
-
-
-def _batting_bref(year: int) -> pd.DataFrame:
-    ttl = _TTL_CURRENT if year == _current_year() else _TTL_HISTORICAL
-    return _cached(
-        f"batting_bref_{year}",
-        lambda: _fetch_with_retry(lambda: pybaseball.batting_stats_bref(year)),
-        ttl=ttl,
-    )
-
-
-# bref publishes the full historical WAR CSVs at these two stable
-# URLs. Direct HTTP download is faster and more transparent than
-# pybaseball's wrapper — we get the raw text to hash for freshness
-# detection, the request timeout is ours to set, and there's no
-# pybaseball cache layer in the middle that we can't introspect.
-_BWAR_BAT_URL   = "https://www.baseball-reference.com/data/war_daily_bat.txt"
-_BWAR_PITCH_URL = "https://www.baseball-reference.com/data/war_daily_pitch.txt"
-
-# Module-level snapshot of the most recently observed CSV hash per
-# side. Updated by `_download_bref_war_csv` on every successful
-# download; the catch-up reads this BEFORE its own download to
-# detect whether bref has shipped new data since the last call
-# (the morning nightly, typically). Survives across thread
-# invocations within the same Python process; resets on restart.
-_last_war_hashes: dict[str, Optional[str]] = {"bat": None, "pitch": None}
-
-
-def get_last_war_hash(side: str) -> Optional[str]:
-    """Most recently observed bref WAR CSV hash for `side` ('bat'
-    or 'pitch'). Returns None if no successful download has run
-    in this process yet — callers should treat that as "assume
-    updated" rather than as "matches"."""
-    return _last_war_hashes.get(side)
-
-
-def _download_bref_war_csv(url: str, side: str) -> dict:
-    """Download one bref WAR CSV directly. Returns a dict with:
-
-      df:            parsed DataFrame
-      text:          raw CSV text (for hashing / freshness check)
-      hash:          md5 of the raw text
-      downloaded_at: ISO-8601 UTC timestamp of the download
-      rows:          row count (mirrors len(df), convenient for status)
-
-    Side-effect: stamps `_last_war_hashes[side]` so subsequent
-    callers can detect whether bref has updated since this download.
-    """
-    label = f"bwar_{side}"
-    log.info("Downloading bref %s from %s", label, url)
-    response = requests.get(url, timeout=30)
-    response.raise_for_status()
-    text = response.text
-    df = pd.read_csv(io.StringIO(text))
-    h = hashlib.md5(text.encode("utf-8")).hexdigest()
-    now_iso = datetime.datetime.utcnow().isoformat() + "Z"
-    log.info(
-        "bref %s: %d rows, %d bytes, md5=%s downloaded_at=%s",
-        label, len(df), len(text), h[:8], now_iso,
-    )
-    _last_war_hashes[side] = h
-    return {
-        "df":            df,
-        "text":          text,
-        "hash":          h,
-        "downloaded_at": now_iso,
-        "rows":          len(df),
-    }
-
-
-def _bwar_bat_all_meta() -> dict:
-    """Cached metadata-rich accessor: returns the full
-    `{df, text, hash, downloaded_at, rows}` dict so callers that
-    care about freshness (catch-up, status endpoint) can read it.
-
-    Retry-with-stale-fallback is preserved: `_bref_war_with_retry`
-    handles `ReadTimeout` / `ConnectionError` 3× with 30s sleeps;
-    `_cached(fall_back_to_stale_on_error=True)` serves the previous
-    cached dict if every retry fails."""
-    return _cached(
-        "bwar_bat_all",
-        lambda: _bref_war_with_retry(
-            lambda: _download_bref_war_csv(_BWAR_BAT_URL, "bat"),
-            "bwar_bat",
-        ),
-        ttl=_TTL_CURRENT,
-        fall_back_to_stale_on_error=True,
-    )
-
-
-def _bwar_bat_all() -> pd.DataFrame:
-    """DataFrame-only view for back-compat with callers that
-    don't care about freshness metadata."""
-    return _bwar_bat_all_meta()["df"]
-
-
-def _pitching_bref(year: int) -> pd.DataFrame:
-    ttl = _TTL_CURRENT if year == _current_year() else _TTL_HISTORICAL
-    return _cached(
-        f"pitching_bref_{year}",
-        lambda: _fetch_with_retry(lambda: pybaseball.pitching_stats_bref(year)),
-        ttl=ttl,
-    )
-
-
-def _bwar_pitch_all_meta() -> dict:
-    """Pitcher counterpart to `_bwar_bat_all_meta` — same shape
-    and same retry / stale-fallback semantics."""
-    return _cached(
-        "bwar_pitch_all",
-        lambda: _bref_war_with_retry(
-            lambda: _download_bref_war_csv(_BWAR_PITCH_URL, "pitch"),
-            "bwar_pitch",
-        ),
-        ttl=_TTL_CURRENT,
-        fall_back_to_stale_on_error=True,
-    )
-
-
-def _bwar_pitch_all() -> pd.DataFrame:
-    return _bwar_pitch_all_meta()["df"]
 
 
 def _ip_to_decimal(ip) -> float:
@@ -541,8 +368,8 @@ def _safe(val):
 def _safe_col(row, col: str):
     """row[col] via _safe(), but None if col is missing from the Series.
 
-    Used when reading bref/bwar fields that may not exist in older / partial
-    pybaseball responses (e.g. SH / SF / GIDP / SHO depending on year).
+    Used when reading fields that may not exist in older / partial source
+    rows (e.g. SH / SF / GIDP / SHO depending on year).
     """
     if col not in row.index:
         return None
@@ -602,8 +429,8 @@ def _db_pitcher_row_to_season(row) -> dict:
 # code. The DB stores three different shapes depending on which loader wrote
 # the row:
 #   • Lahman → raw teamID, e.g. "NYA", "BOS", "SLN"
-#   • nightly bref override → bref Tm, e.g. "NYY", "STL"
-#   • nightly bwar (no bref) → city via _TEAM_DISPLAY, e.g. "New York"
+#   • the former nightly bref override → bref Tm, e.g. "NYY", "STL"
+#   • the former nightly bwar merge → city via _TEAM_DISPLAY, e.g. "New York"
 # The first two are already 2–3 char uppercase codes and pass through. The
 # third needs a reverse lookup, sometimes with the league to disambiguate
 # two-team cities (NYY vs NYM, LAN vs LAA, CHA vs CHN).
@@ -622,7 +449,7 @@ _CITY_TO_CODE: dict[str, str] = {
     "Milwaukee":     "MIL",
     "Minnesota":     "MIN",
     "Oakland":       "OAK",
-    # 2025 rebrand — bref / pybaseball write the bare team name with no
+    # 2025 rebrand — the former bref / bwar loaders wrote the bare team name with no
     # city prefix once the team relocated. Same franchise as OAK so the
     # downstream lookups stay consistent.
     "Athletics":     "OAK",
@@ -2167,7 +1994,8 @@ def _parse_bdl_batter_row(s: dict) -> dict:
         "OBP":     _safe_rate(s.get("batting_obp")),
         "SLG":     _safe_rate(s.get("batting_slg")),
         "OPS":     _safe_rate(s.get("batting_ops")),
-        "WAR":     _safe_rate(s.get("batting_war")),
+        # No WAR: balldontlie's `batting_war` is Baseball-Reference's WAR,
+        # and stored WAR is kept as it is, never refreshed.
     }
 
 
@@ -2223,7 +2051,7 @@ def _parse_bdl_pitcher_row(s: dict) -> dict:
         "ERA":    _round_or_none(_safe_rate(s.get("pitching_era")), 2),
         "WHIP":   _round_or_none(_safe_rate(s.get("pitching_whip")), 2),
         "K_per9": _round_or_none(_safe_rate(s.get("pitching_k_per_9")), 2),
-        "WAR":    _safe_rate(s.get("pitching_war")),
+        # No WAR: see _parse_bdl_batter_row.
     }
 
 
@@ -4471,14 +4299,10 @@ def backfill_player_seasons(player_id: int, year_from: int, year_to: int) -> dic
     Domingo Gonzalez (682445) who don't show on any active roster.
 
     The MLB Stats API season block has `team`, so each year's row
-    gets stamped with the Lahman team code for that year. A second
-    pass over `bwar_bat` / `bwar_pitch` fills in WAR / OPS+ /
-    WAR_off / WAR_def / WAA / runs_above_avg / runs_above_rep
-    (pitchers also get ERA+). The upsert path is column-additive,
-    so the bwar merge only writes advanced columns — it doesn't
-    overwrite the standard counting stats the MLB API leg already
-    wrote, and doesn't NULL out anything that bwar happens to
-    lack for an off-year.
+    gets stamped with the Lahman team code for that year. WAR and the
+    WAR-derived columns are never written here: they are stored values,
+    no longer fetched (the upsert is column-additive, so a stored WAR
+    stays as it is).
 
     Also opportunistically backfills `bbref_id` on the bio row via
     the Chadwick bridge — without it, the Lahman loader can never
@@ -4490,8 +4314,6 @@ def backfill_player_seasons(player_id: int, year_from: int, year_to: int) -> dic
     counts: dict[str, int] = {
         "player_seasons:written":      0,
         "pitcher_seasons:written":     0,
-        "player_seasons:war_merged":   0,
-        "pitcher_seasons:war_merged":  0,
         "pitchers_bio:created":        0,
         "players_bio:created":         0,
         "bbref_id:populated":          0,
@@ -4521,8 +4343,7 @@ def backfill_player_seasons(player_id: int, year_from: int, year_to: int) -> dic
 
         # Populate bbref_id from the Chadwick bridge if missing.
         # Without it, the Lahman loader can't link historical rows
-        # on the next archive drop. The bwar overlay below keys
-        # off mlb_ID, not bbref_id, so it still works regardless.
+        # on the next archive drop.
         bridge = _load_chadwick_mlbam_to_bbref()
         bbref = bridge.get(player_id)
         if bbref:
@@ -4538,17 +4359,6 @@ def backfill_player_seasons(player_id: int, year_from: int, year_to: int) -> dic
                     counts["bbref_id:populated"] += 1
             db.commit()
 
-    # Pre-build bwar lookups so we hit the (cached) full-history
-    # frame once instead of slicing on every year iteration.
-    bwar_bat_by_year = (
-        _player_bwar_batting_seasons(player_id, year_from, year_to)
-        if in_players else {}
-    )
-    bwar_pitch_by_year = (
-        _player_bwar_pitching_seasons(player_id, year_from, year_to)
-        if in_pitchers else {}
-    )
-
     for year in range(year_from, year_to + 1):
         wrote_any = False
         if in_players:
@@ -4558,28 +4368,12 @@ def backfill_player_seasons(player_id: int, year_from: int, year_to: int) -> dic
                     crud.save_player_seasons(db, player_id, [entry])
                 counts["player_seasons:written"] += 1
                 wrote_any = True
-            war_entry = bwar_bat_by_year.get(year)
-            if war_entry:
-                with connection.get_session() as db:
-                    crud.save_player_seasons(
-                        db, player_id, [{"year": year, **war_entry}],
-                    )
-                counts["player_seasons:war_merged"] += 1
-                wrote_any = True
         if in_pitchers:
             entry = _build_backfill_pitcher_entry(bdl_id, year)
             if entry is not None:
                 with connection.get_session() as db:
                     crud.save_pitcher_seasons(db, player_id, [entry])
                 counts["pitcher_seasons:written"] += 1
-                wrote_any = True
-            war_entry = bwar_pitch_by_year.get(year)
-            if war_entry:
-                with connection.get_session() as db:
-                    crud.save_pitcher_seasons(
-                        db, player_id, [{"year": year, **war_entry}],
-                    )
-                counts["pitcher_seasons:war_merged"] += 1
                 wrote_any = True
         if not wrote_any:
             missing_years.append(year)
@@ -4592,104 +4386,6 @@ def backfill_player_seasons(player_id: int, year_from: int, year_to: int) -> dic
         "counts":        counts,
         "missing_years": missing_years,
     }
-
-
-def _player_bwar_batting_seasons(
-    player_id: int, year_from: int, year_to: int,
-) -> dict[int, dict]:
-    """Aggregate per-stint bwar_bat rows for one player into one
-    advanced-stat dict per year in [year_from, year_to]. Returns
-    a {year: {WAR, OPS_plus, WAR_off, WAR_def, WAA, ...}} map.
-    Empty dict if bwar has no rows for this player (or fails)."""
-    try:
-        bwar = _bwar_bat_all()
-    except Exception as exc:
-        log.warning("bwar_bat fetch failed for %s: %s", player_id, exc)
-        return {}
-    if "mlb_ID" not in bwar.columns or "year_ID" not in bwar.columns:
-        return {}
-    mlb_ids = pd.to_numeric(bwar["mlb_ID"], errors="coerce")
-    years   = pd.to_numeric(bwar["year_ID"], errors="coerce")
-    mask = (
-        (mlb_ids == float(player_id))
-        & (years >= year_from)
-        & (years <= year_to)
-    )
-    slice_ = bwar[mask]
-    if slice_.empty:
-        return {}
-    out: dict[int, dict] = {}
-    for year, group in slice_.groupby(years[mask].astype(int)):
-        total_pa = float(group["PA"].sum()) if "PA" in group else 0.0
-        ops_plus: Optional[float] = None
-        if total_pa > 0 and "OPS_plus" in group and not group["OPS_plus"].dropna().empty:
-            ops_plus = float(
-                (group["OPS_plus"].fillna(0) * group["PA"]).sum() / total_pa
-            )
-        entry: dict = {
-            "WAR":            round(float(group["WAR"].sum()), 2),
-            "WAR_off":        round(float(group["WAR_off"].sum()), 2)
-                              if "WAR_off" in group else None,
-            "WAR_def":        round(float(group["WAR_def"].sum()), 2)
-                              if "WAR_def" in group else None,
-            "WAA":            round(float(group["WAA"].sum()), 2)
-                              if "WAA" in group else None,
-            "OPS_plus":       round(ops_plus, 1) if ops_plus is not None else None,
-            "runs_above_avg": round(float(group["runs_above_avg"].sum()), 2)
-                              if "runs_above_avg" in group else None,
-            "runs_above_rep": round(float(group["runs_above_rep"].sum()), 2)
-                              if "runs_above_rep" in group else None,
-        }
-        # Drop None-valued keys so the upsert doesn't overwrite
-        # existing non-null values with null.
-        out[int(year)] = {k: v for k, v in entry.items() if v is not None}
-    return out
-
-
-def _player_bwar_pitching_seasons(
-    player_id: int, year_from: int, year_to: int,
-) -> dict[int, dict]:
-    """Pitcher counterpart to `_player_bwar_batting_seasons`. ERA+
-    is rate-based; weight by IPouts to combine multi-stint seasons."""
-    try:
-        bwar = _bwar_pitch_all()
-    except Exception as exc:
-        log.warning("bwar_pitch fetch failed for %s: %s", player_id, exc)
-        return {}
-    if "mlb_ID" not in bwar.columns or "year_ID" not in bwar.columns:
-        return {}
-    mlb_ids = pd.to_numeric(bwar["mlb_ID"], errors="coerce")
-    years   = pd.to_numeric(bwar["year_ID"], errors="coerce")
-    mask = (
-        (mlb_ids == float(player_id))
-        & (years >= year_from)
-        & (years <= year_to)
-    )
-    slice_ = bwar[mask]
-    if slice_.empty:
-        return {}
-    out: dict[int, dict] = {}
-    for year, group in slice_.groupby(years[mask].astype(int)):
-        ipouts = float(group["IPouts"].sum()) if "IPouts" in group else 0.0
-        era_plus: Optional[float] = None
-        if ipouts > 0 and "ERA_plus" in group and not group["ERA_plus"].dropna().empty:
-            era_plus = float(
-                (group["ERA_plus"].fillna(0) * group["IPouts"]).sum() / ipouts
-            )
-        entry: dict = {
-            "WAR":            round(float(group["WAR"].sum()), 2),
-            "WAR_def":        round(float(group["WAR_def"].sum()), 2)
-                              if "WAR_def" in group else None,
-            "WAA":            round(float(group["WAA"].sum()), 2)
-                              if "WAA" in group else None,
-            "ERA_plus":       round(era_plus, 1) if era_plus is not None else None,
-            "runs_above_avg": round(float(group["runs_above_avg"].sum()), 2)
-                              if "runs_above_avg" in group else None,
-            "runs_above_rep": round(float(group["runs_above_rep"].sum()), 2)
-                              if "runs_above_rep" in group else None,
-        }
-        out[int(year)] = {k: v for k, v in entry.items() if v is not None}
-    return out
 
 
 # BDL ships season_stats rows with `team_name` (e.g., "Angels"),
@@ -4757,9 +4453,7 @@ def _build_backfill_batter_entry(bdl_id: Optional[int], year: int) -> Optional[d
 
     BDL doesn't carry HBP / SF / SH / GIDP / IBB / CS on the
     season_stats endpoint — those columns stay nil for current-
-    season backfill rows. The bwar overlay (called separately
-    in `backfill_player_seasons`) still drops WAR / OPS+ on top
-    from the bref-sourced full-history CSV."""
+    season backfill rows."""
     if bdl_id is None:
         return None
     try:
@@ -6974,7 +6668,7 @@ _LEADERBOARD_PITCHING: dict[str, tuple[str, str, Optional[str]]] = {
 #
 # Storage in player_seasons / pitcher_seasons varies by source:
 #   • Lahman load (historical) → Lahman codes ("NYA", "LAN", "FLO", …)
-#   • Nightly bref/pybaseball (current season) → city display names
+#   • The former nightly bref/bwar merge (current season) → city display names
 #     ("New York", "Boston", "Atlanta") with the league column set
 #     so two-team cities can be disambiguated.
 # The leaderboard filter must accept both.
@@ -7813,147 +7507,27 @@ def _player_payload(player_row, db, *, current_team, team_code, is_pitcher) -> d
 
 
 # ---------------------------------------------------------------------------
-# Pybaseball fetchers — used by nightly_update only (current season ingest).
-# Historical seasons are loaded from Lahman; full-career pybaseball fetches
-# were removed when Lahman became the primary source.
+# Current-season pitcher row (nightly_update only). Historical seasons are
+# loaded from Lahman.
 # ---------------------------------------------------------------------------
 
 def _build_pitcher_season_entry(
     player_id: int,
     year: int,
-    war_group: pd.DataFrame,
-    bref_df: Optional[pd.DataFrame],
     mlb_api_stats: Optional[dict] = None,
 ) -> dict:
-    """Build a pitcher_seasons row from one year of bwar_pitch +
-    (optionally) bref + (current-season only) the MLB Stats API
-    season splits.
+    """Build a pitcher_seasons row for the current season from the stats
+    source's season line (BDL, via `mlb_api_stats`) — W, L, G, GS, SV, IP,
+    H, R, ER, HR, BB, IBB, SO, HBP, BK, WP, ERA, WHIP, FIP, K/9, plus BB/9
+    and HR/9 derived from them.
 
-    When `mlb_api_stats` is provided, its values take precedence
-    over bref for the standard counting + rate stats (W, L, G, GS,
-    SV, IP, H, R, ER, HR, BB, IBB, SO, HBP, BK, WP, ERA, WHIP).
-    bref still drives WAR-adjacent computed fields (FIP, BABIP,
-    K_per9, BB_per9, HR_per9) and remaining bref-only counters
-    (CG, SHO, BAOpp, GF, SH, SF, GIDP, BFP). bwar_pitch always
-    drives WAR / ERA_plus / WAA. The MLB Stats API path closes
-    the ~24h lag bref has between game completion and its public
-    stats table publishing.
+    Never WAR or the WAR-derived columns (ERA+, WAA, runs above average /
+    replacement): those are stored values, kept as they are and never
+    refreshed. The upsert is column-additive, so leaving them out keeps them.
     """
-    # bwar_pitch slice may be empty when the caller has only MLB
-    # Stats API data (no bref / no bwar yet). Guard the war-derived
-    # section so the entry-build still proceeds with API + bref
-    # values alone.
-    has_war = war_group is not None and not war_group.empty
-    ip_dec: float = 0.0
-    # Start with year only — team / league get filled in iff a
-    # source provides them. When no source does (bref + bwar both
-    # empty, MLB API only carries stat fields), omitting them lets
-    # the upsert preserve whatever team Phase 5 wrote previously
-    # instead of NULLing it.
+    # Start with year only — team / league are omitted so the upsert
+    # preserves whatever team Phase 5 wrote previously instead of NULLing it.
     entry: dict = {"year": year}
-
-    if has_war:
-        raw_team = str(war_group.iloc[-1]["team_ID"])
-        ip_outs_total = float(war_group["IPouts"].sum()) if "IPouts" in war_group else 0.0
-        ip_dec = ip_outs_total / 3 if ip_outs_total else 0.0
-
-        # ERA_plus is rate-based; weight by IPouts to combine stints within a year.
-        era_plus_vals = war_group["ERA_plus"].dropna()
-        era_plus: Optional[float] = None
-        if ip_outs_total > 0 and not era_plus_vals.empty:
-            era_plus = float(
-                (war_group["ERA_plus"].fillna(0) * war_group["IPouts"]).sum() / ip_outs_total
-            )
-
-        entry.update({
-        "team":           _TEAM_DISPLAY.get(raw_team, raw_team),
-        "league":         str(war_group.iloc[-1]["lg_ID"]),
-        "G":              int(war_group["G"].sum()) if "G" in war_group else None,
-        "GS":             int(war_group["GS"].sum()) if "GS" in war_group else None,
-        "IP":             round(ip_outs_total / 3, 1) if ip_outs_total else None,
-        "WAR":            round(float(war_group["WAR"].sum()), 2),
-        "WAR_def":        round(float(war_group["WAR_def"].sum()), 2)
-                          if "WAR_def" in war_group else None,
-        "WAA":            round(float(war_group["WAA"].sum()), 2),
-        "ERA_plus":       round(era_plus, 1) if era_plus is not None else None,
-        "runs_above_avg": round(float(war_group["runs_above_avg"].sum()), 2),
-        "runs_above_rep": round(float(war_group["runs_above_rep"].sum()), 2),
-        })
-
-    if bref_df is not None and not bref_df.empty:
-        # pitching_stats_bref stores mlbID as STRING.
-        player_bref = bref_df[bref_df["mlbID"] == str(player_id)]
-        if not player_bref.empty:
-            br = player_bref.iloc[0]
-
-            # Aggregate counting stats if a player had multiple stint rows.
-            def _sum(col):
-                v = player_bref[col]
-                v = pd.to_numeric(v, errors="coerce").fillna(0)
-                return float(v.sum()) if not v.empty else 0.0
-
-            so  = _sum("SO")
-            bb  = _sum("BB")
-            hr  = _sum("HR")
-            hbp = _sum("HBP")
-            bf  = _sum("BF") if "BF" in br.index else 0.0
-            h   = _sum("H")
-            ip_dec = _ip_to_decimal(br["IP"]) if pd.notna(br["IP"]) else ip_dec
-
-            babip_denom = bf - so - hr - bb
-            babip = round((h - hr) / babip_denom, 3) if babip_denom > 0 else None
-
-            k_per9   = round(so * 9 / ip_dec, 2) if ip_dec else None
-            bb_per9  = round(bb * 9 / ip_dec, 2) if ip_dec else None
-            hr_per9  = round(hr * 9 / ip_dec, 2) if ip_dec else None
-
-            entry["team"] = str(br["Tm"])
-            entry.update({
-                # W/L: coerce NaN → 0 at write time so we don't store
-                # nulls for relievers / fresh callups whose bref row
-                # has the column but no value yet. Lahman always
-                # writes 0; this lines nightly up with that.
-                "W":     int(_safe(br["W"]) or 0),
-                "L":     int(_safe(br["L"]) or 0),
-                "G":     _safe(br["G"]),
-                "GS":    _safe(br["GS"]),
-                # bref ships IP as a string in baseball notation
-                # ("10.2" = 10 ⅔). _safe() would store the raw float
-                # 10.2 in the DB; convert via _ip_to_decimal to the
-                # true-decimal value (10.667) the rest of the app
-                # assumes. Without this, the iOS overlay adds
-                # today's true-decimal IP onto a baseball-notation
-                # season total and the running IP drifts.
-                "IP":    _ip_to_decimal(br["IP"]) if pd.notna(br["IP"]) else None,
-                "SO":    int(so),
-                "BB":    int(bb),
-                "HR":    int(hr),
-                "ERA":   _safe(br["ERA"]),
-                "WHIP":  _safe(br["WHIP"]),
-                "FIP":   _fip(hr, bb, hbp, so, ip_dec),
-                "BABIP": babip,
-                "K_per9":  k_per9,
-                "BB_per9": bb_per9,
-                "HR_per9": hr_per9,
-                # Extended counting stats from bref. Most are present; SH/SF/
-                # GIDP/SHO can be missing in older years — _safe_col handles it.
-                "CG":    _safe_col(br, "CG"),
-                "SHO":   _safe_col(br, "SHO"),
-                "SV":    _safe_col(br, "SV"),
-                "H":     int(h),
-                "ER":    int(_sum("ER")) if "ER" in br.index else None,
-                "R":     int(_sum("R"))  if "R"  in br.index else None,
-                "BAOpp": _safe_col(br, "BAopp") or _safe_col(br, "BAOpp"),
-                "IBB":   int(_sum("IBB")) if "IBB" in br.index else None,
-                "WP":    int(_sum("WP"))  if "WP"  in br.index else None,
-                "HBP":   int(hbp),
-                "BK":    int(_sum("BK"))  if "BK"  in br.index else None,
-                "BFP":   int(bf) if bf else None,
-                "GF":    int(_sum("GF"))  if "GF"  in br.index else None,
-                "SH":    _safe_col(br, "SH"),
-                "SF":    _safe_col(br, "SF"),
-                "GIDP":  _safe_col(br, "GIDP") if "GIDP" in br.index else _safe_col(br, "GDP"),
-            })
 
     # Stats-source override — current-season only. The override
     # dict can come from BDL (`_fetch_bdl_pitcher_stats` — primary
@@ -7962,11 +7536,10 @@ def _build_pitcher_season_entry(
     # a bdl_id). Both helpers normalize to the same key shape, so
     # the consumer here doesn't care which fed it.
     #
-    # Iterate so None values from the source don't clobber the
-    # values bref / bwar wrote above (e.g. holds — bref doesn't
-    # carry it). BDL ships FIP under `fielding_fip` which the
-    # fetch helper already lifts into the `FIP` key — that's why
-    # we accept FIP / K_per9 / WAR directly from the override.
+    # Iterate so None values from the source don't clobber stored
+    # values. BDL ships FIP under `fielding_fip` which the fetch helper
+    # already lifts into the `FIP` key — that's why we accept FIP / K_per9
+    # directly from the override.
     if mlb_api_stats:
         for key in ("G", "GS", "W", "L", "SV", "IP",
                     "H", "R", "ER", "HR",
@@ -7975,12 +7548,6 @@ def _build_pitcher_season_entry(
             value = mlb_api_stats.get(key)
             if value is not None:
                 entry[key] = value
-        # WAR only comes off the override when bwar didn't populate
-        # one above — bwar is the canonical source.
-        if "WAR" not in entry:
-            war = mlb_api_stats.get("WAR")
-            if war is not None:
-                entry["WAR"] = war
         # Recompute BB/9 and HR/9 from the override counts when IP
         # is non-zero — BDL only ships K/9, so the other per-9 rates
         # need on-the-fly derivation. If the override didn't carry

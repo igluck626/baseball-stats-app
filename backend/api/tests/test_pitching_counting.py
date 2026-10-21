@@ -8,7 +8,7 @@ qualified `COALESCE(pitcher_seasons."R", ...)` all behave like the production
 Postgres path — verified), so this exercises the ACTUAL fill/overwrite result,
 not just the SQL string.
 
-`data_service` pulls pandas / pybaseball / sqlalchemy / dotenv at import (and
+`data_service` pulls pandas / sqlalchemy / dotenv at import (and
 reads ORM columns), none needed by this pure-SQL function — so we stub those
 heavy deps before importing, and stub sqlalchemy's `text` to return the raw SQL
 string so a sqlite-backed fake session can run it. Mirrors how
@@ -34,10 +34,6 @@ class _AnyAttrModule(types.ModuleType):
 
 sys.modules.setdefault("pandas", _AnyAttrModule("pandas"))
 sys.modules.setdefault("requests", types.ModuleType("requests"))
-
-_pyb = types.ModuleType("pybaseball")
-_pyb.cache = types.SimpleNamespace(enable=lambda: None)
-sys.modules.setdefault("pybaseball", _pyb)
 
 _dotenv = types.ModuleType("dotenv")
 _dotenv.load_dotenv = lambda *a, **k: None

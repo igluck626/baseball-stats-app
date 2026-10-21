@@ -4,7 +4,7 @@
 BDL `/season_stats` response even when the postseason row is listed FIRST (the
 Cade Smith 2024 shape), and must never fall back to a postseason line.
 
-`data_service` imports pandas / pybaseball / sqlalchemy / dotenv at module load
+`data_service` imports pandas / sqlalchemy / dotenv at module load
 (and reads ORM columns), which aren't needed by this pure helper — so we stub
 those heavy deps before importing, mirroring how `test_live_derivations` stubs
 `data_service` itself. Run:
@@ -33,11 +33,6 @@ class _AnyAttrModule(types.ModuleType):
 
 sys.modules.setdefault("pandas", _AnyAttrModule("pandas"))
 sys.modules.setdefault("requests", types.ModuleType("requests"))
-
-# pybaseball calls `pybaseball.cache.enable()` at data_service import.
-_pyb = types.ModuleType("pybaseball")
-_pyb.cache = types.SimpleNamespace(enable=lambda: None)
-sys.modules.setdefault("pybaseball", _pyb)
 
 _dotenv = types.ModuleType("dotenv")
 _dotenv.load_dotenv = lambda *a, **k: None

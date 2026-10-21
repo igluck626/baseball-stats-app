@@ -26,7 +26,6 @@ pandas==3.0.2
 pillow==12.2.0
 psycopg2-binary==2.9.12
 pyarrow==24.0.0
-pybaseball==2.2.7
 pycparser==3.0
 pydantic==2.13.3
 pydantic_core==2.46.3

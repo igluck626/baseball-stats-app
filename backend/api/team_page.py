@@ -216,7 +216,7 @@ def roster_stats(team: str, stints: list[dict], season: Optional[dict], pitcher:
         season row IS this team's line — shown as it always was, WAR included.
       • stints for more than one team that add up to the season row: this
         team's stint, computed here. WAR is null: it is only stored per season,
-        summed over teams (backfill_war.py), so it can't be split.
+        summed over teams, so it can't be split.
       • anything else — stints that don't add up, none for this team, none at
         all — is the season row, labelled "all_teams".
 
