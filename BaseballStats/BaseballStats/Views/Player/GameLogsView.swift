@@ -197,10 +197,18 @@ struct GameLogsView: View {
                 PostseasonGameLogsSection(playerId: playerId, isPitcher: isPitcher,
                                           seasons: postseasonSeasons, record: postseasonRecord,
                                           year: $postseasonYear)
+                if GameLogResolver.source(season: postseasonYear) == .retrosheet {
+                    RetrosheetCredit()
+                }
             } else {
                 splitsTable
                 seasonPicker
                 gamesTable
+                // Retrosheet's notice under a season built from its data.
+                if GameLogResolver.source(season: vm.selectedSeason) == .retrosheet,
+                   vm.gameLogResponse?.games?.isEmpty == false {
+                    RetrosheetCredit()
+                }
             }
         }
         .task { await vm.load() }

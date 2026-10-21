@@ -4,8 +4,9 @@
 //
 //  Pushed from Settings → About. A grouped Form (matching the Settings style)
 //  with the app version (read live from the bundle — never hardcoded), a short
-//  description, data-source acknowledgments that open in the browser, and a
-//  feedback mailto link.
+//  description, data-source acknowledgments that open in the browser (and push
+//  Sources & Licenses, each source's required notice), and a feedback mailto
+//  link.
 //
 //  NOTE: `feedbackEmail` below is currently a personal address used as a
 //  placeholder — swap it for a dedicated feedback/support address before
@@ -42,12 +43,18 @@ struct AboutView: View {
     }
 
     private let dataSources: [DataSource] = [
-        DataSource(name: "Baseball Reference",
-                   descriptor: "Statistics and WAR benchmarking",
+        DataSource(name: "Baseball-Reference",
+                   descriptor: "WAR (stored, not updated)",
                    urlString: "https://www.baseball-reference.com"),
-        DataSource(name: "Lahman Baseball Database",
+        DataSource(name: "Retrosheet",
+                   descriptor: "Historical game logs and box scores",
+                   urlString: "https://www.retrosheet.org"),
+        DataSource(name: "SABR Lahman Baseball Database",
                    descriptor: "Historical statistics (1871–present)",
-                   urlString: "https://www.seanlahman.com"),
+                   urlString: "https://sabr.org/lahman-database/"),
+        DataSource(name: "Chadwick Baseball Bureau Register",
+                   descriptor: "Player identifiers",
+                   urlString: "https://github.com/chadwickbureau/register"),
         DataSource(name: "balldontlie",
                    descriptor: "Live and recent game data",
                    urlString: "https://www.balldontlie.io"),
@@ -73,7 +80,7 @@ struct AboutView: View {
             }
 
             Section {
-                Text("BaseballStats brings you comprehensive Major League Baseball statistics, standings, scores, and news — from the 1871 season to today. Player and team stats are benchmarked against Baseball Reference for accuracy.")
+                Text("BaseballStats brings you comprehensive Major League Baseball statistics, standings, scores, and news — from the 1871 season to today.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -91,6 +98,12 @@ struct AboutView: View {
                             }
                         }
                     }
+                }
+                // The notices and licenses each source asks for, in its own words.
+                NavigationLink {
+                    SourcesView()
+                } label: {
+                    Text("Sources & Licenses")
                 }
             } header: {
                 Text("Data Sources")

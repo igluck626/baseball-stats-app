@@ -879,6 +879,11 @@ struct BoxScoreView: View {
                             }
                             .onGeometryChange(for: CGFloat.self) { $0.frame(in: .scrollView).minY } action: { noteTop(id, $0) }
                         }
+                        // Retrosheet's notice, one tap away, under a box score
+                        // built from its data.
+                        if vm.game.usesRetrosheetBoxScore {
+                            RetrosheetCredit()
+                        }
                     } else if vm.isLoading {
                         ProgressView().controlSize(.large)
                             .frame(maxWidth: .infinity, minHeight: 120)
