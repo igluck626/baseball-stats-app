@@ -2052,6 +2052,22 @@ def teams_season_stats(season: int = Query(..., description="Season year, e.g. 2
     return payload
 
 
+@app.get("/players/{player_id}/season-teams")
+def player_season_teams(player_id: int):
+    """Each traded season's clubs, for the player page's "All teams" row and
+    the club rows under it — batting and pitching. A club value is sent only
+    where it adds up to the season row (the per-team split rule); every other
+    one is null, as is every value of a season with no exact breakdown. See
+    season_teams."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    import season_teams
+    with connection.get_session() as db:
+        return {"player_id": player_id,
+                "batting": season_teams.seasons(db, player_id, "bat"),
+                "pitching": season_teams.seasons(db, player_id, "pit")}
+
+
 @app.get("/teams/{team_id}/history")
 def team_history(team_id: str):
     rows = data_service.get_team_history(team_id)

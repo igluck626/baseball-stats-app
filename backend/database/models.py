@@ -308,6 +308,85 @@ class PitcherSeasonStint(Base):
 
 
 # ---------------------------------------------------------------------------
+# Per-club rows for a TRADED season, as the player page shows them ("2 Teams",
+# then one row per club). Unlike the stint tables these hold only seasons whose
+# club rows add up exactly to the season row, under the per-team split rule
+# (scripts/load_season_teams.py), from Retrosheet or, failing that, Lahman.
+# `verified` lists the columns that are recorded on both sides AND add up; any
+# other column shows "—" on a club row. Loaded once for finished seasons; the
+# current season is checked live from the nightly stints.
+# ---------------------------------------------------------------------------
+
+class PlayerSeasonTeam(Base):
+    __tablename__ = "player_season_teams"
+    __table_args__ = (
+        Index("ix_player_season_teams_py", "player_id", "year"),
+    )
+
+    player_id      = Column(Integer, primary_key=True)
+    year           = Column(Integer, primary_key=True)
+    stint_order    = Column(Integer, primary_key=True)
+    team           = Column(String,  nullable=False)
+    source         = Column(String,  nullable=False)   # 'retrosheet' | 'lahman'
+    verified       = Column(String,  nullable=False)   # column names, '|'-separated
+    G              = Column(Integer)
+    PA             = Column(Integer)
+    AB             = Column(Integer)
+    R              = Column(Integer)
+    H              = Column(Integer)
+    doubles        = Column(Integer)
+    triples        = Column(Integer)
+    HR             = Column(Integer)
+    RBI            = Column(Integer)
+    SB             = Column(Integer)
+    CS             = Column(Integer)
+    BB             = Column(Integer)
+    SO             = Column(Integer)
+    IBB            = Column(Integer)
+    HBP            = Column(Integer)
+    SH             = Column(Integer)
+    SF             = Column(Integer)
+    GIDP           = Column(Integer)
+
+
+class PitcherSeasonTeam(Base):
+    __tablename__ = "pitcher_season_teams"
+    __table_args__ = (
+        Index("ix_pitcher_season_teams_py", "player_id", "year"),
+    )
+
+    player_id      = Column(Integer, primary_key=True)
+    year           = Column(Integer, primary_key=True)
+    stint_order    = Column(Integer, primary_key=True)
+    team           = Column(String,  nullable=False)
+    source         = Column(String,  nullable=False)
+    verified       = Column(String,  nullable=False)
+    G              = Column(Integer)
+    GS             = Column(Integer)
+    CG             = Column(Integer)
+    SHO            = Column(Integer)
+    GF             = Column(Integer)
+    W              = Column(Integer)
+    L              = Column(Integer)
+    SV             = Column(Integer)
+    IP             = Column(Float)     # decimal thirds (outs / 3), like every IP column
+    H              = Column(Integer)
+    R              = Column(Integer)
+    ER             = Column(Integer)
+    HR             = Column(Integer)
+    BB             = Column(Integer)
+    IBB            = Column(Integer)
+    SO             = Column(Integer)
+    HBP            = Column(Integer)
+    WP             = Column(Integer)
+    BK             = Column(Integer)
+    BFP            = Column(Integer)
+    SH             = Column(Integer)
+    SF             = Column(Integer)
+    GIDP           = Column(Integer)
+
+
+# ---------------------------------------------------------------------------
 # Fielding — one row per (player, year, position); stints are summed.
 # ---------------------------------------------------------------------------
 
