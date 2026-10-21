@@ -460,7 +460,6 @@ final class PlayerCompareViewModel: ObservableObject {
             seasons.reduce(0.0) { $0 + Double(key($1) ?? 0) }
         }
         let g   = sumInt { $0.G }
-        let pa  = sumInt { $0.PA }
         let ab  = sumInt { $0.AB }
         let h   = sumInt { $0.H }
         let dbl = sumInt { $0.doubles }
@@ -470,22 +469,33 @@ final class PlayerCompareViewModel: ObservableObject {
         let sb  = sumInt { $0.SB }
         let bb  = sumInt { $0.BB }
         let so  = sumInt { $0.SO }
-        let hbp = sumInt { $0.HBP }
-        let sf  = sumInt { $0.SF }
-        let ibb = sumInt { $0.IBB }
-        // Total bases: stored when present, else derived (H + 2B + 2·3B + 3·HR).
-        let tb = seasons.reduce(0.0) { acc, s in
+        // ⚠️ nil = unknown: a current season's PA / HBP / SF / IBB the server
+        // left NULL (a game shipped without detail). UnknownRule.careerSum.
+        func sumKnown(_ key: KeyPath<CareerSeason, Int?>) -> Double? {
+            UnknownRule.careerSum(seasons, unknownable: true, year: \.year,
+                                  played: { $0.H != nil }, value: { $0[keyPath: key] }).map(Double.init)
+        }
+        let pa  = sumKnown(\.PA)
+        let hbp = sumKnown(\.HBP)
+        let sf  = sumKnown(\.SF)
+        let ibb = sumKnown(\.IBB)
+        // Total bases: stored when present, else derived (H + 2B + 2·3B + 3·HR);
+        // nil when a season has neither (a missing double is not a zero).
+        let tb: Double? = seasons.reduce(Optional(0.0)) { acc, s in
+            guard let acc else { return nil }
             if let t = s.TB { return acc + Double(t) }
-            let sH = Double(s.H ?? 0), s2 = Double(s.doubles ?? 0)
-            let s3 = Double(s.triples ?? 0), sHR = Double(s.HR ?? 0)
-            return acc + (sH + s2 + 2 * s3 + 3 * sHR)
+            guard let sH = s.H, let s2 = s.doubles, let s3 = s.triples else { return nil }
+            return acc + Double(sH + s2 + 2 * s3 + 3 * (s.HR ?? 0))
         }
         let war = seasons.reduce(0.0) { $0 + ($1.WAR ?? 0) }
 
         let avg: Double? = ab > 0 ? h / ab : nil
-        let obpDen = ab + bb + hbp + sf
-        let obp: Double? = obpDen > 0 ? (h + bb + hbp) / obpDen : nil
-        let slg: Double? = ab > 0 ? tb / ab : nil
+        let obp: Double? = {
+            guard let hbp, let sf else { return nil }
+            let den = ab + bb + hbp + sf
+            return den > 0 ? (h + bb + hbp) / den : nil
+        }()
+        let slg: Double? = (ab > 0 && tb != nil) ? tb! / ab : nil
         let ops: Double? = (obp != nil && slg != nil) ? obp! + slg! : nil
         // OPS+ is park/league-adjusted — aggregate as a PA-weighted average
         // of the seasonal values (only seasons that carry both OPS+ and PA).
@@ -534,7 +544,9 @@ final class PlayerCompareViewModel: ObservableObject {
         let bb = sumInt { $0.BB }
         let er = sumInt { $0.ER }
         let hr  = sumInt { $0.HR }
-        let hbp = sumInt { $0.HBP }
+        // ⚠️ nil = unknown: a current season's HBP the server left NULL.
+        let hbp = UnknownRule.careerSum(seasons, unknownable: true, year: \.year,
+                                        played: { $0.IP != nil }, value: { $0.HBP }).map(Double.init)
         let cg  = sumInt { $0.CG }
         let sho = sumInt { $0.SHO }
         // Innings: summed as the app does elsewhere (raw decimal), so the
@@ -549,8 +561,8 @@ final class PlayerCompareViewModel: ObservableObject {
         let eraPlus = paWeightedAverage(seasons, value: { $0.ERA_plus }, weight: { $0.IP })
         // FIP recomputed from career components, constant 3.10. HBP is
         // present on the pitching model, so use the full 3·(BB+HBP) form.
-        let fip: Double? = ip > 0
-            ? ((13 * hr) + (3 * (bb + hbp)) - (2 * so)) / ip + 3.10
+        let fip: Double? = (ip > 0 && hbp != nil)
+            ? ((13 * hr) + (3 * (bb + hbp!)) - (2 * so)) / ip + 3.10
             : nil
         let so9: Double? = ip > 0 ? so * 9 / ip : nil
         let soBB: Double? = bb > 0 ? so / bb : nil

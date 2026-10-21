@@ -627,6 +627,11 @@ struct GameLogsView: View {
         var sumSF  = 0
         var sumIP  = 0.0
         var sumER  = 0
+        // Once a game leaves HBP / SF (or a double / triple) unknown, the
+        // season-to-date OBP (SLG) through it and every later game is
+        // unknown too — "—", never a rate on a short count (UnknownRule).
+        var obpKnown = true
+        var slgKnown = true
         var chronoWithCumulative: [GameWithCumulative] = []
         for g in chrono {
             if isPitcher {
@@ -645,13 +650,17 @@ struct GameLogsView: View {
                 sumBB  += g.BB ?? 0
                 sumHBP += g.HBP ?? 0
                 sumSF  += g.SF ?? 0
+                if UnknownRule.battingSum([g], "HBP", { $0.HBP }) == nil
+                    || UnknownRule.battingSum([g], "SF", { $0.SF }) == nil { obpKnown = false }
+                if UnknownRule.battingSum([g], "doubles", { $0.doubles }) == nil
+                    || UnknownRule.battingSum([g], "triples", { $0.triples }) == nil { slgKnown = false }
 
                 let singles = sumH - sumDbl - sumTrp - sumHR
                 let avg: Double? = sumAB > 0 ? Double(sumH) / Double(sumAB) : nil
                 let obpDen = sumAB + sumBB + sumHBP + sumSF
-                let obp: Double? = obpDen > 0
+                let obp: Double? = obpKnown && obpDen > 0
                     ? Double(sumH + sumBB + sumHBP) / Double(obpDen) : nil
-                let slg: Double? = sumAB > 0
+                let slg: Double? = slgKnown && sumAB > 0
                     ? Double(singles + 2 * sumDbl + 3 * sumTrp + 4 * sumHR) / Double(sumAB)
                     : nil
                 let ops: Double? = (obp != nil && slg != nil) ? (obp! + slg!) : nil
@@ -866,31 +875,39 @@ struct WindowSnapshot {
 
     /// Aggregate batting stats over a games slice. Mirrors the backend's
     /// `_aggregate_batting_window` formula so our local custom-window
-    /// numbers match what the server would have returned.
+    /// numbers match what the server would have returned — its ACTIVITY
+    /// RULE included (UnknownRule): a total an unknown game could change is
+    /// nil ("—"), and so is every rate built on it. AB, R, H, HR, RBI, BB and
+    /// SO are never NULL in a game log, so they sum plainly.
     static func computeBatting(games: [GameLog]) -> WindowSnapshot {
         guard !games.isEmpty else { return .empty }
         let g = games.count
         let ab  = games.reduce(0) { $0 + ($1.AB ?? 0) }
         let r   = games.reduce(0) { $0 + ($1.R ?? 0) }
         let h   = games.reduce(0) { $0 + ($1.H ?? 0) }
-        let dbl = games.reduce(0) { $0 + ($1.doubles ?? 0) }
-        let trp = games.reduce(0) { $0 + ($1.triples ?? 0) }
         let hr  = games.reduce(0) { $0 + ($1.HR ?? 0) }
         let rbi = games.reduce(0) { $0 + ($1.RBI ?? 0) }
         let bb  = games.reduce(0) { $0 + ($1.BB ?? 0) }
-        let ibb = games.reduce(0) { $0 + ($1.IBB ?? 0) }
         let so  = games.reduce(0) { $0 + ($1.SO ?? 0) }
-        let sb  = games.reduce(0) { $0 + ($1.SB ?? 0) }
-        let cs  = games.reduce(0) { $0 + ($1.CS ?? 0) }
-        let hbp = games.reduce(0) { $0 + ($1.HBP ?? 0) }
-        let sf  = games.reduce(0) { $0 + ($1.SF ?? 0) }
+        let dbl = UnknownRule.battingSum(games, "doubles", { $0.doubles })
+        let trp = UnknownRule.battingSum(games, "triples", { $0.triples })
+        let ibb = UnknownRule.battingSum(games, "IBB", { $0.IBB })
+        let sb  = UnknownRule.battingSum(games, "SB", { $0.SB })
+        let cs  = UnknownRule.battingSum(games, "CS", { $0.CS })
+        let hbp = UnknownRule.battingSum(games, "HBP", { $0.HBP })
+        let sf  = UnknownRule.battingSum(games, "SF", { $0.SF })
 
-        let singles = h - dbl - trp - hr
-        let tb = singles + 2 * dbl + 3 * trp + 4 * hr
+        let tb: Int? = {
+            guard let dbl, let trp else { return nil }
+            return (h - dbl - trp - hr) + 2 * dbl + 3 * trp + 4 * hr
+        }()
         let avg: Double? = ab > 0 ? Double(h) / Double(ab) : nil
-        let obpDen = ab + bb + hbp + sf
-        let obp: Double? = obpDen > 0 ? Double(h + bb + hbp) / Double(obpDen) : nil
-        let slg: Double? = ab > 0 ? Double(tb) / Double(ab) : nil
+        let obp: Double? = {
+            guard let hbp, let sf else { return nil }
+            let den = ab + bb + hbp + sf
+            return den > 0 ? Double(h + bb + hbp) / Double(den) : nil
+        }()
+        let slg: Double? = (ab > 0 && tb != nil) ? Double(tb!) / Double(ab) : nil
         let ops: Double? = (obp != nil && slg != nil) ? (obp! + slg!) : nil
 
         return WindowSnapshot(
@@ -912,7 +929,9 @@ struct WindowSnapshot {
         let bb = games.reduce(0)   { $0 + ($1.BB ?? 0) }
         let so = games.reduce(0)   { $0 + ($1.SO ?? 0) }
         let hr = games.reduce(0)   { $0 + ($1.HR ?? 0) }
-        let hbp = games.reduce(0)  { $0 + ($1.HBP ?? 0) }
+        // Every pitching game is activity: one NULL HBP makes the total
+        // unknown. IP, H, R, ER, BB, SO and HR are never NULL in a game log.
+        let hbp = UnknownRule.pitchingSum(games, { $0.HBP })
 
         let era:    Double? = ip > 0 ? Double(er) * 9 / ip : nil
         let whip:   Double? = ip > 0 ? Double(bb + h) / ip : nil
@@ -1523,10 +1542,10 @@ private struct PitchingScrollableMonthTotalsRow: View {
     var body: some View {
         let m = group.monthlyTotals
         let games = group.games.map(\.game)
-        let wins = games.filter { $0.result == "W" }.count
-        let losses = games.filter { $0.result == "L" }.count
+        // "—" when a game's decision is unknown (balldontlie didn't ship it).
+        let wl = UnknownRule.winLoss(games).map { "\($0.w)-\($0.l)" } ?? "—"
         HStack(spacing: 0) {
-            Text("\(wins)-\(losses)")  .frame(width: PitchingGameColumn.dec, alignment: .center).monospacedDigit().padding(.horizontal, 2)
+            Text(wl)  .frame(width: PitchingGameColumn.dec, alignment: .center).monospacedDigit().padding(.horizontal, 2)
             Text(formatIP(m.ip))     .frame(width: PitchingGameColumn.ip,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             Text(formatInt(m.h))     .frame(width: PitchingGameColumn.h,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             Text(formatInt(m.r))     .frame(width: PitchingGameColumn.r,   alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
@@ -2144,11 +2163,12 @@ private func formatInt(_ value: Int?) -> String {
 
 /// Per-game total bases. TB = singles + 2·2B + 3·3B + 4·HR, expressed
 /// in available stats as H + 2B + 2·3B + 3·HR. Returns nil when H is
-/// missing — better to render "—" than a wrong zero.
+/// missing, or when a double or triple is unknown on a game with AB or BB
+/// (UnknownRule) — better to render "—" than a wrong zero.
 private func perGameTB(_ g: GameLog) -> Int? {
     guard let h = g.H else { return nil }
-    let dbl = g.doubles ?? 0
-    let trp = g.triples ?? 0
+    guard let dbl = UnknownRule.battingSum([g], "doubles", { $0.doubles }),
+          let trp = UnknownRule.battingSum([g], "triples", { $0.triples }) else { return nil }
     let hr  = g.HR ?? 0
     return h + dbl + 2 * trp + 3 * hr
 }
