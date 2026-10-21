@@ -21,20 +21,40 @@ enum GameLogResolver {
 
     enum Failure: Error { case notInSlate, unsupportedSeason }
 
-    /// Whether a row from `season` can be resolved at all.
+    /// Where a row from `season` gets its slate: our own (`/games/by-date`,
+    /// Retrosheet) through the boundary the server reports, the provider after
+    /// it, or nowhere.
+    enum Source: Equatable { case retrosheet, provider, none }
+
+    /// The provider's first season (the same floor as `ScoresView.bdlFirstSeason`,
+    /// kept here so this model doesn't reach into a view).
+    static let providerFirstSeason = 2000
+
+    /// ⚠️ THE BOUNDARY IS THE SERVER'S, NEVER THE CALENDAR'S. The provider
+    /// branch used to be "the current calendar year", so on 2027-01-01 every
+    /// 2026 row went untappable until Retrosheet published 2026 and we loaded
+    /// it — the server still reports 2025 all that time, and 2026 sits past it,
+    /// on the provider, exactly where `resolve` already looked for it.
+    /// `lastSeason` is `RetrosheetCoverage.lastSeason` (GET /meta/coverage).
     ///
-    /// ⚠️ THIS IS A GUARD AGAINST A FUTURE COVERAGE GAP, NOT AN EXCLUSION OF
-    /// ANY ERA — AND IT IS NOT DEAD CODE. Today it is true for every row that
-    /// can exist, because a game-log row only exists for a game we hold, and
-    /// both branches below cover everything we hold: `/games/by-date` reaches
-    /// back to 1898, and BDL serves the current season. It returns false only
-    /// if those two ranges ever stop meeting — a season we ingest logs for but
-    /// serve no slate for. The row would then render untappable instead of
-    /// spinning and failing, which is the whole reason the check is here rather
-    /// than discovered after a fetch.
-    static func canResolve(season: Int) -> Bool {
-        season <= RetrosheetCoverage.lastSeason
-            || season == Calendar.current.component(.year, from: Date())
+    /// `.none` is the guard against a future coverage gap, not an exclusion of
+    /// any era: a season past the boundary but before the provider's first
+    /// season, or a season that hasn't happened yet on `today`. The row then
+    /// renders untappable instead of spinning and failing.
+    static func source(season: Int,
+                       lastSeason: Int = RetrosheetCoverage.lastSeason,
+                       today: Date = Date()) -> Source {
+        if season <= lastSeason { return .retrosheet }
+        let thisYear = Calendar(identifier: .gregorian).component(.year, from: today)
+        if season >= providerFirstSeason && season <= thisYear { return .provider }
+        return .none
+    }
+
+    /// Whether a row from `season` can be resolved at all (see `source`).
+    static func canResolve(season: Int,
+                           lastSeason: Int = RetrosheetCoverage.lastSeason,
+                           today: Date = Date()) -> Bool {
+        source(season: season, lastSeason: lastSeason, today: today) != .none
     }
 
     /// The `Game` for `gameId` on `date`, or a `Failure`.
@@ -73,9 +93,9 @@ enum GameLogResolver {
             throw Failure.notInSlate
         }
 
-        // CURRENT SEASON: the row's `game_id` IS BDL's game id, so the slate
+        // PAST THE BOUNDARY: the row's `game_id` IS BDL's game id, so the slate
         // already carries everything and there is nothing to pair.
-        if season > RetrosheetCoverage.lastSeason {
+        if source(season: season) == .provider {
             guard let id = Int(gameId) else { throw Failure.notInSlate }
             let games = (try? await bdl.getGames(date: dateString)) ?? []
             guard let match = games.first(where: { $0.id == id }) else {
