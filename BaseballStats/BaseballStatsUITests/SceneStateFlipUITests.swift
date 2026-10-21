@@ -221,6 +221,7 @@ final class SceneStateFlipUITests: XCTestCase {
                      file: StaticString = #filePath, line: UInt = #line) -> XCUIElement {
         let tabs = ["Home", "Scores", "Search", "Standings", "Leaders"]
         let deadline = Date().addingTimeInterval(5)
+        var restored = false
         repeat {
             let inTabBar = app.tabBars.buttons[label]
             if inTabBar.exists { return inTabBar }
@@ -234,6 +235,15 @@ final class SceneStateFlipUITests: XCTestCase {
                         .contains { abs($0.frame.midY - c.frame.midY) < 2 }
                 }
                 if row.count >= 3 { return c }
+            }
+            // The tab bar minimizes on scroll down (ContentView's
+            // `.tabBarMinimizeBehavior(.onScrollDown)`): after the swipes that
+            // reach Home's news, only the current tab shows. A swipe down
+            // brings the bar back.
+            if !restored {
+                restored = true
+                app.swipeDown()
+                continue
             }
             usleep(200_000)
         } while Date() < deadline
