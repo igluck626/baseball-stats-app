@@ -228,6 +228,14 @@ final class APIClient {
         return try await getOptional(url)
     }
 
+    /// `GET /teams/season-stats?season=` — every club's season totals with MLB
+    /// ranks, Run differential included, for the team page's Season Stats card.
+    func getTeamSeasonStats(season: Int) async throws -> TeamSeasonStatsResponse {
+        let url = try buildURL(path: "/teams/season-stats",
+                               query: [URLQueryItem(name: "season", value: String(season))])
+        return try await get(url, using: snakeCaseDecoder)
+    }
+
     /// `GET /players/{id}/pitching/current`. Returns nil on 404 — the
     /// player has no current-season pitching line (the common case for
     /// position players).

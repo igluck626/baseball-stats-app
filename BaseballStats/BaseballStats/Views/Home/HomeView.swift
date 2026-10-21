@@ -220,6 +220,10 @@ struct TeamPageLayout<Extra: View>: View {
                     onTapStripGame: { game in path.wrappedValue.append(game) },
                 )
 
+                // Season Stats: the club's totals with MLB ranks. Left column on
+                // a wide window, under the hero card.
+                SeasonStatsCard(bdlTeamId: entry.bdlTeamId, season: UnknownRule.currentSeason, tint: tint)
+
                 // Team News — nice-to-have, so it only appears once
                 // articles have loaded. A failed/empty fetch keeps
                 // `vm.news` empty and the section never renders.
@@ -509,7 +513,7 @@ extension View {
 /// team colors. In DARK mode the wash color is brightened (`adaptiveBrightened`)
 /// so dark team colors actually show — text/borders/accents elsewhere keep the
 /// TRUE team color. Pair with the caller's existing border + shadow.
-private func teamWashBackground(
+func teamWashBackground(
     tint: Color,
     cornerRadius: CGFloat,
     isDark: Bool,
@@ -1298,7 +1302,7 @@ private struct CompactGameStripCard: View {
 
 // MARK: - Section header (shared)
 
-private struct HomeSectionHeader<Trailing: View>: View {
+struct HomeSectionHeader<Trailing: View>: View {
     let title: String
     let tint: Color
     @ViewBuilder let trailing: Trailing

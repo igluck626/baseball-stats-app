@@ -1,0 +1,3126 @@
+{
+ "season": 2026,
+ "source": "balldontlie team season totals (regular season)",
+ "teams": [
+  {
+   "team": "ARI",
+   "bdl_id": 1,
+   "name": "Arizona Diamondbacks",
+   "league": "National",
+   "stats": {
+    "R": {
+     "label": "Runs",
+     "value": 739,
+     "mlb_rank": 9,
+     "mlb_tied": true,
+     "league_rank": 8,
+     "league_tied": false
+    },
+    "AVG": {
+     "label": "AVG",
+     "value": 0.24600990643918547,
+     "mlb_rank": 12,
+     "mlb_tied": false,
+     "league_rank": 9,
+     "league_tied": false
+    },
+    "OBP": {
+     "label": "OBP",
+     "value": 0.31782436,
+     "mlb_rank": 13,
+     "mlb_tied": false,
+     "league_rank": 9,
+     "league_tied": false
+    },
+    "SLG": {
+     "label": "SLG",
+     "value": 0.40212804989910106,
+     "mlb_rank": 12,
+     "mlb_tied": false,
+     "league_rank": 8,
+     "league_tied": false
+    },
+    "OPS": {
+     "label": "OPS",
+     "value": 0.719952409899101,
+     "mlb_rank": 14,
+     "mlb_tied": false,
+     "league_rank": 8,
+     "league_tied": false
+    },
+    "HR": {
+     "label": "Home runs",
+     "value": 166,
+     "mlb_rank": 25,
+     "mlb_tied": false,
+     "league_rank": 14,
+     "league_tied": false
+    },
+    "SB": {
+     "label": "Stolen bases",
+     "value": 103,
+     "mlb_rank": 16,
+     "mlb_tied": false,
+     "league_rank": 10,
+     "league_tied": false
+    },
+    "ERA": {
+     "label": "ERA",
+     "value": 4.175450762829404,
+     "mlb_rank": 18,
+     "mlb_tied": false,
+     "league_rank": 10,
+     "league_tied": false
+    },
+    "WHIP": {
+     "label": "WHIP",
+     "value": 1.2836338418862692,
+     "mlb_rank": 12,
+     "mlb_tied": false,
+     "league_rank": 6,
+     "league_tied": false
+    },
+    "SO": {
+     "label": "Strikeouts",
+     "value": 1140,
+     "mlb_rank": 29,
+     "mlb_tied": false,
+     "league_rank": 14,
+     "league_tied": false
+    },
+    "SV": {
+     "label": "Saves",
+     "value": 38,
+     "mlb_rank": 21,
+     "mlb_tied": true,
+     "league_rank": 10,
+     "league_tied": false
+    },
+    "HRA": {
+     "label": "Home runs allowed",
+     "value": 186,
+     "mlb_rank": 18,
+     "mlb_tied": true,
+     "league_rank": 10,
+     "league_tied": false
+    }
+   }
+  },
+  {
+   "team": "ATL",
+   "bdl_id": 2,
+   "name": "Atlanta Braves",
+   "league": "National",
+   "stats": {
+    "R": {
+     "label": "Runs",
+     "value": 742,
+     "mlb_rank": 8,
+     "mlb_tied": false,
+     "league_rank": 7,
+     "league_tied": false
+    },
+    "AVG": {
+     "label": "AVG",
+     "value": 0.24639005666240177,
+     "mlb_rank": 10,
+     "mlb_tied": false,
+     "league_rank": 7,
+     "league_tied": false
+    },
+    "OBP": {
+     "label": "OBP",
+     "value": 0.30948833,
+     "mlb_rank": 28,
+     "mlb_tied": false,
+     "league_rank": 13,
+     "league_tied": false
+    },
+    "SLG": {
+     "label": "SLG",
+     "value": 0.40888320233960884,
+     "mlb_rank": 7,
+     "mlb_tied": false,
+     "league_rank": 5,
+     "league_tied": false
+    },
+    "OPS": {
+     "label": "OPS",
+     "value": 0.7183715323396088,
+     "mlb_rank": 16,
+     "mlb_tied": false,
+     "league_rank": 9,
+     "league_tied": false
+    },
+    "HR": {
+     "label": "Home runs",
+     "value": 204,
+     "mlb_rank": 7,
+     "mlb_tied": true,
+     "league_rank": 4,
+     "league_tied": true
+    },
+    "SB": {
+     "label": "Stolen bases",
+     "value": 83,
+     "mlb_rank": 23,
+     "mlb_tied": true,
+     "league_rank": 13,
+     "league_tied": true
+    },
+    "ERA": {
+     "label": "ERA",
+     "value": 3.6300417246175245,
+     "mlb_rank": 5,
+     "mlb_tied": false,
+     "league_rank": 3,
+     "league_tied": false
+    },
+    "WHIP": {
+     "label": "WHIP",
+     "value": 1.243393602225313,
+     "mlb_rank": 7,
+     "mlb_tied": false,
+     "league_rank": 3,
+     "league_tied": false
+    },
+    "SO": {
+     "label": "Strikeouts",
+     "value": 1350,
+     "mlb_rank": 15,
+     "mlb_tied": false,
+     "league_rank": 6,
+     "league_tied": false
+    },
+    "SV": {
+     "label": "Saves",
+     "value": 49,
+     "mlb_rank": 4,
+     "mlb_tied": true,
+     "league_rank": 2,
+     "league_tied": false
+    },
+    "HRA": {
+     "label": "Home runs allowed",
+     "value": 185,
+     "mlb_rank": 17,
+     "mlb_tied": false,
+     "league_rank": 9,
+     "league_tied": false
+    }
+   }
+  },
+  {
+   "team": "BAL",
+   "bdl_id": 3,
+   "name": "Baltimore Orioles",
+   "league": "American",
+   "stats": {
+    "R": {
+     "label": "Runs",
+     "value": 718,
+     "mlb_rank": 17,
+     "mlb_tied": false,
+     "league_rank": 7,
+     "league_tied": false
+    },
+    "AVG": {
+     "label": "AVG",
+     "value": 0.23394751535455052,
+     "mlb_rank": 27,
+     "mlb_tied": false,
+     "league_rank": 13,
+     "league_tied": false
+    },
+    "OBP": {
+     "label": "OBP",
+     "value": 0.31440833,
+     "mlb_rank": 20,
+     "mlb_tied": false,
+     "league_rank": 11,
+     "league_tied": false
+    },
+    "SLG": {
+     "label": "SLG",
+     "value": 0.39624046156709475,
+     "mlb_rank": 21,
+     "mlb_tied": false,
+     "league_rank": 10,
+     "league_tied": false
+    },
+    "OPS": {
+     "label": "OPS",
+     "value": 0.7106487915670947,
+     "mlb_rank": 21,
+     "mlb_tied": false,
+     "league_rank": 11,
+     "league_tied": false
+    },
+    "HR": {
+     "label": "Home runs",
+     "value": 199,
+     "mlb_rank": 10,
+     "mlb_tied": false,
+     "league_rank": 4,
+     "league_tied": false
+    },
+    "SB": {
+     "label": "Stolen bases",
+     "value": 78,
+     "mlb_rank": 25,
+     "mlb_tied": true,
+     "league_rank": 11,
+     "league_tied": true
+    },
+    "ERA": {
+     "label": "ERA",
+     "value": 4.079136690647482,
+     "mlb_rank": 12,
+     "mlb_tied": false,
+     "league_rank": 7,
+     "league_tied": false
+    },
+    "WHIP": {
+     "label": "WHIP",
+     "value": 1.3374332791831052,
+     "mlb_rank": 20,
+     "mlb_tied": false,
+     "league_rank": 10,
+     "league_tied": false
+    },
+    "SO": {
+     "label": "Strikeouts",
+     "value": 1305,
+     "mlb_rank": 22,
+     "mlb_tied": false,
+     "league_rank": 14,
+     "league_tied": false
+    },
+    "SV": {
+     "label": "Saves",
+     "value": 46,
+     "mlb_rank": 7,
+     "mlb_tied": true,
+     "league_rank": 4,
+     "league_tied": true
+    },
+    "HRA": {
+     "label": "Home runs allowed",
+     "value": 169,
+     "mlb_rank": 9,
+     "mlb_tied": false,
+     "league_rank": 6,
+     "league_tied": false
+    }
+   }
+  },
+  {
+   "team": "BOS",
+   "bdl_id": 4,
+   "name": "Boston Red Sox",
+   "league": "American",
+   "stats": {
+    "R": {
+     "label": "Runs",
+     "value": 689,
+     "mlb_rank": 23,
+     "mlb_tied": false,
+     "league_rank": 10,
+     "league_tied": false
+    },
+    "AVG": {
+     "label": "AVG",
+     "value": 0.2449205762837089,
+     "mlb_rank": 15,
+     "mlb_tied": false,
+     "league_rank": 5,
+     "league_tied": false
+    },
+    "OBP": {
+     "label": "OBP",
+     "value": 0.31916997,
+     "mlb_rank": 12,
+     "mlb_tied": false,
+     "league_rank": 4,
+     "league_tied": false
+    },
+    "SLG": {
+     "label": "SLG",
+     "value": 0.39748799408939783,
+     "mlb_rank": 20,
+     "mlb_tied": false,
+     "league_rank": 9,
+     "league_tied": false
+    },
+    "OPS": {
+     "label": "OPS",
+     "value": 0.7166579640893979,
+     "mlb_rank": 19,
+     "mlb_tied": false,
+     "league_rank": 9,
+     "league_tied": false
+    },
+    "HR": {
+     "label": "Home runs",
+     "value": 163,
+     "mlb_rank": 26,
+     "mlb_tied": false,
+     "league_rank": 12,
+     "league_tied": false
+    },
+    "SB": {
+     "label": "Stolen bases",
+     "value": 107,
+     "mlb_rank": 14,
+     "mlb_tied": false,
+     "league_rank": 6,
+     "league_tied": false
+    },
+    "ERA": {
+     "label": "ERA",
+     "value": 3.5375,
+     "mlb_rank": 3,
+     "mlb_tied": false,
+     "league_rank": 2,
+     "league_tied": false
+    },
+    "WHIP": {
+     "label": "WHIP",
+     "value": 1.2333333333333334,
+     "mlb_rank": 6,
+     "mlb_tied": false,
+     "league_rank": 4,
+     "league_tied": false
+    },
+    "SO": {
+     "label": "Strikeouts",
+     "value": 1398,
+     "mlb_rank": 11,
+     "mlb_tied": false,
+     "league_rank": 6,
+     "league_tied": false
+    },
+    "SV": {
+     "label": "Saves",
+     "value": 46,
+     "mlb_rank": 7,
+     "mlb_tied": true,
+     "league_rank": 4,
+     "league_tied": true
+    },
+    "HRA": {
+     "label": "Home runs allowed",
+     "value": 153,
+     "mlb_rank": 1,
+     "mlb_tied": false,
+     "league_rank": 1,
+     "league_tied": false
+    }
+   }
+  },
+  {
+   "team": "CHC",
+   "bdl_id": 5,
+   "name": "Chicago Cubs",
+   "league": "National",
+   "stats": {
+    "R": {
+     "label": "Runs",
+     "value": 850,
+     "mlb_rank": 1,
+     "mlb_tied": false,
+     "league_rank": 1,
+     "league_tied": false
+    },
+    "AVG": {
+     "label": "AVG",
+     "value": 0.25125808770668584,
+     "mlb_rank": 6,
+     "mlb_tied": false,
+     "league_rank": 5,
+     "league_tied": false
+    },
+    "OBP": {
+     "label": "OBP",
+     "value": 0.3388793,
+     "mlb_rank": 2,
+     "mlb_tied": false,
+     "league_rank": 2,
+     "league_tied": false
+    },
+    "SLG": {
+     "label": "SLG",
+     "value": 0.4284687275341481,
+     "mlb_rank": 1,
+     "mlb_tied": false,
+     "league_rank": 1,
+     "league_tied": false
+    },
+    "OPS": {
+     "label": "OPS",
+     "value": 0.7673480275341481,
+     "mlb_rank": 1,
+     "mlb_tied": false,
+     "league_rank": 1,
+     "league_tied": false
+    },
+    "HR": {
+     "label": "Home runs",
+     "value": 220,
+     "mlb_rank": 3,
+     "mlb_tied": false,
+     "league_rank": 1,
+     "league_tied": false
+    },
+    "SB": {
+     "label": "Stolen bases",
+     "value": 114,
+     "mlb_rank": 10,
+     "mlb_tied": true,
+     "league_rank": 6,
+     "league_tied": false
+    },
+    "ERA": {
+     "label": "ERA",
+     "value": 4.117484450587423,
+     "mlb_rank": 14,
+     "mlb_tied": false,
+     "league_rank": 7,
+     "league_tied": false
+    },
+    "WHIP": {
+     "label": "WHIP",
+     "value": 1.2598479612992397,
+     "mlb_rank": 8,
+     "mlb_tied": false,
+     "league_rank": 4,
+     "league_tied": false
+    },
+    "SO": {
+     "label": "Strikeouts",
+     "value": 1260,
+     "mlb_rank": 26,
+     "mlb_tied": false,
+     "league_rank": 12,
+     "league_tied": false
+    },
+    "SV": {
+     "label": "Saves",
+     "value": 36,
+     "mlb_rank": 23,
+     "mlb_tied": false,
+     "league_rank": 11,
+     "league_tied": false
+    },
+    "HRA": {
+     "label": "Home runs allowed",
+     "value": 231,
+     "mlb_rank": 29,
+     "mlb_tied": false,
+     "league_rank": 15,
+     "league_tied": false
+    }
+   }
+  },
+  {
+   "team": "CHW",
+   "bdl_id": 6,
+   "name": "Chicago White Sox",
+   "league": "American",
+   "stats": {
+    "R": {
+     "label": "Runs",
+     "value": 776,
+     "mlb_rank": 5,
+     "mlb_tied": false,
+     "league_rank": 1,
+     "league_tied": false
+    },
+    "AVG": {
+     "label": "AVG",
+     "value": 0.23609576427255985,
+     "mlb_rank": 25,
+     "mlb_tied": false,
+     "league_rank": 11,
+     "league_tied": false
+    },
+    "OBP": {
+     "label": "OBP",
+     "value": 0.32023385,
+     "mlb_rank": 9,
+     "mlb_tied": false,
+     "league_rank": 2,
+     "league_tied": false
+    },
+    "SLG": {
+     "label": "SLG",
+     "value": 0.4057090239410681,
+     "mlb_rank": 8,
+     "mlb_tied": false,
+     "league_rank": 3,
+     "league_tied": false
+    },
+    "OPS": {
+     "label": "OPS",
+     "value": 0.725942873941068,
+     "mlb_rank": 10,
+     "mlb_tied": false,
+     "league_rank": 3,
+     "league_tied": false
+    },
+    "HR": {
+     "label": "Home runs",
+     "value": 211,
+     "mlb_rank": 5,
+     "mlb_tied": false,
+     "league_rank": 3,
+     "league_tied": false
+    },
+    "SB": {
+     "label": "Stolen bases",
+     "value": 93,
+     "mlb_rank": 18,
+     "mlb_tied": true,
+     "league_rank": 7,
+     "league_tied": true
+    },
+    "ERA": {
+     "label": "ERA",
+     "value": 4.123091161499306,
+     "mlb_rank": 15,
+     "mlb_tied": false,
+     "league_rank": 8,
+     "league_tied": false
+    },
+    "WHIP": {
+     "label": "WHIP",
+     "value": 1.3105043961129106,
+     "mlb_rank": 19,
+     "mlb_tied": false,
+     "league_rank": 9,
+     "league_tied": false
+    },
+    "SO": {
+     "label": "Strikeouts",
+     "value": 1337,
+     "mlb_rank": 16,
+     "mlb_tied": true,
+     "league_rank": 10,
+     "league_tied": true
+    },
+    "SV": {
+     "label": "Saves",
+     "value": 41,
+     "mlb_rank": 18,
+     "mlb_tied": true,
+     "league_rank": 10,
+     "league_tied": false
+    },
+    "HRA": {
+     "label": "Home runs allowed",
+     "value": 180,
+     "mlb_rank": 14,
+     "mlb_tied": true,
+     "league_rank": 8,
+     "league_tied": false
+    }
+   }
+  },
+  {
+   "team": "CIN",
+   "bdl_id": 7,
+   "name": "Cincinnati Reds",
+   "league": "National",
+   "stats": {
+    "R": {
+     "label": "Runs",
+     "value": 666,
+     "mlb_rank": 27,
+     "mlb_tied": false,
+     "league_rank": 15,
+     "league_tied": false
+    },
+    "AVG": {
+     "label": "AVG",
+     "value": 0.22868289058146016,
+     "mlb_rank": 30,
+     "mlb_tied": false,
+     "league_rank": 15,
+     "league_tied": false
+    },
+    "OBP": {
+     "label": "OBP",
+     "value": 0.30497512,
+     "mlb_rank": 30,
+     "mlb_tied": false,
+     "league_rank": 15,
+     "league_tied": false
+    },
+    "SLG": {
+     "label": "SLG",
+     "value": 0.3940182054616385,
+     "mlb_rank": 25,
+     "mlb_tied": false,
+     "league_rank": 14,
+     "league_tied": false
+    },
+    "OPS": {
+     "label": "OPS",
+     "value": 0.6989933254616385,
+     "mlb_rank": 25,
+     "mlb_tied": false,
+     "league_rank": 14,
+     "league_tied": false
+    },
+    "HR": {
+     "label": "Home runs",
+     "value": 213,
+     "mlb_rank": 4,
+     "mlb_tied": false,
+     "league_rank": 2,
+     "league_tied": false
+    },
+    "SB": {
+     "label": "Stolen bases",
+     "value": 112,
+     "mlb_rank": 12,
+     "mlb_tied": false,
+     "league_rank": 7,
+     "league_tied": false
+    },
+    "ERA": {
+     "label": "ERA",
+     "value": 4.834883720930232,
+     "mlb_rank": 28,
+     "mlb_tied": false,
+     "league_rank": 14,
+     "league_tied": false
+    },
+    "WHIP": {
+     "label": "WHIP",
+     "value": 1.4434883720930232,
+     "mlb_rank": 28,
+     "mlb_tied": false,
+     "league_rank": 14,
+     "league_tied": false
+    },
+    "SO": {
+     "label": "Strikeouts",
+     "value": 1293,
+     "mlb_rank": 23,
+     "mlb_tied": false,
+     "league_rank": 9,
+     "league_tied": false
+    },
+    "SV": {
+     "label": "Saves",
+     "value": 42,
+     "mlb_rank": 15,
+     "mlb_tied": true,
+     "league_rank": 6,
+     "league_tied": true
+    },
+    "HRA": {
+     "label": "Home runs allowed",
+     "value": 214,
+     "mlb_rank": 26,
+     "mlb_tied": false,
+     "league_rank": 12,
+     "league_tied": false
+    }
+   }
+  },
+  {
+   "team": "CLE",
+   "bdl_id": 8,
+   "name": "Cleveland Guardians",
+   "league": "American",
+   "stats": {
+    "R": {
+     "label": "Runs",
+     "value": 678,
+     "mlb_rank": 24,
+     "mlb_tied": false,
+     "league_rank": 11,
+     "league_tied": false
+    },
+    "AVG": {
+     "label": "AVG",
+     "value": 0.23863216266173753,
+     "mlb_rank": 24,
+     "mlb_tied": false,
+     "league_rank": 10,
+     "league_tied": false
+    },
+    "OBP": {
+     "label": "OBP",
+     "value": 0.31591916,
+     "mlb_rank": 18,
+     "mlb_tied": false,
+     "league_rank": 9,
+     "league_tied": false
+    },
+    "SLG": {
+     "label": "SLG",
+     "value": 0.38040665434380777,
+     "mlb_rank": 27,
+     "mlb_tied": false,
+     "league_rank": 13,
+     "league_tied": false
+    },
+    "OPS": {
+     "label": "OPS",
+     "value": 0.6963258143438078,
+     "mlb_rank": 26,
+     "mlb_tied": false,
+     "league_rank": 12,
+     "league_tied": false
+    },
+    "HR": {
+     "label": "Home runs",
+     "value": 162,
+     "mlb_rank": 27,
+     "mlb_tied": false,
+     "league_rank": 13,
+     "league_tied": false
+    },
+    "SB": {
+     "label": "Stolen bases",
+     "value": 146,
+     "mlb_rank": 7,
+     "mlb_tied": false,
+     "league_rank": 3,
+     "league_tied": false
+    },
+    "ERA": {
+     "label": "ERA",
+     "value": 3.768606538372363,
+     "mlb_rank": 8,
+     "mlb_tied": false,
+     "league_rank": 5,
+     "league_tied": false
+    },
+    "WHIP": {
+     "label": "WHIP",
+     "value": 1.263157894736842,
+     "mlb_rank": 9,
+     "mlb_tied": false,
+     "league_rank": 5,
+     "league_tied": false
+    },
+    "SO": {
+     "label": "Strikeouts",
+     "value": 1530,
+     "mlb_rank": 3,
+     "mlb_tied": false,
+     "league_rank": 1,
+     "league_tied": false
+    },
+    "SV": {
+     "label": "Saves",
+     "value": 46,
+     "mlb_rank": 7,
+     "mlb_tied": true,
+     "league_rank": 4,
+     "league_tied": true
+    },
+    "HRA": {
+     "label": "Home runs allowed",
+     "value": 175,
+     "mlb_rank": 13,
+     "mlb_tied": false,
+     "league_rank": 7,
+     "league_tied": false
+    }
+   }
+  },
+  {
+   "team": "COL",
+   "bdl_id": 9,
+   "name": "Colorado Rockies",
+   "league": "National",
+   "stats": {
+    "R": {
+     "label": "Runs",
+     "value": 752,
+     "mlb_rank": 7,
+     "mlb_tied": false,
+     "league_rank": 6,
+     "league_tied": false
+    },
+    "AVG": {
+     "label": "AVG",
+     "value": 0.2535798441181802,
+     "mlb_rank": 4,
+     "mlb_tied": false,
+     "league_rank": 3,
+     "league_tied": false
+    },
+    "OBP": {
+     "label": "OBP",
+     "value": 0.32200357,
+     "mlb_rank": 7,
+     "mlb_tied": false,
+     "league_rank": 6,
+     "league_tied": false
+    },
+    "SLG": {
+     "label": "SLG",
+     "value": 0.4168932390792097,
+     "mlb_rank": 5,
+     "mlb_tied": false,
+     "league_rank": 4,
+     "league_tied": false
+    },
+    "OPS": {
+     "label": "OPS",
+     "value": 0.7388968090792097,
+     "mlb_rank": 5,
+     "mlb_tied": false,
+     "league_rank": 5,
+     "league_tied": false
+    },
+    "HR": {
+     "label": "Home runs",
+     "value": 180,
+     "mlb_rank": 19,
+     "mlb_tied": false,
+     "league_rank": 10,
+     "league_tied": false
+    },
+    "SB": {
+     "label": "Stolen bases",
+     "value": 109,
+     "mlb_rank": 13,
+     "mlb_tied": false,
+     "league_rank": 8,
+     "league_tied": false
+    },
+    "ERA": {
+     "label": "ERA",
+     "value": 5.589917936694021,
+     "mlb_rank": 30,
+     "mlb_tied": false,
+     "league_rank": 15,
+     "league_tied": false
+    },
+    "WHIP": {
+     "label": "WHIP",
+     "value": 1.5235638921453694,
+     "mlb_rank": 30,
+     "mlb_tied": false,
+     "league_rank": 15,
+     "league_tied": false
+    },
+    "SO": {
+     "label": "Strikeouts",
+     "value": 1113,
+     "mlb_rank": 30,
+     "mlb_tied": false,
+     "league_rank": 15,
+     "league_tied": false
+    },
+    "SV": {
+     "label": "Saves",
+     "value": 33,
+     "mlb_rank": 26,
+     "mlb_tied": false,
+     "league_rank": 13,
+     "league_tied": false
+    },
+    "HRA": {
+     "label": "Home runs allowed",
+     "value": 227,
+     "mlb_rank": 28,
+     "mlb_tied": false,
+     "league_rank": 14,
+     "league_tied": false
+    }
+   }
+  },
+  {
+   "team": "DET",
+   "bdl_id": 10,
+   "name": "Detroit Tigers",
+   "league": "American",
+   "stats": {
+    "R": {
+     "label": "Runs",
+     "value": 723,
+     "mlb_rank": 14,
+     "mlb_tied": false,
+     "league_rank": 6,
+     "league_tied": false
+    },
+    "AVG": {
+     "label": "AVG",
+     "value": 0.24079838857352134,
+     "mlb_rank": 20,
+     "mlb_tied": false,
+     "league_rank": 9,
+     "league_tied": false
+    },
+    "OBP": {
+     "label": "OBP",
+     "value": 0.31969476,
+     "mlb_rank": 10,
+     "mlb_tied": false,
+     "league_rank": 3,
+     "league_tied": false
+    },
+    "SLG": {
+     "label": "SLG",
+     "value": 0.4002929866324849,
+     "mlb_rank": 17,
+     "mlb_tied": false,
+     "league_rank": 8,
+     "league_tied": false
+    },
+    "OPS": {
+     "label": "OPS",
+     "value": 0.7199877466324849,
+     "mlb_rank": 13,
+     "mlb_tied": false,
+     "league_rank": 6,
+     "league_tied": false
+    },
+    "HR": {
+     "label": "Home runs",
+     "value": 181,
+     "mlb_rank": 18,
+     "mlb_tied": false,
+     "league_rank": 9,
+     "league_tied": false
+    },
+    "SB": {
+     "label": "Stolen bases",
+     "value": 58,
+     "mlb_rank": 29,
+     "mlb_tied": false,
+     "league_rank": 14,
+     "league_tied": false
+    },
+    "ERA": {
+     "label": "ERA",
+     "value": 3.6652719665271967,
+     "mlb_rank": 6,
+     "mlb_tied": false,
+     "league_rank": 3,
+     "league_tied": false
+    },
+    "WHIP": {
+     "label": "WHIP",
+     "value": 1.2182705718270572,
+     "mlb_rank": 5,
+     "mlb_tied": false,
+     "league_rank": 3,
+     "league_tied": false
+    },
+    "SO": {
+     "label": "Strikeouts",
+     "value": 1312,
+     "mlb_rank": 21,
+     "mlb_tied": false,
+     "league_rank": 13,
+     "league_tied": false
+    },
+    "SV": {
+     "label": "Saves",
+     "value": 32,
+     "mlb_rank": 27,
+     "mlb_tied": false,
+     "league_rank": 14,
+     "league_tied": false
+    },
+    "HRA": {
+     "label": "Home runs allowed",
+     "value": 167,
+     "mlb_rank": 7,
+     "mlb_tied": true,
+     "league_rank": 4,
+     "league_tied": true
+    }
+   }
+  },
+  {
+   "team": "HOU",
+   "bdl_id": 11,
+   "name": "Houston Astros",
+   "league": "American",
+   "stats": {
+    "R": {
+     "label": "Runs",
+     "value": 734,
+     "mlb_rank": 13,
+     "mlb_tied": false,
+     "league_rank": 5,
+     "league_tied": false
+    },
+    "AVG": {
+     "label": "AVG",
+     "value": 0.24189114898295766,
+     "mlb_rank": 18,
+     "mlb_tied": false,
+     "league_rank": 7,
+     "league_tied": false
+    },
+    "OBP": {
+     "label": "OBP",
+     "value": 0.31530645,
+     "mlb_rank": 19,
+     "mlb_tied": false,
+     "league_rank": 10,
+     "league_tied": false
+    },
+    "SLG": {
+     "label": "SLG",
+     "value": 0.4174454828660436,
+     "mlb_rank": 4,
+     "mlb_tied": false,
+     "league_rank": 1,
+     "league_tied": false
+    },
+    "OPS": {
+     "label": "OPS",
+     "value": 0.7327519328660437,
+     "mlb_rank": 7,
+     "mlb_tied": false,
+     "league_rank": 1,
+     "league_tied": false
+    },
+    "HR": {
+     "label": "Home runs",
+     "value": 226,
+     "mlb_rank": 1,
+     "mlb_tied": false,
+     "league_rank": 1,
+     "league_tied": false
+    },
+    "SB": {
+     "label": "Stolen bases",
+     "value": 50,
+     "mlb_rank": 30,
+     "mlb_tied": false,
+     "league_rank": 15,
+     "league_tied": false
+    },
+    "ERA": {
+     "label": "ERA",
+     "value": 4.453027139874739,
+     "mlb_rank": 24,
+     "mlb_tied": false,
+     "league_rank": 12,
+     "league_tied": false
+    },
+    "WHIP": {
+     "label": "WHIP",
+     "value": 1.3402922755741127,
+     "mlb_rank": 21,
+     "mlb_tied": false,
+     "league_rank": 11,
+     "league_tied": false
+    },
+    "SO": {
+     "label": "Strikeouts",
+     "value": 1411,
+     "mlb_rank": 9,
+     "mlb_tied": false,
+     "league_rank": 4,
+     "league_tied": false
+    },
+    "SV": {
+     "label": "Saves",
+     "value": 49,
+     "mlb_rank": 4,
+     "mlb_tied": true,
+     "league_rank": 3,
+     "league_tied": false
+    },
+    "HRA": {
+     "label": "Home runs allowed",
+     "value": 204,
+     "mlb_rank": 24,
+     "mlb_tied": false,
+     "league_rank": 13,
+     "league_tied": false
+    }
+   }
+  },
+  {
+   "team": "KC",
+   "bdl_id": 12,
+   "name": "Kansas City Royals",
+   "league": "American",
+   "stats": {
+    "R": {
+     "label": "Runs",
+     "value": 690,
+     "mlb_rank": 22,
+     "mlb_tied": false,
+     "league_rank": 9,
+     "league_tied": false
+    },
+    "AVG": {
+     "label": "AVG",
+     "value": 0.24733357852151527,
+     "mlb_rank": 8,
+     "mlb_tied": false,
+     "league_rank": 2,
+     "league_tied": false
+    },
+    "OBP": {
+     "label": "OBP",
+     "value": 0.31620684,
+     "mlb_rank": 17,
+     "mlb_tied": false,
+     "league_rank": 8,
+     "league_tied": false
+    },
+    "SLG": {
+     "label": "SLG",
+     "value": 0.40198602427363,
+     "mlb_rank": 13,
+     "mlb_tied": false,
+     "league_rank": 5,
+     "league_tied": false
+    },
+    "OPS": {
+     "label": "OPS",
+     "value": 0.7181928642736299,
+     "mlb_rank": 17,
+     "mlb_tied": false,
+     "league_rank": 8,
+     "league_tied": false
+    },
+    "HR": {
+     "label": "Home runs",
+     "value": 170,
+     "mlb_rank": 21,
+     "mlb_tied": false,
+     "league_rank": 10,
+     "league_tied": false
+    },
+    "SB": {
+     "label": "Stolen bases",
+     "value": 130,
+     "mlb_rank": 9,
+     "mlb_tied": false,
+     "league_rank": 4,
+     "league_tied": false
+    },
+    "ERA": {
+     "label": "ERA",
+     "value": 4.770652937046571,
+     "mlb_rank": 27,
+     "mlb_tied": false,
+     "league_rank": 14,
+     "league_tied": false
+    },
+    "WHIP": {
+     "label": "WHIP",
+     "value": 1.4083781886262579,
+     "mlb_rank": 27,
+     "mlb_tied": false,
+     "league_rank": 14,
+     "league_tied": false
+    },
+    "SO": {
+     "label": "Strikeouts",
+     "value": 1173,
+     "mlb_rank": 28,
+     "mlb_tied": false,
+     "league_rank": 15,
+     "league_tied": false
+    },
+    "SV": {
+     "label": "Saves",
+     "value": 38,
+     "mlb_rank": 21,
+     "mlb_tied": true,
+     "league_rank": 12,
+     "league_tied": false
+    },
+    "HRA": {
+     "label": "Home runs allowed",
+     "value": 210,
+     "mlb_rank": 25,
+     "mlb_tied": false,
+     "league_rank": 14,
+     "league_tied": false
+    }
+   }
+  },
+  {
+   "team": "LAA",
+   "bdl_id": 13,
+   "name": "Los Angeles Angels",
+   "league": "American",
+   "stats": {
+    "R": {
+     "label": "Runs",
+     "value": 655,
+     "mlb_rank": 29,
+     "mlb_tied": false,
+     "league_rank": 14,
+     "league_tied": false
+    },
+    "AVG": {
+     "label": "AVG",
+     "value": 0.2338381972663465,
+     "mlb_rank": 28,
+     "mlb_tied": false,
+     "league_rank": 14,
+     "league_tied": false
+    },
+    "OBP": {
+     "label": "OBP",
+     "value": 0.30988938,
+     "mlb_rank": 26,
+     "mlb_tied": false,
+     "league_rank": 15,
+     "league_tied": false
+    },
+    "SLG": {
+     "label": "SLG",
+     "value": 0.36867380864425564,
+     "mlb_rank": 30,
+     "mlb_tied": false,
+     "league_rank": 15,
+     "league_tied": false
+    },
+    "OPS": {
+     "label": "OPS",
+     "value": 0.6785631886442556,
+     "mlb_rank": 30,
+     "mlb_tied": false,
+     "league_rank": 15,
+     "league_tied": false
+    },
+    "HR": {
+     "label": "Home runs",
+     "value": 154,
+     "mlb_rank": 28,
+     "mlb_tied": true,
+     "league_rank": 14,
+     "league_tied": false
+    },
+    "SB": {
+     "label": "Stolen bases",
+     "value": 93,
+     "mlb_rank": 18,
+     "mlb_tied": true,
+     "league_rank": 7,
+     "league_tied": true
+    },
+    "ERA": {
+     "label": "ERA",
+     "value": 4.2913073875553485,
+     "mlb_rank": 21,
+     "mlb_tied": false,
+     "league_rank": 10,
+     "league_tied": false
+    },
+    "WHIP": {
+     "label": "WHIP",
+     "value": 1.3542297832673036,
+     "mlb_rank": 22,
+     "mlb_tied": false,
+     "league_rank": 12,
+     "league_tied": false
+    },
+    "SO": {
+     "label": "Strikeouts",
+     "value": 1439,
+     "mlb_rank": 8,
+     "mlb_tied": false,
+     "league_rank": 3,
+     "league_tied": false
+    },
+    "SV": {
+     "label": "Saves",
+     "value": 25,
+     "mlb_rank": 30,
+     "mlb_tied": false,
+     "league_rank": 15,
+     "league_tied": false
+    },
+    "HRA": {
+     "label": "Home runs allowed",
+     "value": 164,
+     "mlb_rank": 5,
+     "mlb_tied": false,
+     "league_rank": 2,
+     "league_tied": false
+    }
+   }
+  },
+  {
+   "team": "LAD",
+   "bdl_id": 14,
+   "name": "Los Angeles Dodgers",
+   "league": "National",
+   "stats": {
+    "R": {
+     "label": "Runs",
+     "value": 801,
+     "mlb_rank": 4,
+     "mlb_tied": false,
+     "league_rank": 4,
+     "league_tied": false
+    },
+    "AVG": {
+     "label": "AVG",
+     "value": 0.25665015593469087,
+     "mlb_rank": 3,
+     "mlb_tied": false,
+     "league_rank": 2,
+     "league_tied": false
+    },
+    "OBP": {
+     "label": "OBP",
+     "value": 0.33812135,
+     "mlb_rank": 3,
+     "mlb_tied": false,
+     "league_rank": 3,
+     "league_tied": false
+    },
+    "SLG": {
+     "label": "SLG",
+     "value": 0.4243258117776555,
+     "mlb_rank": 2,
+     "mlb_tied": false,
+     "league_rank": 2,
+     "league_tied": false
+    },
+    "OPS": {
+     "label": "OPS",
+     "value": 0.7624471617776555,
+     "mlb_rank": 2,
+     "mlb_tied": false,
+     "league_rank": 2,
+     "league_tied": false
+    },
+    "HR": {
+     "label": "Home runs",
+     "value": 204,
+     "mlb_rank": 7,
+     "mlb_tied": true,
+     "league_rank": 4,
+     "league_tied": true
+    },
+    "SB": {
+     "label": "Stolen bases",
+     "value": 72,
+     "mlb_rank": 28,
+     "mlb_tied": false,
+     "league_rank": 15,
+     "league_tied": false
+    },
+    "ERA": {
+     "label": "ERA",
+     "value": 3.5481773856512655,
+     "mlb_rank": 4,
+     "mlb_tied": false,
+     "league_rank": 2,
+     "league_tied": false
+    },
+    "WHIP": {
+     "label": "WHIP",
+     "value": 1.1416299048061296,
+     "mlb_rank": 2,
+     "mlb_tied": false,
+     "league_rank": 1,
+     "league_tied": false
+    },
+    "SO": {
+     "label": "Strikeouts",
+     "value": 1521,
+     "mlb_rank": 4,
+     "mlb_tied": false,
+     "league_rank": 3,
+     "league_tied": false
+    },
+    "SV": {
+     "label": "Saves",
+     "value": 46,
+     "mlb_rank": 7,
+     "mlb_tied": true,
+     "league_rank": 4,
+     "league_tied": true
+    },
+    "HRA": {
+     "label": "Home runs allowed",
+     "value": 172,
+     "mlb_rank": 12,
+     "mlb_tied": false,
+     "league_rank": 6,
+     "league_tied": false
+    }
+   }
+  },
+  {
+   "team": "MIA",
+   "bdl_id": 15,
+   "name": "Miami Marlins",
+   "league": "National",
+   "stats": {
+    "R": {
+     "label": "Runs",
+     "value": 715,
+     "mlb_rank": 18,
+     "mlb_tied": false,
+     "league_rank": 11,
+     "league_tied": false
+    },
+    "AVG": {
+     "label": "AVG",
+     "value": 0.24893734984291258,
+     "mlb_rank": 7,
+     "mlb_tied": false,
+     "league_rank": 6,
+     "league_tied": false
+    },
+    "OBP": {
+     "label": "OBP",
+     "value": 0.32633993,
+     "mlb_rank": 6,
+     "mlb_tied": false,
+     "league_rank": 5,
+     "league_tied": false
+    },
+    "SLG": {
+     "label": "SLG",
+     "value": 0.40048050267972646,
+     "mlb_rank": 16,
+     "mlb_tied": false,
+     "league_rank": 9,
+     "league_tied": false
+    },
+    "OPS": {
+     "label": "OPS",
+     "value": 0.7268204326797265,
+     "mlb_rank": 9,
+     "mlb_tied": false,
+     "league_rank": 7,
+     "league_tied": false
+    },
+    "HR": {
+     "label": "Home runs",
+     "value": 168,
+     "mlb_rank": 23,
+     "mlb_tied": false,
+     "league_rank": 12,
+     "league_tied": false
+    },
+    "SB": {
+     "label": "Stolen bases",
+     "value": 163,
+     "mlb_rank": 4,
+     "mlb_tied": false,
+     "league_rank": 3,
+     "league_tied": false
+    },
+    "ERA": {
+     "label": "ERA",
+     "value": 4.089381563593932,
+     "mlb_rank": 13,
+     "mlb_tied": false,
+     "league_rank": 6,
+     "league_tied": false
+    },
+    "WHIP": {
+     "label": "WHIP",
+     "value": 1.279113185530922,
+     "mlb_rank": 11,
+     "mlb_tied": false,
+     "league_rank": 5,
+     "league_tied": false
+    },
+    "SO": {
+     "label": "Strikeouts",
+     "value": 1323,
+     "mlb_rank": 18,
+     "mlb_tied": false,
+     "league_rank": 7,
+     "league_tied": false
+    },
+    "SV": {
+     "label": "Saves",
+     "value": 35,
+     "mlb_rank": 24,
+     "mlb_tied": true,
+     "league_rank": 12,
+     "league_tied": false
+    },
+    "HRA": {
+     "label": "Home runs allowed",
+     "value": 171,
+     "mlb_rank": 10,
+     "mlb_tied": true,
+     "league_rank": 4,
+     "league_tied": true
+    }
+   }
+  },
+  {
+   "team": "MIL",
+   "bdl_id": 16,
+   "name": "Milwaukee Brewers",
+   "league": "National",
+   "stats": {
+    "R": {
+     "label": "Runs",
+     "value": 832,
+     "mlb_rank": 2,
+     "mlb_tied": false,
+     "league_rank": 2,
+     "league_tied": false
+    },
+    "AVG": {
+     "label": "AVG",
+     "value": 0.2584514721919302,
+     "mlb_rank": 1,
+     "mlb_tied": false,
+     "league_rank": 1,
+     "league_tied": false
+    },
+    "OBP": {
+     "label": "OBP",
+     "value": 0.34052756,
+     "mlb_rank": 1,
+     "mlb_tied": false,
+     "league_rank": 1,
+     "league_tied": false
+    },
+    "SLG": {
+     "label": "SLG",
+     "value": 0.4025808796801163,
+     "mlb_rank": 11,
+     "mlb_tied": false,
+     "league_rank": 7,
+     "league_tied": false
+    },
+    "OPS": {
+     "label": "OPS",
+     "value": 0.7431084396801163,
+     "mlb_rank": 4,
+     "mlb_tied": false,
+     "league_rank": 4,
+     "league_tied": false
+    },
+    "HR": {
+     "label": "Home runs",
+     "value": 154,
+     "mlb_rank": 28,
+     "mlb_tied": true,
+     "league_rank": 15,
+     "league_tied": false
+    },
+    "SB": {
+     "label": "Stolen bases",
+     "value": 162,
+     "mlb_rank": 5,
+     "mlb_tied": false,
+     "league_rank": 4,
+     "league_tied": false
+    },
+    "ERA": {
+     "label": "ERA",
+     "value": 3.5149769585253456,
+     "mlb_rank": 2,
+     "mlb_tied": false,
+     "league_rank": 1,
+     "league_tied": false
+    },
+    "WHIP": {
+     "label": "WHIP",
+     "value": 1.1778801843317972,
+     "mlb_rank": 4,
+     "mlb_tied": false,
+     "league_rank": 2,
+     "league_tied": false
+    },
+    "SO": {
+     "label": "Strikeouts",
+     "value": 1544,
+     "mlb_rank": 2,
+     "mlb_tied": false,
+     "league_rank": 2,
+     "league_tied": false
+    },
+    "SV": {
+     "label": "Saves",
+     "value": 55,
+     "mlb_rank": 2,
+     "mlb_tied": false,
+     "league_rank": 1,
+     "league_tied": false
+    },
+    "HRA": {
+     "label": "Home runs allowed",
+     "value": 171,
+     "mlb_rank": 10,
+     "mlb_tied": true,
+     "league_rank": 4,
+     "league_tied": true
+    }
+   }
+  },
+  {
+   "team": "MIN",
+   "bdl_id": 17,
+   "name": "Minnesota Twins",
+   "league": "American",
+   "stats": {
+    "R": {
+     "label": "Runs",
+     "value": 739,
+     "mlb_rank": 9,
+     "mlb_tied": true,
+     "league_rank": 2,
+     "league_tied": true
+    },
+    "AVG": {
+     "label": "AVG",
+     "value": 0.24451353328456474,
+     "mlb_rank": 16,
+     "mlb_tied": false,
+     "league_rank": 6,
+     "league_tied": false
+    },
+    "OBP": {
+     "label": "OBP",
+     "value": 0.3166503,
+     "mlb_rank": 15,
+     "mlb_tied": false,
+     "league_rank": 6,
+     "league_tied": false
+    },
+    "SLG": {
+     "label": "SLG",
+     "value": 0.40343818580833946,
+     "mlb_rank": 10,
+     "mlb_tied": false,
+     "league_rank": 4,
+     "league_tied": false
+    },
+    "OPS": {
+     "label": "OPS",
+     "value": 0.7200884858083394,
+     "mlb_rank": 12,
+     "mlb_tied": false,
+     "league_rank": 5,
+     "league_tied": false
+    },
+    "HR": {
+     "label": "Home runs",
+     "value": 187,
+     "mlb_rank": 12,
+     "mlb_tied": false,
+     "league_rank": 6,
+     "league_tied": false
+    },
+    "SB": {
+     "label": "Stolen bases",
+     "value": 91,
+     "mlb_rank": 20,
+     "mlb_tied": true,
+     "league_rank": 9,
+     "league_tied": true
+    },
+    "ERA": {
+     "label": "ERA",
+     "value": 4.557464592523798,
+     "mlb_rank": 25,
+     "mlb_tied": false,
+     "league_rank": 13,
+     "league_tied": false
+    },
+    "WHIP": {
+     "label": "WHIP",
+     "value": 1.3575574645925237,
+     "mlb_rank": 25,
+     "mlb_tied": false,
+     "league_rank": 13,
+     "league_tied": false
+    },
+    "SO": {
+     "label": "Strikeouts",
+     "value": 1381,
+     "mlb_rank": 13,
+     "mlb_tied": false,
+     "league_rank": 8,
+     "league_tied": false
+    },
+    "SV": {
+     "label": "Saves",
+     "value": 45,
+     "mlb_rank": 12,
+     "mlb_tied": true,
+     "league_rank": 7,
+     "league_tied": true
+    },
+    "HRA": {
+     "label": "Home runs allowed",
+     "value": 186,
+     "mlb_rank": 18,
+     "mlb_tied": true,
+     "league_rank": 9,
+     "league_tied": false
+    }
+   }
+  },
+  {
+   "team": "NYM",
+   "bdl_id": 18,
+   "name": "New York Mets",
+   "league": "National",
+   "stats": {
+    "R": {
+     "label": "Runs",
+     "value": 699,
+     "mlb_rank": 20,
+     "mlb_tied": true,
+     "league_rank": 13,
+     "league_tied": false
+    },
+    "AVG": {
+     "label": "AVG",
+     "value": 0.2388086972410013,
+     "mlb_rank": 23,
+     "mlb_tied": false,
+     "league_rank": 14,
+     "league_tied": false
+    },
+    "OBP": {
+     "label": "OBP",
+     "value": 0.30957463,
+     "mlb_rank": 27,
+     "mlb_tied": false,
+     "league_rank": 12,
+     "league_tied": false
+    },
+    "SLG": {
+     "label": "SLG",
+     "value": 0.3953955782934405,
+     "mlb_rank": 23,
+     "mlb_tied": false,
+     "league_rank": 12,
+     "league_tied": false
+    },
+    "OPS": {
+     "label": "OPS",
+     "value": 0.7049702082934406,
+     "mlb_rank": 24,
+     "mlb_tied": false,
+     "league_rank": 13,
+     "league_tied": false
+    },
+    "HR": {
+     "label": "Home runs",
+     "value": 204,
+     "mlb_rank": 7,
+     "mlb_tied": true,
+     "league_rank": 4,
+     "league_tied": true
+    },
+    "SB": {
+     "label": "Stolen bases",
+     "value": 83,
+     "mlb_rank": 23,
+     "mlb_tied": true,
+     "league_rank": 13,
+     "league_tied": true
+    },
+    "ERA": {
+     "label": "ERA",
+     "value": 4.151445086705202,
+     "mlb_rank": 16,
+     "mlb_tied": false,
+     "league_rank": 8,
+     "league_tied": false
+    },
+    "WHIP": {
+     "label": "WHIP",
+     "value": 1.2894797687861272,
+     "mlb_rank": 14,
+     "mlb_tied": false,
+     "league_rank": 8,
+     "league_tied": false
+    },
+    "SO": {
+     "label": "Strikeouts",
+     "value": 1450,
+     "mlb_rank": 6,
+     "mlb_tied": true,
+     "league_rank": 5,
+     "league_tied": false
+    },
+    "SV": {
+     "label": "Saves",
+     "value": 31,
+     "mlb_rank": 28,
+     "mlb_tied": false,
+     "league_rank": 14,
+     "league_tied": false
+    },
+    "HRA": {
+     "label": "Home runs allowed",
+     "value": 184,
+     "mlb_rank": 16,
+     "mlb_tied": false,
+     "league_rank": 8,
+     "league_tied": false
+    }
+   }
+  },
+  {
+   "team": "NYY",
+   "bdl_id": 19,
+   "name": "New York Yankees",
+   "league": "American",
+   "stats": {
+    "R": {
+     "label": "Runs",
+     "value": 739,
+     "mlb_rank": 9,
+     "mlb_tied": true,
+     "league_rank": 2,
+     "league_tied": true
+    },
+    "AVG": {
+     "label": "AVG",
+     "value": 0.23452157598499063,
+     "mlb_rank": 26,
+     "mlb_tied": false,
+     "league_rank": 12,
+     "league_tied": false
+    },
+    "OBP": {
+     "label": "OBP",
+     "value": 0.3109328,
+     "mlb_rank": 24,
+     "mlb_tied": false,
+     "league_rank": 13,
+     "league_tied": false
+    },
+    "SLG": {
+     "label": "SLG",
+     "value": 0.40919324577861166,
+     "mlb_rank": 6,
+     "mlb_tied": false,
+     "league_rank": 2,
+     "league_tied": false
+    },
+    "OPS": {
+     "label": "OPS",
+     "value": 0.7201260457786116,
+     "mlb_rank": 11,
+     "mlb_tied": false,
+     "league_rank": 4,
+     "league_tied": false
+    },
+    "HR": {
+     "label": "Home runs",
+     "value": 223,
+     "mlb_rank": 2,
+     "mlb_tied": false,
+     "league_rank": 2,
+     "league_tied": false
+    },
+    "SB": {
+     "label": "Stolen bases",
+     "value": 153,
+     "mlb_rank": 6,
+     "mlb_tied": false,
+     "league_rank": 2,
+     "league_tied": false
+    },
+    "ERA": {
+     "label": "ERA",
+     "value": 3.240749306197965,
+     "mlb_rank": 1,
+     "mlb_tied": false,
+     "league_rank": 1,
+     "league_tied": false
+    },
+    "WHIP": {
+     "label": "WHIP",
+     "value": 1.173913043478261,
+     "mlb_rank": 3,
+     "mlb_tied": false,
+     "league_rank": 2,
+     "league_tied": false
+    },
+    "SO": {
+     "label": "Strikeouts",
+     "value": 1450,
+     "mlb_rank": 6,
+     "mlb_tied": true,
+     "league_rank": 2,
+     "league_tied": false
+    },
+    "SV": {
+     "label": "Saves",
+     "value": 45,
+     "mlb_rank": 12,
+     "mlb_tied": true,
+     "league_rank": 7,
+     "league_tied": true
+    },
+    "HRA": {
+     "label": "Home runs allowed",
+     "value": 165,
+     "mlb_rank": 6,
+     "mlb_tied": false,
+     "league_rank": 3,
+     "league_tied": false
+    }
+   }
+  },
+  {
+   "team": "OAK",
+   "bdl_id": 20,
+   "name": "Oakland Athletics",
+   "league": "American",
+   "stats": {
+    "R": {
+     "label": "Runs",
+     "value": 699,
+     "mlb_rank": 20,
+     "mlb_tied": true,
+     "league_rank": 8,
+     "league_tied": false
+    },
+    "AVG": {
+     "label": "AVG",
+     "value": 0.2450801749271137,
+     "mlb_rank": 13,
+     "mlb_tied": false,
+     "league_rank": 4,
+     "league_tied": false
+    },
+    "OBP": {
+     "label": "OBP",
+     "value": 0.3170572,
+     "mlb_rank": 14,
+     "mlb_tied": false,
+     "league_rank": 5,
+     "league_tied": false
+    },
+    "SLG": {
+     "label": "SLG",
+     "value": 0.4017857142857143,
+     "mlb_rank": 14,
+     "mlb_tied": false,
+     "league_rank": 6,
+     "league_tied": false
+    },
+    "OPS": {
+     "label": "OPS",
+     "value": 0.7188429142857142,
+     "mlb_rank": 15,
+     "mlb_tied": false,
+     "league_rank": 7,
+     "league_tied": false
+    },
+    "HR": {
+     "label": "Home runs",
+     "value": 194,
+     "mlb_rank": 11,
+     "mlb_tied": false,
+     "league_rank": 5,
+     "league_tied": false
+    },
+    "SB": {
+     "label": "Stolen bases",
+     "value": 91,
+     "mlb_rank": 20,
+     "mlb_tied": true,
+     "league_rank": 9,
+     "league_tied": true
+    },
+    "ERA": {
+     "label": "ERA",
+     "value": 5.506993006993007,
+     "mlb_rank": 29,
+     "mlb_tied": false,
+     "league_rank": 15,
+     "league_tied": false
+    },
+    "WHIP": {
+     "label": "WHIP",
+     "value": 1.5104895104895104,
+     "mlb_rank": 29,
+     "mlb_tied": false,
+     "league_rank": 15,
+     "league_tied": false
+    },
+    "SO": {
+     "label": "Strikeouts",
+     "value": 1356,
+     "mlb_rank": 14,
+     "mlb_tied": false,
+     "league_rank": 9,
+     "league_tied": false
+    },
+    "SV": {
+     "label": "Saves",
+     "value": 39,
+     "mlb_rank": 20,
+     "mlb_tied": false,
+     "league_rank": 11,
+     "league_tied": false
+    },
+    "HRA": {
+     "label": "Home runs allowed",
+     "value": 247,
+     "mlb_rank": 30,
+     "mlb_tied": false,
+     "league_rank": 15,
+     "league_tied": false
+    }
+   }
+  },
+  {
+   "team": "PHI",
+   "bdl_id": 21,
+   "name": "Philadelphia Phillies",
+   "league": "National",
+   "stats": {
+    "R": {
+     "label": "Runs",
+     "value": 713,
+     "mlb_rank": 19,
+     "mlb_tied": false,
+     "league_rank": 12,
+     "league_tied": false
+    },
+    "AVG": {
+     "label": "AVG",
+     "value": 0.24016983570241832,
+     "mlb_rank": 21,
+     "mlb_tied": false,
+     "league_rank": 12,
+     "league_tied": false
+    },
+    "OBP": {
+     "label": "OBP",
+     "value": 0.31182975,
+     "mlb_rank": 23,
+     "mlb_tied": false,
+     "league_rank": 11,
+     "league_tied": false
+    },
+    "SLG": {
+     "label": "SLG",
+     "value": 0.39486800812257705,
+     "mlb_rank": 24,
+     "mlb_tied": false,
+     "league_rank": 13,
+     "league_tied": false
+    },
+    "OPS": {
+     "label": "OPS",
+     "value": 0.7066977581225771,
+     "mlb_rank": 22,
+     "mlb_tied": false,
+     "league_rank": 11,
+     "league_tied": false
+    },
+    "HR": {
+     "label": "Home runs",
+     "value": 182,
+     "mlb_rank": 16,
+     "mlb_tied": true,
+     "league_rank": 9,
+     "league_tied": false
+    },
+    "SB": {
+     "label": "Stolen bases",
+     "value": 105,
+     "mlb_rank": 15,
+     "mlb_tied": false,
+     "league_rank": 9,
+     "league_tied": false
+    },
+    "ERA": {
+     "label": "ERA",
+     "value": 4.042178447276941,
+     "mlb_rank": 11,
+     "mlb_tied": false,
+     "league_rank": 5,
+     "league_tied": false
+    },
+    "WHIP": {
+     "label": "WHIP",
+     "value": 1.2862108922363846,
+     "mlb_rank": 13,
+     "mlb_tied": false,
+     "league_rank": 7,
+     "league_tied": false
+    },
+    "SO": {
+     "label": "Strikeouts",
+     "value": 1577,
+     "mlb_rank": 1,
+     "mlb_tied": false,
+     "league_rank": 1,
+     "league_tied": false
+    },
+    "SV": {
+     "label": "Saves",
+     "value": 42,
+     "mlb_rank": 15,
+     "mlb_tied": true,
+     "league_rank": 6,
+     "league_tied": true
+    },
+    "HRA": {
+     "label": "Home runs allowed",
+     "value": 191,
+     "mlb_rank": 21,
+     "mlb_tied": false,
+     "league_rank": 11,
+     "league_tied": false
+    }
+   }
+  },
+  {
+   "team": "PIT",
+   "bdl_id": 22,
+   "name": "Pittsburgh Pirates",
+   "league": "National",
+   "stats": {
+    "R": {
+     "label": "Runs",
+     "value": 767,
+     "mlb_rank": 6,
+     "mlb_tied": false,
+     "league_rank": 5,
+     "league_tied": false
+    },
+    "AVG": {
+     "label": "AVG",
+     "value": 0.2530185619030456,
+     "mlb_rank": 5,
+     "mlb_tied": false,
+     "league_rank": 4,
+     "league_tied": false
+    },
+    "OBP": {
+     "label": "OBP",
+     "value": 0.3299118,
+     "mlb_rank": 4,
+     "mlb_tied": false,
+     "league_rank": 4,
+     "league_tied": false
+    },
+    "SLG": {
+     "label": "SLG",
+     "value": 0.4040367633807893,
+     "mlb_rank": 9,
+     "mlb_tied": false,
+     "league_rank": 6,
+     "league_tied": false
+    },
+    "OPS": {
+     "label": "OPS",
+     "value": 0.7339485633807893,
+     "mlb_rank": 6,
+     "mlb_tied": false,
+     "league_rank": 6,
+     "league_tied": false
+    },
+    "HR": {
+     "label": "Home runs",
+     "value": 186,
+     "mlb_rank": 13,
+     "mlb_tied": false,
+     "league_rank": 7,
+     "league_tied": false
+    },
+    "SB": {
+     "label": "Stolen bases",
+     "value": 132,
+     "mlb_rank": 8,
+     "mlb_tied": false,
+     "league_rank": 5,
+     "league_tied": false
+    },
+    "ERA": {
+     "label": "ERA",
+     "value": 4.154325259515571,
+     "mlb_rank": 17,
+     "mlb_tied": false,
+     "league_rank": 9,
+     "league_tied": false
+    },
+    "WHIP": {
+     "label": "WHIP",
+     "value": 1.2961937716262977,
+     "mlb_rank": 17,
+     "mlb_tied": false,
+     "league_rank": 10,
+     "league_tied": false
+    },
+    "SO": {
+     "label": "Strikeouts",
+     "value": 1496,
+     "mlb_rank": 5,
+     "mlb_tied": false,
+     "league_rank": 4,
+     "league_tied": false
+    },
+    "SV": {
+     "label": "Saves",
+     "value": 41,
+     "mlb_rank": 18,
+     "mlb_tied": true,
+     "league_rank": 9,
+     "league_tied": false
+    },
+    "HRA": {
+     "label": "Home runs allowed",
+     "value": 155,
+     "mlb_rank": 2,
+     "mlb_tied": false,
+     "league_rank": 1,
+     "league_tied": false
+    }
+   }
+  },
+  {
+   "team": "SD",
+   "bdl_id": 23,
+   "name": "San Diego Padres",
+   "league": "National",
+   "stats": {
+    "R": {
+     "label": "Runs",
+     "value": 722,
+     "mlb_rank": 15,
+     "mlb_tied": false,
+     "league_rank": 9,
+     "league_tied": false
+    },
+    "AVG": {
+     "label": "AVG",
+     "value": 0.24428332403792527,
+     "mlb_rank": 17,
+     "mlb_tied": false,
+     "league_rank": 11,
+     "league_tied": false
+    },
+    "OBP": {
+     "label": "OBP",
+     "value": 0.31943065,
+     "mlb_rank": 11,
+     "mlb_tied": false,
+     "league_rank": 8,
+     "league_tied": false
+    },
+    "SLG": {
+     "label": "SLG",
+     "value": 0.39840118981223277,
+     "mlb_rank": 19,
+     "mlb_tied": false,
+     "league_rank": 11,
+     "league_tied": false
+    },
+    "OPS": {
+     "label": "OPS",
+     "value": 0.7178318398122328,
+     "mlb_rank": 18,
+     "mlb_tied": false,
+     "league_rank": 10,
+     "league_tied": false
+    },
+    "HR": {
+     "label": "Home runs",
+     "value": 183,
+     "mlb_rank": 14,
+     "mlb_tied": true,
+     "league_rank": 8,
+     "league_tied": false
+    },
+    "SB": {
+     "label": "Stolen bases",
+     "value": 164,
+     "mlb_rank": 2,
+     "mlb_tied": true,
+     "league_rank": 2,
+     "league_tied": false
+    },
+    "ERA": {
+     "label": "ERA",
+     "value": 3.985147365978185,
+     "mlb_rank": 10,
+     "mlb_tied": false,
+     "league_rank": 4,
+     "league_tied": false
+    },
+    "WHIP": {
+     "label": "WHIP",
+     "value": 1.2935715943374333,
+     "mlb_rank": 15,
+     "mlb_tied": false,
+     "league_rank": 9,
+     "league_tied": false
+    },
+    "SO": {
+     "label": "Strikeouts",
+     "value": 1315,
+     "mlb_rank": 20,
+     "mlb_tied": false,
+     "league_rank": 8,
+     "league_tied": false
+    },
+    "SV": {
+     "label": "Saves",
+     "value": 48,
+     "mlb_rank": 6,
+     "mlb_tied": false,
+     "league_rank": 3,
+     "league_tied": false
+    },
+    "HRA": {
+     "label": "Home runs allowed",
+     "value": 180,
+     "mlb_rank": 14,
+     "mlb_tied": true,
+     "league_rank": 7,
+     "league_tied": false
+    }
+   }
+  },
+  {
+   "team": "SEA",
+   "bdl_id": 25,
+   "name": "Seattle Mariners",
+   "league": "American",
+   "stats": {
+    "R": {
+     "label": "Runs",
+     "value": 664,
+     "mlb_rank": 28,
+     "mlb_tied": false,
+     "league_rank": 13,
+     "league_tied": false
+    },
+    "AVG": {
+     "label": "AVG",
+     "value": 0.23268337975858866,
+     "mlb_rank": 29,
+     "mlb_tied": false,
+     "league_rank": 15,
+     "league_tied": false
+    },
+    "OBP": {
+     "label": "OBP",
+     "value": 0.31358024,
+     "mlb_rank": 21,
+     "mlb_tied": false,
+     "league_rank": 12,
+     "league_tied": false
+    },
+    "SLG": {
+     "label": "SLG",
+     "value": 0.37901578458681523,
+     "mlb_rank": 28,
+     "mlb_tied": false,
+     "league_rank": 14,
+     "league_tied": false
+    },
+    "OPS": {
+     "label": "OPS",
+     "value": 0.6925960245868152,
+     "mlb_rank": 27,
+     "mlb_tied": false,
+     "league_rank": 13,
+     "league_tied": false
+    },
+    "HR": {
+     "label": "Home runs",
+     "value": 182,
+     "mlb_rank": 16,
+     "mlb_tied": true,
+     "league_rank": 8,
+     "league_tied": false
+    },
+    "SB": {
+     "label": "Stolen bases",
+     "value": 114,
+     "mlb_rank": 10,
+     "mlb_tied": true,
+     "league_rank": 5,
+     "league_tied": false
+    },
+    "ERA": {
+     "label": "ERA",
+     "value": 4.203216033558611,
+     "mlb_rank": 19,
+     "mlb_tied": false,
+     "league_rank": 9,
+     "league_tied": false
+    },
+    "WHIP": {
+     "label": "WHIP",
+     "value": 1.267536704730832,
+     "mlb_rank": 10,
+     "mlb_tied": false,
+     "league_rank": 6,
+     "league_tied": false
+    },
+    "SO": {
+     "label": "Strikeouts",
+     "value": 1392,
+     "mlb_rank": 12,
+     "mlb_tied": false,
+     "league_rank": 7,
+     "league_tied": false
+    },
+    "SV": {
+     "label": "Saves",
+     "value": 35,
+     "mlb_rank": 24,
+     "mlb_tied": true,
+     "league_rank": 13,
+     "league_tied": false
+    },
+    "HRA": {
+     "label": "Home runs allowed",
+     "value": 194,
+     "mlb_rank": 22,
+     "mlb_tied": false,
+     "league_rank": 11,
+     "league_tied": false
+    }
+   }
+  },
+  {
+   "team": "SF",
+   "bdl_id": 24,
+   "name": "San Francisco Giants",
+   "league": "National",
+   "stats": {
+    "R": {
+     "label": "Runs",
+     "value": 669,
+     "mlb_rank": 26,
+     "mlb_tied": false,
+     "league_rank": 14,
+     "league_tied": false
+    },
+    "AVG": {
+     "label": "AVG",
+     "value": 0.24502101224191486,
+     "mlb_rank": 14,
+     "mlb_tied": false,
+     "league_rank": 10,
+     "league_tied": false
+    },
+    "OBP": {
+     "label": "OBP",
+     "value": 0.3063632,
+     "mlb_rank": 29,
+     "mlb_tied": false,
+     "league_rank": 14,
+     "league_tied": false
+    },
+    "SLG": {
+     "label": "SLG",
+     "value": 0.3999634569705829,
+     "mlb_rank": 18,
+     "mlb_tied": false,
+     "league_rank": 10,
+     "league_tied": false
+    },
+    "OPS": {
+     "label": "OPS",
+     "value": 0.7063266569705828,
+     "mlb_rank": 23,
+     "mlb_tied": false,
+     "league_rank": 12,
+     "league_tied": false
+    },
+    "HR": {
+     "label": "Home runs",
+     "value": 178,
+     "mlb_rank": 20,
+     "mlb_tied": false,
+     "league_rank": 11,
+     "league_tied": false
+    },
+    "SB": {
+     "label": "Stolen bases",
+     "value": 88,
+     "mlb_rank": 22,
+     "mlb_tied": false,
+     "league_rank": 12,
+     "league_tied": false
+    },
+    "ERA": {
+     "label": "ERA",
+     "value": 4.33006993006993,
+     "mlb_rank": 23,
+     "mlb_tied": false,
+     "league_rank": 12,
+     "league_tied": false
+    },
+    "WHIP": {
+     "label": "WHIP",
+     "value": 1.3573426573426572,
+     "mlb_rank": 24,
+     "mlb_tied": false,
+     "league_rank": 12,
+     "league_tied": false
+    },
+    "SO": {
+     "label": "Strikeouts",
+     "value": 1204,
+     "mlb_rank": 27,
+     "mlb_tied": false,
+     "league_rank": 13,
+     "league_tied": false
+    },
+    "SV": {
+     "label": "Saves",
+     "value": 30,
+     "mlb_rank": 29,
+     "mlb_tied": false,
+     "league_rank": 15,
+     "league_tied": false
+    },
+    "HRA": {
+     "label": "Home runs allowed",
+     "value": 160,
+     "mlb_rank": 4,
+     "mlb_tied": false,
+     "league_rank": 3,
+     "league_tied": false
+    }
+   }
+  },
+  {
+   "team": "STL",
+   "bdl_id": 26,
+   "name": "St. Louis Cardinals",
+   "league": "National",
+   "stats": {
+    "R": {
+     "label": "Runs",
+     "value": 720,
+     "mlb_rank": 16,
+     "mlb_tied": false,
+     "league_rank": 10,
+     "league_tied": false
+    },
+    "AVG": {
+     "label": "AVG",
+     "value": 0.23928178820080614,
+     "mlb_rank": 22,
+     "mlb_tied": false,
+     "league_rank": 13,
+     "league_tied": false
+    },
+    "OBP": {
+     "label": "OBP",
+     "value": 0.3125817,
+     "mlb_rank": 22,
+     "mlb_tied": false,
+     "league_rank": 10,
+     "league_tied": false
+    },
+    "SLG": {
+     "label": "SLG",
+     "value": 0.37834371564675706,
+     "mlb_rank": 29,
+     "mlb_tied": false,
+     "league_rank": 15,
+     "league_tied": false
+    },
+    "OPS": {
+     "label": "OPS",
+     "value": 0.690925415646757,
+     "mlb_rank": 29,
+     "mlb_tied": false,
+     "league_rank": 15,
+     "league_tied": false
+    },
+    "HR": {
+     "label": "Home runs",
+     "value": 167,
+     "mlb_rank": 24,
+     "mlb_tied": false,
+     "league_rank": 13,
+     "league_tied": false
+    },
+    "SB": {
+     "label": "Stolen bases",
+     "value": 100,
+     "mlb_rank": 17,
+     "mlb_tied": false,
+     "league_rank": 11,
+     "league_tied": false
+    },
+    "ERA": {
+     "label": "ERA",
+     "value": 4.267097966728281,
+     "mlb_rank": 20,
+     "mlb_tied": false,
+     "league_rank": 11,
+     "league_tied": false
+    },
+    "WHIP": {
+     "label": "WHIP",
+     "value": 1.3565157116451017,
+     "mlb_rank": 23,
+     "mlb_tied": false,
+     "league_rank": 11,
+     "league_tied": false
+    },
+    "SO": {
+     "label": "Strikeouts",
+     "value": 1278,
+     "mlb_rank": 25,
+     "mlb_tied": false,
+     "league_rank": 11,
+     "league_tied": false
+    },
+    "SV": {
+     "label": "Saves",
+     "value": 46,
+     "mlb_rank": 7,
+     "mlb_tied": true,
+     "league_rank": 4,
+     "league_tied": true
+    },
+    "HRA": {
+     "label": "Home runs allowed",
+     "value": 158,
+     "mlb_rank": 3,
+     "mlb_tied": false,
+     "league_rank": 2,
+     "league_tied": false
+    }
+   }
+  },
+  {
+   "team": "TB",
+   "bdl_id": 27,
+   "name": "Tampa Bay Rays",
+   "league": "American",
+   "stats": {
+    "R": {
+     "label": "Runs",
+     "value": 736,
+     "mlb_rank": 12,
+     "mlb_tied": false,
+     "league_rank": 4,
+     "league_tied": false
+    },
+    "AVG": {
+     "label": "AVG",
+     "value": 0.2580822924320353,
+     "mlb_rank": 2,
+     "mlb_tied": false,
+     "league_rank": 1,
+     "league_tied": false
+    },
+    "OBP": {
+     "label": "OBP",
+     "value": 0.32634532,
+     "mlb_rank": 5,
+     "mlb_tied": false,
+     "league_rank": 1,
+     "league_tied": false
+    },
+    "SLG": {
+     "label": "SLG",
+     "value": 0.4015429831006613,
+     "mlb_rank": 15,
+     "mlb_tied": false,
+     "league_rank": 7,
+     "league_tied": false
+    },
+    "OPS": {
+     "label": "OPS",
+     "value": 0.7278883031006613,
+     "mlb_rank": 8,
+     "mlb_tied": false,
+     "league_rank": 2,
+     "league_tied": false
+    },
+    "HR": {
+     "label": "Home runs",
+     "value": 169,
+     "mlb_rank": 22,
+     "mlb_tied": false,
+     "league_rank": 11,
+     "league_tied": false
+    },
+    "SB": {
+     "label": "Stolen bases",
+     "value": 164,
+     "mlb_rank": 2,
+     "mlb_tied": true,
+     "league_rank": 1,
+     "league_tied": false
+    },
+    "ERA": {
+     "label": "ERA",
+     "value": 3.7047817047817047,
+     "mlb_rank": 7,
+     "mlb_tied": false,
+     "league_rank": 4,
+     "league_tied": false
+    },
+    "WHIP": {
+     "label": "WHIP",
+     "value": 1.1392931392931394,
+     "mlb_rank": 1,
+     "mlb_tied": false,
+     "league_rank": 1,
+     "league_tied": false
+    },
+    "SO": {
+     "label": "Strikeouts",
+     "value": 1322,
+     "mlb_rank": 19,
+     "mlb_tied": false,
+     "league_rank": 12,
+     "league_tied": false
+    },
+    "SV": {
+     "label": "Saves",
+     "value": 58,
+     "mlb_rank": 1,
+     "mlb_tied": false,
+     "league_rank": 1,
+     "league_tied": false
+    },
+    "HRA": {
+     "label": "Home runs allowed",
+     "value": 201,
+     "mlb_rank": 23,
+     "mlb_tied": false,
+     "league_rank": 12,
+     "league_tied": false
+    }
+   }
+  },
+  {
+   "team": "TEX",
+   "bdl_id": 28,
+   "name": "Texas Rangers",
+   "league": "American",
+   "stats": {
+    "R": {
+     "label": "Runs",
+     "value": 673,
+     "mlb_rank": 25,
+     "mlb_tied": false,
+     "league_rank": 12,
+     "league_tied": false
+    },
+    "AVG": {
+     "label": "AVG",
+     "value": 0.24170085788884743,
+     "mlb_rank": 19,
+     "mlb_tied": false,
+     "league_rank": 8,
+     "league_tied": false
+    },
+    "OBP": {
+     "label": "OBP",
+     "value": 0.31662226,
+     "mlb_rank": 16,
+     "mlb_tied": false,
+     "league_rank": 7,
+     "league_tied": false
+    },
+    "SLG": {
+     "label": "SLG",
+     "value": 0.3961208504289444,
+     "mlb_rank": 22,
+     "mlb_tied": false,
+     "league_rank": 11,
+     "league_tied": false
+    },
+    "OPS": {
+     "label": "OPS",
+     "value": 0.7127431104289443,
+     "mlb_rank": 20,
+     "mlb_tied": false,
+     "league_rank": 10,
+     "league_tied": false
+    },
+    "HR": {
+     "label": "Home runs",
+     "value": 183,
+     "mlb_rank": 14,
+     "mlb_tied": true,
+     "league_rank": 7,
+     "league_tied": false
+    },
+    "SB": {
+     "label": "Stolen bases",
+     "value": 78,
+     "mlb_rank": 25,
+     "mlb_tied": true,
+     "league_rank": 11,
+     "league_tied": true
+    },
+    "ERA": {
+     "label": "ERA",
+     "value": 4.318224518553311,
+     "mlb_rank": 22,
+     "mlb_tied": false,
+     "league_rank": 11,
+     "league_tied": false
+    },
+    "WHIP": {
+     "label": "WHIP",
+     "value": 1.3034288398309066,
+     "mlb_rank": 18,
+     "mlb_tied": false,
+     "league_rank": 8,
+     "league_tied": false
+    },
+    "SO": {
+     "label": "Strikeouts",
+     "value": 1337,
+     "mlb_rank": 16,
+     "mlb_tied": true,
+     "league_rank": 10,
+     "league_tied": true
+    },
+    "SV": {
+     "label": "Saves",
+     "value": 43,
+     "mlb_rank": 14,
+     "mlb_tied": false,
+     "league_rank": 9,
+     "league_tied": false
+    },
+    "HRA": {
+     "label": "Home runs allowed",
+     "value": 190,
+     "mlb_rank": 20,
+     "mlb_tied": false,
+     "league_rank": 10,
+     "league_tied": false
+    }
+   }
+  },
+  {
+   "team": "TOR",
+   "bdl_id": 29,
+   "name": "Toronto Blue Jays",
+   "league": "American",
+   "stats": {
+    "R": {
+     "label": "Runs",
+     "value": 648,
+     "mlb_rank": 30,
+     "mlb_tied": false,
+     "league_rank": 15,
+     "league_tied": false
+    },
+    "AVG": {
+     "label": "AVG",
+     "value": 0.2472920873875528,
+     "mlb_rank": 9,
+     "mlb_tied": false,
+     "league_rank": 3,
+     "league_tied": false
+    },
+    "OBP": {
+     "label": "OBP",
+     "value": 0.3101729,
+     "mlb_rank": 25,
+     "mlb_tied": false,
+     "league_rank": 14,
+     "league_tied": false
+    },
+    "SLG": {
+     "label": "SLG",
+     "value": 0.38149440058747935,
+     "mlb_rank": 26,
+     "mlb_tied": false,
+     "league_rank": 12,
+     "league_tied": false
+    },
+    "OPS": {
+     "label": "OPS",
+     "value": 0.6916673005874794,
+     "mlb_rank": 28,
+     "mlb_tied": false,
+     "league_rank": 14,
+     "league_tied": false
+    },
+    "HR": {
+     "label": "Home runs",
+     "value": 152,
+     "mlb_rank": 30,
+     "mlb_tied": false,
+     "league_rank": 15,
+     "league_tied": false
+    },
+    "SB": {
+     "label": "Stolen bases",
+     "value": 75,
+     "mlb_rank": 27,
+     "mlb_tied": false,
+     "league_rank": 13,
+     "league_tied": false
+    },
+    "ERA": {
+     "label": "ERA",
+     "value": 3.8920612813370474,
+     "mlb_rank": 9,
+     "mlb_tied": false,
+     "league_rank": 6,
+     "league_tied": false
+    },
+    "WHIP": {
+     "label": "WHIP",
+     "value": 1.2938718662952646,
+     "mlb_rank": 16,
+     "mlb_tied": false,
+     "league_rank": 7,
+     "league_tied": false
+    },
+    "SO": {
+     "label": "Strikeouts",
+     "value": 1410,
+     "mlb_rank": 10,
+     "mlb_tied": false,
+     "league_rank": 5,
+     "league_tied": false
+    },
+    "SV": {
+     "label": "Saves",
+     "value": 52,
+     "mlb_rank": 3,
+     "mlb_tied": false,
+     "league_rank": 2,
+     "league_tied": false
+    },
+    "HRA": {
+     "label": "Home runs allowed",
+     "value": 167,
+     "mlb_rank": 7,
+     "mlb_tied": true,
+     "league_rank": 4,
+     "league_tied": true
+    }
+   }
+  },
+  {
+   "team": "WSH",
+   "bdl_id": 30,
+   "name": "Washington Nationals",
+   "league": "National",
+   "stats": {
+    "R": {
+     "label": "Runs",
+     "value": 821,
+     "mlb_rank": 3,
+     "mlb_tied": false,
+     "league_rank": 3,
+     "league_tied": false
+    },
+    "AVG": {
+     "label": "AVG",
+     "value": 0.24614267562170994,
+     "mlb_rank": 11,
+     "mlb_tied": false,
+     "league_rank": 8,
+     "league_tied": false
+    },
+    "OBP": {
+     "label": "OBP",
+     "value": 0.32080364,
+     "mlb_rank": 8,
+     "mlb_tied": false,
+     "league_rank": 7,
+     "league_tied": false
+    },
+    "SLG": {
+     "label": "SLG",
+     "value": 0.42276275186059176,
+     "mlb_rank": 3,
+     "mlb_tied": false,
+     "league_rank": 3,
+     "league_tied": false
+    },
+    "OPS": {
+     "label": "OPS",
+     "value": 0.7435663918605917,
+     "mlb_rank": 3,
+     "mlb_tied": false,
+     "league_rank": 3,
+     "league_tied": false
+    },
+    "HR": {
+     "label": "Home runs",
+     "value": 210,
+     "mlb_rank": 6,
+     "mlb_tied": false,
+     "league_rank": 3,
+     "league_tied": false
+    },
+    "SB": {
+     "label": "Stolen bases",
+     "value": 178,
+     "mlb_rank": 1,
+     "mlb_tied": false,
+     "league_rank": 1,
+     "league_tied": false
+    },
+    "ERA": {
+     "label": "ERA",
+     "value": 4.665970772442589,
+     "mlb_rank": 26,
+     "mlb_tied": false,
+     "league_rank": 13,
+     "league_tied": false
+    },
+    "WHIP": {
+     "label": "WHIP",
+     "value": 1.3903966597077244,
+     "mlb_rank": 26,
+     "mlb_tied": false,
+     "league_rank": 13,
+     "league_tied": false
+    },
+    "SO": {
+     "label": "Strikeouts",
+     "value": 1283,
+     "mlb_rank": 24,
+     "mlb_tied": false,
+     "league_rank": 10,
+     "league_tied": false
+    },
+    "SV": {
+     "label": "Saves",
+     "value": 42,
+     "mlb_rank": 15,
+     "mlb_tied": true,
+     "league_rank": 6,
+     "league_tied": true
+    },
+    "HRA": {
+     "label": "Home runs allowed",
+     "value": 218,
+     "mlb_rank": 27,
+     "mlb_tied": false,
+     "league_rank": 13,
+     "league_tied": false
+    }
+   }
+  }
+ ]
+}
