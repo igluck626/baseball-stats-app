@@ -134,6 +134,16 @@ struct TeamStanding: Codable, Identifiable, Hashable {
         return rs - ra
     }
 
+    /// The magic number a division leader's row shows, or nil. Only while it
+    /// still counts down, 1 through 25: at or below 0 the division is clinched,
+    /// and the number keeps falling past zero after that (on 2026-10-22 every
+    /// leader read 0 or below — Tampa Bay "-3", Milwaukee "-13"), so "M-3"
+    /// would read as nonsense. "-", empty and non-numbers show nothing too.
+    var shownMagicNumber: String? {
+        guard let m = magic_number, let n = Int(m), (1...25).contains(n) else { return nil }
+        return m
+    }
+
     /// True iff the team is on a non-trivial winning or losing streak
     /// (at least one game logged). Used to skip rendering an "—" cell.
     var hasStreak: Bool {
