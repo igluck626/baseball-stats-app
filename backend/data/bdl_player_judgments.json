@@ -1,0 +1,27 @@
+{
+  "_about": "balldontlie players mapped to an MLBAM id by hand, where the nightly's Chadwick matcher holds them (a nickname, or no balldontlie birth date). Approved by Isaac 2026-10-21; each checked on Baseball-Reference by Isaac, team included. A record of the judgment: the mapping itself is the bdl_id stamped on the player's row. Name and birth date are taken from Chadwick (and Baseball-Reference) over balldontlie.",
+  "judgments": [
+    {
+      "bdl_id": 4668338,
+      "mlbam": 702047,
+      "bbref_id": "cookal01",
+      "name": "Alex Cook",
+      "why": "balldontlie 'Alexander Cook', born 2001-03-29, TB 2026. Chadwick 702047 'Alex Cook', same birth date; no register match by balldontlie's full first name. Baseball-Reference cookal01 confirms (TB)."
+    },
+    {
+      "bdl_id": 4667310,
+      "mlbam": 687985,
+      "bbref_id": "whitejo04",
+      "name": "Josh White",
+      "why": "balldontlie 'Joshua White', born 2000-11-24, MIA 2026. Chadwick 687985 'Josh White', same birth date; no register match by balldontlie's full first name. Baseball-Reference whitejo04 confirms (MIA)."
+    },
+    {
+      "bdl_id": 4919070,
+      "mlbam": 691945,
+      "bbref_id": "baumlca01",
+      "name": "Carter Baumler",
+      "birth": "2002-01-31",
+      "why": "balldontlie has no birth date. The register has exactly one Carter Baumler, 691945, born 2002-01-31, debut 2026; balldontlie's record is TEX 2026, debut 2026. Baseball-Reference baumlca01 confirms birth date and team (TEX). Birth date from Chadwick."
+    }
+  ]
+}

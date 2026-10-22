@@ -33,7 +33,9 @@ def check(label, ok, detail=""):
 
 FX = json.load(open(os.path.join(HERE, "fixtures", "bdl_alias_halvorsen.json")))["games"]
 HALVORSEN = 678020
-check("the alias file names Halvorsen only: 1015 -> 5868766", ds._bdl_aliases() == {1015: 5868766}, ds._bdl_aliases())
+check("the alias file: Halvorsen, Warren, Brannigan and the four second records",
+      ds._bdl_aliases() == {1015: 5868766, 959: 5842265, 5741618: 5580903, 5841479: 5840693,
+                            5542527: 4840605, 5989672: 5989673, 6102729: 4839202}, ds._bdl_aliases())
 
 
 def run(gid, with_alias=True):

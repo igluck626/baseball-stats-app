@@ -6,6 +6,42 @@
       "bdl_id": 5868766,
       "name": "Seth Halvorsen",
       "why": "1015 is his Colorado record (21 games 2026-04-23..07-01, full detail). 5868766, the id we map, carries all 32 games but its 21 Colorado lines lack HBP, WP and decisions. Checked 2026-10-18: same name and birth date (2000-02-18); no other player maps to 1015."
+    },
+    {
+      "alias_bdl_id": 959,
+      "bdl_id": 5842265,
+      "name": "Austin Warren",
+      "why": "959 is his older record: its 2026 lines stop at 26 games (35.0 IP), and so does its season row. 5842265 carries all 41 games (50.1 IP) and the full season row, so 681810 is stamped 5842265 and 959 reads as its alias. In the 26 games both have, 5842265's line is a sparser copy and the richer one is kept. Checked 2026-10-21: same name and birth date (1996-02-05) as Chadwick 681810; no other player maps to 959."
+    },
+    {
+      "alias_bdl_id": 5741618,
+      "bdl_id": 5580903,
+      "name": "Jack Brannigan",
+      "why": "5741618 carries his 2 PIT games (no detailed box score); 5580903, the id we map, has the same season row and no game lines. Checked 2026-10-21: same name and birth date (2001-03-11) as Chadwick 687394; no other player maps to 5741618."
+    },
+    {
+      "alias_bdl_id": 5841479,
+      "bdl_id": 5840693,
+      "name": "Jack Anderson",
+      "why": "A second record with no 2026 game lines (its season row has 6 of his 7 games). 5840693 carries all 7 (BOS, MIN). Checked 2026-10-21: same name and birth date (1999-11-23) as Chadwick 681252."
+    },
+    {
+      "alias_bdl_id": 5542527,
+      "bdl_id": 4840605,
+      "name": "Tanner Andrews",
+      "why": "A second record ('Tanner Logan Andrews') with no 2026 game lines. 4840605 carries his 2 TOR games. Checked 2026-10-21: same name and birth date (1995-11-15) as Chadwick 681084."
+    },
+    {
+      "alias_bdl_id": 5989672,
+      "bdl_id": 5989673,
+      "name": "Yunior Marte",
+      "why": "A second record with no 2026 game lines and no season row. 5989673 carries his 5 SF games. Checked 2026-10-21: same name and birth date (2003-08-09) as Chadwick 805074; not the other Yunior Marte (628708, born 1995)."
+    },
+    {
+      "alias_bdl_id": 6102729,
+      "bdl_id": 4839202,
+      "name": "Bo Davidson",
+      "why": "A second record (it read 'Chanteyon Davidson' on 2026-10-20) with no 2026 game lines and no season row. 4839202 carries his 6 SF games. Checked 2026-10-21: same birth date (2002-07-05) as Chadwick 815589."
     }
   ]
 }
