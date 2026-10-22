@@ -7020,10 +7020,13 @@ def _ranked_unique_seasons(
     # ROW_NUMBER subquery somehow produced a tie that the outer
     # ORDER BY couldn't break deterministically (shouldn't happen,
     # but the cost is one extra `.limit() * 2` rows).
+    # Ties fall to player_id (then year), as on every other leaderboard. On the
+    # stat alone a tie comes back in whatever order the database picks, and
+    # 2026's complete-game board is 21 pitchers at 1.
     rows = (
         db.query(T)
         .filter(sub.c.rn == 1)
-        .order_by(outer_order)
+        .order_by(outer_order, T.player_id, T.year)
         .limit(max(limit * 2, 50))
         .all()
     )
@@ -7342,6 +7345,9 @@ def _leaderboard_career(
             valued.append((r, value))
 
         reverse = direction == "desc"
+        # Ties fall to player_id, as on every other leaderboard (the sort is
+        # stable, reversed or not).
+        valued.sort(key=lambda rv: rv[0].player_id)
         valued.sort(key=lambda rv: rv[1], reverse=reverse)
         top = valued[:limit]
 
