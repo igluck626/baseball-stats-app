@@ -424,7 +424,8 @@ def get_batting_gamelogs(
     q = (
         db.query(BattingGameLog)
         .filter(BattingGameLog.player_id == player_id)
-        .order_by(BattingGameLog.game_date.desc())
+        .order_by(BattingGameLog.game_date.desc(), BattingGameLog.game_start.desc().nulls_last(),
+                  BattingGameLog.game_id.desc())
     )
     if season is not None:
         q = q.filter(BattingGameLog.season == season)
@@ -477,7 +478,8 @@ def get_pitching_gamelogs(
     q = (
         db.query(PitchingGameLog)
         .filter(PitchingGameLog.player_id == player_id)
-        .order_by(PitchingGameLog.game_date.desc())
+        .order_by(PitchingGameLog.game_date.desc(), PitchingGameLog.game_start.desc().nulls_last(),
+                  PitchingGameLog.game_id.desc())
     )
     if season is not None:
         q = q.filter(PitchingGameLog.season == season)

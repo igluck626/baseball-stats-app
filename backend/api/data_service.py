@@ -5021,6 +5021,7 @@ def _bdl_game_ctx(game: dict, fallback_date: Optional[str] = None) -> dict:
     on. Falls back to the caller's `fallback_date` only when BDL's
     timestamp is unparseable."""
     game_date: Optional[datetime.date] = None
+    game_start: Optional[datetime.datetime] = None
     raw_iso = game.get("date") or ""
     if raw_iso:
         try:
@@ -5029,6 +5030,7 @@ def _bdl_game_ctx(game: dict, fallback_date: Optional[str] = None) -> dict:
             # defensively in case the runtime is older.
             dt = datetime.datetime.fromisoformat(raw_iso.replace("Z", "+00:00"))
             game_date = dt.astimezone(_MLB_LOCAL_TZ).date()
+            game_start = dt.astimezone(datetime.timezone.utc)
         except (TypeError, ValueError):
             game_date = None
     if game_date is None and fallback_date:
@@ -5044,6 +5046,9 @@ def _bdl_game_ctx(game: dict, fallback_date: Optional[str] = None) -> dict:
         "game_id":         str(game.get("id")),
         "_game":           game,     # the record itself (final score, inning scores)
         "game_date":       game_date,
+        # The start time orders a doubleheader (stored as game_start); checked
+        # against the first play of every 2026 doubleheader, 25/25.
+        "game_start":      game_start,
         "season":          _to_int(game.get("season")) or (game_date.year if game_date else None),
         "home_team_id":    home.get("id"),
         "away_team_id":    away.get("id"),
@@ -5386,6 +5391,7 @@ def _parse_bdl_batting_gamelog(stat: dict, ctx: dict) -> Optional[dict]:
     return {
         "game_id":    ctx["game_id"],
         "game_date":  ctx["game_date"],
+        "game_start": ctx.get("game_start"),
         "season":     ctx["season"],
         "opponent":   opp_abbr,
         "home_away":  "H" if is_home else "A",
@@ -5491,6 +5497,7 @@ def _parse_bdl_pitching_gamelog(stat: dict, ctx: dict, *, named_in_plays: bool =
     return {
         "game_id":   ctx["game_id"],
         "game_date": ctx["game_date"],
+        "game_start": ctx.get("game_start"),
         "season":    ctx["season"],
         "opponent":  opp_abbr,
         "home_away": "H" if is_home else "A",

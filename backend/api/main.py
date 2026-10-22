@@ -9077,8 +9077,9 @@ def _unknown_games(games, fields) -> list:
 
 def _daily_games(mlbam_id, season=None):
     """One row per REGULAR-SEASON game the player batted in, from batting_gamelogs,
-    ordered chronologically (game_date, game_id — game_id's trailing digit is the
-    doubleheader number, so this splits doubleheaders correctly). Numerics
+    ordered chronologically: game_date, then game_start (a balldontlie game's
+    start time; NULL on Retrosheet rows), then game_id (a Retrosheet id's
+    trailing digit is the doubleheader number). Numerics
     coalesced to 0, with g["unknown"] naming the fields that are unknown on a
     game with activity (see _UNKNOWN_SQL). Batter game logs are regular-season only."""
     where = ["player_id = :pid"]
@@ -9091,7 +9092,7 @@ def _daily_games(mlbam_id, season=None):
            'COALESCE("HBP",0), COALESCE("SF",0), COALESCE("SH",0), COALESCE("IBB",0), '
            'COALESCE("R",0), COALESCE("SB",0), ' + _UNKNOWN_SQL + ' '
            f"FROM batting_gamelogs WHERE {' AND '.join(where)} "
-           "ORDER BY game_date, game_id")
+           "ORDER BY game_date, game_start NULLS LAST, game_id")
     with connection.get_session() as db:
         rows = db.execute(_sa_text(sql), params).fetchall()
     return [{
@@ -9857,7 +9858,8 @@ def _run_game_achievement(stat, threshold=None, player=None, game_type=None,
             vsel = "1" if is_cycle else col
             rows = db.execute(_sa_text(
                 f"SELECT game_date, opponent, {vsel} v, {extra_col} x FROM {table} "
-                f"WHERE player_id = :pid AND {where}{scope} ORDER BY game_date"), params).fetchall()
+                f"WHERE player_id = :pid AND {where}{scope} "
+                f"ORDER BY game_date, game_start NULLS LAST, game_id"), params).fetchall()
             unk_n = (db.execute(_sa_text(
                 f"SELECT COUNT(*) FROM {table} WHERE player_id = :pid AND {unknown_crit}{scope}"),
                 {"pid": int(mlbam), **scope_params}).scalar() or 0) if unknown_crit else 0
@@ -10257,8 +10259,8 @@ _HIGH_K_THRESHOLD = 10   # "high_k" = games with >= this many strikeouts
 
 def _daily_pitching_games(mlbam_id, season=None):
     """One row per REGULAR-SEASON game the player PITCHED in, from
-    pitching_gamelogs, ordered chronologically (game_date, game_id — trailing digit
-    is the doubleheader number). The pitching-line clone of _daily_games."""
+    pitching_gamelogs, ordered chronologically (game_date, game_start NULLS LAST,
+    game_id — see _daily_games). The pitching-line clone of _daily_games."""
     where = ["player_id = :pid"]
     params: dict = {"pid": int(mlbam_id)}
     if season is not None:
@@ -10267,7 +10269,7 @@ def _daily_pitching_games(mlbam_id, season=None):
            'COALESCE("IP",0), COALESCE("H",0), COALESCE("R",0), COALESCE("ER",0), '
            'COALESCE("BB",0), COALESCE("SO",0), COALESCE("HR",0), COALESCE("HBP",0), '
            f'"GS", "W" FROM pitching_gamelogs WHERE {" AND ".join(where)} '
-           "ORDER BY game_date, game_id")
+           "ORDER BY game_date, game_start NULLS LAST, game_id")
     with connection.get_session() as db:
         rows = db.execute(_sa_text(sql), params).fetchall()
     return [_pitching_game(r) for r in rows]
@@ -19014,7 +19016,7 @@ def _backfill_leaderboard_core(confirm, limit, job_id=None):
                     'COALESCE("HBP",0), COALESCE("SF",0), COALESCE("SH",0), COALESCE("IBB",0), '
                     + _UNKNOWN_SQL + ' '
                     "FROM batting_gamelogs WHERE player_id = ANY(:ids) "
-                    "ORDER BY player_id, game_date, game_id"), {"ids": chunk}).fetchall():
+                    "ORDER BY player_id, game_date, game_start NULLS LAST, game_id"), {"ids": chunk}).fetchall():
                 games_by[r[0]].append({
                     "game_date": r[1], "game_id": r[2], "season": r[3],
                     "AB": r[4], "H": r[5], "2B": r[6], "3B": r[7], "HR": r[8],
@@ -19040,7 +19042,7 @@ def _backfill_leaderboard_core(confirm, limit, job_id=None):
                     'COALESCE("IP",0), COALESCE("H",0), COALESCE("R",0), COALESCE("ER",0), '
                     'COALESCE("BB",0), COALESCE("SO",0), COALESCE("HR",0), COALESCE("HBP",0), '
                     '"GS", "W" FROM pitching_gamelogs WHERE player_id = ANY(:ids) '
-                    "ORDER BY player_id, game_date, game_id"), {"ids": chunk}).fetchall():
+                    "ORDER BY player_id, game_date, game_start NULLS LAST, game_id"), {"ids": chunk}).fetchall():
                 pgames_by[r[0]].append(_pitching_game(r[1:]))
             for pid_, s_, c_ in db.execute(_sa_text(
                     "SELECT player_id, season, COUNT(*) FROM pitching_gamelogs "

@@ -532,6 +532,11 @@ class BattingGameLog(Base):
     player_id   = Column(Integer, primary_key=True)
     game_id     = Column(String,  primary_key=True)
     game_date   = Column(Date)
+    # When the game started (balldontlie's start time, UTC). The only thing that
+    # orders a doubleheader: a balldontlie game id is a number with no game
+    # number in it, and a rescheduled game gets a later id. NULL on Retrosheet
+    # rows, whose id's last digit is the game number.
+    game_start  = Column(DateTime(timezone=True), nullable=True)
     season      = Column(Integer)
     opponent    = Column(String)
     home_away   = Column(String)    # "H" / "A"
@@ -584,6 +589,11 @@ class PitchingGameLog(Base):
     player_id   = Column(Integer, primary_key=True)
     game_id     = Column(String,  primary_key=True)
     game_date   = Column(Date)
+    # When the game started (balldontlie's start time, UTC). The only thing that
+    # orders a doubleheader: a balldontlie game id is a number with no game
+    # number in it, and a rescheduled game gets a later id. NULL on Retrosheet
+    # rows, whose id's last digit is the game number.
+    game_start  = Column(DateTime(timezone=True), nullable=True)
     season      = Column(Integer)
     opponent    = Column(String)
     home_away   = Column(String)
@@ -644,6 +654,11 @@ class StagingBattingGameLog(Base):
     player_id   = Column(Integer, primary_key=True)
     game_id     = Column(String,  primary_key=True)
     game_date   = Column(Date)
+    # When the game started (balldontlie's start time, UTC). The only thing that
+    # orders a doubleheader: a balldontlie game id is a number with no game
+    # number in it, and a rescheduled game gets a later id. NULL on Retrosheet
+    # rows, whose id's last digit is the game number.
+    game_start  = Column(DateTime(timezone=True), nullable=True)
     season      = Column(Integer)
     opponent    = Column(String)
     home_away   = Column(String)
@@ -792,6 +807,11 @@ class StagingPitchingGameLog(Base):
     player_id   = Column(Integer, primary_key=True)
     game_id     = Column(String,  primary_key=True)
     game_date   = Column(Date)
+    # When the game started (balldontlie's start time, UTC). The only thing that
+    # orders a doubleheader: a balldontlie game id is a number with no game
+    # number in it, and a rescheduled game gets a later id. NULL on Retrosheet
+    # rows, whose id's last digit is the game number.
+    game_start  = Column(DateTime(timezone=True), nullable=True)
     season      = Column(Integer)
     opponent    = Column(String)
     home_away   = Column(String)

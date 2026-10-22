@@ -134,6 +134,8 @@ _PITCHING_GAMELOGS_NEW_COLUMNS: list[tuple[str, str]] = [
     ("HLD", "INTEGER"),
     ("BS",  "INTEGER"),
     ("GS",  "INTEGER"),
+    # start time, the doubleheader order (see PitchingGameLog.game_start)
+    ("game_start", "TIMESTAMPTZ"),
 ]
 
 _PITCHING_GAMELOGS_QUALITY_COLUMNS: list[str] = [
@@ -164,6 +166,8 @@ _BATTING_GAMELOGS_NEW_COLUMNS: list[tuple[str, str]] = [
     ("slot", "INTEGER"),
     ("seq",  "INTEGER"),
     ("pos",  "VARCHAR"),
+    # start time, the doubleheader order (see BattingGameLog.game_start)
+    ("game_start", "TIMESTAMPTZ"),
 ]
 
 # Columns added to retro_game_info AFTER its first deploy. Empty today because
