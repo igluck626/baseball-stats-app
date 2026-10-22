@@ -5256,9 +5256,11 @@ def recalculate_batting_counting(
 # Pitcher counterpart to `_BATTING_COUNTING_FIELDS`. BDL's season_stats omits R
 # (runs allowed) and HBP for pitchers, but the per-game `/stats` carries them
 # (`p_runs` → R, `pitching_hbp` → HBP) and the parser already stores them on
-# `pitching_gamelogs`, so they can be summed up. BFP is intentionally NOT here:
-# `batters_faced` isn't captured on the gamelog yet (no column / parser field).
-_PITCHING_COUNTING_FIELDS = ("R", "HBP")
+# `pitching_gamelogs`, so they can be summed up. WP and BK come from the lines;
+# CG, SHO and GF are set per game at ingest (`_flag_complete_games`,
+# `_flag_games_finished`). BFP is intentionally NOT here: `batters_faced` isn't
+# captured on the gamelog yet (no column / parser field).
+_PITCHING_COUNTING_FIELDS = ("R", "HBP", "WP", "BK", "CG", "SHO", "GF")
 
 
 def recalculate_pitching_counting(
@@ -5517,10 +5519,73 @@ def _parse_bdl_pitching_gamelog(stat: dict, ctx: dict, *, named_in_plays: bool =
         # every game sampled 2026-10-17); both were hardcoded None on a wrong
         # assumption, which left every balldontlie-sourced row without them.
         "WP":        _to_int(stat.get("wild_pitches")),
+        "BK":        _to_int(stat.get("balks")),
         "pitches":   _to_int(stat.get("pitch_count")),
         "strikes":   _to_int(stat.get("strikes")),
         **dec,
     }
+
+
+def _is_pitching_line(stat: dict) -> bool:
+    """A /stats line with any pitching field shipped — the whole-box count CG
+    is judged on (mapped or not)."""
+    return any(stat.get(k) is not None for k in ("ip", "pitch_count", "p_k"))
+
+
+def _flag_complete_games(all_lines: list[dict], pit_by_pid: dict, ctx: dict) -> None:
+    """CG / SHO on each pitching row: a complete game is a start that is the ONLY
+    pitching line of his team in balldontlie's whole box — counted over every
+    line, mapped or not, never over our rows (four 2026 starters look complete
+    in our rows only because a reliever's row is missing). SHO is a CG with no
+    runs. Checked against balldontlie's team totals: CG and team shutouts match
+    for all 30 clubs in 2026."""
+    from collections import Counter
+    per_side = Counter()
+    for stat in all_lines:
+        if _is_pitching_line(stat):
+            per_side[_resolve_side(stat, ctx)] += 1
+    for rows in pit_by_pid.values():
+        for r in rows:
+            side = "home" if r.get("home_away") == "H" else "away"
+            cg = 1 if (r.get("GS") == 1 and per_side[side] == 1) else 0
+            r["CG"] = cg
+            r["SHO"] = 1 if (cg and r.get("R") == 0) else 0
+
+
+def _game_finishers(plays: list[dict]) -> dict:
+    """{'H': bdl id, 'A': bdl id} — the pitcher whose FIRST appearance for that
+    side comes last, plays ordered by (inning, order). Not the last play's
+    pitcher: balldontlie posts stray plays late (an inning-7 pitch numbered after
+    the final out; a replaced pitcher's pitches listed after his reliever's).
+    On 1,060 games of 2026 this credits all 625 saves to the finisher."""
+    out = {}
+    ordered = sorted(plays, key=lambda p: (p.get("inning") or 0, p.get("order") or 0))
+    for half, side in (("Top", "H"), ("Bottom", "A")):      # the home side pitches the top
+        first: dict = {}
+        for i, p in enumerate(x for x in ordered if x.get("inning_type") == half and x.get("pitcher_id")):
+            first.setdefault(p["pitcher_id"], i)
+        if first:
+            out[side] = max(first, key=first.get)
+    return out
+
+
+def _flag_games_finished(game_id: int, pit_by_pid: dict, bdl_to_mlbam: dict, plays_of) -> None:
+    """GF on each pitching row: 1 for the side's finisher when he didn't start
+    (a complete game is not a game finished), else 0. NULL on every row of a
+    side the plays don't cover — unknown, never 0."""
+    try:
+        fin = _game_finishers(plays_of())
+    except Exception as exc:                          # noqa: BLE001
+        log.warning("fetch_bdl_game_stats(%d): plays unreadable, GF unknown: %s", game_id, exc)
+        fin = {}
+    fin_pid = {side: bdl_to_mlbam.get(int(b)) for side, b in fin.items()}
+    for pid, rows in pit_by_pid.items():
+        for r in rows:
+            side = r.get("home_away")
+            if side not in fin:
+                r["GF"] = None
+                continue
+            r["GF"] = 1 if (fin_pid[side] == pid and r.get("GS") != 1) else 0
 
 
 _DECISION_COLS = ("W", "L", "SV", "HLD", "BS")
@@ -5548,7 +5613,7 @@ def _unship_decisions(rows) -> None:
 
 
 def fetch_bdl_game_stats(
-    game_id: int, bdl_to_mlbam: dict[int, int], ctx: dict,
+    game_id: int, bdl_to_mlbam: dict[int, int], ctx: dict, *, gf_stored: bool = False,
 ) -> tuple[dict[int, list[dict]], dict[int, list[dict]]]:
     """Fetch all per-player stat lines for one BDL game and bucket
     them by MLBAM player_id. Returns (batting_by_pid, pitching_by_pid).
@@ -5609,6 +5674,7 @@ def fetch_bdl_game_stats(
             pit = _parse_bdl_pitching_gamelog(stat, ctx)
             if pit is not None:
                 pit_by_pid.setdefault(mlbam, []).append(pit)
+                line_of[id(pit)] = stat
             elif stat.get("ip") is not None and _ip_str_to_decimal(stat.get("ip")) is not None \
                     and not _pitching_line_evidence(stat, _ip_str_to_decimal(stat.get("ip"))):
                 unproven.append((mlbam, stat))
@@ -5638,6 +5704,17 @@ def fetch_bdl_game_stats(
     if n_sb:
         log.info("fetch_bdl_game_stats(%d): SB/CS read from the plays for %d line(s) without detail",
                  game_id, n_sb)
+    _flag_complete_games(all_lines, pit_by_pid, ctx)
+    # GF needs the whole game's plays (~6 pages). A game whose stored rows already
+    # carry GF (`gf_stored`, the nightly's 30-day re-read) skips that read unless
+    # the plays were fetched anyway; its rows leave GF None and keep-known holds
+    # the stored value.
+    if gf_stored and not plays_memo:
+        for rows in pit_by_pid.values():
+            for r in rows:
+                r["GF"] = None
+    else:
+        _flag_games_finished(game_id, pit_by_pid, bdl_to_mlbam, plays_of)
     if not _decisions_shipped(all_lines):
         log.warning("fetch_bdl_game_stats(%d): no winner or loser on any line — "
                     "decisions not shipped, stored as NULL", game_id)
@@ -5672,6 +5749,21 @@ def _before_bdl_cutover(d: datetime.date) -> bool:
     """True for a 2026 date the legacy MLB path owns. Other seasons are out
     of this guard's scope (2020-2025 are Retrosheet ids throughout)."""
     return d.year == _BDL_INGEST_CUTOVER.year and d < _BDL_INGEST_CUTOVER
+
+
+def _gf_stored_games(game_ids) -> set:
+    """Ids (as strings) of games whose stored pitching rows all carry GF, so the
+    re-read can skip the plays GF needs. Any failure reads as "none": the plays
+    are then read, never skipped on a guess."""
+    try:
+        with connection.get_session() as db:
+            return {r[0] for r in db.execute(_sa_text(
+                'SELECT game_id FROM pitching_gamelogs WHERE game_id = ANY(:g) '
+                'GROUP BY game_id HAVING bool_and("GF" IS NOT NULL)'),
+                {"g": [str(x) for x in game_ids if x is not None]})}
+    except Exception as exc:                          # noqa: BLE001
+        log.warning("_gf_stored_games: lookup failed, GF plays will be read: %s", exc)
+        return set()
 
 
 def save_bdl_gamelogs_for_date(
@@ -5737,6 +5829,7 @@ def save_bdl_gamelogs_for_date(
     total_pit = 0
     skipped: int = 0
     skipped_pre_cutover = 0
+    gf_stored = _gf_stored_games(game_ids)
     for i, g in enumerate(games):
         game_id = g.get("id")
         if game_id is None:
@@ -5756,9 +5849,8 @@ def save_bdl_gamelogs_for_date(
             skipped_pre_cutover += 1
             continue
         try:
-            bat_by_pid, pit_by_pid = fetch_bdl_game_stats(
-                int(game_id), bdl_to_mlbam, ctx,
-            )
+            kw = {"gf_stored": True} if str(game_id) in gf_stored else {}
+            bat_by_pid, pit_by_pid = fetch_bdl_game_stats(int(game_id), bdl_to_mlbam, ctx, **kw)
         except Exception as exc:
             log.exception(
                 "save_bdl_gamelogs_for_date(%s): game %s stat fetch raised: %s",

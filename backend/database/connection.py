@@ -136,6 +136,11 @@ _PITCHING_GAMELOGS_NEW_COLUMNS: list[tuple[str, str]] = [
     ("GS",  "INTEGER"),
     # start time, the doubleheader order (see PitchingGameLog.game_start)
     ("game_start", "TIMESTAMPTZ"),
+    # balks, complete game, shutout, game finished (see PitchingGameLog)
+    ("BK",  "INTEGER"),
+    ("CG",  "INTEGER"),
+    ("SHO", "INTEGER"),
+    ("GF",  "INTEGER"),
 ]
 
 _PITCHING_GAMELOGS_QUALITY_COLUMNS: list[str] = [

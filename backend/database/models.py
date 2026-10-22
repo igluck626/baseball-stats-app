@@ -635,6 +635,15 @@ class PitchingGameLog(Base):
     HLD         = Column(Integer, nullable=True)
     BS          = Column(Integer, nullable=True)
     GS          = Column(Integer, nullable=True)
+    # Balks (balldontlie `balks`); a complete game, a complete-game shutout and a
+    # game finished (1/0), set at ingest — CG and SHO from the whole box score
+    # (every line of his team, mapped or not), GF from the plays (the reliever
+    # who appeared last). NULL when not known (Retrosheet history, rows not yet
+    # backfilled, a game whose plays couldn't be read for GF).
+    BK          = Column(Integer, nullable=True)
+    CG          = Column(Integer, nullable=True)
+    SHO         = Column(Integer, nullable=True)
+    GF          = Column(Integer, nullable=True)
 
 
 # ---------------------------------------------------------------------------
@@ -852,6 +861,15 @@ class StagingPitchingGameLog(Base):
     HLD         = Column(Integer, nullable=True)
     BS          = Column(Integer, nullable=True)
     GS          = Column(Integer, nullable=True)
+    # Balks (balldontlie `balks`); a complete game, a complete-game shutout and a
+    # game finished (1/0), set at ingest — CG and SHO from the whole box score
+    # (every line of his team, mapped or not), GF from the plays (the reliever
+    # who appeared last). NULL when not known (Retrosheet history, rows not yet
+    # backfilled, a game whose plays couldn't be read for GF).
+    BK          = Column(Integer, nullable=True)
+    CG          = Column(Integer, nullable=True)
+    SHO         = Column(Integer, nullable=True)
+    GF          = Column(Integer, nullable=True)
 
 
 class PlayerHof(Base):

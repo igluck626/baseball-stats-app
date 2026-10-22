@@ -67,7 +67,7 @@ def check(label, ok, detail=""):
 ds = extract(DATA_SERVICE, {
     "_to_int", "_ip_str_to_decimal", "_batted", "_resolve_side",
     "_bdl_pitching_hbp", "_parse_bdl_batting_gamelog", "_parse_bdl_pitching_gamelog", "_pitching_line_evidence",
-    "_BDL_INGEST_CUTOVER", "_before_bdl_cutover", "save_bdl_gamelogs_for_date",
+    "_BDL_INGEST_CUTOVER", "_before_bdl_cutover", "save_bdl_gamelogs_for_date", "_gf_stored_games",
     "_bdl_game_ctx",
 }, {"datetime": datetime, "Optional": Optional, "log": logging.getLogger("t"),
     "_MLB_LOCAL_TZ": ZoneInfo("America/New_York")})
