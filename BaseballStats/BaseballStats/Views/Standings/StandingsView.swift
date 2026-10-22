@@ -1055,7 +1055,7 @@ private struct FrozenIdentityCell: View {
             if let badge = clinchBadge {
                 clinchBadgeView(badge)
             }
-            if isLeader, let magic = magicText {
+            if isLeader, let magic = team.shownMagicNumber {
                 Text("M\(magic)")
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(Color.accentColor)
@@ -1087,12 +1087,6 @@ private struct FrozenIdentityCell: View {
 
     private var clinchBadge: (letter: String, color: Color)? {
         clinchBadgeFor(team.clinch_indicator)
-    }
-
-    private var magicText: String? {
-        guard let m = team.magic_number, !m.isEmpty, m != "-",
-              let intVal = Int(m), intVal <= 25 else { return nil }
-        return m
     }
 
     private func clinchBadgeView(_ badge: (letter: String, color: Color)) -> some View {
