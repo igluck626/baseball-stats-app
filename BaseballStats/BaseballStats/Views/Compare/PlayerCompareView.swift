@@ -487,7 +487,7 @@ final class PlayerCompareViewModel: ObservableObject {
             guard let sH = s.H, let s2 = s.doubles, let s3 = s.triples else { return nil }
             return acc + Double(sH + s2 + 2 * s3 + 3 * (s.HR ?? 0))
         }
-        let war = seasons.reduce(0.0) { $0 + ($1.WAR ?? 0) }
+        let war = UnknownRule.warSum(seasons, year: \.year, games: \.G, war: \.WAR)
 
         let avg: Double? = ab > 0 ? h / ab : nil
         let obp: Double? = {
@@ -552,7 +552,7 @@ final class PlayerCompareViewModel: ObservableObject {
         // Innings: summed as the app does elsewhere (raw decimal), so the
         // ERA/WHIP math matches WindowSnapshot.computePitching.
         let ip = seasons.reduce(0.0) { $0 + ($1.IP ?? 0) }
-        let war = seasons.reduce(0.0) { $0 + ($1.WAR ?? 0) }
+        let war = UnknownRule.warSum(seasons, year: \.year, games: \.G, war: \.WAR)
 
         let era: Double? = ip > 0 ? er * 9 / ip : nil
         let whip: Double? = ip > 0 ? (h + bb) / ip : nil
