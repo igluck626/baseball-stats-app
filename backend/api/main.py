@@ -8543,10 +8543,17 @@ def _run_season_rate(player, role, canon, season, season_start, season_end, gt):
     # ---- FLOAT (summable): career = SUM ----
     if canon in _SEASON_FLOAT:
         col = _SEASON_COL[(role, canon)]
-        sql = f"SELECT COALESCE(SUM({col}),0), MIN(year), MAX(year), COUNT(*) FROM {table} WHERE {wc}"
+        # WAR after data_service.WAR_LAST_STORED_SEASON: a season with games but no WAR
+        # is unknown, and so is a sum over it — never a short total or a 0. NULLs up to
+        # that season are "not rated" and read as 0, as career totals do.
+        unknown = (f', BOOL_OR({col} IS NULL AND year > :war_last AND COALESCE("G", 0) > 0)'
+                   if canon == "WAR" else ", FALSE")
+        sql = (f"SELECT COALESCE(SUM({col}),0), MIN(year), MAX(year), COUNT(*){unknown} "
+               f"FROM {table} WHERE {wc}")
         with connection.get_session() as db:
-            val, mn, mx, nrows = db.execute(_sa_text(sql), p).fetchone()
-        if not nrows:
+            val, mn, mx, nrows, is_unknown = db.execute(
+                _sa_text(sql), {**p, "war_last": data_service.WAR_LAST_STORED_SEASON}).fetchone()
+        if not nrows or is_unknown:
             return finish(None, [mn, mx])
         return finish(round(float(val), 2 if canon == "WAR" else 1), [mn, mx])
 

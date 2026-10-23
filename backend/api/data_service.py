@@ -1145,6 +1145,22 @@ def get_career_stats(player_id: int) -> Optional[dict]:
     }
 
 
+# The last season whose Baseball-Reference WAR we store. That fetch is gone, so a LATER
+# season with games but no WAR is unknown, and so is any career WAR summed over it: None,
+# never a short sum. A NULL in this season or earlier is "not rated" (clubs
+# Baseball-Reference doesn't rate, placeholder rows with no games) and keeps reading as 0.
+WAR_LAST_STORED_SEASON = 2026
+
+
+def _war_total(seasons: list[dict], key: str) -> Optional[float]:
+    """A career WAR figure (WAR, WAR_off, WAR_def) from season rows, by the
+    WAR_LAST_STORED_SEASON rule."""
+    if any((s.get("year") or 0) > WAR_LAST_STORED_SEASON and (s.get("G") or 0) > 0
+           and s.get(key) is None for s in seasons):
+        return None
+    return round(sum((s.get(key) or 0.0) for s in seasons), 1)
+
+
 def _batting_career_totals(seasons: list[dict]) -> dict:
     """Aggregate season-level batting rows into a `career_totals`
     dict. Counting stats are linear sums; rate stats come off the
@@ -1157,9 +1173,9 @@ def _batting_career_totals(seasons: list[dict]) -> dict:
     seasons_with_counting = [s for s in seasons if s.get("H") is not None]
     totals: dict = {
         "seasons": len(seasons),
-        "WAR":     round(sum((s.get("WAR")     or 0.0) for s in seasons), 1),
-        "WAR_off": round(sum((s.get("WAR_off") or 0.0) for s in seasons), 1),
-        "WAR_def": round(sum((s.get("WAR_def") or 0.0) for s in seasons), 1),
+        "WAR":     _war_total(seasons, "WAR"),
+        "WAR_off": _war_total(seasons, "WAR_off"),
+        "WAR_def": _war_total(seasons, "WAR_def"),
     }
     if not seasons_with_counting:
         return totals
@@ -1335,7 +1351,7 @@ def _pitching_career_totals(seasons: list[dict]) -> dict:
     weight in the ratio."""
     totals: dict = {
         "seasons": len(seasons),
-        "WAR":     round(sum((s.get("WAR") or 0.0) for s in seasons), 1),
+        "WAR":     _war_total(seasons, "WAR"),
         "IP":      round(sum((s.get("IP")  or 0.0) for s in seasons), 1),
         "SO":      int(sum(s.get("SO") or 0 for s in seasons)),
         "BB":      int(sum(s.get("BB") or 0 for s in seasons)),
@@ -7335,6 +7351,14 @@ def _career_sum_known(table, col):
     return case((unknown == 1, None), else_=func.sum(col))
 
 
+def _career_war_known(table, col):
+    """SUM(col) of a WAR column over a player's seasons, or NULL by the
+    WAR_LAST_STORED_SEASON rule: a season after it with games and no WAR."""
+    unknown = func.max(case((and_(table.year > WAR_LAST_STORED_SEASON,
+                                  func.coalesce(table.G, 0) > 0, col.is_(None)), 1), else_=0))
+    return case((unknown == 1, None), else_=func.sum(col))
+
+
 def _leaderboard_career(
     stat: str, is_batter: bool, limit: int,
     league: Optional[str], team: Optional[str],
@@ -7372,7 +7396,7 @@ def _leaderboard_career(
         if is_batter:
             agg_columns = [
                 _PlayerSeason.player_id.label("player_id"),
-                func.sum(_PlayerSeason.WAR).label("WAR"),
+                _career_war_known(_PlayerSeason, _PlayerSeason.WAR).label("WAR"),
                 func.sum(_PlayerSeason.HR).label("HR"),
                 func.sum(_PlayerSeason.RBI).label("RBI"),
                 func.sum(_PlayerSeason.H).label("H"),
@@ -7394,7 +7418,7 @@ def _leaderboard_career(
         else:
             agg_columns = [
                 _PitcherSeason.player_id.label("player_id"),
-                func.sum(_PitcherSeason.WAR).label("WAR"),
+                _career_war_known(_PitcherSeason, _PitcherSeason.WAR).label("WAR"),
                 func.sum(_PitcherSeason.SO).label("SO"),
                 func.sum(_PitcherSeason.W).label("W"),
                 func.sum(_PitcherSeason.SV).label("SV"),
