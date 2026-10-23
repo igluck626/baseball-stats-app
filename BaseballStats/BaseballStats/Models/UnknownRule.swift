@@ -22,6 +22,9 @@
 //      has the column NULL; a NULL in a PAST season is "not recorded" (SF
 //      before 1954, say) and still reads as 0, as it always has. Only the
 //      columns the server fills from the game logs can be unknown this way.
+//    • WAR — Baseball-Reference's, stored through 2026 and no longer fetched:
+//      a season AFTER 2026 with games but no WAR makes a WAR sum unknown; a
+//      NULL in 2026 or earlier is "not rated" and reads as 0.
 //
 
 import Foundation
@@ -120,6 +123,23 @@ enum UnknownRule {
         for s in seasons {
             if let v = value(s) { total += v; continue }
             if unknownable, (year(s) ?? 0) >= currentSeason, played(s) { return nil }
+        }
+        return total
+    }
+
+    /// The last season whose Baseball-Reference WAR the server stores (its
+    /// `WAR_LAST_STORED_SEASON`).
+    static let warLastStoredSeason = 2026
+
+    /// A WAR sum over seasons: nil when a season after `warLastStoredSeason`
+    /// has games but no WAR, otherwise the sum with a NULL as 0.
+    static func warSum<S>(
+        _ seasons: [S], year: (S) -> Int?, games: (S) -> Int?, war: (S) -> Double?
+    ) -> Double? {
+        var total = 0.0
+        for s in seasons {
+            if let v = war(s) { total += v; continue }
+            if (year(s) ?? 0) > warLastStoredSeason, (games(s) ?? 0) > 0 { return nil }
         }
         return total
     }

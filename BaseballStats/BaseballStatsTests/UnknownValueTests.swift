@@ -156,6 +156,58 @@ struct UnknownValueTests {
         #expect(agg.r != nil && agg.era != nil)
     }
 
+    // MARK: Career WAR (Baseball-Reference stored through 2026)
+
+    /// The real career response with one season appended, a copy of its 2026
+    /// row as `year` with `G` games and no WAR — the shape every active player
+    /// takes from 2027 until there's a WAR source.
+    private func withSeason<T: Decodable>(_ type: T.Type, _ name: String, year: Int, games: Int) throws -> T {
+        var json = try #require(try JSONSerialization.jsonObject(with: fixture(name)) as? [String: Any])
+        var seasons = try #require(json["seasons"] as? [[String: Any]])
+        var row = try #require(seasons.first { $0["year"] as? Int == 2026 })
+        row["year"] = year; row["G"] = games
+        for key in ["WAR", "WAR_off", "WAR_def"] where row[key] != nil { row[key] = NSNull() }
+        seasons.append(row); json["seasons"] = seasons
+        return try JSONDecoder().decode(type, from: JSONSerialization.data(withJSONObject: json))
+    }
+
+    @Test func careerWARThrough2026IsTheSum() throws {
+        let seasons = try #require(try decode(PlayerCareerStats.self, "collins-career-batting").seasons)
+        let war = try #require(BattingCareerAgg.compute(seasons: seasons).war)
+        #expect(abs(war - 2.06) < 0.001)   // -0.33 + 2.03 + 0.36
+        let pitching = try #require(try decode(PitcherCareerStats.self, "heuer-career-pitching").seasons)
+        #expect(PitchingCareerAgg.compute(seasons: pitching).war != nil)
+    }
+
+    @Test func aSeasonAfter2026WithGamesAndNoWARMakesCareerWARUnknown() throws {
+        let seasons = try #require(try withSeason(PlayerCareerStats.self, "collins-career-batting",
+                                                  year: 2027, games: 120).seasons)
+        #expect(BattingCareerAgg.compute(seasons: seasons).war == nil)
+        let pitching = try #require(try withSeason(PitcherCareerStats.self, "heuer-career-pitching",
+                                                   year: 2027, games: 30).seasons)
+        #expect(PitchingCareerAgg.compute(seasons: pitching).war == nil)
+    }
+
+    @Test func aPlaceholderSeasonWithNoGamesChangesNothing() throws {
+        let seasons = try #require(try withSeason(PlayerCareerStats.self, "collins-career-batting",
+                                                  year: 2027, games: 0).seasons)
+        let war = try #require(BattingCareerAgg.compute(seasons: seasons).war)
+        #expect(abs(war - 2.06) < 0.001)
+    }
+
+    @Test func warSumRule() {
+        typealias S = (year: Int?, g: Int?, war: Double?)
+        func sum(_ rows: [S]) -> Double? {
+            UnknownRule.warSum(rows, year: { $0.year }, games: { $0.g }, war: { $0.war })
+        }
+        #expect(UnknownRule.warLastStoredSeason == 2026)
+        #expect(sum([(2026, 140, 2.4), (2027, 120, nil)]) == nil)
+        #expect(sum([(2027, 120, nil)]) == nil)                        // never 0.0
+        #expect(sum([(2026, 140, 2.4), (2027, 0, nil)]) == 2.4)        // placeholder
+        #expect(sum([(2025, 150, 3.0), (2026, 140, nil)]) == 3.0)      // 2026 NULL: not rated
+        #expect(sum([(2026, 140, 2.0), (2027, 120, 1.0)]) == 3.0)      // 2027 WITH WAR sums
+    }
+
     // MARK: Today's overlay
 
     /// balldontlie's own /stats lines for two real finals (fetched 2026-10-18):

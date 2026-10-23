@@ -3741,7 +3741,7 @@ private struct MultiYearSummarySheet: View {
         if showingBatting {
             let agg = battingAgg
             return [
-                local1(agg.war / n),
+                local1(agg.war.map { $0 / n }),
                 local1(Double(agg.g)    / n),
                 local1(agg.pa.map { Double($0)   / n }),
                 local1(Double(agg.ab)   / n),
@@ -3770,7 +3770,7 @@ private struct MultiYearSummarySheet: View {
         } else {
             let agg = pitchingAgg
             return [
-                local1(agg.war / n),
+                local1(agg.war.map { $0 / n }),
                 local1(Double(agg.w)   / n),
                 local1(Double(agg.l)   / n),
                 format3(agg.winPct),
@@ -3815,7 +3815,7 @@ private struct MultiYearSummarySheet: View {
             }
             let s = 162.0 / Double(agg.g)
             return [
-                local1(agg.war * s),
+                local1(agg.war.map { $0 * s }),
                 local1(Double(agg.g)    * s),     // always 162.0
                 local1(agg.pa.map { Double($0)   * s }),
                 local1(Double(agg.ab)   * s),
@@ -3850,7 +3850,7 @@ private struct MultiYearSummarySheet: View {
             }
             let s = 162.0 / agg.ip
             return [
-                local1(agg.war * s),
+                local1(agg.war.map { $0 * s }),
                 local1(Double(agg.w)   * s),
                 local1(Double(agg.l)   * s),
                 format3(agg.winPct),
@@ -4857,7 +4857,7 @@ struct BattingCareerAgg {
     let gidp: Int?
     let sh:   Int?
     let ibb:  Int?
-    let war:  Double
+    let war:  Double?
 
     var avg: Double? {
         ab > 0 ? Double(h) / Double(ab) : nil
@@ -4930,7 +4930,7 @@ struct BattingCareerAgg {
             gidp: sum(\.GIDP, "GIDP"),
             sh:   sum(\.SH, "SH"),
             ibb:  sum(\.IBB, "IBB"),
-            war:  seasons.reduce(0.0) { $0 + ($1.WAR ?? 0) }
+            war:  UnknownRule.warSum(seasons, year: \.year, games: \.G, war: \.WAR)
         )
     }
 }
@@ -4962,7 +4962,7 @@ struct PitchingCareerAgg {
     let sv: Int
     let w: Int
     let l: Int
-    let war: Double
+    let war: Double?
 
     var era: Double? {
         ip > 0 ? Double(er) * 9.0 / ip : nil
@@ -5044,7 +5044,7 @@ struct PitchingCareerAgg {
             sv:  seasons.reduce(0)   { $0 + ($1.SV  ?? 0) },
             w:   seasons.reduce(0)   { $0 + ($1.W   ?? 0) },
             l:   seasons.reduce(0)   { $0 + ($1.L   ?? 0) },
-            war: seasons.reduce(0.0) { $0 + ($1.WAR ?? 0) }
+            war: UnknownRule.warSum(seasons, year: \.year, games: \.G, war: \.WAR)
         )
     }
 }
