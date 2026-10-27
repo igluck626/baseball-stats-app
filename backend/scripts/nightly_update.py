@@ -1196,9 +1196,12 @@ GROUP BY p.player_id, p.raw_team
 
 # Pitching: W/L/SV counted from the decision columns (falling back to `result`
 # for a row not yet re-parsed); IP summed as OUTS (6.2 = 6⅔) so the
-# decimal-innings notation adds up correctly. GS/CG/SHO/etc. aren't in the
-# gamelog and stay NULL (the team board ranks by W/L/SV/SO/ER, all derivable).
-_STINT_PIT_COLS = ["G", "W", "L", "SV", "H", "R", "ER", "BB", "SO", "HR", "HBP", "WP", "ip_outs"]
+# decimal-innings notation adds up correctly. GS, CG, SHO, GF and BK are summed
+# too (the gamelogs carry them since the 2026-10-22 backfill), so a traded
+# pitcher's club rows can show them; IBB, BFP, SH, SF and GIDP aren't in the
+# pitching gamelog and stay NULL.
+_STINT_PIT_COLS = ["G", "W", "L", "SV", "H", "R", "ER", "BB", "SO", "HR", "HBP", "WP",
+                   "GS", "CG", "SHO", "GF", "BK", "ip_outs"]
 _STINT_PIT_SQL = """
 WITH game_team AS (   -- both teams of every game, from BOTH logs (see _STINT_BAT_SQL)
   SELECT game_id, opponent AS team FROM pitching_gamelogs WHERE season = :yr
@@ -1216,7 +1219,8 @@ per_game AS (
          MAX(COALESCE(g."L", CASE WHEN g.result IS NULL THEN NULL WHEN g.result = 'L' THEN 1 ELSE 0 END)) AS l,
          MAX(COALESCE(g."SV", CASE WHEN g.result IS NULL THEN NULL WHEN g.result = 'S' THEN 1 ELSE 0 END)) AS sv,
          MAX(g."H") "H", MAX(g."R") "R", MAX(g."ER") "ER", MAX(g."BB") "BB",
-         MAX(g."SO") "SO", MAX(g."HR") "HR", MAX(g."HBP") "HBP", MAX(g."WP") "WP"
+         MAX(g."SO") "SO", MAX(g."HR") "HR", MAX(g."HBP") "HBP", MAX(g."WP") "WP",
+         MAX(g."GS") "GS", MAX(g."CG") "CG", MAX(g."SHO") "SHO", MAX(g."GF") "GF", MAX(g."BK") "BK"
   FROM pitching_gamelogs g
   JOIN game_team gt ON gt.game_id = g.game_id AND gt.team <> g.opponent
   WHERE g.season = :yr
@@ -1231,6 +1235,12 @@ SELECT player_id, raw_team, min(gd) AS first_date, count(*) AS "G",
        -- every pitching game is activity: one unknown HBP / WP makes the stint's NULL
        CASE WHEN bool_or("HBP" IS NULL) THEN NULL ELSE sum("HBP") END "HBP",
        CASE WHEN bool_or("WP" IS NULL) THEN NULL ELSE sum("WP") END "WP",
+       -- starts, complete games, shutouts, games finished and balks, the same way
+       CASE WHEN bool_or("GS" IS NULL) THEN NULL ELSE sum("GS") END "GS",
+       CASE WHEN bool_or("CG" IS NULL) THEN NULL ELSE sum("CG") END "CG",
+       CASE WHEN bool_or("SHO" IS NULL) THEN NULL ELSE sum("SHO") END "SHO",
+       CASE WHEN bool_or("GF" IS NULL) THEN NULL ELSE sum("GF") END "GF",
+       CASE WHEN bool_or("BK" IS NULL) THEN NULL ELSE sum("BK") END "BK",
        -- "IP" stores thirds as .333 / .667, so outs are IP x 3, rounded
        sum(round(ip * 3))::int AS ip_outs
 FROM per_game GROUP BY player_id, raw_team
@@ -1286,7 +1296,9 @@ def _derive_stints(db, year, is_pitch):
                 row.update({"G": acc["G"], "W": acc["W"], "L": acc["L"], "SV": acc["SV"],
                             "IP": _ip_from_outs(outs),
                             "H": acc["H"], "R": acc["R"], "ER": acc["ER"], "BB": acc["BB"],
-                            "SO": acc["SO"], "HR": acc["HR"], "HBP": acc["HBP"], "WP": acc["WP"]})
+                            "SO": acc["SO"], "HR": acc["HR"], "HBP": acc["HBP"], "WP": acc["WP"],
+                            "GS": acc["GS"], "CG": acc["CG"], "SHO": acc["SHO"], "GF": acc["GF"],
+                            "BK": acc["BK"]})
             else:
                 row.update({c: acc[c] for c in _STINT_BAT_COLS})
                 parts = (acc["H"], acc["doubles"], acc["triples"], acc["HR"])

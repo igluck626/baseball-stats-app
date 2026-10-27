@@ -59,7 +59,8 @@ CREATE TABLE batting_gamelogs (player_id, game_id, game_date, season, opponent,
   "SF", "SH", "GIDP", "PA");
 CREATE TABLE pitching_gamelogs (player_id, game_id, game_date, season, opponent,
   result, "IP", "H", "R", "ER", "BB", "SO", "HR", "HBP", "WP",
-  "W" DEFAULT NULL, "L" DEFAULT NULL, "SV" DEFAULT NULL);
+  "W" DEFAULT NULL, "L" DEFAULT NULL, "SV" DEFAULT NULL,
+  "GS" DEFAULT 0, "CG" DEFAULT 0, "SHO" DEFAULT 0, "GF" DEFAULT 0, "BK" DEFAULT 0);
 """)
 
 
@@ -159,6 +160,7 @@ print("the contract _derive_stints relies on")
 
 def select_aliases(sql):
     body = sql[sql.rindex("\nSELECT"):sql.rindex("\nFROM")]
+    body = re.sub(r"--[^\n]*", "", body)          # a comment's commas are not columns
     out = []
     for part in re.split(r",(?![^()]*\))", body.replace("\nSELECT", "", 1)):
         part = part.strip()
@@ -171,6 +173,9 @@ al = select_aliases(BAT)
 check("batting SELECT is player_id, raw_team, first_date, then _STINT_BAT_COLS in order",
       al[:3] == ["player_id", "raw_team", "first_date"] and al[3:] == ns["_STINT_BAT_COLS"])
 check("G_batted is a batting stint column", "G_batted" in ns["_STINT_BAT_COLS"])
+al = select_aliases(PIT)
+check("pitching SELECT is player_id, raw_team, first_date, then _STINT_PIT_COLS in order",
+      al[:3] == ["player_id", "raw_team", "first_date"] and al[3:] == ns["_STINT_PIT_COLS"])
 for name, sql in (("batting", BAT), ("pitching", PIT)):
     gt = sql[sql.index("game_team AS"):sql.index("),", sql.index("game_team AS"))]
     check(f"{name} game_team is built from BOTH logs",
