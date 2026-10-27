@@ -320,6 +320,13 @@ struct StandingsView: View {
                         wildcardContent
                     }
                 }
+                if let legend = standingsLegendText(shownTeams, divisionTables: stack.league != .wc) {
+                    legend
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .accessibilityIdentifier("standings.legend")
+                }
                 if let footer = updatedFooter {
                     Text(footer)
                         .font(.caption)
@@ -418,6 +425,16 @@ struct StandingsView: View {
                     favoriteCode: viewModel.favoriteLahmanCode
                 )
             }
+        }
+    }
+
+    /// The teams the picked table shows (AL / NL divisions, or both wild-card
+    /// races) — what the legend under it explains.
+    private var shownTeams: [TeamStanding] {
+        switch stack.league {
+        case .al: return viewModel.alStandings.values.flatMap { $0 }
+        case .nl: return viewModel.nlStandings.values.flatMap { $0 }
+        case .wc: return viewModel.alWildcard + viewModel.nlWildcard
         }
     }
 
@@ -642,18 +659,36 @@ private enum StandingsLayout {
 
 // MARK: - Row helpers
 
-/// Single-character clinch tag mapping per MLB / bbref convention.
-/// Shared between the frozen cell and any future detail surfaces.
+/// A row's clinch badge: the letter in its mark's colour (`ClinchMark` holds
+/// what the letters mean). A letter balldontlie hasn't sent before shows as
+/// itself, in gray.
 private func clinchBadgeFor(_ raw: String?) -> (letter: String, color: Color)? {
     guard let raw = raw?.lowercased(), !raw.isEmpty else { return nil }
-    switch raw {
-    case "z": return ("z", .yellow)   // clinched home-field advantage
-    case "y": return ("y", .green)    // clinched division
-    case "x": return ("x", .blue)     // clinched playoff berth
-    case "w": return ("w", .teal)     // clinched wild card
-    case "e": return ("e", .red)      // eliminated
-    default:  return (raw, .secondary)
+    guard let mark = ClinchMark(raw) else { return (raw, .secondary) }
+    return (mark.rawValue, clinchColor(mark))
+}
+
+private func clinchColor(_ mark: ClinchMark) -> Color {
+    switch mark {
+    case .bestRecord: return .yellow
+    case .division:   return .blue
+    case .wildCard:   return .green
+    case .eliminated: return .red
     }
+}
+
+/// "* best record · x division · y wild card · e eliminated · M magic number",
+/// each symbol in its badge's colour — only the ones `teams` show. One Text with
+/// " · " separators, so it wraps as words at the largest text sizes.
+private func standingsLegendText(_ teams: [TeamStanding], divisionTables: Bool) -> Text? {
+    var parts: [Text] = StandingsLegend.marks(teams).map { mark in
+        Text(mark.rawValue).bold().foregroundStyle(clinchColor(mark)) + Text(" \(mark.meaning)")
+    }
+    if StandingsLegend.showsMagicNumber(teams, divisionTables: divisionTables) {
+        parts.append(Text("M").bold().foregroundStyle(Color.accentColor) + Text(" magic number"))
+    }
+    guard let first = parts.first else { return nil }
+    return parts.dropFirst().reduce(first) { $0 + Text(" · ") + $1 }
 }
 
 /// Subtle row background. Division view leaves every row plain —

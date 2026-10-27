@@ -117,9 +117,8 @@ struct TeamStanding: Codable, Identifiable, Hashable {
     /// no deficit, "2.5" / "+1.5" otherwise — so we keep it as-is.
     let games_back: String?
     let wild_card_games_back: String?
-    /// Single character per MLB convention: "y" (clinched playoff),
-    /// "x" (clinched division), "w" (clinched wild card),
-    /// "z" (clinched home-field advantage), "e" (eliminated).
+    /// balldontlie's `clincher`, passed through by the server — read through
+    /// `ClinchMark`, which holds what each letter means.
     let clinch_indicator: String?
     let division_leader: Bool?
     let clinched: Bool?
@@ -166,4 +165,49 @@ struct TeamHistoryResponse: Codable {
     /// One TeamStanding row per season in franchise history. Same shape
     /// as the standings rows, sorted chronologically by the backend.
     let history: [TeamStanding]?
+}
+
+/// A standings clinch mark: balldontlie's `clincher` letter. What each letter
+/// means was read off the 2026 final standings, the only season that carries
+/// them: "*" went to the two division winners with their league's best record
+/// (Tampa Bay, Milwaukee), "x" to the other four division winners, "y" to the
+/// six wild cards, "e" to the other eighteen. balldontlie documents none of it,
+/// and it has sent no other letter; one it hasn't sent before shows as itself,
+/// in gray, with no legend entry — never a guessed meaning.
+enum ClinchMark: String, CaseIterable {
+    case bestRecord = "*"
+    case division   = "x"
+    case wildCard   = "y"
+    case eliminated = "e"
+
+    init?(_ raw: String?) {
+        guard let raw = raw?.lowercased(), let mark = ClinchMark(rawValue: raw) else { return nil }
+        self = mark
+    }
+
+    /// The legend's words.
+    var meaning: String {
+        switch self {
+        case .bestRecord: return "best record"
+        case .division:   return "division"
+        case .wildCard:   return "wild card"
+        case .eliminated: return "eliminated"
+        }
+    }
+}
+
+/// The line under a standings table that says what its symbols mean — only the
+/// ones that table shows, in a fixed order, so a table with none has no line.
+enum StandingsLegend {
+    /// The clinch marks among `teams`, in `ClinchMark.allCases` order.
+    static func marks(_ teams: [TeamStanding]) -> [ClinchMark] {
+        let present = Set(teams.compactMap { ClinchMark($0.clinch_indicator) })
+        return ClinchMark.allCases.filter(present.contains)
+    }
+
+    /// Whether any row shows a magic number: a division leader's, while it
+    /// still counts down (`shownMagicNumber`). The wild-card tables never do.
+    static func showsMagicNumber(_ teams: [TeamStanding], divisionTables: Bool) -> Bool {
+        divisionTables && teams.contains { $0.rank == 1 && $0.shownMagicNumber != nil }
+    }
 }
