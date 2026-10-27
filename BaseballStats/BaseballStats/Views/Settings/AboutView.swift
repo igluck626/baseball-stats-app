@@ -38,7 +38,7 @@ struct AboutView: View {
         var components = URLComponents()
         components.scheme = "mailto"
         components.path = feedbackEmail
-        components.queryItems = [URLQueryItem(name: "subject", value: "BaseballStats Feedback")]
+        components.queryItems = [URLQueryItem(name: "subject", value: "WhosOnFirst Feedback")]
         return components.url
     }
 
@@ -68,7 +68,7 @@ struct AboutView: View {
             // App name + live version, floated like a header.
             Section {
                 VStack(spacing: 6) {
-                    Text("BaseballStats")
+                    Text("WhosOnFirst")
                         .font(.title2.bold())
                     Text(versionString)
                         .font(.subheadline)
@@ -80,7 +80,7 @@ struct AboutView: View {
             }
 
             Section {
-                Text("BaseballStats brings you comprehensive Major League Baseball statistics, standings, scores, and news — from the 1871 season to today.")
+                Text("WhosOnFirst brings you comprehensive Major League Baseball statistics, standings, scores, and news — from the 1871 season to today.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }

@@ -32,7 +32,7 @@ struct SourcesView: View {
     var body: some View {
         Form {
             Section {
-                Text("BaseballStats is an independent app. It is not affiliated with or endorsed by Major League Baseball or any club, and its statistics are not official league data.")
+                Text("WhosOnFirst is an independent app. It is not affiliated with or endorsed by Major League Baseball or any club, and its statistics are not official league data.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -91,7 +91,7 @@ struct Credit: Identifiable {
         Credit(
             name: "SABR Lahman Baseball Database",
             use: "Season and career statistics, awards and biographical data, 1871 to the most recent completed season.",
-            notice: "Contains data from the SABR Lahman Baseball Database, copyright 1996–2025 by SABR, via generous donation from Sean Lahman, licensed under the Creative Commons Attribution-ShareAlike 3.0 Unported License. BaseballStats combines it with the other sources here and corrects some records. Its Negro Leagues statistics come from Seamheads.com.",
+            notice: "Contains data from the SABR Lahman Baseball Database, copyright 1996–2025 by SABR, via generous donation from Sean Lahman, licensed under the Creative Commons Attribution-ShareAlike 3.0 Unported License. WhosOnFirst combines it with the other sources here and corrects some records. Its Negro Leagues statistics come from Seamheads.com.",
             links: [CreditLink("SABR Lahman Baseball Database", "https://sabr.org/lahman-database/"),
                     CreditLink("CC BY-SA 3.0 license", "https://creativecommons.org/licenses/by-sa/3.0/"),
                     CreditLink("Seamheads Negro Leagues Database", "https://www.seamheads.com/NegroLgs/index.php")]),
