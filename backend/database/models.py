@@ -644,6 +644,9 @@ class PitchingGameLog(Base):
     CG          = Column(Integer, nullable=True)
     SHO         = Column(Integer, nullable=True)
     GF          = Column(Integer, nullable=True)
+    # Batters faced (balldontlie `batters_faced`). NULL when not shipped — a
+    # handful of 2026 lines, every Retrosheet row — never 0.
+    BFP         = Column(Integer, nullable=True)
 
 
 # ---------------------------------------------------------------------------
@@ -870,6 +873,9 @@ class StagingPitchingGameLog(Base):
     CG          = Column(Integer, nullable=True)
     SHO         = Column(Integer, nullable=True)
     GF          = Column(Integer, nullable=True)
+    # Batters faced (balldontlie `batters_faced`). NULL when not shipped — a
+    # handful of 2026 lines, every Retrosheet row — never 0.
+    BFP         = Column(Integer, nullable=True)
 
 
 class PlayerHof(Base):

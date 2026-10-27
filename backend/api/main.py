@@ -3768,9 +3768,7 @@ def admin_recalculate_pitching_counting(
     are never clobbered. The EXISTS guard means only rows that actually have game
     logs for the year are touched. Idempotent.
 
-    BFP is intentionally excluded — `batters_faced` isn't captured on
-    `pitching_gamelogs` yet (needs a schema column + parser change + gamelog
-    backfill; separate task)."""
+    BFP is summed too, from `batters_faced` on each line."""
     if not connection.db_available():
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
 

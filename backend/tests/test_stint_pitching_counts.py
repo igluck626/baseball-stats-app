@@ -15,7 +15,8 @@ games, shutouts, games finished and balks (Isaac, 2026-10-27).
   • Milner's season row says 44 games, his logs hold 45 (CHN 39 + SEA 6), so
     his 2026 has no exact breakdown — the clubs alone, every value null — as
     it already does in production. Unchanged by this fix.
-  • IBB and BF stay null: the pitching game logs don't carry them.
+  • IBB stays null: the pitching game logs don't carry it. BF is null here
+    because these fixture rows predate the BF column (test_bfp_gamelog covers it).
 
 Real rows (fixtures/stint_pitching_counts.json, read from production): both
 pitchers' 2026 pitching logs, one row from the other side of each game, their
@@ -108,7 +109,7 @@ else:
     check("Skubal: GS, CG, SHO, GF, BK now sent on both club rows (the page showed '—')",
           clubs and all(t["stats"].get(c) is not None for t in clubs for c in NEW),
           [{c: t["stats"].get(c) for c in NEW} for t in clubs])
-    check("Skubal: IBB and BF still null — the pitching game logs don't carry them",
+    check("Skubal: IBB null (not in the game logs); BF null (these fixture rows have none)",
           clubs and all(t["stats"].get("IBB") is None and t["stats"].get("BFP") is None for t in clubs))
     m26 = next((s for s in sent[MILNER] if s["year"] == 2026), None)
     mclubs = m26["teams"] if m26 else []

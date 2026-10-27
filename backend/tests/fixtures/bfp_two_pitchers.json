@@ -1,0 +1,451 @@
+{
+ "_source": "balldontlie /stats batters_faced for the rows in stint_pitching_counts.json, from the 2026-10-27 BF dry run (plan 79ff0ec8); null = not shipped",
+ "BFP": [
+  {
+   "player_id": 571948,
+   "game_id": "5057774",
+   "BFP": 5
+  },
+  {
+   "player_id": 571948,
+   "game_id": "5057816",
+   "BFP": 5
+  },
+  {
+   "player_id": 571948,
+   "game_id": "5057839",
+   "BFP": 1
+  },
+  {
+   "player_id": 571948,
+   "game_id": "5057871",
+   "BFP": 6
+  },
+  {
+   "player_id": 571948,
+   "game_id": "5057899",
+   "BFP": 3
+  },
+  {
+   "player_id": 571948,
+   "game_id": "5057924",
+   "BFP": 6
+  },
+  {
+   "player_id": 571948,
+   "game_id": "5057948",
+   "BFP": 3
+  },
+  {
+   "player_id": 571948,
+   "game_id": "5057976",
+   "BFP": 3
+  },
+  {
+   "player_id": 571948,
+   "game_id": "5058015",
+   "BFP": null
+  },
+  {
+   "player_id": 571948,
+   "game_id": "5058054",
+   "BFP": 3
+  },
+  {
+   "player_id": 571948,
+   "game_id": "5058105",
+   "BFP": 6
+  },
+  {
+   "player_id": 571948,
+   "game_id": "5058134",
+   "BFP": 4
+  },
+  {
+   "player_id": 571948,
+   "game_id": "5058141",
+   "BFP": 4
+  },
+  {
+   "player_id": 571948,
+   "game_id": "5058190",
+   "BFP": 4
+  },
+  {
+   "player_id": 571948,
+   "game_id": "5058212",
+   "BFP": 4
+  },
+  {
+   "player_id": 571948,
+   "game_id": "5058221",
+   "BFP": 1
+  },
+  {
+   "player_id": 571948,
+   "game_id": "5058277",
+   "BFP": 4
+  },
+  {
+   "player_id": 571948,
+   "game_id": "5058288",
+   "BFP": 3
+  },
+  {
+   "player_id": 571948,
+   "game_id": "5058323",
+   "BFP": 6
+  },
+  {
+   "player_id": 571948,
+   "game_id": "5058374",
+   "BFP": 3
+  },
+  {
+   "player_id": 571948,
+   "game_id": "5058424",
+   "BFP": 7
+  },
+  {
+   "player_id": 571948,
+   "game_id": "5868564",
+   "BFP": 5
+  },
+  {
+   "player_id": 571948,
+   "game_id": "5058512",
+   "BFP": 4
+  },
+  {
+   "player_id": 571948,
+   "game_id": "5058523",
+   "BFP": 2
+  },
+  {
+   "player_id": 571948,
+   "game_id": "5058584",
+   "BFP": 6
+  },
+  {
+   "player_id": 571948,
+   "game_id": "5058615",
+   "BFP": 3
+  },
+  {
+   "player_id": 571948,
+   "game_id": "5058627",
+   "BFP": 1
+  },
+  {
+   "player_id": 571948,
+   "game_id": "5058681",
+   "BFP": 5
+  },
+  {
+   "player_id": 571948,
+   "game_id": "5058697",
+   "BFP": 2
+  },
+  {
+   "player_id": 571948,
+   "game_id": "5058710",
+   "BFP": 7
+  },
+  {
+   "player_id": 571948,
+   "game_id": "5058773",
+   "BFP": 5
+  },
+  {
+   "player_id": 571948,
+   "game_id": "5058797",
+   "BFP": 3
+  },
+  {
+   "player_id": 571948,
+   "game_id": "5058815",
+   "BFP": 3
+  },
+  {
+   "player_id": 571948,
+   "game_id": "5058843",
+   "BFP": 3
+  },
+  {
+   "player_id": 571948,
+   "game_id": "5058882",
+   "BFP": 5
+  },
+  {
+   "player_id": 571948,
+   "game_id": "5058894",
+   "BFP": 3
+  },
+  {
+   "player_id": 571948,
+   "game_id": "5058956",
+   "BFP": 3
+  },
+  {
+   "player_id": 571948,
+   "game_id": "5058974",
+   "BFP": 5
+  },
+  {
+   "player_id": 571948,
+   "game_id": "5058986",
+   "BFP": 3
+  },
+  {
+   "player_id": 571948,
+   "game_id": "5059848",
+   "BFP": 3
+  },
+  {
+   "player_id": 571948,
+   "game_id": "5059880",
+   "BFP": 5
+  },
+  {
+   "player_id": 571948,
+   "game_id": "5059948",
+   "BFP": 3
+  },
+  {
+   "player_id": 571948,
+   "game_id": "5060002",
+   "BFP": 5
+  },
+  {
+   "player_id": 571948,
+   "game_id": "5060154",
+   "BFP": 4
+  },
+  {
+   "player_id": 571948,
+   "game_id": "5060199",
+   "BFP": 8
+  },
+  {
+   "player_id": 669373,
+   "game_id": "5057778",
+   "BFP": 22
+  },
+  {
+   "player_id": 669373,
+   "game_id": "5057857",
+   "BFP": 25
+  },
+  {
+   "player_id": 669373,
+   "game_id": "5057933",
+   "BFP": 24
+  },
+  {
+   "player_id": 669373,
+   "game_id": "5057994",
+   "BFP": 24
+  },
+  {
+   "player_id": 669373,
+   "game_id": "5058075",
+   "BFP": 23
+  },
+  {
+   "player_id": 669373,
+   "game_id": "5058140",
+   "BFP": 24
+  },
+  {
+   "player_id": 669373,
+   "game_id": "5058227",
+   "BFP": 24
+  },
+  {
+   "player_id": 669373,
+   "game_id": "5058823",
+   "BFP": 21
+  },
+  {
+   "player_id": 669373,
+   "game_id": "5058895",
+   "BFP": 25
+  },
+  {
+   "player_id": 669373,
+   "game_id": "5058970",
+   "BFP": 22
+  },
+  {
+   "player_id": 669373,
+   "game_id": "5059050",
+   "BFP": 20
+  },
+  {
+   "player_id": 669373,
+   "game_id": "5059137",
+   "BFP": 22
+  },
+  {
+   "player_id": 669373,
+   "game_id": "5059215",
+   "BFP": 21
+  },
+  {
+   "player_id": 669373,
+   "game_id": "5059254",
+   "BFP": 24
+  },
+  {
+   "player_id": 669373,
+   "game_id": "10209279",
+   "BFP": 28
+  },
+  {
+   "player_id": 669373,
+   "game_id": "9470136",
+   "BFP": 25
+  },
+  {
+   "player_id": 669373,
+   "game_id": "5059478",
+   "BFP": 24
+  },
+  {
+   "player_id": 669373,
+   "game_id": "5059563",
+   "BFP": 21
+  },
+  {
+   "player_id": 669373,
+   "game_id": "5059645",
+   "BFP": 27
+  },
+  {
+   "player_id": 669373,
+   "game_id": "5059723",
+   "BFP": 27
+  },
+  {
+   "player_id": 669373,
+   "game_id": "5059788",
+   "BFP": 22
+  },
+  {
+   "player_id": 669373,
+   "game_id": "5059881",
+   "BFP": 26
+  },
+  {
+   "player_id": 669373,
+   "game_id": "5059952",
+   "BFP": 27
+  },
+  {
+   "player_id": 669373,
+   "game_id": "5060019",
+   "BFP": 24
+  },
+  {
+   "player_id": 669373,
+   "game_id": "5060095",
+   "BFP": 25
+  },
+  {
+   "player_id": 669373,
+   "game_id": "5060171",
+   "BFP": 23
+  }
+ ],
+ "wire_line": {
+  "_source": "balldontlie /stats, game 10209277, cached by the 2026-10-27 dry run, unmodified",
+  "line": {
+   "player": {
+    "id": 222329,
+    "first_name": "Tomoyuki",
+    "last_name": "Sugano",
+    "full_name": "Tomoyuki Sugano",
+    "debut_year": 2026,
+    "jersey": "11",
+    "college": null,
+    "position": "SP",
+    "active": true,
+    "birth_place": "Kanagawa, Japan",
+    "dob": "1989-10-11",
+    "age": 37,
+    "height": "6' 1\"",
+    "weight": "227 lbs",
+    "draft": null,
+    "bats_throws": "R/R"
+   },
+   "team": {
+    "id": 9,
+    "slug": "colorado-rockies",
+    "abbreviation": "COL",
+    "display_name": "Colorado Rockies",
+    "short_display_name": "Rockies",
+    "name": "Rockies",
+    "location": "Colorado",
+    "league": "National",
+    "division": "West"
+   },
+   "game_id": 10209277,
+   "team_name": "Colorado Rockies",
+   "at_bats": null,
+   "runs": null,
+   "hits": null,
+   "rbi": null,
+   "hr": null,
+   "bb": null,
+   "k": null,
+   "avg": null,
+   "obp": null,
+   "slg": null,
+   "doubles": null,
+   "triples": null,
+   "intentional_walks": null,
+   "hit_by_pitch": null,
+   "stolen_bases": null,
+   "caught_stealing": null,
+   "plate_appearances": null,
+   "total_bases": null,
+   "left_on_base": null,
+   "fly_outs": null,
+   "ground_outs": null,
+   "line_outs": null,
+   "pop_outs": null,
+   "air_outs": null,
+   "gidp": null,
+   "sac_bunts": null,
+   "sac_flies": null,
+   "ip": 5.1,
+   "p_hits": 6,
+   "p_runs": 2,
+   "er": 2,
+   "p_bb": 1,
+   "p_k": 5,
+   "p_hr": 2,
+   "pitch_count": 93,
+   "strikes": 55,
+   "era": 4.69,
+   "batters_faced": 23,
+   "pitching_outs": 16,
+   "wins": 1,
+   "losses": 0,
+   "saves": 0,
+   "holds": 0,
+   "blown_saves": 0,
+   "games_started": 1,
+   "wild_pitches": 0,
+   "balks": 0,
+   "pitching_hbp": 0,
+   "inherited_runners": 0,
+   "inherited_runners_scored": 0,
+   "putouts": 1,
+   "assists": 0,
+   "errors": 0,
+   "fielding_chances": 1,
+   "fielding_pct": 0
+  }
+ }
+}

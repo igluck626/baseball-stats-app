@@ -141,6 +141,8 @@ _PITCHING_GAMELOGS_NEW_COLUMNS: list[tuple[str, str]] = [
     ("CG",  "INTEGER"),
     ("SHO", "INTEGER"),
     ("GF",  "INTEGER"),
+    # batters faced (see PitchingGameLog.BFP)
+    ("BFP", "INTEGER"),
 ]
 
 _PITCHING_GAMELOGS_QUALITY_COLUMNS: list[str] = [

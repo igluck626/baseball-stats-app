@@ -60,7 +60,7 @@ CREATE TABLE batting_gamelogs (player_id, game_id, game_date, season, opponent,
 CREATE TABLE pitching_gamelogs (player_id, game_id, game_date, season, opponent,
   result, "IP", "H", "R", "ER", "BB", "SO", "HR", "HBP", "WP",
   "W" DEFAULT NULL, "L" DEFAULT NULL, "SV" DEFAULT NULL,
-  "GS" DEFAULT 0, "CG" DEFAULT 0, "SHO" DEFAULT 0, "GF" DEFAULT 0, "BK" DEFAULT 0);
+  "GS" DEFAULT 0, "CG" DEFAULT 0, "SHO" DEFAULT 0, "GF" DEFAULT 0, "BK" DEFAULT 0, "BFP" DEFAULT 0);
 """)
 
 

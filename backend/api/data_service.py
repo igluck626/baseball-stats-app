@@ -5274,9 +5274,10 @@ def recalculate_batting_counting(
 # (`p_runs` → R, `pitching_hbp` → HBP) and the parser already stores them on
 # `pitching_gamelogs`, so they can be summed up. WP and BK come from the lines;
 # CG, SHO and GF are set per game at ingest (`_flag_complete_games`,
-# `_flag_games_finished`). BFP is intentionally NOT here: `batters_faced` isn't
-# captured on the gamelog yet (no column / parser field).
-_PITCHING_COUNTING_FIELDS = ("R", "HBP", "WP", "BK", "CG", "SHO", "GF")
+# `_flag_games_finished`). BFP is `batters_faced` from the lines: BDL's
+# season_stats has no batters faced, so the season row's BF was otherwise a
+# spring snapshot nothing refreshed (515 of 569 stored 2026 values, 2026-10-27).
+_PITCHING_COUNTING_FIELDS = ("R", "HBP", "WP", "BK", "CG", "SHO", "GF", "BFP")
 
 
 def recalculate_pitching_counting(
@@ -5536,6 +5537,7 @@ def _parse_bdl_pitching_gamelog(stat: dict, ctx: dict, *, named_in_plays: bool =
         # assumption, which left every balldontlie-sourced row without them.
         "WP":        _to_int(stat.get("wild_pitches")),
         "BK":        _to_int(stat.get("balks")),
+        "BFP":       _to_int(stat.get("batters_faced")),
         "pitches":   _to_int(stat.get("pitch_count")),
         "strikes":   _to_int(stat.get("strikes")),
         **dec,
