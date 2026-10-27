@@ -44,6 +44,9 @@ struct StandingsView: View {
     /// This view's bracket view model has resolved its season (see
     /// `applyDefaultViewIfNeeded`).
     @State private var didResolveBracket = false
+    /// Set while this window's first open decides between the bracket and the
+    /// standings — see `awaitingDefault`.
+    @State private var holdingForDefault = false
     /// The bracket slot whose games sheet is showing.
     @State private var selectedSlot: BracketSlot?
 
@@ -83,13 +86,19 @@ struct StandingsView: View {
             ZStack {
                 backgroundGradient
                 VStack(spacing: 0) {
-                    if bracketVM.season != nil {
-                        modePicker
-                    }
-                    if stack.mode == .bracket {
-                        bracketContent
+                    if awaitingDefault {
+                        ProgressView()
+                            .controlSize(.large)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else {
-                        content
+                        if bracketVM.season != nil {
+                            modePicker
+                        }
+                        if stack.mode == .bracket {
+                            bracketContent
+                        } else {
+                            content
+                        }
                     }
                 }
             }
@@ -100,7 +109,8 @@ struct StandingsView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     // The bracket is one season's; the year picker belongs to
                     // the standings.
-                    if stack.mode == .standings { yearMenu }
+                    // ...and nothing while the first open decides which shows.
+                    if stack.mode == .standings && !awaitingDefault { yearMenu }
                 }
             }
             .stackDestinations(BoxScoreContext(
@@ -116,6 +126,9 @@ struct StandingsView: View {
         // The window keeps this path across a resize or a fold (see SceneState).
         .scenePathPersistence(stack, key: "standings")
         .task {
+            if !didResolveBracket {
+                bracketVM.prefetchCurrent(currentYear: StandingsViewModel.currentYear)
+            }
             await viewModel.loadStandings()
             applyFavoriteLeagueIfNeeded()
             await applyDefaultViewIfNeeded()
@@ -207,6 +220,8 @@ struct StandingsView: View {
     /// Both flags are set before the await, so a re-run during it does nothing.
     private func applyDefaultViewIfNeeded() async {
         let applyMode = !stack.didApplyDefaultMode
+        if applyMode { holdingForDefault = true }
+        defer { holdingForDefault = false }
         stack.didApplyDefaultMode = true
         if !didResolveBracket {
             didResolveBracket = true
@@ -214,6 +229,14 @@ struct StandingsView: View {
                                            currentYearGamesPlayed: viewModel.currentYearGamesPlayed)
         }
         if applyMode, bracketVM.season != nil { stack.mode = .bracket }
+    }
+
+    /// The window's first open shows a spinner until the default is decided,
+    /// rather than the standings for the moment before it switches to the
+    /// bracket (seen on 1.1 (19), 2026-10-27). Only the first: once applied,
+    /// the mode is the user's, and a rebuilt view shows it straight away.
+    private var awaitingDefault: Bool {
+        !stack.didApplyDefaultMode || holdingForDefault
     }
 
     private var modePicker: some View {

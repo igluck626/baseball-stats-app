@@ -28,6 +28,10 @@ final class LiveBracketViewModel: ObservableObject {
     @Published private(set) var state: State = .idle
 
     private let fetch: (Int) async throws -> LiveBracket
+    /// The current year's bracket, fetched alongside the standings
+    /// (`prefetchCurrent`) so deciding the default doesn't wait for one and
+    /// then the other.
+    private var prefetch: (year: Int, task: Task<LiveBracket?, Never>)?
 
     init(fetch: @escaping (Int) async throws -> LiveBracket = { season in
         try await APIClient.shared.getPostseasonBracket(season: season)
@@ -46,8 +50,13 @@ final class LiveBracketViewModel: ObservableObject {
     func resolveDefault(now: Date = Date(), currentYear: Int, currentYearGamesPlayed: Bool?) async {
         var current: LiveBracket?
         if currentYear >= LiveBracketRules.firstSeason {
-            current = try? await fetch(currentYear)
+            if let p = prefetch, p.year == currentYear {
+                current = await p.task.value
+            } else {
+                current = try? await fetch(currentYear)
+            }
         }
+        prefetch = nil
         let rule = standingsDefault(now: now, currentYear: currentYear,
                                     currentYearFirstPitch: current?.firstPitch,
                                     currentYearGamesPlayed: currentYearGamesPlayed)
@@ -58,6 +67,14 @@ final class LiveBracketViewModel: ObservableObject {
         } else {
             await load(quiet: false)
         }
+    }
+
+    /// Start the current year's bracket fetch now; `resolveDefault` uses it.
+    /// It needs nothing from the standings, so the two go out together.
+    func prefetchCurrent(currentYear: Int) {
+        guard prefetch == nil, currentYear >= LiveBracketRules.firstSeason else { return }
+        let fetch = self.fetch
+        prefetch = (currentYear, Task { try? await fetch(currentYear) })
     }
 
     /// Reload the bracket's season. `quiet` — the periodic tick — keeps what

@@ -213,6 +213,17 @@ struct LiveBracketDefaultTests {
         #expect(fetched == [2026])
     }
 
+    @Test func aBracketFetchedAlongsideTheStandingsIsNotFetchedAgain() async throws {
+        let b26 = try bracket(2026)
+        var fetched: [Int] = []
+        let vm = LiveBracketViewModel(fetch: { season in fetched.append(season); return b26 })
+        vm.prefetchCurrent(currentYear: 2026)
+        await vm.resolveDefault(now: iso("2026-09-30T02:00:00Z"), currentYear: 2026, currentYearGamesPlayed: true)
+        #expect(vm.defaultView == .bracket(season: 2026))
+        #expect(vm.state == .loaded(b26))
+        #expect(fetched == [2026], "one request, started before the standings came back")
+    }
+
     @Test func inTheWinterItLoadsLastSeasons() async throws {
         let b25 = try bracket(2025)
         var fetched: [Int] = []
