@@ -286,7 +286,7 @@ private func formatRankingValue(stat: String, value: Double?) -> String {
         // HR / RBI / SB / SO / H / R / BB / 2B / 3B / PA / AB — integer
         // counting stats. Round in case the backend ships them as
         // Double (it does for some columns to keep the type uniform).
-        return String(Int(value.rounded()))
+        return StatNumber.grouped(Int(value.rounded()))
     }
 }
 

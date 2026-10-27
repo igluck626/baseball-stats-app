@@ -1616,7 +1616,7 @@ private func statDisplayName(_ stat: String) -> String {
 /// strip/sheet, and `TeamLeadersSheet`'s static helper. Returns
 /// "—" for nil, formats batting rates without the leading zero,
 /// pitcher rates to two decimals, IP in baseball outs notation, and
-/// every counting stat as a plain integer. Module-internal so
+/// every counting stat as an integer, with a comma from 1,000. Module-internal so
 /// other Home-tab files (`RosterSheet`) can reuse it.
 func formatLeaderValue(_ v: Double?, stat: String) -> String {
     guard let v else { return "—" }
@@ -1630,7 +1630,7 @@ func formatLeaderValue(_ v: Double?, stat: String) -> String {
         return String(format: "%.2f", v)
     case "HR", "RBI", "SO", "W", "L", "SV", "H", "BB", "R", "SB",
          "2B", "3B", "CG", "SHO":
-        return String(Int(v.rounded()))
+        return StatNumber.grouped(Int(v.rounded()))
     case "IP":
         let whole = Int(v.rounded(.down))
         let frac  = v - Double(whole)
@@ -1638,7 +1638,7 @@ func formatLeaderValue(_ v: Double?, stat: String) -> String {
         if      frac < 0.17 { outs = ".0" }
         else if frac < 0.5  { outs = ".1" }
         else                { outs = ".2" }
-        return "\(whole)\(outs)"
+        return StatNumber.grouped(whole) + outs
     default:
         return String(format: "%.1f", v)
     }

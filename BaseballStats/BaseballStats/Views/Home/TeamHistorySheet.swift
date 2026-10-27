@@ -656,7 +656,7 @@ private struct YearCard: View {
     /// missing so the row doesn't render a partial half-line.
     private var rsRaText: String {
         guard let rs = row.runs_scored, let ra = row.runs_allowed else { return "" }
-        return "R: \(rs) RA: \(ra)"
+        return "R: \(StatNumber.grouped(rs)) RA: \(StatNumber.grouped(ra))"
     }
 
     // MARK: Postseason cell (tappable when there's a postseason)

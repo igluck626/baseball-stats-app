@@ -2168,7 +2168,7 @@ private func monthShortName(_ m: Int) -> String {
 
 private func formatInt(_ value: Int?) -> String {
     guard let value else { return "—" }
-    return String(value)
+    return StatNumber.grouped(value)
 }
 
 /// Per-game total bases. TB = singles + 2·2B + 3·3B + 4·HR, expressed

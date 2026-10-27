@@ -171,12 +171,12 @@ struct AskAnswerView: View {
     private func rateComponents(_ r: AskRates) -> String? {
         var parts: [String] = []
         if let x = r.PA { parts.append("\(x.formatted(.number)) PA") }
-        if let x = r.doubles { parts.append("\(x) 2B") }
-        if let x = r.triples { parts.append("\(x) 3B") }
-        if let x = r.BB { parts.append("\(x) BB") }
-        if let x = r.HBP { parts.append("\(x) HBP") }
-        if let x = r.SF { parts.append("\(x) SF") }
-        if let x = r.SO { parts.append("\(x) SO") }
+        if let x = r.doubles { parts.append("\(StatNumber.grouped(x)) 2B") }
+        if let x = r.triples { parts.append("\(StatNumber.grouped(x)) 3B") }
+        if let x = r.BB { parts.append("\(StatNumber.grouped(x)) BB") }
+        if let x = r.HBP { parts.append("\(StatNumber.grouped(x)) HBP") }
+        if let x = r.SF { parts.append("\(StatNumber.grouped(x)) SF") }
+        if let x = r.SO { parts.append("\(StatNumber.grouped(x)) SO") }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
@@ -794,7 +794,7 @@ struct AskAnswerView: View {
                 cols.append(StatTable.Column(label: h, value: e.display, highlighted: true))
             }
         }
-        cols.append(col("IP", l.IP ?? "—"))
+        cols.append(col("IP", l.IP.map(StatNumber.groupedIP) ?? "—"))
         // W and L are a decision record — meaningless over a partial-game streak
         // (the scoreless line leaves both null), so shown only when present. A wins
         // or losses query now highlights its own column directly (no W-L mapping).

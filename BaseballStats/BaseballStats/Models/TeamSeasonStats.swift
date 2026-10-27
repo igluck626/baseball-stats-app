@@ -37,20 +37,20 @@ enum SeasonStatsFormat {
     static let batting = ["R", "AVG", "OBP", "SLG", "OPS", "HR", "SB"]
     static let pitching = ["RA", "ERA", "WHIP", "SO", "SV", "HRA"]
 
-    /// "+138", "−192", ".235", "3.24", "223"; "—" when the server has no value.
+    /// "+138", "−192", ".235", "3.24", "1,140"; "—" when the server has no value.
     static func value(_ key: String, _ v: Double?) -> String {
         guard let v else { return "—" }
         switch key {
         case "RD":
             let n = Int(v.rounded())
-            return n > 0 ? "+\(n)" : (n < 0 ? "−\(-n)" : "0")
+            return n > 0 ? "+" + StatNumber.grouped(n) : (n < 0 ? "−" + StatNumber.grouped(-n) : "0")
         case "ERA", "WHIP":
             return String(format: "%.2f", v)
         case "AVG", "OBP", "SLG", "OPS":
             let s = String(format: "%.3f", v)
             return s.hasPrefix("0.") ? String(s.dropFirst()) : s
         default:
-            return String(Int(v.rounded()))
+            return StatNumber.grouped(Int(v.rounded()))
         }
     }
 

@@ -445,11 +445,11 @@ struct RosterSheet: View {
         }
     }
 
-    /// "—" for nil, plain integer otherwise. Used for counting stats
+    /// "—" for nil, the integer (comma from 1,000) otherwise. Used for counting stats
     /// where `formatLeaderValue` would need a Double conversion that
     /// muddies the nil case.
     private func formatStatInt(_ v: Int?) -> String {
         guard let v else { return "—" }
-        return String(v)
+        return StatNumber.grouped(v)
     }
 }

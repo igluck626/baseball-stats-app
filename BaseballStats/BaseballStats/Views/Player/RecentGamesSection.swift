@@ -260,7 +260,7 @@ struct RecentGamesSection: View {
 
 private func formatIntLocal(_ value: Int?) -> String {
     guard let value else { return "—" }
-    return String(value)
+    return StatNumber.grouped(value)
 }
 
 private func format2Local(_ value: Double?) -> String {
@@ -287,5 +287,5 @@ private func formatIPLocal(_ value: Double?) -> String {
     if frac < 0.166 { third = ".0" }
     else if frac < 0.5 { third = ".1" }
     else { third = ".2" }
-    return "\(whole)\(third)"
+    return StatNumber.grouped(whole) + third
 }
