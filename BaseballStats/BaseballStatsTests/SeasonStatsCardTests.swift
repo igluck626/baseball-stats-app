@@ -7,7 +7,10 @@
 //    • season-stats-2026-live.json — the deployed server, before Run
 //      differential: the card must read it and simply show no RD row;
 //    • season-stats-2026-with-rd.json — the server change run locally on the
-//      same day's balldontlie totals and our standings: RD for all 30 clubs.
+//      same day's balldontlie totals and our standings: RD for all 30 clubs;
+//    • season-stats-2026-with-ra.json — the Runs allowed change, run on
+//      2026-10-27's balldontlie totals and production's standings (the
+//      server's own functions, the way the endpoint calls them).
 //
 
 import Foundation
@@ -45,12 +48,26 @@ struct SeasonStatsCardTests {
     }
 
     @Test func everyCardStatIsServed() throws {
-        let r = try response("season-stats-2026-with-rd")
+        let r = try response("season-stats-2026-with-ra")
         let keys = SeasonStatsFormat.overall + SeasonStatsFormat.batting + SeasonStatsFormat.pitching
-        #expect(keys.count == 13)
+        #expect(keys.count == 14)
         for t in r.teams {
             for k in keys { #expect(t.stats[k] != nil, "\(t.team) \(k)") }
         }
+    }
+
+    /// Runs allowed heads Pitching, as Runs heads Batting; fewest ranks 1st.
+    @Test func yankeesRunsAllowedHeadsPitching() throws {
+        let r = try response("season-stats-2026-with-ra")
+        let nyy = try #require(r.teams.first { $0.bdlId == 19 })
+        let ra = try #require(nyy.stats["RA"])
+        #expect(SeasonStatsFormat.pitching.first == "RA")
+        #expect(SeasonStatsFormat.batting.first == "R")
+        #expect(ra.label == "Runs allowed")
+        #expect(SeasonStatsFormat.value("RA", ra.value) == "601")
+        #expect(SeasonStatsFormat.rank(ra) == "2nd")
+        let fewest = try #require(r.teams.min { ($0.stats["RA"]?.value ?? .infinity) < ($1.stats["RA"]?.value ?? .infinity) })
+        #expect(fewest.stats["RA"]?.mlbRank == 1)
     }
 
     @Test func theDeployedServerHasNoRunDifferentialYet() throws {

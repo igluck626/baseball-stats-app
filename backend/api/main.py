@@ -2043,7 +2043,7 @@ def teams_season_stats(season: int = Query(..., description="Season year, e.g. 2
     leagues = {a: (teams[a].get("league") or None) for a in teams}
     ranked = team_season_stats.payload(totals, leagues)
     payload = {"season": season, "source": "balldontlie team season totals (regular season); "
-                                           "run differential from our standings", "teams": [
+                                           "runs allowed and run differential from our standings", "teams": [
         {"team": a, "bdl_id": teams[a].get("id"), "name": teams[a].get("display_name"),
          "league": ranked[a]["league"], "stats": ranked[a]["stats"]}
         for a in sorted(totals)]}

@@ -35,7 +35,7 @@ enum SeasonStatsFormat {
     /// Run differential, on its own row above Batting and Pitching.
     static let overall = ["RD"]
     static let batting = ["R", "AVG", "OBP", "SLG", "OPS", "HR", "SB"]
-    static let pitching = ["ERA", "WHIP", "SO", "SV", "HRA"]
+    static let pitching = ["RA", "ERA", "WHIP", "SO", "SV", "HRA"]
 
     /// "+138", "−192", ".235", "3.24", "223"; "—" when the server has no value.
     static func value(_ key: String, _ v: Double?) -> String {

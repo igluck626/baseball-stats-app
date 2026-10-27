@@ -152,5 +152,22 @@ check("a club missing from the standings: no value and no rank, never 0",
 T.with_run_differential(tot, teams, [dict(r, runs_allowed=None) if r["franch_id"] == "NYY" else r for r in STAND], LAHMAN)
 check("runs allowed missing: no run differential", tot["NYY"]["team"]["RD"] is None)
 
+print("runs allowed (our standings)")
+tot, teams = T.bdl_totals(ROWS)
+T.with_run_differential(tot, teams, STAND, LAHMAN)
+check("Yankees allowed 601 (739 scored, +138)", tot["NYY"]["team"]["RA"] == 601, tot["NYY"]["team"])
+check("left out of the drift check", not any(k == "RA" for _, k, *_ in T.drift(tot, tot)["drift"]))
+pay = T.payload(everyone, {r["franch_id"]: r["league"] for r in STAND})
+ra = {a: pay[a]["stats"]["RA"] for a in pay}
+check("label 'Runs allowed', fewest ranks 1st",
+      ra["NYY"]["label"] == "Runs allowed"
+      and ra["NYY"]["mlb_rank"] == 1 + sum(1 for r in STAND if r["runs_allowed"] < 601), ra["NYY"])
+best = min(STAND, key=lambda r: r["runs_allowed"])["franch_id"]
+check(f"the club allowing the fewest ({best}) is 1st", ra[best]["mlb_rank"] == 1, ra[best])
+T.with_run_differential(tot, teams, [r for r in STAND if r["franch_id"] != "COL"], LAHMAN)
+pay = T.payload(tot, {a: teams[a].get("league") for a in teams})
+check("a club missing from the standings: no runs allowed and no rank, never 0",
+      pay["COL"]["stats"]["RA"]["value"] is None and pay["COL"]["stats"]["RA"]["mlb_rank"] is None)
+
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
