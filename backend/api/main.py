@@ -2279,8 +2279,8 @@ ORDER BY g.game_id
 # shape as `_GAMES_BY_DATE_SQL` plus the round. `batting_gamelogs` holds no
 # postseason game (162 per team, checked), so without this a past October date
 # read "No games" while we held every box score. The `retro_game_info` join
-# finds nothing today — that table has regular-season games only — and is kept
-# so linescores appear by themselves the day postseason game info is loaded.
+# finds the line score and park from Retrosheet's postseason game logs
+# (`retrosheet_gameinfo.ingest_postseason`), on the same game ids.
 _POSTSEASON_GAMES_BY_DATE_SQL = """
 WITH g AS (
     SELECT
@@ -3011,6 +3011,14 @@ def historical_boxscore(game_pk: int):
 # the table means.
 _COVERAGE_FALLBACK_SEASON = 2025
 
+# Games per season in `retro_game_info`, regular season only — the postseason
+# games share the table and are told apart by having postseason lines.
+_COVERAGE_SEASON_COUNTS_SQL = """
+SELECT i.season, COUNT(*) AS games FROM retro_game_info i
+WHERE NOT EXISTS (SELECT 1 FROM postseason_batting_gamelogs p WHERE p.game_id = i.game_id)
+GROUP BY i.season ORDER BY i.season
+"""
+
 
 @app.get("/meta/coverage")
 def meta_coverage():
@@ -3050,10 +3058,10 @@ def meta_coverage():
                 "source": "fallback", "reason": "no database"}
     try:
         with connection.get_session() as db:
-            rows = db.execute(_sa_text(
-                "SELECT season, COUNT(*) AS games FROM retro_game_info "
-                "GROUP BY season ORDER BY season"
-            )).fetchall()
+            # Regular-season games only: the table also holds postseason
+            # games, and a year whose ~40 playoff games landed first must not
+            # count toward the floor.
+            rows = db.execute(_sa_text(_COVERAGE_SEASON_COUNTS_SQL)).fetchall()
     except Exception as exc:  # noqa: BLE001
         return {"retrosheet_last_season": _COVERAGE_FALLBACK_SEASON,
                 "source": "fallback", "reason": str(exc)[:120]}
@@ -6648,13 +6656,19 @@ _gameinfo_state: dict = {
 _gameinfo_lock = threading.Lock()
 
 
-def _run_gameinfo(year_from: int, year_to: int) -> None:
+def _run_gameinfo(year_from: int, year_to: int, postseason: bool = False) -> None:
     with _gameinfo_lock:
         _gameinfo_state.update(running=True, phase="ingesting", current_year=None,
                                years_done=0, games_written=0, summary=None, error=None)
     try:
-        retrosheet_gameinfo.run(year_from=year_from, year_to=year_to,
-                                state=_gameinfo_state, lock=_gameinfo_lock)
+        if postseason:
+            retrosheet_gameinfo.connection.init_db()
+            res = retrosheet_gameinfo.ingest_postseason(retrosheet_gameinfo._load_parks())
+            with _gameinfo_lock:
+                _gameinfo_state.update(phase="done", games_written=res["games"], summary=res)
+        else:
+            retrosheet_gameinfo.run(year_from=year_from, year_to=year_to,
+                                    state=_gameinfo_state, lock=_gameinfo_lock)
     except Exception as exc:  # noqa: BLE001
         with _gameinfo_lock:
             _gameinfo_state["error"] = str(exc)
@@ -6669,8 +6683,12 @@ def _run_gameinfo(year_from: int, year_to: int) -> None:
 def start_ingest_gameinfo(
     year_from: int = Query(default=1898),
     year_to: int = Query(default=2025),
+    postseason: bool = Query(default=False),
 ):
     """Per-game linescore + ballpark from Retrosheet's game logs.
+
+    `postseason=true` reads the four postseason files instead (every year at
+    once; the years are ignored).
 
     Idempotent: the write is ON CONFLICT DO UPDATE on `game_id`, so a re-run
     genuinely re-writes rather than reporting success and changing nothing."""
@@ -6679,9 +6697,10 @@ def start_ingest_gameinfo(
             return {"status": "already_running", **_gameinfo_state}
     if not connection.db_available():
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
-    threading.Thread(target=_run_gameinfo, args=(year_from, year_to),
+    threading.Thread(target=_run_gameinfo, args=(year_from, year_to, postseason),
                      daemon=True).start()
-    return {"status": "started", "year_from": year_from, "year_to": year_to}
+    return {"status": "started", "year_from": year_from, "year_to": year_to,
+            "postseason": postseason}
 
 
 @app.get("/admin/ingest-retrosheet-gameinfo/status")

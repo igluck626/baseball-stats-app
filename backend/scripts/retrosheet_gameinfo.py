@@ -42,6 +42,12 @@ from database.models import RetroGameInfo                                  # noq
 from sqlalchemy.dialects.postgresql import insert as pg_insert             # noqa: E402
 
 _GL_URL = "https://www.retrosheet.org/gamelogs/gl{year}.zip"
+# The POSTSEASON game logs: one file per round type, each holding every year at
+# once (World Series from 1903, LCS from 1969, division series from 1981, wild
+# card from 2012). Same 161-field rows, same game ids as the postseason lines in
+# `postseason_*_gamelogs`, so the slate's join finds them unchanged.
+_GL_POST_URL = "https://www.retrosheet.org/gamelogs/{name}.zip"
+POSTSEASON_FILES = ("glws", "gllc", "gldv", "glwc")
 # ⚠️ COMMITTED WITH `git add -f`. `.gitignore` ignores backend/data/retrosheet/*
 # wholesale, so this file — like the six alongside it — is only in the repo
 # because it was force-added. Add it the ordinary way and git accepts the
@@ -140,22 +146,25 @@ def _load_parks() -> dict:
 
 
 def _download(year: int) -> Optional[str]:
-    url = _GL_URL.format(year=year)
+    return _download_url(_GL_URL.format(year=year), f"year {year}")
+
+
+def _download_url(url: str, label: str) -> Optional[str]:
     try:
         with urllib.request.urlopen(url, timeout=120) as resp:
             blob = resp.read()
     except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as exc:
-        log.warning("year %d: %s — skipped", year, exc)
+        log.warning("%s: %s — skipped", label, exc)
         return None
     try:
         with zipfile.ZipFile(io.BytesIO(blob)) as z:
             name = next((n for n in z.namelist() if n.lower().endswith(".txt")), None)
             if name is None:
-                log.warning("year %d: zip holds no .txt", year)
+                log.warning("%s: zip holds no .txt", label)
                 return None
             return z.read(name).decode("latin-1")
     except zipfile.BadZipFile:
-        log.warning("year %d: not a zip", year)
+        log.warning("%s: not a zip", label)
         return None
 
 
@@ -163,7 +172,32 @@ def ingest_year(year: int, parks: dict) -> dict:
     text = _download(year)
     if text is None:
         return {"year": year, "status": "missing", "games": 0, "linescore_mismatch": 0}
+    rows, mismatch = parse_rows(text, parks)
+    return _check_and_write(rows, mismatch, {"year": year}, f"year {year}")
 
+
+def ingest_postseason(parks: dict) -> dict:
+    """Every postseason game Retrosheet logs, from the four round files.
+
+    Each file is all years at once, so this re-reads the whole history: run it
+    once a year after the World Series lands (the upsert makes a re-run
+    harmless). A file that fails to download writes nothing at all, rather than
+    leaving one round's games without a line score."""
+    rows, mismatch = [], 0
+    for name in POSTSEASON_FILES:
+        text = _download_url(_GL_POST_URL.format(name=name), name)
+        if text is None:
+            return {"files": list(POSTSEASON_FILES), "status": "missing",
+                    "missing": name, "games": 0, "linescore_mismatch": 0}
+        r, m = parse_rows(text, parks)
+        rows += r
+        mismatch += m
+    return _check_and_write(rows, mismatch, {"files": list(POSTSEASON_FILES)}, "postseason")
+
+
+def parse_rows(text: str, parks: dict) -> tuple:
+    """One game-log file's rows as `retro_game_info` dicts, and how many were
+    dropped because their innings do not sum to the score."""
     rows = []
     mismatch = 0
     for r in csv.reader(io.StringIO(text)):
@@ -212,22 +246,25 @@ def ingest_year(year: int, parks: dict) -> dict:
             "away_lob":    _i(r[F_AWAY_LOB]),
             "home_lob":    _i(r[F_HOME_LOB]),
         })
+    return rows, mismatch
 
+
+def _check_and_write(rows: list, mismatch: int, what: dict, label: str) -> dict:
     # THE DOUBLEHEADER COLLAPSE CHECK, made loud. Two halves of a doubleheader
     # differ only in the trailing game number; a key built without it maps both
     # onto one row and ON CONFLICT quietly keeps one. Distinct keys must equal
     # row count, and a year where they do not is reported, not written.
     distinct = len({x["game_id"] for x in rows})
     if distinct != len(rows):
-        log.error("year %d: %d rows collapse to %d keys — NOT WRITTEN",
-                  year, len(rows), distinct)
-        return {"year": year, "status": "key_collision", "games": 0,
+        log.error("%s: %d rows collapse to %d keys — NOT WRITTEN",
+                  label, len(rows), distinct)
+        return {**what, "status": "key_collision", "games": 0,
                 "rows": len(rows), "distinct": distinct,
                 "linescore_mismatch": mismatch}
 
     written = _write(rows)
-    log.info("year %d: %d games, %d linescore mismatches", year, written, mismatch)
-    return {"year": year, "status": "ok", "games": written,
+    log.info("%s: %d games, %d linescore mismatches", label, written, mismatch)
+    return {**what, "status": "ok", "games": written,
             "linescore_mismatch": mismatch}
 
 

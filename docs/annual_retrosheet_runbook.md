@@ -53,6 +53,14 @@ Two ingests, in this order. Both are idempotent — re-running is safe.
    POST /admin/ingest-retrosheet-gameinfo?year_from=<N>&year_to=<N>
    ```
 
+3. **Postseason line scores and parks** — Retrosheet's four postseason game-log
+   files (World Series, LCS, division series, wild card), each holding every
+   year, so this re-reads them all; re-running is harmless:
+
+   ```
+   POST /admin/ingest-retrosheet-gameinfo?postseason=true
+   ```
+
 Watch each with its `/status` sibling.
 
 ## How to check it worked
@@ -68,6 +76,11 @@ FROM batting_gamelogs WHERE season = <N> AND game_id LIKE 'retro-%';
 
 -- and every game should have a line score
 SELECT COUNT(*) FROM retro_game_info WHERE season = <N> AND away_line IS NOT NULL;
+
+-- and every stored postseason game of the new season should have one too (0)
+SELECT COUNT(DISTINCT p.game_id) FROM postseason_batting_gamelogs p
+LEFT JOIN retro_game_info i ON i.game_id = p.game_id
+WHERE p.season = <N> AND p.source = 'retrosheet' AND i.away_line IS NULL;
 ```
 
 A count that is a **round multiple of the batch size** (2,000 for gamelogs,
