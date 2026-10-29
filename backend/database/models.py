@@ -1258,6 +1258,12 @@ class PostseasonBattingGameLog(Base):
     SF            = Column(Integer)
     GIDP          = Column(Integer)
     SH            = Column(Integer)
+    # The game's batting order and position, from the same retrosplits row —
+    # `BattingGameLog`'s convention: slot 0 is "not in the order", seq 1 the
+    # man who started in the slot. NULL on a balldontlie row.
+    slot          = Column(Integer, nullable=True)
+    seq           = Column(Integer, nullable=True)
+    pos           = Column(String, nullable=True)
 
 
 class PostseasonPitchingGameLog(Base):
@@ -1297,3 +1303,6 @@ class PostseasonPitchingGameLog(Base):
     L             = Column(Integer)
     SV            = Column(Integer)
     GS            = Column(Integer)
+    # Appearance order (seq), as on `PitchingGameLog`. NULL on a balldontlie row.
+    slot          = Column(Integer, nullable=True)
+    seq           = Column(Integer, nullable=True)

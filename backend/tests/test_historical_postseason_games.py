@@ -13,7 +13,8 @@ test_this_postseason.py):
     takes a number and moves nobody's total;
   • the slate and box-score SQL read the postseason tables, Retrosheet rows only,
     and the box score falls back to them only when the regular tables are empty;
-  • a postseason box score sends no season line and a postseason card says so.
+  • a postseason box score's season line is that postseason's through the game
+    (as balldontlie's is for 2026), and a postseason card says so.
 Run: python3 backend/tests/test_historical_postseason_games.py
 """
 import ast
@@ -50,7 +51,8 @@ def extract(names, ns):
 ns = {"postseason_series": postseason_series}
 extract({"_RETRO_DISPLAY_ABBR", "_display_abbr", "_historical_series_line",
          "_POSTSEASON_GAMES_BY_DATE_SQL", "_POSTSEASON_ROUND_GAMES_SQL",
-         "_BOX_POST_BAT_SQL", "_BOX_POST_PIT_SQL"}, ns)
+         "_BOX_POST_BAT_SQL", "_BOX_POST_PIT_SQL", "_BOX_BAT_SEASON_SQL", "_BOX_PIT_SEASON_SQL",
+         "_BOX_POST_BAT_SEASON_SQL", "_BOX_POST_PIT_SEASON_SQL"}, ns)
 line = ns["_historical_series_line"]
 FX = json.load(open(os.path.join(HERE, "fixtures", "postseason_round_games.json")))
 
@@ -98,8 +100,12 @@ fn = next(n for n in TREE.body if isinstance(n, ast.FunctionDef) and n.name == "
 body = ast.get_source_segment(SRC, fn)
 check("the box score falls back to the postseason reads only when the regular ones are empty",
       "postseason = not bat and not pit" in body and "_BOX_POST_BAT_SQL" in body)
-check("a postseason box score sends no season line", "[] if postseason else" in body
-      and "None if postseason else pit_season_stats" in body)
+check("a postseason box score's season line is that postseason's, through the game",
+      "_BOX_POST_BAT_SEASON_SQL if postseason" in body and "_BOX_POST_PIT_SEASON_SQL if postseason" in body)
+for name in ("_BOX_POST_BAT_SEASON_SQL", "_BOX_POST_PIT_SEASON_SQL"):
+    sql = ns[name]
+    check(f"{name}: postseason table, Retrosheet rows, through this game",
+          "postseason_" in sql and "source = 'retrosheet'" in sql and "game_id <= :gid" in sql)
 slate = ast.get_source_segment(SRC, next(n for n in TREE.body
                                           if isinstance(n, ast.FunctionDef) and n.name == "games_by_date"))
 check("a postseason card is marked postseason and carries its line",

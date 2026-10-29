@@ -182,6 +182,19 @@ _BATTING_GAMELOGS_NEW_COLUMNS: list[tuple[str, str]] = [
 # included. The list exists so the next column added has an obvious home:
 # `create_all` never alters a table that already exists, so a column added to
 # the model alone reaches dev and not prod.
+# Batting order, position and appearance order on the Retrosheet postseason
+# lines, so a past postseason box score lists its lineup (2026-10-29).
+_POSTSEASON_BATTING_GAMELOGS_NEW_COLUMNS: list[tuple[str, str]] = [
+    ("slot", "INTEGER"),
+    ("seq",  "INTEGER"),
+    ("pos",  "VARCHAR"),
+]
+
+_POSTSEASON_PITCHING_GAMELOGS_NEW_COLUMNS: list[tuple[str, str]] = [
+    ("slot", "INTEGER"),
+    ("seq",  "INTEGER"),
+]
+
 _RETRO_GAME_INFO_NEW_COLUMNS: list[tuple[str, str]] = [
 ]
 
@@ -427,6 +440,8 @@ def init_db() -> dict:
         ("pitching_gamelogs", _PITCHING_GAMELOGS_NEW_COLUMNS),
         ("staging_pitching_gamelogs", _PITCHING_GAMELOGS_NEW_COLUMNS),
         ("retro_game_info",   _RETRO_GAME_INFO_NEW_COLUMNS),
+        ("postseason_batting_gamelogs",  _POSTSEASON_BATTING_GAMELOGS_NEW_COLUMNS),
+        ("postseason_pitching_gamelogs", _POSTSEASON_PITCHING_GAMELOGS_NEW_COLUMNS),
         ("ask_log",           _ASK_LOG_NEW_COLUMNS),
         # game_unit_leaderboard.role tags bat vs pit rows; ADD COLUMN … DEFAULT
         # 'bat' backfills existing (batting-only) rows to 'bat'.

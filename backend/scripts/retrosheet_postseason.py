@@ -112,14 +112,18 @@ def parse_year(year: int, playing_text: str, teams_text: Optional[str],
                         "RBI": i(r.get("B_RBI")), "BB": i(r.get("B_BB")), "IBB": i(r.get("B_IBB")),
                         "SO": i(r.get("B_SO")), "SB": i(r.get("B_SB")), "CS": i(r.get("B_CS")),
                         "HBP": i(r.get("B_HP")), "SF": i(r.get("B_SF")), "GIDP": i(r.get("B_GDP")),
-                        "SH": i(r.get("B_SH"))})
+                        "SH": i(r.get("B_SH")),
+                        # the regular ingest's lineup columns, same convention
+                        "slot": i(r.get("slot")), "seq": i(r.get("seq")),
+                        "pos": rg._position(r, year)})
         if i(r.get("P_G")) > 0 or i(r.get("P_OUT")) > 0:
             pit.append({**common, "result": rg._pitcher_decision(r),
                         "IP": round(i(r.get("P_OUT")) / 3, 3), "H": i(r.get("P_H")),
                         "R": i(r.get("P_R")), "ER": i(r.get("P_ER")), "BB": i(r.get("P_BB")),
                         "SO": i(r.get("P_SO")), "HR": i(r.get("P_HR")), "HBP": i(r.get("P_HP")),
                         "W": i(r.get("P_W")), "L": i(r.get("P_L")), "SV": i(r.get("P_SV")),
-                        "GS": i(r.get("P_GS"))})
+                        "GS": i(r.get("P_GS")),
+                        "slot": i(r.get("slot")), "seq": i(r.get("seq"))})
     return bat, pit, unmapped
 
 

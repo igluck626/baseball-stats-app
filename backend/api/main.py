@@ -2537,37 +2537,51 @@ ORDER BY g."IP" DESC NULLS LAST, name
 """
 
 
-# The same two reads for a POSTSEASON game, from Retrosheet's postseason lines.
-# Those carry no lineup slot, sequence, fielding position or pitch count, so the
-# columns come back NULL: batters alphabetical (and `batterOrdering` says so),
-# pitchers by innings — the existing fallbacks, unchanged.
+# The same two reads for a POSTSEASON game, from Retrosheet's postseason lines,
+# which carry the lineup slot, sequence and position as the regular rows do —
+# so the lineup and appearance-order rules below apply unchanged. No pitch count
+# (NULL), and a row loaded before the lineup columns reads NULL there and takes
+# the alphabetical / innings fallbacks, which `batterOrdering` reports.
 _BOX_POST_BAT_SQL = """
 SELECT b.player_id, b.home_away, p.name,
        b."AB", b."R", b."H", b.doubles, b.triples, b."HR", b."RBI",
        b."BB", b."SO", b."SB", b."CS", b."HBP", b."SF", b."SH", b."GIDP",
-       NULL::int AS slot, NULL::int AS seq, NULL::text AS pos
+       b.slot, b.seq, b.pos
 FROM postseason_batting_gamelogs b
 LEFT JOIN players p ON p.player_id = b.player_id
 WHERE b.game_id = :gid AND b.source = 'retrosheet'
-  -- the regular read's rule, less the slot: a man with no offensive event of
-  -- any kind is a pitcher who never batted, and stays in the pitching table
-  AND NOT (COALESCE(b."PA", 0) = 0 AND COALESCE(b."AB", 0) = 0
+  -- the regular read's rule: no slot and no offensive event of any kind is a
+  -- pitcher who never batted, and he stays in the pitching table
+  AND NOT (COALESCE(b.slot, 0) = 0
+           AND COALESCE(b."PA", 0) = 0 AND COALESCE(b."AB", 0) = 0
            AND COALESCE(b."BB", 0) = 0 AND COALESCE(b."R", 0) = 0
            AND COALESCE(b."HBP", 0) = 0 AND COALESCE(b."SF", 0) = 0
            AND COALESCE(b."SH", 0) = 0)
-ORDER BY p.name
+ORDER BY NULLIF(b.slot, 0) NULLS LAST, b.seq NULLS LAST, p.name
 """
 
 _BOX_POST_PIT_SQL = """
 SELECT g.player_id, g.home_away, COALESCE(p.name, pl.name) AS name,
        g."IP", g."H", g."R", g."ER", g."BB", g."SO", g."HR",
-       NULL::int AS pitches, g.result, NULL::int AS seq
+       NULL::int AS pitches, g.result, g.seq
 FROM postseason_pitching_gamelogs g
 LEFT JOIN pitchers p ON p.player_id = g.player_id
 LEFT JOIN players  pl ON pl.player_id = g.player_id
 WHERE g.game_id = :gid AND g.source = 'retrosheet'
 ORDER BY g."IP" DESC NULLS LAST, name
 """
+
+
+# The season line beside a POSTSEASON game is that postseason's, through this
+# game — what the balldontlie path shows for a 2026 playoff game (Contreras'
+# .373 after the 2026 World Series is his 19-for-51 postseason). Same sums,
+# from the postseason lines, Retrosheet rows only.
+_BOX_POST_BAT_SEASON_SQL = _BOX_BAT_SEASON_SQL.replace(
+    "FROM batting_gamelogs\nWHERE season", "FROM postseason_batting_gamelogs\nWHERE source = 'retrosheet' AND season")
+_BOX_POST_PIT_SEASON_SQL = _BOX_PIT_SEASON_SQL.replace(
+    "FROM pitching_gamelogs\nWHERE season", "FROM postseason_pitching_gamelogs\nWHERE source = 'retrosheet' AND season")
+assert "postseason_batting_gamelogs" in _BOX_POST_BAT_SEASON_SQL
+assert "postseason_pitching_gamelogs" in _BOX_POST_PIT_SEASON_SQL
 
 
 # Retrosheet game-id code -> the abbreviation to SHOW.
@@ -2719,9 +2733,9 @@ def historical_boxscore(game_pk: int):
 
     POSTSEASON GAMES come from Retrosheet's postseason lines when the regular
     tables have no row for the id (the two id sets never overlap). Those lines
-    carry no lineup, position, pitch count or appearance order, so the
-    alphabetical and innings fallbacks apply, and no season line is sent: every
-    figure we could sum is regular-season.
+    carry the lineup, position and appearance order but no pitch count. The
+    season line beside each row is that postseason's through this game, as on
+    a balldontlie playoff game.
 
     A caveat worth knowing when reading old games: a zero here can mean "the
     statistic did not exist yet" rather than "it did not happen" — GIDP was not
@@ -2772,16 +2786,16 @@ def historical_boxscore(game_pk: int):
             _sa_text("SELECT team_id, team_name FROM team_seasons WHERE year = :y"),
             {"y": year}).fetchall()})
         gdate = datetime.date(int(date_s[:4]), int(date_s[4:6]), int(date_s[6:8]))
-        # A postseason game gets no season line: every figure here is summed
-        # from REGULAR-season logs, and beside a playoff game it would read as
-        # his postseason line. Empty ids skip both queries below.
-        bat_ids = [] if postseason else sorted({r.player_id for r in bat})
-        pit_ids = [] if postseason else sorted({r.player_id for r in pit})
+        # A postseason game's line is that postseason's, never the regular
+        # season's — beside a playoff game a regular-season AVG reads as his
+        # postseason one.
+        bat_ids = sorted({r.player_id for r in bat})
+        pit_ids = sorted({r.player_id for r in pit})
         bat_season = {r.player_id: r for r in db.execute(
-            _sa_text(_BOX_BAT_SEASON_SQL),
+            _sa_text(_BOX_POST_BAT_SEASON_SQL if postseason else _BOX_BAT_SEASON_SQL),
             {"yr": year, "gdate": gdate, "gid": game_id, "pids": bat_ids}).fetchall()} if bat_ids else {}
         pit_season = {r.player_id: r for r in db.execute(
-            _sa_text(_BOX_PIT_SEASON_SQL),
+            _sa_text(_BOX_POST_PIT_SEASON_SQL if postseason else _BOX_PIT_SEASON_SQL),
             {"yr": year, "gdate": gdate, "gid": game_id, "pids": pit_ids}).fetchall()} if pit_ids else {}
 
     def bat_season_stats(pid):
@@ -2903,7 +2917,7 @@ def historical_boxscore(game_pk: int):
             "saves": 1 if dec == "S" else 0,
             "pitchCount": r.pitches,
         }
-        season = None if postseason else pit_season_stats(r.player_id)
+        season = pit_season_stats(r.player_id)
         if entry is None:
             side["players"][key] = {
                 "person": {"id": r.player_id, "fullName": r.name or str(r.player_id)},
@@ -2915,10 +2929,9 @@ def historical_boxscore(game_pk: int):
             # A two-way row already carries the batting season line; merge
             # rather than overwrite, or the AVG column goes dark for pitchers
             # who also hit — which in this era is most of them.
-            if season is not None:
-                prior = entry.get("seasonStats") or {}
-                entry["seasonStats"] = {"batting": prior.get("batting"),
-                                        "pitching": season["pitching"]}
+            prior = entry.get("seasonStats") or {}
+            entry["seasonStats"] = {"batting": prior.get("batting"),
+                                    "pitching": season["pitching"]}
         side["pitchers"].append(r.player_id)
         pitcher_seq.setdefault(r.home_away, {})[r.player_id] = getattr(r, "seq", None)
 
