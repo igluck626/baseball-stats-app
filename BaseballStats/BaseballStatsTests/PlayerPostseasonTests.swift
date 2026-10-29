@@ -4,7 +4,7 @@
 //  The profile's postseason record: decoding `/players/{id}/postseason`, the
 //  switch appearing only for a side that has a postseason, round labels by
 //  era, series results in progress and complete, the mapping into the career
-//  tables' row types, and the Overview line's rule.
+//  tables' row types, and the Overview postseason window.
 //
 //  `testdata/player-postseason/*.json` is the backend's OWN output (captured
 //  2026-09-30): O'Neill (batting only), Sabathia (a pitcher who also batted),
@@ -26,6 +26,10 @@ private func record(_ name: String) throws -> PlayerPostseason {
         .appendingPathComponent("testdata/player-postseason/\(name).json")
     return try JSONDecoder().decode(PlayerPostseason.self, from: Data(contentsOf: url))
 }
+
+/// The day the fixtures were captured, mid-postseason, and the 2026 span.
+private let sept30 = "2026-09-30"
+private let season2026 = SeasonPhase(season: 2026, openingDay: "2026-03-25", lastRegularDay: "2026-09-27")
 
 @MainActor
 @Suite("Player postseason")
@@ -152,14 +156,14 @@ struct PlayerPostseasonTests {
         // have a bye, he has nine postseasons of history.
         let r = try record("betts")
         #expect(r.current.leagueInProgress == true && r.current.playerAppeared == false)
-        #expect(showsPostseasonCareerBox(r, side: r.batting) != nil)
-        #expect(showsPostseasonOverviewLine(r, side: r.batting) == nil)
+        #expect(showsPostseasonCareerBox(r, side: r.batting, today: sept30, phase: season2026) != nil)
+        #expect(showsPostseasonOverviewLine(r, side: r.batting, today: sept30, phase: season2026) == nil)
     }
 
     @Test func aPlayerWhoHasAppearedGetsBoth() throws {
         let r = try record("machado")                       // captured 2026-09-30, after WC G1
-        #expect(showsPostseasonCareerBox(r, side: r.batting) != nil)
-        #expect(showsPostseasonOverviewLine(r, side: r.batting)?.season == 2026)
+        #expect(showsPostseasonCareerBox(r, side: r.batting, today: sept30, phase: season2026) != nil)
+        #expect(showsPostseasonOverviewLine(r, side: r.batting, today: sept30, phase: season2026)?.season == 2026)
     }
 
     @Test func aPlayerWithNoPostseasonGetsNeither() throws {
@@ -167,16 +171,28 @@ struct PlayerPostseasonTests {
         let during = PlayerPostseason(playerId: r.playerId, retroLast: r.retroLast, batting: nil, pitching: nil,
                                       current: PostseasonCurrent(season: 2026, leagueInProgress: true,
                                                                  playerAppeared: false, teamEliminated: nil))
-        #expect(showsPostseasonCareerBox(during, side: during.batting) == nil)
-        #expect(showsPostseasonOverviewLine(during, side: during.batting) == nil)
+        #expect(showsPostseasonCareerBox(during, side: during.batting, today: sept30, phase: season2026) == nil)
+        #expect(showsPostseasonOverviewLine(during, side: during.batting, today: sept30, phase: season2026) == nil)
     }
 
-    @Test func theCareerBoxEndsWithTheWorldSeries() throws {
+    @Test func theCareerBoxStaysAfterTheWorldSeries() throws {
         let r = try record("betts")
         let over = PlayerPostseason(playerId: r.playerId, retroLast: r.retroLast, batting: r.batting, pitching: nil,
                                     current: PostseasonCurrent(season: 2026, leagueInProgress: false,
-                                                               playerAppeared: false, teamEliminated: nil))
-        #expect(showsPostseasonCareerBox(over, side: over.batting) == nil)
+                                                               playerAppeared: false, teamEliminated: nil,
+                                                               leagueComplete: true))
+        #expect(showsPostseasonCareerBox(over, side: over.batting, today: "2026-11-15", phase: season2026) != nil)
+    }
+
+    @Test func notBeforeThePostseasonStarts() throws {
+        // September, between the last regular day and the first postseason game:
+        // nothing in progress, nothing complete, and last year's window long shut.
+        let r = try record("betts")
+        let before = PlayerPostseason(playerId: r.playerId, retroLast: r.retroLast, batting: r.batting, pitching: nil,
+                                      current: PostseasonCurrent(season: 2026, leagueInProgress: false,
+                                                                 playerAppeared: false, teamEliminated: nil,
+                                                                 leagueComplete: false))
+        #expect(showsPostseasonCareerBox(before, side: before.batting, today: "2026-09-28", phase: season2026) == nil)
     }
 
     // MARK: the live line
@@ -204,32 +220,78 @@ struct PlayerPostseasonTests {
         #expect(r.live == nil && !r.isLive(batting: true))
     }
 
-    // MARK: the Overview line (until the World Series ends)
+    // MARK: the Overview line (until a month before the next Opening Day)
 
     @Test func theOverviewLineShowsOnceHeHasAppeared() throws {
         let r = try record("hendrickson")
-        let line = showsPostseasonOverviewLine(r, side: r.pitching)
+        let line = showsPostseasonOverviewLine(r, side: r.pitching, today: sept30, phase: season2026)
         #expect(line?.season == 2026)
-        #expect(showsPostseasonOverviewLine(r, side: r.batting) == nil)   // no batting side
+        #expect(showsPostseasonOverviewLine(r, side: r.batting, today: sept30, phase: season2026) == nil)   // no batting side
     }
 
     @Test func notBeforeHeAppears() throws {
         let r = try record("oneill")            // league in progress, he isn't in it
-        #expect(showsPostseasonOverviewLine(r, side: r.batting) == nil)
+        #expect(showsPostseasonOverviewLine(r, side: r.batting, today: sept30, phase: season2026) == nil)
     }
 
-    @Test func itStaysAfterHisTeamIsOutUntilTheWorldSeriesEnds() throws {
+    @Test func itStaysAfterHisTeamIsOut() throws {
         let r = try record("hendrickson")
         let out = PlayerPostseason(playerId: r.playerId, retroLast: r.retroLast, batting: nil,
                                    pitching: r.pitching,
                                    current: PostseasonCurrent(season: 2026, leagueInProgress: true,
                                                               playerAppeared: true, teamEliminated: true))
-        #expect(showsPostseasonOverviewLine(out, side: out.pitching) != nil)
-        let over = PlayerPostseason(playerId: r.playerId, retroLast: r.retroLast, batting: nil,
-                                    pitching: r.pitching,
-                                    current: PostseasonCurrent(season: 2026, leagueInProgress: false,
-                                                               playerAppeared: true, teamEliminated: true))
-        #expect(showsPostseasonOverviewLine(over, side: over.pitching) == nil)
+        #expect(showsPostseasonOverviewLine(out, side: out.pitching, today: sept30, phase: season2026) != nil)
+        // A payload from before `league_complete` shipped can't say the World
+        // Series is over, so after it the line hides rather than guess.
+        let oldPayload = PlayerPostseason(playerId: r.playerId, retroLast: r.retroLast, batting: nil,
+                                          pitching: r.pitching,
+                                          current: PostseasonCurrent(season: 2026, leagueInProgress: false,
+                                                                     playerAppeared: true, teamEliminated: true))
+        #expect(showsPostseasonOverviewLine(oldPayload, side: oldPayload.pitching,
+                                            today: "2026-11-15", phase: season2026) == nil)
+    }
+
+    /// Hendrickson's 2026 line, as the payload reads after the World Series
+    /// (`season` 2026) or in the new year (`season` 2027, nothing in progress).
+    private func after(season: Int, complete: Bool) throws -> PlayerPostseason {
+        let r = try record("hendrickson")
+        return PlayerPostseason(playerId: r.playerId, retroLast: r.retroLast, batting: nil, pitching: r.pitching,
+                                current: PostseasonCurrent(season: season, leagueInProgress: false,
+                                                           playerAppeared: season == 2026, teamEliminated: nil,
+                                                           leagueComplete: complete))
+    }
+
+    @Test func novemberStillShowsTheFinishedPostseason() throws {
+        let r = try after(season: 2026, complete: true)
+        #expect(showsPostseasonOverviewLine(r, side: r.pitching, today: "2026-11-15", phase: season2026)?.season == 2026)
+        #expect(showsPostseasonOverviewLine(r, side: r.pitching, today: "2026-12-31", phase: season2026)?.season == 2026)
+    }
+
+    @Test func inTheNewYearItShowsLastSeasonsUntilAMonthBeforeOpeningDay() throws {
+        let r = try after(season: 2027, complete: false)
+        let s2027 = SeasonPhase(season: 2027, openingDay: "2027-03-25", lastRegularDay: "2027-09-26")
+        #expect(postseasonOverviewEnd(season: 2027, phase: s2027) == "2027-02-23")
+        #expect(showsPostseasonOverviewLine(r, side: r.pitching, today: "2027-01-10", phase: s2027)?.season == 2026)
+        #expect(showsPostseasonOverviewLine(r, side: r.pitching, today: "2027-02-23", phase: s2027)?.season == 2026)
+        #expect(showsPostseasonOverviewLine(r, side: r.pitching, today: "2027-02-24", phase: s2027) == nil)
+        #expect(showsPostseasonCareerBox(r, side: r.pitching, today: "2027-02-24", phase: s2027) == nil)
+    }
+
+    @Test func withNoScheduleYetItEndsWithFebruary() throws {
+        let r = try after(season: 2027, complete: false)
+        let unpublished = SeasonPhase(season: 2027, openingDay: nil, lastRegularDay: nil)
+        #expect(postseasonOverviewEnd(season: 2027, phase: unpublished) == "2027-02-28")
+        #expect(postseasonOverviewEnd(season: 2028, phase: nil) == "2028-02-29")
+        #expect(showsPostseasonOverviewLine(r, side: r.pitching, today: "2027-02-28", phase: unpublished)?.season == 2026)
+        #expect(showsPostseasonOverviewLine(r, side: r.pitching, today: "2027-03-01", phase: nil) == nil)
+    }
+
+    @Test func leagueCompleteDecodes() throws {
+        let json = #"{"player_id": 1, "retro_last": 2025, "batting": null, "pitching": null,"# +
+            #""current": {"season": 2026, "league_in_progress": false, "player_appeared": true,"# +
+            #" "team_eliminated": true, "league_complete": true}}"#
+        let r = try JSONDecoder().decode(PlayerPostseason.self, from: Data(json.utf8))
+        #expect(r.current.leagueComplete == true)
     }
 
     @Test func anUnknownLeagueStateHidesIt() throws {
@@ -238,6 +300,6 @@ struct PlayerPostseasonTests {
                                        pitching: r.pitching,
                                        current: PostseasonCurrent(season: 2026, leagueInProgress: nil,
                                                                   playerAppeared: true, teamEliminated: nil))
-        #expect(showsPostseasonOverviewLine(unknown, side: unknown.pitching) == nil)
+        #expect(showsPostseasonOverviewLine(unknown, side: unknown.pitching, today: sept30, phase: season2026) == nil)
     }
 }

@@ -807,7 +807,8 @@ struct PlayerProfileScreen: View {
         }
     }
 
-    /// While the league's postseason runs and he has postseason history
+    /// In the Overview postseason window (first postseason game until a month
+    /// before the next Opening Day) for a player with postseason history
     /// (`showsPostseasonCareerBox`), the postseason leads: "<season>
     /// Postseason" once he has appeared (`showsPostseasonOverviewLine`), then
     /// "Postseason Career", then the season. Otherwise the regular order.
@@ -819,8 +820,10 @@ struct PlayerProfileScreen: View {
                 tier: viewModel.currentBatting?.bio?.heat_tier,
                 window: "Last 15 games"
             )
-            if let career = showsPostseasonCareerBox(viewModel.postseason, side: viewModel.postseason?.batting) {
-                if let line = showsPostseasonOverviewLine(viewModel.postseason, side: viewModel.postseason?.batting) {
+            if let career = showsPostseasonCareerBox(viewModel.postseason, side: viewModel.postseason?.batting,
+                                                     today: Self.overviewToday, phase: viewModel.seasonPhase) {
+                if let line = showsPostseasonOverviewLine(viewModel.postseason, side: viewModel.postseason?.batting,
+                                                          today: Self.overviewToday, phase: viewModel.seasonPhase) {
                     battingPostseasonCard(line)
                 }
                 battingPostseasonCareerCard(career)
@@ -864,8 +867,10 @@ struct PlayerProfileScreen: View {
                 tier: viewModel.currentPitching?.bio?.heat_tier,
                 window: "Recent form"
             )
-            if let career = showsPostseasonCareerBox(viewModel.postseason, side: viewModel.postseason?.pitching) {
-                if let line = showsPostseasonOverviewLine(viewModel.postseason, side: viewModel.postseason?.pitching) {
+            if let career = showsPostseasonCareerBox(viewModel.postseason, side: viewModel.postseason?.pitching,
+                                                     today: Self.overviewToday, phase: viewModel.seasonPhase) {
+                if let line = showsPostseasonOverviewLine(viewModel.postseason, side: viewModel.postseason?.pitching,
+                                                          today: Self.overviewToday, phase: viewModel.seasonPhase) {
                     pitchingPostseasonCard(line)
                 }
                 pitchingPostseasonCareerCard(career)
@@ -898,17 +903,22 @@ struct PlayerProfileScreen: View {
         .task { await pitchingRanksVM.load() }
     }
 
-    /// Current calendar year — the only season Overview ever surfaces.
+    /// Current calendar year — the only regular season Overview surfaces.
     /// Pinned to a single source of truth so Recent Games and League
     /// Rankings are guaranteed to ask about the same year.
     private static var overviewSeason: Int {
         Calendar.current.component(.year, from: Date())
     }
 
+    /// Today's Eastern date, `yyyy-MM-dd` — what the postseason window rules read.
+    private static var overviewToday: String {
+        HotColdSeason.easternDateString(Date())
+    }
+
     // MARK: - Current postseason (Overview)
 
-    /// "<season> Postseason" — shown by `showsPostseasonOverviewLine`: while
-    /// the league's postseason runs, once he has appeared, including after his
+    /// "<season> Postseason" — shown by `showsPostseasonOverviewLine`: in the
+    /// Overview postseason window, once he has appeared, including after his
     /// team is out. Subtitle: his latest series and where it stands. A tap
     /// opens his game log for that postseason.
     private func battingPostseasonCard(_ line: PostseasonSeasonLine<PostseasonBattingTotals>) -> some View {
@@ -940,7 +950,7 @@ struct PlayerProfileScreen: View {
     /// order and layout, from the postseason career line — one definition
     /// (`postseasonBattingStatItems` / `postseasonPitchingStatItems`), so the
     /// two boxes can't drift apart. Shown by `showsPostseasonCareerBox`: any
-    /// player with postseason history while the league's postseason runs.
+    /// player with postseason history in the Overview postseason window.
     private func battingPostseasonCareerCard(_ side: PostseasonSide<PostseasonBattingTotals>) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             currentSeasonGridCard(title: "Postseason Career", subtitle: nil,

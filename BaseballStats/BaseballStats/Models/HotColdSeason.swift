@@ -7,8 +7,9 @@
 //
 //  A third season-phase rule, kept its own function like the other two: the
 //  Standings bracket default (`standingsDefault`, first pitch → next Opening
-//  Day) and the Overview postseason line (`showsPostseasonOverviewLine`,
-//  first game → end of the World Series). This one is the regular season.
+//  Day) and the Overview postseason window (`overviewPostseasonSeason`,
+//  first game → a month before the next Opening Day). This one is the
+//  regular season.
 //
 
 import Foundation

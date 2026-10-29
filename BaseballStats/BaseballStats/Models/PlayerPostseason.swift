@@ -165,12 +165,16 @@ struct PostseasonCurrent: Codable, Hashable {
     let playerAppeared: Bool
     /// nil when he hasn't appeared, or balldontlie couldn't be reached.
     let teamEliminated: Bool?
+    /// `season`'s World Series is over. nil when balldontlie couldn't be
+    /// reached, and on a payload from before the field shipped.
+    var leagueComplete: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
         case season
         case leagueInProgress = "league_in_progress"
         case playerAppeared = "player_appeared"
         case teamEliminated = "team_eliminated"
+        case leagueComplete = "league_complete"
     }
 }
 
@@ -326,32 +330,64 @@ struct PostseasonPitchingGameLine: Codable, Hashable, Identifiable, PostseasonGa
 
 // MARK: - The Overview line
 
-/// ⚠️ THE OVERVIEW RULE: show the "<season> Postseason" line while the
-/// league's postseason is in progress — first game until the World Series
-/// ends — once the player has appeared in it, INCLUDING after his team is
-/// eliminated. Not the bracket default (`standingsDefault`, until Opening
-/// Day): a different rule, kept a different function.
+/// ⚠️ THE OVERVIEW WINDOW: the postseason leads the Overview from its first
+/// game until A MONTH BEFORE THE NEXT OPENING DAY (Isaac, 2026-10-28: the
+/// offseason is months away, so keep last October's results up). Through the
+/// World Series it is `current.season`'s; from January it is last season's.
 ///
-/// Only for the side being shown, and only when that side has a line for the
-/// current season. Unknown league state (balldontlie down) hides it: better
-/// absent than shown past the World Series.
-func showsPostseasonOverviewLine<T>(_ postseason: PlayerPostseason?,
-                                    side: PostseasonSide<T>?) -> PostseasonSeasonLine<T>? {
-    guard let postseason, postseason.current.leagueInProgress == true,
-          postseason.current.playerAppeared,
-          let line = side?.seasons.first(where: { $0.season == postseason.current.season })
-    else { return nil }
-    return line
+/// The end is the next season's Opening Day minus 30 days when `/season/phase`
+/// has it, else the last day of February. Not the bracket default
+/// (`standingsDefault`, until Opening Day): a different rule, kept a different
+/// function.
+///
+/// Unknown league state (balldontlie down) hides it: better absent than shown
+/// in the wrong season.
+///
+/// - Parameters:
+///   - today: the Eastern date, `yyyy-MM-dd`.
+///   - phase: `/season/phase` for today's season (its Opening Day ends the window).
+/// - Returns: the season whose postseason the Overview shows, or nil.
+func overviewPostseasonSeason(_ postseason: PlayerPostseason?, today: String, phase: SeasonPhase?) -> Int? {
+    guard let current = postseason?.current else { return nil }
+    if current.leagueInProgress == true || current.leagueComplete == true { return current.season }
+    guard current.leagueInProgress == false else { return nil }
+    return today <= postseasonOverviewEnd(season: current.season, phase: phase) ? current.season - 1 : nil
 }
 
-/// ⚠️ THE POSTSEASON CAREER BOX RULE: while the league's postseason is in
-/// progress, show it for ANY player with postseason history on the side being
-/// shown — whether or not he or his team is in this year's (Mookie Betts on a
-/// bye). Its own rule, not `showsPostseasonOverviewLine` (that one also needs
-/// him to have appeared). Unknown league state hides it.
-func showsPostseasonCareerBox<T>(_ postseason: PlayerPostseason?,
-                                 side: PostseasonSide<T>?) -> PostseasonSide<T>? {
-    guard postseason?.current.leagueInProgress == true, let side, !side.seasons.isEmpty else { return nil }
+/// The last day, `yyyy-MM-dd`, the Overview shows LAST season's postseason in
+/// `season`: 30 days before `season`'s Opening Day, else the end of February.
+func postseasonOverviewEnd(season: Int, phase: SeasonPhase?) -> String {
+    let f = DateFormatter()
+    f.calendar = Calendar(identifier: .gregorian)
+    f.locale = Locale(identifier: "en_US_POSIX")
+    f.timeZone = TimeZone(identifier: "UTC")
+    f.dateFormat = "yyyy-MM-dd"
+    if phase?.season == season, let opening = phase?.openingDay.flatMap(f.date(from:)),
+       let end = f.calendar.date(byAdding: .day, value: -30, to: opening) {
+        return f.string(from: end)
+    }
+    let leap = season % 4 == 0 && (season % 100 != 0 || season % 400 == 0)
+    return "\(season)-02-\(leap ? 29 : 28)"
+}
+
+/// The "<season> Postseason" line: in the Overview window, for the side being
+/// shown, once the player has a line for that season — INCLUDING after his
+/// team is eliminated.
+func showsPostseasonOverviewLine<T>(_ postseason: PlayerPostseason?, side: PostseasonSide<T>?,
+                                    today: String, phase: SeasonPhase?) -> PostseasonSeasonLine<T>? {
+    guard let season = overviewPostseasonSeason(postseason, today: today, phase: phase) else { return nil }
+    return side?.seasons.first(where: { $0.season == season })
+}
+
+/// ⚠️ THE POSTSEASON CAREER BOX RULE: in the Overview window, show it for ANY
+/// player with postseason history on the side being shown — whether or not he
+/// or his team is in that postseason (Mookie Betts on a bye). Its own rule,
+/// not `showsPostseasonOverviewLine` (that one also needs a line for the
+/// season).
+func showsPostseasonCareerBox<T>(_ postseason: PlayerPostseason?, side: PostseasonSide<T>?,
+                                 today: String, phase: SeasonPhase?) -> PostseasonSide<T>? {
+    guard overviewPostseasonSeason(postseason, today: today, phase: phase) != nil,
+          let side, !side.seasons.isEmpty else { return nil }
     return side
 }
 
