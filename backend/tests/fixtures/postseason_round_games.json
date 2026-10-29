@@ -1,0 +1,331 @@
+{
+ "_note": "Every game of three postseason rounds, from production's postseason_batting_gamelogs via _POSTSEASON_ROUND_GAMES_SQL (read-only, captured 2026-10-29). 1912 WS game 2 ended tied 6-6.",
+ "2025_WS": [
+  {
+   "game_id": "retro-TOR202510240",
+   "game_date": "2025-10-24",
+   "home": "TOR",
+   "away": "LAN",
+   "home_score": 11,
+   "away_score": 4
+  },
+  {
+   "game_id": "retro-TOR202510250",
+   "game_date": "2025-10-25",
+   "home": "TOR",
+   "away": "LAN",
+   "home_score": 1,
+   "away_score": 5
+  },
+  {
+   "game_id": "retro-LAN202510270",
+   "game_date": "2025-10-27",
+   "home": "LAN",
+   "away": "TOR",
+   "home_score": 6,
+   "away_score": 5
+  },
+  {
+   "game_id": "retro-LAN202510280",
+   "game_date": "2025-10-28",
+   "home": "LAN",
+   "away": "TOR",
+   "home_score": 2,
+   "away_score": 6
+  },
+  {
+   "game_id": "retro-LAN202510290",
+   "game_date": "2025-10-29",
+   "home": "LAN",
+   "away": "TOR",
+   "home_score": 1,
+   "away_score": 6
+  },
+  {
+   "game_id": "retro-TOR202510310",
+   "game_date": "2025-10-31",
+   "home": "TOR",
+   "away": "LAN",
+   "home_score": 1,
+   "away_score": 3
+  },
+  {
+   "game_id": "retro-TOR202511010",
+   "game_date": "2025-11-01",
+   "home": "TOR",
+   "away": "LAN",
+   "home_score": 4,
+   "away_score": 5
+  }
+ ],
+ "1960_WS": [
+  {
+   "game_id": "retro-PIT196010050",
+   "game_date": "1960-10-05",
+   "home": "PIT",
+   "away": "NYA",
+   "home_score": 6,
+   "away_score": 4
+  },
+  {
+   "game_id": "retro-PIT196010060",
+   "game_date": "1960-10-06",
+   "home": "PIT",
+   "away": "NYA",
+   "home_score": 3,
+   "away_score": 16
+  },
+  {
+   "game_id": "retro-NYA196010080",
+   "game_date": "1960-10-08",
+   "home": "NYA",
+   "away": "PIT",
+   "home_score": 10,
+   "away_score": 0
+  },
+  {
+   "game_id": "retro-NYA196010090",
+   "game_date": "1960-10-09",
+   "home": "NYA",
+   "away": "PIT",
+   "home_score": 2,
+   "away_score": 3
+  },
+  {
+   "game_id": "retro-NYA196010100",
+   "game_date": "1960-10-10",
+   "home": "NYA",
+   "away": "PIT",
+   "home_score": 2,
+   "away_score": 5
+  },
+  {
+   "game_id": "retro-PIT196010120",
+   "game_date": "1960-10-12",
+   "home": "PIT",
+   "away": "NYA",
+   "home_score": 0,
+   "away_score": 12
+  },
+  {
+   "game_id": "retro-PIT196010130",
+   "game_date": "1960-10-13",
+   "home": "PIT",
+   "away": "NYA",
+   "home_score": 10,
+   "away_score": 9
+  }
+ ],
+ "1912_WS": [
+  {
+   "game_id": "retro-NY1191210080",
+   "game_date": "1912-10-08",
+   "home": "NY1",
+   "away": "BOS",
+   "home_score": 3,
+   "away_score": 4
+  },
+  {
+   "game_id": "retro-BOS191210090",
+   "game_date": "1912-10-09",
+   "home": "BOS",
+   "away": "NY1",
+   "home_score": 6,
+   "away_score": 6
+  },
+  {
+   "game_id": "retro-BOS191210100",
+   "game_date": "1912-10-10",
+   "home": "BOS",
+   "away": "NY1",
+   "home_score": 1,
+   "away_score": 2
+  },
+  {
+   "game_id": "retro-NY1191210110",
+   "game_date": "1912-10-11",
+   "home": "NY1",
+   "away": "BOS",
+   "home_score": 1,
+   "away_score": 3
+  },
+  {
+   "game_id": "retro-BOS191210120",
+   "game_date": "1912-10-12",
+   "home": "BOS",
+   "away": "NY1",
+   "home_score": 2,
+   "away_score": 1
+  },
+  {
+   "game_id": "retro-NY1191210140",
+   "game_date": "1912-10-14",
+   "home": "NY1",
+   "away": "BOS",
+   "home_score": 5,
+   "away_score": 2
+  },
+  {
+   "game_id": "retro-BOS191210150",
+   "game_date": "1912-10-15",
+   "home": "BOS",
+   "away": "NY1",
+   "home_score": 4,
+   "away_score": 11
+  },
+  {
+   "game_id": "retro-BOS191210160",
+   "game_date": "1912-10-16",
+   "home": "BOS",
+   "away": "NY1",
+   "home_score": 3,
+   "away_score": 2
+  }
+ ],
+ "2025_DS": [
+  {
+   "game_id": "retro-MIL202510040",
+   "game_date": "2025-10-04",
+   "home": "MIL",
+   "away": "CHN",
+   "home_score": 9,
+   "away_score": 3
+  },
+  {
+   "game_id": "retro-PHI202510040",
+   "game_date": "2025-10-04",
+   "home": "PHI",
+   "away": "LAN",
+   "home_score": 3,
+   "away_score": 5
+  },
+  {
+   "game_id": "retro-SEA202510040",
+   "game_date": "2025-10-04",
+   "home": "SEA",
+   "away": "DET",
+   "home_score": 2,
+   "away_score": 3
+  },
+  {
+   "game_id": "retro-TOR202510040",
+   "game_date": "2025-10-04",
+   "home": "TOR",
+   "away": "NYA",
+   "home_score": 10,
+   "away_score": 1
+  },
+  {
+   "game_id": "retro-SEA202510050",
+   "game_date": "2025-10-05",
+   "home": "SEA",
+   "away": "DET",
+   "home_score": 3,
+   "away_score": 2
+  },
+  {
+   "game_id": "retro-TOR202510050",
+   "game_date": "2025-10-05",
+   "home": "TOR",
+   "away": "NYA",
+   "home_score": 13,
+   "away_score": 7
+  },
+  {
+   "game_id": "retro-MIL202510060",
+   "game_date": "2025-10-06",
+   "home": "MIL",
+   "away": "CHN",
+   "home_score": 7,
+   "away_score": 3
+  },
+  {
+   "game_id": "retro-PHI202510060",
+   "game_date": "2025-10-06",
+   "home": "PHI",
+   "away": "LAN",
+   "home_score": 3,
+   "away_score": 4
+  },
+  {
+   "game_id": "retro-DET202510070",
+   "game_date": "2025-10-07",
+   "home": "DET",
+   "away": "SEA",
+   "home_score": 4,
+   "away_score": 8
+  },
+  {
+   "game_id": "retro-NYA202510070",
+   "game_date": "2025-10-07",
+   "home": "NYA",
+   "away": "TOR",
+   "home_score": 9,
+   "away_score": 6
+  },
+  {
+   "game_id": "retro-CHN202510080",
+   "game_date": "2025-10-08",
+   "home": "CHN",
+   "away": "MIL",
+   "home_score": 4,
+   "away_score": 3
+  },
+  {
+   "game_id": "retro-DET202510080",
+   "game_date": "2025-10-08",
+   "home": "DET",
+   "away": "SEA",
+   "home_score": 9,
+   "away_score": 3
+  },
+  {
+   "game_id": "retro-LAN202510080",
+   "game_date": "2025-10-08",
+   "home": "LAN",
+   "away": "PHI",
+   "home_score": 2,
+   "away_score": 8
+  },
+  {
+   "game_id": "retro-NYA202510080",
+   "game_date": "2025-10-08",
+   "home": "NYA",
+   "away": "TOR",
+   "home_score": 2,
+   "away_score": 5
+  },
+  {
+   "game_id": "retro-CHN202510090",
+   "game_date": "2025-10-09",
+   "home": "CHN",
+   "away": "MIL",
+   "home_score": 6,
+   "away_score": 0
+  },
+  {
+   "game_id": "retro-LAN202510090",
+   "game_date": "2025-10-09",
+   "home": "LAN",
+   "away": "PHI",
+   "home_score": 2,
+   "away_score": 1
+  },
+  {
+   "game_id": "retro-SEA202510100",
+   "game_date": "2025-10-10",
+   "home": "SEA",
+   "away": "DET",
+   "home_score": 3,
+   "away_score": 2
+  },
+  {
+   "game_id": "retro-MIL202510110",
+   "game_date": "2025-10-11",
+   "home": "MIL",
+   "away": "CHN",
+   "home_score": 3,
+   "away_score": 1
+  }
+ ]
+}

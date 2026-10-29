@@ -2275,6 +2275,78 @@ FROM g LEFT JOIN retro_game_info i ON i.game_id = g.game_id
 ORDER BY g.game_id
 """
 
+# The day's POSTSEASON games, from Retrosheet's postseason lines — the same
+# shape as `_GAMES_BY_DATE_SQL` plus the round. `batting_gamelogs` holds no
+# postseason game (162 per team, checked), so without this a past October date
+# read "No games" while we held every box score. The `retro_game_info` join
+# finds nothing today — that table has regular-season games only — and is kept
+# so linescores appear by themselves the day postseason game info is loaded.
+_POSTSEASON_GAMES_BY_DATE_SQL = """
+WITH g AS (
+    SELECT
+        game_id,
+        MAX(round) AS round,
+        MAX(CASE WHEN home_away = 'H' THEN opponent   END) AS away_code,
+        MAX(CASE WHEN home_away = 'H' THEN team_score END) AS home_score,
+        MAX(CASE WHEN home_away = 'A' THEN team_score END) AS away_score
+    FROM postseason_batting_gamelogs
+    WHERE game_date = :d AND source = 'retrosheet' AND game_id LIKE 'retro-%'
+    GROUP BY game_id
+)
+SELECT g.*, i.park_name, i.away_line, i.home_line,
+       i.away_hits, i.home_hits, i.away_errors, i.home_errors,
+       i.away_lob, i.home_lob
+FROM g LEFT JOIN retro_game_info i ON i.game_id = g.game_id
+ORDER BY g.game_id
+"""
+
+# Every game of one postseason round, for numbering a game within its series
+# and saying where the series stood after it.
+_POSTSEASON_ROUND_GAMES_SQL = """
+SELECT game_id, game_date,
+       MAX(CASE WHEN home_away = 'H' THEN team       END) AS home,
+       MAX(CASE WHEN home_away = 'H' THEN opponent   END) AS away,
+       MAX(CASE WHEN home_away = 'H' THEN team_score END) AS home_score,
+       MAX(CASE WHEN home_away = 'A' THEN team_score END) AS away_score
+FROM postseason_batting_gamelogs
+WHERE season = :y AND round = :r AND source = 'retrosheet'
+GROUP BY game_id, game_date
+"""
+
+
+def _historical_series_line(round_code, league, round_games, game_id):
+    """The card's series line for a past postseason game: "World Series ·
+    Game 7 · LAD wins 4-3", "ALCS · Game 2 · Series tied 1-1".
+
+    `round_games` is every game of the round (`_POSTSEASON_ROUND_GAMES_SQL`
+    rows as dicts); the series is this game's two clubs within it, in date and
+    id order. "wins" only on the series' LAST game, which the complete record
+    lets us know — a best-of can't be assumed across eras (the 1903 and
+    1919-21 World Series were best-of-nine). A game that ended tied (1907,
+    1912, 1922 World Series) takes a number and moves nobody's total. None when
+    the game isn't in the list."""
+    me = next((g for g in round_games if g["game_id"] == game_id), None)
+    if me is None:
+        return None
+    pair = {me["home"], me["away"]}
+    series = sorted((g for g in round_games if {g["home"], g["away"]} == pair),
+                    key=lambda g: (str(g["game_date"]), g["game_id"]))
+    n = next(i for i, g in enumerate(series) if g["game_id"] == game_id) + 1
+    wins = {c: 0 for c in pair}
+    for g in series[:n]:
+        hs, as_ = g["home_score"], g["away_score"]
+        if hs is not None and as_ is not None and hs != as_:
+            wins[g["home"] if hs > as_ else g["away"]] += 1
+    (t1, w1), (t2, w2) = sorted(wins.items(), key=lambda kv: (-kv[1], kv[0]))
+    if w1 == w2:
+        state = f"Series tied {w1}-{w2}"
+    elif n == len(series):
+        state = f"{_display_abbr(t1)} wins {w1}-{w2}"
+    else:
+        state = f"{_display_abbr(t1)} leads {w1}-{w2}"
+    name = postseason_series.round_name(round_code, league)
+    return " · ".join(p for p in (name, f"Game {n}", state) if p)
+
 
 def _parse_retro_linescore(s):
     """Per-inning runs from Retrosheet's string form. Mirrors
@@ -2465,6 +2537,39 @@ ORDER BY g."IP" DESC NULLS LAST, name
 """
 
 
+# The same two reads for a POSTSEASON game, from Retrosheet's postseason lines.
+# Those carry no lineup slot, sequence, fielding position or pitch count, so the
+# columns come back NULL: batters alphabetical (and `batterOrdering` says so),
+# pitchers by innings — the existing fallbacks, unchanged.
+_BOX_POST_BAT_SQL = """
+SELECT b.player_id, b.home_away, p.name,
+       b."AB", b."R", b."H", b.doubles, b.triples, b."HR", b."RBI",
+       b."BB", b."SO", b."SB", b."CS", b."HBP", b."SF", b."SH", b."GIDP",
+       NULL::int AS slot, NULL::int AS seq, NULL::text AS pos
+FROM postseason_batting_gamelogs b
+LEFT JOIN players p ON p.player_id = b.player_id
+WHERE b.game_id = :gid AND b.source = 'retrosheet'
+  -- the regular read's rule, less the slot: a man with no offensive event of
+  -- any kind is a pitcher who never batted, and stays in the pitching table
+  AND NOT (COALESCE(b."PA", 0) = 0 AND COALESCE(b."AB", 0) = 0
+           AND COALESCE(b."BB", 0) = 0 AND COALESCE(b."R", 0) = 0
+           AND COALESCE(b."HBP", 0) = 0 AND COALESCE(b."SF", 0) = 0
+           AND COALESCE(b."SH", 0) = 0)
+ORDER BY p.name
+"""
+
+_BOX_POST_PIT_SQL = """
+SELECT g.player_id, g.home_away, COALESCE(p.name, pl.name) AS name,
+       g."IP", g."H", g."R", g."ER", g."BB", g."SO", g."HR",
+       NULL::int AS pitches, g.result, NULL::int AS seq
+FROM postseason_pitching_gamelogs g
+LEFT JOIN pitchers p ON p.player_id = g.player_id
+LEFT JOIN players  pl ON pl.player_id = g.player_id
+WHERE g.game_id = :gid AND g.source = 'retrosheet'
+ORDER BY g."IP" DESC NULLS LAST, name
+"""
+
+
 # Retrosheet game-id code -> the abbreviation to SHOW.
 #
 # ⚠️ THIS IS NOT THE JOIN MAP, AND MUST NOT BE MERGED WITH IT. iOS carries
@@ -2612,6 +2717,12 @@ def historical_boxscore(game_pk: int):
     Both were previously emitted as null on a scoping claim that the data did
     not exist; it did.
 
+    POSTSEASON GAMES come from Retrosheet's postseason lines when the regular
+    tables have no row for the id (the two id sets never overlap). Those lines
+    carry no lineup, position, pitch count or appearance order, so the
+    alphabetical and innings fallbacks apply, and no season line is sent: every
+    figure we could sum is regular-season.
+
     A caveat worth knowing when reading old games: a zero here can mean "the
     statistic did not exist yet" rather than "it did not happen" — GIDP was not
     official until the 1930s, sacrifice flies came and went. Those render as 0,
@@ -2640,12 +2751,18 @@ def historical_boxscore(game_pk: int):
     with connection.get_session() as db:
         bat = db.execute(_sa_text(_BOX_BAT_SQL), {"gid": game_id}).fetchall()
         pit = db.execute(_sa_text(_BOX_PIT_SQL), {"gid": game_id}).fetchall()
+        # Not a regular-season game: a postseason one, from the postseason lines.
+        postseason = not bat and not pit
+        if postseason:
+            bat = db.execute(_sa_text(_BOX_POST_BAT_SQL), {"gid": game_id}).fetchall()
+            pit = db.execute(_sa_text(_BOX_POST_PIT_SQL), {"gid": game_id}).fetchall()
         if not bat and not pit:
             raise HTTPException(status_code=404, detail=f"No game logs for {game_id}")
         year = int(date_s[:4])
         away_code = next((r.opponent for r in db.execute(
-            _sa_text("SELECT DISTINCT opponent FROM batting_gamelogs "
-                     "WHERE game_id = :gid AND home_away = 'H'"),
+            _sa_text("SELECT DISTINCT opponent FROM "
+                     + ("postseason_batting_gamelogs" if postseason else "batting_gamelogs")
+                     + " WHERE game_id = :gid AND home_away = 'H'"),
             {"gid": game_id}).fetchall()), "")
         # Aliased for the same reason as the slate: the box score builds its
         # OWN name map, and the team picker reads THIS one rather than the
@@ -2655,8 +2772,11 @@ def historical_boxscore(game_pk: int):
             _sa_text("SELECT team_id, team_name FROM team_seasons WHERE year = :y"),
             {"y": year}).fetchall()})
         gdate = datetime.date(int(date_s[:4]), int(date_s[4:6]), int(date_s[6:8]))
-        bat_ids = sorted({r.player_id for r in bat})
-        pit_ids = sorted({r.player_id for r in pit})
+        # A postseason game gets no season line: every figure here is summed
+        # from REGULAR-season logs, and beside a playoff game it would read as
+        # his postseason line. Empty ids skip both queries below.
+        bat_ids = [] if postseason else sorted({r.player_id for r in bat})
+        pit_ids = [] if postseason else sorted({r.player_id for r in pit})
         bat_season = {r.player_id: r for r in db.execute(
             _sa_text(_BOX_BAT_SEASON_SQL),
             {"yr": year, "gdate": gdate, "gid": game_id, "pids": bat_ids}).fetchall()} if bat_ids else {}
@@ -2783,7 +2903,7 @@ def historical_boxscore(game_pk: int):
             "saves": 1 if dec == "S" else 0,
             "pitchCount": r.pitches,
         }
-        season = pit_season_stats(r.player_id)
+        season = None if postseason else pit_season_stats(r.player_id)
         if entry is None:
             side["players"][key] = {
                 "person": {"id": r.player_id, "fullName": r.name or str(r.player_id)},
@@ -2795,9 +2915,10 @@ def historical_boxscore(game_pk: int):
             # A two-way row already carries the batting season line; merge
             # rather than overwrite, or the AVG column goes dark for pitchers
             # who also hit — which in this era is most of them.
-            prior = entry.get("seasonStats") or {}
-            entry["seasonStats"] = {"batting": prior.get("batting"),
-                                    "pitching": season["pitching"]}
+            if season is not None:
+                prior = entry.get("seasonStats") or {}
+                entry["seasonStats"] = {"batting": prior.get("batting"),
+                                        "pitching": season["pitching"]}
         side["pitchers"].append(r.player_id)
         pitcher_seq.setdefault(r.home_away, {})[r.player_id] = getattr(r, "seq", None)
 
@@ -2983,22 +3104,33 @@ def games_by_date(
 
     with connection.get_session() as db:
         rows = db.execute(_sa_text(_GAMES_BY_DATE_SQL), {"d": date}).fetchall()
+        post_rows = db.execute(_sa_text(_POSTSEASON_GAMES_BY_DATE_SQL), {"d": date}).fetchall()
         year = date.year
-        names = {
-            r[0]: r[1] for r in db.execute(
-                _sa_text("SELECT team_id, team_name FROM team_seasons WHERE year = :y"),
-                {"y": year},
-            ).fetchall()
-        }
-        names = _named_with_aliases(names)
+        team_rows = db.execute(
+            _sa_text("SELECT team_id, team_name, league FROM team_seasons WHERE year = :y"),
+            {"y": year},
+        ).fetchall()
+        names = _named_with_aliases({r[0]: r[1] for r in team_rows})
+        leagues = {r[0]: r[2] for r in team_rows}
+        series_lines = {}
+        for rnd in sorted({r.round for r in post_rows if r.round}):
+            round_games = [dict(g._mapping) for g in db.execute(
+                _sa_text(_POSTSEASON_ROUND_GAMES_SQL), {"y": year, "r": rnd}).fetchall()]
+            for r in post_rows:
+                if r.round == rnd:
+                    parts = _retro_parts(r.game_id)
+                    lg = leagues.get(parts[0]) if parts else None
+                    series_lines[r.game_id] = _historical_series_line(rnd, lg, round_games, r.game_id)
 
     iso_midnight = f"{date.isoformat()}T00:00:00Z"
     games = []
-    for r in rows:
+    post_ids = {r.game_id for r in post_rows}
+    for r in list(rows) + list(post_rows):
         parts = _retro_parts(r.game_id)
         if parts is None:
             continue
         home_code, _, _ = parts
+        postseason = r.game_id in post_ids
         away_code = r.away_code or ""
         home_score, away_score = r.home_score, r.away_score
 
@@ -3043,6 +3175,12 @@ def games_by_date(
             "decisions": None,
             "bdlAwayTeamId": None,
             "bdlHomeTeamId": None,
+            # A postseason game says so — every regular-season figure the
+            # client would print beside it (records, season totals) then steps
+            # aside, exactly as for a balldontlie postseason game — and carries
+            # its own series line; the series store only knows balldontlie ids.
+            **({"seasonType": "postseason", "seriesLine": series_lines.get(r.game_id)}
+               if postseason else {}),
         })
 
     return {"date": date.isoformat(), "count": len(games), "games": games}
