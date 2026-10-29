@@ -3,7 +3,8 @@
 //  BaseballStats
 //
 //  One caption line of postseason series state under a game — "AL Wild Card ·
-//  Game 2 · BOS leads 1-0", "BOS wins 2-1". Renders NOTHING for a regular-
+//  Game 2 · BOS leads 1-0", "BOS wins 2-1"; a past postseason game brings its
+//  own ("World Series · Game 7 · LAD wins 4-3"). Renders NOTHING for a regular-
 //  season game, an unknown game, or when the series endpoint failed, so a
 //  card with no line lays out exactly as it did before.
 //
@@ -25,7 +26,10 @@ struct SeriesLine: View {
         // The first load happens at app start / foreground (`ContentView`);
         // an EMPTY view could not trigger it — its `.task` never runs. This
         // one only keeps a line that is showing fresh.
-        if !game.isRegularSeason {
+        if let own = game.seriesLine {
+            // A past postseason game carries its own line; the store has none.
+            if !compact { lineText(own) }
+        } else if !game.isRegularSeason {
             content
                 .task(id: game.seasonYear) {
                     if let season = game.seasonYear { await store.load(season: season) }
@@ -45,11 +49,15 @@ struct SeriesLine: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
         } else if !compact, let line = store.line(for: game) {
-            Text(line)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: alignment)
-                .fixedSize(horizontal: false, vertical: true)
+            lineText(line)
         }
+    }
+
+    private func lineText(_ line: String) -> some View {
+        Text(line)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: alignment)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }

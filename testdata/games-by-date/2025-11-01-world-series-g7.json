@@ -1,0 +1,47 @@
+{
+ "date": "2025-11-01",
+ "count": 1,
+ "games": [
+  {
+   "gamePk": -20251101384750,
+   "gameDate": "2025-11-01T00:00:00Z",
+   "status": {
+    "abstractGameState": "Final",
+    "detailedState": "Final",
+    "statusCode": "F",
+    "codedGameState": "F"
+   },
+   "teams": {
+    "away": {
+     "team": {
+      "id": 0,
+      "name": "Los Angeles Dodgers",
+      "abbreviation": "LAD"
+     },
+     "score": 5,
+     "leagueRecord": null,
+     "isWinner": true,
+     "probablePitcher": null
+    },
+    "home": {
+     "team": {
+      "id": 0,
+      "name": "Toronto Blue Jays",
+      "abbreviation": "TOR"
+     },
+     "score": 4,
+     "leagueRecord": null,
+     "isWinner": false,
+     "probablePitcher": null
+    }
+   },
+   "venue": null,
+   "linescore": null,
+   "decisions": null,
+   "bdlAwayTeamId": null,
+   "bdlHomeTeamId": null,
+   "seasonType": "postseason",
+   "seriesLine": "World Series \u00b7 Game 7 \u00b7 LAD wins 4-3"
+  }
+ ]
+}

@@ -56,6 +56,11 @@ struct Game: Codable, Identifiable, Hashable {
     /// games (all regular season) and older payloads. Read it through
     /// `isRegularSeason`, never directly.
     let seasonType: String?
+    /// A past postseason game's own series line — "World Series · Game 7 ·
+    /// LAD wins 4-3" — sent by `/games/by-date`. `SeriesStore` keys its lines
+    /// by balldontlie id and only knows the seasons balldontlie serves, so a
+    /// Retrosheet-served game brings its own. nil for every other game.
+    var seriesLine: String? = nil
 
     var id: Int { gamePk }
 

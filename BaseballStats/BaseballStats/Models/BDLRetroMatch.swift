@@ -212,6 +212,7 @@ extension Game {
             bdlHomeTeamId: bdlGame.homeTeam.id,
             bdlGameId:     bdlGame.id,
             seasonType:    seasonType,
+            seriesLine:    seriesLine,
         )
     }
 }

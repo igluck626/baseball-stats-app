@@ -1,0 +1,1074 @@
+{
+ "gameId": "retro-TOR202511010",
+ "batterOrdering": "alphabetical",
+ "teams": {
+  "away": {
+   "team": {
+    "id": 0,
+    "name": "Los Angeles Dodgers",
+    "abbreviation": "LAD"
+   },
+   "players": {
+    "ID681624": {
+     "person": {
+      "id": 681624,
+      "fullName": "Andy Pages"
+     },
+     "position": null,
+     "battingOrder": null,
+     "seasonStats": null,
+     "stats": {
+      "batting": {
+       "atBats": 1,
+       "runs": 0,
+       "hits": 0,
+       "doubles": 0,
+       "triples": 0,
+       "homeRuns": 0,
+       "rbi": 0,
+       "baseOnBalls": 0,
+       "strikeOuts": 0,
+       "stolenBases": 0,
+       "caughtStealing": 0,
+       "hitByPitch": 0,
+       "sacFlies": 0,
+       "sacBunts": 0,
+       "groundIntoDoublePlay": 0,
+       "avg": ".000",
+       "ops": null
+      },
+      "pitching": null
+     }
+    },
+    "ID571771": {
+     "person": {
+      "id": 571771,
+      "fullName": "Enrique Hernandez"
+     },
+     "position": null,
+     "battingOrder": null,
+     "seasonStats": null,
+     "stats": {
+      "batting": {
+       "atBats": 5,
+       "runs": 0,
+       "hits": 1,
+       "doubles": 0,
+       "triples": 0,
+       "homeRuns": 0,
+       "rbi": 0,
+       "baseOnBalls": 0,
+       "strikeOuts": 2,
+       "stolenBases": 0,
+       "caughtStealing": 0,
+       "hitByPitch": 0,
+       "sacFlies": 0,
+       "sacBunts": 0,
+       "groundIntoDoublePlay": 0,
+       "avg": ".200",
+       "ops": null
+      },
+      "pitching": null
+     }
+    },
+    "ID518692": {
+     "person": {
+      "id": 518692,
+      "fullName": "Freddie Freeman"
+     },
+     "position": null,
+     "battingOrder": null,
+     "seasonStats": null,
+     "stats": {
+      "batting": {
+       "atBats": 6,
+       "runs": 0,
+       "hits": 1,
+       "doubles": 0,
+       "triples": 0,
+       "homeRuns": 0,
+       "rbi": 0,
+       "baseOnBalls": 0,
+       "strikeOuts": 0,
+       "stolenBases": 0,
+       "caughtStealing": 0,
+       "hitByPitch": 0,
+       "sacFlies": 0,
+       "sacBunts": 0,
+       "groundIntoDoublePlay": 1,
+       "avg": ".167",
+       "ops": null
+      },
+      "pitching": null
+     }
+    },
+    "ID571970": {
+     "person": {
+      "id": 571970,
+      "fullName": "Max Muncy"
+     },
+     "position": null,
+     "battingOrder": null,
+     "seasonStats": null,
+     "stats": {
+      "batting": {
+       "atBats": 4,
+       "runs": 1,
+       "hits": 3,
+       "doubles": 0,
+       "triples": 0,
+       "homeRuns": 1,
+       "rbi": 1,
+       "baseOnBalls": 1,
+       "strikeOuts": 1,
+       "stolenBases": 0,
+       "caughtStealing": 0,
+       "hitByPitch": 0,
+       "sacFlies": 0,
+       "sacBunts": 0,
+       "groundIntoDoublePlay": 0,
+       "avg": ".750",
+       "ops": null
+      },
+      "pitching": null
+     }
+    },
+    "ID500743": {
+     "person": {
+      "id": 500743,
+      "fullName": "Miguel Rojas"
+     },
+     "position": null,
+     "battingOrder": null,
+     "seasonStats": null,
+     "stats": {
+      "batting": {
+       "atBats": 5,
+       "runs": 1,
+       "hits": 2,
+       "doubles": 0,
+       "triples": 0,
+       "homeRuns": 1,
+       "rbi": 1,
+       "baseOnBalls": 0,
+       "strikeOuts": 1,
+       "stolenBases": 0,
+       "caughtStealing": 0,
+       "hitByPitch": 0,
+       "sacFlies": 0,
+       "sacBunts": 0,
+       "groundIntoDoublePlay": 0,
+       "avg": ".400",
+       "ops": null
+      },
+      "pitching": null
+     }
+    },
+    "ID605141": {
+     "person": {
+      "id": 605141,
+      "fullName": "Mookie Betts"
+     },
+     "position": null,
+     "battingOrder": null,
+     "seasonStats": null,
+     "stats": {
+      "batting": {
+       "atBats": 3,
+       "runs": 1,
+       "hits": 0,
+       "doubles": 0,
+       "triples": 0,
+       "homeRuns": 0,
+       "rbi": 0,
+       "baseOnBalls": 2,
+       "strikeOuts": 0,
+       "stolenBases": 0,
+       "caughtStealing": 0,
+       "hitByPitch": 0,
+       "sacFlies": 0,
+       "sacBunts": 0,
+       "groundIntoDoublePlay": 0,
+       "avg": ".000",
+       "ops": null
+      },
+      "pitching": null
+     }
+    },
+    "ID660271": {
+     "person": {
+      "id": 660271,
+      "fullName": "Shohei Ohtani"
+     },
+     "position": null,
+     "battingOrder": null,
+     "seasonStats": null,
+     "stats": {
+      "batting": {
+       "atBats": 5,
+       "runs": 0,
+       "hits": 2,
+       "doubles": 0,
+       "triples": 0,
+       "homeRuns": 0,
+       "rbi": 0,
+       "baseOnBalls": 1,
+       "strikeOuts": 0,
+       "stolenBases": 0,
+       "caughtStealing": 0,
+       "hitByPitch": 0,
+       "sacFlies": 0,
+       "sacBunts": 0,
+       "groundIntoDoublePlay": 0,
+       "avg": ".400",
+       "ops": null
+      },
+      "pitching": {
+       "inningsPitched": "2.1",
+       "hits": 5,
+       "runs": 3,
+       "earnedRuns": 3,
+       "baseOnBalls": 2,
+       "strikeOuts": 3,
+       "homeRuns": 1,
+       "era": "11.57",
+       "wins": 0,
+       "losses": 0,
+       "saves": 0,
+       "pitchCount": null
+      }
+     }
+    },
+    "ID606192": {
+     "person": {
+      "id": 606192,
+      "fullName": "Teoscar Hernandez"
+     },
+     "position": null,
+     "battingOrder": null,
+     "seasonStats": null,
+     "stats": {
+      "batting": {
+       "atBats": 3,
+       "runs": 0,
+       "hits": 0,
+       "doubles": 0,
+       "triples": 0,
+       "homeRuns": 0,
+       "rbi": 1,
+       "baseOnBalls": 1,
+       "strikeOuts": 0,
+       "stolenBases": 0,
+       "caughtStealing": 0,
+       "hitByPitch": 0,
+       "sacFlies": 1,
+       "sacBunts": 0,
+       "groundIntoDoublePlay": 0,
+       "avg": ".000",
+       "ops": null
+      },
+      "pitching": null
+     }
+    },
+    "ID669242": {
+     "person": {
+      "id": 669242,
+      "fullName": "Tommy Edman"
+     },
+     "position": null,
+     "battingOrder": null,
+     "seasonStats": null,
+     "stats": {
+      "batting": {
+       "atBats": 3,
+       "runs": 0,
+       "hits": 0,
+       "doubles": 0,
+       "triples": 0,
+       "homeRuns": 0,
+       "rbi": 1,
+       "baseOnBalls": 0,
+       "strikeOuts": 0,
+       "stolenBases": 0,
+       "caughtStealing": 0,
+       "hitByPitch": 0,
+       "sacFlies": 1,
+       "sacBunts": 0,
+       "groundIntoDoublePlay": 0,
+       "avg": ".000",
+       "ops": null
+      },
+      "pitching": null
+     }
+    },
+    "ID669257": {
+     "person": {
+      "id": 669257,
+      "fullName": "Will Smith"
+     },
+     "position": null,
+     "battingOrder": null,
+     "seasonStats": null,
+     "stats": {
+      "batting": {
+       "atBats": 6,
+       "runs": 2,
+       "hits": 2,
+       "doubles": 1,
+       "triples": 0,
+       "homeRuns": 1,
+       "rbi": 1,
+       "baseOnBalls": 0,
+       "strikeOuts": 1,
+       "stolenBases": 0,
+       "caughtStealing": 0,
+       "hitByPitch": 0,
+       "sacFlies": 0,
+       "sacBunts": 0,
+       "groundIntoDoublePlay": 0,
+       "avg": ".333",
+       "ops": null
+      },
+      "pitching": null
+     }
+    },
+    "ID808967": {
+     "person": {
+      "id": 808967,
+      "fullName": "Yoshinobu Yamamoto"
+     },
+     "position": null,
+     "battingOrder": null,
+     "seasonStats": null,
+     "stats": {
+      "batting": null,
+      "pitching": {
+       "inningsPitched": "2.2",
+       "hits": 1,
+       "runs": 0,
+       "earnedRuns": 0,
+       "baseOnBalls": 1,
+       "strikeOuts": 1,
+       "homeRuns": 0,
+       "era": "0.00",
+       "wins": 1,
+       "losses": 0,
+       "saves": 0,
+       "pitchCount": null
+      }
+     }
+    },
+    "ID607192": {
+     "person": {
+      "id": 607192,
+      "fullName": "Tyler Glasnow"
+     },
+     "position": null,
+     "battingOrder": null,
+     "seasonStats": null,
+     "stats": {
+      "batting": null,
+      "pitching": {
+       "inningsPitched": "2.1",
+       "hits": 3,
+       "runs": 1,
+       "earnedRuns": 1,
+       "baseOnBalls": 0,
+       "strikeOuts": 2,
+       "homeRuns": 0,
+       "era": "3.86",
+       "wins": 0,
+       "losses": 0,
+       "saves": 0,
+       "pitchCount": null
+      }
+     }
+    },
+    "ID605483": {
+     "person": {
+      "id": 605483,
+      "fullName": "Blake Snell"
+     },
+     "position": null,
+     "battingOrder": null,
+     "seasonStats": null,
+     "stats": {
+      "batting": null,
+      "pitching": {
+       "inningsPitched": "1.1",
+       "hits": 1,
+       "runs": 0,
+       "earnedRuns": 0,
+       "baseOnBalls": 1,
+       "strikeOuts": 2,
+       "homeRuns": 0,
+       "era": "0.00",
+       "wins": 0,
+       "losses": 0,
+       "saves": 0,
+       "pitchCount": null
+      }
+     }
+    },
+    "ID680736": {
+     "person": {
+      "id": 680736,
+      "fullName": "Justin Wrobleski"
+     },
+     "position": null,
+     "battingOrder": null,
+     "seasonStats": null,
+     "stats": {
+      "batting": null,
+      "pitching": {
+       "inningsPitched": "1.1",
+       "hits": 2,
+       "runs": 0,
+       "earnedRuns": 0,
+       "baseOnBalls": 0,
+       "strikeOuts": 2,
+       "homeRuns": 0,
+       "era": "0.00",
+       "wins": 0,
+       "losses": 0,
+       "saves": 0,
+       "pitchCount": null
+      }
+     }
+    },
+    "ID686218": {
+     "person": {
+      "id": 686218,
+      "fullName": "Emmet Sheehan"
+     },
+     "position": null,
+     "battingOrder": null,
+     "seasonStats": null,
+     "stats": {
+      "batting": null,
+      "pitching": {
+       "inningsPitched": "1.0",
+       "hits": 2,
+       "runs": 0,
+       "earnedRuns": 0,
+       "baseOnBalls": 0,
+       "strikeOuts": 2,
+       "homeRuns": 0,
+       "era": "0.00",
+       "wins": 0,
+       "losses": 0,
+       "saves": 0,
+       "pitchCount": null
+      }
+     }
+    }
+   },
+   "batters": [
+    681624,
+    571771,
+    518692,
+    571970,
+    500743,
+    605141,
+    660271,
+    606192,
+    669242,
+    669257
+   ],
+   "pitchers": [
+    808967,
+    660271,
+    607192,
+    605483,
+    680736,
+    686218
+   ]
+  },
+  "home": {
+   "team": {
+    "id": 0,
+    "name": "Toronto Blue Jays",
+    "abbreviation": "TOR"
+   },
+   "players": {
+    "ID680718": {
+     "person": {
+      "id": 680718,
+      "fullName": "Addison Barger"
+     },
+     "position": null,
+     "battingOrder": null,
+     "seasonStats": null,
+     "stats": {
+      "batting": {
+       "atBats": 4,
+       "runs": 0,
+       "hits": 2,
+       "doubles": 0,
+       "triples": 0,
+       "homeRuns": 0,
+       "rbi": 0,
+       "baseOnBalls": 2,
+       "strikeOuts": 1,
+       "stolenBases": 0,
+       "caughtStealing": 0,
+       "hitByPitch": 0,
+       "sacFlies": 0,
+       "sacBunts": 0,
+       "groundIntoDoublePlay": 0,
+       "avg": ".500",
+       "ops": null
+      },
+      "pitching": null
+     }
+    },
+    "ID672386": {
+     "person": {
+      "id": 672386,
+      "fullName": "Alejandro Kirk"
+     },
+     "position": null,
+     "battingOrder": null,
+     "seasonStats": null,
+     "stats": {
+      "batting": {
+       "atBats": 5,
+       "runs": 0,
+       "hits": 2,
+       "doubles": 0,
+       "triples": 0,
+       "homeRuns": 0,
+       "rbi": 0,
+       "baseOnBalls": 0,
+       "strikeOuts": 0,
+       "stolenBases": 0,
+       "caughtStealing": 0,
+       "hitByPitch": 1,
+       "sacFlies": 0,
+       "sacBunts": 0,
+       "groundIntoDoublePlay": 1,
+       "avg": ".400",
+       "ops": null
+      },
+      "pitching": null
+     }
+    },
+    "ID665926": {
+     "person": {
+      "id": 665926,
+      "fullName": "Andres Gimenez"
+     },
+     "position": null,
+     "battingOrder": null,
+     "seasonStats": null,
+     "stats": {
+      "batting": {
+       "atBats": 4,
+       "runs": 0,
+       "hits": 1,
+       "doubles": 1,
+       "triples": 0,
+       "homeRuns": 0,
+       "rbi": 1,
+       "baseOnBalls": 0,
+       "strikeOuts": 1,
+       "stolenBases": 0,
+       "caughtStealing": 0,
+       "hitByPitch": 1,
+       "sacFlies": 0,
+       "sacBunts": 0,
+       "groundIntoDoublePlay": 0,
+       "avg": ".250",
+       "ops": null
+      },
+      "pitching": null
+     }
+    },
+    "ID666182": {
+     "person": {
+      "id": 666182,
+      "fullName": "Bo Bichette"
+     },
+     "position": null,
+     "battingOrder": null,
+     "seasonStats": null,
+     "stats": {
+      "batting": {
+       "atBats": 4,
+       "runs": 1,
+       "hits": 2,
+       "doubles": 0,
+       "triples": 0,
+       "homeRuns": 1,
+       "rbi": 3,
+       "baseOnBalls": 1,
+       "strikeOuts": 1,
+       "stolenBases": 0,
+       "caughtStealing": 0,
+       "hitByPitch": 0,
+       "sacFlies": 0,
+       "sacBunts": 0,
+       "groundIntoDoublePlay": 0,
+       "avg": ".500",
+       "ops": null
+      },
+      "pitching": null
+     }
+    },
+    "ID662139": {
+     "person": {
+      "id": 662139,
+      "fullName": "Daulton Varsho"
+     },
+     "position": null,
+     "battingOrder": null,
+     "seasonStats": null,
+     "stats": {
+      "batting": {
+       "atBats": 5,
+       "runs": 0,
+       "hits": 0,
+       "doubles": 0,
+       "triples": 0,
+       "homeRuns": 0,
+       "rbi": 0,
+       "baseOnBalls": 0,
+       "strikeOuts": 2,
+       "stolenBases": 0,
+       "caughtStealing": 0,
+       "hitByPitch": 0,
+       "sacFlies": 0,
+       "sacBunts": 0,
+       "groundIntoDoublePlay": 0,
+       "avg": ".000",
+       "ops": null
+      },
+      "pitching": null
+     }
+    },
+    "ID676914": {
+     "person": {
+      "id": 676914,
+      "fullName": "Davis Schneider"
+     },
+     "position": null,
+     "battingOrder": null,
+     "seasonStats": null,
+     "stats": {
+      "batting": {
+       "atBats": 1,
+       "runs": 0,
+       "hits": 0,
+       "doubles": 0,
+       "triples": 0,
+       "homeRuns": 0,
+       "rbi": 0,
+       "baseOnBalls": 0,
+       "strikeOuts": 1,
+       "stolenBases": 0,
+       "caughtStealing": 0,
+       "hitByPitch": 0,
+       "sacFlies": 0,
+       "sacBunts": 0,
+       "groundIntoDoublePlay": 0,
+       "avg": ".000",
+       "ops": null
+      },
+      "pitching": null
+     }
+    },
+    "ID676391": {
+     "person": {
+      "id": 676391,
+      "fullName": "Ernie Clement"
+     },
+     "position": null,
+     "battingOrder": null,
+     "seasonStats": null,
+     "stats": {
+      "batting": {
+       "atBats": 5,
+       "runs": 1,
+       "hits": 3,
+       "doubles": 1,
+       "triples": 0,
+       "homeRuns": 0,
+       "rbi": 0,
+       "baseOnBalls": 0,
+       "strikeOuts": 0,
+       "stolenBases": 1,
+       "caughtStealing": 0,
+       "hitByPitch": 0,
+       "sacFlies": 0,
+       "sacBunts": 0,
+       "groundIntoDoublePlay": 0,
+       "avg": ".600",
+       "ops": null
+      },
+      "pitching": null
+     }
+    },
+    "ID543807": {
+     "person": {
+      "id": 543807,
+      "fullName": "George Springer"
+     },
+     "position": null,
+     "battingOrder": null,
+     "seasonStats": null,
+     "stats": {
+      "batting": {
+       "atBats": 6,
+       "runs": 1,
+       "hits": 3,
+       "doubles": 0,
+       "triples": 0,
+       "homeRuns": 0,
+       "rbi": 0,
+       "baseOnBalls": 0,
+       "strikeOuts": 3,
+       "stolenBases": 0,
+       "caughtStealing": 1,
+       "hitByPitch": 0,
+       "sacFlies": 0,
+       "sacBunts": 0,
+       "groundIntoDoublePlay": 0,
+       "avg": ".500",
+       "ops": null
+      },
+      "pitching": null
+     }
+    },
+    "ID643396": {
+     "person": {
+      "id": 643396,
+      "fullName": "Isiah Kiner-Falefa"
+     },
+     "position": null,
+     "battingOrder": null,
+     "seasonStats": null,
+     "stats": {
+      "batting": {
+       "atBats": 0,
+       "runs": 0,
+       "hits": 0,
+       "doubles": 0,
+       "triples": 0,
+       "homeRuns": 0,
+       "rbi": 0,
+       "baseOnBalls": 0,
+       "strikeOuts": 0,
+       "stolenBases": 0,
+       "caughtStealing": 0,
+       "hitByPitch": 0,
+       "sacFlies": 0,
+       "sacBunts": 1,
+       "groundIntoDoublePlay": 0,
+       "avg": "---",
+       "ops": null
+      },
+      "pitching": null
+     }
+    },
+    "ID664702": {
+     "person": {
+      "id": 664702,
+      "fullName": "Myles Straw"
+     },
+     "position": null,
+     "battingOrder": null,
+     "seasonStats": null,
+     "stats": {
+      "batting": {
+       "atBats": 1,
+       "runs": 0,
+       "hits": 0,
+       "doubles": 0,
+       "triples": 0,
+       "homeRuns": 0,
+       "rbi": 0,
+       "baseOnBalls": 0,
+       "strikeOuts": 0,
+       "stolenBases": 0,
+       "caughtStealing": 0,
+       "hitByPitch": 0,
+       "sacFlies": 0,
+       "sacBunts": 0,
+       "groundIntoDoublePlay": 0,
+       "avg": ".000",
+       "ops": null
+      },
+      "pitching": null
+     }
+    },
+    "ID664770": {
+     "person": {
+      "id": 664770,
+      "fullName": "Nathan Lukes"
+     },
+     "position": null,
+     "battingOrder": null,
+     "seasonStats": null,
+     "stats": {
+      "batting": {
+       "atBats": 3,
+       "runs": 0,
+       "hits": 0,
+       "doubles": 0,
+       "triples": 0,
+       "homeRuns": 0,
+       "rbi": 0,
+       "baseOnBalls": 0,
+       "strikeOuts": 2,
+       "stolenBases": 0,
+       "caughtStealing": 0,
+       "hitByPitch": 0,
+       "sacFlies": 0,
+       "sacBunts": 1,
+       "groundIntoDoublePlay": 0,
+       "avg": ".000",
+       "ops": null
+      },
+      "pitching": null
+     }
+    },
+    "ID665489": {
+     "person": {
+      "id": 665489,
+      "fullName": "Vladimir Guerrero"
+     },
+     "position": null,
+     "battingOrder": null,
+     "seasonStats": null,
+     "stats": {
+      "batting": {
+       "atBats": 5,
+       "runs": 1,
+       "hits": 1,
+       "doubles": 1,
+       "triples": 0,
+       "homeRuns": 0,
+       "rbi": 0,
+       "baseOnBalls": 1,
+       "strikeOuts": 1,
+       "stolenBases": 0,
+       "caughtStealing": 0,
+       "hitByPitch": 0,
+       "sacFlies": 0,
+       "sacBunts": 0,
+       "groundIntoDoublePlay": 0,
+       "avg": ".200",
+       "ops": null
+      },
+      "pitching": null
+     }
+    },
+    "ID453286": {
+     "person": {
+      "id": 453286,
+      "fullName": "Max Scherzer"
+     },
+     "position": null,
+     "battingOrder": null,
+     "seasonStats": null,
+     "stats": {
+      "batting": null,
+      "pitching": {
+       "inningsPitched": "4.1",
+       "hits": 4,
+       "runs": 1,
+       "earnedRuns": 1,
+       "baseOnBalls": 1,
+       "strikeOuts": 3,
+       "homeRuns": 0,
+       "era": "2.08",
+       "wins": 0,
+       "losses": 0,
+       "saves": 0,
+       "pitchCount": null
+      }
+     }
+    },
+    "ID702056": {
+     "person": {
+      "id": 702056,
+      "fullName": "Trey Yesavage"
+     },
+     "position": null,
+     "battingOrder": null,
+     "seasonStats": null,
+     "stats": {
+      "batting": null,
+      "pitching": {
+       "inningsPitched": "1.2",
+       "hits": 1,
+       "runs": 1,
+       "earnedRuns": 1,
+       "baseOnBalls": 1,
+       "strikeOuts": 0,
+       "homeRuns": 1,
+       "era": "5.40",
+       "wins": 0,
+       "losses": 0,
+       "saves": 0,
+       "pitchCount": null
+      }
+     }
+    },
+    "ID656546": {
+     "person": {
+      "id": 656546,
+      "fullName": "Jeff Hoffman"
+     },
+     "position": null,
+     "battingOrder": null,
+     "seasonStats": null,
+     "stats": {
+      "batting": null,
+      "pitching": {
+       "inningsPitched": "1.1",
+       "hits": 1,
+       "runs": 1,
+       "earnedRuns": 1,
+       "baseOnBalls": 0,
+       "strikeOuts": 2,
+       "homeRuns": 1,
+       "era": "6.75",
+       "wins": 0,
+       "losses": 0,
+       "saves": 0,
+       "pitchCount": null
+      }
+     }
+    },
+    "ID605135": {
+     "person": {
+      "id": 605135,
+      "fullName": "Chris Bassitt"
+     },
+     "position": null,
+     "battingOrder": null,
+     "seasonStats": null,
+     "stats": {
+      "batting": null,
+      "pitching": {
+       "inningsPitched": "1.0",
+       "hits": 2,
+       "runs": 1,
+       "earnedRuns": 1,
+       "baseOnBalls": 1,
+       "strikeOuts": 0,
+       "homeRuns": 0,
+       "era": "9.00",
+       "wins": 0,
+       "losses": 0,
+       "saves": 0,
+       "pitchCount": null
+      }
+     }
+    },
+    "ID622554": {
+     "person": {
+      "id": 622554,
+      "fullName": "Seranthony Dominguez"
+     },
+     "position": null,
+     "battingOrder": null,
+     "seasonStats": null,
+     "stats": {
+      "batting": null,
+      "pitching": {
+       "inningsPitched": "1.0",
+       "hits": 1,
+       "runs": 0,
+       "earnedRuns": 0,
+       "baseOnBalls": 2,
+       "strikeOuts": 0,
+       "homeRuns": 0,
+       "era": "0.00",
+       "wins": 0,
+       "losses": 0,
+       "saves": 0,
+       "pitchCount": null
+      }
+     }
+    },
+    "ID669456": {
+     "person": {
+      "id": 669456,
+      "fullName": "Shane Bieber"
+     },
+     "position": null,
+     "battingOrder": null,
+     "seasonStats": null,
+     "stats": {
+      "batting": null,
+      "pitching": {
+       "inningsPitched": "1.0",
+       "hits": 1,
+       "runs": 1,
+       "earnedRuns": 1,
+       "baseOnBalls": 0,
+       "strikeOuts": 0,
+       "homeRuns": 1,
+       "era": "9.00",
+       "wins": 0,
+       "losses": 1,
+       "saves": 0,
+       "pitchCount": null
+      }
+     }
+    },
+    "ID686973": {
+     "person": {
+      "id": 686973,
+      "fullName": "Louie Varland"
+     },
+     "position": null,
+     "battingOrder": null,
+     "seasonStats": null,
+     "stats": {
+      "batting": null,
+      "pitching": {
+       "inningsPitched": "0.2",
+       "hits": 1,
+       "runs": 0,
+       "earnedRuns": 0,
+       "baseOnBalls": 0,
+       "strikeOuts": 0,
+       "homeRuns": 0,
+       "era": "0.00",
+       "wins": 0,
+       "losses": 0,
+       "saves": 0,
+       "pitchCount": null
+      }
+     }
+    }
+   },
+   "batters": [
+    680718,
+    672386,
+    665926,
+    666182,
+    662139,
+    676914,
+    676391,
+    543807,
+    643396,
+    664702,
+    664770,
+    665489
+   ],
+   "pitchers": [
+    453286,
+    702056,
+    656546,
+    605135,
+    622554,
+    669456,
+    686973
+   ]
+  }
+ }
+}
