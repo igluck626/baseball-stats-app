@@ -61,6 +61,12 @@ Two ingests, in this order. Both are idempotent — re-running is safe.
    POST /admin/ingest-retrosheet-gameinfo?postseason=true
    ```
 
+4. **Postseason play-by-play** — translated LOCALLY (the server has no
+   Chadwick): update the event-file checkout, then run
+   `backend/scripts/retrosheet_postseason_plays.py` for the new season and load
+   its games into `retro_postseason_plays` with a guarded write (one row per
+   game; check every game's last play reaches its stored final).
+
 Watch each with its `/status` sibling.
 
 ## How to check it worked

@@ -2697,6 +2697,48 @@ def _named_with_aliases(names: dict) -> dict:
     return {k: _TEAM_NAME_SIMPLIFICATIONS.get(v, v) for k, v in out.items()}
 
 
+def _historical_game_id(game_pk: int) -> str:
+    """The Retrosheet game id a synthetic negative pk encodes — the inverse of
+    `_synthetic_game_pk`: date, home code in base 36, and game number."""
+    v = -game_pk
+    date_i, rest = divmod(v, 1_000_000)
+    code36, num = divmod(rest, 10)
+    chars = ""
+    for _ in range(3):
+        code36, r = divmod(code36, 36)
+        chars = _RETRO_CODE_ALPHABET[r] + chars
+    return f"retro-{chars}{date_i}{num}"
+
+
+@app.get("/games/{game_pk}/historical-plays")
+def historical_plays(game_pk: int):
+    """A past postseason game's play-by-play, translated from Retrosheet's event
+    files (`retro_postseason_plays`), as `{"data": [...]}` in balldontlie's
+    /plays shape so the app decodes it with the same model. 404 when we hold
+    none — every regular-season game today; the app then shows no plays.
+
+    The app asks only when balldontlie has nothing for the game: before 2002,
+    and the 2010-2014 postseasons it never published."""
+    if not connection.db_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    if game_pk >= 0:
+        raise HTTPException(status_code=400, detail="Not a historical game id")
+    game_id = _historical_game_id(game_pk)
+    cache_key = f"historical-plays:{game_id}"
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
+    with connection.get_session() as db:
+        row = db.execute(_sa_text("SELECT plays FROM retro_postseason_plays WHERE game_id = :gid"),
+                         {"gid": game_id}).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"No plays for {game_id}")
+    plays = row[0] if isinstance(row[0], list) else json.loads(row[0])
+    out = {"data": [{**p, "game_id": game_pk} for p in plays]}
+    _cache.set(cache_key, out, ttl_seconds=3600)    # translated once a year; nothing changes it in between
+    return out
+
+
 @app.get("/games/{game_pk}/historical-boxscore")
 def historical_boxscore(game_pk: int):
     """A box score for a game older than BDL's coverage, assembled from our own
@@ -2752,16 +2794,8 @@ def historical_boxscore(game_pk: int):
             detail="Not a historical game id — those are negative by construction "
                    "(see `_synthetic_game_pk`). Use the live box score for this one.")
 
-    v = -game_pk
-    date_i, rest = divmod(v, 1_000_000)
-    code36, num = divmod(rest, 10)
-    chars = ""
-    for _ in range(3):
-        code36, r = divmod(code36, 36)
-        chars = _RETRO_CODE_ALPHABET[r] + chars
-    home_code = chars
-    date_s = str(date_i)
-    game_id = f"retro-{home_code}{date_s}{num}"
+    game_id = _historical_game_id(game_pk)
+    home_code, date_s = game_id[6:9], game_id[9:17]
 
     with connection.get_session() as db:
         bat = db.execute(_sa_text(_BOX_BAT_SQL), {"gid": game_id}).fetchall()

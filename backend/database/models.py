@@ -1,5 +1,5 @@
 from sqlalchemy import (
-    Boolean, CheckConstraint, Column, Date, DateTime, Float, Index, Integer, String, Text,
+    JSON, Boolean, CheckConstraint, Column, Date, DateTime, Float, Index, Integer, String, Text,
     UniqueConstraint, text,
 )
 from sqlalchemy.orm import DeclarativeBase
@@ -1310,3 +1310,29 @@ class PostseasonPitchingGameLog(Base):
     # counter), never the daybyday P_PITCH — wrong in 2000-02, 2023 and 2025.
     # NULL before 1988 and wherever the event file declares no pitch data.
     pitches       = Column(Integer, nullable=True)
+
+
+class RetroPostseasonPlays(Base):
+    """Readable play-by-play for one Retrosheet postseason game, one row per game.
+
+    Translated locally from the event files by
+    `scripts/retrosheet_postseason_plays.py` (Chadwick is not on the server)
+    and served by `/games/{pk}/historical-plays` for any past postseason game
+    balldontlie has no plays for: everything before 2002 and the 2010-2014
+    postseasons.
+
+    `plays` is the game's rows in balldontlie's /plays shape and key names
+    (order, type, text, inning, inning_type, away_score, home_score,
+    scoring_play, score_value, outs), so the app decodes them as `BDLPlay`.
+    One JSON document per game rather than ~260 rows each: the app only ever
+    reads a whole game, and it keeps 485,000 rows out of the table count.
+
+    New table, so `create_all` builds it whole; a column added later must also
+    go in a `connection` startup list.
+    """
+    __tablename__ = "retro_postseason_plays"
+
+    game_id = Column(String, primary_key=True)      # "retro-NYA195610080"
+    season  = Column(Integer, nullable=False, index=True)
+    plays   = Column(JSON, nullable=False)
+
