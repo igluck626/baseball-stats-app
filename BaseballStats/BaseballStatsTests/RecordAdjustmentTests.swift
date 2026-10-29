@@ -849,6 +849,107 @@ struct RecordAdjustmentTests {
         #expect(short.shown == 3 && short.expected == 4)
     }
 
+    private func play(_ order: Int, _ type: String, inning: Int, top: Bool,
+                      away: Int, home: Int, _ text: String?) -> BDLPlay {
+        BDLPlay(gameId: 1, order: order, type: type, text: text,
+                homeScore: home, awayScore: away, inning: inning,
+                inningType: top ? "Top" : "Bottom", scoringPlay: false,
+                scoreValue: nil, outs: nil, balls: nil, strikes: nil,
+                batterId: nil, pitcherId: nil, pitchType: nil,
+                pitchVelocity: nil, trajectory: nil)
+    }
+
+    /// Isaac's report: LAD-CIN 2026-09-09, the Dodgers' run that made it 7-1
+    /// read "Mey relieved Lowder". The score moves on the new pitcher's
+    /// opening row and the relief note is the next sentence; the run is the
+    /// wild pitch after it. Rows copied from balldontlie game 5059967.
+    @Test func aPitchingChangeIsNeverTheScoringPlay() {
+        let plays = [
+            play(239, "Play Result", inning: 4, top: false, away: 1, home: 6,
+                 "E. Hernández doubled to left, Feduccia scored and Freeland scored."),
+            play(244, "End Batter/Pitcher", inning: 4, top: false, away: 1, home: 6, nil),
+            play(245, "Start Batter/Pitcher", inning: 4, top: false, away: 1, home: 7, "Luis Mey pitches to Will Smith"),
+            play(246, "Play Result", inning: 4, top: false, away: 1, home: 6, "Mey relieved Lowder"),
+            play(247, "Ball", inning: 4, top: false, away: 1, home: 6, "Pitch 1 : Ball 1"),
+            play(250, "Wild Pitch", inning: 4, top: false, away: 1, home: 7, "E. Hernández scored on Mey wild pitch."),
+            play(251, "Play Result", inning: 4, top: false, away: 1, home: 7, "E. Hernández scored on Mey wild pitch."),
+        ]
+        let rows = PlaysView.scoringRows(from: plays)
+        #expect(rows.count == 2)
+        #expect(rows.last?.text == "E. Hernández scored on Mey wild pitch.")
+        #expect(rows.last?.homeScore == 7)
+    }
+
+    /// Some eras raise the score one run per row. Fielder's three-run homer
+    /// (2009, balldontlie game 33621) moved it on three rows that all found
+    /// the same sentence, and was listed three times.
+    @Test func aRunPerRowIsStillOnePlay() {
+        let hr = "P Fielder homered to center, J Kendall and C Counsell scored."
+        let plays = [
+            play(1, "Home Run", inning: 3, top: true, away: 1, home: 0, nil),
+            play(2, "Advancing", inning: 3, top: true, away: 2, home: 0, nil),
+            play(3, "Advancing", inning: 3, top: true, away: 3, home: 0, nil),
+            play(4, "Play Result", inning: 3, top: true, away: 3, home: 0, hr),
+            play(5, "End Batter/Pitcher", inning: 3, top: true, away: 3, home: 0, nil),
+            play(6, "Start Batter/Pitcher", inning: 3, top: false, away: 3, home: 1, "J Votto batting"),
+            play(7, "Play Result", inning: 3, top: false, away: 3, home: 1, "J Votto homered to right."),
+        ]
+        let rows = PlaysView.scoringRows(from: plays)
+        #expect(rows.map(\.text) == [hr, "J Votto homered to right."])
+        #expect(rows.first?.awayScore == 3, "the merged row carries the play's final score")
+        #expect(rows.first?.id == 1)
+    }
+
+    /// The sentence can sit past a fixed window: the 2018 postseason (game
+    /// 58471) moved the score on Bogaerts's first pitch, and five pitches and
+    /// a wild pitch came before "Bogaerts doubled to left, Benintendi scored."
+    /// A runner's advance is not a run and must not be taken instead.
+    @Test func theSentenceIsFoundToTheEndOfTheAtBat() {
+        let plays = [
+            play(582, "Start Batter/Pitcher", inning: 5, top: true, away: 0, home: 0, "Charlie Morton pitches to Xander Bogaerts"),
+            play(583, "Strike Looking", inning: 5, top: true, away: 1, home: 0, "Pitch 1 : Strike 1 Looking"),
+            play(584, "Ball", inning: 5, top: true, away: 1, home: 0, "Pitch 2 : Ball 1"),
+            play(585, "Foul Ball", inning: 5, top: true, away: 1, home: 0, "Pitch 3 : Strike 2 Foul"),
+            play(586, "Ball", inning: 5, top: true, away: 1, home: 0, "Pitch 4 : Ball 2"),
+            play(587, "Ball", inning: 5, top: true, away: 1, home: 0, "Pitch 5 : Ball 3"),
+            play(588, "Wild Pitch", inning: 5, top: true, away: 0, home: 0, "Benintendi to third on wild pitch by Morton."),
+            play(589, "Play Result", inning: 5, top: true, away: 0, home: 0, "Benintendi to third on wild pitch by Morton."),
+            play(590, "Double", inning: 5, top: true, away: 1, home: 0, "Pitch 6 : Ball In Play"),
+            play(591, "Play Result", inning: 5, top: true, away: 1, home: 0, "Bogaerts doubled to left, Benintendi scored."),
+            play(592, "End Batter/Pitcher", inning: 5, top: true, away: 1, home: 0, nil),
+        ]
+        let rows = PlaysView.scoringRows(from: plays)
+        #expect(rows.count == 1)
+        #expect(rows.first?.text == "Bogaerts doubled to left, Benintendi scored.")
+    }
+
+    /// When the provider sent no sentence for a run (a 2005 game, 24663), the
+    /// row says "Run scored" rather than borrowing the next batter's out —
+    /// the search stops at the end of the at-bat.
+    @Test func aRunWithNoSentenceDoesNotBorrowTheNextPlay() {
+        let plays = [
+            play(634, "Double", inning: 7, top: false, away: 0, home: 0, "Pitch 6: in play"),
+            play(635, "Advancing On Force", inning: 7, top: false, away: 0, home: 1, nil),
+            play(637, "End Batter/Pitcher", inning: 7, top: false, away: 0, home: 1, nil),
+            play(638, "Start Batter/Pitcher", inning: 7, top: false, away: 0, home: 1, "S Hairston batting"),
+            play(640, "Play Result", inning: 7, top: false, away: 0, home: 1, "S Hairston popped out to second."),
+        ]
+        let rows = PlaysView.scoringRows(from: plays)
+        #expect(rows.count == 1)
+        #expect(rows.first?.text == nil)
+    }
+
+    @Test func runWordsInEveryEraWording() {
+        for t in ["E. Hernández scored on Mey wild pitch.", "Larnach homered to right (394 feet).",
+                  "Run scored", "J Hardy reached on infield single to third, C McGehee scored"] {
+            #expect(PlaysView.reportsARun(t), "\(t) reports a run")
+        }
+        for t in ["Mey relieved Lowder", "Benintendi to third on wild pitch by Morton.",
+                  "Rafaela stole second, Rafaela safe at third on throwing error by catcher Higashioka."] {
+            #expect(!PlaysView.reportsARun(t), "\(t) is not a run")
+        }
+    }
+
     /// A shutout reconciles like any other game — zero on one side is not a
     /// missing side.
     @Test func aShutoutReconciles() {

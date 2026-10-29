@@ -463,10 +463,10 @@ struct PlaysView: View {
     ///
     /// A RUN CROSSING THE PLATE IS ERA-INDEPENDENT. Every row of every era
     /// carries the running score, so the rows where it rises are the scoring
-    /// plays by definition — and a list built that way cannot double-count or
-    /// run backwards, because it is monotonic by construction.
+    /// plays by definition — and a list built that way cannot run backwards,
+    /// because it is monotonic by construction.
     ///
-    /// TWO WRINKLES, both measured rather than assumed:
+    /// THREE WRINKLES, all measured rather than assumed:
     ///
     /// 1. The score is peeked and reverted. A row mid-at-bat can report a
     ///    lower score than one already seen (five such rows in a 2026 game,
@@ -477,7 +477,17 @@ struct PlaysView: View {
     ///    sentence is two rows later; in 2021 on "Pitch 7 : Ball In Play" with
     ///    the sentence next; in 2005 on a blank row with the sentence three
     ///    later. So the row is found by the score and the words are taken from
-    ///    the rows that follow it.
+    ///    the rows that follow it — to the end of THAT at-bat, and only a
+    ///    sentence that reports a run. The first sentence after the move was
+    ///    taken until 2026-10-29, and it is often something else: "Mey
+    ///    relieved Lowder" headlined a wild-pitch run (Isaac saw it, LAD-CIN
+    ///    2026-09-09), a runner's advance on a wild pitch headlined Bogaerts's
+    ///    double. Twelve of 154 rows were wrong that way in a 119-game sample.
+    /// 3. SOME ERAS MOVE THE SCORE ONE RUN PER ROW. Fielder's three-run homer
+    ///    (2009) raised it on three rows, each finding the same sentence, so
+    ///    it was listed three times — 151 such repeats in the sample. Rows that
+    ///    find the same sentence are one play and merge into one row carrying
+    ///    the later score.
     private func derivedScoringRows() -> [ScoringRow] { Self.scoringRows(from: plays) }
 
     /// Pure, and deliberately so: the reconciliation test drives THIS with
@@ -496,37 +506,70 @@ struct PlaysView: View {
             let scoredAway = newAway > maxAway
             maxHome = newHome
             maxAway = newAway
+            let source = Self.describingRow(plays, from: i)
+            if let source, let last = rows.last, last.sourceIndex == source {
+                rows[rows.count - 1] = ScoringRow(
+                    id:          last.id,
+                    inning:      last.inning,
+                    inningType:  last.inningType,
+                    text:        last.text,
+                    awayScore:   newAway,
+                    homeScore:   newHome,
+                    scoredHome:  last.scoredHome || scoredHome,
+                    scoredAway:  last.scoredAway || scoredAway,
+                    sourceIndex: source,
+                )
+                continue
+            }
             rows.append(ScoringRow(
-                id:         play.order,
-                inning:     play.inning,
-                inningType: play.inningType,
-                text:       Self.descriptionFollowing(plays, from: i),
-                awayScore:  newAway,
-                homeScore:  newHome,
-                scoredHome: scoredHome,
-                scoredAway: scoredAway,
+                id:          play.order,
+                inning:      play.inning,
+                inningType:  play.inningType,
+                text:        source.flatMap { plays[$0].text?.trimmingCharacters(in: .whitespacesAndNewlines) },
+                awayScore:   newAway,
+                homeScore:   newHome,
+                scoredHome:  scoredHome,
+                scoredAway:  scoredAway,
+                sourceIndex: source,
             ))
         }
         return rows
     }
 
-    /// The first sentence at or after `index` that describes a play rather
-    /// than narrating the count.
+    /// The index of the sentence that describes the run scored at `index`:
+    /// the first one, from there to the end of that at-bat, that describes a
+    /// play rather than narrating the count AND reports a run. nil when the
+    /// provider sent none (a handful of 2002-05 runs), which the row shows as
+    /// "Run scored" rather than borrowing the next batter's out.
     ///
-    /// ⚠️ THIS IS A DENYLIST AND DENYLISTS GO STALE. If the provider invents a
-    /// new noise format, it will be mistaken for a description and a scoring
-    /// row will read "Pitch 3 : Ball 2". That is exactly why the list is
-    /// RECONCILED against the final score — see `reconciliation`. The
-    /// arithmetic is the guard; this is only the heuristic it protects.
-    private static func descriptionFollowing(_ plays: [BDLPlay], from index: Int) -> String? {
-        let window = min(plays.count, index + 8)
-        for j in index..<window {
+    /// The at-bat ends at its "End Batter/Pitcher" row; 25 rows caps a feed
+    /// that never says so. A fixed eight rows stopped short of Bogaerts's
+    /// double in a 2018 postseason game, after five pitches and a wild pitch.
+    ///
+    /// ⚠️ THE NARRATION TEST IS A DENYLIST AND DENYLISTS GO STALE — the
+    /// run-word test narrows what it can let through, and the list is still
+    /// RECONCILED against the final score (`reconciliation`). The arithmetic
+    /// is the guard; these are only the heuristics it protects.
+    private static func describingRow(_ plays: [BDLPlay], from index: Int) -> Int? {
+        var end = min(plays.count, index + 25)
+        for k in (index + 1)..<max(index + 1, end) where plays[k].type == "End Batter/Pitcher" {
+            end = k + 1
+            break
+        }
+        for j in index..<end {
             guard let raw = plays[j].text?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !raw.isEmpty else { continue }
-            if isNarration(raw) { continue }
-            return raw
+                  !raw.isEmpty, !isNarration(raw), reportsARun(raw) else { continue }
+            return j
         }
         return nil
+    }
+
+    /// True for a sentence that says a run crossed the plate — "scored",
+    /// "scores", "homered", "home run", "grand slam" — in every era's wording.
+    static func reportsARun(_ text: String) -> Bool {
+        let lower = text.lowercased()
+        return lower.contains("scor") || lower.contains("homer")
+            || lower.contains("home run") || lower.contains("grand slam")
     }
 
     /// True for a row that narrates rather than describes: a pitch count, an
@@ -579,6 +622,9 @@ struct PlaysView: View {
         let homeScore: Int
         let scoredHome: Bool
         let scoredAway: Bool
+        /// Index in the play list of the sentence shown; rows that share one
+        /// are one play and merge.
+        var sourceIndex: Int? = nil
     }
 
     // MARK: All mode (PA-grouped)
