@@ -102,6 +102,15 @@ struct Game: Codable, Identifiable, Hashable {
         return y >= Self.bdlFirstPlaysSeason && bdlGameId != nil
     }
 
+    /// Whether WE hold play-by-play for this game: every past postseason game,
+    /// translated from Retrosheet's event files (`/games/{pk}/historical-plays`).
+    /// Used when the provider has none — before 2002, and the 2010-2014
+    /// postseasons balldontlie never published.
+    var hasRetrosheetPlays: Bool { isHistorical && !isRegularSeason }
+
+    /// Whether the box score offers a Plays section at all.
+    var hasPlays: Bool { providerHasPlays || hasRetrosheetPlays }
+
     /// Last season Retrosheet publishes, and the last our tables hold.
     ///
     /// ⚠️ NO LONGER THE SOURCE OF TRUTH — see `RetrosheetCoverage`, which reads

@@ -6,7 +6,9 @@
 //  (captured 2026-10-29 from production, read-only; the box score again after
 //  the lineup load):
 //  `testdata/games-by-date/2025-11-01-world-series-g7.json` (the slate) and
-//  `…-boxscore.json` (its box score).
+//  `…-boxscore.json` (its box score). Plays: `2013-10-30-world-series-g6-plays.json`,
+//  `/games/{pk}/historical-plays` for a game balldontlie has no plays for, built
+//  from the load plan's rows exactly as the endpoint shapes them.
 //
 
 import Foundation
@@ -50,6 +52,41 @@ struct HistoricalPostseasonGamesTests {
                             bdlAwayTeamId: nil, bdlHomeTeamId: nil, bdlGameId: 4506999,
                             seasonType: g.seasonType, seriesLine: g.seriesLine)
         #expect(attached.seriesLine == g.seriesLine && attached.providerHasPlays)
+    }
+
+    /// A past postseason game offers plays even with no provider id: ours,
+    /// translated from Retrosheet. A regular-season one does not.
+    @Test func aPastPostseasonGameHasOurPlays() throws {
+        let g = try game7()
+        #expect(g.hasRetrosheetPlays && g.hasPlays)
+        let json = #"{"gamePk": -1, "gameDate": "1986-07-04T00:00:00Z", "status": {"abstractGameState": "Final", "detailedState": "Final", "statusCode": "F", "codedGameState": "F"}, "teams": {"away": {"team": {"id": 0, "name": "A", "abbreviation": "A"}, "score": 1, "isWinner": false}, "home": {"team": {"id": 0, "name": "B", "abbreviation": "B"}, "score": 2, "isWinner": true}}}"#
+        let regular = try JSONDecoder().decode(Game.self, from: Data(json.utf8))
+        #expect(!regular.hasRetrosheetPlays && !regular.hasPlays)
+    }
+
+    /// The translated plays decode as `BDLPlay` and drive the same Scoring and
+    /// All lists: 2013 World Series Game 6, where balldontlie has none.
+    @Test func translatedPlaysRenderLikeTheProvidersOwn() throws {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let plays = try decoder.decode(BDLDataEnvelope<BDLPlay>.self,
+                                       from: fixture("2013-10-30-world-series-g6-plays")).data
+        let scoring = PlaysView.scoringRows(from: plays)
+        #expect(scoring.map { "\($0.awayScore)-\($0.homeScore)" } == ["0-3", "0-4", "0-5", "0-6", "1-6"])
+        #expect(scoring.first?.text?.hasPrefix("Victorino doubled to left") == true)
+        #expect(PlaysView.reconcile(plays: plays, finalAway: 1, finalHome: 6).matches)
+        // Every at-bat is a batted row carrying its own result and out count —
+        // bottom of the 4th, nine of them, though two pitching changes fall
+        // between at-bats there (inside an at-bat's group, as balldontlie's do).
+        let halves = PlaysView.groupedHalfInnings(plays)
+        let b4 = try #require(halves.first { $0.inning == 4 && $0.inningType == "Bottom" })
+        #expect(b4.atBats.count == 9 && b4.atBats.allSatisfy { $0.batterId != nil })
+        #expect(b4.atBats.compactMap(\.resultText).count == 9)
+        #expect(b4.atBats.last?.outs == 3)
+        // A change made between innings opens the next half as an announcement.
+        let t9 = try #require(halves.first { $0.inning == 9 && $0.inningType == "Top" })
+        #expect(t9.atBats.first?.batterId == nil)
+        #expect(t9.atBats.first?.plays.first?.text == "Uehara relieved Workman")
     }
 
     @Test func aRegularSeasonPayloadHasNoLine() throws {

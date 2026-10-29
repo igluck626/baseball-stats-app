@@ -160,7 +160,7 @@ final class BoxScoreViewModel: ObservableObject {
         // slate could not match, goes without.
         if game.usesRetrosheetBoxScore {
             await loadHistoricalBoxScore()
-            if game.providerHasPlays { await loadPlays() }
+            if game.hasPlays { await loadPlays() }
             isLoading = false
             return
         }
@@ -417,8 +417,15 @@ final class BoxScoreViewModel: ObservableObject {
         // synthetic negative id that BDL has never heard of; the provider id
         // is the one the slate attached by matching the two lists. For a
         // BDL-served game the two are the same number.
-        guard let providerId = game.bdlGameId else { return }
-        if let p = try? await bdl.getPlays(gameId: providerId) {
+        if let providerId = game.bdlGameId,
+           let p = try? await bdl.getPlays(gameId: providerId), !p.isEmpty {
+            self.plays = p
+            return
+        }
+        // The provider has none (before 2002, or the 2010-2014 postseasons it
+        // never published): a past postseason game's plays from Retrosheet.
+        if game.hasRetrosheetPlays,
+           let p = try? await api.getHistoricalPlays(gamePk: game.gamePk) {
             self.plays = p
         }
     }
@@ -1344,10 +1351,11 @@ struct BoxScoreView: View {
             // Play-by-play is a BDL feed that floors at season 2000, so for a
             // historical game there is nothing behind this — absent rather than
             // an empty list under a divider.
-            // `providerHasPlays` rather than an era test: it is true for any
-            // season from 2002 that the slate managed to match, whichever
-            // source built the box score above.
-            if !isLiveNow && vm.game.providerHasPlays {
+            // `hasPlays` rather than an era test: true for any season from 2002
+            // that the slate managed to match, whichever source built the box
+            // score above, and for every past postseason game, whose plays we
+            // translate from Retrosheet when the provider has none.
+            if !isLiveNow && vm.game.hasPlays {
                 Divider().opacity(0.4)
                 PlaysView(
                     plays:               vm.plays,

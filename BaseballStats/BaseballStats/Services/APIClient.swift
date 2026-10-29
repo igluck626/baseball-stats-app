@@ -300,6 +300,19 @@ final class APIClient {
         return try await getOptional(url)
     }
 
+    /// `GET /games/{pk}/historical-plays` — a past postseason game's plays,
+    /// translated from Retrosheet, in balldontlie's /plays shape (snake case,
+    /// `{"data": [...]}`) so they decode as `BDLPlay`. nil on 404.
+    func getHistoricalPlays(gamePk: Int) async throws -> [BDLPlay]? {
+        let url = try buildURL(path: "/games/\(gamePk)/historical-plays")
+        do {
+            let envelope: BDLDataEnvelope<BDLPlay> = try await get(url, using: snakeCaseDecoder)
+            return envelope.data
+        } catch APIError.notFound {
+            return nil
+        }
+    }
+
     /// `yyyy-MM-dd` in the LOCAL timezone, matching
     /// `ScoresViewModel.scheduleDateFormatter` — because `selectedDate` is a
     /// LOCAL midnight and the whole date strip keys on local days.
