@@ -74,6 +74,14 @@ struct HistoricalPostseasonGamesTests {
         let winner = lad.pitchers.compactMap { lad.players["ID\($0)"] }
             .first { ($0.stats?.pitching?.wins ?? 0) > 0 }
         #expect(winner?.person.fullName == "Yoshinobu Yamamoto")
+        // Pitch counts from Retrosheet's event files (loaded 2026-10-29), on every pitcher.
+        let pc = { (side: BoxScoreTeam, name: String) in
+            side.players.values.first { $0.person.fullName == name }?.stats?.pitching?.pitchCount }
+        #expect(pc(lad, "Shohei Ohtani") == 51 && pc(lad, "Yoshinobu Yamamoto") == 34)
+        #expect(pc(tor, "Max Scherzer") == 54)
+        #expect((lad.pitchers + tor.pitchers).count == 13)
+        #expect(lad.pitchers.allSatisfy { lad.players["ID\($0)"]?.stats?.pitching?.pitchCount != nil })
+        #expect(tor.pitchers.allSatisfy { tor.players["ID\($0)"]?.stats?.pitching?.pitchCount != nil })
         // The line beside each man is his 2025 POSTSEASON through Game 7, as
         // balldontlie's is on a 2026 playoff box score: Yamamoto went 5-1, 1.45.
         #expect(winner?.seasonStats?.pitching?.era == "1.45")
