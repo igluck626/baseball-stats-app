@@ -3,7 +3,8 @@
 //
 //  Past postseason games on the Scores tab (Isaac, 2026-10-29). Both fixtures
 //  are the backend's OWN output for 2025-11-01, the 2025 World Series Game 7
-//  (captured 2026-10-29 from production data, read-only):
+//  (captured 2026-10-29 from production, read-only; the box score again after
+//  the lineup load):
 //  `testdata/games-by-date/2025-11-01-world-series-g7.json` (the slate) and
 //  `…-boxscore.json` (its box score).
 //
@@ -60,9 +61,16 @@ struct HistoricalPostseasonGamesTests {
     @Test func theBoxScoreHasBothStaffsAndPostseasonLines() throws {
         let box = try JSONDecoder().decode(HistoricalBoxScore.self, from: fixture("2025-11-01-world-series-g7-boxscore"))
         #expect(box.gameId == "retro-TOR202511010")
-        #expect(box.batterOrdering == "alphabetical")      // postseason lines carry no lineup slot
+        // The real lineup and staff order, from the postseason lines' slot/seq
+        // (loaded 2026-10-29): Ohtani led off as DH and started on the mound.
+        #expect(box.batterOrdering == "lineup")
         let lad = box.teams.away, tor = box.teams.home
         #expect(lad.pitchers.count == 6 && tor.pitchers.count == 7)
+        let ladOrder = lad.batters.prefix(5).compactMap { lad.players["ID\($0)"]?.person.fullName }
+        #expect(ladOrder == ["Shohei Ohtani", "Will Smith", "Freddie Freeman", "Mookie Betts", "Max Muncy"])
+        #expect(lad.players["ID\(lad.batters[0])"]?.position?.abbreviation == "DH")
+        let ladStaff = lad.pitchers.compactMap { lad.players["ID\($0)"]?.person.fullName }
+        #expect(ladStaff.first == "Shohei Ohtani" && ladStaff.last == "Yoshinobu Yamamoto")
         let winner = lad.pitchers.compactMap { lad.players["ID\($0)"] }
             .first { ($0.stats?.pitching?.wins ?? 0) > 0 }
         #expect(winner?.person.fullName == "Yoshinobu Yamamoto")
