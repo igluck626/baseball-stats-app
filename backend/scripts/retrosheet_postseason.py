@@ -123,6 +123,9 @@ def parse_year(year: int, playing_text: str, teams_text: Optional[str],
                         "SO": i(r.get("P_SO")), "HR": i(r.get("P_HR")), "HBP": i(r.get("P_HP")),
                         "W": i(r.get("P_W")), "L": i(r.get("P_L")), "SV": i(r.get("P_SV")),
                         "GS": i(r.get("P_GS")),
+                        # No `pitches`: the daybyday P_PITCH is wrong in 2000-02,
+                        # 2023 and 2025. The count comes from the event files
+                        # (refresh_pitches' counter), loaded separately.
                         "slot": i(r.get("slot")), "seq": i(r.get("seq"))})
     return bat, pit, unmapped
 

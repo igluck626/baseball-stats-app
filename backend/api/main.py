@@ -2539,9 +2539,10 @@ ORDER BY g."IP" DESC NULLS LAST, name
 
 # The same two reads for a POSTSEASON game, from Retrosheet's postseason lines,
 # which carry the lineup slot, sequence and position as the regular rows do —
-# so the lineup and appearance-order rules below apply unchanged. No pitch count
-# (NULL), and a row loaded before the lineup columns reads NULL there and takes
-# the alphabetical / innings fallbacks, which `batterOrdering` reports.
+# so the lineup and appearance-order rules below apply unchanged — and the pitch
+# count from the event files (NULL before 1988, as on the regular rows). A row
+# loaded without the lineup columns takes the alphabetical / innings fallbacks,
+# which `batterOrdering` reports.
 _BOX_POST_BAT_SQL = """
 SELECT b.player_id, b.home_away, p.name,
        b."AB", b."R", b."H", b.doubles, b.triples, b."HR", b."RBI",
@@ -2563,7 +2564,7 @@ ORDER BY NULLIF(b.slot, 0) NULLS LAST, b.seq NULLS LAST, p.name
 _BOX_POST_PIT_SQL = """
 SELECT g.player_id, g.home_away, COALESCE(p.name, pl.name) AS name,
        g."IP", g."H", g."R", g."ER", g."BB", g."SO", g."HR",
-       NULL::int AS pitches, g.result, g.seq
+       g.pitches, g.result, g.seq
 FROM postseason_pitching_gamelogs g
 LEFT JOIN pitchers p ON p.player_id = g.player_id
 LEFT JOIN players  pl ON pl.player_id = g.player_id
@@ -2733,7 +2734,7 @@ def historical_boxscore(game_pk: int):
 
     POSTSEASON GAMES come from Retrosheet's postseason lines when the regular
     tables have no row for the id (the two id sets never overlap). Those lines
-    carry the lineup, position and appearance order but no pitch count. The
+    carry the lineup, position, appearance order and pitch count. The
     season line beside each row is that postseason's through this game, as on
     a balldontlie playoff game.
 

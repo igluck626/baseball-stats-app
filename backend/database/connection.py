@@ -193,6 +193,8 @@ _POSTSEASON_BATTING_GAMELOGS_NEW_COLUMNS: list[tuple[str, str]] = [
 _POSTSEASON_PITCHING_GAMELOGS_NEW_COLUMNS: list[tuple[str, str]] = [
     ("slot", "INTEGER"),
     ("seq",  "INTEGER"),
+    # pitch count, from the event files (see PostseasonPitchingGameLog)
+    ("pitches", "INTEGER"),
 ]
 
 _RETRO_GAME_INFO_NEW_COLUMNS: list[tuple[str, str]] = [

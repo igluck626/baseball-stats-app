@@ -93,6 +93,10 @@ for name in ("_POSTSEASON_GAMES_BY_DATE_SQL", "_POSTSEASON_ROUND_GAMES_SQL", "_B
     sql = ns[name]
     check(f"{name}: postseason table, Retrosheet rows only",
           "postseason_" in sql and "source = 'retrosheet'" in sql)
+check("the postseason pitching read carries the pitch count and appearance order",
+      "g.pitches" in ns["_BOX_POST_PIT_SQL"] and "g.seq" in ns["_BOX_POST_PIT_SQL"])
+check("the postseason batting read orders by the lineup",
+      "ORDER BY NULLIF(b.slot, 0)" in ns["_BOX_POST_BAT_SQL"])
 check("the slate's postseason read still joins game info, so linescores appear once loaded",
       "LEFT JOIN retro_game_info" in ns["_POSTSEASON_GAMES_BY_DATE_SQL"])
 

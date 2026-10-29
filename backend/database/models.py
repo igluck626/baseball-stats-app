@@ -1306,3 +1306,7 @@ class PostseasonPitchingGameLog(Base):
     # Appearance order (seq), as on `PitchingGameLog`. NULL on a balldontlie row.
     slot          = Column(Integer, nullable=True)
     seq           = Column(Integer, nullable=True)
+    # Pitches thrown, counted from Retrosheet's EVENT files (refresh_pitches'
+    # counter), never the daybyday P_PITCH — wrong in 2000-02, 2023 and 2025.
+    # NULL before 1988 and wherever the event file declares no pitch data.
+    pitches       = Column(Integer, nullable=True)
