@@ -57,7 +57,7 @@ struct HistoricalPostseasonGamesTests {
         #expect(g.seriesLine == nil && g.isRegularSeason)
     }
 
-    @Test func theBoxScoreHasBothStaffsAndNoSeasonLine() throws {
+    @Test func theBoxScoreHasBothStaffsAndPostseasonLines() throws {
         let box = try JSONDecoder().decode(HistoricalBoxScore.self, from: fixture("2025-11-01-world-series-g7-boxscore"))
         #expect(box.gameId == "retro-TOR202511010")
         #expect(box.batterOrdering == "alphabetical")      // postseason lines carry no lineup slot
@@ -66,7 +66,11 @@ struct HistoricalPostseasonGamesTests {
         let winner = lad.pitchers.compactMap { lad.players["ID\($0)"] }
             .first { ($0.stats?.pitching?.wins ?? 0) > 0 }
         #expect(winner?.person.fullName == "Yoshinobu Yamamoto")
-        let everyone = Array(lad.players.values) + Array(tor.players.values)
-        #expect(everyone.allSatisfy { $0.seasonStats == nil })
+        // The line beside each man is his 2025 POSTSEASON through Game 7, as
+        // balldontlie's is on a 2026 playoff box score: Yamamoto went 5-1, 1.45.
+        #expect(winner?.seasonStats?.pitching?.era == "1.45")
+        #expect(winner?.seasonStats?.pitching?.wins == 5 && winner?.seasonStats?.pitching?.losses == 1)
+        let bichette = tor.players.values.first { $0.person.fullName == "Bo Bichette" }
+        #expect(bichette?.seasonStats?.batting?.avg == ".348")
     }
 }

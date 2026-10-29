@@ -16,7 +16,17 @@
      },
      "position": null,
      "battingOrder": null,
-     "seasonStats": null,
+     "seasonStats": {
+      "batting": {
+       "avg": ".078",
+       "ops": ".211",
+       "hits": 4,
+       "doubles": 1,
+       "triples": 0,
+       "homeRuns": 0
+      },
+      "pitching": null
+     },
      "stats": {
       "batting": {
        "atBats": 1,
@@ -47,7 +57,17 @@
      },
      "position": null,
      "battingOrder": null,
-     "seasonStats": null,
+     "seasonStats": {
+      "batting": {
+       "avg": ".250",
+       "ops": ".649",
+       "hits": 16,
+       "doubles": 4,
+       "triples": 0,
+       "homeRuns": 1
+      },
+      "pitching": null
+     },
      "stats": {
       "batting": {
        "atBats": 5,
@@ -78,7 +98,17 @@
      },
      "position": null,
      "battingOrder": null,
-     "seasonStats": null,
+     "seasonStats": {
+      "batting": {
+       "avg": ".221",
+       "ops": ".720",
+       "hits": 15,
+       "doubles": 5,
+       "triples": 0,
+       "homeRuns": 2
+      },
+      "pitching": null
+     },
      "stats": {
       "batting": {
        "atBats": 6,
@@ -109,7 +139,17 @@
      },
      "position": null,
      "battingOrder": null,
-     "seasonStats": null,
+     "seasonStats": {
+      "batting": {
+       "avg": ".214",
+       "ops": ".764",
+       "hits": 12,
+       "doubles": 2,
+       "triples": 0,
+       "homeRuns": 3
+      },
+      "pitching": null
+     },
      "stats": {
       "batting": {
        "atBats": 4,
@@ -140,7 +180,17 @@
      },
      "position": null,
      "battingOrder": null,
-     "seasonStats": null,
+     "seasonStats": {
+      "batting": {
+       "avg": ".278",
+       "ops": ".760",
+       "hits": 5,
+       "doubles": 0,
+       "triples": 0,
+       "homeRuns": 1
+      },
+      "pitching": null
+     },
      "stats": {
       "batting": {
        "atBats": 5,
@@ -171,7 +221,17 @@
      },
      "position": null,
      "battingOrder": null,
-     "seasonStats": null,
+     "seasonStats": {
+      "batting": {
+       "avg": ".229",
+       "ops": ".648",
+       "hits": 16,
+       "doubles": 4,
+       "triples": 1,
+       "homeRuns": 0
+      },
+      "pitching": null
+     },
      "stats": {
       "batting": {
        "atBats": 3,
@@ -202,7 +262,22 @@
      },
      "position": null,
      "battingOrder": null,
-     "seasonStats": null,
+     "seasonStats": {
+      "batting": {
+       "avg": ".265",
+       "ops": "1.096",
+       "hits": 18,
+       "doubles": 3,
+       "triples": 1,
+       "homeRuns": 8
+      },
+      "pitching": {
+       "wins": 2,
+       "losses": 1,
+       "saves": 0,
+       "era": "4.43"
+      }
+     },
      "stats": {
       "batting": {
        "atBats": 5,
@@ -246,7 +321,17 @@
      },
      "position": null,
      "battingOrder": null,
-     "seasonStats": null,
+     "seasonStats": {
+      "batting": {
+       "avg": ".257",
+       "ops": ".788",
+       "hits": 18,
+       "doubles": 1,
+       "triples": 0,
+       "homeRuns": 5
+      },
+      "pitching": null
+     },
      "stats": {
       "batting": {
        "atBats": 3,
@@ -277,7 +362,17 @@
      },
      "position": null,
      "battingOrder": null,
-     "seasonStats": null,
+     "seasonStats": {
+      "batting": {
+       "avg": ".222",
+       "ops": ".619",
+       "hits": 14,
+       "doubles": 3,
+       "triples": 0,
+       "homeRuns": 2
+      },
+      "pitching": null
+     },
      "stats": {
       "batting": {
        "atBats": 3,
@@ -308,7 +403,17 @@
      },
      "position": null,
      "battingOrder": null,
-     "seasonStats": null,
+     "seasonStats": {
+      "batting": {
+       "avg": ".276",
+       "ops": ".777",
+       "hits": 16,
+       "doubles": 2,
+       "triples": 0,
+       "homeRuns": 2
+      },
+      "pitching": null
+     },
      "stats": {
       "batting": {
        "atBats": 6,
@@ -339,7 +444,15 @@
      },
      "position": null,
      "battingOrder": null,
-     "seasonStats": null,
+     "seasonStats": {
+      "batting": null,
+      "pitching": {
+       "wins": 5,
+       "losses": 1,
+       "saves": 0,
+       "era": "1.45"
+      }
+     },
      "stats": {
       "batting": null,
       "pitching": {
@@ -365,7 +478,15 @@
      },
      "position": null,
      "battingOrder": null,
-     "seasonStats": null,
+     "seasonStats": {
+      "batting": null,
+      "pitching": {
+       "wins": 0,
+       "losses": 0,
+       "saves": 1,
+       "era": "1.69"
+      }
+     },
      "stats": {
       "batting": null,
       "pitching": {
@@ -391,7 +512,15 @@
      },
      "position": null,
      "battingOrder": null,
-     "seasonStats": null,
+     "seasonStats": {
+      "batting": null,
+      "pitching": {
+       "wins": 3,
+       "losses": 2,
+       "saves": 0,
+       "era": "3.18"
+      }
+     },
      "stats": {
       "batting": null,
       "pitching": {
@@ -417,7 +546,15 @@
      },
      "position": null,
      "battingOrder": null,
-     "seasonStats": null,
+     "seasonStats": {
+      "batting": null,
+      "pitching": {
+       "wins": 0,
+       "losses": 0,
+       "saves": 0,
+       "era": "0.00"
+      }
+     },
      "stats": {
       "batting": null,
       "pitching": {
@@ -443,7 +580,15 @@
      },
      "position": null,
      "battingOrder": null,
-     "seasonStats": null,
+     "seasonStats": {
+      "batting": null,
+      "pitching": {
+       "wins": 0,
+       "losses": 0,
+       "saves": 0,
+       "era": "8.59"
+      }
+     },
      "stats": {
       "batting": null,
       "pitching": {
@@ -498,7 +643,17 @@
      },
      "position": null,
      "battingOrder": null,
-     "seasonStats": null,
+     "seasonStats": {
+      "batting": {
+       "avg": ".367",
+       "ops": "1.025",
+       "hits": 22,
+       "doubles": 4,
+       "triples": 0,
+       "homeRuns": 3
+      },
+      "pitching": null
+     },
      "stats": {
       "batting": {
        "atBats": 4,
@@ -529,7 +684,17 @@
      },
      "position": null,
      "battingOrder": null,
-     "seasonStats": null,
+     "seasonStats": {
+      "batting": {
+       "avg": ".254",
+       "ops": ".842",
+       "hits": 18,
+       "doubles": 2,
+       "triples": 0,
+       "homeRuns": 5
+      },
+      "pitching": null
+     },
      "stats": {
       "batting": {
        "atBats": 5,
@@ -560,7 +725,17 @@
      },
      "position": null,
      "battingOrder": null,
-     "seasonStats": null,
+     "seasonStats": {
+      "batting": {
+       "avg": ".215",
+       "ops": ".626",
+       "hits": 14,
+       "doubles": 2,
+       "triples": 0,
+       "homeRuns": 2
+      },
+      "pitching": null
+     },
      "stats": {
       "batting": {
        "atBats": 4,
@@ -591,7 +766,17 @@
      },
      "position": null,
      "battingOrder": null,
-     "seasonStats": null,
+     "seasonStats": {
+      "batting": {
+       "avg": ".348",
+       "ops": ".923",
+       "hits": 8,
+       "doubles": 0,
+       "triples": 0,
+       "homeRuns": 1
+      },
+      "pitching": null
+     },
      "stats": {
       "batting": {
        "atBats": 4,
@@ -622,7 +807,17 @@
      },
      "position": null,
      "battingOrder": null,
-     "seasonStats": null,
+     "seasonStats": {
+      "batting": {
+       "avg": ".227",
+       "ops": ".711",
+       "hits": 17,
+       "doubles": 4,
+       "triples": 1,
+       "homeRuns": 3
+      },
+      "pitching": null
+     },
      "stats": {
       "batting": {
        "atBats": 5,
@@ -653,7 +848,17 @@
      },
      "position": null,
      "battingOrder": null,
-     "seasonStats": null,
+     "seasonStats": {
+      "batting": {
+       "avg": ".200",
+       "ops": ".733",
+       "hits": 4,
+       "doubles": 1,
+       "triples": 0,
+       "homeRuns": 1
+      },
+      "pitching": null
+     },
      "stats": {
       "batting": {
        "atBats": 1,
@@ -684,7 +889,17 @@
      },
      "position": null,
      "battingOrder": null,
-     "seasonStats": null,
+     "seasonStats": {
+      "batting": {
+       "avg": ".411",
+       "ops": ".977",
+       "hits": 30,
+       "doubles": 6,
+       "triples": 1,
+       "homeRuns": 1
+      },
+      "pitching": null
+     },
      "stats": {
       "batting": {
        "atBats": 5,
@@ -715,7 +930,17 @@
      },
      "position": null,
      "battingOrder": null,
-     "seasonStats": null,
+     "seasonStats": {
+      "batting": {
+       "avg": ".284",
+       "ops": ".899",
+       "hits": 19,
+       "doubles": 6,
+       "triples": 0,
+       "homeRuns": 4
+      },
+      "pitching": null
+     },
      "stats": {
       "batting": {
        "atBats": 6,
@@ -746,7 +971,17 @@
      },
      "position": null,
      "battingOrder": null,
-     "seasonStats": null,
+     "seasonStats": {
+      "batting": {
+       "avg": ".162",
+       "ops": ".400",
+       "hits": 6,
+       "doubles": 2,
+       "triples": 0,
+       "homeRuns": 0
+      },
+      "pitching": null
+     },
      "stats": {
       "batting": {
        "atBats": 0,
@@ -777,7 +1012,17 @@
      },
      "position": null,
      "battingOrder": null,
-     "seasonStats": null,
+     "seasonStats": {
+      "batting": {
+       "avg": ".111",
+       "ops": ".269",
+       "hits": 2,
+       "doubles": 0,
+       "triples": 0,
+       "homeRuns": 0
+      },
+      "pitching": null
+     },
      "stats": {
       "batting": {
        "atBats": 1,
@@ -808,7 +1053,17 @@
      },
      "position": null,
      "battingOrder": null,
-     "seasonStats": null,
+     "seasonStats": {
+      "batting": {
+       "avg": ".274",
+       "ops": ".667",
+       "hits": 17,
+       "doubles": 4,
+       "triples": 0,
+       "homeRuns": 0
+      },
+      "pitching": null
+     },
      "stats": {
       "batting": {
        "atBats": 3,
@@ -839,7 +1094,17 @@
      },
      "position": null,
      "battingOrder": null,
-     "seasonStats": null,
+     "seasonStats": {
+      "batting": {
+       "avg": ".397",
+       "ops": "1.289",
+       "hits": 29,
+       "doubles": 5,
+       "triples": 0,
+       "homeRuns": 8
+      },
+      "pitching": null
+     },
      "stats": {
       "batting": {
        "atBats": 5,
@@ -870,7 +1135,15 @@
      },
      "position": null,
      "battingOrder": null,
-     "seasonStats": null,
+     "seasonStats": {
+      "batting": null,
+      "pitching": {
+       "wins": 1,
+       "losses": 0,
+       "saves": 0,
+       "era": "3.77"
+      }
+     },
      "stats": {
       "batting": null,
       "pitching": {
@@ -896,7 +1169,15 @@
      },
      "position": null,
      "battingOrder": null,
-     "seasonStats": null,
+     "seasonStats": {
+      "batting": null,
+      "pitching": {
+       "wins": 3,
+       "losses": 1,
+       "saves": 0,
+       "era": "3.58"
+      }
+     },
      "stats": {
       "batting": null,
       "pitching": {
@@ -922,7 +1203,15 @@
      },
      "position": null,
      "battingOrder": null,
-     "seasonStats": null,
+     "seasonStats": {
+      "batting": null,
+      "pitching": {
+       "wins": 0,
+       "losses": 0,
+       "saves": 2,
+       "era": "1.46"
+      }
+     },
      "stats": {
       "batting": null,
       "pitching": {
@@ -948,7 +1237,15 @@
      },
      "position": null,
      "battingOrder": null,
-     "seasonStats": null,
+     "seasonStats": {
+      "batting": null,
+      "pitching": {
+       "wins": 0,
+       "losses": 0,
+       "saves": 0,
+       "era": "1.04"
+      }
+     },
      "stats": {
       "batting": null,
       "pitching": {
@@ -974,7 +1271,15 @@
      },
      "position": null,
      "battingOrder": null,
-     "seasonStats": null,
+     "seasonStats": {
+      "batting": null,
+      "pitching": {
+       "wins": 2,
+       "losses": 0,
+       "saves": 0,
+       "era": "3.18"
+      }
+     },
      "stats": {
       "batting": null,
       "pitching": {
@@ -1000,7 +1305,15 @@
      },
      "position": null,
      "battingOrder": null,
-     "seasonStats": null,
+     "seasonStats": {
+      "batting": null,
+      "pitching": {
+       "wins": 2,
+       "losses": 1,
+       "saves": 0,
+       "era": "3.86"
+      }
+     },
      "stats": {
       "batting": null,
       "pitching": {
@@ -1026,7 +1339,15 @@
      },
      "position": null,
      "battingOrder": null,
-     "seasonStats": null,
+     "seasonStats": {
+      "batting": null,
+      "pitching": {
+       "wins": 0,
+       "losses": 1,
+       "saves": 0,
+       "era": "3.94"
+      }
+     },
      "stats": {
       "batting": null,
       "pitching": {
