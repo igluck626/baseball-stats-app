@@ -1415,8 +1415,9 @@ def player_postseason(player_id: int):
     has none): each season with its rounds (opponent, series W-L and result,
     totals and rates) and the career line. `current` carries the flags the
     profile's current-season line needs: whether the league's postseason is in
-    progress (first game until the World Series ends), whether he has
-    appeared, and whether his team is out.
+    progress (first game until the World Series ends), whether it is complete
+    (the World Series is over), whether he has appeared, and whether his team
+    is out.
 
     A balldontlie failure leaves `current`'s league-level flags null rather
     than failing the whole response — the stored history still serves."""

@@ -309,6 +309,9 @@ def player_postseason(db, player_id: int, current_season: int,
                                   if current_series is not None else None,
             "player_appeared": bool(cur_rows),
             "team_eliminated": eliminated,
+            # the World Series is over — the profile keeps the Overview postseason up
+            # past it, so it has to tell "over" from "not started"
+            "league_complete": bool(ws and ws.get("is_over")) if current_series is not None else None,
         },
     }
 

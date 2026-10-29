@@ -175,5 +175,18 @@ for th in set(_t.enumerate()) - before_threads:
     th.join(timeout=5)
 check("run_safely('final') runs, off the caller's thread", fired == ["final"], fired)
 
+print("player_postseason: league_complete — the World Series is over (keeps the Overview postseason up)")
+ws_over = [{"round": "WS", "is_over": True, "teams": ["MIL", "TB"], "winner": "MIL"}]
+ws_on = [{"round": "WS", "is_over": False, "teams": ["MIL", "TB"], "winner": None}]
+done = ps.player_postseason(FakeDB(HISTORY), ALTUVE, 2026, ws_over)["current"]
+check("after the World Series: not in progress, complete",
+      done["league_in_progress"] is False and done["league_complete"] is True, done)
+going = ps.player_postseason(FakeDB(HISTORY), ALTUVE, 2026, ws_on)["current"]
+check("during it: in progress, not complete", going["league_in_progress"] is True and going["league_complete"] is False, going)
+none_yet = ps.player_postseason(FakeDB(HISTORY), ALTUVE, 2026, [])["current"]
+check("before the first game: neither", none_yet["league_in_progress"] is False and none_yet["league_complete"] is False, none_yet)
+unknown = ps.player_postseason(FakeDB(HISTORY), ALTUVE, 2026, None)["current"]
+check("balldontlie down: unknown, not false", unknown["league_complete"] is None, unknown)
+
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
