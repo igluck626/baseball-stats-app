@@ -76,13 +76,17 @@ struct HistoricalPostseasonGamesTests {
         #expect(scoring.first?.text?.hasPrefix("Victorino doubled to left") == true)
         #expect(PlaysView.reconcile(plays: plays, finalAway: 1, finalHome: 6).matches)
         // Every at-bat is a batted row carrying its own result and out count —
-        // bottom of the 4th, nine of them, though two pitching changes fall
-        // between at-bats there (inside an at-bat's group, as balldontlie's do).
+        // bottom of the 4th, nine of them — and the two pitching changes made
+        // between at-bats there read as announcements where they happened.
         let halves = PlaysView.groupedHalfInnings(plays)
         let b4 = try #require(halves.first { $0.inning == 4 && $0.inningType == "Bottom" })
-        #expect(b4.atBats.count == 9 && b4.atBats.allSatisfy { $0.batterId != nil })
-        #expect(b4.atBats.compactMap(\.resultText).count == 9)
-        #expect(b4.atBats.last?.outs == 3)
+        let batted = b4.atBats.filter { $0.batterId != nil }
+        #expect(batted.count == 9 && batted.compactMap(\.resultText).count == 9)
+        #expect(batted.last?.outs == 3)
+        let order = b4.atBats.compactMap(\.resultText)
+        #expect(order.firstIndex(of: "Lynn relieved Wacha") == 5)        // after Ortiz's walk
+        #expect(order.firstIndex(of: "Maness relieved Lynn") == 9)       // after Victorino's single
+        #expect(b4.atBats.count == 11)
         // A change made between innings opens the next half as an announcement.
         let t9 = try #require(halves.first { $0.inning == 9 && $0.inningType == "Top" })
         #expect(t9.atBats.first?.batterId == nil)

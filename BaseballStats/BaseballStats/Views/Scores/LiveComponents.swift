@@ -652,7 +652,8 @@ struct PlaysView: View {
         let isHalfExpanded = expandedHalfInnings.contains(half.id)
         let arrow = half.inningType.hasPrefix("Top") ? "▲" : "▼"
         let ord = Self.ordinalInning(half.inning)
-        let atBatCount = half.atBats.count
+        // Announcements are rows in the list but not at-bats.
+        let atBatCount = half.atBats.filter { $0.batterId != nil }.count
         return VStack(alignment: .leading, spacing: 4) {
             Button {
                 withAnimation(.easeInOut(duration: 0.18)) {
@@ -999,8 +1000,14 @@ struct PlaysView: View {
         var currentBatterId: Int? = nil
         var currentPlays: [BDLPlay] = []
         var firstOrder: Int? = nil
+        // Set by the at-bat's "End Batter/Pitcher". Rows after it still
+        // join the at-bat (an overturned call can arrive there), and the
+        // substitutions among them wait here to follow its row.
+        var ended = false
+        var afterAtBat: [AtBat] = []
 
         func flush() {
+            defer { result += afterAtBat; afterAtBat = [] }
             guard !currentPlays.isEmpty || currentBatter != nil else { return }
             let orderKey = firstOrder.map(String.init) ?? "x\(result.count)"
             // This at-bat's OWN result row. Scanning from the back
@@ -1035,15 +1042,54 @@ struct PlaysView: View {
                 currentBatter = parseBatter(from: p.text)
                 currentBatterId = p.batterId
                 firstOrder = p.order
+                ended = false
                 continue
             }
+            if p.type == "End Batter/Pitcher" { ended = true; continue }
             if !shouldDisplay(p) { continue }
+            // A substitution gets its own announcement row. Left in the
+            // at-bat's group it was never shown, and where balldontlie
+            // gives it a batter id it became the at-bat's headline.
+            // After the at-bat it follows that at-bat's row; inside one
+            // (before the first pitch, or a mid-count change) it comes
+            // before it, since the at-bat row is added at its end.
+            if isSubstitution(p) {
+                let note = AtBat(
+                    id:         "\(halfInningKey)/\(p.order)",
+                    batterText: nil,
+                    batterId:   nil,
+                    plays:      [p],
+                    resultText: p.text,
+                    outs:       nil,
+                    runs:       nil,
+                    awayScore:  nil,
+                    homeScore:  nil,
+                    contact:    nil,
+                    paPitches:  [],
+                )
+                if ended { afterAtBat.append(note) } else { result.append(note) }
+                continue
+            }
             currentPlays.append(p)
             if firstOrder == nil { firstOrder = p.order }
         }
         flush()
         return result
     }
+
+    /// A pitching change, pinch hitter or runner, or defensive move, in
+    /// the wording both balldontlie and our Retrosheet translation use.
+    /// Every row either source puts between at-bats is one of these, and
+    /// none scores: 648 in 44 balldontlie postseason games (2015-25),
+    /// 19,874 in our 1,878. No batter's own result matches.
+    static func isSubstitution(_ p: BDLPlay) -> Bool {
+        guard p.type == "Play Result", p.scoringPlay != true,
+              let text = p.text?.trimmingCharacters(in: .whitespaces) else { return false }
+        return text.range(of: substitutionPattern, options: .regularExpression) != nil
+    }
+
+    private static let substitutionPattern =
+        #"( relieved | hit for | ran for |\S (catching|pitching|as designated hitter|at (first|second|third) base|at shortstop|in (left|center|right) field)(, replacing .+)?\.?$)"#
 
     /// Join the plate-appearance feed onto the grouped at-bats so each
     /// one carries its batted-ball metrics.
