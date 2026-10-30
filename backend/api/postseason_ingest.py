@@ -85,6 +85,12 @@ def build_rows(game: dict, round_code: str, stats: list[dict],
             row.update(W=to_int(stat.get("wins")) or 0, L=to_int(stat.get("losses")) or 0,
                        SV=to_int(stat.get("saves")) or 0, GS=to_int(stat.get("games_started")) or 0)
             pit.append(row)
+    # ⚠️ A final always has a winner and a loser: when balldontlie credits
+    # neither, it hasn't shipped the decisions, and its 0s are unknown — NULL,
+    # never "no decision" (the regular season's `_decisions_shipped` rule).
+    if not data_service._decisions_shipped(stats):
+        for row in pit:
+            row.update(W=None, L=None, SV=None, result=None)
     for row in bat + pit:
         row["game_id"] = str(row["game_id"])
     for rows in (bat, pit):

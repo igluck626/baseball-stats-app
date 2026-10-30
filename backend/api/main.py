@@ -57,7 +57,7 @@ from database.models import (                                # noqa: E402
     AskLog, BattingGameLog, Pitcher, PitcherSeason, PitcherSeasonStint,
     PitchingGameLog, Player, PlayerAllstar, PlayerAward, PlayerFielding,
     PlayerHof, PlayerPostseasonBatting, PlayerPostseasonPitching,
-    PlayerSeason, PlayerSeasonStint, SeriesPost,
+    PostseasonBattingGameLog, PostseasonPitchingGameLog, PlayerSeason, PlayerSeasonStint, SeriesPost,
     StagingBattingGameLog, StagingPitchingGameLog, TeamSeason,
 )
 
@@ -1563,11 +1563,13 @@ _LAST_REGULAR_SEASON_DAY = {
 }
 
 
-def _includes_today(rows, game_date) -> bool:
+def _includes_today(rows, game_date, postseason: bool = False) -> bool:
     """Whether the gamelog has reached `game_date` — any row on that date —
-    or, per the stopgap above, the date falls after the regular season."""
+    or, per the stopgap above, the date falls after the regular season. A
+    postseason count skips the stopgap: its rows ARE the October games, and
+    only a client new enough to ask for them reads the answer."""
     last = _LAST_REGULAR_SEASON_DAY.get(game_date.year)
-    if last is not None and game_date > last:
+    if not postseason and last is not None and game_date > last:
         return True
     return any(r.game_date == game_date for r in rows)
 
@@ -1588,6 +1590,22 @@ def _decision(row, col):
     return 1 if res == _RESULT_OF[col] else 0
 
 
+def _postseason_rows(db, model, cols, player_id: int, game_date: datetime.date):
+    """This player's postseason game-log rows for `game_date`'s year, through
+    that date — ONE source per season, Retrosheet where it has the season, else
+    balldontlie, so a season both have is never counted twice."""
+    season = game_date.year
+    retro = db.query(model.id).filter(model.season == season, model.source == "retrosheet").first()
+    return (
+        db.query(*[getattr(model, c) for c in cols])
+          .filter(model.player_id == player_id)
+          .filter(model.season    == season)
+          .filter(model.source    == ("retrosheet" if retro else "bdl"))
+          .filter(model.game_date <= game_date)
+          .all()
+    )
+
+
 @app.get("/players/{player_id}/pitcher-record-at-date")
 def player_pitcher_record_at_date(
     player_id: int,
@@ -1595,6 +1613,7 @@ def player_pitcher_record_at_date(
         ...,
         description="Cumulative through this date (inclusive). yyyy-mm-dd.",
     ),
+    postseason: bool = False,   # the date's postseason instead of its regular season
 ):
     """Pitcher's cumulative W-L-SV through `game_date` (inclusive),
     counted from this player's `pitching_gamelogs` rows for the
@@ -1626,7 +1645,10 @@ def player_pitcher_record_at_date(
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
     season = game_date.year
     with connection.get_session() as db:
-        rows = (
+        # `postseason=true`: the same count over that October's games, for a
+        # playoff box score — "W: Yamamoto (5-1)" is his postseason record.
+        rows = _postseason_rows(db, PostseasonPitchingGameLog, ("result", "game_date", "W", "L", "SV"),
+                                player_id, game_date) if postseason else (
             db.query(PitchingGameLog.result, PitchingGameLog.game_date,
                      PitchingGameLog.W, PitchingGameLog.L, PitchingGameLog.SV)
               .filter(PitchingGameLog.player_id == player_id)
@@ -1643,7 +1665,7 @@ def player_pitcher_record_at_date(
     losses = sum(1 for r in rows if _decision(r, "L") == 1)
     saves  = sum(1 for r in rows if _decision(r, "SV") == 1)
     unknown = any(_decision(r, "W") is None for r in rows)
-    includes_today = _includes_today(rows, game_date)
+    includes_today = _includes_today(rows, game_date, postseason)
     return {
         "player_id":      player_id,
         "game_date":      game_date.isoformat(),
@@ -1669,6 +1691,7 @@ def player_batter_stats_at_date(
         ...,
         description="Cumulative through this date (inclusive). yyyy-mm-dd.",
     ),
+    postseason: bool = False,   # the date's postseason instead of its regular season
 ):
     """Batter's cumulative HR / 2B / 3B through `game_date`
     (inclusive), counted from this player's `batting_gamelogs`
@@ -1694,7 +1717,8 @@ def player_batter_stats_at_date(
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
     season = game_date.year
     with connection.get_session() as db:
-        rows = (
+        rows = _postseason_rows(db, PostseasonBattingGameLog, ("HR", "doubles", "triples", "game_date", "AB", "BB"),
+                                player_id, game_date) if postseason else (
             db.query(
                 BattingGameLog.HR,
                 BattingGameLog.doubles,
@@ -1716,7 +1740,7 @@ def player_batter_stats_at_date(
     # non-optional Int, so the numbers stay (null would fail the whole
     # response); the `*_unknown` flags let a current app show "—" instead.
     active = [r for r in rows if (r.AB or 0) > 0 or (r.BB or 0) > 0]
-    includes_today = _includes_today(rows, game_date)
+    includes_today = _includes_today(rows, game_date, postseason)
     return {
         "player_id":      player_id,
         "game_date":      game_date.isoformat(),

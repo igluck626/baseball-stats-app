@@ -60,6 +60,13 @@ check("Hicks the win, Blubaugh the loss and the start", dec.get("Hicks") == (1, 
       and dec.get("Blubaugh") == (0, 1, 0, 1), dec)
 check("one winner and one loser in the game", sum(r["W"] for r in pit) == 1 and sum(r["L"] for r in pit) == 1)
 check("IP is decimal: Hendrickson's 1.2 is 1.667", abs(h[0]["IP"] - 5 / 3) < 0.01, h[0]["IP"])
+# The same game with balldontlie's decisions zeroed, as it ships one it hasn't the decisions for.
+unshipped = [{**s, "wins": 0, "losses": 0, "saves": 0} for s in FIX["stats"]]
+_, pit0, _ = pi.build_rows(FIX["game"], "WC", unshipped, mapped)
+check("no winner or loser shipped: W/L/SV and result are unknown (None), never 'ND'",
+      pit0 and all(r["W"] is None and r["L"] is None and r["SV"] is None and r["result"] is None for r in pit0),
+      [(r["W"], r["result"]) for r in pit0][:3])
+check("  ...and GS, not a decision, stays", any(r["GS"] == 1 for r in pit0))
 
 print("batting")
 check("no batting row for a pitcher who didn't bat (the appearance rule)",
