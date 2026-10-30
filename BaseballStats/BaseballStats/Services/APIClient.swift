@@ -153,16 +153,24 @@ final class APIClient {
     /// notable-plays lines stay accurate even when BDL's season-stats
     /// snapshot is stale.
     func getBatterStatsAtDate(
-        playerId: Int, gameDate: String,
+        playerId: Int, gameDate: String, postseason: Bool = false,
     ) async throws -> BatterStatsAtDate? {
         let url = try buildURL(
             path: "/players/\(playerId)/batter-stats-at-date",
-            query: [URLQueryItem(name: "game_date", value: gameDate)],
+            query: Self.atDateQuery(gameDate: gameDate, postseason: postseason),
         )
         guard let resp: BatterStatsAtDateResponse = try await getOptional(url) else {
             return nil
         }
         return Self.batterStatsAtDate(resp)
+    }
+
+    /// The record-at-date query: the date, and on a playoff game
+    /// `postseason=true` so the server counts that October's games — "2B:
+    /// Rice (3)" is his postseason total there, not the regular season's.
+    static func atDateQuery(gameDate: String, postseason: Bool) -> [URLQueryItem] {
+        [URLQueryItem(name: "game_date", value: gameDate)]
+            + (postseason ? [URLQueryItem(name: "postseason", value: "true")] : [])
     }
 
     /// The response bytes → `BatterStatsAtDate`, the step the fetch takes —
@@ -191,11 +199,11 @@ final class APIClient {
     /// independent of any later games that may have updated BDL's
     /// season-stats snapshot.
     func getPitcherRecordAtDate(
-        playerId: Int, gameDate: String,
+        playerId: Int, gameDate: String, postseason: Bool = false,
     ) async throws -> PitcherRecord? {
         let url = try buildURL(
             path: "/players/\(playerId)/pitcher-record-at-date",
-            query: [URLQueryItem(name: "game_date", value: gameDate)],
+            query: Self.atDateQuery(gameDate: gameDate, postseason: postseason),
         )
         guard let resp: PitcherRecordResponse = try await getOptional(url) else {
             return nil

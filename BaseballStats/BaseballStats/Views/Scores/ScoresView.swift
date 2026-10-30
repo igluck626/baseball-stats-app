@@ -1432,6 +1432,7 @@ private struct FinalGameCard: View {
         guard !notableBdlIds.isEmpty else { return }
         let bdl = BallDontLieClient.shared
         let api = APIClient.shared
+        let postseason = !game.isRegularSeason
         let pairs = await withTaskGroup(
             of: (Int, BatterStatsAtDate)?.self,
         ) { group in
@@ -1440,7 +1441,7 @@ private struct FinalGameCard: View {
                     guard let player = try? await bdl.resolveBDLPlayerId(bdlId)
                     else { return nil }
                     let outer = try? await api.getBatterStatsAtDate(
-                        playerId: player.player_id, gameDate: gameDate,
+                        playerId: player.player_id, gameDate: gameDate, postseason: postseason,
                     )
                     guard let stats = outer ?? nil else { return nil }
                     return (bdlId, stats)
@@ -1476,6 +1477,7 @@ private struct FinalGameCard: View {
         guard !decisionBdlIds.isEmpty else { return }
         let bdl = BallDontLieClient.shared
         let api = APIClient.shared
+        let postseason = !game.isRegularSeason
         let pairs = await withTaskGroup(
             of: (Int, PitcherRecord)?.self,
         ) { group in
@@ -1484,7 +1486,7 @@ private struct FinalGameCard: View {
                     guard let player = try? await bdl.resolveBDLPlayerId(bdlId)
                     else { return nil }
                     let outer = try? await api.getPitcherRecordAtDate(
-                        playerId: player.player_id, gameDate: gameDate,
+                        playerId: player.player_id, gameDate: gameDate, postseason: postseason,
                     )
                     guard let record = outer ?? nil else { return nil }
                     return (bdlId, record)
@@ -1753,11 +1755,11 @@ private struct FinalGameCard: View {
             // `pitcherDecisionTag`: bump only when this is today's
             // game AND the gamelog ingest hasn't reached today yet.
             // "—" in place of the record when the server flags it unknown.
-            let recBump = SeasonType.regularSeasonBump(1, includesToday: rec.includesToday, game: game)
+            let recBump = SeasonType.bump(1, includesToday: rec.includesToday)
             return rec.figure(for: tag, bump: recBump).map { "(\($0))" }
         }()
-        // On a postseason game this is a REGULAR-season record — left off.
-        let recordText = SeasonType.regularSeasonFigure(seasonRecord, in: game)
+        // On a playoff game it is that POSTSEASON's record, by either branch.
+        let recordText = seasonRecord
         return HStack(spacing: 6) {
             Text("\(tag):")
                 .font(.caption.weight(.bold))
@@ -1820,18 +1822,14 @@ private struct FinalGameCard: View {
                 guard let hr = p.stats?.batting?.homeRuns, hr > 0 else { continue }
                 let last = lastNameWithSuffix(p.person.fullName)
                 let prefix = hr > 1 ? "\(last) \(hr)" : last
-                // A postseason game: the only total we hold is the regular
-                // season's, so the name stands alone — no figure, no "(—)".
-                guard game.isRegularSeason else {
-                    out.append(prefix)
-                    continue
-                }
+                // On a playoff game the total is that POSTSEASON's — the
+                // fetch asks for it, and a Retrosheet box score ships it.
                 // While the point-in-time fetch is still in flight,
                 // render `(—)` rather than the stale placeholder
                 // total. Eliminates the flash of e.g. "(20)" → "(21)"
                 // on a 21st-HR-of-the-year night. Animated below.
                 if let stats = batterStatsAtDateByBDL[p.person.id] {
-                    let bump = SeasonType.regularSeasonBump(hr, includesToday: stats.includesToday, game: game)
+                    let bump = SeasonType.bump(hr, includesToday: stats.includesToday)
                     out.append("\(prefix) (\(stats.homeRuns + bump))")
                 } else if game.usesRetrosheetBoxScore {
                     // Never-lands case, so a dash here would be permanent. The

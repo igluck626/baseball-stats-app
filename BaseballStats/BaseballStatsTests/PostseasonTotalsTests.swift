@@ -1,10 +1,12 @@
 //
 //  PostseasonTotalsTests.swift
 //
-//  Every season figure the app writes beside a player — "2B: Rice (24)",
-//  a Scores final's HR line, a pitcher's "(W 15-6)" — is a REGULAR-season
-//  number. On a postseason game it read as the playoff figure, so there it
-//  is left off and the name (and, for a pitcher, the decision) stands alone.
+//  On a postseason game the figure beside a player — "2B: Rice (3)", a Scores
+//  final's HR line, a pitcher's "(W 5-1)" — is that POSTSEASON's (Isaac,
+//  2026-10-29). It used to be left off, because every figure the app held was
+//  the regular season's. A playoff game now asks the record-at-date endpoints
+//  for `postseason=true`; a past one's Retrosheet box score already ships the
+//  postseason line.
 //
 
 import Foundation
@@ -26,28 +28,31 @@ private func game(postseason: Bool) -> Game {
     ).toGame()
 }
 
+private func query(_ items: [URLQueryItem]) -> [String: String] {
+    Dictionary(uniqueKeysWithValues: items.map { ($0.name, $0.value ?? "") })
+}
+
 @Suite("Postseason season totals")
 struct PostseasonTotalsTests {
 
-    @Test func aPostseasonGameShowsNoRegularSeasonFigure() {
+    @Test func aPlayoffGameAsksForThePostseasonCount() {
         let wc = game(postseason: true)
-        #expect(SeasonType.regularSeasonFigure("(24)", in: wc) == nil, "2B: Rice, not Rice (24)")
-        #expect(SeasonType.regularSeasonFigure("(15-6)", in: wc) == nil)
-        #expect(SeasonType.regularSeasonFigure("(—)", in: wc) == nil, "no loading dash either")
+        let items = APIClient.atDateQuery(gameDate: "2026-09-30", postseason: !wc.isRegularSeason)
+        #expect(query(items) == ["game_date": "2026-09-30", "postseason": "true"])
     }
 
-    @Test func aRegularSeasonGameIsUnchanged() {
+    @Test func aRegularSeasonGameAsksAsBefore() {
+        // No `postseason` item at all — the request an older server knows.
         let reg = game(postseason: false)
-        #expect(SeasonType.regularSeasonFigure("(24)", in: reg) == "(24)")
-        #expect(SeasonType.regularSeasonFigure("(—)", in: reg) == "(—)")
-        #expect(SeasonType.regularSeasonFigure(nil, in: reg) == nil)
+        let items = APIClient.atDateQuery(gameDate: "2026-09-20", postseason: !reg.isRegularSeason)
+        #expect(query(items) == ["game_date": "2026-09-20"])
     }
 
-    @Test func aPostseasonDecisionKeepsTheLetterAndDropsTheRecord() {
-        #expect(SeasonType.decisionOnly(wins: 1, losses: 0, saves: 0) == "(W)")
-        #expect(SeasonType.decisionOnly(wins: 0, losses: 1, saves: 0) == "(L)")
-        #expect(SeasonType.decisionOnly(wins: 0, losses: 0, saves: 1) == "(SV)")
-        #expect(SeasonType.decisionOnly(wins: 0, losses: 0, saves: 0) == nil)
-        #expect(SeasonType.decisionOnly(wins: nil, losses: nil, saves: nil) == nil)
+    /// The postseason count decodes like the regular one: Yamamoto through
+    /// 2025 World Series Game 7, the server's real answer (2026-10-29).
+    @Test func thePostseasonRecordReadsAsAFigure() throws {
+        let json = #"{"player_id": 808967, "game_date": "2025-11-01", "wins": 5, "losses": 1, "saves": 0, "wins_unknown": false, "losses_unknown": false, "saves_unknown": false, "includes_today": true, "gamelog_games": 6, "gamelog_rows": 6}"#
+        let rec = try APIClient.pitcherRecord(from: Data(json.utf8))
+        #expect(rec.figure(for: "W", bump: SeasonType.bump(1, includesToday: rec.includesToday)) == "5-1")
     }
 }

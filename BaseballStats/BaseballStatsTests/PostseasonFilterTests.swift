@@ -115,16 +115,12 @@ struct PostseasonFilterTests {
 
     // ── the Scores / box-score bumps ────────────────────────────────────
 
-    @Test func aPostseasonWinDoesNotBumpTheRegularSeasonRecord() {
-        #expect(SeasonType.regularSeasonBump(1, includesToday: false, game: wildCard.toGame()) == 0)
-        #expect(SeasonType.regularSeasonBump(2, includesToday: false, game: wildCard.toGame()) == 0,
-                "nor a regular-season HR total")
-    }
-
-    @Test func theRegularSeasonBumpIsUnchanged() {
-        #expect(SeasonType.regularSeasonBump(1, includesToday: false, game: regular.toGame()) == 1)
-        #expect(SeasonType.regularSeasonBump(2, includesToday: false, game: regular.toGame()) == 2)
-        #expect(SeasonType.regularSeasonBump(1, includesToday: true, game: regular.toGame()) == 0)
+    @Test func thePostseasonRecordIsBumpedLikeAnyOther() {
+        // A playoff game reads its POSTSEASON record (`postseason=true`), so
+        // tonight's win is added until the October game logs reach it.
+        #expect(SeasonType.bump(1, includesToday: false) == 1)
+        #expect(SeasonType.bump(2, includesToday: false) == 2, "a two-homer night")
+        #expect(SeasonType.bump(1, includesToday: true) == 0, "already counted")
     }
 
     // ── the standings fold ──────────────────────────────────────────────

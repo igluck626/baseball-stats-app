@@ -300,6 +300,7 @@ final class BoxScoreViewModel: ObservableObject {
         let unfetched = decisionBdlIds.subtracting(pitcherRecordsRequested)
         guard !unfetched.isEmpty else { return }
         pitcherRecordsRequested.formUnion(unfetched)
+        let postseason = !game.isRegularSeason
         let triples = await withTaskGroup(
             of: (bdlId: Int, mlbam: Int, record: PitcherRecord)?.self,
         ) { group in
@@ -309,7 +310,7 @@ final class BoxScoreViewModel: ObservableObject {
                     else { return nil }
                     let mlbam = player.player_id
                     let outer = try? await api.getPitcherRecordAtDate(
-                        playerId: mlbam, gameDate: gameDate,
+                        playerId: mlbam, gameDate: gameDate, postseason: postseason,
                     )
                     guard let record = outer ?? nil else { return nil }
                     return (bdlId, mlbam, record)
@@ -367,6 +368,7 @@ final class BoxScoreViewModel: ObservableObject {
         let unfetched = notableBdlIds.subtracting(batterStatsRequested)
         guard !unfetched.isEmpty else { return }
         batterStatsRequested.formUnion(unfetched)
+        let postseason = !game.isRegularSeason
         let pairs = await withTaskGroup(
             of: (Int, BatterStatsAtDate)?.self,
         ) { group in
@@ -375,7 +377,7 @@ final class BoxScoreViewModel: ObservableObject {
                     guard let player = try? await bdl.resolveBDLPlayerId(bdlId)
                     else { return nil }
                     let outer = try? await api.getBatterStatsAtDate(
-                        playerId: player.player_id, gameDate: gameDate,
+                        playerId: player.player_id, gameDate: gameDate, postseason: postseason,
                     )
                     guard let stats = outer ?? nil else { return nil }
                     return (bdlId, stats)
@@ -1883,9 +1885,8 @@ struct BoxScoreView: View {
             let last = lastName(bp.person.fullName)
             let gameCount = bp.stats?.batting?[keyPath: totalKey] ?? 0
             let prefix = gameCount > 1 ? "\(last) \(gameCount)" : last
-            // A postseason game: every total we hold is REGULAR-season, and
-            // "2B: Rice (24)" read as his playoff total. The name stands alone.
-            guard vm.game.isRegularSeason else { return prefix }
+            // On a playoff game every total below is that POSTSEASON's —
+            // the fetch asks for it, and a Retrosheet box score ships it.
             // Prefer the contextual total from
             // `/players/{id}/batter-stats-at-date` — counts gamelog
             // rows up to this game's date. Bump only when the game
@@ -1898,8 +1899,7 @@ struct BoxScoreView: View {
                 else if totalKey == \BoxBatting.doubles  { total = .doubles }
                 else if totalKey == \BoxBatting.triples  { total = .triples }
                 else                                     { return prefix }
-                let bump = SeasonType.regularSeasonBump(gameCount, includesToday: stats.includesToday,
-                                                        game: vm.game)
+                let bump = SeasonType.bump(gameCount, includesToday: stats.includesToday)
                 return "\(prefix) (\(stats.figure(total, bump: bump)))"
             }
             // Historical: the contextual endpoint is never called for
@@ -2060,11 +2060,7 @@ struct BoxScoreView: View {
     /// endpoint's scan has not yet absorbed today.
     private func pitcherDecisionTag(for p: BoxPlayer) -> String? {
         let game = p.stats?.pitching
-        // A postseason game: the decision is this game's, the record would be
-        // the regular season's — keep "(W)", drop the "15-6".
-        guard vm.game.isRegularSeason else {
-            return SeasonType.decisionOnly(wins: game?.wins, losses: game?.losses, saves: game?.saves)
-        }
+        // On a playoff game the record is that POSTSEASON's, by both branches.
         // Prefer the contextual record from
         // `/players/{id}/pitcher-record-at-date` — that endpoint
         // counts gamelog rows up to and including this game's date,
@@ -2079,7 +2075,7 @@ struct BoxScoreView: View {
             // catch-up writes today's gamelog row so the displayed
             // record doesn't double-count this decision.
             // "—" in place of the record when the server flags it unknown.
-            let bump = SeasonType.regularSeasonBump(1, includesToday: rec.includesToday, game: vm.game)
+            let bump = SeasonType.bump(1, includesToday: rec.includesToday)
             if (game?.wins ?? 0) > 0, let f = rec.figure(for: "W", bump: bump) {
                 return "(W \(f))"
             }
@@ -2098,7 +2094,11 @@ struct BoxScoreView: View {
         // .270/.796 before it). Adding one printed the winner 13-4 where the
         // record was 12-4. The `pitcherRecordsByBDL` branch above still bumps,
         // because that endpoint is genuinely as-of-the-morning.
-        let season = p.seasonStats?.pitching
+        // balldontlie's season line here is the REGULAR season's, so on its
+        // playoff box score it would put "15-6" beside a postseason win: the
+        // letter alone until the postseason record lands. A Retrosheet box
+        // score's line is already that postseason's.
+        let season = (vm.game.isRegularSeason || vm.game.usesRetrosheetBoxScore) ? p.seasonStats?.pitching : nil
         if (game?.wins ?? 0) > 0 {
             if let w = season?.wins, let l = season?.losses {
                 return "(W \(w)-\(l))"

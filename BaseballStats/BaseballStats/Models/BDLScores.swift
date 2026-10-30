@@ -72,31 +72,15 @@ enum SeasonType {
         return (seasonType ?? "regular") == "regular"
     }
 
-    /// How much of THIS game to add to a regular-season figure (a W-L-SV
-    /// record, an HR total) that our gamelog hasn't reached yet: `amount` when
-    /// the gamelog has not absorbed the day and the game is regular season,
-    /// otherwise nothing. The Scores and box-score bumps all read this.
-    static func regularSeasonBump(_ amount: Int, includesToday: Bool, game: Game) -> Int {
-        (!includesToday && game.isRegularSeason) ? amount : 0
-    }
-
-    /// A season figure written beside a player — "(24)", "(15-6)", "(—)" —
-    /// or nil on a postseason game. Every figure we have is REGULAR-season,
-    /// so on a playoff box score "2B: Rice (24)" read as his postseason
-    /// total. Until postseason totals have their own source the figure is
-    /// left off and the name stands alone.
-    static func regularSeasonFigure(_ figure: String?, in game: Game) -> String? {
-        game.isRegularSeason ? figure : nil
-    }
-
-    /// A pitcher's decision without his record — "(W)", "(L)", "(SV)" — for
-    /// a postseason box score, where the only record we hold is the regular
-    /// season's. nil when he took no decision.
-    static func decisionOnly(wins: Int?, losses: Int?, saves: Int?) -> String? {
-        if (wins ?? 0) > 0 { return "(W)" }
-        if (losses ?? 0) > 0 { return "(L)" }
-        if (saves ?? 0) > 0 { return "(SV)" }
-        return nil
+    /// How much of THIS game to add to a record-at-date figure (a W-L-SV
+    /// record, an HR total) whose game logs haven't reached the day yet:
+    /// `amount` when they haven't, otherwise nothing. The figure is always
+    /// the game's own kind — a playoff game asks for the postseason count
+    /// (`postseason=true`, Isaac 2026-10-29) — so a playoff win bumps his
+    /// postseason record, never the regular season's. The Scores and
+    /// box-score bumps all read this.
+    static func bump(_ amount: Int, includesToday: Bool) -> Int {
+        includesToday ? 0 : amount
     }
 }
 
