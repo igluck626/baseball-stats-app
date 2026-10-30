@@ -69,9 +69,14 @@ final class BoxScoreViewModel: ObservableObject {
     @Published var liveLeaders: LiveGameLeaders?
     /// Each team's Team Stats (AVG, xBA, XBH and the rest), from the backend: the
     /// live snapshot while the game is on, `/games/{id}/team-contact` once it's
-    /// final. nil for a historical (Retrosheet-boxed) game and on any failure —
-    /// the block then simply isn't drawn.
+    /// final. nil for a historical (Retrosheet-boxed) game before 2015 and on
+    /// any failure — the block then simply isn't drawn.
     @Published var teamContact: TeamContact?
+    /// A Retrosheet-boxed game's balldontlie player rows, kept only to name the
+    /// players its plate-appearance feed mentions (the Game Leaders card). The
+    /// box score itself is ours, keyed by MLBAM ids, so it can't. Empty for
+    /// every game balldontlie boxes.
+    @Published var providerStats: [BDLPlayerStat] = []
     /// Set only for a historical game — how its batters are sorted. The view
     /// shows it rather than letting a reader read a lineup into the order.
     @Published var batterOrdering: String?
@@ -159,8 +164,10 @@ final class BoxScoreViewModel: ObservableObject {
         // and still gets its play-by-play; only a game before 2002, or one the
         // slate could not match, goes without.
         if game.usesRetrosheetBoxScore {
+            async let contactTask: Void = loadTrackedContact()
             await loadHistoricalBoxScore()
             if game.hasPlays { await loadPlays() }
+            await contactTask
             isLoading = false
             return
         }
@@ -430,6 +437,28 @@ final class BoxScoreViewModel: ObservableObject {
            let p = try? await api.getHistoricalPlays(gamePk: game.gamePk) {
             self.plays = p
         }
+    }
+
+    /// The first season balldontlie's plate appearances carry tracked pitches
+    /// and batted balls. Its feed for any earlier game is empty.
+    static let firstTrackedSeason = 2015
+
+    /// Batted-ball metrics for a Retrosheet-boxed game from the tracking era
+    /// (Isaac, 2026-10-30). balldontlie has them for every game from 2015 — 53
+    /// tracked balls on 2016 World Series Game 7, 34 in its first week — but
+    /// this path never asked, so a past game's plays opened with no exit
+    /// velocity and the Game Leaders and Team Stats blocks never drew. The
+    /// same three fetches the modern path makes, by the provider id the slate
+    /// attached; a game it couldn't match goes without, as before.
+    private func loadTrackedContact() async {
+        guard let providerId = game.bdlGameId,
+              (game.seasonYear ?? 0) >= Self.firstTrackedSeason else { return }
+        async let paTask      = bdl.getGamePlateAppearances(gameId: providerId)
+        async let statsTask   = bdl.getGameStats(gameId: providerId)
+        async let contactTask = api.getTeamContact(bdlGameId: providerId)
+        plateAppearances = (try? await paTask) ?? []
+        providerStats    = (try? await statsTask) ?? []
+        teamContact      = try? await contactTask
     }
 
     /// The historical path: our own game logs, shaped server-side into exactly
@@ -1549,6 +1578,14 @@ struct BoxScoreView: View {
     /// this needs no additional fetch.
     private func leaderIdentity(bs: BoxScoreResponse) -> (Int) -> (name: String, teamId: Int)? {
         var table: [Int: (name: String, teamId: Int)] = [:]
+        // A Retrosheet-boxed game's players carry MLBAM ids and team id 0; the
+        // feed's are balldontlie's, so name them from balldontlie's own rows.
+        if !vm.providerStats.isEmpty {
+            for s in vm.providerStats {
+                if let teamId = s.team?.id { table[s.player.id] = (s.player.fullName, teamId) }
+            }
+            return { table[$0] }
+        }
         for side in [bs.teams.away, bs.teams.home] {
             let teamId = side.team.id
             for p in side.players.values {
@@ -1566,10 +1603,13 @@ struct BoxScoreView: View {
     }
 
     private func gameLeadersByTeam(bs: BoxScoreResponse) -> (away: GameLeaders?, home: GameLeaders?) {
-        GameLeaders.byTeam(
+        // balldontlie's team ids, which a Retrosheet-boxed game's box score
+        // doesn't carry; the slate attached them with the provider id.
+        let provider = !vm.providerStats.isEmpty
+        return GameLeaders.byTeam(
             plateAppearances: vm.plateAppearances,
-            awayTeamId: bs.teams.away.team.id,
-            homeTeamId: bs.teams.home.team.id,
+            awayTeamId: provider ? (vm.game.bdlAwayTeamId ?? 0) : bs.teams.away.team.id,
+            homeTeamId: provider ? (vm.game.bdlHomeTeamId ?? 0) : bs.teams.home.team.id,
             nameAndTeam: leaderIdentity(bs: bs),
         )
     }
