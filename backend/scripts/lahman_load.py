@@ -446,7 +446,7 @@ def _pitching_derived(ipouts: float, h: float, hr: float, bb: float, hbp: float,
     babip = (h - hr) / babip_denom      if babip_denom > 0 else None
 
     return {
-        "IP":      round(ip, 1) if ip > 0 else None,
+        "IP":      round(ip, 3) if ip > 0 else None,   # thirds: 66.667, never 66.7
         "WHIP":    _round(whip),
         "FIP":     _round(fip, 2),
         "K_per9":  _round(k_per9, 2),
@@ -1292,7 +1292,7 @@ def _load_postseason_pitching(
                 continue
 
             ipouts = _i_safe(row["IPouts"])
-            ip = round(ipouts / 3, 1) if ipouts > 0 else None
+            ip = round(ipouts / 3, 3) if ipouts > 0 else None    # thirds, as every IP column
             ip_dec = ipouts / 3 if ipouts > 0 else 0.0
             h  = _i_safe(row["H"])
             bb = _i_safe(row["BB"])
