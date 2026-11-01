@@ -571,6 +571,7 @@ struct ScoresView: View {
     @ObservedObject var vm: ScoresViewModel
     @EnvironmentObject private var navigation: AppNavigation
     @EnvironmentObject private var liveStore: LiveGameStore
+    @ObservedObject private var countdownStore = SeasonCountdownStore.shared
     /// Stable token for this tab's refcounted hold on the shared list loop, so
     /// Home↔Scores switching can't cancel a loop the other tab still needs.
     @State private var listSubscriberID = LiveGameStore.SubscriberID()
@@ -666,6 +667,7 @@ struct ScoresView: View {
         .task {
             if navigation.shouldPoll(on: .scores) { liveStore.subscribeList(owner: listSubscriberID) }
         }
+        .task { await countdownStore.load() }
         // Fold each fresh /live/games snapshot from the store into `games`
         // (score / inning) — the merge the deleted refreshLive loop used to do,
         // now sourced from the store's shared list instead of a self-fetch.
@@ -886,13 +888,32 @@ struct ScoresView: View {
                     .buttonStyle(.borderedProminent)
             }
         } else if vm.games.isEmpty && vm.didLoad {
-            ContentUnavailableView {
-                Label("No games", systemImage: "calendar")
-            } description: {
-                Text("No MLB games scheduled for \(ScoresView.cardDateFormatter.string(from: vm.selectedDate)).")
+            // The offseason countdown over an empty day — today or later only: on
+            // a past day it would read as that day's. With it the two scroll, so
+            // neither is cut off at the largest text sizes.
+            if let countdown = countdownStore.countdown, countdown.isActive,
+               vm.selectedDate >= Calendar.current.startOfDay(for: Date()) {
+                ScrollView {
+                    VStack(spacing: 24) {
+                        SeasonCountdownCard(countdown: countdown)
+                            .readableContentWidth(ScoresGrid.contentCap(columns: columns))
+                        noGames
+                    }
+                    .padding(.vertical, 12)
+                }
+            } else {
+                noGames
             }
         } else {
             gameList
+        }
+    }
+
+    private var noGames: some View {
+        ContentUnavailableView {
+            Label("No games", systemImage: "calendar")
+        } description: {
+            Text("No MLB games scheduled for \(ScoresView.cardDateFormatter.string(from: vm.selectedDate)).")
         }
     }
 

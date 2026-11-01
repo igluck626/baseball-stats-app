@@ -20,6 +20,7 @@ struct HomeView: View {
     @StateObject private var vm = HomeViewModel()
     @ObservedObject private var store = FavoriteTeamStore.shared
     @ObservedObject private var favoritesStore = FavoritePlayersStore.shared
+    @ObservedObject private var countdownStore = SeasonCountdownStore.shared
     @EnvironmentObject private var navigation: AppNavigation
     @EnvironmentObject private var liveStore: LiveGameStore
     @State private var showingSettings = false
@@ -63,6 +64,7 @@ struct HomeView: View {
         .task(id: favoritesStore.playerIds) {
             await vm.loadFavoritePlayers(ids: favoritesStore.playerIds)
         }
+        .task { await countdownStore.load() }
     }
 
     // MARK: - Chrome
@@ -134,7 +136,8 @@ struct HomeView: View {
         // The team page every club has, with My Players added: Home is the
         // favourite's team page.
         TeamPageLayout(entry: entry, vm: vm, path: $stack.path,
-                       navigation: navigation, liveStore: liveStore) {
+                       navigation: navigation, liveStore: liveStore,
+                       countdown: countdownStore.countdown) {
             FavoritePlayersSection(
                 favorites:    vm.favoritePlayers,
                 isLoading:    vm.isLoadingFavorites,
@@ -183,6 +186,8 @@ struct TeamPageLayout<Extra: View>: View {
     /// from their presenter (see `StackDestinations`).
     @ObservedObject var navigation: AppNavigation
     @ObservedObject var liveStore: LiveGameStore
+    /// The offseason countdown, on Home only (another team's page passes none).
+    var countdown: SeasonCountdown? = nil
     @ViewBuilder let extra: () -> Extra
 
     @State private var showingSchedule = false
@@ -203,6 +208,12 @@ struct TeamPageLayout<Extra: View>: View {
             // One column on a phone, in the order written; two on a wide window,
             // News and Leaders on the right (`HomeColumns`).
             columns {
+                // The offseason countdown, above everything (Isaac, 2026-10-31).
+                // Absent all season — no view, so no gap.
+                if let countdown, countdown.isActive {
+                    SeasonCountdownCard(countdown: countdown, tint: tint)
+                }
+
                 TeamHeroCard(
                     entry:        entry,
                     record:       vm.teamRecord,

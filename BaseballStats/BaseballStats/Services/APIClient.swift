@@ -381,6 +381,12 @@ final class APIClient {
         return try await get(url)
     }
 
+    /// `GET /season/countdown` — the offseason countdown's next milestone, or
+    /// every field null while a season is on.
+    func getSeasonCountdown() async throws -> SeasonCountdown {
+        try await get(try buildURL(path: "/season/countdown"))
+    }
+
     /// `GET /players/{id}/postseason/gamelogs?season=` — one postseason's
     /// game lines per side, oldest first. Always a body; a side is null when
     /// he has no games on it that postseason.
