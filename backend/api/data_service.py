@@ -3358,7 +3358,7 @@ def _apply_team_to_season_rows(
             .first()
         )
         if pit_row is None:
-            db.add(_PitcherSeason(player_id=player_id, year=year, team=abbr))
+            db.add(_PitcherSeason(player_id=player_id, year=year, team=abbr, source="bdl"))
             actions.append("pitcher_seasons:created")
         elif pit_row.team != abbr:
             pit_row.team = abbr
@@ -3371,7 +3371,7 @@ def _apply_team_to_season_rows(
             .first()
         )
         if bat_row is None:
-            db.add(_PlayerSeason(player_id=player_id, year=year, team=abbr))
+            db.add(_PlayerSeason(player_id=player_id, year=year, team=abbr, source="bdl"))
             actions.append("player_seasons:created")
         elif bat_row.team != abbr:
             bat_row.team = abbr
@@ -4499,6 +4499,7 @@ def _build_backfill_batter_entry(bdl_id: Optional[int], year: int) -> Optional[d
 
     entry: dict = {
         "year":    year,
+        "source":  "bdl",
         "G":       _to_int(s.get("batting_gp")),
         "AB":      _to_int(s.get("batting_ab")),
         "R":       _to_int(s.get("batting_r")),
@@ -4562,6 +4563,7 @@ def _build_backfill_pitcher_entry(bdl_id: Optional[int], year: int) -> Optional[
 
     entry: dict = {
         "year":   year,
+        "source": "bdl",
         "G":      _to_int(s.get("pitching_gp")),
         "GS":     _to_int(s.get("pitching_gs")),
         "W":      _to_int(s.get("pitching_w")),
@@ -7658,7 +7660,7 @@ def _build_pitcher_season_entry(
     """
     # Start with year only — team / league are omitted so the upsert
     # preserves whatever team Phase 5 wrote previously instead of NULLing it.
-    entry: dict = {"year": year}
+    entry: dict = {"year": year, "source": "bdl"}   # a new row is labelled, never NULL
 
     # Stats-source override — current-season only. The override
     # dict can come from BDL (`_fetch_bdl_pitcher_stats` — primary

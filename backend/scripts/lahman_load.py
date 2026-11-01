@@ -601,6 +601,7 @@ def _batting_season(year: int, agg: dict) -> dict:
 
     season = {
         "year":    year,
+        "source":  "lahman",
         "team":    agg["teamID"] or None,
         "league":  agg["lgID"] or None,
         "G":       agg["G"],
@@ -648,6 +649,7 @@ def _pitching_season(year: int, agg: dict) -> dict:
 
     season = {
         "year":    year,
+        "source":  "lahman",
         "team":    agg["teamID"] or None,
         "league":  agg["lgID"] or None,
         "W":       agg["W"],

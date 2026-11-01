@@ -153,7 +153,7 @@ def _build_current_batter_entry(
     if bdl_stats is None:
         return None
 
-    entry: dict = {"year": current_year}
+    entry: dict = {"year": current_year, "source": "bdl"}   # a new row is labelled, never NULL
 
     if bdl_stats:
         # Standard counting + rate stats from BDL (or MLB Stats API
