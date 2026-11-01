@@ -16,6 +16,7 @@ Idempotent: rows already in the database are skipped.
 import argparse
 import csv
 import datetime
+import json
 import logging
 import os
 import re
@@ -44,6 +45,7 @@ BATTING_CSV             = os.path.join(LAHMAN_DIR, "Batting.csv")
 PITCHING_CSV            = os.path.join(LAHMAN_DIR, "Pitching.csv")
 PEOPLE_CSV              = os.path.join(LAHMAN_DIR, "People.csv")
 CHADWICK_CSV            = os.path.join(LAHMAN_DIR, "chadwick_mlb.csv")
+JUDGMENTS_JSON          = os.path.join(_BACKEND_DIR, "data", "lahman_bridge_judgments.json")
 FIELDING_CSV            = os.path.join(LAHMAN_DIR, "Fielding.csv")
 AWARDS_CSV              = os.path.join(LAHMAN_DIR, "AwardsPlayers.csv")
 AWARDS_SHARE_CSV        = os.path.join(LAHMAN_DIR, "AwardsSharePlayers.csv")
@@ -358,7 +360,9 @@ def _load_chadwick_bridge() -> dict[str, int]:
     by Lahman playerID ONLY — every loader, the bio loader included, looks up
     by playerID. (Keying Baseball-Reference ids, playerIDs and retroIDs in one
     dict is how one man's playerID collided with another man's bbref id.)
-    Every held id is logged loudly, never dropped silently."""
+    Every held id is logged loudly, never dropped silently. Held ids judged by
+    hand (data/lahman_bridge_judgments.json, Isaac 2026-10-19) are added; a
+    judgment contradicting the judge stops the load."""
     with open(CHADWICK_CSV, newline="", encoding="utf-8-sig") as fh:
         chadwick = list(csv.DictReader(fh))
     try:
@@ -375,6 +379,14 @@ def _load_chadwick_bridge() -> dict[str, int]:
     if held:
         log.warning("chadwick bridge: %d Lahman playerIDs HELD (their rows will be skipped): %s%s",
                     len(held), ", ".join(list(held)[:20]), " ..." if len(held) > 20 else "")
+    with open(JUDGMENTS_JSON, encoding="utf-8") as fh:
+        judgments = json.load(fh)["judgments"]
+    for j in judgments:
+        have = bridge.get(j["playerID"])
+        if have is not None and have != j["mlbam"]:
+            raise SystemExit(f"judgment {j['playerID']} -> {j['mlbam']} contradicts the judged bridge ({have})")
+        bridge[j["playerID"]] = j["mlbam"]
+    log.info("chadwick bridge: %d held ids judged by hand", len(judgments))
     return bridge
 
 

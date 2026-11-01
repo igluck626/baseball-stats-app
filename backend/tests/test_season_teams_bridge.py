@@ -53,14 +53,15 @@ print("a judgment can't override the judge")
 bad = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
 json.dump({"judgments": [{"playerID": "gilyalu01", "mlbam": 819382, "why": "test"}]}, bad)
 bad.close()
-saved, lst.JUDGMENTS = lst.JUDGMENTS, bad.name
+import lahman_load                                                # noqa: E402
+saved, lahman_load.JUDGMENTS_JSON = lahman_load.JUDGMENTS_JSON, bad.name    # the bridge reads them there
 try:
     lst.lahman_bridge()
     check("a judgment contradicting the judged bridge is refused", False, "no error")
 except SystemExit as exc:
     check("a judgment contradicting the judged bridge is refused", "contradicts" in str(exc), exc)
 finally:
-    lst.JUDGMENTS = saved
+    lahman_load.JUDGMENTS_JSON = saved
     os.unlink(bad.name)
 
 print(f"\n{sum(results)}/{len(results)} passed")

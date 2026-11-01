@@ -126,19 +126,14 @@ def _row(cols, values, role):
 
 
 def lahman_bridge():
-    """Lahman playerID -> our player id: lahman_load's judged bridge, plus the
-    hand judgments in data/lahman_bridge_judgments.json for ids the judge holds.
-    Never People's bbrefID: along a few chains Lahman shifted it onto the next
-    man, so keying by it files one man's club rows under his namesake."""
+    """Lahman playerID -> our player id: lahman_load's judged bridge, which
+    includes the hand judgments in data/lahman_bridge_judgments.json for ids
+    the judge holds. Never People's bbrefID: along a few chains Lahman shifted
+    it onto the next man, so keying by it files one man's club rows under his
+    namesake."""
     sys.path.insert(0, HERE)
     import lahman_load
-    bridge = dict(lahman_load._load_chadwick_bridge())
-    for j in json.load(open(JUDGMENTS))["judgments"]:
-        have = bridge.get(j["playerID"])
-        if have is not None and have != j["mlbam"]:
-            raise SystemExit(f"judgment {j['playerID']} -> {j['mlbam']} contradicts the judged bridge ({have})")
-        bridge[j["playerID"]] = j["mlbam"]
-    return bridge
+    return dict(lahman_load._load_chadwick_bridge())
 
 
 def load_sources(cur, role, bridge=None):
