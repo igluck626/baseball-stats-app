@@ -1,0 +1,9 @@
+{
+  "_about": "Offseason countdown dates no source we use publishes (Isaac, 2026-10-31). One entry per season, typed in by hand when teams announce; see api/season_countdown.py. spring_training_start / opening_day may be added to override balldontlie's schedule (a lockout moving the published dates).",
+  "2027": {
+    "pitchers_catchers_report": {
+      "date": "2027-02-09",
+      "note": "Isaac, 2026-10-31: most teams' reporting date, as announced. Full squads ~02-14, first spring games 02-19. Subject to the CBA expiring 2026-12-01."
+    }
+  }
+}

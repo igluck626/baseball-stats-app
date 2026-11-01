@@ -1,5 +1,6 @@
 """A season's regular-season span — Opening Day and the last regular-season
-day — derived from balldontlie's schedule, for `GET /season/phase`.
+day — derived from balldontlie's schedule, for `GET /season/phase`, and the
+first spring training game, for the offseason countdown (`season_countdown`).
 
 ⚠️ OPENING DAY = THE FIRST DATE BY WHICH AT LEAST 15 TEAMS HAVE PLAYED (or
 are scheduled to play) A REGULAR-SEASON GAME. Overseas openers don't count:
@@ -46,14 +47,19 @@ def eastern_date(iso: str) -> Optional[datetime.date]:
 
 
 def derive(games: list[dict]) -> dict:
-    """{"opening_day", "last_regular_day"} as ISO dates, each None when the
-    schedule doesn't reach it (no regular-season games published yet)."""
+    """{"opening_day", "last_regular_day", "spring_training_start"} as ISO
+    dates, each None when the schedule doesn't reach it (none published yet)."""
     by_day: dict[datetime.date, set] = {}
+    spring: list[datetime.date] = []
     for g in games:
-        if g.get("season_type") != "regular" or g.get("status") in _NOT_PLAYED:
+        if g.get("status") in _NOT_PLAYED:
             continue
         day = eastern_date(g.get("date") or "")
         if day is None:
+            continue
+        if g.get("season_type") == "spring_training":
+            spring.append(day)
+        if g.get("season_type") != "regular":
             continue
         teams = by_day.setdefault(day, set())
         for side in ("home_team", "away_team"):
@@ -68,7 +74,8 @@ def derive(games: list[dict]) -> dict:
             break
     last = max(by_day) if by_day else None
     return {"opening_day": opening.isoformat() if opening else None,
-            "last_regular_day": last.isoformat() if last else None}
+            "last_regular_day": last.isoformat() if last else None,
+            "spring_training_start": min(spring).isoformat() if spring else None}
 
 
 # ---------------------------------------------------------------------------
@@ -124,13 +131,20 @@ def current_seasons(now: Optional[datetime.datetime] = None) -> list[int]:
     return [year, year - 1]
 
 
+def phase_seasons(now: Optional[datetime.datetime] = None) -> list[int]:
+    """The seasons kept derived: next year's too, which the offseason countdown
+    needs from the World Series on (its schedule is empty until published)."""
+    seasons = current_seasons(now)
+    return [seasons[0] + 1] + seasons
+
+
 def start_refresh(reason: str, fetch: Callable[[str, dict], dict],
                   retries: int = 8, retry_seconds: int = 900) -> threading.Thread:
     """Refresh in a daemon thread — never on the caller's path — retrying a
     failure every `retry_seconds` up to `retries` more times."""
     def _run():
         for attempt in range(retries + 1):
-            if refresh(fetch, current_seasons()):
+            if refresh(fetch, phase_seasons()):
                 return
             if attempt < retries:
                 log.warning("season phase (%s): retrying in %ss", reason, retry_seconds)

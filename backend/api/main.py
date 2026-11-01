@@ -40,6 +40,7 @@ import postseason_ingest
 import postseason_series
 import postseason_stats
 import season_phase
+import season_countdown
 import team_contact
 import team_crosswalk
 import team_page
@@ -3329,6 +3330,30 @@ def season_phase_span(season: int = Query(..., description="Season year, e.g. 20
     if body is None:
         raise HTTPException(status_code=503, detail="season phase not derived yet")
     return body
+
+
+@app.get("/season/countdown")
+def season_countdown_now():
+    """The offseason countdown (Home, Scores): from the end of the World Series
+    to Opening Day, the next milestone — pitchers & catchers report (typed in
+    yearly, data/season_milestones.json), the first spring training game, then
+    Opening Day (both from `season_phase`, unless the file overrides them) —
+    with its Eastern date and the days until it. Every field null when there is
+    no countdown: a season in progress, or balldontlie unable to say the World
+    Series is over (`season_countdown`)."""
+    today = datetime.datetime.now(data_service._MLB_LOCAL_TZ).date()
+
+    def season_over(year: int):
+        try:
+            series = postseason_series.build_series(*_postseason_inputs(year), year)
+        except Exception as exc:
+            log.warning("season_countdown: balldontlie unavailable: %s", exc)
+            return None
+        ws = next((s for s in series if s.get("round") == "WS"), None)
+        return bool(ws and ws.get("is_over"))
+
+    return season_countdown.countdown(today, season_countdown.load_milestones(),
+                                      season_phase.cached, season_over)
 
 
 def _records_current_seasons() -> list[int]:

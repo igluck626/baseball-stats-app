@@ -73,7 +73,12 @@ mid = sp.derive(OPENING_NIGHT + [g("2026-09-27T19:10:00.000Z", 5, 6, status="STA
 check("mid-season the end is the last SCHEDULED game, not the latest final", mid["last_regular_day"] == "2026-09-27", mid)
 check("a late West Coast game counts on its Eastern date", sp.eastern_date("2026-09-28T02:10:00.000Z").isoformat() == "2026-09-27")
 none = sp.derive([g("2027-02-20T18:05:00.000Z", 1, 2, "spring_training")])
-check("no regular-season schedule yet: both null", none == {"opening_day": None, "last_regular_day": None}, none)
+check("no regular-season schedule yet: both null, spring training known",
+      none == {"opening_day": None, "last_regular_day": None, "spring_training_start": "2027-02-20"}, none)
+check("spring training starts with its first game, Eastern; a postponed one doesn't count",
+      sp.derive([g("2026-02-21T01:05:00.000Z", 1, 2, "spring_training"),          # 8:05pm ET 02-20
+                 g("2026-02-19T18:05:00.000Z", 3, 4, "spring_training", status="STATUS_POSTPONED"),
+                 g("2026-02-22T18:05:00.000Z", 5, 6, "spring_training")])["spring_training_start"] == "2026-02-20")
 check("an unparseable date is skipped, not a crash", sp.derive([g("garbage", 1, 2)] + TOKYO)["opening_day"] == "2025-03-27")
 
 print("GET /season/phase never walks balldontlie")
@@ -106,7 +111,8 @@ check("  ...asking for the season, without the ignored postseason / start_date f
 n = len(calls)
 body = main.season_phase_span(season=2026)
 check("a request answers from the stored value",
-      body == {"season": 2026, "opening_day": "2026-03-26", "last_regular_day": "2026-09-27"}, body)
+      body == {"season": 2026, "opening_day": "2026-03-26", "last_regular_day": "2026-09-27",
+               "spring_training_start": "2026-02-20"}, body)
 for _ in range(5):
     main.season_phase_span(season=2026)
 check("  ...and six requests made NO balldontlie call", len(calls) == n, len(calls) - n)
@@ -135,6 +141,8 @@ check("start_refresh retries after a failure and then stores the value",
       sp.cached(2026) is not None and len(attempts) > 1, (sp.cached(2026), len(attempts)))
 check("current_seasons: this Eastern year and last", sp.current_seasons(
     __import__("datetime").datetime(2027, 1, 1, 3, 0, tzinfo=__import__("datetime").timezone.utc)) == [2026, 2025])
+check("phase_seasons adds next year, for the offseason countdown", sp.phase_seasons(
+    __import__("datetime").datetime(2026, 11, 1, 12, 0, tzinfo=__import__("datetime").timezone.utc)) == [2027, 2026, 2025])
 
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
