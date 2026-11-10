@@ -259,8 +259,9 @@ struct GameLogsView: View {
                 }
             }
             .frame(width: SplitsLayout.frozenPaneWidth)
-            .background(.ultraThinMaterial)
-            .shadow(color: .black.opacity(0.08), radius: 4, x: 2, y: 0)
+            // Shadow from the pane's rectangle, not the pane: on the pane, SwiftUI shadows
+            // every row's text (~380 offscreen passes a frame, measured 2026-11-10).
+            .background(Rectangle().fill(.ultraThinMaterial).shadow(color: .black.opacity(0.08), radius: 4, x: 2, y: 0))
             .zIndex(1)
 
             // Scrollable pane — counting + rate stats.
@@ -1080,8 +1081,7 @@ private struct BattingGameLogTable: View {
                 }
             }
             .frame(width: gameLogFrozenPaneWidth)
-            .background(.ultraThinMaterial)
-            .shadow(color: .black.opacity(0.08), radius: 4, x: 2, y: 0)
+            .background(Rectangle().fill(.ultraThinMaterial).shadow(color: .black.opacity(0.08), radius: 4, x: 2, y: 0))
             .zIndex(1)
 
             // Scrollable pane — must mirror the frozen pane row-for-row
@@ -1354,8 +1354,7 @@ private struct PitchingGameLogTable: View {
                 }
             }
             .frame(width: gameLogFrozenPaneWidth)
-            .background(.ultraThinMaterial)
-            .shadow(color: .black.opacity(0.08), radius: 4, x: 2, y: 0)
+            .background(Rectangle().fill(.ultraThinMaterial).shadow(color: .black.opacity(0.08), radius: 4, x: 2, y: 0))
             .zIndex(1)
 
             ScrollView(.horizontal, showsIndicators: false) {
@@ -1890,8 +1889,7 @@ private struct PostseasonBattingGameTable: View {
                 }
             }
             .frame(width: gameLogFrozenPaneWidth)
-            .background(.ultraThinMaterial)
-            .shadow(color: .black.opacity(0.08), radius: 4, x: 2, y: 0)
+            .background(Rectangle().fill(.ultraThinMaterial).shadow(color: .black.opacity(0.08), radius: 4, x: 2, y: 0))
             .zIndex(1)
 
             // The regular log's own header, row and monthly-totals row,
@@ -1946,8 +1944,7 @@ private struct PostseasonPitchingGameTable: View {
                 }
             }
             .frame(width: gameLogFrozenPaneWidth)
-            .background(.ultraThinMaterial)
-            .shadow(color: .black.opacity(0.08), radius: 4, x: 2, y: 0)
+            .background(Rectangle().fill(.ultraThinMaterial).shadow(color: .black.opacity(0.08), radius: 4, x: 2, y: 0))
             .zIndex(1)
 
             ScrollView(.horizontal, showsIndicators: false) {

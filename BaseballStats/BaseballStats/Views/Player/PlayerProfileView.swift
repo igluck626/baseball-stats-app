@@ -1572,8 +1572,7 @@ struct PlayerProfileScreen: View {
                 BattingCareerFrozenTotalsRow(teamWidth: teamWidth)
             }
             .frame(width: paneWidth)
-            .background(.ultraThinMaterial)
-            .shadow(color: .black.opacity(0.08), radius: 4, x: 2, y: 0)
+            .background(Rectangle().fill(.ultraThinMaterial).shadow(color: .black.opacity(0.08), radius: 4, x: 2, y: 0))
             .zIndex(1)
 
             // Scrollable section — WAR + filtered optional columns.
@@ -1665,8 +1664,7 @@ struct PlayerProfileScreen: View {
                 PitchingCareerFrozenTotalsRow(teamWidth: teamWidth)
             }
             .frame(width: paneWidth)
-            .background(.ultraThinMaterial)
-            .shadow(color: .black.opacity(0.08), radius: 4, x: 2, y: 0)
+            .background(Rectangle().fill(.ultraThinMaterial).shadow(color: .black.opacity(0.08), radius: 4, x: 2, y: 0))
             .zIndex(1)
 
             // Scrollable section — WAR + filtered optional columns.
@@ -5326,8 +5324,7 @@ private struct PostseasonTableFrame: View {
                     .background(Color(.systemGray5).opacity(0.7))
             }
             .frame(width: postseasonFrozenWidth)
-            .background(.ultraThinMaterial)
-            .shadow(color: .black.opacity(0.08), radius: 4, x: 2, y: 0)
+            .background(Rectangle().fill(.ultraThinMaterial).shadow(color: .black.opacity(0.08), radius: 4, x: 2, y: 0))
             .zIndex(1)
 
             ScrollView(.horizontal, showsIndicators: false) {

@@ -681,15 +681,17 @@ private struct TeamHeroCard: View {
         // cards) so it reads as a crisp white surface over the grouped
         // background rather than translucent grey.
         .background(
+            // ⚠️ The shadow goes on the BACKGROUND, never on the card: on the card,
+            // SwiftUI shadows every Text inside it (~230 offscreen passes a frame —
+            // Home scrolled at ~40 fps on an iPhone Air, measured 2026-11-10).
             teamWashBackground(
                 tint: teamColor, cornerRadius: 18, isDark: colorScheme == .dark,
-            )
+            ).shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 3)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .strokeBorder(teamColor.opacity(0.25), lineWidth: 1)
         )
-        .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 3)
         .padding(.horizontal, 16)
         // Subscribe to the favorite's shared detail loop while there's a live
         // game AND the Home tab is visible/active. Refcounted by subscriberID.
@@ -1528,13 +1530,12 @@ private struct TeamLeadersSection: View {
             .background(
                 teamWashBackground(
                     tint: tint, cornerRadius: 18, isDark: colorScheme == .dark,
-                )
+                ).shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 3)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .strokeBorder(tint.opacity(0.25), lineWidth: 1)
             )
-            .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 3)
             .padding(.horizontal, 16)
         }
     }
@@ -1703,13 +1704,12 @@ private struct TeamToolsCard: View {
         // Team-tint wash — identical treatment to the Team Leaders card so the
         // two cards stay in sync (same helper, border, shadow, corner radius).
         .background(
-            teamWashBackground(tint: tint, cornerRadius: 18, isDark: colorScheme == .dark)
+            teamWashBackground(tint: tint, cornerRadius: 18, isDark: colorScheme == .dark).shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 3)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .strokeBorder(tint.opacity(0.25), lineWidth: 1)
         )
-        .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 3)
         .padding(.horizontal, 16)
     }
 
@@ -1866,9 +1866,8 @@ private struct FavoritePlayerTile: View {
             .background(
                 teamWashBackground(
                     tint: tint, cornerRadius: 14, isDark: colorScheme == .dark, faint: true,
-                )
+                ).shadow(color: .black.opacity(0.06), radius: 8, y: 3)
             )
-            .shadow(color: .black.opacity(0.06), radius: 8, y: 3)
 
             if showRemoveBadge {
                 Button(action: onRemove) {
@@ -2083,7 +2082,7 @@ private struct NewsCard: View {
         .frame(width: Self.cardWidth)
         .background(Color(.systemBackground))
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 3)
+        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color(.systemBackground)).shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 3))
         .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
