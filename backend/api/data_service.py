@@ -53,6 +53,10 @@ from database.models import PlayerSeason as _PlayerSeason
 _PS_COLUMNS       = [c.key for c in _PlayerSeason.__table__.columns  if c.key != "player_id"]
 _PS_PITCH_COLUMNS = [c.key for c in _PitcherSeason.__table__.columns if c.key != "player_id"]
 
+# Leagues whose seasons carry no OPS+ / ERA+ (no game scores for a park
+# factor), so a career total skips them instead of turning unknown.
+from postseason_stats import NEGRO_CIRCUITS as _NO_PLUS_LEAGUES
+
 # Bio fields exposed by search results and batting/pitching stats responses.
 _BIO_COLUMNS = [
     "position", "bats", "throws", "height", "weight",
@@ -1218,15 +1222,25 @@ def _batting_career_totals(seasons: list[dict]) -> dict:
     # (182.7 vs bref 182) and ~4 points low for Trout (168.6 vs
     # bref 173); the AB-weighted alternative drifts further from
     # bref on both, so PA-weighted is the best fit available.
+    #
+    # A season with at-bats but no OPS+ (before 1898 there are no game
+    # scores to build a park factor from) makes the career figure
+    # unknown rather than quietly covering part of the career. Negro
+    # Leagues seasons don't count: they carry no OPS+ and are left out.
     num = 0.0
     den = 0.0
+    career_known = True
     for s in seasons_with_counting:
         ops_plus = s.get("OPS_plus")
         pa = s.get("PA")
-        if ops_plus is not None and pa is not None and pa > 0:
+        if ops_plus is None:
+            if (s.get("AB") or 0) > 0 and s.get("league") not in _NO_PLUS_LEAGUES:
+                career_known = False
+            continue
+        if pa is not None and pa > 0:
             num += float(ops_plus) * float(pa)
             den += float(pa)
-    if den > 0:
+    if den > 0 and career_known:
         totals["OPS_plus"] = round(num / den, 1)
 
     return totals
@@ -1370,13 +1384,18 @@ def _pitching_career_totals(seasons: list[dict]) -> dict:
 
     # ER-weighted career ERA+. Use stored ER when present; fall
     # back to ER ≈ ERA × IP / 9 for the older rows whose ER column
-    # was never backfilled. Seasons missing ERA+ silently drop out
-    # of both sides of the ratio.
+    # was never backfilled. A season with innings and earned runs but
+    # no ERA+ (before 1898) makes the career figure unknown, as for
+    # OPS+; Negro Leagues seasons don't count.
     era_num = 0.0
     era_den = 0.0
+    era_known = True
     for s in seasons:
         era_plus = s.get("ERA_plus")
         if era_plus is None:
+            if ((s.get("IP") or 0) > 0 and (s.get("ER") or 0) > 0
+                    and s.get("league") not in _NO_PLUS_LEAGUES):
+                era_known = False
             continue
         season_er = s.get("ER")
         if season_er is None:
@@ -1390,7 +1409,7 @@ def _pitching_career_totals(seasons: list[dict]) -> dict:
             continue
         era_num += float(era_plus) * float(season_er)
         era_den += float(season_er)
-    if era_den > 0:
+    if era_den > 0 and era_known:
         totals["ERA_plus"] = round(era_num / era_den, 1)
 
     # Career FIP. Algebraically:
