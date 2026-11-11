@@ -3828,6 +3828,7 @@ def admin_reset_player_season(
             player_id = player_id,
             year      = season,
             team      = team_code,
+            source    = "bdl",     # the nightly fills it from BDL (audit item 4)
         ))
         db.commit()
 
@@ -4603,8 +4604,9 @@ def admin_add_historical_player(
 
 @app.post("/admin/reload-player-lahman/{player_id}")
 def admin_reload_player_lahman(player_id: int):
-    """Load (or refresh) Lahman career stats for a single player by
-    `bbref_id` filter against Batting.csv / Pitching.csv. Designed as
+    """Load (or refresh) Lahman career stats for a single player: the
+    Lahman playerID the JUDGED bridge assigns to `player_id` (not the bio's
+    bbref_id), filtered against Batting.csv / Pitching.csv. Designed as
     the follow-up to `/admin/add-historical-player` — the bio row
     lands first via that endpoint, then this one pulls the player's
     actual seasons in.
@@ -4636,21 +4638,24 @@ def admin_reload_player_lahman(player_id: int):
                 status_code=404,
                 detail=f"No bio row in players or pitchers for player_id {player_id}",
             )
-        # `bbref_id` is the join key into Lahman's playerID column.
-        # Both bio sides carry the same one when both exist.
+        # bbref_id is reported back only; it is NOT the Lahman key.
         bbref_id    = (player_row.bbref_id if player_row else pitcher_row.bbref_id)
         has_batter  = player_row  is not None
         has_pitcher = pitcher_row is not None
 
-    if not bbref_id:
+    # Lahman rows are found through the judged bridge, never by bbref_id
+    # (see `_judged_lahman_ids`). No judged id, or more than one: load nothing.
+    lahman_ids = _judged_lahman_ids(player_id)
+    if len(lahman_ids) != 1:
         raise HTTPException(
-            status_code=400,
+            status_code=409,
             detail=(
-                f"player_id {player_id} has no bbref_id — Lahman CSVs "
-                "are keyed on bbref/playerID, so we can't locate rows "
-                "without it."
+                f"player_id {player_id}: the judged Lahman bridge gives "
+                f"{lahman_ids or 'no playerID'} — nothing loaded. (Held or not "
+                "in Lahman; judge it in data/lahman_bridge_judgments.json first.)"
             ),
         )
+    lahman_id = lahman_ids[0]
 
     batting_saved  = 0
     pitching_saved = 0
@@ -4658,7 +4663,7 @@ def admin_reload_player_lahman(player_id: int):
     years_pitching: list[int] = []
 
     if has_batter:
-        seasons = _lahman_batting_seasons_for_bbref(bbref_id)
+        seasons = _lahman_batting_seasons_for_playerid(lahman_id)
         if seasons:
             with connection.get_session() as db:
                 crud.save_player_seasons(db, player_id, seasons)
@@ -4666,7 +4671,7 @@ def admin_reload_player_lahman(player_id: int):
             years_batting = sorted(s["year"] for s in seasons)
 
     if has_pitcher:
-        seasons = _lahman_pitching_seasons_for_bbref(bbref_id)
+        seasons = _lahman_pitching_seasons_for_playerid(lahman_id)
         if seasons:
             with connection.get_session() as db:
                 crud.save_pitcher_seasons(db, player_id, seasons)
@@ -4677,6 +4682,7 @@ def admin_reload_player_lahman(player_id: int):
         "status":          "ok",
         "player_id":       player_id,
         "bbref_id":        bbref_id,
+        "lahman_id":       lahman_id,
         "batting_saved":   batting_saved,
         "pitching_saved":  pitching_saved,
         "years_batting":   years_batting,
@@ -4684,17 +4690,25 @@ def admin_reload_player_lahman(player_id: int):
     }
 
 
+def _judged_lahman_ids(mlbam: int) -> list[str]:
+    """The Lahman playerIDs the judged bridge assigns to `mlbam` (normally one).
+    ⚠️ Never look Lahman up by bbref_id: a Baseball-Reference id is not always
+    the man's Lahman playerID, and one man's playerID can be another man's
+    bbref id — the same trap the loader's bridge was rebuilt to avoid."""
+    return sorted(pid for pid, m in lahman_load._load_chadwick_bridge().items() if m == mlbam)
+
+
 # Stint aggregation + derived-stat layout that follows
 # `lahman_load._read_batting_aggregated` and the per-row `_load_batting`
-# builder, but scoped to a single bbref id and without the CUTOFF_YEAR
+# builder, but scoped to a single Lahman playerID and without the CUTOFF_YEAR
 # gate. Stored here instead of as a generic helper in `lahman_load.py`
 # because the rest of that module is full-table-scan oriented; this
 # is the only single-player variant the codebase needs today.
-def _lahman_batting_seasons_for_bbref(bbref_id: str) -> list[dict]:
+def _lahman_batting_seasons_for_playerid(lahman_id: str) -> list[dict]:
     by_year: dict[int, dict] = {}
     with open(lahman_load.BATTING_CSV, newline="", encoding="utf-8-sig") as fh:
         for row in csv.DictReader(fh):
-            if row.get("playerID") != bbref_id:
+            if row.get("playerID") != lahman_id:
                 continue
             year  = int(row["yearID"])
             stint = int(row["stint"])
@@ -4736,6 +4750,7 @@ def _lahman_batting_seasons_for_bbref(bbref_id: str) -> list[dict]:
         )
         seasons.append({
             "year":    year,
+            "source":  "lahman",
             "team":    agg["teamID"] or None,
             "league":  agg["lgID"] or None,
             "G":       agg["G"],
@@ -4762,11 +4777,11 @@ def _lahman_batting_seasons_for_bbref(bbref_id: str) -> list[dict]:
     return seasons
 
 
-def _lahman_pitching_seasons_for_bbref(bbref_id: str) -> list[dict]:
+def _lahman_pitching_seasons_for_playerid(lahman_id: str) -> list[dict]:
     by_year: dict[int, dict] = {}
     with open(lahman_load.PITCHING_CSV, newline="", encoding="utf-8-sig") as fh:
         for row in csv.DictReader(fh):
-            if row.get("playerID") != bbref_id:
+            if row.get("playerID") != lahman_id:
                 continue
             year  = int(row["yearID"])
             stint = int(row["stint"])
@@ -4817,6 +4832,7 @@ def _lahman_pitching_seasons_for_bbref(bbref_id: str) -> list[dict]:
         baopp = round(agg["H"] / ab_faced, 3) if ab_faced > 0 else None
         seasons.append({
             "year":    year,
+            "source":  "lahman",
             "team":    agg["teamID"] or None,
             "league":  agg["lgID"] or None,
             "W":       agg["W"],
@@ -4991,7 +5007,8 @@ def admin_repair_swapped_player(
          `real_mlbam` (the historical junk — it can sit on either side).
          Game logs are keyed on player_id and are NOT touched.
       E. Reload the real career from Lahman via `correct_bbref` onto
-         `real_mlbam` (`_lahman_pitching/batting_seasons_for_bbref`).
+         `real_mlbam` (`_lahman_pitching/batting_seasons_for_playerid`); the
+         judged bridge must agree (checked before phase A, or nothing runs).
       F. Delete the bogus duplicate record (bio + seasons), guarded by A.
 
     Modern-player mode: pass `skip_lahman_reload=true` (and omit `bogus_mlbam`)
@@ -5021,6 +5038,26 @@ def admin_repair_swapped_player(
         "steps":         [],
     }
     step = summary["steps"].append
+
+    # Phase D deletes every season row before phase E reloads, so check the
+    # reload source FIRST: the judged bridge must give real_mlbam exactly
+    # correct_bbref as its Lahman playerID. Anything else stops before any write
+    # (a mismatch would load the wrong man's rows, or the next Lahman load
+    # would put them back on another id). Modern players: skip_lahman_reload.
+    if not skip_lahman_reload:
+        judged = _judged_lahman_ids(real_mlbam)
+        owner  = lahman_load._load_chadwick_bridge().get(correct_bbref)
+        if judged != [correct_bbref]:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"the judged Lahman bridge gives real_mlbam {real_mlbam} "
+                    f"{judged or 'no playerID'} (and {correct_bbref!r} -> {owner}), "
+                    f"not [{correct_bbref!r}] — nothing changed. Use "
+                    "skip_lahman_reload=true for a player with no Lahman career."
+                ),
+            )
+        step(f"judged bridge agrees: {correct_bbref} -> {real_mlbam}")
 
     try:
         # --- A. Guard the bogus record (must carry NO bdl_id / NO game logs) ---
@@ -5190,12 +5227,12 @@ def admin_repair_swapped_player(
 
         # --- E. Reload the real career from Lahman onto real_mlbam ---
         if correct_is_pitcher:
-            seasons = _lahman_pitching_seasons_for_bbref(correct_bbref)
+            seasons = _lahman_pitching_seasons_for_playerid(correct_bbref)
             if seasons:
                 with connection.get_session() as db:
                     crud.save_pitcher_seasons(db, real_mlbam, seasons)
         else:
-            seasons = _lahman_batting_seasons_for_bbref(correct_bbref)
+            seasons = _lahman_batting_seasons_for_playerid(correct_bbref)
             if seasons:
                 with connection.get_session() as db:
                     crud.save_player_seasons(db, real_mlbam, seasons)
@@ -5313,6 +5350,7 @@ def admin_seed_pitcher_season(
             player_id = player_id,
             year      = season,
             team      = team_code,
+            source    = "bdl",     # the nightly fills it from BDL (audit item 4)
         ))
         db.commit()
 
