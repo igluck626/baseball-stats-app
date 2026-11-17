@@ -4,7 +4,9 @@ import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))   # backend/, for `war.`
 INPUTS = _os.environ.get('WAR_INPUTS', _os.path.expanduser('~/baseballstats-tools/scripts/war'))         # where input files go
 RETRO = _os.environ.get('RETRO_DUCKDB', _os.path.expanduser('~/retrosheet-phase4/plays_v3.duckdb'))      # Retrosheet play-by-play
-BDL_DIR = _os.environ.get('WAR_BDL_DIR', _os.path.expanduser('~/baseballstats-tools/data/bdl2026'))      # balldontlie season download
+SEASON = int(_os.environ.get('WAR_SEASON', '2026'))                                                   # the balldontlie season
+TAG = f'bdl{SEASON % 100:02d}'                                                                      # its input-file prefix
+BDL_DIR = _os.environ.get('WAR_BDL_DIR', _os.path.expanduser(f'~/baseballstats-tools/data/bdl{SEASON}'))   # balldontlie season download
 LAHMAN = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))), 'data', 'lahman')
 import os, sys, pickle, math, statistics
 from collections import defaultdict
@@ -12,14 +14,14 @@ from war.dbconn import conn
 cur = conn().cursor()
 cur.execute('SELECT year, team_id, league FROM team_seasons'); TL = {(y, t): L for y, t, L in cur.fetchall()}
 n = lambda v: float(v or 0)
-cur.execute('SELECT player_id, year, team, "PA","AB","H",doubles,triples,"HR","BB","HBP","SF" FROM player_season_stints WHERE year BETWEEN 1900 AND 2026')
+cur.execute('SELECT player_id, year, team, "PA","AB","H",doubles,triples,"HR","BB","HBP","SF" FROM player_season_stints WHERE year BETWEEN 1900 AND %s', (SEASON,))
 B = defaultdict(lambda: defaultdict(lambda: [0.0] * 9))      # B[(pid, y)][league] summed counts
 for r in cur.fetchall():
     L = TL.get((r[1], r[2]))
     if L not in ('AL', 'NL', 'FL'): continue
     acc = B[(r[0], r[1])][L]
     for i, v in enumerate(r[3:12]): acc[i] += n(v)
-cur.execute('SELECT player_id, year, team, "IP", "R" FROM pitcher_season_stints WHERE year BETWEEN 1900 AND 2026')
+cur.execute('SELECT player_id, year, team, "IP", "R" FROM pitcher_season_stints WHERE year BETWEEN 1900 AND %s', (SEASON,))
 Pp = defaultdict(lambda: defaultdict(lambda: [0.0, 0.0]))
 for pid, y, t, ip, R in cur.fetchall():
     L = TL.get((y, t))
@@ -57,7 +59,7 @@ for src, D, rel, mn in (('bat', B, hrel, MINB), ('pit', Pp, prel, MINP)):
 W = int(os.environ.get('SW', '4'))
 def wm(x): return sum(a * w for a, w in x) / sum(w for _, w in x)
 STR = {}
-for y in range(1900, 2027):
+for y in range(1900, SEASON + 1):
     pairs = {}
     for A, Bl in (('AL', 'NL'), ('AL', 'FL'), ('FL', 'NL')):
         ab = [t for yy in range(y - W, y + W + 1) for t in obs.get((yy, A, Bl), [])]

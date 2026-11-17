@@ -47,12 +47,24 @@ check('every section present', need <= set(P), sorted(need - set(P)))
 check('version is v1', P.get('version') == 'v1', P.get('version'))
 check('option B on (Total Zone weights from 2003)', P['fld_retro'].get('use_tz_weights_from_2003') == 1)
 check('fielding weights for 4 eras × 8 positions', len(P['fld_retro']['coef']) == 32, len(P['fld_retro']['coef']))
-for s in ('hit_rep_share', 'pit_rep_share', 'war_per_season_games', 'center_fielding', 'rep_pool_leagues', 'league_strength_k_1900'):
+SIGN = dict(range=1, dp=1, tot=1, err=-1, zr=1, rbp=1, tzp=1, tder=1, xb=-1, kill=1, cs=1, pb=-1, catt=-1, ccs=1, cwp=-1, cpo=1)
+wrong = [(k, f, round(c, 3)) for k, d in P['fld_retro']['coef'].items() for f, c in d.items() if c * SIGN[f] < -1e-12]
+check('every fielding weight has its sensible sign (more plays good, errors bad)', not wrong, wrong[:6])
+SIGN_T = dict(A=1, PO=1, DP=1, E=-1)
+wrong_t = [(g, f, c) for g, d in P['fld_totals']['coef'].items() for f, c in d.items() if c * SIGN_T[f] < -1e-12]
+check('season-totals fielding weights have sensible signs too', not wrong_t, wrong_t)
+check('position values from the 1870s on', min(int(e) for e in P['positions']['by_era']) == 1870)
+for s in ('start_to_relief_ip_ratio', 'pre1910_team_def_scale', 'team_der_weight'):
+    check(f'setting {s} lives in the settings file', s in P['scalars'])
+check('replacement shares add to about 1,000 WAR a season', 0.95 <= P['scalars']['hit_rep_share'] + P['scalars']['pit_rep_share'] <= 1.0)
+for s in ('hit_rep_share', 'pit_rep_share', 'war_per_season_games', 'center_fielding', 'center_positions', 'center_pitcher_waa',
+          'reliever_leverage', 'reliever_rep_weight', 'rep_pool_leagues', 'league_strength_k_1900'):
     check(f'scalar {s} present', s in P['scalars'])
 
 print("a fresh run matches the reviewed numbers")
 inputs = os.environ.get('WAR_INPUTS', os.path.expanduser('~/baseballstats-tools/scripts/war'))
-have = all(os.path.exists(os.path.join(inputs, f)) for f in ('bat_raw.pkl', 'fld2_raw.pkl', 'tz_raw.pkl', 'coverage.json', 'bdl26.pkl'))
+have = all(os.path.exists(os.path.join(inputs, f)) for f in ('bat_raw.pkl', 'fld2_raw.pkl', 'tz_raw.pkl', 'coverage.json',
+                                                            'coverage_league.json', 'li_raw.pkl', 'bdl26.pkl', 'bdl26_li.pkl'))
 if not have:
     print(f'  [SKIPPED] input files not found in {inputs} (run on the machine that holds them)')
 else:
@@ -62,6 +74,20 @@ else:
     res = compute(conn().cursor(), inputs)
     diffs = golden.compare(golden.summary(res), json.load(open(os.path.join(HERE, 'fixtures', 'war_v1_golden.json'))))
     check('matches tests/fixtures/war_v1_golden.json', not diffs, diffs[:8])
+    check('every unrated season is listed with a reason, and only a handful', len(res['skipped']) <= 10 and all(len(x) == 4 for x in res['skipped']),
+          res['skipped'][:5])
+    from collections import defaultdict
+    lt = defaultdict(lambda: [0.0, 0.0])
+    for (p, y), v in res['hit'].items():
+        if not v['pitcher']: lt[(y, v['league'])][0] += v['fld']; lt[(y, v['league'])][1] += v['pos']
+    worst = max(abs(x) for t in lt.values() for x in t[:2])
+    check('fielding and position runs sum to zero within every league-season', worst < 1e-6, worst)
+    pw = defaultdict(float)
+    for (p, y), v in res['pit'].items():
+        if v['IP'] > 0: pw[(y, v['league'])] += v['waa']
+    check('pitcher wins above average sum to zero within every league-season', max(abs(x) for x in pw.values()) < 1e-6, max(abs(x) for x in pw.values()))
+    zp = [(k, v['war']) for k, v in res['hit'].items() if v['PA'] == 0]
+    check('players with no plate appearances (pinch runners, defensive subs) are rated', len(zp) > 100 and any(abs(w) > 0.05 for _, w in zp), len(zp))
 
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

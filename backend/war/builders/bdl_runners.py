@@ -10,12 +10,14 @@ import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))   # backend/, for `war.`
 INPUTS = _os.environ.get('WAR_INPUTS', _os.path.expanduser('~/baseballstats-tools/scripts/war'))         # where input files go
 RETRO = _os.environ.get('RETRO_DUCKDB', _os.path.expanduser('~/retrosheet-phase4/plays_v3.duckdb'))      # Retrosheet play-by-play
-BDL_DIR = _os.environ.get('WAR_BDL_DIR', _os.path.expanduser('~/baseballstats-tools/data/bdl2026'))      # balldontlie season download
+SEASON = int(_os.environ.get('WAR_SEASON', '2026'))                                                   # the balldontlie season
+TAG = f'bdl{SEASON % 100:02d}'                                                                      # its input-file prefix
+BDL_DIR = _os.environ.get('WAR_BDL_DIR', _os.path.expanduser(f'~/baseballstats-tools/data/bdl{SEASON}'))   # balldontlie season download
 LAHMAN = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))), 'data', 'lahman')
 import json, os, re, sys, pickle, collections, unicodedata
 fold = lambda t: ''.join(c for c in unicodedata.normalize('NFKD', t) if not unicodedata.combining(c))
 OUT = BDL_DIR; W = INPUTS
-B = pickle.load(open(os.path.join(W, 'bdl26.pkl'), 'rb')); SP = B['SPANS']
+B = pickle.load(open(os.path.join(W, f'{TAG}.pkl'), 'rb')); SP = B['SPANS']
 from war.dbconn import conn
 cur = conn().cursor(); cur.execute('SELECT bdl_id, player_id FROM players WHERE bdl_id IS NOT NULL')
 B2P = collections.defaultdict(list)
@@ -144,5 +146,5 @@ for f, pos, cd, b_, o, x_, k in ARM:
 dr = {q: sum(i for _, p_, i in DP if p_ == q) / max(1, sum(1 for _, p_, _i in DP if p_ == q)) for q in (3, 4, 5, 6)}; DX = collections.defaultdict(float)
 for f, p_, inv in DP:
     if f is not None: DX[(f, p_)] += inv - dr[p_]
-pickle.dump(dict(BRX=dict(BRX), ARM=dict(AX), DP=dict(DX)), open(os.path.join(W, 'bdl26_runs.pkl'), 'wb'))
+pickle.dump(dict(BRX=dict(BRX), ARM=dict(AX), DP=dict(DX)), open(os.path.join(W, f'{TAG}_runs.pkl'), 'wb'))
 print('runners with BR', len(BRX), 'OF with arm', len(AX), 'IF with DP', len(DX))

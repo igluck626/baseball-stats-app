@@ -4,14 +4,15 @@ Pure: it reads, it never writes. Hitters and pitchers come back as dicts keyed b
 
   hitters:  bat, br (baserunning), dp, rep (replacement), pos (position), fld (fielding), all in runs; rpw (runs per win);
             offense = (bat + br + dp + rep) / rpw;  defense = (pos + fld) / rpw;  war = offense + defense
-  pitchers: waa (wins above average), rep (replacement wins), war = waa + rep
+  pitchers: waa (wins above average), rep (replacement wins), war = waa + rep, plus the pieces behind waa
+  skipped:  every season row that could not be rated, with the reason (nothing is dropped silently)
 
 How each piece works, and why, is in README.md. Every tuned number comes from the settings file; nothing here reads the
 stored Baseball-Reference columns.
 
-Inputs (one directory, built by builders/): posPA.pkl, bat_raw.pkl, roe.pkl, coverage.json, lgstr.pkl, lgstr_pre1900.pkl,
-fld2_raw.pkl, zfld_raw.pkl, cat_raw.pkl, tz_raw.pkl, rb_raw.pkl, tder_raw.pkl, and for the balldontlie season bdl26.pkl,
-bdl26_runs.pkl, bdl26_fld.pkl.
+Inputs (one directory, built by builders/): posPA.pkl, bat_raw.pkl, roe.pkl, coverage.json, coverage_league.json,
+lgstr.pkl, lgstr_pre1900.pkl, fld2_raw.pkl, zfld_raw.pkl, cat_raw.pkl, tz_raw.pkl, rb_raw.pkl, tder_raw.pkl, li_raw.pkl,
+and for the balldontlie season bdlYY.pkl, bdlYY_runs.pkl, bdlYY_fld.pkl, bdlYY_li.pkl (YY = the season's last two digits).
 """
 import csv
 import json
@@ -29,19 +30,34 @@ DEFAULT_PARAMS = os.path.join(HERE, 'params', 'war_params_v1.json')
 DEFAULT_TEAMS = os.path.join(os.path.dirname(HERE), 'data', 'lahman', 'Teams.csv')
 # Negro Leagues seasons are not covered (they are to be hidden); these league codes are skipped.
 NEL = ('NN2', 'NNL', 'NAL', 'ECL', 'NSL', 'ANL', 'EWL', 'IND', 'EAS', 'WES', 'NAC', 'INT')
-# Retrosheet team code → Lahman team_seasons code, for the few season rows stored without a league
+# Retrosheet team code → Lahman team_seasons code (the two vocabularies differ for a few franchises)
 ALIAS = {'MLN': ['ML1'], 'MIL': ['ML4', 'MIL'], 'ANA': ['LAA', 'ANA', 'CAL'], 'WSN': ['WAS', 'WSN', 'MON']}
-BDL_SEASON = 2026          # the season whose fielding/baserunning inputs come from balldontlie (bdl26*.pkl)
+BDL2RETRO = {'CHC': 'CHN', 'CHW': 'CHA', 'KC': 'KCA', 'LAD': 'LAN', 'NYM': 'NYN', 'NYY': 'NYA', 'OAK': 'ATH',
+             'SD': 'SDN', 'SF': 'SFN', 'STL': 'SLN', 'TB': 'TBA', 'WSH': 'WAS', 'LAA': 'ANA'}
 
 
-def compute(cur, inputs_dir, params_path=DEFAULT_PARAMS, teams_csv=DEFAULT_TEAMS, y0=1871):
+def _first_word(name):
+    w = ''.join(c if c.isalnum() else ' ' for c in (name or '').lower()).split()
+    return w[0] if w else None
+
+
+def compute(cur, inputs_dir, params_path=DEFAULT_PARAMS, teams_csv=DEFAULT_TEAMS, y0=1871, current=2026, through=None, features_only=False):
+    """current = the season whose fielding/baserunning inputs come from balldontlie (the season in progress, or the last
+    one Retrosheet has not published yet). current=None computes every season from Retrosheet only, up to `through`
+    (the 'final' recompute once Retrosheet publishes a season)."""
+    if current is None and through is None:
+        raise ValueError('give current (a balldontlie season) or through (the last Retrosheet season)')
+    y1 = current or through
     PRM = json.load(open(params_path))
     S = PRM['scalars']
     n = lambda v: float(v or 0)
     pk = lambda name: pickle.load(open(os.path.join(inputs_dir, name), 'rb'))
+    tag = f'bdl{current % 100:02d}' if current else None
+    SKIP = []                                  # (player_id, season, role, reason)
 
     # ---------- park factors ----------
-    A, one_year = _parks.build(cur, teams_csv)
+    A, one_year = _parks.build(cur, teams_csv, current=current or through + 1)
+    B26 = pk(f'{tag}.pkl') if current else {'INN': {}, 'PBP': {}, 'VENUE': {}}
 
     def parkset(y, t):
         p = A.get((y, t), {}).get('parks')
@@ -51,14 +67,24 @@ def compute(cur, inputs_dir, params_path=DEFAULT_PARAMS, teams_csv=DEFAULT_TEAMS
     for r in csv.DictReader(open(teams_csv, encoding='utf-8-sig')):
         if r['BPF'] and r['PPF']:
             LAHPF[(int(r['yearID']), norm_team(r['teamID'], r['lgID']))] = (int(r['BPF']) / 100, int(r['PPF']) / 100)
+    # the current season borrows last season's factor only when the team's main ballpark is the same
+    cur.execute('SELECT team_id, park_name FROM team_seasons WHERE year = %s', ((current or 0) - 1,))
+    prev_park = {t: _first_word(p) for t, p in cur.fetchall()}
+    same_park = {}
+    for abbr, venue in (B26.get('VENUE') or {}).items():
+        t = BDL2RETRO.get(abbr, abbr)
+        prev = prev_park.get(t) or prev_park.get({'ANA': 'LAA'}.get(t, t))
+        same_park[t] = prev is not None and prev == _first_word(venue)
     _pc = {}
 
     def park(y, t, i):                       # i = 0 batting factor, 1 pitching factor
-        t = 'ANA' if (y == BDL_SEASON and t == 'LAA') else t
+        t = 'ANA' if (current and y == current and t == 'LAA') else t
         if (y, t, i) in _pc:
             return _pc[(y, t, i)]
-        ys = [BDL_SEASON - 1, BDL_SEASON] if y == BDL_SEASON else \
-            [yy for yy in (y - 1, y, y + 1) if yy == y or (parkset(yy, t) is not None and parkset(yy, t) == parkset(y, t))]
+        if current and y == current:
+            ys = [current - 1, current] if same_park.get(t, True) else [current]
+        else:
+            ys = [yy for yy in (y - 1, y, y + 1) if yy == y or (parkset(yy, t) is not None and parkset(yy, t) == parkset(y, t))]
         vals = [(one_year(yy, t, True), A[(yy, t)]['hg']) for yy in ys if (yy, t) in A]
         vals = [(r, w) for r, w in vals if r]
         v = sum(r[i] * w for r, w in vals) / sum(w for _, w in vals) if vals else None
@@ -68,22 +94,29 @@ def compute(cur, inputs_dir, params_path=DEFAULT_PARAMS, teams_csv=DEFAULT_TEAMS
         return v
 
     # ---------- database inputs (counting stats only) ----------
-    cur.execute('SELECT player_id, year, team, league, "PA","AB","H",doubles,triples,"HR","BB","IBB","HBP","SF","SH","SB","CS","GIDP","G","SO" '
-                'FROM player_seasons WHERE year BETWEEN %s AND %s AND "PA" > 0 AND coalesce(league, \'\') NOT IN %s', (y0, BDL_SEASON, NEL))
+    cur.execute('SELECT player_id, year, team, league, CASE WHEN coalesce("PA", 0) = 0 AND "AB" > 0 THEN "AB" + coalesce("BB",0) + coalesce("HBP",0) + coalesce("SF",0) + coalesce("SH",0) ELSE "PA" END,'
+                '"AB","H",doubles,triples,"HR","BB","IBB","HBP","SF","SH","SB","CS","GIDP","G","SO" '
+                'FROM player_seasons WHERE year BETWEEN %s AND %s AND coalesce(league, \'\') NOT IN %s', (y0, y1, NEL))
     _hr = cur.fetchall()
     cur.execute('SELECT year, team_id, league FROM team_seasons')
     TEAMLG = {(y, t): L for y, t, L in cur.fetchall()}
 
-    def fixlg(y, t, L):                       # a few season rows have no league: take the team's
-        if L:
-            return L
+    def team_league(y, t):
         for c in [t] + ALIAS.get(t, []):
             if (y, c) in TEAMLG:
                 return TEAMLG[(y, c)]
         return None
 
-    HROWS = [(r[0], r[1], norm_team(r[2], fixlg(r[1], r[2], r[3])), fixlg(r[1], r[2], r[3])) + tuple(r[4:]) for r in _hr]
+    def fixlg(y, t, L):                       # the team's league wins when we know it (a few rows are missing or mis-tagged)
+        return team_league(y, t) or team_league(y, norm_team(t, L)) or L
+
+    HROWS = []                                # every season row, plate appearances or not (pinch runners, defensive subs)
+    for r in _hr:
+        if not r[4] and not r[18]: continue              # no games and no plate appearances: nothing happened
+        L = fixlg(r[1], r[2], r[3])
+        HROWS.append((r[0], r[1], norm_team(r[2], L), L, r[4] or 0) + tuple(r[5:]))
     HTEAM0 = {(r[0], r[1]): r[2] for r in HROWS}
+    HLEAGUE = {(r[0], r[1]): r[3] for r in HROWS}
     cur.execute('SELECT player_id, year, sum("G") FROM pitcher_seasons GROUP BY 1, 2')
     PG = {(a, b): c or 0 for a, b, c in cur.fetchall()}
     cur.execute('SELECT year, league, sum("G"), sum(runs_scored) FROM team_seasons GROUP BY 1, 2')
@@ -120,32 +153,49 @@ def compute(cur, inputs_dir, params_path=DEFAULT_PARAMS, teams_csv=DEFAULT_TEAMS
         if bid in R2P: DPX[(R2P[bid], s_)] += dd
     for s_, bid, c in pk('roe.pkl'):
         if bid in R2P: ROEX[(R2P[bid], s_)] += c
-    B26 = pk('bdl26.pkl')
     _lr = sum(c[2] for c in B26['PBP'].values()) / max(1, sum(c[3] for c in B26['PBP'].values()))
     for pid_, (c, roe_, g_, ch_) in B26['PBP'].items():
-        PBPPA[(pid_, BDL_SEASON)] = c; ROEX[(pid_, BDL_SEASON)] = roe_; DPX[(pid_, BDL_SEASON)] = g_ - _lr * ch_
-    R26 = pk('bdl26_runs.pkl')
+        PBPPA[(pid_, current)] = c; ROEX[(pid_, current)] = roe_; DPX[(pid_, current)] = g_ - _lr * ch_
+    R26 = pk(f'{tag}_runs.pkl') if current else {'BRX': {}, 'DP': {}, 'ARM': {}}
     for pid_, (xb_, ob_) in R26['BRX'].items():
-        BRX[(pid_, BDL_SEASON)] = [xb_, ob_]
+        BRX[(pid_, current)] = [xb_, ob_]
     LGSTR = pk('lgstr.pkl'); LGSTR.update(pk('lgstr_pre1900.pkl'))
     COV = {int(k): v for k, v in json.load(open(os.path.join(inputs_dir, 'coverage.json'))).items()}
+    COVL = {int(k): v for k, v in json.load(open(os.path.join(inputs_dir, 'coverage_league.json'))).items()}
+    # play-by-play plate appearances per (season, league), the league taken from each player's season row
     LGPA = defaultdict(int)
-    for (bid, s_), m in POSPA.items():
-        LGPA[s_] += sum(m.values())
-    TG = defaultdict(int)
+    for (pid_, s_), m in POSPA_P.items():
+        L_ = HLEAGUE.get((pid_, s_))
+        if L_: LGPA[(s_, L_)] += sum(m.values())
+    TG = defaultdict(int)                      # team games per (season, league): AL and NL, the leagues Retrosheet covers
     for (y_, L_), (gm_, r_) in TS.items():
-        if L_ in ('AL', 'NL', 'FL'): TG[y_] += gm_ or 0
+        if L_ in ('AL', 'NL'): TG[(y_, L_)] += gm_ or 0
 
-    # ---------- league baselines (non-pitchers) ----------
-    pitcher_row = lambda pid, y, G: PG.get((pid, y), 0) >= max(1, n(G) / 2)
-    TOT = defaultdict(lambda: [0] * 14); GDP_PA = defaultdict(lambda: [0, 0])
+    # ---------- who is a pitcher at the plate ----------
+    def pit_share(pid, y, G):
+        """share of his plate appearances made as the pitcher: play-by-play where it exists, games before 1910"""
+        pp = POSPA_P.get((pid, y))
+        if pp and sum(pp.values()):
+            return pp.get(1, 0) / sum(pp.values())
+        pg = PG.get((pid, y), 0)
+        if y < 1910 and pg:
+            return min(1.0, pg / max(1.0, n(G)))
+        return 1.0 if pg >= max(1, n(G) / 2) else 0.0
+    PSH = {(r[0], r[1]): pit_share(r[0], r[1], r[18]) for r in HROWS}
+    is_pit = lambda pid, y: PSH.get((pid, y), 0) >= 0.5
+
+    # ---------- league baselines ----------
+    TOT = defaultdict(lambda: [0] * 14); GDP_PA = defaultdict(lambda: [0, 0]); TOTP = defaultdict(lambda: [0] * 14)
     for r in HROWS:
-        if pitcher_row(r[0], r[1], r[18]): continue
-        v = [n(x) for x in r[4:18]]; k = (r[1], r[3]); TOT[k] = [a + b for a, b in zip(TOT[k], v)]
+        v = [n(x) for x in r[4:18]]; k = (r[1], r[3])
+        if is_pit(r[0], r[1]):
+            TOTP[k] = [a + b for a, b in zip(TOTP[k], v)]; continue
+        TOT[k] = [a + b for a, b in zip(TOT[k], v)]
         if r[17] is not None: GDP_PA[k][0] += r[17]; GDP_PA[k][1] += n(r[4])
+    y_lw0, y_lw1 = min(LWS), max(LWS)
 
     def LW(y):
-        l = LWS[min(max(y, min(LWS)), max(LWS))]
+        l = LWS[min(max(y, y_lw0), y_lw1)]
         return {e: l[e] for e in ('S', 'D', 'T', 'HR', 'BB', 'HBP')}
 
     def lw(v, out_w, y):
@@ -154,33 +204,75 @@ def compute(cur, inputs_dir, params_path=DEFAULT_PARAMS, teams_csv=DEFAULT_TEAMS
                 + w['HBP'] * HBP - out_w * (AB - H + S['sf_as_out'] * SF))
 
     OUTW = {k: lw(v, 0, k[0]) / (v[1] - v[2] + S['sf_as_out'] * v[9]) for k, v in TOT.items() if v[1] - v[2] > 0}
-    # pitchers' own hitting is measured against the average hitting pitcher (replacement is counted once, in pitching WAR)
-    TOTP = defaultdict(lambda: [0] * 14)
-    for r in HROWS:
-        if pitcher_row(r[0], r[1], r[18]):
-            k = (r[1], r[3]); TOTP[k] = [a + b for a, b in zip(TOTP[k], [n(x) for x in r[4:18]])]
     _ra = defaultdict(lambda: [0, 0])
     for (p_, s_), c in ROEX.items(): _ra[s_][0] += c
     for (p_, s_), c in PBPPA.items(): _ra[s_][1] += c
     LGROE = {s_: a / b for s_, (a, b) in _ra.items() if b}
 
+    def lg_mult(y, L, k_old, k_new):
+        return max(0.0, 1 + (k_old if y < 1900 else k_new) * LGSTR.get((y, L), 0.0))
+
+    def consts(y, L):
+        """everything a hitter's runs depend on in his league-season, or None when the league-season can't be rated"""
+        k = (y, L)
+        if k not in OUTW or rpw(k) is None or not TOT[k][0]:
+            return None
+        R = rpw(k); gm = TS[k][0]
+        mult = lg_mult(y, L, S['league_strength_k'], S.get('league_strength_k_1900', S['league_strength_k']))
+        if S.get('rep_pool_leagues', 0) and L in ('AL', 'NL'):       # replacement spread per PA across both leagues
+            gm_p = sum(TS[(y, l_)][0] for l_ in ('AL', 'NL') if (y, l_) in TS); pa_p = sum(TOT[(y, l_)][0] for l_ in ('AL', 'NL') if (y, l_) in TOT)
+            rep = S['hit_rep_share'] * S['war_per_season_games'] / 2 * gm_p * R / pa_p * mult
+        else:
+            rep = S['hit_rep_share'] * S['war_per_season_games'] / 2 * gm * R / TOT[k][0] * mult
+        tp = TOTP.get(k)
+        return dict(outw=OUTW[k], rpa=TS[k][1] / TOT[k][0], R=R, rep=rep,
+                    gdp=GDP_PA[k][0] / GDP_PA[k][1] if GDP_PA[k][1] else None,
+                    brb=(S['sb_runs'] * TOT[k][11] + S['cs_runs'] * TOT[k][12]) / TOT[k][0],
+                    pit=(lw(tp, OUTW[k], y) / tp[0]) if tp and tp[0] else None)
+
+    def blended(pid, y, L):
+        """league constants weighted by the plate appearances he had in each league (players traded between leagues)"""
+        sts = HSTN.get((pid, y), [])
+        w = defaultdict(float)
+        for t_, pa_ in sts:
+            l_ = team_league(y, t_)
+            if l_ and pa_ > 0: w[l_] += pa_
+        if len(w) < 2:
+            return consts(y, L)
+        cs = {l_: consts(y, l_) for l_ in w}
+        if any(c is None for c in cs.values()):
+            return consts(y, L)
+        tw = sum(w.values()); out = {}
+        for key in ('outw', 'rpa', 'R', 'rep', 'brb'):
+            out[key] = sum(cs[l_][key] * w[l_] for l_ in w) / tw
+        for key in ('gdp', 'pit'):
+            vals = [(cs[l_][key], w[l_]) for l_ in w if cs[l_][key] is not None]
+            out[key] = sum(a * b for a, b in vals) / sum(b for _, b in vals) if vals else None
+        return out
+
     # ---------- innings by position ----------
     FC = {1: 'P', 2: 'C', 3: '1B', 4: '2B', 5: '3B', 6: 'SS', 7: 'OF', 8: 'OF', 9: 'OF'}
     PN = {2: 'C', 3: '1B', 4: '2B', 5: '3B', 6: 'SS', 7: 'LF', 8: 'CF', 9: 'RF', 10: 'DH'}
 
+    def ipp(y, L):                             # innings per play-by-play plate appearance in his league-season
+        c = COVL.get(y, {}).get(L)
+        if not c or not LGPA.get((y, L)) or not TG.get((y, L)):
+            return None, None
+        return 81 * TG[(y, L)] * c / LGPA[(y, L)], c
+
     def innings(pid, y):
         f = FLDI.get((pid, y), {}); gg = FG.get((pid, y), {})
         if sum(f.values()) >= 3 * sum(gg.values()) and sum(f.values()) > 0: return dict(f)
-        pp = POSPA_P.get((pid, y), {})
-        if pp and y in COV and LGPA.get(y):
-            ipp = 81 * TG[y] * COV[y] / LGPA[y]; out = defaultdict(float)
+        pp = POSPA_P.get((pid, y), {}); i_, c_ = ipp(y, HLEAGUE.get((pid, y)))
+        if pp and i_:
+            out = defaultdict(float)
             for code, c in pp.items():
-                if code in FC: out[FC[code]] += c * ipp / COV[y]
+                if code in FC: out[FC[code]] += c * i_ / c_
             if out: return dict(out)
         return {pos: gm_ * 8.5 for pos, gm_ in gg.items()}
 
     def splits(pid, y):
-        if y == BDL_SEASON:
+        if current and y == current:
             m = B26['INN'].get(pid)
             if m: return {PN[q]: v for q, v in m.items()}
         f = innings(pid, y); pp = POSPA_P.get((pid, y), {}); out = {}
@@ -192,15 +284,36 @@ def compute(cur, inputs_dir, params_path=DEFAULT_PARAMS, teams_csv=DEFAULT_TEAMS
             else: out['OF'] = of
         fpa = sum(pp.get(i, 0) for i in range(1, 10)); finn = sum(f.get(p_, 0) for p_ in ('C', 'SS', '2B', '3B', '1B', 'OF', 'P'))
         if pp.get(10): out['DH'] = pp[10] * (finn / fpa if fpa > 50 and finn else 9 / 4.2)
-        if pp.get(10) and not finn and y in COV and LGPA.get(y): out['DH'] = pp[10] * 81 * TG[y] * COV[y] / LGPA[y]
+        if pp.get(10) and not finn:
+            i_, c_ = ipp(y, HLEAGUE.get((pid, y)))
+            if i_: out['DH'] = pp[10] * i_
         return out
 
     POS = PRM['positions']
+    _eras = sorted(int(e) for e in POS['by_era'])
+    PL_ALL = sorted({p for d in POS['by_era'].values() for p in d})
+
+    _dh0 = next((POS['by_era'][str(e)].get('DH') for e in _eras if POS['by_era'][str(e)].get('DH')), 0.0)
+
+    def era_value(e, pos):
+        """an era's value; a 0.0 there means 'not fitted' (no split outfield before the 1910s, no DH before 1973), so
+        LF/CF/RF fall back to the era's unsplit OF value and DH to its first fitted value"""
+        d = POS['by_era'][str(e)]; v = d.get(pos, 0.0)
+        if pos == 'OF': return d.get('OF') or sum(d.get(q, 0.0) for q in ('LF', 'CF', 'RF')) / 3
+        if not v and pos in ('LF', 'CF', 'RF'): return d.get('OF', 0.0)
+        if not v and pos == 'DH': return _dh0
+        return v
+
+    def pos_value(y, pos):
+        """runs per 1,458 innings: interpolated between decade midpoints, held flat before the first and after the last"""
+        ctr = [(e + POS['era_years'] / 2, era_value(e, pos)) for e in _eras]
+        if y <= ctr[0][0]: return ctr[0][1]
+        if y >= ctr[-1][0]: return ctr[-1][1]
+        for (c0, v0), (c1, v1) in zip(ctr, ctr[1:]):
+            if c0 <= y <= c1: return v0 + (v1 - v0) * (y - c0) / (c1 - c0)
 
     def rpos(pid, y):
-        e0 = min(int(e) for e in POS['by_era'])                               # before 1910: the 1910s values
-        t = POS['by_era'].get(str(max(e0, y // POS['era_years'] * POS['era_years'])), {})
-        return sum(t.get(pos, 0) * inn / 1458 for pos, inn in splits(pid, y).items())
+        return sum(pos_value(y, pos) * inn / 1458 for pos, inn in splits(pid, y).items())
 
     def pf_mix(pid, y, team):
         sts = HSTN.get((pid, y), [])
@@ -211,6 +324,45 @@ def compute(cur, inputs_dir, params_path=DEFAULT_PARAMS, teams_csv=DEFAULT_TEAMS
             if v_ is not None and pa_ > 0: num += v_ * pa_; den += pa_
         return num / den if den else park(y, team, 0)
 
+    # ---------- pitching lines (season rows, split by team where the stints add up) ----------
+    def bfpx(ip, bfp, h, bb, hbp):
+        """batters faced, or an estimate (3 outs an inning + hits + walks + hit batsmen) when the stored count is
+        impossibly low — some 1901–07 rows hold a fraction of the real figure"""
+        est = 3 * n(ip) + n(h) + n(bb) + n(hbp)
+        return n(bfp) if bfp and n(bfp) >= 0.95 * est else est
+
+    def tcode(y, t, L):
+        t2 = norm_team(t, L)
+        return 'LAA' if (current and y == current and t2 == 'ANA') else t2    # the current season's stints say ANA
+
+    cur.execute('SELECT player_id, year, team, league, "G", "GS", "IP", "R", "BFP", "SO", "BB", "HBP", "HR", "H" FROM pitcher_seasons '
+                'WHERE year BETWEEN %s AND %s AND ("IP" > 0 OR "R" > 0) AND coalesce(league, \'\') NOT IN %s', (y0, y1, NEL))
+    PSEASON = {}
+    for r in cur.fetchall():
+        team = r[2] or HTEAM0.get((r[0], r[1]))
+        L = fixlg(r[1], team, r[3]) if team else r[3]
+        if not team or not L:
+            SKIP.append((r[0], r[1], 'pit', 'no team or league recorded')); continue
+        PSEASON[(r[0], r[1])] = (tcode(r[1], team, L), L) + tuple(r[4:])
+    cur.execute('SELECT player_id, year, team, "IP", "BFP", "SO", "BB", "HBP", "HR", "H" FROM pitcher_season_stints WHERE year BETWEEN %s AND %s', (y0, y1))
+    _st = defaultdict(list)
+    for r in cur.fetchall(): _st[(r[0], r[1])].append(r[2:])
+    PLINES = {}                                   # (pid, y) → [(team, league, IP, balls in play, hits other than HR)]
+    for k, (team, L, G, GS, IP, R_, BFP, SO, BB, HBP, HR, H) in PSEASON.items():
+        sts = _st.get(k, [])
+        if sts and abs(sum(n(x[1]) for x in sts) - n(IP)) <= 1:
+            lines = []
+            for t_, ip_, bf_, so_, bb_, hb_, hr_, h_ in sts:
+                tc = tcode(k[1], t_, None); lt = team_league(k[1], tc) or L
+                lines.append((tc, lt, n(ip_), max(0.0, bfpx(ip_, bf_, h_, bb_, hb_) - n(so_) - n(bb_) - n(hb_) - n(hr_)), n(h_) - n(hr_)))
+        else:
+            lines = [(team, L, n(IP), max(0.0, bfpx(IP, BFP, H, BB, HBP) - n(SO) - n(BB) - n(HBP) - n(HR)), n(H) - n(HR))]
+        PLINES[k] = lines
+    TD = defaultdict(lambda: [0.0, 0.0]); TLD = {}            # team balls in play and hits on them, from the lines
+    for k, lines in PLINES.items():
+        for tc, lt, ip_, b_, h_ in lines:
+            TD[(k[1], tc)][0] += b_; TD[(k[1], tc)][1] += h_; TLD.setdefault((k[1], tc), lt)
+
     # ---------- fielding runs ----------
     _ts = {}
 
@@ -219,12 +371,7 @@ def compute(cur, inputs_dir, params_path=DEFAULT_PARAMS, teams_csv=DEFAULT_TEAMS
         from 1953 (a season without Retrosheet yet borrows the previous season's factor for the same park)"""
         if _ts: return _ts
         TDR = pk('tder_raw.pkl')
-        cur.execute('SELECT year, team, league, sum("BFP" - "SO" - "BB" - coalesce("HBP",0) - "HR"), sum("H" - "HR") FROM pitcher_seasons '
-                    'WHERE year BETWEEN 1910 AND %s AND "BFP" IS NOT NULL GROUP BY 1,2,3', (BDL_SEASON,))
-        td = defaultdict(lambda: [0.0, 0.0]); tl = {}
-        for y_, t_, L_, b_, h_ in cur.fetchall():
-            L_ = L_ or fixlg(y_, t_, None)
-            if b_ and L_: kk = (y_, norm_team(t_, L_)); td[kk][0] += float(b_); td[kk][1] += float(h_); tl[kk] = L_
+        td = {kk: v for kk, v in TD.items() if kk[0] >= 1910 and v[0]}; tl = TLD
         lgd = defaultdict(lambda: [0.0, 0.0])
         for kk, (b_, h_) in td.items(): lgd[(kk[0], tl[kk])][0] += b_; lgd[(kk[0], tl[kk])][1] += h_
 
@@ -308,149 +455,179 @@ def compute(cur, inputs_dir, params_path=DEFAULT_PARAMS, teams_csv=DEFAULT_TEAMS
                 if q >= 3: v['tder'] = sv[(s_, t_)] * v.get('n', 0) / tot[(s_, t_)]
 
     def fielding_bdl():
-        X = {k: {p: dict(v) for p, v in m.items()} for k, m in pk('bdl26_fld.pkl').items()}
+        X = {k: {p: dict(v) for p, v in m.items()} for k, m in pk(f'{tag}_fld.pkl').items()}
         for (pid, p), v in R26['DP'].items():
-            if (pid, BDL_SEASON) in X and p in X[(pid, BDL_SEASON)]: X[(pid, BDL_SEASON)][p]['dp'] = v
+            if (pid, current) in X and p in X[(pid, current)]: X[(pid, current)][p]['dp'] = v
         for (pid, p), (xb, kl) in R26['ARM'].items():
-            if (pid, BDL_SEASON) in X and p in X[(pid, BDL_SEASON)]: X[(pid, BDL_SEASON)][p]['xb'] = xb; X[(pid, BDL_SEASON)][p]['kill'] = kl
+            if (pid, current) in X and p in X[(pid, current)]: X[(pid, current)][p]['xb'] = xb; X[(pid, current)][p]['kill'] = kl
         add_tder_bdl(X)
         coef = PRM['fld_bdl']['coef']
-        return {k: sum(c_ * v.get(f, 0) for p, v in m.items() for f, c_ in coef[str(p)].items()) for k, m in X.items()}
+        part = {k: {p: sum(c_ * v.get(f, 0) for f, c_ in coef[str(p)].items()) for p, v in m.items()} for k, m in X.items()}
+        # centre each position (per ball in play there), so no position as a whole reads above or below average
+        tot = defaultdict(lambda: [0.0, 0.0])
+        for k, m in part.items():
+            for p, r in m.items(): tot[p][0] += r; tot[p][1] += X[k][p].get('n', 0)
+        mean = {p: a / b for p, (a, b) in tot.items() if b}
+        return {k: sum(r - mean.get(p, 0) * X[k][p].get('n', 0) for p, r in m.items()) for k, m in part.items()}
 
-    FLD = {k: v for k, v in fielding_retro().items() if k[1] < BDL_SEASON}; FLD_SRC_TOT = set()
-    FLD.update(fielding_bdl())
-    for k, v in tot_runs(tot_features(cur, y0, BDL_SEASON), PRM['fld_totals']['coef']).items():
-        if k not in FLD: FLD[k] = v; FLD_SRC_TOT.add(k)        # season totals where play-by-play has no fielder
+    if features_only == 'splits':                               # for refitting position values (calibration only)
+        return {(r[0], r[1]): (splits(r[0], r[1]), rpw((r[1], r[3])), PSH[(r[0], r[1])]) for r in HROWS}
+    if features_only:                                           # for refitting the fielding weights (calibration only)
+        return features_retro()
+    FLD = {k: v for k, v in fielding_retro().items() if k[1] < (current or through + 1)}; FLD_SRC = {k: 'play_by_play' for k in FLD}
+    if current:
+        for k, v in fielding_bdl().items():
+            FLD[k] = v; FLD_SRC[k] = 'balldontlie'
+    for k, v in tot_runs(tot_features(cur, y0, y1), PRM['fld_totals']['coef']).items():
+        if k not in FLD: FLD[k] = v; FLD_SRC[k] = 'season_totals'   # season totals where play-by-play has no fielder
 
     # ---------- hitters ----------
-    HIT = {}; HTEAM = {(r[0], r[1]): r[2] for r in HROWS}
-    FCEN = {}
-    if S.get('center_fielding', 0):                              # average fielder = 0 each season
-        _a = defaultdict(lambda: [0.0, 0.0])
-        for r in HROWS:
-            if (r[0], r[1]) in FLD and not pitcher_row(r[0], r[1], r[18]): _a[r[1]][0] += FLD[(r[0], r[1])]; _a[r[1]][1] += n(r[4])
-        FCEN = {y_: a_ / b_ for y_, (a_, b_) in _a.items() if b_}
-
-    def lg_mult(y, L, k_old, k_new):
-        return max(0.0, 1 + (k_old if y < 1900 else k_new) * LGSTR.get((y, L), 0.0))
-
+    HIT = {}
+    raw_h = {}
     for r in HROWS:
         pid, y, team, L = r[:4]; v = [n(x) for x in r[4:18]]; G = r[18]
-        k = (y, L); p = pf_mix(pid, y, team); R = rpw(k)
-        if k not in OUTW or p is None or R is None: continue
-        PA = v[0]; gm, runs = TS[k]
-        rbat = lw(v, OUTW[k], y) - PA * (runs / TOT[k][0]) * (p - 1)
+        c = blended(pid, y, L); p = pf_mix(pid, y, team)
+        if c is None or p is None:
+            SKIP.append((pid, y, 'hit', 'no park factor' if c else f'league {L!r} {y} cannot be rated')); continue
+        PA = v[0]; f = PSH[(pid, y)]
+        if PA == 0 and f >= 0.5: continue                   # a pitcher who never batted: no hitting row
+        park_runs = PA * c['rpa'] * (p - 1)
+        rbat = lw(v, c['outw'], y) - park_runs
         pb = PBPPA.get((pid, y), 0)
         if pb and pb >= 0.5 * PA: rbat += S['roe_weight'] * (ROEX[(pid, y)] - pb * LGROE.get(y, 0)) * PA / pb
-        sbw, csw = S['sb_runs'], S['cs_runs']
-        rbr = sbw * v[11] + csw * v[12] - (sbw * TOT[k][11] + csw * TOT[k][12]) / TOT[k][0] * PA
-        rdp = S['gidp_runs_season'] * (r[17] - GDP_PA[k][0] / GDP_PA[k][1] * PA) if r[17] is not None and GDP_PA[k][1] else 0.0
+        rbr = S['sb_runs'] * v[11] + S['cs_runs'] * v[12] - c['brb'] * PA
+        rdp = S['gidp_runs_season'] * (r[17] - c['gdp'] * PA) if r[17] is not None and c['gdp'] is not None else 0.0
         if pb:
             sc = PA / pb if pb >= 0.5 * PA else 0.0
             rbr += sc * (S['xb_runs'] * BRX[(pid, y)][0] + S['out_on_bases_runs'] * BRX[(pid, y)][1])
-            rdp = S['gidp_runs_pbp'] * DPX[(pid, y)] * sc
-        mult = lg_mult(y, L, S['league_strength_k'], S.get('league_strength_k_1900', S['league_strength_k']))
-        if S.get('rep_pool_leagues', 0) and L in ('AL', 'NL'):   # replacement spread per PA across both leagues
-            gm_p = sum(TS[(y, l_)][0] for l_ in ('AL', 'NL') if (y, l_) in TS); pa_p = sum(TOT[(y, l_)][0] for l_ in ('AL', 'NL') if (y, l_) in TOT)
-            rrep = S['hit_rep_share'] * S['war_per_season_games'] / 2 * gm_p * R / pa_p * PA * mult
-        else:
-            rrep = S['hit_rep_share'] * S['war_per_season_games'] / 2 * gm * R / TOT[k][0] * PA * mult
+            if sc: rdp = S['gidp_runs_pbp'] * DPX[(pid, y)] * sc
         BD = PRM.get('bat_delta')
-        if BD:                                                   # per-era event-value corrections
-            e_ = next((d_ for k_, d_ in BD.items() if int(k_[:4]) <= y <= int(k_[5:])), None)
+        if BD:                                                   # per-era event-value corrections; the last era runs on
+            last = max(BD, key=lambda k_: int(k_[5:]))
+            e_ = next((d_ for k_, d_ in BD.items() if int(k_[:4]) <= y <= int(k_[5:])), BD[last] if y > int(last[5:]) else None)
             if e_:
                 PA_, AB_, H_, D_, T_, HR_, BB_, IBB_, HBP_, SF_, SH_, SB_, CS_, GIDP_ = v; SO_ = n(r[19])
                 xx = dict(zip(['1B', '2B', '3B', 'HR', 'uBB', 'IBB', 'HBP', 'SO', 'OIP', 'SF', 'GIDP', 'PA'],
                               [H_ - D_ - T_ - HR_, D_, T_, HR_, BB_ - IBB_, IBB_, HBP_, SO_, AB_ - H_ - SO_, SF_, GIDP_, PA_]))
                 rbat += sum(e_[k_] * xx[k_] for k_ in e_)
-        rp = rpos(pid, y); rf = FLD.get((pid, y), 0.0) - (FCEN.get(y, 0.0) * PA if (pid, y) in FLD else 0.0)
-        if pitcher_row(pid, y, G):
-            tp = TOTP[k]
-            rbat = lw(v, OUTW[k], y) - PA * lw(tp, OUTW[k], y) / tp[0] - PA * (runs / TOT[k][0]) * (p - 1)
-            rrep = rp = rf = 0.0; rbr = rdp = 0.0
-        HIT[(pid, y)] = dict(bat=rbat, br=rbr, dp=rdp, rep=rrep, pos=rp, fld=rf, rpw=R, PA=PA, pitcher=pitcher_row(pid, y, G),
-                             has_fld=(pid, y) in FLD, fld_totals=(pid, y) in FLD_SRC_TOT, league=L,
-                             offense=(rbat + rbr + rdp + rrep) / R, defense=(rp + rf) / R, war=(rbat + rbr + rdp + rrep + rp + rf) / R)
+        rrep = c['rep'] * PA
+        if f > 0 and c['pit'] is not None:                       # his PA as the pitcher: measured against hitting pitchers
+            rbat_p = lw(v, c['outw'], y) - PA * c['pit'] - park_runs
+            rbat = (1 - f) * rbat + f * rbat_p; rbr *= 1 - f; rdp *= 1 - f; rrep *= 1 - f
+        raw_h[(pid, y)] = dict(bat=rbat, br=rbr, dp=rdp, rep=rrep, pos=rpos(pid, y), fld=FLD.get((pid, y)), R=c['R'], PA=PA, f=f,
+                               L=L, park=p)
+    # average fielder = 0 and position values sum to 0, within each league-season (per position-player PA)
+    cen = defaultdict(lambda: [0.0, 0.0, 0.0, 0.0])
+    for (pid, y), h in raw_h.items():
+        if h['f'] >= 0.5: continue
+        cc = cen[(y, h['L'])]; w = h['PA'] * (1 - h['f'])
+        cc[0] += h['pos']; cc[1] += w
+        if h['fld'] is not None: cc[2] += h['fld']; cc[3] += w
+    for (pid, y), h in raw_h.items():
+        cc = cen[(y, h['L'])]; w = h['PA'] * (1 - h['f'])
+        rp = h['pos'] - (cc[0] / cc[1] * w if S.get('center_positions', 0) and cc[1] else 0.0)
+        rf = (h['fld'] - (cc[2] / cc[3] * w if S.get('center_fielding', 0) and cc[3] else 0.0)) if h['fld'] is not None else 0.0
+        if h['f'] >= 0.5: rp = rf = 0.0                         # a pitcher at the plate: no position or fielding credit
+        R = h['R']; t = h['bat'] + h['br'] + h['dp'] + h['rep']
+        HIT[(pid, y)] = dict(bat=h['bat'], br=h['br'], dp=h['dp'], rep=h['rep'], pos=rp, fld=rf, rpw=R, PA=h['PA'],
+                             pitcher=h['f'] >= 0.5, pit_share=h['f'], league=h['L'], park=h['park'],
+                             has_fld=h['fld'] is not None, fielding_source=FLD_SRC.get((pid, y)) if h['f'] < 0.5 else None,
+                             offense=t / R, defense=(rp + rf) / R, war=(t + rp + rf) / R)
 
     # ---------- pitchers ----------
-    cur.execute('SELECT player_id, year, team, league, "G", "GS", "IP", "R", "BFP", "SO", "BB", "HBP", "HR" FROM pitcher_seasons '
-                'WHERE year BETWEEN %s AND %s AND "IP" > 0 AND coalesce(league, \'\') NOT IN %s', (y0, BDL_SEASON, NEL))
-    PROWS = [(r[0], r[1], norm_team(r[2], fixlg(r[1], r[2], r[3])), fixlg(r[1], r[2], r[3])) + tuple(r[4:8])
-             + ((r[8] if r[8] is not None else 4.25 * float(r[6] or 0)),) + tuple(r[9:]) for r in cur.fetchall()]
+    PROWS = [(k[0], k[1]) + v[:2] + v[2:6] + (bfpx(v[4], v[6], v[11], v[8], v[9]),) + v[7:11] for k, v in PSEASON.items()]
     lg = defaultdict(lambda: [0.0] * 6)
     for r in PROWS:
         k = (r[1], r[3]); ip, R_ = n(r[6]), n(r[7]); st = n(r[5]) / max(1, n(r[4])); L_ = lg[k]
         L_[0] += R_; L_[1] += ip; L_[2] += R_ * st; L_[3] += ip * st; L_[4] += R_ * (1 - st); L_[5] += ip * (1 - st)
-    TEAMF = defaultdict(float); TEAMB = defaultdict(float); share = defaultdict(lambda: defaultdict(float))
-    raw = pk('fld2_raw.pkl')
-    for (kind, p), rr in raw.items():
-        if kind == 'range' and p == 3:
-            for s_, fid, team, made, ex, nb in rr: TEAMB[(s_, team)] += nb
-    for (kind, p), rr in raw.items():
+    # team fielding runs behind the pitchers: each fielder's runs, split by his chances with each team
+    TEAMF = defaultdict(float); share = defaultdict(lambda: defaultdict(float))
+    for (kind, p), rr in pk('fld2_raw.pkl').items():
         if kind == 'range':
             for s_, fid, team, made, ex, nb in rr:
                 if fid in R2P: share[(R2P[fid], s_)][team] += nb
     for k, v in FLD.items():
-        if k[1] >= BDL_SEASON: continue             # the balldontlie season: team defense from hits on balls in play only
         t_ = sum(share[k].values())
         for team, nb in share[k].items(): TEAMF[(k[1], team)] += v * nb / t_
-        if not t_ and k in FLD_SRC_TOT and k in HTEAM:
-            TEAMF[(k[1], HTEAM[k])] += v                # no play-by-play: the season-totals fielder counts for his main team
-    cur.execute('SELECT year, team, league, sum("BFP" - "SO" - "BB" - coalesce("HBP",0) - "HR"), sum("H" - "HR") FROM pitcher_seasons '
-                'WHERE year BETWEEN %s AND %s AND "BFP" IS NOT NULL GROUP BY 1,2,3', (y0, BDL_SEASON))
-    TD = defaultdict(lambda: [0.0, 0.0]); TLD = {}; LDER = defaultdict(lambda: [0.0, 0.0])
-    for y_, t_, L_, b_, h_ in cur.fetchall():
-        if b_ and L_: kk = (y_, norm_team(t_, L_)); TD[kk][0] += float(b_); TD[kk][1] += float(h_); TLD[kk] = L_
+        if not t_ and k in HTEAM0 and FLD_SRC.get(k) in ('season_totals', 'balldontlie'):
+            TEAMF[(k[1], HTEAM0[k])] += v                # no Retrosheet chances: the fielder counts for his main team
+    LDER = defaultdict(lambda: [0.0, 0.0])
     for kk, (b_, h_) in TD.items():
         if b_: LDER[(kk[0], TLD[kk])][0] += b_; LDER[(kk[0], TLD[kk])][1] += h_
-    cur.execute('SELECT year, team, league FROM pitcher_seasons GROUP BY 1,2,3')
-    TL = {(a, norm_team(b, c)): c for a, b, c in cur.fetchall() if c}
+    TEAMB = {kk: b_ for kk, (b_, h_) in TD.items() if b_}        # team balls in play, from the same lines as each pitcher's
     for kk, (b_, h_) in TD.items():
         if not b_: continue
-        L_ = LDER[(kk[0], TL[kk])]
-        derw = S['team_der_weight'] if kk[0] < BDL_SEASON else S.get('team_der_weight_no_fielding', S['team_der_weight'])
+        # before 1910 the season-totals fielders carry no team hits-saved signal, so it is added here; from 1910 the fielders'
+        # own runs already include it (counting it again would charge pitchers twice)
+        derw = S['team_der_weight'] if kk[0] < 1910 else 0.0
+        L_ = LDER[(kk[0], TLD[kk])]
         TEAMF[kk] = S['our_team_fld_weight'] * TEAMF.get(kk, 0.0) + derw * (b_ * L_[1] / L_[0] - h_) * S['der_runs_per_hit']
-        if not TEAMB.get(kk): TEAMB[kk] = b_
     cs = defaultdict(lambda: [0.0, 0.0])                       # average defense = 0 within each league-season
-    for kk in TD:
-        if kk in TL and TEAMB.get(kk): cs[(kk[0], TL[kk])][0] += TEAMF.get(kk, 0.0); cs[(kk[0], TL[kk])][1] += TEAMB[kk]
-    for kk in TD:
-        if kk in TL and TEAMB.get(kk) and cs[(kk[0], TL[kk])][1]: TEAMF[kk] -= TEAMB[kk] * cs[(kk[0], TL[kk])][0] / cs[(kk[0], TL[kk])][1]
+    for kk in TEAMB:
+        cs[(kk[0], TLD[kk])][0] += TEAMF.get(kk, 0.0); cs[(kk[0], TLD[kk])][1] += TEAMB[kk]
+    for kk in TEAMB:
+        c_ = cs[(kk[0], TLD[kk])]
+        if c_[1]: TEAMF[kk] -= TEAMB[kk] * c_[0] / c_[1]
     RELW = S['reliever_rep_weight']; wt = defaultdict(float)
     for r in PROWS:
         st = n(r[5]) / max(1, n(r[4])); wt[(r[1], r[3])] += n(r[6]) * (st + RELW * (1 - st))
-    cur.execute('SELECT player_id, year, team, "IP", "BFP", "SO", "BB", "HBP", "HR" FROM pitcher_season_stints WHERE year BETWEEN %s AND %s', (y0, BDL_SEASON))
-    STN = defaultdict(list)
-    for r_ in cur.fetchall():
-        STN[(r_[0], r_[1])].append((norm_team(r_[2], None) if r_[2] and len(r_[2]) <= 3 else r_[2],) + tuple(r_[3:]))
-    TLG = dict(TEAMLG)
+    STN = {k: v for k, v in PLINES.items() if len({x[0] for x in v}) > 1}
     PIT = {}
     for r in PROWS:
         pid, y, team, L, G, GS, IP, R_, BFP, SO, BB, HBP, HR = r
         k = (y, L); R = rpw(k); p = park(y, team, 1)
-        if R is None or p is None or k not in TS: continue
+        if R is None or p is None or k not in TS or not lg[k][1]:
+            SKIP.append((pid, y, 'pit', 'no park factor' if R is not None else f'league {L!r} {y} cannot be rated')); continue
         IP, R_ = n(IP), n(R_); st = n(GS) / max(1, n(G)); L_ = lg[k]
         lgra9 = 9 * L_[0] / L_[1]
         xra9 = (lgra9 + S['reliever_ra9_shift'] * (st - L_[3] / L_[1])) * p
         bip = max(0.0, n(BFP) - n(SO) - n(BB) - n(HBP) - n(HR))
         rdef = TEAMF.get((y, team), 0.0) * bip / TEAMB[(y, team)] if TEAMB.get((y, team)) else 0.0
         sts = STN.get((pid, y), [])
-        if len({x[0] for x in sts}) > 1 and IP > 0:
+        if sts and IP > 0:
             xs = rd = ipw = 0.0
-            for t_, ip_, bf_, so_, bb_, hb_, hr_ in sts:
-                ip_ = n(ip_); p_ = park(y, t_, 1); Lk = lg.get((y, TLG.get((y, t_), L)))
+            for t_, lt_, ip_, b_, h_ in sts:
+                p_ = park(y, t_, 1); Lk = lg.get((y, lt_))
                 if p_ is None or not Lk or not Lk[1]: p_, Lk = p, L_
                 xs += ip_ * (9 * Lk[0] / Lk[1] + S['reliever_ra9_shift'] * (st - Lk[3] / Lk[1])) * p_; ipw += ip_
-                b_ = max(0.0, n(bf_) - n(so_) - n(bb_) - n(hb_) - n(hr_))
                 rd += TEAMF.get((y, t_), 0.0) * b_ / TEAMB[(y, t_)] if TEAMB.get((y, t_)) else 0.0
             if ipw > 0: xra9 = xs / ipw; rdef = rd
-        if y < 1910: rdef *= S.get('pre1910_team_def_scale', 1.0)
+        if y < 1910: rdef *= S['pre1910_team_def_scale']
         raa = IP / 9 * xra9 - R_ - rdef
-        rep_w = S['pit_rep_share'] * S['war_per_season_games'] / 2 * TS[k][0] * IP * (st + RELW * (1 - st)) / wt[k]
+        rep_w = S['pit_rep_share'] * S['war_per_season_games'] / 2 * TS[k][0] * IP * (st + RELW * (1 - st)) / wt[k] if wt[k] else 0.0
         rep_w *= max(0.0, 1 + S.get('pit_league_strength_k', 0.0) * LGSTR.get((y, L), 0.0))
-        waa_w = raa / R
+        waa_lin = raa / R; waa_w = waa_lin
         if IP > 0:                                               # blend linear and Pythagenpat wins
             ra9 = max(S['min_ra9'], xra9 - 9 * raa / IP); x = (xra9 + ra9) ** S['pythag_exponent']
-            waa_w = raa / R + S.get('pythag_blend', 1.0) * ((xra9 ** x / (xra9 ** x + ra9 ** x) - 0.5) * IP / 9 - raa / R)
-        PIT[(pid, y)] = dict(waa=waa_w, lin=raa / R, xra9=xra9, R_=R_, rep=rep_w, war=waa_w + rep_w, IP=IP, st=st, league=L)
-    return dict(hit=HIT, pit=PIT, params=PRM['version'])
+            waa_w = waa_lin + S.get('pythag_blend', 1.0) * ((xra9 ** x / (xra9 ** x + ra9 ** x) - 0.5) * IP / 9 - waa_lin)
+        # share of his innings pitched in relief: relief outings run about a third as long as starts (season lines carry no split)
+        relief_ip_share = (n(G) - n(GS)) / ((n(G) - n(GS)) + S['start_to_relief_ip_ratio'] * n(GS)) if n(G) > 0 else 0.0
+        PIT[(pid, y)] = dict(waa=waa_w, lin=waa_lin, relief_ip_share=relief_ip_share, xra9=xra9, R_=R_, rdef=rdef, park=p, rep=rep_w, IP=IP, st=st, league=L, rpw=R)
+    if S.get('center_pitcher_waa', 0):                          # an average pitcher = 0 wins above average in each league-season
+        cw = defaultdict(lambda: [0.0, 0.0])
+        for (pid, y), v in PIT.items():
+            if v['IP'] > 0: cw[(y, v['league'])][0] += v['waa']; cw[(y, v['league'])][1] += v['IP']
+        for (pid, y), v in PIT.items():
+            c_ = cw[(y, v['league'])]
+            if v['IP'] > 0 and c_[1]: v['waa'] -= c_[0] / c_[1] * v['IP']
+    if S.get('reliever_leverage', 0):                           # relievers: wins above average × (1 + entry leverage) / 2
+        GLI = {}
+        for k_, v_ in pk('li_raw.pkl').items():
+            if k_ != 'TABLE' and k_[0] in R2P and k_[1] < (current or through + 1) and v_[0]: GLI[(R2P[k_[0]], k_[1])] = v_[1] / v_[0]
+        for pid_, (napp, sli) in (pk(f'{tag}_li.pkl').items() if current else []):
+            if napp: GLI[(pid_, current)] = sli / napp
+        for k_, v in PIT.items():
+            g_ = GLI.get(k_)
+            v['gmli'] = g_
+            if g_ is not None and v['IP'] > 0:
+                v['waa'] *= 1 + v['relief_ip_share'] * (g_ - 1) / 2
+        if S.get('center_pitcher_waa', 0):                      # keep each league-season's pitcher WAA at zero after leverage
+            cw = defaultdict(lambda: [0.0, 0.0])
+            for (pid, y), v in PIT.items():
+                if v['IP'] > 0: cw[(y, v['league'])][0] += v['waa']; cw[(y, v['league'])][1] += v['IP']
+            for (pid, y), v in PIT.items():
+                c_ = cw[(y, v['league'])]
+                if v['IP'] > 0 and c_[1]: v['waa'] -= c_[0] / c_[1] * v['IP']
+    for v in PIT.values():
+        v['war'] = v['waa'] + v['rep']
+    return dict(hit=HIT, pit=PIT, skipped=SKIP, params=PRM['version'], current=current, through=y1)

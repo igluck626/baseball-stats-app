@@ -4,7 +4,9 @@ import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))   # backend/, for `war.`
 INPUTS = _os.environ.get('WAR_INPUTS', _os.path.expanduser('~/baseballstats-tools/scripts/war'))         # where input files go
 RETRO = _os.environ.get('RETRO_DUCKDB', _os.path.expanduser('~/retrosheet-phase4/plays_v3.duckdb'))      # Retrosheet play-by-play
-BDL_DIR = _os.environ.get('WAR_BDL_DIR', _os.path.expanduser('~/baseballstats-tools/data/bdl2026'))      # balldontlie season download
+SEASON = int(_os.environ.get('WAR_SEASON', '2026'))                                                   # the balldontlie season
+TAG = f'bdl{SEASON % 100:02d}'                                                                      # its input-file prefix
+BDL_DIR = _os.environ.get('WAR_BDL_DIR', _os.path.expanduser(f'~/baseballstats-tools/data/bdl{SEASON}'))   # balldontlie season download
 LAHMAN = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))), 'data', 'lahman')
 import json, os, sys, pickle, collections
 OUT = BDL_DIR
@@ -86,5 +88,12 @@ for gid, pas in PA.items():
         if b in amb or b not in B2P: continue
         c = PBP[B2P[b][0]]; c[0] += 1; c[1] += p['result'] == 'Field Error'
         ch = p['runner_on_first'] and p['outs'] < 2; c[3] += ch; c[2] += ch and p['result'] in ('GIDP', 'Grounded Into DP')
-pickle.dump(dict(INN={k: dict(v) for k, v in INN.items()}, GS=dict(GS), PBP=dict(PBP), games=games_used, SPANS=dict(SPANS), HALF={}), open(os.path.join(INPUTS, 'bdl26.pkl'), 'wb'))
+# each team's main home ballpark this season (balldontlie venue), so the current season's park factor only borrows last
+# season when the team played in the same park
+_v = collections.defaultdict(collections.Counter)
+for g_ in G.values():
+    ht_ = g_['home_team'].get('abbreviation') if isinstance(g_.get('home_team'), dict) else None
+    if ht_ and g_.get('venue'): _v[ht_][g_['venue']] += 1
+VENUE = {t_: c_.most_common(1)[0][0] for t_, c_ in _v.items()}
+pickle.dump(dict(INN={k: dict(v) for k, v in INN.items()}, GS=dict(GS), PBP=dict(PBP), games=games_used, SPANS=dict(SPANS), HALF={}, VENUE=VENUE), open(os.path.join(INPUTS, f'{TAG}.pkl'), 'wb'))
 print(collections.Counter(p['result'] for pas in PA.values() for p in pas).most_common(40))

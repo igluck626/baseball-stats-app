@@ -10,11 +10,13 @@ import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))   # backend/, for `war.`
 INPUTS = _os.environ.get('WAR_INPUTS', _os.path.expanduser('~/baseballstats-tools/scripts/war'))         # where input files go
 RETRO = _os.environ.get('RETRO_DUCKDB', _os.path.expanduser('~/retrosheet-phase4/plays_v3.duckdb'))      # Retrosheet play-by-play
-BDL_DIR = _os.environ.get('WAR_BDL_DIR', _os.path.expanduser('~/baseballstats-tools/data/bdl2026'))      # balldontlie season download
+SEASON = int(_os.environ.get('WAR_SEASON', '2026'))                                                   # the balldontlie season
+TAG = f'bdl{SEASON % 100:02d}'                                                                      # its input-file prefix
+BDL_DIR = _os.environ.get('WAR_BDL_DIR', _os.path.expanduser(f'~/baseballstats-tools/data/bdl{SEASON}'))   # balldontlie season download
 LAHMAN = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))), 'data', 'lahman')
 import json, os, sys, math, pickle, collections
 OUT = BDL_DIR; W = INPUTS
-B = pickle.load(open(os.path.join(W, 'bdl26.pkl'), 'rb')); SP = B['SPANS']
+B = pickle.load(open(os.path.join(W, f'{TAG}.pkl'), 'rb')); SP = B['SPANS']
 from war.dbconn import conn
 cur = conn().cursor(); cur.execute('SELECT bdl_id, player_id FROM players WHERE bdl_id IS NOT NULL')
 B2P = collections.defaultdict(list)
@@ -53,7 +55,7 @@ miss = 0
 for gid, ft, inn, pos, o, k in bips:
     b = fielder(gid, ft, pos, inn); pid = pid_of(b) if b else None
     if pid is None: miss += 1; continue
-    F = X[(pid, 2026)][pos]; F['zr'] += o - pout(k); F['n'] += 1
+    F = X[(pid, SEASON)][pos]; F['zr'] += o - pout(k); F['n'] += 1
 print('balls in play charged', len(bips) - miss, 'unassigned', miss)
 # innings at each position per player and game; main position per game for /stats totals
 GP = collections.defaultdict(lambda: collections.defaultdict(float))   # (gid, bdl player) -> pos -> innings
@@ -97,7 +99,7 @@ for (pid, s_), m in X.items():
             L = lgT[pos]; F['tot'] = tots[(pid, pos)][0] - F['n'] * L[1] / L[0]; F['err'] = tots[(pid, pos)][1] - F['n'] * L[2] / L[0]
 li = sum(v[0] for v in run.values()); la_ = sum(v[1] for v in run.values()); lc = sum(v[2] for v in run.values())
 for c, (inn, att, cs) in run.items():
-    F = X[(c, 2026)][2]; F['inn'] = inn; F['n'] += inn
+    F = X[(c, SEASON)][2]; F['inn'] = inn; F['n'] += inn
     F['catt'] = att - inn * la_ / li; F['ccs'] = cs - att * lc / la_
 print('players', len(X), 'catchers', len(run), 'league attempts', la_, 'CS', lc)
-pickle.dump({k: {p: dict(v) for p, v in m.items()} for k, m in X.items()}, open(os.path.join(W, 'bdl26_fld.pkl'), 'wb'))
+pickle.dump({k: {p: dict(v) for p, v in m.items()} for k, m in X.items()}, open(os.path.join(W, f'{TAG}_fld.pkl'), 'wb'))

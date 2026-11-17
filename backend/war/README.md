@@ -1,75 +1,121 @@
 # Our WAR (version 1)
 
-Wins above replacement computed from our own data. This package holds the calculation, its frozen settings and the
+This package computes wins above replacement from our own data. It holds the calculation, its frozen settings and the
 scripts that build its inputs. It never reads the stored Baseball-Reference WAR columns, and
-`tests/test_war_v1_package.py` checks that no file here names them.
+`tests/test_war_v1_package.py` checks that no file in this package names them.
 
-**Status (2026-11-16): code only.** It doesn't store results, the server doesn't read it yet, and there is no nightly job.
-Those are later, separately approved steps.
+**Status (2026-11-16): code only.** It stores nothing, the server doesn't read it, and there's no nightly job yet. Each of
+those is a later step that needs its own approval. Two independent reviews on 2026-11-16 found blocking problems and
+smaller ones. All are fixed here except the nightly freeze rules, which belong to the storage step.
 
 ## What it produces
 
-Results are per player-season, 1871 to the current season. Negro Leagues seasons aren't covered; they're to be hidden.
+There's one figure per player-season, from 1871 to the current season. Negro Leagues seasons aren't covered; they're to
+be hidden.
 
-- **Hitters**
-  - The pieces, in runs: batting, baserunning, double plays, replacement, position and fielding.
-  - **Offense** = (batting + baserunning + double plays + replacement) ÷ runs per win.
-  - **Defense** = (position + fielding) ÷ runs per win.
-  - **WAR** = Offense + Defense.
-  - Pitchers' own hitting is measured against the average hitting pitcher, with no replacement or position credit.
-- **Pitchers**
-  - **WAR** = wins above average + replacement wins.
-  - Wins above average come from runs allowed compared with what an average pitcher would allow in the same parks and
-    league, behind the same defense, converted to wins with a 50/50 blend of linear and Pythagorean wins.
+### Hitters
+
+- The pieces, all in runs: batting, baserunning, double plays, replacement, position and fielding.
+- **Offense** = (batting + baserunning + double plays + replacement) ÷ runs per win.
+- **Defense** = (position + fielding) ÷ runs per win.
+- **WAR** = Offense + Defense.
+
+A player's plate appearances made as the pitcher are measured against the average hitting pitcher. Those plate
+appearances get no replacement, position or fielding credit. A season counts as "pitcher batting" when that share is half
+or more.
+
+### Pitchers
+
+**WAR** = wins above average + replacement wins.
+
+Wins above average come from comparing the runs a pitcher allowed with what an average pitcher would allow in the same
+parks, in the same league, behind the same defense. Three adjustments follow:
+
+- the result is converted to wins with a 50/50 blend of linear and Pythagorean wins;
+- each league-season is re-centered so an average pitcher is worth 0;
+- for innings pitched in relief, the result is multiplied by (1 + entry leverage) ÷ 2.
+
+### Rows that can't be rated
+
+- **Players with no plate appearances** (pinch runners, defensive substitutes) are rated on their baserunning, position
+  and fielding, with no replacement credit.
+- **A pitcher who never batted** gets no hitting row, because there is nothing to rate.
+- **Any other row that can't be rated** comes back in `skipped`, with a reason. Nothing is dropped silently.
 
 ## How each piece works
 
 | Piece | Method | Settings (`params/war_params_v1.json`) |
 |---|---|---|
-| Batting | Run value of each event, measured from that season's play-by-play; league average = non-pitchers; park-adjusted; reached-on-error credit; small per-era corrections to event values | `bat_delta`, `scalars.ibb_weight`, `roe_weight`, `sf_as_out` |
-| Baserunning | Steals and caught stealing, plus extra bases taken and outs on the bases on singles and doubles | `sb_runs`, `cs_runs`, `xb_runs`, `out_on_bases_runs` |
-| Double plays | Grounded into double plays vs league rate on chances | `gidp_runs_pbp`, `gidp_runs_season` |
-| Replacement | 1,000 WAR per 2,430 games, split hitters/pitchers; spread per plate appearance across both leagues; weaker leagues get less (measured from players who switched leagues) | `hit_rep_share`, `pit_rep_share`, `rep_pool_leagues`, `league_strength_k`, `league_strength_k_1900`, `pit_league_strength_k` |
-| Position | Runs per 1,458 innings by position and decade | `positions` |
-| Fielding 1910–2025 | Total Zone-style play counting from Retrosheet: plays made vs chances, hits charged to the responsible fielder, park-adjusted; batter × pitcher out pattern; team hits saved on balls in play; arms, double plays, catchers' running game. Seasons from 2003 use the 1989–2002 weights, so every era is on one scale (option B). Each season is re-centered so an average fielder is worth 0. | `fld_retro`, `center_fielding` |
-| Fielding, current season | The same idea from balldontlie: ball coordinates, totals, double plays and outfield throws from play text, team hits saved; calibrated to our own Total Zone values for 2015–2025 | `fld_bdl` |
-| Fielding without play-by-play | Season totals (putouts, assists, errors, double plays) vs league per game | `fld_totals` |
-| Pitchers | League runs allowed per 9 × park, a reliever adjustment, minus the defense behind him (our fielding plus team hits saved) | `reliever_ra9_shift`, `team_der_weight`, `pythag_blend`, `pythag_exponent` |
-| Runs per win | 10 × √(runs per inning, both teams) | — |
+| Batting | Each event is worth its run value, measured from that season's play-by-play. League average is non-pitchers. Adjusted for park, with reached-on-error credit and small per-era corrections to event values. Players traded between leagues use each league's baseline, weighted by their plate appearances there. | `bat_delta`, `ibb_weight`, `roe_weight`, `sf_as_out` |
+| Baserunning | Steals and caught stealing, plus extra bases taken and outs on the bases on singles and doubles. | `sb_runs`, `cs_runs`, `xb_runs`, `out_on_bases_runs` |
+| Double plays | Grounded into double plays compared with the league rate on chances. | `gidp_runs_pbp`, `gidp_runs_season` |
+| Replacement | About 1,000 WAR per 2,430 games, split hitters 58.6% and pitchers 40.9%. It's spread per plate appearance across both leagues; weaker leagues get less (measured from players who switched leagues). Relief innings get 0.85 of a starter's replacement credit. | `hit_rep_share`, `pit_rep_share`, `rep_pool_leagues`, `league_strength_k`, `league_strength_k_1900`, `pit_league_strength_k`, `reliever_rep_weight` |
+| Position | Runs per 1,458 innings by position for each decade from the 1870s, interpolated between decades. Re-centered so each league-season sums to 0. | `positions`, `center_positions` |
+| Fielding 1910–2025 | Total Zone-style play counting from Retrosheet: plays made vs chances, with hits charged to the responsible fielder, adjusted for park. Also uses the batter × pitcher out pattern, team hits saved on balls in play, arms, double plays and catchers' running game. Weights are held to sensible signs. Seasons from 2003 use the 1989–2002 weights (option B). Re-centered so each league-season sums to 0. | `fld_retro`, `center_fielding` |
+| Fielding, current season | The same idea from balldontlie: ball coordinates, totals, double plays and outfield throws from play text, and team hits saved. Calibrated to our own Total Zone values for 2015–2025, and centered per position. | `fld_bdl` |
+| Fielding without play-by-play | Season totals (putouts, assists, errors, double plays) compared with league per game. | `fld_totals` |
+| Pitchers | League runs allowed per 9 × park, plus a reliever adjustment, minus the defense behind him (the team's fielding runs, shared by his balls in play). Team balls in play come from each pitcher's team-by-team lines (stints where they add up). Impossibly low batters-faced counts (some 1901–07 rows) are replaced by 3 × innings + hits + walks + hit batsmen. Before 1910, team hits saved is added directly at half weight, because season-totals fielding doesn't carry it. | `reliever_ra9_shift`, `team_der_weight`, `pythag_blend`, `center_pitcher_waa`, `pre1910_team_def_scale` |
+| Reliever leverage | Entry leverage index, from a win-expectancy table measured on Retrosheet and applied to balldontlie plays for the current season. | `reliever_leverage`, `start_to_relief_ip_ratio` |
+| Runs per win | 10 × √(runs per inning, both teams). | — |
 
 ## Where the settings came from
 
-The settings were tuned once, in November 2026, so that our figures land close to the stored Baseball-Reference ones. Close
-here means about 94% of regular hitters' seasons and 95% of starters' seasons within one win. The tuning scripts read those
-stored columns, so they live outside this repository, in `~/baseballstats-tools/scripts/war/v1/`:
-`freeze_params.py`, `fit_retro.py`, `fit_bdl.py`, `fit_totals_eval.py` and `bat_delta_eval.py`. The full record is the audit
-page linked from the project notes. After the stored columns are deleted, those scripts can't run again, and the frozen
-settings here are what remain.
+The settings were tuned in November 2026 so that our figures land close to the stored Baseball-Reference ones:
+
+- 94% of regular hitters' seasons within one win;
+- 96% of starters' seasons within one win;
+- every reliever season within one win;
+- league totals within about 1% in most decades.
+
+The tuning scripts read those stored columns, so they live outside this repository, in
+`~/baseballstats-tools/scripts/war/v1/`:
+
+- `freeze_params.py`
+- `fit_retro.py` and `fit_retro_signed.py` (fielding)
+- `fit_bdl.py`
+- `fit_totals_eval.py` and `fit_totals_signed.py` (season-totals fielding)
+- `fit_bat_delta2.py` (batting corrections)
+- `fit_pos_pre1910.py` (1870s–1900s positions)
+- `fit_rep_shares.py`
+
+The full record is the audit page linked from the project notes. Once the stored columns are deleted, these scripts can't
+run again; the frozen settings here are what remain.
+
+## When a season's figures change (approved 2026-11-16)
+
+- **The current season is provisional.** It's built from balldontlie inputs and recomputed every night.
+- **When Retrosheet publishes that season (each winter),** it's recomputed once from Retrosheet and becomes final.
+- **A finished season changes only when we deliberately release a new formula version.** The storage step will hold
+  versions side by side.
+
+Rebuilding inputs can still nudge recent final seasons. Park factors use the season after, and league strength uses a
+±4-year window. So final seasons must be stored, not recomputed. The storage step enforces this.
 
 ## Running it
 
-Everything below is read-only.
+Everything here is read-only.
 
 ```bash
-# 1. build the inputs (needs the Retrosheet DuckDB and the balldontlie download on this machine)
 export WAR_INPUTS=~/baseballstats-tools/scripts/war        # where the input files go
+export WAR_SEASON=2026                                     # the balldontlie (current) season
+# 1. inputs (needs the Retrosheet DuckDB and the balldontlie download on this machine)
 for b in retro_coverage retro_positions retro_batting retro_roe retro_fielding retro_zone retro_catchers \
-         retro_total_zone retro_batter_range retro_team_hits_saved league_strength league_strength_pre1900 \
-         bdl_season bdl_fielding bdl_runners; do <backend python> war/builders/$b.py; done
-
-# 2. compute every season and save to a local file
+         retro_total_zone retro_batter_range retro_team_hits_saved retro_leverage league_strength \
+         league_strength_pre1900 bdl_season bdl_fielding bdl_runners bdl_leverage; do <backend python> war/builders/$b.py; done
+# 2. compute every season to a local file
 <backend python> -m war.build_history
-
 # 3. check it still matches the reviewed numbers
 <backend python> tests/test_war_v1_package.py
+# once Retrosheet publishes the balldontlie season: recompute every season from Retrosheet only (the 'final' run)
+<backend python> -m war.build_history --season 0 --through 2026
 ```
 
-The balldontlie download for a season comes from `builders/bdl_download.py` and `builders/bdl_plays.py`. That's about 15,000
-requests, one at a time, and needs `BDL_KEY`. Both are resumable.
+`builders/bdl_download.py` and `builders/bdl_plays.py` download a season from balldontlie. That's about 15,000 requests,
+one at a time, and needs `BDL_KEY`. Both are resumable.
 
 | Input file | Built by | From |
 |---|---|---|
-| `coverage.json` | `retro_coverage.py` | Retrosheet |
+| `coverage.json`, `coverage_league.json` | `retro_coverage.py` | Retrosheet, Lahman |
 | `posPA.pkl` | `retro_positions.py` | Retrosheet |
 | `bat_raw.pkl` (run values, baserunning, double plays) | `retro_batting.py` | Retrosheet |
 | `roe.pkl` | `retro_roe.py` | Retrosheet |
@@ -79,17 +125,19 @@ requests, one at a time, and needs `BDL_KEY`. Both are resumable.
 | `tz_raw.pkl` | `retro_total_zone.py` | Retrosheet |
 | `rb_raw.pkl` | `retro_batter_range.py` | Retrosheet |
 | `tder_raw.pkl` | `retro_team_hits_saved.py` | Retrosheet |
+| `li_raw.pkl` (leverage table, reliever entrances) | `retro_leverage.py` | Retrosheet |
 | `lgstr.pkl` | `league_strength.py` | our database |
 | `lgstr_pre1900.pkl` | `league_strength_pre1900.py` | Lahman |
-| `bdl26.pkl`, `bdl26_fld.pkl`, `bdl26_runs.pkl` | `bdl_season.py`, `bdl_fielding.py`, `bdl_runners.py` | balldontlie |
-
-Verified 2026-11-16:
-- Rebuilding every input from scratch reproduces the reviewed figures for all 89,946 hitter seasons and 49,838 pitcher
-  seasons, to within 0.00000000002 wins.
-- Database sums can come back in a different order, which changes the last decimal places and nothing else.
+| `bdlYY.pkl`, `bdlYY_fld.pkl`, `bdlYY_runs.pkl`, `bdlYY_li.pkl` | `bdl_season.py`, `bdl_fielding.py`, `bdl_runners.py`, `bdl_leverage.py` | balldontlie |
 
 ## Known limits
 
-- The balldontlie season is fixed at 2026 (`compute.BDL_SEASON`). The nightly job will generalize it.
-- Individual fielding matches Baseball-Reference less closely than everything else. The correlation is 0.84–0.90 before
-  2003. From 2003 their figures come from a licensed video-scouting source we don't have.
+- **Individual fielding** matches Baseball-Reference less closely than everything else: a correlation of 0.84–0.90 before
+  2003. From 2003, their figures come from a licensed video-scouting source we don't have.
+- **Starters before 1910** are the weakest pitching group: 91% within one win.
+- **A few heavy-workload starters from the 1910s** come out above Baseball-Reference: Pete Alexander +9.6, Christy
+  Mathewson +7. Walter Johnson comes out below (−7.7 pitching). Their wins above average match closely; the difference is
+  in relief leverage and replacement credit.
+- **Cap Anson** (−7 wins) is the largest remaining 19th-century batting gap.
+- **Three 2026 pitcher rows** have no player or team in our tables, so they're skipped. This is a data fix, not a
+  calculation issue.
