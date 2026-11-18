@@ -30,8 +30,10 @@ if __name__ == '__main__':
     t = time.time()
     res = compute(conn().cursor(), a.inputs, current=a.season or None, through=a.through)
     pickle.dump(res, open(a.out, 'wb'))
-    print(f"hitter seasons {len(res['hit'])}, pitcher seasons {len(res['pit'])}, skipped {len(res['skipped'])}, {time.time() - t:.0f}s → {a.out}")
+    print(f"hitter seasons {len(res['hit'])}, pitcher seasons {len(res['pit'])}, skipped {len(res['skipped'])}, "
+          f"no playing time {len(res['empty'])}, {time.time() - t:.0f}s → {a.out}")
     for s in res['skipped']: print('  skipped:', s)
+    print('  pre-1898 traded players from Lahman:', res['lahman_stints'])
     if a.golden:
         json.dump(golden.summary(res), open(GOLDEN, 'w'), indent=1, sort_keys=True)
         print('golden fixture written:', GOLDEN)

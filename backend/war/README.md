@@ -4,9 +4,10 @@ This package computes wins above replacement from our own data. It holds the cal
 scripts that build its inputs. It never reads the stored Baseball-Reference WAR columns, and
 `tests/test_war_v1_package.py` checks that no file in this package names them.
 
-**Status (2026-11-16): code only.** It stores nothing, the server doesn't read it, and there's no nightly job yet. Each of
-those is a later step that needs its own approval. Two independent reviews on 2026-11-16 found blocking problems and
-smaller ones. All are fixed here except the nightly freeze rules, which belong to the storage step.
+**Status (2026-11-17): code only.** It stores nothing, the server doesn't read it, and there's no nightly job yet. Each of
+those is a later step that needs its own approval. Three independent reviews (2026-11-16 and 11-17) found problems; all
+are fixed here except the nightly freeze rules, which belong to the storage step, and the database fixes listed under
+Known limits.
 
 ## What it produces
 
@@ -40,21 +41,24 @@ parks, in the same league, behind the same defense. Three adjustments follow:
 - **Players with no plate appearances** (pinch runners, defensive substitutes) are rated on their baserunning, position
   and fielding, with no replacement credit.
 - **A pitcher who never batted** gets no hitting row, because there is nothing to rate.
-- **Any other row that can't be rated** comes back in `skipped`, with a reason. Nothing is dropped silently.
+- **Rows with no playing time at all** (no games and no plate appearances; or no innings and no runs) come back in
+  `empty`, with a reason.
+- **Any other row that can't be rated** comes back in `skipped`, with a reason. That includes six seasons copied under a
+  wrong player id, left out until the database is cleaned up (approved 2026-11-17).
 
 ## How each piece works
 
 | Piece | Method | Settings (`params/war_params_v1.json`) |
 |---|---|---|
-| Batting | Each event is worth its run value, measured from that season's play-by-play. League average is non-pitchers. Adjusted for park, with reached-on-error credit and small per-era corrections to event values. Players traded between leagues use each league's baseline, weighted by their plate appearances there. | `bat_delta`, `ibb_weight`, `roe_weight`, `sf_as_out` |
-| Baserunning | Steals and caught stealing, plus extra bases taken and outs on the bases on singles and doubles. | `sb_runs`, `cs_runs`, `xb_runs`, `out_on_bases_runs` |
+| Batting | Each event is worth its run value, measured from that season's play-by-play. League average is non-pitchers. Adjusted for park, with reached-on-error credit and small per-era corrections to event values, then re-centred so position players' batting sums to zero in each league-season. Players traded between leagues use each league's baseline, weighted by their plate appearances there (team-by-team lines from Lahman before 1898, matched by Retrosheet id and confirmed against our season rows). | `bat_delta`, `ibb_weight`, `roe_weight`, `sf_as_out` |
+| Baserunning | Steals and caught stealing, plus extra bases taken and outs on the bases on singles and doubles (not on outs in play). | `sb_runs`, `cs_runs`, `xb_runs`, `out_on_bases_runs` |
 | Double plays | Grounded into double plays compared with the league rate on chances. | `gidp_runs_pbp`, `gidp_runs_season` |
-| Replacement | About 1,000 WAR per 2,430 games, split hitters 58.6% and pitchers 40.9%. It's spread per plate appearance across both leagues; weaker leagues get less (measured from players who switched leagues). Relief innings get 0.85 of a starter's replacement credit. | `hit_rep_share`, `pit_rep_share`, `rep_pool_leagues`, `league_strength_k`, `league_strength_k_1900`, `pit_league_strength_k`, `reliever_rep_weight` |
+| Replacement | About 1,000 WAR per 2,430 games, split hitters 58.6% and pitchers 40.9%. It's spread per plate appearance across both leagues; weaker leagues get less (measured from players who switched leagues). Relief innings (the estimated share of his innings in relief) get 0.85 of a starter's replacement credit, and a pitcher traded between leagues gets each league's credit for his innings there. | `hit_rep_share`, `pit_rep_share`, `rep_pool_leagues`, `league_strength_k`, `league_strength_k_1900`, `pit_league_strength_k`, `reliever_rep_weight` |
 | Position | Runs per 1,458 innings by position for each decade from the 1870s, interpolated between decades. Re-centered so each league-season sums to 0. | `positions`, `center_positions` |
 | Fielding 1910–2025 | Total Zone-style play counting from Retrosheet: plays made vs chances, with hits charged to the responsible fielder, adjusted for park. Also uses the batter × pitcher out pattern, team hits saved on balls in play, arms, double plays and catchers' running game. Weights are held to sensible signs. Seasons from 2003 use the 1989–2002 weights (option B). Re-centered so each league-season sums to 0. | `fld_retro`, `center_fielding` |
 | Fielding, current season | The same idea from balldontlie: ball coordinates, totals, double plays and outfield throws from play text, and team hits saved. Calibrated to our own Total Zone values for 2015–2025, and centered per position. | `fld_bdl` |
 | Fielding without play-by-play | Season totals (putouts, assists, errors, double plays) compared with league per game. | `fld_totals` |
-| Pitchers | League runs allowed per 9 × park, plus a reliever adjustment, minus the defense behind him (the team's fielding runs, shared by his balls in play). Team balls in play come from each pitcher's team-by-team lines (stints where they add up). Impossibly low batters-faced counts (some 1901–07 rows) are replaced by 3 × innings + hits + walks + hit batsmen. Before 1910, team hits saved is added directly at half weight, because season-totals fielding doesn't carry it. | `reliever_ra9_shift`, `team_der_weight`, `pythag_blend`, `center_pitcher_waa`, `pre1910_team_def_scale` |
+| Pitchers | League runs allowed per 9 × park, plus a reliever adjustment, minus the defense behind him (the team's fielding runs, catchers included, shared by his balls in play). Team balls in play come from each pitcher's team-by-team lines (stints where they add up; Lahman before 1898). A blank runs-allowed falls back to earned runs. Impossibly low batters-faced counts (some 1901–07 rows) are replaced by 3 × innings + hits + walks + hit batsmen. Before 1910, team hits saved is added directly at half weight, because season-totals fielding doesn't carry it. | `reliever_ra9_shift`, `team_der_weight`, `pythag_blend`, `center_pitcher_waa`, `pre1910_team_def_scale` |
 | Reliever leverage | Entry leverage index, from a win-expectancy table measured on Retrosheet and applied to balldontlie plays for the current season. | `reliever_leverage`, `start_to_relief_ip_ratio` |
 | Runs per win | 10 × √(runs per inning, both teams). | — |
 
@@ -63,9 +67,9 @@ parks, in the same league, behind the same defense. Three adjustments follow:
 The settings were tuned in November 2026 so that our figures land close to the stored Baseball-Reference ones:
 
 - 94% of regular hitters' seasons within one win;
-- 96% of starters' seasons within one win;
-- every reliever season within one win;
-- league totals within about 1% in most decades.
+- 97% of starters' seasons within one win (93% before 1910);
+- all but two reliever seasons with 40+ innings within one win (Mike Marshall 1973 +1.0, Lindy McDaniel 1968 −1.5);
+- league totals within about 1% in most decades, and every season within about 1% of the 1,000-WAR target.
 
 The tuning scripts read those stored columns, so they live outside this repository, in
 `~/baseballstats-tools/scripts/war/v1/`:
@@ -134,10 +138,14 @@ one at a time, and needs `BDL_KEY`. Both are resumable.
 
 - **Individual fielding** matches Baseball-Reference less closely than everything else: a correlation of 0.84–0.90 before
   2003. From 2003, their figures come from a licensed video-scouting source we don't have.
-- **Starters before 1910** are the weakest pitching group: 91% within one win.
+- **Starters before 1910** are the weakest pitching group: 93% within one win.
 - **A few heavy-workload starters from the 1910s** come out above Baseball-Reference: Pete Alexander +9.6, Christy
-  Mathewson +7. Walter Johnson comes out below (−7.7 pitching). Their wins above average match closely; the difference is
-  in relief leverage and replacement credit.
+  Mathewson +7. Walter Johnson comes out below (−7.7 pitching).
 - **Cap Anson** (−7 wins) is the largest remaining 19th-century batting gap.
-- **Three 2026 pitcher rows** have no player or team in our tables, so they're skipped. This is a data fix, not a
-  calculation issue.
+- **Database fixes pending** (each its own approved write): three 2026 pitcher rows with no player or team (skipped); six
+  seasons copied under wrong ids 817009 and 817503 (skipped); Retrosheet id mismatches that cost a few players their
+  play-by-play inputs (Curtis Roberts 1954–56 `robec103` vs `robec102`; Hal Jones 1961–62 `joneh106` vs `joneh103`).
+- **Outfielders with no left/centre/right split** (1910s–1940s seasons without full play-by-play) get that era's fitted
+  unsplit outfield value, which sits a little below the left/centre/right average. It was fitted that way on purpose.
+- **The golden test runs against the live database.** It will need regenerating when 2026 rows change or new Retrosheet
+  ids are mapped. That's expected, and one more reason final seasons are stored rather than recomputed.

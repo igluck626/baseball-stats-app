@@ -5,7 +5,7 @@ Pure: it reads, it never writes. Hitters and pitchers come back as dicts keyed b
   hitters:  bat, br (baserunning), dp, rep (replacement), pos (position), fld (fielding), all in runs; rpw (runs per win);
             offense = (bat + br + dp + rep) / rpw;  defense = (pos + fld) / rpw;  war = offense + defense
   pitchers: waa (wins above average), rep (replacement wins), war = waa + rep, plus the pieces behind waa
-  skipped:  every season row that could not be rated, with the reason (nothing is dropped silently)
+  skipped:  every season row that could not be rated, with the reason; empty: rows with no playing time, with the reason
 
 How each piece works, and why, is in README.md. Every tuned number comes from the settings file; nothing here reads the
 stored Baseball-Reference columns.
@@ -32,6 +32,11 @@ DEFAULT_TEAMS = os.path.join(os.path.dirname(HERE), 'data', 'lahman', 'Teams.csv
 NEL = ('NN2', 'NNL', 'NAL', 'ECL', 'NSL', 'ANL', 'EWL', 'IND', 'EAS', 'WES', 'NAC', 'INT')
 # Retrosheet team code → Lahman team_seasons code (the two vocabularies differ for a few franchises)
 ALIAS = {'MLN': ['ML1'], 'MIL': ['ML4', 'MIL'], 'ANA': ['LAA', 'ANA', 'CAL'], 'WSN': ['WAS', 'WSN', 'MON']}
+# Season rows that are copies of another player's seasons under a wrong id (a database cleanup is pending; approved
+# 2026-11-17 to leave them out until then). Each is reported in `skipped` with this reason.
+_COPY = 'copy of another player\'s season under a wrong id (database cleanup pending)'
+EXCLUDE = {**{(817009, y): _COPY for y in (2023, 2024, 2025)},       # copies of Samad Taylor's seasons
+           **{(817503, y): _COPY for y in (2022, 2024, 2025)}}       # copies of Chuckie Robinson's seasons
 BDL2RETRO = {'CHC': 'CHN', 'CHW': 'CHA', 'KC': 'KCA', 'LAD': 'LAN', 'NYM': 'NYN', 'NYY': 'NYA', 'OAK': 'ATH',
              'SD': 'SDN', 'SF': 'SFN', 'STL': 'SLN', 'TB': 'TBA', 'WSH': 'WAS', 'LAA': 'ANA'}
 
@@ -53,7 +58,8 @@ def compute(cur, inputs_dir, params_path=DEFAULT_PARAMS, teams_csv=DEFAULT_TEAMS
     n = lambda v: float(v or 0)
     pk = lambda name: pickle.load(open(os.path.join(inputs_dir, name), 'rb'))
     tag = f'bdl{current % 100:02d}' if current else None
-    SKIP = []                                  # (player_id, season, role, reason)
+    SKIP = []                                  # (player_id, season, role, reason): rows that could not be rated
+    EMPTY = []                                 # (player_id, season, role, reason): rows with no playing time to rate
 
     # ---------- park factors ----------
     A, one_year = _parks.build(cur, teams_csv, current=current or through + 1)
@@ -112,7 +118,10 @@ def compute(cur, inputs_dir, params_path=DEFAULT_PARAMS, teams_csv=DEFAULT_TEAMS
 
     HROWS = []                                # every season row, plate appearances or not (pinch runners, defensive subs)
     for r in _hr:
-        if not r[4] and not r[18]: continue              # no games and no plate appearances: nothing happened
+        if (r[0], r[1]) in EXCLUDE:
+            SKIP.append((r[0], r[1], 'hit', EXCLUDE[(r[0], r[1])])); continue
+        if not r[4] and not r[18]:                       # no games and no plate appearances: nothing happened
+            EMPTY.append((r[0], r[1], 'hit', 'no games and no plate appearances recorded')); continue
         L = fixlg(r[1], r[2], r[3])
         HROWS.append((r[0], r[1], norm_team(r[2], L), L, r[4] or 0) + tuple(r[5:]))
     HTEAM0 = {(r[0], r[1]): r[2] for r in HROWS}
@@ -127,10 +136,48 @@ def compute(cur, inputs_dir, params_path=DEFAULT_PARAMS, teams_csv=DEFAULT_TEAMS
         FLDI[(p_, y)][pos] = (io_ or 0) / 3; FG[(p_, y)][pos] = gg or 0; TOTS[(p_, y)][pos] = (po or 0, a_ or 0, e_ or 0)
     cur.execute('SELECT retro_id, player_id FROM players WHERE retro_id IS NOT NULL')
     R2P = dict(cur.fetchall())
+    cur.execute('SELECT retro_id, player_id FROM pitchers WHERE retro_id IS NOT NULL')
+    for rid_, pid_ in cur.fetchall(): R2P.setdefault(rid_, pid_)       # pitchers with no players row keep their Retrosheet inputs
     cur.execute('SELECT player_id, year, team, coalesce("PA", "AB") FROM player_season_stints WHERE year >= 1871')
     HSTN = defaultdict(list)
     for a_, b_, t_, pa_ in cur.fetchall():
         HSTN[(a_, b_)].append((t_, float(pa_ or 0)))
+
+    # before 1898 our stint tables are empty: team-by-team lines come from Lahman. The Lahman player is matched by his
+    # Retrosheet id and confirmed against our season row (its team is one of his Lahman teams and the games agree).
+    LAHDIR = os.path.dirname(teams_csv)
+    l2r = {r['playerID']: r['retroID'] for r in csv.DictReader(open(os.path.join(LAHDIR, 'People.csv'), encoding='utf-8-sig')) if r['retroID']}
+    cur.execute('SELECT player_id, year, team, "G" FROM player_seasons WHERE year < 1898')
+    _ps0 = {(a_, b_): (t_, g_ or 0) for a_, b_, t_, g_ in cur.fetchall()}
+    cur.execute('SELECT player_id, year, team, "G", "IP" FROM pitcher_seasons WHERE year < 1898')
+    _pp0 = {(a_, b_): (t_, g_ or 0, n(ip_)) for a_, b_, t_, g_, ip_ in cur.fetchall()}
+    LAH_ST = dict(bat_confirmed=0, bat_unconfirmed=0, pit_confirmed=0, pit_unconfirmed=0)
+    i_ = lambda x: int(x) if x not in (None, '') else 0
+    _lb = defaultdict(list)
+    for r in csv.DictReader(open(os.path.join(LAHDIR, 'Batting.csv'), encoding='utf-8-sig')):
+        if int(r['yearID']) < 1898: _lb[(r['playerID'], int(r['yearID']))].append(r)
+    for (lid, y), rs in _lb.items():
+        pid_ = R2P.get(l2r.get(lid))
+        if len(rs) < 2 or pid_ is None or (pid_, y) in HSTN: continue
+        ours = _ps0.get((pid_, y))
+        if not ours or ours[0] not in {r['teamID'] for r in rs} or abs(sum(i_(r['G']) for r in rs) - ours[1]) > 2:
+            LAH_ST['bat_unconfirmed'] += 1; continue
+        LAH_ST['bat_confirmed'] += 1
+        for r in rs:
+            HSTN[(pid_, y)].append((r['teamID'], float(sum(i_(r[c]) for c in ('AB', 'BB', 'HBP', 'SH', 'SF')))))
+    _lp = defaultdict(list)
+    for r in csv.DictReader(open(os.path.join(LAHDIR, 'Pitching.csv'), encoding='utf-8-sig')):
+        if int(r['yearID']) < 1898: _lp[(r['playerID'], int(r['yearID']))].append(r)
+    LPST = {}                                  # (pid, y) → stint lines in pitcher_season_stints' column order
+    for (lid, y), rs in _lp.items():
+        pid_ = R2P.get(l2r.get(lid))
+        if len(rs) < 2 or pid_ is None: continue
+        ours = _pp0.get((pid_, y))
+        if not ours or ours[0] not in {r['teamID'] for r in rs} or abs(sum(i_(r['IPouts']) for r in rs) / 3 - ours[2]) > 1:
+            LAH_ST['pit_unconfirmed'] += 1; continue
+        LAH_ST['pit_confirmed'] += 1
+        LPST[(pid_, y)] = [(r['teamID'], i_(r['IPouts']) / 3, i_(r['BFP']) or None, i_(r['SO']), i_(r['BB']), i_(r['HBP']), i_(r['HR']), i_(r['H']))
+                           for r in rs]
 
     def rpw(k):                                # runs per win from the league's scoring
         if k not in TS or not TS[k][0]:
@@ -335,10 +382,17 @@ def compute(cur, inputs_dir, params_path=DEFAULT_PARAMS, teams_csv=DEFAULT_TEAMS
         t2 = norm_team(t, L)
         return 'LAA' if (current and y == current and t2 == 'ANA') else t2    # the current season's stints say ANA
 
-    cur.execute('SELECT player_id, year, team, league, "G", "GS", "IP", "R", "BFP", "SO", "BB", "HBP", "HR", "H" FROM pitcher_seasons '
-                'WHERE year BETWEEN %s AND %s AND ("IP" > 0 OR "R" > 0) AND coalesce(league, \'\') NOT IN %s', (y0, y1, NEL))
+    # runs allowed: a blank R falls back to earned runs (some current-season rows carry ER only); never read as zero
+    cur.execute('SELECT player_id, year, team, league, "G", "GS", "IP", coalesce("R", "ER"), "BFP", "SO", "BB", "HBP", "HR", "H" FROM pitcher_seasons '
+                'WHERE year BETWEEN %s AND %s AND coalesce(league, \'\') NOT IN %s', (y0, y1, NEL))
     PSEASON = {}
     for r in cur.fetchall():
+        if (r[0], r[1]) in EXCLUDE:
+            SKIP.append((r[0], r[1], 'pit', EXCLUDE[(r[0], r[1])])); continue
+        if not (n(r[6]) > 0 or n(r[7]) > 0):
+            EMPTY.append((r[0], r[1], 'pit', 'no innings and no runs recorded')); continue
+        if n(r[6]) > 0 and r[7] is None:
+            SKIP.append((r[0], r[1], 'pit', 'innings but no runs or earned runs recorded')); continue
         team = r[2] or HTEAM0.get((r[0], r[1]))
         L = fixlg(r[1], team, r[3]) if team else r[3]
         if not team or not L:
@@ -347,6 +401,8 @@ def compute(cur, inputs_dir, params_path=DEFAULT_PARAMS, teams_csv=DEFAULT_TEAMS
     cur.execute('SELECT player_id, year, team, "IP", "BFP", "SO", "BB", "HBP", "HR", "H" FROM pitcher_season_stints WHERE year BETWEEN %s AND %s', (y0, y1))
     _st = defaultdict(list)
     for r in cur.fetchall(): _st[(r[0], r[1])].append(r[2:])
+    for k_, lines_ in LPST.items():
+        if k_ not in _st: _st[k_] = lines_
     PLINES = {}                                   # (pid, y) → [(team, league, IP, balls in play, hits other than HR)]
     for k, (team, L, G, GS, IP, R_, BFP, SO, BB, HBP, HR, H) in PSEASON.items():
         sts = _st.get(k, [])
@@ -377,8 +433,10 @@ def compute(cur, inputs_dir, params_path=DEFAULT_PARAMS, teams_csv=DEFAULT_TEAMS
 
         def pfac(kk):
             if kk[0] < 1953: return 1.0
-            for yy in (kk[0], kk[0] - 1):
-                v = TDR.get((yy, kk[1]))
+            t_ = 'ANA' if (current and kk[0] == current and kk[1] == 'LAA') else kk[1]     # Retrosheet's code for the Angels
+            borrow = not (current and kk[0] == current) or same_park.get(t_, True)      # only for the same main ballpark
+            for yy in ((kk[0], kk[0] - 1) if borrow else (kk[0],)):
+                v = TDR.get((yy, t_))
                 if v and v[2]: return v[3] / v[2]
             return 1.0
         _ts.update({kk: b_ * lgd[(kk[0], tl[kk])][1] / lgd[(kk[0], tl[kk])][0] * pfac(kk) - h_ for kk, (b_, h_) in td.items()})
@@ -516,6 +574,15 @@ def compute(cur, inputs_dir, params_path=DEFAULT_PARAMS, teams_csv=DEFAULT_TEAMS
             rbat = (1 - f) * rbat + f * rbat_p; rbr *= 1 - f; rdp *= 1 - f; rrep *= 1 - f
         raw_h[(pid, y)] = dict(bat=rbat, br=rbr, dp=rdp, rep=rrep, pos=rpos(pid, y), fld=FLD.get((pid, y)), R=c['R'], PA=PA, f=f,
                                L=L, park=p)
+    # batting runs re-centred so they sum to zero in each league-season (an average hitter = 0): the per-era event
+    # corrections, the park adjustment and reached-on-error credit shift hitters relative to each other, but must not move
+    # the league as a whole. Summed over position players, shifted per plate appearance not made as the pitcher.
+    bdc = defaultdict(lambda: [0.0, 0.0])
+    for (pid, y), h in raw_h.items():
+        if h['f'] < 0.5: bdc[(y, h['L'])][0] += h['bat']; bdc[(y, h['L'])][1] += h['PA'] * (1 - h['f'])
+    for (pid, y), h in raw_h.items():
+        c_ = bdc[(y, h['L'])]
+        if c_[1]: h['bat'] -= c_[0] / c_[1] * h['PA'] * (1 - h['f'])
     # average fielder = 0 and position values sum to 0, within each league-season (per position-player PA)
     cen = defaultdict(lambda: [0.0, 0.0, 0.0, 0.0])
     for (pid, y), h in raw_h.items():
@@ -543,13 +610,16 @@ def compute(cur, inputs_dir, params_path=DEFAULT_PARAMS, teams_csv=DEFAULT_TEAMS
     # team fielding runs behind the pitchers: each fielder's runs, split by his chances with each team
     TEAMF = defaultdict(float); share = defaultdict(lambda: defaultdict(float))
     for (kind, p), rr in pk('fld2_raw.pkl').items():
-        if kind == 'range':
+        if kind == 'range':                              # fielders: balls in play they had a chance at, per team
             for s_, fid, team, made, ex, nb in rr:
+                if fid in R2P: share[(R2P[fid], s_)][team] += nb
+        elif kind == 'catch':                            # catchers: plays caught, per team
+            for s_, fid, team, cs_, ecs, pb_, epb, nb, att in rr:
                 if fid in R2P: share[(R2P[fid], s_)][team] += nb
     for k, v in FLD.items():
         t_ = sum(share[k].values())
         for team, nb in share[k].items(): TEAMF[(k[1], team)] += v * nb / t_
-        if not t_ and k in HTEAM0 and FLD_SRC.get(k) in ('season_totals', 'balldontlie'):
+        if not t_ and k in HTEAM0:
             TEAMF[(k[1], HTEAM0[k])] += v                # no Retrosheet chances: the fielder counts for his main team
     LDER = defaultdict(lambda: [0.0, 0.0])
     for kk, (b_, h_) in TD.items():
@@ -569,9 +639,18 @@ def compute(cur, inputs_dir, params_path=DEFAULT_PARAMS, teams_csv=DEFAULT_TEAMS
         c_ = cs[(kk[0], TLD[kk])]
         if c_[1]: TEAMF[kk] -= TEAMB[kk] * c_[0] / c_[1]
     RELW = S['reliever_rep_weight']; wt = defaultdict(float)
-    for r in PROWS:
-        st = n(r[5]) / max(1, n(r[4])); wt[(r[1], r[3])] += n(r[6]) * (st + RELW * (1 - st))
+    # share of his innings pitched in relief: relief outings run about a third as long as starts (season lines carry no split)
+    ris = lambda G, GS: (n(G) - n(GS)) / ((n(G) - n(GS)) + S['start_to_relief_ip_ratio'] * n(GS)) if n(G) > 0 else 0.0
+    repf = lambda G, GS: 1 - ris(G, GS) + RELW * ris(G, GS)          # relief innings earn RELW of a starter's replacement
     STN = {k: v for k, v in PLINES.items() if len({x[0] for x in v}) > 1}
+
+    def lglines(pid, y, L, IP):                                    # (league, innings) for each league he pitched in
+        if (pid, y) in STN:
+            out = [(lt_, ip_) for t_, lt_, ip_, b_, h_ in STN[(pid, y)] if (y, lt_) in TS]
+            if out: return out
+        return [(L, n(IP))]
+    for r in PROWS:
+        for lt_, ip_ in lglines(r[0], r[1], r[3], r[6]): wt[(r[1], lt_)] += ip_ * repf(r[4], r[5])
     PIT = {}
     for r in PROWS:
         pid, y, team, L, G, GS, IP, R_, BFP, SO, BB, HBP, HR = r
@@ -594,14 +673,16 @@ def compute(cur, inputs_dir, params_path=DEFAULT_PARAMS, teams_csv=DEFAULT_TEAMS
             if ipw > 0: xra9 = xs / ipw; rdef = rd
         if y < 1910: rdef *= S['pre1910_team_def_scale']
         raa = IP / 9 * xra9 - R_ - rdef
-        rep_w = S['pit_rep_share'] * S['war_per_season_games'] / 2 * TS[k][0] * IP * (st + RELW * (1 - st)) / wt[k] if wt[k] else 0.0
-        rep_w *= max(0.0, 1 + S.get('pit_league_strength_k', 0.0) * LGSTR.get((y, L), 0.0))
+        rep_w = 0.0                                              # replacement, in each league he pitched in
+        for lt_, ip_ in lglines(pid, y, L, IP):
+            if wt[(y, lt_)]:
+                rep_w += (S['pit_rep_share'] * S['war_per_season_games'] / 2 * TS[(y, lt_)][0] * ip_ * repf(G, GS) / wt[(y, lt_)]
+                          * max(0.0, 1 + S.get('pit_league_strength_k', 0.0) * LGSTR.get((y, lt_), 0.0)))
         waa_lin = raa / R; waa_w = waa_lin
         if IP > 0:                                               # blend linear and Pythagenpat wins
             ra9 = max(S['min_ra9'], xra9 - 9 * raa / IP); x = (xra9 + ra9) ** S['pythag_exponent']
             waa_w = waa_lin + S.get('pythag_blend', 1.0) * ((xra9 ** x / (xra9 ** x + ra9 ** x) - 0.5) * IP / 9 - waa_lin)
-        # share of his innings pitched in relief: relief outings run about a third as long as starts (season lines carry no split)
-        relief_ip_share = (n(G) - n(GS)) / ((n(G) - n(GS)) + S['start_to_relief_ip_ratio'] * n(GS)) if n(G) > 0 else 0.0
+        relief_ip_share = ris(G, GS)
         PIT[(pid, y)] = dict(waa=waa_w, lin=waa_lin, relief_ip_share=relief_ip_share, xra9=xra9, R_=R_, rdef=rdef, park=p, rep=rep_w, IP=IP, st=st, league=L, rpw=R)
     if S.get('center_pitcher_waa', 0):                          # an average pitcher = 0 wins above average in each league-season
         cw = defaultdict(lambda: [0.0, 0.0])
@@ -630,4 +711,4 @@ def compute(cur, inputs_dir, params_path=DEFAULT_PARAMS, teams_csv=DEFAULT_TEAMS
                 if v['IP'] > 0 and c_[1]: v['waa'] -= c_[0] / c_[1] * v['IP']
     for v in PIT.values():
         v['war'] = v['waa'] + v['rep']
-    return dict(hit=HIT, pit=PIT, skipped=SKIP, params=PRM['version'], current=current, through=y1)
+    return dict(hit=HIT, pit=PIT, skipped=SKIP, empty=EMPTY, lahman_stints=LAH_ST, params=PRM['version'], current=current, through=y1)
