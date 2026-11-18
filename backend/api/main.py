@@ -1923,6 +1923,8 @@ def _roster_rows(players: list[tuple[int, bool]], year: int) -> tuple[dict, dict
                 continue
             for r in db.query(model).filter(model.player_id.in_(ids), model.year == year):
                 seasons[(r.player_id, pitcher)] = convert(r)
+                data_service.war_source.apply_to_seasons(db, r.player_id, [seasons[(r.player_id, pitcher)]],
+                                                         "pit" if pitcher else "hit")
             for r in db.execute(_sa_text(f"SELECT * FROM {table} WHERE year = :y AND player_id = ANY(:ids)"),
                                 {"y": year, "ids": ids}).mappings():
                 stints.setdefault((r["player_id"], pitcher), []).append(dict(r))
@@ -8839,11 +8841,15 @@ def _run_season_rate(player, role, canon, season, season_start, season_end, gt):
         # that season are "not rated" and read as 0, as career totals do.
         unknown = (f', BOOL_OR({col} IS NULL AND year > :war_last AND COALESCE("G", 0) > 0)'
                    if canon == "WAR" else ", FALSE")
+        war_v = data_service.war_source.active_version()
+        if canon == "WAR" and war_v:                     # our WAR (war_source): its own unknown rule
+            col, unk = data_service.war_source.ask_sql(table)
+            unknown = f", {unk}"
         sql = (f"SELECT COALESCE(SUM({col}),0), MIN(year), MAX(year), COUNT(*){unknown} "
                f"FROM {table} WHERE {wc}")
         with connection.get_session() as db:
             val, mn, mx, nrows, is_unknown = db.execute(
-                _sa_text(sql), {**p, "war_last": data_service.WAR_LAST_STORED_SEASON}).fetchone()
+                _sa_text(sql), {**p, "war_last": data_service.WAR_LAST_STORED_SEASON, "war_v": war_v}).fetchone()
         if not nrows or is_unknown:
             return finish(None, [mn, mx])
         return finish(round(float(val), 2 if canon == "WAR" else 1), [mn, mx])
@@ -13332,6 +13338,8 @@ def _run_season_count_min_leaderboard(canon, role, per_season=False, season=None
     role = (role or "bat").lower()
     if canon in _COUNT_MIN_EXCLUDE:
         return None
+    if canon == "WAR" and data_service.war_source.active_version():
+        return None        # our WAR isn't a season-table column; WAR boards fall through, as the 'most' ones do
     col = _SEASON_COL.get((role, canon))
     if col is None:
         return None

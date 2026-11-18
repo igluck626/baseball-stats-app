@@ -56,6 +56,8 @@ _PS_PITCH_COLUMNS = [c.key for c in _PitcherSeason.__table__.columns if c.key !=
 # Leagues whose seasons carry no OPS+ / ERA+ (no game scores for a park
 # factor), so a career total skips them instead of turning unknown.
 from postseason_stats import NEGRO_CIRCUITS as _NO_PLUS_LEAGUES
+import war_source
+from database.models import WarSeason as _WarSeason
 
 # Bio fields exposed by search results and batting/pitching stats responses.
 _BIO_COLUMNS = [
@@ -804,6 +806,7 @@ def get_current_stats(player_id: int) -> Optional[dict]:
         if not season_rows:
             return None
         season = _db_row_to_season(season_rows[0])
+        war_source.apply_to_seasons(db, player_id, [season], "hit")
         player = crud.get_player(db, player_id)
         name = player.name if player else None
         bio = _bio_dict(player, db)
@@ -976,8 +979,9 @@ def _leader_extremes(
     inside the aggregate, so a single 1-AB pinch hitter never wins AVG.
     """
     selects = []
+    ours = bool(war_source.active_version())
     for _, column_name, agg, qualifier in catalog:
-        col = getattr(table, column_name)
+        col = war_source.season_value_sql(table) if (ours and column_name == "WAR") else getattr(table, column_name)
         extreme_fn = func.max if agg == "max" else func.min
         if qualifier == "PA":
             expr = extreme_fn(case(
@@ -996,7 +1000,10 @@ def _leader_extremes(
         # "2B" and "3B" can't be used directly.
         selects.append(expr.label(f"x_{column_name}"))
 
-    q = db.query(*selects).filter(table.year == year)
+    q = db.query(*selects).select_from(table)
+    if ours:
+        q = q.outerjoin(_WarSeason, war_source.join_on(table))
+    q = q.filter(table.year == year)
     if league:
         q = q.filter(table.league == league)
     row = q.one()
@@ -1122,6 +1129,7 @@ def get_career_stats(player_id: int) -> Optional[dict]:
         if not rows:
             return None
         seasons = [_db_row_to_season(r) for r in sorted(rows, key=lambda r: r.year)]
+        war_source.apply_to_seasons(db, player_id, seasons, "hit")
         player = crud.get_player(db, player_id)
         name = player.name if player else None
         bio = _bio_dict(player, db)
@@ -1158,7 +1166,9 @@ WAR_LAST_STORED_SEASON = 2026
 
 def _war_total(seasons: list[dict], key: str) -> Optional[float]:
     """A career WAR figure (WAR, WAR_off, WAR_def) from season rows, by the
-    WAR_LAST_STORED_SEASON rule."""
+    WAR_LAST_STORED_SEASON rule (stored columns) or war_source's rule (our WAR)."""
+    if war_source.active_version():
+        return war_source.career_total(seasons, key)
     if any((s.get("year") or 0) > WAR_LAST_STORED_SEASON and (s.get("G") or 0) > 0
            and s.get(key) is None for s in seasons):
         return None
@@ -1257,6 +1267,7 @@ def get_current_pitching_stats(player_id: int) -> Optional[dict]:
         if not season_rows:
             return None
         season = _db_pitcher_row_to_season(season_rows[0])
+        war_source.apply_to_seasons(db, player_id, [season], "pit")
         pitcher = crud.get_pitcher(db, player_id)
         name = pitcher.name if pitcher else None
         bio = _bio_dict(pitcher, db)
@@ -1328,6 +1339,7 @@ def get_career_pitching_stats(player_id: int) -> Optional[dict]:
         if not rows:
             return None
         seasons = [_db_pitcher_row_to_season(r) for r in sorted(rows, key=lambda r: r.year)]
+        war_source.apply_to_seasons(db, player_id, seasons, "pit")
         pitcher = crud.get_pitcher(db, player_id)
         name = pitcher.name if pitcher else None
         bio = _bio_dict(pitcher, db)
@@ -1635,7 +1647,7 @@ def _season_stats_for_voting(db, player_id: int, year: int, award_id: str) -> di
             "AVG":     bat.BA,
             "HR":      bat.HR,
             "RBI":     bat.RBI,
-            "WAR":     bat.WAR,
+            "WAR":     war_source.row_war(db, bat, "hit"),
             "PA":      bat.PA,
             "OPSplus": bat.OPS_plus,
         }
@@ -1647,7 +1659,7 @@ def _season_stats_for_voting(db, player_id: int, year: int, award_id: str) -> di
             "W":       pit.W,
             "L":       pit.L,
             "SO":      pit.SO,
-            "WAR":     pit.WAR,
+            "WAR":     war_source.row_war(db, pit, "pit"),
             "IP":      pit.IP,
             "ERAplus": pit.ERA_plus,
         }
@@ -7171,6 +7183,37 @@ def _ranked_unique_seasons(
     return _dedupe_rows_by_player_year(rows, limit)
 
 
+def _ranked_war_seasons(*, db, table, year, league, team, limit, year_from=None, year_to=None):
+    """Top single seasons by our WAR (war_source active): [(season row, war)], best first, ties to player_id then
+    year. Same filters as _ranked_unique_seasons; the season tables and war_seasons are both one row per
+    (player_id, year[, role]), so the join cannot repeat a season (the dedupe below is the same safety net)."""
+    v = war_source.r1_sql(_WarSeason.war).label("war1")
+    q = (db.query(table, v)
+         .join(_WarSeason, war_source.join_on(table))
+         .filter(_WarSeason.war.isnot(None)))
+    if year is not None:
+        q = q.filter(table.year == year)
+    if year_from is not None:
+        q = q.filter(table.year >= year_from)
+    if year_to is not None:
+        q = q.filter(table.year <= year_to)
+    if league:
+        q = q.filter(table.league == league)
+    if team:
+        clause = _team_filter_clause(table, team)
+        if clause is not None:
+            q = q.filter(clause)
+    got = q.order_by(v.desc(), table.player_id, table.year).limit(max(limit * 2, 50)).all()
+    seen, out = set(), []
+    for row, war in got:
+        if (row.player_id, row.year) in seen:
+            continue
+        seen.add((row.player_id, row.year)); out.append((row, war))
+        if len(out) >= limit:
+            break
+    return out
+
+
 def _leaderboard_season(
     stat: str, year: int, is_batter: bool, limit: int,
     league: Optional[str], team: Optional[str],
@@ -7193,22 +7236,26 @@ def _leaderboard_season(
         # (eligibility None) ignore this value entirely.
         min_pa, min_ip = _qualifier_thresholds(db, year)
 
-        rows = _ranked_unique_seasons(
-            db=db, table=table, column=column, direction=direction,
-            year=year, eligibility=eligibility,
-            league=league, team=team,
-            min_pa=min_pa, min_ip=min_ip, limit=limit,
-        )
+        if stat == "WAR" and war_source.active_version():
+            ranked = _ranked_war_seasons(db=db, table=table, year=year, league=league, team=team, limit=limit)
+        else:
+            rows = _ranked_unique_seasons(
+                db=db, table=table, column=column, direction=direction,
+                year=year, eligibility=eligibility,
+                league=league, team=team,
+                min_pa=min_pa, min_ip=min_ip, limit=limit,
+            )
+            ranked = [(r, getattr(r, column_name)) for r in rows]
 
         leaders = []
-        for rank, season_row in enumerate(rows, start=1):
+        for rank, (season_row, value) in enumerate(ranked, start=1):
             player_row = _resolve_player_row(db, season_row.player_id, is_batter)
             if player_row is None:
                 continue
             team_code = _resolve_team_code(season_row.team, season_row.league)
             leaders.append({
                 "rank":   rank,
-                "value":  getattr(season_row, column_name),
+                "value":  value,
                 "year":   season_row.year,
                 "player": _player_payload(
                     player_row, db,
@@ -7257,23 +7304,28 @@ def _leaderboard_all_time(
     min_ip = _ALL_TIME_MIN_IP
 
     with connection.get_session() as db:
-        rows = _ranked_unique_seasons(
-            db=db, table=table, column=column, direction=direction,
-            year=None, eligibility=eligibility,
-            league=league, team=team,
-            min_pa=min_pa, min_ip=min_ip, limit=limit,
-            year_from=year_from, year_to=year_to,
-        )
+        if stat == "WAR" and war_source.active_version():
+            ranked = _ranked_war_seasons(db=db, table=table, year=None, league=league, team=team, limit=limit,
+                                         year_from=year_from, year_to=year_to)
+        else:
+            rows = _ranked_unique_seasons(
+                db=db, table=table, column=column, direction=direction,
+                year=None, eligibility=eligibility,
+                league=league, team=team,
+                min_pa=min_pa, min_ip=min_ip, limit=limit,
+                year_from=year_from, year_to=year_to,
+            )
+            ranked = [(r, getattr(r, column_name)) for r in rows]
 
         leaders = []
-        for rank, season_row in enumerate(rows, start=1):
+        for rank, (season_row, value) in enumerate(ranked, start=1):
             player_row = _resolve_player_row(db, season_row.player_id, is_batter)
             if player_row is None:
                 continue
             team_code = _resolve_team_code(season_row.team, season_row.league)
             leaders.append({
                 "rank":   rank,
-                "value":  getattr(season_row, column_name),
+                "value":  value,
                 "year":   season_row.year,
                 "player": _player_payload(
                     player_row, db,
@@ -7419,7 +7471,8 @@ def _leaderboard_career(
         if is_batter:
             agg_columns = [
                 _PlayerSeason.player_id.label("player_id"),
-                _career_war_known(_PlayerSeason, _PlayerSeason.WAR).label("WAR"),
+                (war_source.career_sum_sql(_PlayerSeason) if war_source.active_version()
+                 else _career_war_known(_PlayerSeason, _PlayerSeason.WAR)).label("WAR"),
                 func.sum(_PlayerSeason.HR).label("HR"),
                 func.sum(_PlayerSeason.RBI).label("RBI"),
                 func.sum(_PlayerSeason.H).label("H"),
@@ -7441,7 +7494,8 @@ def _leaderboard_career(
         else:
             agg_columns = [
                 _PitcherSeason.player_id.label("player_id"),
-                _career_war_known(_PitcherSeason, _PitcherSeason.WAR).label("WAR"),
+                (war_source.career_sum_sql(_PitcherSeason) if war_source.active_version()
+                 else _career_war_known(_PitcherSeason, _PitcherSeason.WAR)).label("WAR"),
                 func.sum(_PitcherSeason.SO).label("SO"),
                 func.sum(_PitcherSeason.W).label("W"),
                 func.sum(_PitcherSeason.SV).label("SV"),
@@ -7456,7 +7510,10 @@ def _leaderboard_career(
                 func.max(_PitcherSeason.year).label("last_year"),
             ]
 
-        agg_q = db.query(*agg_columns).group_by(table.player_id)
+        agg_q = db.query(*agg_columns).select_from(table)
+        if war_source.active_version():                  # 1:1 outer join: every other sum is unchanged
+            agg_q = agg_q.outerjoin(_WarSeason, war_source.join_on(table))
+        agg_q = agg_q.group_by(table.player_id)
         if league:
             agg_q = agg_q.filter(table.league == league)
         if team:
