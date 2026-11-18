@@ -29,7 +29,7 @@ struct WARMethodView: View {
 
             Section("Pitchers") {
                 Text("A pitcher's WAR compares the runs a pitcher allowed with what an average pitcher would allow in the same ballparks and league, behind the same defense, then adds credit for innings above replacement level.")
-                Text("Relievers who usually enter in high-pressure moments get extra credit for those innings.")
+                Text("Relievers' innings count more when they usually enter in high-pressure moments, for better or worse.")
                 Text("A pitcher's own hitting is counted separately, as batting WAR.")
             }
 
@@ -97,6 +97,7 @@ struct WARInfoButton: View {
                 .foregroundStyle(.secondary)
         }
         .buttonStyle(.plain)
+        .contentShape(Rectangle().inset(by: -12))      // a ~44pt tap target without growing the line it sits on
         .accessibilityLabel("How we calculate WAR")
         .accessibilityIdentifier("warInfoButton")
     }

@@ -173,6 +173,19 @@ v, unk = ask_sum(1, "player_seasons")
 check("/ask career sum: hidden season left out, known", (round(float(v), 2), unk) == (9.5, False), (v, unk))
 v, unk = ask_sum(2, "player_seasons")
 check("/ask career sum over an unrated season is unknown", unk is True, (v, unk))
+with eng.connect() as c_:                               # all-hidden scope: unknown, never 0.0
+    val_, unk_ = war_source.ask_sql("player_seasons")
+    r_ = c_.execute(text(f"SELECT COALESCE(SUM({val_}), 0), {unk_} FROM player_seasons WHERE player_id = 1 AND year = 1932"),
+                    {"war_v": "v1"}).fetchone()
+check("/ask over only Negro Leagues seasons is unknown, not 0.0", r_[1] is True, r_)
+check("no -0.0: a small negative rounds to 0.0", str(war_source.r1(-0.04)) == "0.0", war_source.r1(-0.04))
+check("pitchers' stored Baseball-Reference WAR_def is not served under our WAR",
+      seasons_of(3, "pit")[0].get("WAR_def") is None)
+os.environ["WAR_VERSION"] = "V1"
+war_source._known.update(at=0.0, versions=None)
+check("a WAR_VERSION the table doesn't hold falls back to the stored columns", war_source.active_version() is None)
+check("…so pages show the stored WAR, never blanks", [s["WAR"] for s in seasons_of(1, "hit")] == [5.0, 4.0, 2.0])
+os.environ["WAR_VERSION"] = "v1"
 v, unk = ask_sum(3, "pitcher_seasons")
 check("/ask pitching sum reads ours", round(float(v), 2) == 6.2 and unk is False, (v, unk))
 

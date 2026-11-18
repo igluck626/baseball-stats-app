@@ -148,12 +148,12 @@ enum UnknownRule {
         var total = 0.0
         var ours = false, counted = false
         for s in seasons {
-            if source(s) != nil { ours = true }
-            if let v = war(s) { total += v; counted = true; continue }
             if source(s) != nil {
-                if let l = league(s), warHiddenLeagues.contains(l) { continue }
-                return nil
+                ours = true
+                if let l = league(s), warHiddenLeagues.contains(l) { continue }   // hidden first, as the server does
             }
+            if let v = war(s) { total += v; counted = true; continue }
+            if source(s) != nil { return nil }
             if (year(s) ?? 0) > warLastStoredSeason, (games(s) ?? 0) > 0 { return nil }
         }
         return (ours && !counted) ? nil : total          // only hidden seasons: no figure (the server agrees)

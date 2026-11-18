@@ -18,9 +18,10 @@
 //      names linked.
 //    • balldontlie — Terms §6: no attribution required (credited anyway);
 //      §7: never state or imply the data is official league data.
-//    • Baseball-Reference — no longer credited: nothing shown comes from it.
-//      OPS+ / ERA+ are our own since 2026-11-11 and WAR is our own (backend/war,
-//      approved 2026-11-17/18). Its stored columns are no longer read.
+//    • Baseball-Reference — not credited by this build: OPS+ / ERA+ are our own
+//      since 2026-11-11 and WAR is our own (backend/war, approved 2026-11-17/18).
+//      Its stored WAR columns are read only until the server's WAR_VERSION
+//      setting is turned on, on this build's release day.
 //
 //  The quoted wording is the sources' own: change it only from their sites.
 //

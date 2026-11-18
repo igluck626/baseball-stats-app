@@ -1098,8 +1098,10 @@ def recalculate_current_season_leaders(year: Optional[int] = None) -> dict:
 
         for row in db.query(_PlayerSeason).filter(_PlayerSeason.year == year).all():
             batters += 1
+            s_ = _db_row_to_season(row)
+            war_source.apply_to_seasons(db, row.player_id, [s_], "hit")
             led = _season_leaders(
-                db, _db_row_to_season(row), _PlayerSeason,
+                db, s_, _PlayerSeason,
                 _LEADER_BATTING_STATS, extremes_cache, qualifier_cache,
             )
             for label in led:
@@ -1107,8 +1109,10 @@ def recalculate_current_season_leaders(year: Optional[int] = None) -> dict:
 
         for row in db.query(_PitcherSeason).filter(_PitcherSeason.year == year).all():
             pitchers += 1
+            s_ = _db_pitcher_row_to_season(row)
+            war_source.apply_to_seasons(db, row.player_id, [s_], "pit")
             led = _season_leaders(
-                db, _db_pitcher_row_to_season(row), _PitcherSeason,
+                db, s_, _PitcherSeason,
                 _LEADER_PITCHING_STATS, extremes_cache, qualifier_cache,
             )
             for label in led:
@@ -7196,7 +7200,7 @@ def _ranked_war_seasons(*, db, table, year, league, team, limit, year_from=None,
     v = war_source.r1_sql(_WarSeason.war).label("war1")
     q = (db.query(table, v)
          .join(_WarSeason, war_source.join_on(table))
-         .filter(_WarSeason.war.isnot(None)))
+         .filter(_WarSeason.war.isnot(None), ~func.coalesce(table.league, "").in_(war_source.HIDDEN_LEAGUES)))
     if year is not None:
         q = q.filter(table.year == year)
     if year_from is not None:

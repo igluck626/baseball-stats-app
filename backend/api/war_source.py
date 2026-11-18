@@ -20,7 +20,9 @@ leader badge's extreme equals the leader's own value). Hitting offense/defense a
 fields; defense is WAR − offense after rounding, so the two shown parts always add up to the WAR shown. The
 Baseball-Reference-only fields (WAA, runs_above_avg, runs_above_rep) are None under our WAR.
 """
+import logging
 import os
+import time
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Optional
 
@@ -31,22 +33,53 @@ from postseason_stats import NEGRO_CIRCUITS
 
 HIDDEN_LEAGUES = frozenset(NEGRO_CIRCUITS)
 BREF_ONLY = ("WAA", "runs_above_avg", "runs_above_rep")
+BREF_ONLY_PIT = ("WAR_def",)          # pitcher_seasons."WAR_def": a stored Baseball-Reference figure, nothing of ours
+log = logging.getLogger(__name__)
+_known = {"at": 0.0, "versions": None}
+_KNOWN_TTL = 600.0
 
 
 def r1(x):
     """One decimal, half away from zero, from the float's shortest decimal form: the same result as Postgres'
     round(x::numeric, 1)."""
-    return None if x is None else float(Decimal(repr(float(x))).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
+    if x is None:
+        return None
+    return float(Decimal(repr(float(x))).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)) + 0.0   # + 0.0: no "-0.0"
 
 
 def r1_sql(expr):
     return cast(func.round(cast(expr, Numeric), 1), Float)
 
 
+def _versions_loaded() -> Optional[set]:
+    """The method_versions war_seasons holds (cached ten minutes), or None when they can't be read."""
+    now = time.time()
+    if _known["versions"] is not None and now - _known["at"] < _KNOWN_TTL:
+        return _known["versions"]
+    try:
+        from database import connection
+        with connection.get_session() as db:
+            got = {v for (v,) in db.query(WarSeason.method_version).distinct().all()}
+    except Exception as exc:  # noqa: BLE001 — an unreadable table must not take the API down
+        log.error("war_source: can't read war_seasons versions (%s); serving the stored WAR columns", exc)
+        return None
+    _known.update(at=now, versions=got)
+    return got
+
+
 def active_version() -> Optional[str]:
-    """The war_seasons method_version the API serves, or None for the stored Baseball-Reference columns."""
+    """The war_seasons method_version the API serves, or None for the stored Baseball-Reference columns.
+    A WAR_VERSION the table doesn't hold (a typo such as 'V1', or a version not loaded yet) is refused, loudly in the
+    log, and the stored columns are served instead — never a blank WAR across the app."""
     v = (os.environ.get("WAR_VERSION") or "").strip()
-    return v or None
+    if not v:
+        return None
+    have = _versions_loaded()
+    if not have or v not in have:
+        log.error("war_source: WAR_VERSION=%r is not in war_seasons (have %s); serving the stored WAR columns",
+                  v, sorted(have or []))
+        return None
+    return v
 
 
 def role_of(table) -> str:
@@ -70,11 +103,11 @@ def _no_playing_time(season: dict, role: str) -> bool:
 
 def apply_to_season(season: dict, found: Optional[tuple], role: str) -> None:
     """Overwrite a season dict's WAR fields with our figures (call only when active_version() is set)."""
-    if found is not None:
-        war, off = r1(found[0]), r1(found[1])
-        dfn = None if (war is None or off is None) else round(war - off, 1)
-    elif season.get("league") in HIDDEN_LEAGUES:
+    if season.get("league") in HIDDEN_LEAGUES:              # hidden first: a row there would still not be shown
         war = off = dfn = None
+    elif found is not None:
+        war, off = r1(found[0]), r1(found[1])
+        dfn = None if (war is None or off is None) else round(war - off, 1) + 0.0
     elif _no_playing_time(season, role):
         war, off, dfn = 0.0, (0.0 if role == "hit" else None), (0.0 if role == "hit" else None)
     else:
@@ -84,7 +117,7 @@ def apply_to_season(season: dict, found: Optional[tuple], role: str) -> None:
     if role == "hit":
         season["WAR_off"] = off
         season["WAR_def"] = dfn
-    for k in BREF_ONLY:
+    for k in BREF_ONLY + (BREF_ONLY_PIT if role == "pit" else ()):
         if k in season:
             season[k] = None
 
@@ -120,8 +153,8 @@ def season_value_sql(table):
     else:
         empty = func.coalesce(table.IP, 0) == 0
     return case(
+        (func.coalesce(table.league, "").in_(HIDDEN_LEAGUES), None),
         (WarSeason.war.isnot(None), r1_sql(WarSeason.war)),
-        (table.league.in_(HIDDEN_LEAGUES), None),
         (empty, 0.0),
         else_=None,
     )
@@ -158,5 +191,7 @@ def ask_sql(table: str) -> tuple:
            f"AND w.role = '{role}' AND w.method_version = :war_v)")
     is_hidden = f"COALESCE({table}.league, '') IN {hidden}"
     value = f"(CASE WHEN {is_hidden} THEN NULL WHEN {sub} IS NOT NULL THEN round(({sub})::numeric, 1)::float8 WHEN {empty} THEN 0.0 ELSE NULL END)"
-    unknown = f"BOOL_OR(NOT ({is_hidden}) AND {value} IS NULL)"
+    # unknown: a non-hidden season with no figure, OR no non-hidden season at all in scope (all Negro Leagues: "—",
+    # never a SUM of nothing read as 0.0 — career_total and career_sum_sql agree)
+    unknown = f"(BOOL_OR(NOT ({is_hidden}) AND {value} IS NULL) OR BOOL_AND({is_hidden}))"
     return value, unknown

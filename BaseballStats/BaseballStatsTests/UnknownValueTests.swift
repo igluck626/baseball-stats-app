@@ -222,6 +222,7 @@ struct UnknownValueTests {
         #expect(sum([(1930, 150, 6.0, "AL"), (1931, 120, nil, "AL")]) == nil)   // unrated season: unknown
         #expect(sum([(2026, 140, 2.4, "AL"), (2027, 120, nil, "AL")]) == nil)
         #expect(sum([(1932, 60, nil, "NNL")]) == nil)                           // only hidden seasons: no figure
+        #expect(sum([(1930, 150, 6.0, "AL"), (1932, 60, 2.0, "NNL")]) == 6.0)   // a hidden season never counts
     }
 
     // MARK: Today's overlay

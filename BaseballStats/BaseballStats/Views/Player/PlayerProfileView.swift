@@ -1252,6 +1252,7 @@ struct PlayerProfileScreen: View {
                 Text(parts)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+                    .accessibilityLabel("WAR: \(parts)")
                     .accessibilityIdentifier("warParts")
             }
             Spacer(minLength: 0)
