@@ -342,6 +342,10 @@ final class PlayerCompareViewModel: ObservableObject {
         guard let t = totals else { return base }
         var out = base
         if let v = t.WAR      { out["WAR"]  = v }
+        if t.WAR_source != nil {                          // our WAR's parts add up; the stored ones aren't shown
+            out["oWAR"] = t.WAR_off
+            out["dWAR"] = t.WAR_def
+        }
         if let v = t.AVG      { out["AVG"]  = v }
         if let v = t.OBP      { out["OBP"]  = v }
         if let v = t.SLG      { out["SLG"]  = v }
@@ -369,7 +373,7 @@ final class PlayerCompareViewModel: ObservableObject {
     /// slash-line / ERA / WHIP rates). WAR is included — it's a counting
     /// stat, so a per-season WAR pace is exactly the point of the mode.
     private static let scalableBatting: Set<String> =
-        ["WAR", "G", "PA", "AB", "H", "2B", "3B", "HR", "RBI", "SB", "BB", "SO", "TB", "IBB"]
+        ["WAR", "oWAR", "dWAR", "G", "PA", "AB", "H", "2B", "3B", "HR", "RBI", "SB", "BB", "SO", "TB", "IBB"]
     private static let scalablePitching: Set<String> =
         ["WAR", "W", "L", "G", "GS", "SV", "IP", "H", "SO", "BB", "CG", "SHO"]
 
@@ -489,6 +493,10 @@ final class PlayerCompareViewModel: ObservableObject {
         }
         let war = UnknownRule.warSum(seasons, year: \.year, games: \.G, war: \.WAR,
                                     league: \.league, source: \.WAR_source)
+        let owar = UnknownRule.warPartSum(seasons, year: \.year, games: \.G, part: \.WAR_off,
+                                          league: \.league, source: \.WAR_source)
+        let dwar = UnknownRule.warPartSum(seasons, year: \.year, games: \.G, part: \.WAR_def,
+                                          league: \.league, source: \.WAR_source)
 
         let avg: Double? = ab > 0 ? h / ab : nil
         let obp: Double? = {
@@ -505,7 +513,7 @@ final class PlayerCompareViewModel: ObservableObject {
         )
 
         return [
-            "WAR": war, "G": g, "PA": pa, "AB": ab, "H": h,
+            "WAR": war, "oWAR": owar, "dWAR": dwar, "G": g, "PA": pa, "AB": ab, "H": h,
             "2B": dbl, "3B": trp, "HR": hr, "RBI": rbi, "SB": sb,
             "BB": bb, "SO": so,
             "AVG": avg, "OBP": obp, "SLG": slg, "OPS": ops,
@@ -582,6 +590,8 @@ final class PlayerCompareViewModel: ObservableObject {
 
     private static let battingStats: [CompareStat] = [
         .init(label: "WAR", format: .dec1),
+        .init(label: "oWAR", format: .dec1),
+        .init(label: "dWAR", format: .dec1),
         .init(label: "G",   format: .int),
         .init(label: "PA",  format: .int),
         .init(label: "AB",  format: .int),

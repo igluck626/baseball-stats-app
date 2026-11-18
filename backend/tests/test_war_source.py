@@ -104,13 +104,13 @@ def seasons_of(pid, role):
     return ss
 
 
-def board(stat_mode, is_batter=True, league=None, year=1930):
+def board(stat_mode, is_batter=True, league=None, year=1930, stat="WAR"):
     if stat_mode == "season":
-        r = data_service._leaderboard_season("WAR", year, is_batter, 10, league, None)
+        r = data_service._leaderboard_season(stat, year, is_batter, 10, league, None)
     elif stat_mode == "all_time":
-        r = data_service._leaderboard_all_time("WAR", is_batter, 10, league, None)
+        r = data_service._leaderboard_all_time(stat, is_batter, 10, league, None)
     else:
-        r = data_service._leaderboard_career(stat="WAR", is_batter=is_batter, limit=10, league=league, team=None)
+        r = data_service._leaderboard_career(stat=stat, is_batter=is_batter, limit=10, league=league, team=None)
     return [(x["player"]["player_id"], round(x["value"], 2) if x["value"] is not None else None) for x in r["leaders"]]
 
 
@@ -131,6 +131,7 @@ check("seasons read the stored WAR", [s["WAR"] for s in s1] == [5.0, 4.0, 2.0], 
 check("career WAR is the stored sum", data_service._batting_career_totals(s1)["WAR"] == 11.0)
 check("career totals say the stored figures (no source)", data_service._batting_career_totals(s1)["WAR_source"] is None)
 check("season board ranks stored WAR", board("season") == [(1, 5.0), (2, 3.0), (3, 0.0)], board("season"))
+check("oWAR board ranks the stored offense column when the setting is off", board("season", stat="oWAR") == [(1, 4.0)], board("season", stat="oWAR"))
 check("career board sums stored WAR", board("career")[:2] == [(1, 11.0), (2, 3.0)], board("career"))
 with get_session() as db:
     bat = db.query(PlayerSeason).filter_by(player_id=1, year=1930).one()
@@ -162,6 +163,12 @@ check("season board ranks our WAR (unrated season left off)", board("season") ==
 check("all-time board ranks our WAR", board("all_time") == [(1, 6.0), (1, 3.5)], board("all_time"))
 check("career board: hidden season left out, unknown career dropped, never-batted 0.0",
       board("career") == [(1, 9.5), (3, 0.0)], board("career"))
+check("oWAR / dWAR season boards: offense, and defense = WAR − offense", (board("season", stat="oWAR"), board("season", stat="dWAR"))
+      == ([(1, 5.0)], [(1, 1.0)]), (board("season", stat="oWAR"), board("season", stat="dWAR")))
+check("oWAR all-time board uses the rounded offense (2.97 → 3.0)", board("all_time", stat="oWAR") == [(1, 5.0), (1, 3.0)], board("all_time", stat="oWAR"))
+check("oWAR / dWAR career boards add the seasons shown, hidden left out (5.0+3.0, 1.0+0.5)",
+      (board("career", stat="oWAR"), board("career", stat="dWAR")) == ([(1, 8.0), (3, 0.0)], [(1, 1.5), (3, 0.0)]),
+      (board("career", stat="oWAR"), board("career", stat="dWAR")))
 check("pitching boards read ours", board("season", is_batter=False) == [(3, 6.2)], board("season", is_batter=False))
 with get_session() as db:
     ex = data_service._leader_extremes(db, PlayerSeason, 1930, "AL", data_service._LEADER_BATTING_STATS, 502, 162.0)

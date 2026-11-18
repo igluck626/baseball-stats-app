@@ -208,7 +208,7 @@ struct LeaderboardsView: View {
             VStack(spacing: 10) {
                 modePicker
                 kindAndStatBar
-                if viewModel.selectedStat == "WAR" {
+                if LeaderboardsViewModel.warStats.contains(viewModel.selectedStat) {
                     warMethodLink
                 }
                 if showFilters {
@@ -396,7 +396,7 @@ struct LeaderboardsView: View {
                 }
             }
         } label: {
-            MenuPillLabel(text: LeaderboardsViewModel.displayName(viewModel.selectedStat))
+            MenuPillLabel(text: LeaderboardsViewModel.shortName(viewModel.selectedStat))
         }
     }
 

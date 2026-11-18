@@ -158,6 +158,16 @@ enum UnknownRule {
         }
         return (ours && !counted) ? nil : total          // only hidden seasons: no figure (the server agrees)
     }
+
+    /// oWAR / dWAR sums: `warSum` over a part, and nil unless every counted season is our WAR — the stored
+    /// Baseball-Reference parts don't add up and aren't shown.
+    static func warPartSum<S>(
+        _ seasons: [S], year: (S) -> Int?, games: (S) -> Int?, part: (S) -> Double?,
+        league: (S) -> String?, source: (S) -> String?
+    ) -> Double? {
+        guard !seasons.isEmpty, seasons.allSatisfy({ source($0) != nil }) else { return nil }
+        return warSum(seasons, year: year, games: games, war: part, league: league, source: source)
+    }
 }
 
 // MARK: - Point-in-time records (box score, game card)

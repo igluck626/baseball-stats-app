@@ -6781,6 +6781,9 @@ _LEADERBOARD_BATTING: dict[str, tuple[str, str, Optional[str]]] = {
     "OBP": ("OBP",     "desc", "PA"),
     "SLG": ("SLG",     "desc", "PA"),
     "WAR": ("WAR",     "desc", None),
+    # a hitter's WAR in its two parts (approved 2026-11-18); with our WAR they add up to WAR
+    "oWAR": ("WAR_off", "desc", None),
+    "dWAR": ("WAR_def", "desc", None),
     "2B":  ("doubles", "desc", None),
     "3B":  ("triples", "desc", None),
     "SO":  ("SO",      "desc", None),
@@ -7193,14 +7196,17 @@ def _ranked_unique_seasons(
     return _dedupe_rows_by_player_year(rows, limit)
 
 
-def _ranked_war_seasons(*, db, table, year, league, team, limit, year_from=None, year_to=None):
+_WAR_PART = {"WAR": "war", "oWAR": "off", "dWAR": "def"}
+
+
+def _ranked_war_seasons(*, db, table, year, league, team, limit, year_from=None, year_to=None, part="war"):
     """Top single seasons by our WAR (war_source active): [(season row, war)], best first, ties to player_id then
     year. Same filters as _ranked_unique_seasons; the season tables and war_seasons are both one row per
     (player_id, year[, role]), so the join cannot repeat a season (the dedupe below is the same safety net)."""
-    v = war_source.r1_sql(_WarSeason.war).label("war1")
+    v = war_source.part_sql(part).label("war1")
     q = (db.query(table, v)
          .join(_WarSeason, war_source.join_on(table))
-         .filter(_WarSeason.war.isnot(None), ~func.coalesce(table.league, "").in_(war_source.HIDDEN_LEAGUES)))
+         .filter(war_source.part_present_sql(part), ~func.coalesce(table.league, "").in_(war_source.HIDDEN_LEAGUES)))
     if year is not None:
         q = q.filter(table.year == year)
     if year_from is not None:
@@ -7246,8 +7252,9 @@ def _leaderboard_season(
         # (eligibility None) ignore this value entirely.
         min_pa, min_ip = _qualifier_thresholds(db, year)
 
-        if stat == "WAR" and war_source.active_version():
-            ranked = _ranked_war_seasons(db=db, table=table, year=year, league=league, team=team, limit=limit)
+        if stat in _WAR_PART and war_source.active_version():
+            ranked = _ranked_war_seasons(db=db, table=table, year=year, league=league, team=team, limit=limit,
+                                         part=_WAR_PART[stat])
         else:
             rows = _ranked_unique_seasons(
                 db=db, table=table, column=column, direction=direction,
@@ -7314,9 +7321,9 @@ def _leaderboard_all_time(
     min_ip = _ALL_TIME_MIN_IP
 
     with connection.get_session() as db:
-        if stat == "WAR" and war_source.active_version():
+        if stat in _WAR_PART and war_source.active_version():
             ranked = _ranked_war_seasons(db=db, table=table, year=None, league=league, team=team, limit=limit,
-                                         year_from=year_from, year_to=year_to)
+                                         year_from=year_from, year_to=year_to, part=_WAR_PART[stat])
         else:
             rows = _ranked_unique_seasons(
                 db=db, table=table, column=column, direction=direction,
@@ -7483,6 +7490,10 @@ def _leaderboard_career(
                 _PlayerSeason.player_id.label("player_id"),
                 (war_source.career_sum_sql(_PlayerSeason) if war_source.active_version()
                  else _career_war_known(_PlayerSeason, _PlayerSeason.WAR)).label("WAR"),
+                (war_source.career_sum_sql(_PlayerSeason, "off") if war_source.active_version()
+                 else _career_war_known(_PlayerSeason, _PlayerSeason.WAR_off)).label("oWAR"),
+                (war_source.career_sum_sql(_PlayerSeason, "def") if war_source.active_version()
+                 else _career_war_known(_PlayerSeason, _PlayerSeason.WAR_def)).label("dWAR"),
                 func.sum(_PlayerSeason.HR).label("HR"),
                 func.sum(_PlayerSeason.RBI).label("RBI"),
                 func.sum(_PlayerSeason.H).label("H"),

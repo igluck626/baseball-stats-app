@@ -146,24 +146,42 @@ def join_on(table):
                 WarSeason.role == role_of(table), WarSeason.method_version == active_version())
 
 
-def season_value_sql(table):
-    """SQL value of one season row's WAR under our WAR (for queries that OUTER JOIN war_seasons via join_on)."""
+# the parts a hitter's WAR is served in: 'war'; 'off' = offense; 'def' = defense, shown as WAR − offense after rounding
+PARTS = ("war", "off", "def")
+
+
+def part_sql(part: str):
+    """One decimal SQL value of a war_seasons row's part (needs war_seasons joined)."""
+    if part == "off":
+        return r1_sql(WarSeason.offense)
+    if part == "def":
+        return r1_sql(WarSeason.war) - r1_sql(WarSeason.offense)
+    return r1_sql(WarSeason.war)
+
+
+def part_present_sql(part: str):
+    return WarSeason.war.isnot(None) if part == "war" else and_(WarSeason.war.isnot(None), WarSeason.offense.isnot(None))
+
+
+def season_value_sql(table, part: str = "war"):
+    """SQL value of one season row's WAR (or offense / defense) under our WAR, by the same rules as apply_to_season
+    (for queries that OUTER JOIN war_seasons via join_on)."""
     if role_of(table) == "hit":
         empty = and_(func.coalesce(table.PA, 0) == 0, func.coalesce(table.AB, 0) == 0)
     else:
         empty = func.coalesce(table.IP, 0) == 0
     return case(
         (func.coalesce(table.league, "").in_(HIDDEN_LEAGUES), None),
-        (WarSeason.war.isnot(None), r1_sql(WarSeason.war)),
+        (part_present_sql(part), part_sql(part)),
         (empty, 0.0),
         else_=None,
     )
 
 
-def career_sum_sql(table):
-    """SUM of WAR over a player's season rows under our WAR, NULL when any non-hidden season has no figure.
-    Needs the same OUTER JOIN as season_value_sql."""
-    v = season_value_sql(table)
+def career_sum_sql(table, part: str = "war"):
+    """SUM of WAR (or offense / defense) over a player's season rows under our WAR, NULL when any non-hidden season
+    has no figure. Needs the same OUTER JOIN as season_value_sql."""
+    v = season_value_sql(table, part)
     hidden = func.coalesce(table.league, "").in_(HIDDEN_LEAGUES)
     unknown = func.max(case((and_(~hidden, v.is_(None)), 1), else_=0))
     return case((unknown == 1, None), else_=func.sum(case((hidden, None), else_=v)))

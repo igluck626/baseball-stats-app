@@ -176,7 +176,7 @@ struct LeaderboardRow: View {
         switch stat {
         case "AVG", "OBP", "SLG", "OPS", "wOBA", "ISO": return .threeDecimal
         case "ERA", "WHIP", "FIP", "BB/9":             return .twoDecimal
-        case "WAR", "SO/9":                            return .oneDecimal
+        case "WAR", "oWAR", "dWAR", "SO/9":            return .oneDecimal
         case "IP":                                     return .oneDecimalGrouped
         case "K%", "BB%":                              return .percent
         // OPS+ / ERA+ are integers — fall through to .integer.

@@ -211,6 +211,20 @@ struct UnknownValueTests {
 
     /// Our own WAR (source "v1"): a Negro Leagues season is left out; any other season with no WAR, of any year,
     /// makes the sum unknown (the server sends 0.0 where there is nothing to rate).
+    /// oWAR / dWAR sums: our WAR's parts sum by warSum's rule; the stored figures' parts are never summed (nil).
+    @Test func warPartSumRule() {
+        typealias S = (year: Int?, g: Int?, part: Double?, lg: String?, src: String?)
+        func sum(_ rows: [S]) -> Double? {
+            UnknownRule.warPartSum(rows, year: { $0.year }, games: { $0.g }, part: { $0.part },
+                                   league: { $0.lg }, source: { $0.src })
+        }
+        #expect(sum([(1930, 150, 5.0, "AL", "v1"), (1931, 140, 3.0, "AL", "v1")]) == 8.0)
+        #expect(sum([(1930, 150, 5.0, "AL", "v1"), (1932, 60, nil, "NNL", "v1")]) == 5.0)   // hidden: left out
+        #expect(sum([(1930, 150, 5.0, "AL", "v1"), (1931, 120, nil, "AL", "v1")]) == nil)   // unrated: unknown
+        #expect(sum([(2025, 150, 4.0, "AL", nil)]) == nil)                                  // stored parts: not shown
+        #expect(sum([]) == nil)
+    }
+
     @Test func warSumRuleOurWAR() {
         typealias S = (year: Int?, g: Int?, war: Double?, lg: String?)
         func sum(_ rows: [S]) -> Double? {

@@ -131,7 +131,7 @@ final class LeaderboardsViewModel: ObservableObject {
     /// Note: HLD ("holds") isn't currently tracked in pitcher_seasons,
     /// so it's deliberately absent from the pitching list.
     static let battingStats:  [String] = [
-        "WAR", "HR", "AVG", "RBI", "OPS", "OPS+", "wOBA",
+        "WAR", "oWAR", "dWAR", "HR", "AVG", "RBI", "OPS", "OPS+", "wOBA",
         "H", "R", "SB", "BB", "OBP", "SLG", "ISO", "K%", "BB%",
         "2B", "3B", "SO", "PA", "AB",
     ]
@@ -149,7 +149,17 @@ final class LeaderboardsViewModel: ObservableObject {
     }
     private static let statDisplayOverrides: [String: String] = [
         "SO/9": "K/9",
+        "oWAR": "Offensive WAR",
+        "dWAR": "Defensive WAR",
     ]
+
+    /// The closed stat-menu pill: the short form ("oWAR"), since the pill shares one row with two other controls.
+    static func shortName(_ stat: String) -> String {
+        ["oWAR": "oWAR", "dWAR": "dWAR"][stat] ?? displayName(stat)
+    }
+
+    /// WAR and its two parts: the board shows the "How we calculate WAR" link for each.
+    static let warStats: Set<String> = ["WAR", "oWAR", "dWAR"]
 
     /// Default stat for each kind. Both kinds open on WAR — the
     /// headline modern stat for hitters and pitchers alike. These

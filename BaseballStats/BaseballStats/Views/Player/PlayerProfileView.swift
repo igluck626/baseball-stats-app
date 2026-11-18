@@ -1034,9 +1034,7 @@ struct PlayerProfileScreen: View {
                     .init(label: "G",   value: formatCount(effective.G),   rank: .unrankable),
                     .init(label: "PA",  value: formatCount(effective.PA),  rank: .unrankable),
                 ],
-                warLine: WARLine(parts: warParts(source: stats.advanced?.WAR_source,
-                                                 offense: stats.advanced?.WAR_off, defense: stats.advanced?.WAR_def),
-                                 showInfo: true)
+                warLine: WARLine(parts: nil, showInfo: true)
             )
         } else if let error = viewModel.error {
             errorCard(error)
@@ -1143,9 +1141,7 @@ struct PlayerProfileScreen: View {
                     ("SB",  formatCount(agg.sb)),
                     ("G",   formatCount(totals?.G)),
                     ("PA",  formatCount(agg.pa)),
-                ],
-                warLine: warParts(source: totals?.WAR_source, offense: totals?.WAR_off, defense: totals?.WAR_def)
-                    .map { WARLine(parts: $0, showInfo: false) }
+                ]
             )
         }
         // No empty state — career card is suppressed if there's no career
@@ -1260,11 +1256,6 @@ struct PlayerProfileScreen: View {
         }
     }
 
-    /// "WAR: Offense 4.1 · Defense 1.2", only for our WAR (source set) — the stored figures' parts don't add up.
-    private func warParts(source: String?, offense: Double?, defense: Double?) -> String? {
-        guard source != nil, let offense, let defense else { return nil }
-        return "Offense \(formatWAR(offense)) · Defense \(formatWAR(defense))"
-    }
 
     /// Current-season card: title (+ subtitle) + 5×2 grid of three-line
     /// stat blocks (value / label / rank). Caller passes exactly 10
@@ -2015,6 +2006,9 @@ private enum BattingCareerColumn {
     static let ageTeamGap: CGFloat = 4
     static let team:    CGFloat = 30
     static let war:     CGFloat = 40
+    /// oWAR / dWAR (approved 2026-11-18): a hitter's WAR in its two parts, right after WAR.
+    static let owar:    CGFloat = 40
+    static let dwar:    CGFloat = 40
     static let g:       CGFloat = 32
     static let pa:      CGFloat = 40
     static let ab:      CGFloat = 40
@@ -2654,6 +2648,8 @@ private struct BattingCareerScrollableHeader: View {
         HStack(spacing: 0) {
             // Core — always shown.
             CareerHeaderCell(label: "WAR", width: BattingCareerColumn.war, alignment: .trailing, sort: $sort)
+            CareerHeaderCell(label: "oWAR", width: BattingCareerColumn.owar, alignment: .trailing, sort: $sort)
+            CareerHeaderCell(label: "dWAR", width: BattingCareerColumn.dwar, alignment: .trailing, sort: $sort)
             CareerHeaderCell(label: "G",   width: BattingCareerColumn.g,   alignment: .trailing, sort: $sort)
             CareerHeaderCell(label: "PA",  width: BattingCareerColumn.pa,  alignment: .trailing, sort: $sort)
             CareerHeaderCell(label: "AB",  width: BattingCareerColumn.ab,  alignment: .trailing, sort: $sort)
@@ -2721,6 +2717,8 @@ private struct BattingCareerScrollableSeasonRow: View {
         HStack(spacing: 0) {
             // Core
             leaderCell(formatWAR(season.WAR),    label: "WAR", leaders: l, width: BattingCareerColumn.war)
+            Text(formatWAR(season.oWAR)).frame(width: BattingCareerColumn.owar, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatWAR(season.dWAR)).frame(width: BattingCareerColumn.dwar, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             Text(formatCount(season.G)) .frame(width: BattingCareerColumn.g,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             Text(formatCount(season.PA)).frame(width: BattingCareerColumn.pa, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             Text(formatCount(season.AB)).frame(width: BattingCareerColumn.ab, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
@@ -2787,6 +2785,8 @@ private struct BattingCareerScrollableTotalsRow: View {
                 .frame(width: BattingCareerColumn.war, alignment: .trailing)
                 .monospacedDigit()
                 .padding(.horizontal, 2)
+            Text(formatWAR(agg.owar)).frame(width: BattingCareerColumn.owar, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
+            Text(formatWAR(agg.dwar)).frame(width: BattingCareerColumn.dwar, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             Text(formatCount(agg.g)) .frame(width: BattingCareerColumn.g,  alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             Text(formatCount(agg.pa)).frame(width: BattingCareerColumn.pa, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
             Text(formatCount(agg.ab)).frame(width: BattingCareerColumn.ab, alignment: .trailing).monospacedDigit().padding(.horizontal, 2)
@@ -3309,6 +3309,8 @@ private struct BattingCareerScrollableClubRow: View {
         let c = club
         HStack(spacing: 0) {
             clubCell("—", BattingCareerColumn.war)                       // WAR: per season only
+            clubCell("—", BattingCareerColumn.owar)                      // so are its parts
+            clubCell("—", BattingCareerColumn.dwar)
             clubCell(formatCount(c.int("G")),  BattingCareerColumn.g)
             clubCell(formatCount(c.int("PA")), BattingCareerColumn.pa)
             clubCell(formatCount(c.int("AB")), BattingCareerColumn.ab)
@@ -3426,6 +3428,8 @@ private func sortBatting(_ seasons: [CareerSeason], by s: CareerSort) -> [Career
         case "Age":  return cmpOpt(a.year,    b.year,    asc: asc)  // age is monotonic with year
         case "Team": return cmpOpt(a.team,    b.team,    asc: asc)
         case "WAR":  return cmpOpt(a.WAR,     b.WAR,     asc: asc)
+        case "oWAR": return cmpOpt(a.oWAR,    b.oWAR,    asc: asc)
+        case "dWAR": return cmpOpt(a.dWAR,    b.dWAR,    asc: asc)
         case "G":    return cmpOpt(a.G,       b.G,       asc: asc)
         case "PA":   return cmpOpt(a.PA,      b.PA,      asc: asc)
         case "AB":   return cmpOpt(a.AB,      b.AB,      asc: asc)
@@ -3687,7 +3691,7 @@ private struct MultiYearSummarySheet: View {
 
     private var cols: [String] {
         showingBatting
-            ? ["WAR","G","PA","AB","R","H","2B","3B","HR","RBI","SB","CS",
+            ? ["WAR","oWAR","dWAR","G","PA","AB","R","H","2B","3B","HR","RBI","SB","CS",
                "BB","SO","BA","OBP","SLG","OPS","OPS+","TB","GIDP","HBP",
                "SH","SF","IBB"]
             : ["WAR","W","L","W-L%","ERA","G","GS","GF","CG","SHO","SV",
@@ -3713,6 +3717,8 @@ private struct MultiYearSummarySheet: View {
             let agg = battingAgg
             return [
                 formatWAR(agg.war),
+                formatWAR(agg.owar),
+                formatWAR(agg.dwar),
                 formatCount(agg.g),
                 formatCount(agg.pa),
                 formatCount(agg.ab),
@@ -3782,6 +3788,8 @@ private struct MultiYearSummarySheet: View {
             let agg = battingAgg
             return [
                 local1(agg.war.map { $0 / n }),
+                local1(agg.owar.map { $0 / n }),
+                local1(agg.dwar.map { $0 / n }),
                 local1(Double(agg.g)    / n),
                 local1(agg.pa.map { Double($0)   / n }),
                 local1(Double(agg.ab)   / n),
@@ -3856,6 +3864,8 @@ private struct MultiYearSummarySheet: View {
             let s = 162.0 / Double(agg.g)
             return [
                 local1(agg.war.map { $0 * s }),
+                local1(agg.owar.map { $0 * s }),
+                local1(agg.dwar.map { $0 * s }),
                 local1(Double(agg.g)    * s),     // always 162.0
                 local1(agg.pa.map { Double($0)   * s }),
                 local1(Double(agg.ab)   * s),
@@ -4904,6 +4914,9 @@ struct BattingCareerAgg {
     let sh:   Int?
     let ibb:  Int?
     let war:  Double?
+    /// oWAR / dWAR sums (same rule as `war`); nil for the stored Baseball-Reference figures, whose parts don't add up.
+    let owar: Double?
+    let dwar: Double?
 
     var avg: Double? {
         ab > 0 ? Double(h) / Double(ab) : nil
@@ -4977,7 +4990,11 @@ struct BattingCareerAgg {
             sh:   sum(\.SH, "SH"),
             ibb:  sum(\.IBB, "IBB"),
             war:  UnknownRule.warSum(seasons, year: \.year, games: \.G, war: \.WAR,
-                                    league: \.league, source: \.WAR_source)
+                                    league: \.league, source: \.WAR_source),
+            owar: UnknownRule.warPartSum(seasons, year: \.year, games: \.G, part: \.WAR_off,
+                                         league: \.league, source: \.WAR_source),
+            dwar: UnknownRule.warPartSum(seasons, year: \.year, games: \.G, part: \.WAR_def,
+                                         league: \.league, source: \.WAR_source)
         )
     }
 }

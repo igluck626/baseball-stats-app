@@ -367,6 +367,10 @@ struct CareerSeason: Codable, Identifiable, Hashable {
     let runs_above_rep: Double?
     /// "v1" = our own WAR, nil = the stored Baseball-Reference figures (see UnknownRule.warSum).
     var WAR_source: String? = nil
+    /// oWAR / dWAR for display: our offense / defense (they add up to WAR); nil for the stored figures, whose
+    /// WAR_off / WAR_def don't add up and aren't shown.
+    var oWAR: Double? { WAR_source != nil ? WAR_off : nil }
+    var dWAR: Double? { WAR_source != nil ? WAR_def : nil }
 
     /// Per-stat league/majors leadership flags computed by the backend.
     /// Keyed by user-facing stat label ("AVG", "HR", "2B", "WAR" …).
