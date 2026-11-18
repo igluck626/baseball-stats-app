@@ -1336,3 +1336,97 @@ class RetroPostseasonPlays(Base):
     season  = Column(Integer, nullable=False, index=True)
     plays   = Column(JSON, nullable=False)
 
+
+
+class WarSeason(Base):
+    """Our own WAR, one row per player, season, role and formula version (design approved 2026-11-17).
+
+    Computed by backend/war; never from Baseball-Reference. A player who both hit and pitched in a season has a 'hit' and a
+    'pit' row; his season WAR is their sum, as with the stored figures today. The server reads one formula version at a
+    time (the active one), so a new version can be loaded beside the old and switched to, or back, without rewriting rows.
+
+    Hitters: the pieces are in runs; offense = (batting + baserunning + double_plays + replacement) / runs_per_win,
+    defense = (position + fielding) / runs_per_win, war = offense + defense. pitcher_batting marks a pitcher's own hitting
+    (measured against the average hitting pitcher, no replacement/position/fielding credit), so position-player
+    leaderboards can leave it out.
+    Pitchers: war = wins_above_avg + wins_replacement; the other pitcher columns are the pieces wins_above_avg comes from.
+
+    data_tier: 'provisional' while the season's inputs come from balldontlie (the season in progress, recomputed nightly),
+    'final' once it is recomputed from Retrosheet; finished seasons then change only with a new method_version.
+    params_sha = SHA-256 of the settings file; run_id names the input build, so any figure traces to formula and data.
+    New table, so `create_all` builds it whole; a column added later must also go in a `connection` startup list.
+    """
+    __tablename__ = "war_seasons"
+    __table_args__ = (
+        Index("ix_war_seasons_version_year_role_war", "method_version", "year", "role", "war"),
+        CheckConstraint("role IN ('hit', 'pit')", name="ck_war_seasons_role"),
+        CheckConstraint("data_tier IN ('provisional', 'final')", name="ck_war_seasons_tier"),
+    )
+
+    player_id         = Column(Integer, primary_key=True)
+    year              = Column(Integer, primary_key=True)
+    role              = Column(String(3), primary_key=True)     # 'hit' | 'pit'
+    method_version    = Column(String(16), primary_key=True)    # 'v1'
+    war               = Column(Float, nullable=False)
+    # hitters
+    offense           = Column(Float)
+    defense           = Column(Float)
+    runs_batting      = Column(Float)
+    runs_baserunning  = Column(Float)
+    runs_double_plays = Column(Float)
+    runs_replacement  = Column(Float)
+    runs_position     = Column(Float)
+    runs_fielding     = Column(Float)
+    pa                = Column(Integer)                        # plate appearances as rated (PA, or AB+BB+HBP+SF+SH when PA is blank)
+    pitcher_batting   = Column(Boolean)
+    pitcher_pa_share  = Column(Float)                          # share of his PA made as the pitcher
+    fielding_source   = Column(String(16))    # 'play_by_play' | 'balldontlie' | 'season_totals' | None = no fielding data
+                                              # (DH, pitcher batting, or no fielding row): runs_fielding is then 0.0, meaning "no data", not "average"
+    # pitchers
+    wins_above_avg    = Column(Float)
+    wins_replacement  = Column(Float)
+    ip                = Column(Float)                          # decimal innings (200.333), not 200.1 notation
+    runs_allowed      = Column(Float)                          # runs allowed; earned runs where runs are blank (a few current-season rows)
+    expected_ra9      = Column(Float)                          # league runs per 9 (with the starter/reliever shift) × park, before the
+                                                               # defense behind him; innings-weighted across teams for traded pitchers
+    defense_runs      = Column(Float)                          # runs his defense saved (positive = good defense), SUBTRACTED from his
+                                                               # credit: runs above average = ip/9 × expected_ra9 − runs_allowed − defense_runs
+    wins_linear       = Column(Float)                          # runs above average ÷ runs per win: before the Pythagorean blend, the
+                                                               # league-season centring and leverage
+    entry_leverage    = Column(Float)                          # average leverage index when entering in relief (gmLI)
+    relief_ip_share   = Column(Float)
+    # both
+    runs_per_win      = Column(Float)
+    park_factor       = Column(Float)
+    league            = Column(String(3))
+    data_tier         = Column(String(12), nullable=False)
+    params_sha        = Column(String(64), nullable=False)
+    run_id            = Column(String(64), nullable=False)
+    computed_at       = Column(DateTime, nullable=False)
+
+
+# Freeze guard on war_seasons (approved 2026-11-17): the database itself refuses to change or delete a 'final' row, or to
+# empty the table, whatever script tries. A provisional row can be replaced (deleted and re-inserted, or updated). A final
+# season changes only by loading a new method_version beside it. Retiring an old version is a deliberate step that first
+# drops this trigger, by hand, with its own approval.
+# Installed by create_all together with the table (after_create), so it exists from the moment the table does.
+from sqlalchemy import DDL, event  # noqa: E402
+
+event.listen(WarSeason.__table__, "after_create", DDL("""
+CREATE OR REPLACE FUNCTION war_seasons_freeze() RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'TRUNCATE' THEN
+        RAISE EXCEPTION 'war_seasons: final rows are frozen; TRUNCATE refused';
+    END IF;
+    IF OLD.data_tier = 'final' THEN
+        RAISE EXCEPTION 'war_seasons: %% refused on a final row (player %%, year %%, role %%, version %%)',
+            TG_OP, OLD.player_id, OLD.year, OLD.role, OLD.method_version;
+    END IF;
+    IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+    RETURN NEW;
+END $$ LANGUAGE plpgsql;
+CREATE TRIGGER war_seasons_freeze_rows BEFORE UPDATE OR DELETE ON war_seasons
+    FOR EACH ROW EXECUTE FUNCTION war_seasons_freeze();
+CREATE TRIGGER war_seasons_freeze_truncate BEFORE TRUNCATE ON war_seasons
+    FOR EACH STATEMENT EXECUTE FUNCTION war_seasons_freeze();
+""").execute_if(dialect="postgresql"))
