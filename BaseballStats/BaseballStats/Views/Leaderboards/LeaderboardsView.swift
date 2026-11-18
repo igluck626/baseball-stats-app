@@ -208,6 +208,9 @@ struct LeaderboardsView: View {
             VStack(spacing: 10) {
                 modePicker
                 kindAndStatBar
+                if viewModel.selectedStat == "WAR" {
+                    warMethodLink
+                }
                 if showFilters {
                     secondaryFilters
                         // Slide down from the top edge + fade, so
@@ -364,6 +367,25 @@ struct LeaderboardsView: View {
             .padding(.vertical, 9)
             .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 10))
         }
+    }
+
+    /// Shown while WAR is the chosen stat: opens "How we calculate WAR" (the ⓘ approved for the WAR board).
+    private var warMethodLink: some View {
+        NavigationLink {
+            WARMethodView()
+        } label: {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text("How we calculate WAR")
+                Image(systemName: "info.circle")
+                    .accessibilityHidden(true)
+            }
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("leaderboardWarInfo")
     }
 
     private var statMenu: some View {

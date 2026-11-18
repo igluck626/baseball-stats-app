@@ -1033,7 +1033,10 @@ struct PlayerProfileScreen: View {
                     .init(label: "SB",  value: formatCount(effective.SB),  rank: rankableSlot("SB",  ranks)),
                     .init(label: "G",   value: formatCount(effective.G),   rank: .unrankable),
                     .init(label: "PA",  value: formatCount(effective.PA),  rank: .unrankable),
-                ]
+                ],
+                warLine: WARLine(parts: warParts(source: stats.advanced?.WAR_source,
+                                                 offense: stats.advanced?.WAR_off, defense: stats.advanced?.WAR_def),
+                                 showInfo: true)
             )
         } else if let error = viewModel.error {
             errorCard(error)
@@ -1090,7 +1093,8 @@ struct PlayerProfileScreen: View {
                     .init(label: "IP",   value: formatIP(effective.IP),                                rank: rankableSlot("IP", ranks)),
                     .init(label: "SO",   value: formatCount(effective.SO),                             rank: rankableSlot("SO", ranks)),
                     .init(label: "BB",   value: formatCount(effective.BB),                             rank: .unrankable),
-                ]
+                ],
+                warLine: WARLine(parts: nil, showInfo: true)
             )
         } else if let error = viewModel.error {
             errorCard(error)
@@ -1139,7 +1143,9 @@ struct PlayerProfileScreen: View {
                     ("SB",  formatCount(agg.sb)),
                     ("G",   formatCount(totals?.G)),
                     ("PA",  formatCount(agg.pa)),
-                ]
+                ],
+                warLine: warParts(source: totals?.WAR_source, offense: totals?.WAR_off, defense: totals?.WAR_def)
+                    .map { WARLine(parts: $0, showInfo: false) }
             )
         }
         // No empty state — career card is suppressed if there's no career
@@ -1224,7 +1230,8 @@ struct PlayerProfileScreen: View {
     private func statsGridCard(
         title: String,
         subtitle: String?,
-        items: [(String, String)]
+        items: [(String, String)],
+        warLine: WARLine? = nil
     ) -> some View {
         VStack(spacing: 10) {
             gridHeader(title: title, subtitle: subtitle)
@@ -1232,8 +1239,30 @@ struct PlayerProfileScreen: View {
                 statsLegacyRow(Array(items.prefix(5)))
                 statsLegacyRow(Array(items.dropFirst(5).prefix(5)))
             }
+            if let warLine { warFooter(warLine) }
         }
         .modifier(GridCardChrome())
+    }
+
+    /// Under a season / career grid: our WAR's Offense · Defense split (hitters; one Text with " · " so it wraps
+    /// whole at accessibility sizes) and the ⓘ that opens "How we calculate WAR".
+    private func warFooter(_ line: WARLine) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            if let parts = line.parts {
+                Text(parts)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("warParts")
+            }
+            Spacer(minLength: 0)
+            if line.showInfo { WARInfoButton() }
+        }
+    }
+
+    /// "WAR: Offense 4.1 · Defense 1.2", only for our WAR (source set) — the stored figures' parts don't add up.
+    private func warParts(source: String?, offense: Double?, defense: Double?) -> String? {
+        guard source != nil, let offense, let defense else { return nil }
+        return "Offense \(formatWAR(offense)) · Defense \(formatWAR(defense))"
     }
 
     /// Current-season card: title (+ subtitle) + 5×2 grid of three-line
@@ -1247,7 +1276,8 @@ struct PlayerProfileScreen: View {
         title: String,
         subtitle: String?,
         liveBadge: Bool = false,
-        items: [StatItem]
+        items: [StatItem],
+        warLine: WARLine? = nil
     ) -> some View {
         VStack(spacing: 10) {
             gridHeader(title: title, subtitle: subtitle, liveBadge: liveBadge)
@@ -1255,6 +1285,7 @@ struct PlayerProfileScreen: View {
                 statsRankedRow(Array(items.prefix(5)))
                 statsRankedRow(Array(items.dropFirst(5).prefix(5)))
             }
+            if let warLine { warFooter(warLine) }
         }
         .modifier(GridCardChrome())
     }
@@ -4393,6 +4424,12 @@ private let countFormatter: NumberFormatter = {
     return f
 }()
 
+/// The line under a stats grid about WAR: the Offense · Defense text (nil = none) and whether to show the ⓘ.
+private struct WARLine {
+    let parts: String?
+    let showInfo: Bool
+}
+
 private func formatWAR(_ value: Double?) -> String {
     guard let value else { return "—" }
     return String(format: "%.1f", value)
@@ -4938,7 +4975,8 @@ struct BattingCareerAgg {
             gidp: sum(\.GIDP, "GIDP"),
             sh:   sum(\.SH, "SH"),
             ibb:  sum(\.IBB, "IBB"),
-            war:  UnknownRule.warSum(seasons, year: \.year, games: \.G, war: \.WAR)
+            war:  UnknownRule.warSum(seasons, year: \.year, games: \.G, war: \.WAR,
+                                    league: \.league, source: \.WAR_source)
         )
     }
 }
@@ -5052,7 +5090,8 @@ struct PitchingCareerAgg {
             sv:  seasons.reduce(0)   { $0 + ($1.SV  ?? 0) },
             w:   seasons.reduce(0)   { $0 + ($1.W   ?? 0) },
             l:   seasons.reduce(0)   { $0 + ($1.L   ?? 0) },
-            war: UnknownRule.warSum(seasons, year: \.year, games: \.G, war: \.WAR)
+            war: UnknownRule.warSum(seasons, year: \.year, games: \.G, war: \.WAR,
+                                    league: \.league, source: \.WAR_source)
         )
     }
 }

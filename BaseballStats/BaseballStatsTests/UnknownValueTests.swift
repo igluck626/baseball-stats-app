@@ -197,8 +197,9 @@ struct UnknownValueTests {
 
     @Test func warSumRule() {
         typealias S = (year: Int?, g: Int?, war: Double?)
-        func sum(_ rows: [S]) -> Double? {
-            UnknownRule.warSum(rows, year: { $0.year }, games: { $0.g }, war: { $0.war })
+        func sum(_ rows: [S]) -> Double? {         // the stored Baseball-Reference figures (no source)
+            UnknownRule.warSum(rows, year: { $0.year }, games: { $0.g }, war: { $0.war },
+                               league: { _ in "AL" }, source: { _ in nil })
         }
         #expect(UnknownRule.warLastStoredSeason == 2026)
         #expect(sum([(2026, 140, 2.4), (2027, 120, nil)]) == nil)
@@ -206,6 +207,21 @@ struct UnknownValueTests {
         #expect(sum([(2026, 140, 2.4), (2027, 0, nil)]) == 2.4)        // placeholder
         #expect(sum([(2025, 150, 3.0), (2026, 140, nil)]) == 3.0)      // 2026 NULL: not rated
         #expect(sum([(2026, 140, 2.0), (2027, 120, 1.0)]) == 3.0)      // 2027 WITH WAR sums
+    }
+
+    /// Our own WAR (source "v1"): a Negro Leagues season is left out; any other season with no WAR, of any year,
+    /// makes the sum unknown (the server sends 0.0 where there is nothing to rate).
+    @Test func warSumRuleOurWAR() {
+        typealias S = (year: Int?, g: Int?, war: Double?, lg: String?)
+        func sum(_ rows: [S]) -> Double? {
+            UnknownRule.warSum(rows, year: { $0.year }, games: { $0.g }, war: { $0.war },
+                               league: { $0.lg }, source: { _ in "v1" })
+        }
+        #expect(sum([(1930, 150, 6.0, "AL"), (1931, 140, 3.5, "AL")]) == 9.5)
+        #expect(sum([(1930, 150, 6.0, "AL"), (1932, 60, nil, "NNL")]) == 6.0)   // hidden: left out
+        #expect(sum([(1930, 150, 6.0, "AL"), (1931, 120, nil, "AL")]) == nil)   // unrated season: unknown
+        #expect(sum([(2026, 140, 2.4, "AL"), (2027, 120, nil, "AL")]) == nil)
+        #expect(sum([(1932, 60, nil, "NNL")]) == nil)                           // only hidden seasons: no figure
     }
 
     // MARK: Today's overlay

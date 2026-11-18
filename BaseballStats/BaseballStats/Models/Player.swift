@@ -296,6 +296,9 @@ struct BattingAdvancedStats: Codable {
     let WAR: Double?
     let WAR_off: Double?
     let WAR_def: Double?
+    /// Which WAR this is: "v1" = our own calculation, nil = the stored Baseball-Reference figures (whose
+    /// offense and defense don't add up to WAR, so the Offense · Defense line is hidden for them).
+    let WAR_source: String?
     let WAA: Double?
     let OPS_plus: Double?
     let runs_above_avg: Double?
@@ -362,6 +365,8 @@ struct CareerSeason: Codable, Identifiable, Hashable {
     let OPS_plus: Double?
     let runs_above_avg: Double?
     let runs_above_rep: Double?
+    /// "v1" = our own WAR, nil = the stored Baseball-Reference figures (see UnknownRule.warSum).
+    var WAR_source: String? = nil
 
     /// Per-stat league/majors leadership flags computed by the backend.
     /// Keyed by user-facing stat label ("AVG", "HR", "2B", "WAR" …).
@@ -384,6 +389,9 @@ struct CareerTotals: Codable, Equatable {
     let WAR: Double?
     let WAR_off: Double?
     let WAR_def: Double?
+    /// Which WAR this is: "v1" = our own calculation, nil = the stored Baseball-Reference figures (whose
+    /// offense and defense don't add up to WAR, so the Offense · Defense line is hidden for them).
+    let WAR_source: String?
     let G: Int?
     let H: Int?
     let HR: Int?
@@ -449,6 +457,9 @@ struct PitcherStandardStats: Codable {
 
 struct PitcherAdvancedStats: Codable {
     let WAR: Double?
+    /// Which WAR this is: "v1" = our own calculation, nil = the stored Baseball-Reference figures (whose
+    /// offense and defense don't add up to WAR, so the Offense · Defense line is hidden for them).
+    let WAR_source: String?
     let WAA: Double?
     let ERA_plus: Double?
     let runs_above_avg: Double?
@@ -507,6 +518,8 @@ struct PitcherCareerSeason: Codable, Identifiable, Hashable {
     let HR_per9: Double?
 
     let WAR: Double?
+    /// "v1" = our own WAR, nil = the stored Baseball-Reference figures (see UnknownRule.warSum).
+    var WAR_source: String? = nil
     let WAR_def: Double?
     let WAA: Double?
     let ERA_plus: Double?
@@ -527,6 +540,9 @@ struct PitcherCareerSeason: Codable, Identifiable, Hashable {
 struct PitcherCareerTotals: Codable, Equatable {
     let seasons: Int?
     let WAR: Double?
+    /// Which WAR this is: "v1" = our own calculation, nil = the stored Baseball-Reference figures (whose
+    /// offense and defense don't add up to WAR, so the Offense · Defense line is hidden for them).
+    let WAR_source: String?
     let IP: Double?
     let SO: Int?
     let BB: Int?

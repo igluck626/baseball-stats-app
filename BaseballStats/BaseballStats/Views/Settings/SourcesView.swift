@@ -18,10 +18,9 @@
 //      names linked.
 //    • balldontlie — Terms §6: no attribution required (credited anyway);
 //      §7: never state or imply the data is official league data.
-//    • Baseball-Reference — WAR and the WAR-derived columns. Stored values,
-//      no longer fetched or updated (backend: test_no_baseball_reference);
-//      credited as Isaac worded it (2026-10-21). Its terms are on the
-//      pre-release review queue.
+//    • Baseball-Reference — no longer credited: nothing shown comes from it.
+//      OPS+ / ERA+ are our own since 2026-11-11 and WAR is our own (backend/war,
+//      approved 2026-11-17/18). Its stored columns are no longer read.
 //
 //  The quoted wording is the sources' own: change it only from their sites.
 //
@@ -85,7 +84,7 @@ struct Credit: Identifiable {
     static let all: [Credit] = [
         Credit(
             name: "Retrosheet",
-            use: "Historical game logs, box scores and per-club season lines.",
+            use: "Historical game logs, box scores, per-club season lines, and the play-by-play our WAR is calculated from.",
             notice: "The information used here was obtained free of charge from and is copyrighted by Retrosheet. Interested parties may contact Retrosheet at \"www.retrosheet.org\".",
             links: [CreditLink("Retrosheet", "https://www.retrosheet.org")]),
         Credit(
@@ -106,11 +105,6 @@ struct Credit: Identifiable {
             use: "Live scores, play-by-play, and the current season's games and statistics.",
             notice: "Live and current-season data is provided by balldontlie.",
             links: [CreditLink("balldontlie", "https://www.balldontlie.io")]),
-        Credit(
-            name: "Baseball-Reference",
-            use: "WAR and the statistics built on it (WAR components, OPS+, ERA+).",
-            notice: "WAR: Baseball-Reference (stored, not updated).",
-            links: [CreditLink("Baseball-Reference", "https://www.baseball-reference.com")]),
     ]
 }
 

@@ -80,6 +80,7 @@ def apply_to_season(season: dict, found: Optional[tuple], role: str) -> None:
     else:
         war = off = dfn = None
     season["WAR"] = war
+    season["WAR_source"] = active_version()       # tells the app this is our WAR (its unknown rule depends on it)
     if role == "hit":
         season["WAR_off"] = off
         season["WAR_def"] = dfn
@@ -101,7 +102,7 @@ def career_total(seasons: list, key: str) -> Optional[float]:
     """A career WAR figure under our WAR: hidden-league seasons are left out; any other season with no figure makes
     the total unknown (None), never a short sum."""
     shown = [s for s in seasons if s.get("league") not in HIDDEN_LEAGUES]
-    if any(s.get(key) is None for s in shown):
+    if not shown or any(s.get(key) is None for s in shown):      # only hidden seasons: no figure, as in SQL
         return None
     return round(sum(s.get(key) or 0.0 for s in shown), 1)
 

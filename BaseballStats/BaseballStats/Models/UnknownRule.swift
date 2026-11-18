@@ -128,20 +128,35 @@ enum UnknownRule {
     }
 
     /// The last season whose Baseball-Reference WAR the server stores (its
-    /// `WAR_LAST_STORED_SEASON`).
+    /// `WAR_LAST_STORED_SEASON`). Only used for seasons served from those stored figures.
     static let warLastStoredSeason = 2026
 
-    /// A WAR sum over seasons: nil when a season after `warLastStoredSeason`
-    /// has games but no WAR, otherwise the sum with a NULL as 0.
+    /// Negro Leagues circuits (the server's NEGRO_CIRCUITS): our WAR doesn't rate them yet. Their seasons read "—"
+    /// and are left out of a WAR sum rather than making it unknown.
+    static let warHiddenLeagues: Set<String> = ["NNL", "ECL", "ANL", "NSL", "EWL", "NN2", "NAL",
+                                                "IND", "EAS", "WES", "NAC", "INT"]
+
+    /// A WAR sum over seasons, matching the server's career rule season by season:
+    ///   • our WAR (`source` set, "v1"): a hidden-league season is left out; any other season with no WAR makes the
+    ///     sum unknown (nil) — the server already sends 0.0 for a season with nothing to rate
+    ///   • the stored Baseball-Reference figures (`source` nil): nil when a season after `warLastStoredSeason` has
+    ///     games but no WAR, otherwise the sum with a NULL as 0
     static func warSum<S>(
-        _ seasons: [S], year: (S) -> Int?, games: (S) -> Int?, war: (S) -> Double?
+        _ seasons: [S], year: (S) -> Int?, games: (S) -> Int?, war: (S) -> Double?,
+        league: (S) -> String?, source: (S) -> String?
     ) -> Double? {
         var total = 0.0
+        var ours = false, counted = false
         for s in seasons {
-            if let v = war(s) { total += v; continue }
+            if source(s) != nil { ours = true }
+            if let v = war(s) { total += v; counted = true; continue }
+            if source(s) != nil {
+                if let l = league(s), warHiddenLeagues.contains(l) { continue }
+                return nil
+            }
             if (year(s) ?? 0) > warLastStoredSeason, (games(s) ?? 0) > 0 { return nil }
         }
-        return total
+        return (ours && !counted) ? nil : total          // only hidden seasons: no figure (the server agrees)
     }
 }
 

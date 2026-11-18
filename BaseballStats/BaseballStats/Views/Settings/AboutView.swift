@@ -43,9 +43,6 @@ struct AboutView: View {
     }
 
     private let dataSources: [DataSource] = [
-        DataSource(name: "Baseball-Reference",
-                   descriptor: "WAR (stored, not updated)",
-                   urlString: "https://www.baseball-reference.com"),
         DataSource(name: "Retrosheet",
                    descriptor: "Historical game logs and box scores",
                    urlString: "https://www.retrosheet.org"),

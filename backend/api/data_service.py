@@ -846,6 +846,9 @@ def get_current_stats(player_id: int) -> Optional[dict]:
         "WAR":            season.get("WAR"),
         "WAR_off":        season.get("WAR_off"),
         "WAR_def":        season.get("WAR_def"),
+        # which WAR this is: the war_seasons method_version ("v1"), or None for the stored
+        # Baseball-Reference figures (whose offense/defense don't add up, so the app hides them)
+        "WAR_source":     war_source.active_version(),
         "WAA":            season.get("WAA"),
         "OPS_plus":       season.get("OPS_plus"),
         "runs_above_avg": season.get("runs_above_avg"),
@@ -1190,6 +1193,7 @@ def _batting_career_totals(seasons: list[dict]) -> dict:
         "WAR":     _war_total(seasons, "WAR"),
         "WAR_off": _war_total(seasons, "WAR_off"),
         "WAR_def": _war_total(seasons, "WAR_def"),
+        "WAR_source": war_source.active_version(),
     }
     if not seasons_with_counting:
         return totals
@@ -1313,6 +1317,7 @@ def get_current_pitching_stats(player_id: int) -> Optional[dict]:
     }
     advanced = {
         "WAR":            season.get("WAR"),
+        "WAR_source":     war_source.active_version(),
         "WAA":            season.get("WAA"),
         "ERA_plus":       season.get("ERA_plus"),
         "runs_above_avg": season.get("runs_above_avg"),
@@ -1378,6 +1383,7 @@ def _pitching_career_totals(seasons: list[dict]) -> dict:
     totals: dict = {
         "seasons": len(seasons),
         "WAR":     _war_total(seasons, "WAR"),
+        "WAR_source": war_source.active_version(),
         "IP":      round(sum((s.get("IP")  or 0.0) for s in seasons), 1),
         "SO":      int(sum(s.get("SO") or 0 for s in seasons)),
         "BB":      int(sum(s.get("BB") or 0 for s in seasons)),

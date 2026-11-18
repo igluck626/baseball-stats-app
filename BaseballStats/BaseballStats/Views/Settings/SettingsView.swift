@@ -85,6 +85,16 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    NavigationLink {
+                        WARMethodView()
+                    } label: {
+                        Text("How We Calculate WAR")
+                    }
+                } header: {
+                    Text("Statistics")
+                }
+
+                Section {
                     // Pushes within this NavigationStack; inherits the
                     // appearance override applied to the sheet below.
                     NavigationLink {
