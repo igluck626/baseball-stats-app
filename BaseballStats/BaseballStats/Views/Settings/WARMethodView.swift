@@ -55,6 +55,8 @@ struct WARMethodView: View {
                         formula("Pitcher WAR", "wins above average + replacement wins")
                         formula("Runs above average", "innings ÷ 9 × expected runs per 9 − runs allowed − runs saved by the defense behind the pitcher")
                         formula("Expected runs per 9", "league runs per 9 × ballpark factor")
+                        formula("Pitcher wins above average", "runs above average ÷ pitcher runs per win")
+                        formula("Pitcher runs per win", "((18 − innings per game) × expected runs per 9 + innings per game × the pitcher's runs allowed per 9) ÷ 18, + 2, × 1.5")
                         formula("Relief innings", "wins above average × (1 + entry leverage) ÷ 2")
                         formula("Runs per win", "10 × √(runs per inning, both teams)")
                         Text("Replacement level is set so that all players together are worth about 1,000 wins over a 162-game season.")

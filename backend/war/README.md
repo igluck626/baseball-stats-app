@@ -1,4 +1,4 @@
-# Our WAR (version 1)
+# Our WAR (versions 1 and 2)
 
 This package computes wins above replacement from our own data. It holds the calculation, its frozen settings and the
 scripts that build its inputs. It never reads the stored Baseball-Reference WAR columns, and
@@ -8,6 +8,22 @@ scripts that build its inputs. It never reads the stored Baseball-Reference WAR 
 those is a later step that needs its own approval. Three independent reviews (2026-11-16 and 11-17) found problems; all
 are fixed here except the nightly freeze rules, which belong to the storage step, and the database fixes listed under
 Known limits.
+
+## Versions
+
+- **v1** (`params/war_params_v1.json`, stored 2026-11-18): the method described below.
+- **v2** (`params/war_params_v2.json`, approved 2026-11-19): v1 with one change. A pitcher's runs saved are turned
+  into wins at the runs per win of *his own games*, using the published pitcher runs-per-win formula:
+  ((18 − IP/G) × league RA9 × park + (IP/G) × his RA9) ÷ 18, + 2, × 1.5. The league rate is put in his parks
+  (`dyn_rpw_park_adjust`) because his own RA9 is measured there; against a neutral-park league rate, pitchers in
+  hitters' parks would get too little credit and pitchers in pitchers' parks too much.
+  v1 used the league's runs per win blended 50/50 with Pythagenpat, which left the best starters short: aces since
+  2010 came out about 0.8 wins below Baseball-Reference. With v2, aces within one win rise from 68% to 89% (2010–2026)
+  and from 84% to 96% (1950–2009); modern aces' careers land within about a win (Maddux, Pedro Martínez, Kershaw).
+  The cost is in the heaviest pre-1920 workloads, which were already high and go higher (Alexander, Mathewson,
+  Cy Young). Hitters are identical in both versions, and replacement credit is unchanged.
+
+`build_history.py --version v2` builds v2. `tests/test_war_v2_package.py` checks that v2 is v1 plus exactly this change.
 
 ## What it produces
 
@@ -32,7 +48,7 @@ or more.
 Wins above average come from comparing the runs a pitcher allowed with what an average pitcher would allow in the same
 parks, in the same league, behind the same defense. Three adjustments follow:
 
-- the result is converted to wins with a 50/50 blend of linear and Pythagorean wins;
+- the result is converted to wins: v1 with a 50/50 blend of linear and Pythagorean wins, v2 at the runs per win of his own games (see Versions);
 - each league-season is re-centered so an average pitcher is worth 0;
 - for innings pitched in relief, the result is multiplied by (1 + entry leverage) ÷ 2.
 
@@ -58,7 +74,7 @@ parks, in the same league, behind the same defense. Three adjustments follow:
 | Fielding 1910–2025 | Total Zone-style play counting from Retrosheet: plays made vs chances, with hits charged to the responsible fielder, adjusted for park. Also uses the batter × pitcher out pattern, team hits saved on balls in play, arms, double plays and catchers' running game. Weights are held to sensible signs. Seasons from 2003 use the 1989–2002 weights (option B). Re-centered so each league-season sums to 0. | `fld_retro`, `center_fielding` |
 | Fielding, current season | The same idea from balldontlie: ball coordinates, totals, double plays and outfield throws from play text, and team hits saved. Calibrated to our own Total Zone values for 2015–2025, and centered per position. | `fld_bdl` |
 | Fielding without play-by-play | Season totals (putouts, assists, errors, double plays) compared with league per game. | `fld_totals` |
-| Pitchers | League runs allowed per 9 × park, plus a reliever adjustment, minus the defense behind him (the team's fielding runs, catchers included, shared by his balls in play). Team balls in play come from each pitcher's team-by-team lines (stints where they add up; Lahman before 1898). A blank runs-allowed falls back to earned runs. Impossibly low batters-faced counts (some 1901–07 rows) are replaced by 3 × innings + hits + walks + hit batsmen. Before 1910, team hits saved is added directly at half weight, because season-totals fielding doesn't carry it. | `reliever_ra9_shift`, `team_der_weight`, `pythag_blend`, `center_pitcher_waa`, `pre1910_team_def_scale` |
+| Pitchers | League runs allowed per 9 × park, plus a reliever adjustment, minus the defense behind him (the team's fielding runs, catchers included, shared by his balls in play). Team balls in play come from each pitcher's team-by-team lines (stints where they add up; Lahman before 1898). A blank runs-allowed falls back to earned runs. Impossibly low batters-faced counts (some 1901–07 rows) are replaced by 3 × innings + hits + walks + hit batsmen. Before 1910, team hits saved is added directly at half weight, because season-totals fielding doesn't carry it. | `reliever_ra9_shift`, `team_der_weight`, `pythag_blend` (v1), `pitcher_wins_model` + `dyn_rpw_add` + `dyn_rpw_mult` + `dyn_rpw_park_adjust` (v2), `center_pitcher_waa`, `pre1910_team_def_scale` |
 | Reliever leverage | Entry leverage index, from a win-expectancy table measured on Retrosheet and applied to balldontlie plays for the current season. | `reliever_leverage`, `start_to_relief_ip_ratio` |
 | Runs per win | 10 × √(runs per inning, both teams). | — |
 

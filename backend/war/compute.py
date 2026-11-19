@@ -679,9 +679,26 @@ def compute(cur, inputs_dir, params_path=DEFAULT_PARAMS, teams_csv=DEFAULT_TEAMS
                 rep_w += (S['pit_rep_share'] * S['war_per_season_games'] / 2 * TS[(y, lt_)][0] * ip_ * repf(G, GS) / wt[(y, lt_)]
                           * max(0.0, 1 + S.get('pit_league_strength_k', 0.0) * LGSTR.get((y, lt_), 0.0)))
         waa_lin = raa / R; waa_w = waa_lin
-        if IP > 0:                                               # blend linear and Pythagenpat wins
+        model = S.get('pitcher_wins_model', 'blend')
+        if IP > 0 and model == 'blend':                          # v1: blend linear and Pythagenpat wins
             ra9 = max(S['min_ra9'], xra9 - 9 * raa / IP); x = (xra9 + ra9) ** S['pythag_exponent']
             waa_w = waa_lin + S.get('pythag_blend', 1.0) * ((xra9 ** x / (xra9 ** x + ra9 ** x) - 0.5) * IP / 9 - waa_lin)
+        elif IP > 0 and model == 'game_pythag':
+            # each appearance as a game: his innings at his run rate, the rest at the average rate, an average
+            # offense; Pythagenpat win chance in that game's own scoring level, minus .500, times appearances
+            ra9 = max(S['min_ra9'], xra9 - 9 * raa / IP); ipg = min(9.0, IP / max(1.0, n(G)))
+            rag = (ipg * ra9 + (9 - ipg) * xra9) / 9; x = (xra9 + rag) ** S['pythag_exponent']
+            waa_w = (xra9 ** x / (xra9 ** x + rag ** x) - 0.5) * max(1.0, n(G))
+        elif IP > 0 and model == 'dynamic_rpw':
+            # runs per win in the scoring level of his own games: ((18 - IP/G) x league RA9 + (IP/G) x his RA9) / 18,
+            # + 2, x 1.5 (the published pitcher runs-per-win formula); league RA9 is the league's, before park
+            ra9 = max(S['min_ra9'], xra9 - 9 * raa / IP); ipg = min(9.0, IP / max(1.0, n(G)))
+            # ra9 is his actual rate, in his parks; with dyn_rpw_park_adjust the league rate is put in the same parks
+            lg_env = lgra9 * p if S.get('dyn_rpw_park_adjust', 0) else lgra9
+            rpw_p = (((18 - ipg) * lg_env + ipg * ra9) / 18 + S.get('dyn_rpw_add', 2.0)) * S.get('dyn_rpw_mult', 1.5)
+            waa_w = raa / rpw_p
+        elif IP > 0 and model != 'blend':
+            raise ValueError(f'unknown pitcher_wins_model {model!r}')     # a typo must not silently mean linear wins
         relief_ip_share = ris(G, GS)
         PIT[(pid, y)] = dict(waa=waa_w, lin=waa_lin, relief_ip_share=relief_ip_share, xra9=xra9, R_=R_, rdef=rdef, park=p, rep=rep_w, IP=IP, st=st, league=L, rpw=R)
     if S.get('center_pitcher_waa', 0):                          # an average pitcher = 0 wins above average in each league-season

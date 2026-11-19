@@ -1,8 +1,8 @@
-"""Our own WAR (wins above replacement), version 1.
+"""Our own WAR (wins above replacement), versions 1 and 2 (README.md, "Versions").
 
 The calculation reads only our own data: the season counting stats in our tables, inputs derived from Retrosheet
 play-by-play (historical seasons, built on a machine that has the Retrosheet DuckDB) and from balldontlie (current
-seasons), and the frozen settings in ``params/war_params_v1.json``. It never reads the stored Baseball-Reference WAR
+seasons), and the frozen settings in ``params/war_params_<version>.json``. It never reads the stored Baseball-Reference WAR
 columns or anything derived from them; ``backend/tests/test_war_v1_package.py`` checks that no file here names them.
 
 Modules
