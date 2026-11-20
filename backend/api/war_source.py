@@ -4,7 +4,8 @@ One server setting, WAR_VERSION, picks the source for every WAR the API serves:
 
   unset / empty  the stored Baseball-Reference columns (player_seasons."WAR", "WAR_off", "WAR_def"; pitcher_seasons."WAR"),
                  exactly as before this module existed
-  'v1'           our own WAR, from the war_seasons table rows of that method_version (computed by backend/war)
+  'v1', 'v2'     our own WAR, from the war_seasons table rows of that method_version (computed by backend/war);
+                 'v2' since 2026-11-20
 
 Flipping the setting switches every endpoint at once (player pages, careers, leader badges, leaderboards, award voting,
 rosters, /ask); unsetting it switches back. Nothing is rewritten either way.

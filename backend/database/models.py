@@ -1366,7 +1366,7 @@ class WarSeason(Base):
     player_id         = Column(Integer, primary_key=True)
     year              = Column(Integer, primary_key=True)
     role              = Column(String(3), primary_key=True)     # 'hit' | 'pit'
-    method_version    = Column(String(16), primary_key=True)    # 'v1'
+    method_version    = Column(String(16), primary_key=True)    # 'v1', 'v2' (the API serves the one WAR_VERSION names)
     war               = Column(Float, nullable=False)
     # hitters
     offense           = Column(Float)
@@ -1391,8 +1391,9 @@ class WarSeason(Base):
                                                                # defense behind him; innings-weighted across teams for traded pitchers
     defense_runs      = Column(Float)                          # runs his defense saved (positive = good defense), SUBTRACTED from his
                                                                # credit: runs above average = ip/9 × expected_ra9 − runs_allowed − defense_runs
-    wins_linear       = Column(Float)                          # runs above average ÷ runs per win: before the Pythagorean blend, the
-                                                               # league-season centring and leverage
+    wins_linear       = Column(Float)                          # runs above average ÷ the league's runs per win (runs_per_win): before
+                                                               # v1's Pythagorean blend / v2's pitcher runs per win, the league-season
+                                                               # centring and leverage
     entry_leverage    = Column(Float)                          # average leverage index when entering in relief (gmLI)
     relief_ip_share   = Column(Float)
     # both

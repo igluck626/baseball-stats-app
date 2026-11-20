@@ -72,7 +72,7 @@ else:
     from war.compute import compute
     from war.dbconn import conn
     season = int(os.environ.get('WAR_SEASON', '2026'))       # the balldontlie (current) season the golden file was made with
-    res = compute(conn().cursor(), inputs, current=season)
+    res = compute(conn().cursor(), inputs, params_path=os.path.join(BACKEND, 'war', 'params', 'war_params_v1.json'), current=season)   # v1 explicitly: the default is v2
     diffs = golden.compare(golden.summary(res), json.load(open(os.path.join(HERE, 'fixtures', 'war_v1_golden.json'))))
     check('matches tests/fixtures/war_v1_golden.json', not diffs, diffs[:8])
     check('every unrated season is listed with a reason, and only a handful', len(res['skipped']) <= 10 and all(len(x) == 4 for x in res['skipped']),

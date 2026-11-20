@@ -26,7 +26,7 @@ from war.common import norm_team
 from war.fld_totals import features as tot_features, runs as tot_runs
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_PARAMS = os.path.join(HERE, 'params', 'war_params_v1.json')
+DEFAULT_PARAMS = os.path.join(HERE, 'params', 'war_params_v2.json')     # the version the app serves (WAR_VERSION=v2 since 2026-11-20)
 DEFAULT_TEAMS = os.path.join(os.path.dirname(HERE), 'data', 'lahman', 'Teams.csv')
 # Negro Leagues seasons are not covered (they are to be hidden); these league codes are skipped.
 NEL = ('NN2', 'NNL', 'NAL', 'ECL', 'NSL', 'ANL', 'EWL', 'IND', 'EAS', 'WES', 'NAC', 'INT')

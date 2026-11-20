@@ -23,7 +23,7 @@ Known limits.
   The cost is in the heaviest pre-1920 workloads, which were already high and go higher (Alexander, Mathewson,
   Cy Young). Hitters are identical in both versions, and replacement credit is unchanged.
 
-`build_history.py --version v2` builds v2. `tests/test_war_v2_package.py` checks that v2 is v1 plus exactly this change.
+`build_history.py` builds v2 by default (the version the app serves since 2026-11-20); `--version v1` builds v1. `tests/test_war_v2_package.py` checks that v2 is v1 plus exactly this change.
 
 ## What it produces
 

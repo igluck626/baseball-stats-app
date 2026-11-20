@@ -3,7 +3,8 @@ the database (storing results is a separate, approved step).
 
   <backend python> -m war.build_history [--version v1|v2] [--inputs DIR] [--out FILE] [--golden]
 
---version picks the frozen settings file war/params/war_params_<version>.json (default v1).
+--version picks the frozen settings file war/params/war_params_<version>.json (default v2, the version
+the app serves).
 --golden also writes tests/fixtures/war_<version>_golden.json from this run (only when a calculation change is intended).
 """
 import argparse
@@ -21,7 +22,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 if __name__ == '__main__':
     ap = argparse.ArgumentParser()
     ap.add_argument('--inputs', default=os.environ.get('WAR_INPUTS', os.path.expanduser('~/baseballstats-tools/scripts/war')))
-    ap.add_argument('--version', default='v1', help='which frozen settings file: war/params/war_params_<version>.json')
+    ap.add_argument('--version', default='v2', help='which frozen settings file: war/params/war_params_<version>.json')
     ap.add_argument('--out', help='default ~/baseballstats-tools/scripts/war/war_<version>_history.pkl')
     ap.add_argument('--golden', action='store_true')
     ap.add_argument('--season', type=int, default=int(os.environ.get('WAR_SEASON', '2026')),
