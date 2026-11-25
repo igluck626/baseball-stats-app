@@ -130,8 +130,23 @@ for b in retro_coverage retro_positions retro_batting retro_roe retro_fielding r
 <backend python> -m war.build_history --season 0 --through 2026
 ```
 
-`builders/bdl_download.py` and `builders/bdl_plays.py` download a season from balldontlie. That's about 15,000 requests,
-one at a time, and needs `BDL_KEY`. Both are resumable.
+`builders/bdl_download.py` and `builders/bdl_plays.py` download a season from balldontlie. That's about 22,500 requests,
+one at a time, and needs `BDL_KEY`. Both are resumable. They write the raw layout (1.5 GB for 2026) that the four
+`bdl_*` builders' command lines read from `WAR_BDL_DIR`.
+
+For the nightly update, `bdl_store.py` keeps the current season as one small compressed file per game (40 MB for 2026),
+fetching only new games, games whose line score changed, and the last few days' games again for scorer corrections:
+
+```bash
+<backend python> -m war.bdl_store sync   --season 2027 --root <store folder>       # needs BDL_KEY; read-only otherwise
+<backend python> -m war.bdl_store status --season 2027 --root <store folder>
+<backend python> -m war.bdl_store import --season 2026 --root <store folder> --raw ~/baseballstats-tools/data/bdl2026
+```
+
+Each `bdl_*` builder is a `build(...)` function of the season's games in memory (`bdl_store.load()` hands them over),
+which the nightly calls directly. `tests/test_war_bdl_builders.py` checks that all of 2026 built from the store equals
+the build from the raw download, value for value. balldontlie lists the All-Star Game as a regular-season final between
+two 'Unknown' teams; both paths leave it out.
 
 | Input file | Built by | From |
 |---|---|---|
