@@ -143,6 +143,17 @@ fetching only new games, games whose line score changed, and the last few days' 
 <backend python> -m war.bdl_store import --season 2026 --root <store folder> --raw ~/baseballstats-tools/data/bdl2026
 ```
 
+`provisional.py` is the nightly current-season update: one run at a time (advisory lock), only from Opening Day to three
+days after the last regular-season day, download → build → `compute(y0=S, current=S)` on one read-only database snapshot
+→ checks that each input arrived → a guarded replacement of the season's provisional rows (mode `write` only; `dry_run`
+reports what it would do). It reads the small static inputs in `static/current_season.json` (178 KB, written by
+`python -m war.static_inputs export`; see `static_inputs.py` for what's in it and why nothing else is needed), not the
+input files. On 2026 it reproduces the stored rows (`dry_run` reports "unchanged").
+
+```bash
+<backend python> -m war.provisional --season 2026 --root <store folder> --no-download --force --mode dry_run
+```
+
 Each `bdl_*` builder is a `build(...)` function of the season's games in memory (`bdl_store.load()` hands them over),
 which the nightly calls directly. `tests/test_war_bdl_builders.py` checks that all of 2026 built from the store equals
 the build from the raw download, value for value. balldontlie lists the All-Star Game as a regular-season final between

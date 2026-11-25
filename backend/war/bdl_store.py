@@ -133,6 +133,13 @@ def fingerprint(g):
     return hashlib.sha256(json.dumps(key, sort_keys=True).encode()).hexdigest()[:16]
 
 
+def eastern_day(g):
+    """The game's date on MLB's (Eastern) calendar, as api/season_phase.eastern_date reads balldontlie's timestamps."""
+    from zoneinfo import ZoneInfo
+    t = dt.datetime.fromisoformat((g.get('date') or '').replace('Z', '+00:00'))
+    return t.astimezone(ZoneInfo('America/New_York')).date()
+
+
 def is_regular_final(g):
     """A finished regular-season game between two real teams. balldontlie files the All-Star Game as a regular-season
     final with both teams 'Unknown' (id -1): that's why its 2026 list had 2,430 finals to our 2,429."""

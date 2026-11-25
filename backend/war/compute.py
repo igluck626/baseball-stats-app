@@ -46,17 +46,21 @@ def _first_word(name):
     return w[0] if w else None
 
 
-def compute(cur, inputs_dir, params_path=DEFAULT_PARAMS, teams_csv=DEFAULT_TEAMS, y0=1871, current=2026, through=None, features_only=False):
+def compute(cur, inputs_dir, params_path=DEFAULT_PARAMS, teams_csv=DEFAULT_TEAMS, y0=1871, current=2026, through=None, features_only=False, inputs=None):
     """current = the season whose fielding/baserunning inputs come from balldontlie (the season in progress, or the last
     one Retrosheet has not published yet). current=None computes every season from Retrosheet only, up to `through`
-    (the 'final' recompute once Retrosheet publishes a season)."""
+    (the 'final' recompute once Retrosheet publishes a season).
+    inputs = {input file name: its loaded contents} to use instead of reading inputs_dir (the nightly update passes the
+    current season's inputs built in memory and the small static ones from war/static/); a name missing from it is an
+    error, never a silent fallback to the folder."""
     if current is None and through is None:
         raise ValueError('give current (a balldontlie season) or through (the last Retrosheet season)')
     y1 = current or through
     PRM = json.load(open(params_path))
     S = PRM['scalars']
     n = lambda v: float(v or 0)
-    pk = lambda name: pickle.load(open(os.path.join(inputs_dir, name), 'rb'))
+    pk = (lambda name: inputs[name]) if inputs is not None else (lambda name: pickle.load(open(os.path.join(inputs_dir, name), 'rb')))
+    js = (lambda name: inputs[name]) if inputs is not None else (lambda name: json.load(open(os.path.join(inputs_dir, name))))
     tag = f'bdl{current % 100:02d}' if current else None
     SKIP = []                                  # (player_id, season, role, reason): rows that could not be rated
     EMPTY = []                                 # (player_id, season, role, reason): rows with no playing time to rate
@@ -206,9 +210,8 @@ def compute(cur, inputs_dir, params_path=DEFAULT_PARAMS, teams_csv=DEFAULT_TEAMS
     R26 = pk(f'{tag}_runs.pkl') if current else {'BRX': {}, 'DP': {}, 'ARM': {}}
     for pid_, (xb_, ob_) in R26['BRX'].items():
         BRX[(pid_, current)] = [xb_, ob_]
-    LGSTR = pk('lgstr.pkl'); LGSTR.update(pk('lgstr_pre1900.pkl'))
-    COV = {int(k): v for k, v in json.load(open(os.path.join(inputs_dir, 'coverage.json'))).items()}
-    COVL = {int(k): v for k, v in json.load(open(os.path.join(inputs_dir, 'coverage_league.json'))).items()}
+    LGSTR = dict(pk('lgstr.pkl')); LGSTR.update(pk('lgstr_pre1900.pkl'))
+    COVL = {int(k): v for k, v in js('coverage_league.json').items()}
     # play-by-play plate appearances per (season, league), the league taken from each player's season row
     LGPA = defaultdict(int)
     for (pid_, s_), m in POSPA_P.items():
