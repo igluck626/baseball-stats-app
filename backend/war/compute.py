@@ -112,10 +112,21 @@ def compute(cur, inputs_dir, params_path=DEFAULT_PARAMS, teams_csv=DEFAULT_TEAMS
             LAHPF[(int(r['yearID']), norm_team(r['teamID'], r['lgID']))] = (int(r['BPF']) / 100, int(r['PPF']) / 100)
     # the current season borrows last season's factor only when the team's main ballpark is the same
     cur.execute('SELECT team_id, park_name FROM team_seasons WHERE year = %s', ((current or 0) - 1,))
-    prev_park = {t: _first_word(p) for t, p in cur.fetchall()}
+    prev_names = dict(cur.fetchall())
+    prev_park = {t: _first_word(p) for t, p in prev_names.items()}
     same_park = same_parks(B26.get('VENUE'), prev_park, prev_venue)
     PARK_NOTE = {t: 'no record of last season\'s ballpark: borrowed it as if unchanged' for t, v in same_park.items()
                  if v is None and t != 'UNK'}
+    # a different ballpark is reported all season (overridden by current_park's note while it borrows): it may only be a
+    # new name for the same park, which would otherwise switch silently to the noisier one-season factor; if so, put
+    # the new name in last season's venues (static/current_season.json) and it borrows again
+    _was = {BDL2RETRO.get(a, a): n for a, n in (prev_venue or {}).items()}
+    _was.update({t: n.strip() for t, n in prev_names.items() if n and n.strip()})
+    _was.setdefault('ANA', prev_names.get('LAA'))
+    PARK_NOTE.update({t: f"a different ballpark from last season ({_was.get(t) or 'its park last season'} → "
+                         f"{(B26.get('VENUE') or {}).get(a)}): this season's own factor; if it's only a new name, "
+                         "add it to last season's venues" for a, t in ((a, BDL2RETRO.get(a, a)) for a in (B26.get('VENUE') or {}))
+                      if same_park.get(t) is False})
     _pc = {}
 
     def park(y, t, i):                       # i = 0 batting factor, 1 pitching factor

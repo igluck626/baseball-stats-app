@@ -220,6 +220,15 @@ check('Opening Day with ten lineup-less games is written, with warnings (a refus
 check('...a fielding step that produced nothing is still refused on Opening Day',
       refused(run_check(res=dict(r6, hit={(1, S): H(100, src=None), (4, S): H(500, src=None)}), diag=od, old={}), 'fielding'))
 c3.close()
+print('a feed outage mid-season')
+# 1500 games, the newest 150 with no plate appearances: the fielding and leverage shares can't see it (their expected
+# shares are built from the same games), so the count of feed-less games itself must refuse
+mid = dict(DIAG, finals=1500, stored=1500, span_games=1350, no_lineups_or_pa=150, pa_rows=105300, pa_mapped=105300,
+           pa_in_span_games=105300, games_with_pa_and_plays=1350)
+check('150 of 1500 games without feeds is refused (an outage, not Opening Day\'s twelve)',
+      refused(run_check(diag=mid), 'feed outage'))
+check('22 of 1500 (2026\'s twelve plus a lagging night) is a warning', not any(
+    'feed outage' in r for r in run_check(diag=dict(mid, span_games=1478, no_lineups_or_pa=22))[0]))
 print('one run at a time')
 holder = psycopg2.connect(DSN); holder.autocommit = True
 holder.cursor().execute('SELECT pg_advisory_lock(%s)', (pv.LOCK_KEY,))

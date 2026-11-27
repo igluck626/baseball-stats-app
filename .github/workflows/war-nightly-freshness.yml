@@ -6,7 +6,8 @@
 # Fails when, with WAR_NIGHTLY on (dry_run or write):
 #   • the last run was refused or errored (nothing was written; the report says why), or
 #   • during the season, the last run finished more than MAX_AGE_HOURS ago (the nightly or its WAR step stopped), or
-#   • during the season, the newest game it counted (inputs_through) is more than MAX_INPUT_DAYS old.
+#   • during the season (from the day after Opening Day), the newest game it counted (inputs_through) is more than
+#     MAX_INPUT_DAYS old.
 #   • April to September, the last run has no season window (the games list came back empty or cut short).
 # The table is not rewritten on a night with nothing new, so a write time would raise false alarms; these don't.
 name: WAR nightly freshness
@@ -63,7 +64,10 @@ jobs:
                   if age > float(os.environ["MAX_AGE_HOURS"]):
                       problems.append(f"last run finished {age:.1f}h ago")
                   thru = last.get("inputs_through")
-                  if not thru or (today - datetime.date.fromisoformat(thru)).days > int(os.environ["MAX_INPUT_DAYS"]):
+                  # from the day after Opening Day: on Opening Day itself the 15:00 UTC run comes before its games
+                  # ("no_games_yet", or only an earlier overseas opener counted)
+                  settled = today > datetime.date.fromisoformat(window[0])
+                  if settled and (not thru or (today - datetime.date.fromisoformat(thru)).days > int(os.environ["MAX_INPUT_DAYS"])):
                       problems.append(f"newest game counted is {thru}")
               status = "failing" if problems else "ok"
           print(f"status={status}")

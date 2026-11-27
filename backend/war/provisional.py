@@ -61,6 +61,7 @@ FLD_RATIO = 0.95              # balldontlie-fielding share of position players' 
 LI_RATIO = 0.95               # relief innings with leverage ≥ 0.95 × share of games with PA and plays
 UNRATED_ALLOW = (200, 0.02)   # PA (and IP ÷ 4... see check) of the season not rated: max(200, 2%)
 MISSING_ALLOW = (15, 0.02)    # finals not downloaded (a capped or failed download): max(15, 2%)
+NO_FEED_ALLOW = (25, 0.015)  # games balldontlie gave no lineups or no PA: max(25, 1.5%); 2026 ended with 12 (Opening Day)
 GAMES_VS_LOGS = (5, 0.01)     # finals in the download vs games in our batting_gamelogs: differ by at most max(5, 1%)
 GAMELOG_LAG_DAYS = 1          # batting_gamelogs and the download must reach the same day, ±1
 MAX_ABS_WAR = 15.0
@@ -226,7 +227,13 @@ def check(res, rows, diag, cur, season, old, same_code, store_rep, accept_change
                         f"left={len(store_rep.get('left') or [])}")
         if store_rep.get('kept'):
             warn.append(f"{len(store_rep['kept'])} re-downloads came back emptier and were not used: {store_rep['kept'][:5]}")
-    if diag['no_lineups_or_pa']:
+    m['games_without_feeds'] = diag['no_lineups_or_pa']
+    if diag['no_lineups_or_pa'] > allow(NO_FEED_ALLOW, diag['stored']):
+        # these games add nothing to fielding, baserunning or leverage while their batting still counts, and the two
+        # share checks below can't see it (their expected shares are built from the same games): a feed outage
+        refuse.append(f"{diag['no_lineups_or_pa']} of {diag['stored']} games have no lineups or no plate appearances "
+                      'from balldontlie: a feed outage')
+    elif diag['no_lineups_or_pa']:
         warn.append(f"{diag['no_lineups_or_pa']} games have no lineups or no plate appearances from balldontlie (used as "
                     "they are: their players get no fielding from those games)")
     f, st = diag['finals'], diag['stored']

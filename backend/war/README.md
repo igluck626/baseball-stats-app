@@ -153,7 +153,16 @@ input files. On 2026 it reproduces the stored rows (`dry_run` reports "unchanged
 Before Retrosheet publishes last season, park factors borrow it from our own game logs (`parks.build`: matches
 Retrosheet's 2025 factors within 0.001), and "same ballpark as last season" compares balldontlie's venue names (the
 static file keeps 2026's), since team_seasons has no 2026 park names. Team-defense park factors (`tder`) have no such
-fallback: two seasons past Retrosheet (2027) they are 1.0 until it publishes.
+fallback: two seasons past Retrosheet (2027) they are 1.0 until it publishes. A team in a different ballpark than last
+season is listed in every night's warnings with both names (2026: the Rays, back at Tropicana): if balldontlie only
+renamed the park, add the new name to last season's venues in the static file and the team borrows again.
+
+Games balldontlie gave no lineups or no plate appearances are used as they are (2026's twelve Opening Day games never
+got any), up to max(25, 1.5% of stored games); past that the night is refused as a feed outage. Two cases are left as
+they are, on purpose: a nightly that half-fails (some players' season lines a day old) still feeds the WAR step, and the
+catch-up four hours later refreshes every player whose games are behind, and the WAR step runs again after it; and a refusal that compares with last night (a jump, a new row
+above 1.5 wins, dropped rows) repeats every night until someone checks it and sends `accept_change`, which monitoring
+alerts on the first night.
 
 The server runs it after the nightly and after each catch-up (`WAR_NIGHTLY` = off | dry_run | write, default off),
 saves each report under `WAR_STORE/reports` (the /data volume), and serves the last one at `GET /war/nightly-status`,
