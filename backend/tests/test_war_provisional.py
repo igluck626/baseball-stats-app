@@ -229,6 +229,12 @@ check('150 of 1500 games without feeds is refused (an outage, not Opening Day\'s
       refused(run_check(diag=mid), 'feed outage'))
 check('22 of 1500 (2026\'s twelve plus a lagging night) is a warning', not any(
     'feed outage' in r for r in run_check(diag=dict(mid, span_games=1478, no_lineups_or_pa=22))[0]))
+print('what a night that passed does')
+check('nothing differs → unchanged (no write), in either mode', pv.outcome('write', False) == 'unchanged'
+      and pv.outcome('dry_run', False) == 'unchanged')
+check('changes → write in write mode, dry_run otherwise', pv.outcome('write', True) == 'write' and pv.outcome('dry_run', True) == 'dry_run')
+check('rewrite (rehearsal) writes identical rows, but only in write mode', pv.outcome('write', False, True) == 'write'
+      and pv.outcome('dry_run', False, True) == 'unchanged')
 print('one run at a time')
 holder = psycopg2.connect(DSN); holder.autocommit = True
 holder.cursor().execute('SELECT pg_advisory_lock(%s)', (pv.LOCK_KEY,))

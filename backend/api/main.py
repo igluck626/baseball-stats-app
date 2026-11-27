@@ -20843,7 +20843,8 @@ def start_war_nightly(payload: dict = Body(default={})):
     """Run the provisional-WAR step now, in the background (GET /war/nightly-status for the result).
     Body (all optional): {"mode": "write"} writes, and only when WAR_NIGHTLY is 'write' and for the current season;
     anything else is a dry run. Rehearsal options: {"season": 2026, "force": true, "no_download": true}; after checking a
-    big night-to-night change is a genuine correction: {"mode": "write", "accept_change": true}."""
+    big night-to-night change is a genuine correction: {"mode": "write", "accept_change": true}. A write rehearsal on a
+    night with nothing new: {"mode": "write", "rewrite": true} (identical values under a new run id)."""
     write = payload.get("mode") == "write" and _war_nightly_mode() == "write"
     mode = "write" if write else "dry_run"
     extra: list[str] = []
@@ -20864,6 +20865,8 @@ def start_war_nightly(payload: dict = Body(default={})):
         extra.append("--no-download")
     if write and payload.get("accept_change"):
         extra.append("--accept-change")
+    if write and payload.get("rewrite"):
+        extra.append("--rewrite")
     with _war_nightly_lock:
         if _war_nightly_state["running"]:
             return {"status": "already_running", "reason": _war_nightly_state["reason"]}

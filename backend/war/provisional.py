@@ -427,7 +427,17 @@ def write(dsn, season, version, rows, log=print):
 
 
 # --- the run -----------------------------------------------------------------------------------------------------------
-def run(season, mode, root, dsn, client=None, now=None, force=False, params_path=None, accept_change=False, log=print):
+def outcome(mode, has_changes, rewrite=False):
+    """What a night that passed its checks does: 'unchanged' (nothing differs from the stored rows), 'dry_run' or 'write'.
+    rewrite (an explicit, one-off rehearsal option, write mode only) writes even when nothing differs: the season's
+    rows are replaced by identical values under a new run id, which proves the write path works."""
+    if not has_changes and not (rewrite and mode == 'write'):
+        return 'unchanged'
+    return 'write' if mode == 'write' else 'dry_run'
+
+
+def run(season, mode, root, dsn, client=None, now=None, force=False, params_path=None, accept_change=False, rewrite=False,
+        log=print):
     from war.compute import DEFAULT_PARAMS, compute
     import psycopg2
     t0 = time.time()
@@ -484,10 +494,11 @@ def run(season, mode, root, dsn, client=None, now=None, force=False, params_path
             refuse.append(f'{season} {version} is finalized')
         if refuse:
             return dict(rep, status='refused', refusals=refuse, seconds=round(time.time() - t0, 1))
-        if not (added or removed or changed):
-            return dict(rep, status='unchanged', seconds=round(time.time() - t0, 1))
-        if mode != 'write':
-            return dict(rep, status='dry_run', seconds=round(time.time() - t0, 1))
+        act = outcome(mode, bool(added or removed or changed), rewrite)
+        if act != 'write':
+            return dict(rep, status=act, seconds=round(time.time() - t0, 1))
+        if rewrite and not (added or removed or changed):
+            rep['rewrite'] = True
         try:                                          # still holding the run lock? (its connection sat idle)
             lc.execute('SELECT 1')
         except psycopg2.Error as e:
@@ -532,6 +543,8 @@ def main(argv=None):
     ap.add_argument('--no-report', action='store_true', help="don't save the report under <root>/reports")
     ap.add_argument('--accept-change', action='store_true',
                     help='one-off: let a big night-to-night change through (after checking it is a genuine correction)')
+    ap.add_argument('--rewrite', action='store_true',
+                    help='one-off rehearsal, write mode only: write even when nothing differs (identical values, new run id)')
     a = ap.parse_args(argv)
     season = a.season or dt.datetime.now(ET).year
     dsn = os.environ.get('DATABASE_URL') or open(os.path.expanduser('~/.baseballstats_dburl')).read().strip()
@@ -543,7 +556,8 @@ def main(argv=None):
             return 1
         client = bdl_store.Client(key, a.max_requests)
     try:
-        rep = run(season, a.mode, a.root, dsn, client=client, force=a.force, accept_change=a.accept_change)
+        rep = run(season, a.mode, a.root, dsn, client=client, force=a.force, accept_change=a.accept_change,
+                  rewrite=a.rewrite)
     except Exception as e:
         import traceback
         rep = {'season': season, 'mode': a.mode, 'status': 'error', 'error': f'{type(e).__name__}: {e}',

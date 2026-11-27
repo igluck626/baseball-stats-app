@@ -113,7 +113,14 @@ check('with WAR_NIGHTLY write, a request without "mode" is a dry run', r['mode']
 r = main.start_war_nightly({'mode': 'write', 'accept_change': True})
 time.sleep(0.3)
 check('"mode": "write" writes, accept_change passed through', r['mode'] == 'write' and r['args'] == ['--accept-change'], r)
+r = main.start_war_nightly({'mode': 'write', 'season': time.gmtime().tm_year,
+                            'force': True, 'no_download': True, 'rewrite': True})
+time.sleep(0.3)
+check('a write rehearsal passes rewrite through', r['mode'] == 'write' and '--rewrite' in r['args'], r)
 os.environ['WAR_NIGHTLY'] = 'dry_run'
+r = main.start_war_nightly({'mode': 'write', 'rewrite': True})
+time.sleep(0.3)
+check('...and drops it when the request ends up a dry run', r['mode'] == 'dry_run' and r['args'] == [], r)
 r = main.start_war_nightly({'mode': 'write', 'accept_change': True})
 time.sleep(0.3)
 check('a requested write is a dry run unless WAR_NIGHTLY is write (and accept_change is dropped)',
