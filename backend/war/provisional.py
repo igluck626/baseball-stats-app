@@ -14,6 +14,8 @@ Steps
      (war/static/current_season.json), compute(y0=S, current=S).
   5. Checks (see check()). REFUSE = nothing is written and the report says why. WARN = written, and listed.
      Players who can't be rated are left out and listed (Isaac 2026-11-25: write the rest, don't refuse the night).
+     Limits are shares with absolute allowances, so the season's first nights (few games, balldontlie's missing
+     Opening Day lineups) aren't refused: a refused night before any row exists would blank every active career.
   6. Unchanged = every row equals what's stored (floats within 1e-9): nothing is written.
   7. Write (mode 'write' only), one transaction: lock_timeout, statement_timeout, both freeze triggers present and
      enabled, LOCK TABLE, refuse if any row of this season and version is 'final'; DELETE the season's provisional
@@ -47,17 +49,23 @@ LOCK_KEY = 0x57415232                           # 'WAR2': the advisory lock that
 DAYS_AFTER_LAST = 3                             # keep running this many days after the last regular-season day
 OFFSEASON_MONTHS = (11, 12, 1, 2)               # no request at all in these months (Opening Day is never before March)
 
-# checks: REFUSE below these (2026 for comparison, measured on the whole season)
-MIN_SPAN_GAMES = 0.97        # games giving fielding spans / stored finals (2026: 2,414 / 2,429 = 99.4%)
-MIN_PA_MAPPED = 0.97         # store plate appearances whose batter maps to one of our players (2026: see report)
-MIN_FLD_BDL = 0.95           # position players' PA rated with balldontlie fielding (2026: see report)
-MIN_RELIEF_LI = 0.95         # relief innings with an entry leverage (2026: see report)
-MIN_PA_RATED = 0.98          # PA of rated hitter rows / player_seasons PA (2026: see report)
-MIN_IP_RATED = 0.98          # IP of rated pitcher rows / pitcher_seasons IP
+# checks (see check()): a percentage alone would refuse the season's first nights (a handful of games, twelve of 2026's
+# first fourteen with no lineups) and a refused night before any row exists blanks every active career in the app, so
+# each limit is a share AND an absolute allowance, and shares are taken over the games that have the feed they need.
+# 2026, whole season, for comparison: games without spans 15 (12 with no lineups from balldontlie), unmapped PA 253 of
+# 183,859 (0.14%), balldontlie fielding 99.1% of position players' PA, relief innings with leverage 99.8%, rated PA and
+# IP 100% of player_seasons / pitcher_seasons.
+SPAN_ALLOW = (10, 0.03)       # games WITH lineups and PA that still give no fielding spans: max(10, 3% of stored games)
+UNMAPPED_ALLOW = (300, 0.03)  # PA whose batter maps to none (or two) of our players: max(300, 3%)
+FLD_RATIO = 0.95              # balldontlie-fielding share of position players' PA ≥ 0.95 × PA share in games with spans
+LI_RATIO = 0.95               # relief innings with leverage ≥ 0.95 × share of games with PA and plays
+UNRATED_ALLOW = (200, 0.02)   # PA (and IP ÷ 4... see check) of the season not rated: max(200, 2%)
+MISSING_ALLOW = (15, 0.02)    # finals not downloaded (a capped or failed download): max(15, 2%)
+GAMES_VS_LOGS = (5, 0.01)     # finals in the download vs games in our batting_gamelogs: differ by at most max(5, 1%)
+GAMELOG_LAG_DAYS = 1          # batting_gamelogs and the download must reach the same day, ±1
 MAX_ABS_WAR = 15.0
-MAX_MISSING_FINALS = 0.02    # finals without a stored file (a capped download), share of finals
-MAX_NIGHT_CHANGE = 2.5       # biggest one-player change from the stored rows, when the code is the same
-GAMELOG_LAG_DAYS = 1         # batting_gamelogs must reach the newest stored final's date minus this
+MAX_NIGHT_CHANGE = 2.5        # one player's change from the stored row in one night, with the same code and settings
+MAX_NEW_ROW_WAR = 1.5         # a player with no stored row appearing mid-season at more than this (wrong-id copies)
 
 COLS = ['player_id', 'year', 'role', 'method_version', 'war',
         'offense', 'defense', 'runs_batting', 'runs_baserunning', 'runs_double_plays', 'runs_replacement', 'runs_position',
@@ -109,9 +117,26 @@ def build_inputs(root, season, cur, static_path=static_inputs.PATH, log=lambda *
     pa_rows = sum(len(v) for v in PA.values())
     pa_mapped = sum(c[0] for c in b['PBP'].values())
     days = [bdl_store.eastern_day(G[g]) for g in PA]
+    span_g = {g for g, _t in b['SPANS']}
+    no_feed = [g for g in PA if not (LU[g] and PA[g])]                 # balldontlie gave no lineups or no PA
     diag = {'finals': len(G), 'stored': len(PA), 'missing': len(missing), 'span_games': b['games'],
-            'pa_rows': pa_rows, 'pa_mapped': pa_mapped, 'newest_final_et': max(days).isoformat() if days else None}
+            'no_lineups_or_pa': len(no_feed), 'pa_rows': pa_rows, 'pa_mapped': pa_mapped,
+            'pa_in_span_games': sum(len(PA[g]) for g in span_g if g in PA),
+            'games_with_pa_and_plays': sum(1 for g in PA if PA[g] and PL[g]),
+            'newest_final_et': max(days).isoformat() if days else None}
     return inputs, diag
+
+
+def code_hash(params_path):
+    """8 hex over the WAR code, its settings and the static inputs: 'same code' for the one-night jump checks means
+    this, not the repository commit (any unrelated deploy changes the commit)."""
+    h = hashlib.sha256()
+    files = sorted(os.path.join(dp, f) for dp, _, fs in os.walk(HERE) for f in fs
+                   if f.endswith('.py') and '__pycache__' not in dp) + [params_path, static_inputs.PATH]
+    for f in files:
+        h.update(os.path.relpath(f, BACKEND).encode())
+        h.update(open(f, 'rb').read())
+    return h.hexdigest()[:8]
 
 
 def _canon(o):
@@ -188,63 +213,86 @@ def diff_rows(new, old):
 
 
 # --- checks ------------------------------------------------------------------------------------------------------------
-def check(res, rows, diag, cur, season, old, same_code, store_rep):
-    """(refusals, warnings, measures). Each measure is a number in the report, so the nightly log shows how close a
-    night came to a threshold, and the season's first nights can be compared with 2026's."""
+def check(res, rows, diag, cur, season, old, same_code, store_rep, accept_change=False):
+    """(refusals, warnings, measures). Each measure is in the report, so a night shows how close it came to a limit.
+    accept_change (an explicit, one-off option) lets through the jump / new-row / dropped-row checks, which compare
+    with last night and would otherwise refuse every night after a genuine correction."""
     refuse, warn, m = [], [], {}
-
-    def need(name, value, ok, why):
-        m[name] = round(value, 4) if isinstance(value, float) else value
-        if not ok:
-            refuse.append(f'{name} = {m[name]}: {why}')
+    allow = lambda spec, n: max(spec[0], spec[1] * n)
 
     if store_rep is not None:
         if store_rep.get('capped') or store_rep.get('failed'):
             warn.append(f"download incomplete: capped={store_rep.get('capped')}, failed={len(store_rep.get('failed') or [])}, "
                         f"left={len(store_rep.get('left') or [])}")
-        if store_rep.get('incomplete_finals'):
-            warn.append(f"{len(store_rep['incomplete_finals'])} finals with an empty feed (used as they are): "
-                        f"{store_rep['incomplete_finals'][:10]}")
-    f = diag['finals']
-    need('missing_finals_share', diag['missing'] / f, diag['missing'] / f <= MAX_MISSING_FINALS,
-         'too many finished games not downloaded')
-    if diag['missing']:
+        if store_rep.get('kept'):
+            warn.append(f"{len(store_rep['kept'])} re-downloads came back emptier and were not used: {store_rep['kept'][:5]}")
+    if diag['no_lineups_or_pa']:
+        warn.append(f"{diag['no_lineups_or_pa']} games have no lineups or no plate appearances from balldontlie (used as "
+                    "they are: their players get no fielding from those games)")
+    f, st = diag['finals'], diag['stored']
+    m['missing_finals'] = diag['missing']
+    if diag['missing'] > allow(MISSING_ALLOW, f):
+        refuse.append(f"{diag['missing']} of {f} finished games not downloaded")
+    elif diag['missing']:
         warn.append(f"{diag['missing']} finals not downloaded yet")
-    need('span_games_share', diag['span_games'] / max(1, diag['stored']), diag['span_games'] / max(1, diag['stored']) >= MIN_SPAN_GAMES,
-         'too few games could be followed for fielding positions')
-    need('pa_mapped_share', diag['pa_mapped'] / max(1, diag['pa_rows']), diag['pa_mapped'] / max(1, diag['pa_rows']) >= MIN_PA_MAPPED,
-         'too many plate appearances by batters with no (or two) players under their balldontlie id')
+    cur.execute('SELECT count(DISTINCT game_id) FROM batting_gamelogs WHERE season = %s AND team_score IS NOT NULL', (season,))
+    logs = cur.fetchone()[0] or 0
+    m['finals_vs_gamelog_games'] = [f, logs]
+    if abs(f - logs) > allow(GAMES_VS_LOGS, max(f, logs)):
+        refuse.append(f'the download lists {f} finished games, our game logs {logs}: one of them is incomplete')
+    no_span = st - diag['span_games'] - diag['no_lineups_or_pa']
+    m['span_games_share'] = round(diag['span_games'] / max(1, st), 4)
+    m['games_with_feeds_but_no_spans'] = no_span
+    if no_span > allow(SPAN_ALLOW, st):
+        refuse.append(f'{no_span} games with lineups and plate appearances gave no fielding positions')
+    unmapped = diag['pa_rows'] - diag['pa_mapped']
+    m['pa_mapped_share'] = round(diag['pa_mapped'] / max(1, diag['pa_rows']), 4)
+    if unmapped > allow(UNMAPPED_ALLOW, diag['pa_rows']):
+        refuse.append(f"{unmapped} of {diag['pa_rows']} plate appearances are by batters with no (or two) players under "
+                      'their balldontlie id')
     hit = [v for (p, y), v in res['hit'].items() if y == season]
     pos_pa = sum(float(v['PA']) for v in hit if not v['pitcher'])
     bdl_pa = sum(float(v['PA']) for v in hit if not v['pitcher'] and v['fielding_source'] == 'balldontlie')
-    need('fielding_balldontlie_share', bdl_pa / max(1.0, pos_pa), bdl_pa / max(1.0, pos_pa) >= MIN_FLD_BDL,
-         "too little of position players' playing time has balldontlie fielding (the fielding inputs didn't arrive)")
+    expect = diag['pa_in_span_games'] / max(1, diag['pa_rows'])
+    m['fielding_balldontlie_share'] = round(bdl_pa / max(1.0, pos_pa), 4)
+    m['pa_share_in_span_games'] = round(expect, 4)
+    if pos_pa and bdl_pa / pos_pa < FLD_RATIO * expect:
+        refuse.append(f"balldontlie fielding covers {bdl_pa / pos_pa:.1%} of position players' playing time, while "
+                      f"{expect:.1%} of plate appearances are in games with fielding positions: the fielding inputs "
+                      "didn't arrive")
     pit = [v for (p, y), v in res['pit'].items() if y == season]
     rel = sum(float(v['IP']) * float(v['relief_ip_share']) for v in pit)
     rel_li = sum(float(v['IP']) * float(v['relief_ip_share']) for v in pit if v.get('gmli') is not None)
-    need('relief_ip_with_leverage_share', rel_li / max(1.0, rel), rel_li / max(1.0, rel) >= MIN_RELIEF_LI,
-         'too few relief innings have an entry leverage (the leverage inputs didn\'t arrive)')
+    expect_li = diag['games_with_pa_and_plays'] / max(1, st)
+    m['relief_ip_with_leverage_share'] = round(rel_li / max(1.0, rel), 4)
+    if rel and rel_li / rel < LI_RATIO * expect_li:
+        refuse.append(f"only {rel_li / rel:.1%} of relief innings have an entry leverage: the leverage inputs didn't arrive")
     cur.execute('SELECT coalesce(sum(CASE WHEN coalesce("PA", 0) = 0 AND "AB" > 0 THEN "AB" + coalesce("BB",0) + '
                 'coalesce("HBP",0) + coalesce("SF",0) + coalesce("SH",0) ELSE "PA" END), 0) FROM player_seasons '
                 'WHERE year = %s AND coalesce(league, \'\') IN (\'AL\', \'NL\')', (season,))
     db_pa = float(cur.fetchone()[0] or 0)
     rated_pa = sum(float(v['PA']) for v in hit)
-    need('pa_rated_share', rated_pa / max(1.0, db_pa), rated_pa / max(1.0, db_pa) >= MIN_PA_RATED,
-         'too much of the season\'s playing time is not rated')
+    m['pa_rated_share'] = round(rated_pa / max(1.0, db_pa), 4)
+    if db_pa - rated_pa > allow(UNRATED_ALLOW, db_pa):
+        refuse.append(f'{db_pa - rated_pa:.0f} of the season\'s {db_pa:.0f} plate appearances are not rated')
     cur.execute('SELECT coalesce(sum("IP"), 0) FROM pitcher_seasons WHERE year = %s AND coalesce(league, \'\') IN (\'AL\', \'NL\')',
                 (season,))
     db_ip = float(cur.fetchone()[0] or 0)
     rated_ip = sum(float(v['IP']) for v in pit)
-    need('ip_rated_share', rated_ip / max(1.0, db_ip), rated_ip / max(1.0, db_ip) >= MIN_IP_RATED,
-         'too many of the season\'s innings are not rated')
+    m['ip_rated_share'] = round(rated_ip / max(1.0, db_ip), 4)
+    if db_ip - rated_ip > allow((UNRATED_ALLOW[0] / 4, UNRATED_ALLOW[1]), db_ip):     # ~4 PA per inning
+        refuse.append(f'{db_ip - rated_ip:.0f} of the season\'s {db_ip:.0f} innings are not rated')
     cur.execute('SELECT max(game_date) FROM batting_gamelogs WHERE season = %s', (season,))
     gl = cur.fetchone()[0]
     newest = dt.date.fromisoformat(diag['newest_final_et']) if diag['newest_final_et'] else None
     m['gamelogs_through'] = gl.isoformat() if gl else None
     m['inputs_through'] = diag['newest_final_et']
-    if newest and (gl is None or gl < newest - dt.timedelta(days=GAMELOG_LAG_DAYS)):
-        refuse.append(f'our game logs end {gl}, balldontlie finals reach {newest}: the season totals are behind the '
+    lag = dt.timedelta(days=GAMELOG_LAG_DAYS)
+    if newest and (gl is None or gl < newest - lag):
+        refuse.append(f'our game logs end {gl}, the download reaches {newest}: the season totals are behind the '
                       'play-by-play (an earlier nightly phase failed?)')
+    if gl and (newest is None or newest < gl - lag):
+        refuse.append(f'the download ends {newest}, our game logs reach {gl}: the play-by-play is behind the season totals')
     bad = [(r['player_id'], r['role'], r['war']) for r in rows
            if r['war'] is None or not math.isfinite(r['war']) or abs(r['war']) > MAX_ABS_WAR]
     if bad:
@@ -260,22 +308,32 @@ def check(res, rows, diag, cur, season, old, same_code, store_rep):
         refuse.append('no rows')
     m['rows'] = len(rows)
     m['war_sum'] = round(sum(r['war'] for r in rows if r['war'] is not None), 2)
-    skipped = [s for s in res['skipped'] if s[1] == season]
+    skipped = [s_ for s_ in res['skipped'] if s_[1] == season]
     m['skipped'] = len(skipped)
     if skipped:
         warn.append(f'{len(skipped)} player seasons left unrated: {skipped[:10]}')
+    for t, note in sorted((res.get('park_notes') or {}).items()):
+        warn.append(f'park factor for {t}: {note}')
     if old:
         nk = {(r['player_id'], r['role']): r['war'] for r in rows}
+        m['war_sum_before'] = round(sum(o['war'] for o in old.values()), 2)
         deltas = sorted(((abs(nk[k] - o['war']), k) for k, o in old.items() if k in nk), reverse=True)
         m['biggest_change'] = (round(deltas[0][0], 3), list(deltas[0][1])) if deltas else None
         lost = [k for k in old if k not in nk]
-        m['rows_dropped'] = len(lost)
+        new = sorted(((abs(w), k) for k, w in nk.items() if k not in old), reverse=True)
+        m['rows_dropped'], m['rows_new'] = len(lost), len(new)
         if lost:
             warn.append(f'{len(lost)} stored rows not in tonight\'s result: {lost[:10]}')
+        gate = [] if accept_change else refuse
         if len(lost) > max(10, 0.01 * len(old)):
-            refuse.append(f'{len(lost)} of {len(old)} stored rows would disappear')
+            gate.append(f'{len(lost)} of {len(old)} stored rows would disappear')
         if same_code and deltas and deltas[0][0] > MAX_NIGHT_CHANGE:
-            refuse.append(f'a player moved {deltas[0][0]:.2f} WAR in one night with the same code: {deltas[0][1]}')
+            gate.append(f'a player moved {deltas[0][0]:.2f} WAR in one night with the same code: {deltas[0][1]}')
+        if same_code and new and new[0][0] > MAX_NEW_ROW_WAR:
+            gate.append(f'a player with no row last night appears at {new[0][0]:.2f} WAR: {new[0][1]}')
+        if accept_change and (len(lost) > max(10, 0.01 * len(old)) or (deltas and deltas[0][0] > MAX_NIGHT_CHANGE)
+                              or (new and new[0][0] > MAX_NEW_ROW_WAR)):
+            warn.append('accept_change: night-to-night checks let through')
     return refuse, warn, m
 
 
@@ -362,7 +420,7 @@ def write(dsn, season, version, rows, log=print):
 
 
 # --- the run -----------------------------------------------------------------------------------------------------------
-def run(season, mode, root, dsn, client=None, now=None, force=False, params_path=None, log=print):
+def run(season, mode, root, dsn, client=None, now=None, force=False, params_path=None, accept_change=False, log=print):
     from war.compute import DEFAULT_PARAMS, compute
     import psycopg2
     t0 = time.time()
@@ -372,8 +430,8 @@ def run(season, mode, root, dsn, client=None, now=None, force=False, params_path
     rep = {'season': season, 'mode': mode, 'started': now.isoformat(), 'commit': commit_id(), 'status': None}
     if not force and today.month in OFFSEASON_MONTHS:
         return dict(rep, status='offseason')
-    lock = psycopg2.connect(dsn)
-    lock.autocommit = True
+    lock = psycopg2.connect(dsn, keepalives=1, keepalives_idle=30, keepalives_interval=10, keepalives_count=5)
+    lock.autocommit = True                            # held idle through the download: keepalives so it isn't dropped
     try:
         lc = lock.cursor()
         lc.execute('SELECT pg_try_advisory_lock(%s)', (LOCK_KEY,))
@@ -391,21 +449,25 @@ def run(season, mode, root, dsn, client=None, now=None, force=False, params_path
         if not force and (opening is None or today < opening or last is None
                           or today > last + dt.timedelta(days=DAYS_AFTER_LAST)):
             return dict(rep, status='outside_season')
+        if not any(bdl_store.is_regular_final(g) for g in games):
+            return dict(rep, status='no_games_yet')    # Opening Day before the first final: nothing to rate, not a failure
         conn = psycopg2.connect(dsn)
         try:
             conn.set_session(isolation_level='REPEATABLE READ', readonly=True)
             cur = conn.cursor()
             cur.execute("SET TIME ZONE 'UTC'")
             inputs, diag = build_inputs(root, season, cur)
-            res = compute(cur, None, params_path=params_path, y0=season, current=season, inputs=inputs)
+            res = compute(cur, None, params_path=params_path, y0=season, current=season, inputs=inputs,
+                          prev_venue=static_inputs.prev_venue(season))
             version = res['params']
             params_sha = hashlib.sha256(open(params_path, 'rb').read()).hexdigest()
-            run_id = f"{version}-{rep['commit']}-{input_hash(inputs)}"
+            code = code_hash(params_path)
+            run_id = f"{version}-{rep['commit']}-{code}-{input_hash(inputs)}"
             computed_at = now.replace(microsecond=0, tzinfo=None).isoformat()
             rows = to_rows(res, season, version, params_sha, run_id, computed_at)
             old = read_rows(cur, season, version)
-            same_code = bool(old) and all(o['run_id'].split('-')[1:2] == [rep['commit']] for o in old.values())
-            refuse, warn, measures = check(res, rows, diag, cur, season, old, same_code, store_rep)
+            same_code = bool(old) and all(o['run_id'].split('-')[2:3] == [code] for o in old.values())
+            refuse, warn, measures = check(res, rows, diag, cur, season, old, same_code, store_rep, accept_change)
         finally:
             conn.close()
         added, removed, changed = diff_rows(rows, old)
@@ -419,12 +481,37 @@ def run(season, mode, root, dsn, client=None, now=None, force=False, params_path
             return dict(rep, status='unchanged', seconds=round(time.time() - t0, 1))
         if mode != 'write':
             return dict(rep, status='dry_run', seconds=round(time.time() - t0, 1))
+        try:                                          # still holding the run lock? (its connection sat idle)
+            lc.execute('SELECT 1')
+        except psycopg2.Error as e:
+            raise Refuse(f'lost the run lock\'s connection before writing: {e}')
         rep['write'] = write(dsn, season, version, rows, log=log)
         return dict(rep, status='written', seconds=round(time.time() - t0, 1))
     except Refuse as e:
         return dict(rep, status='refused', refusals=[str(e)], seconds=round(time.time() - t0, 1))
     finally:
         lock.close()                                  # releases the advisory lock
+
+
+def save_report(root, rep, keep=60):
+    """<root>/reports/latest.json and a dated copy (the last `keep` kept): the status endpoint and monitoring read these,
+    so they survive a server restart (the API's in-memory state doesn't). A 'locked' run (another was going) isn't
+    saved: it would hide that run's result."""
+    if rep.get('status') == 'locked':
+        return rep
+    d = os.path.join(root, 'reports')
+    os.makedirs(d, exist_ok=True)
+    rep = dict(rep, finished=dt.datetime.now(dt.timezone.utc).isoformat())
+    stamp = rep['finished'][:19].replace(':', '').replace('-', '')
+    for name in (f'{stamp}-{rep.get("season")}.json', 'latest.json'):
+        tmp = os.path.join(d, f'.{name}.tmp')
+        with open(tmp, 'w') as f:
+            json.dump(rep, f, default=str)
+        os.replace(tmp, os.path.join(d, name))
+    old = sorted(n for n in os.listdir(d) if n[:1].isdigit())
+    for n in old[:-keep]:
+        os.remove(os.path.join(d, n))
+    return rep
 
 
 def main(argv=None):
@@ -435,6 +522,9 @@ def main(argv=None):
     ap.add_argument('--no-download', action='store_true', help='use the store as it is (rehearsals)')
     ap.add_argument('--force', action='store_true', help='ignore the season window (rehearsals)')
     ap.add_argument('--max-requests', type=int, default=1500)
+    ap.add_argument('--no-report', action='store_true', help="don't save the report under <root>/reports")
+    ap.add_argument('--accept-change', action='store_true',
+                    help='one-off: let a big night-to-night change through (after checking it is a genuine correction)')
     a = ap.parse_args(argv)
     season = a.season or dt.datetime.now(ET).year
     dsn = os.environ.get('DATABASE_URL') or open(os.path.expanduser('~/.baseballstats_dburl')).read().strip()
@@ -446,11 +536,16 @@ def main(argv=None):
             return 1
         client = bdl_store.Client(key, a.max_requests)
     try:
-        rep = run(season, a.mode, a.root, dsn, client=client, force=a.force)
+        rep = run(season, a.mode, a.root, dsn, client=client, force=a.force, accept_change=a.accept_change)
     except Exception as e:
         import traceback
         rep = {'season': season, 'mode': a.mode, 'status': 'error', 'error': f'{type(e).__name__}: {e}',
                'traceback': traceback.format_exc()[-2000:]}
+    if not a.no_report:
+        try:
+            rep = save_report(a.root, rep)
+        except OSError as e:
+            rep['report_not_saved'] = str(e)
     print(json.dumps(rep, default=str))
     return {'refused': 2, 'error': 1}.get(rep['status'], 0)
 

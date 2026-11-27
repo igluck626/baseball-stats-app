@@ -46,13 +46,46 @@ def _first_word(name):
     return w[0] if w else None
 
 
-def compute(cur, inputs_dir, params_path=DEFAULT_PARAMS, teams_csv=DEFAULT_TEAMS, y0=1871, current=2026, through=None, features_only=False, inputs=None):
+def current_park(i, same, now, prev):
+    """The current season's park factor i (0 batting, 1 pitching) and a note (None when nothing unusual).
+    now / prev = (one_year factors or None, home games) for this season and last. Same ballpark (or unknown, None):
+    both seasons weighted by home games. A different ballpark: this season alone, and until it has ten home and ten
+    road games, last season's factor (Isaac 2026-11-25: "use the team's previous ballpark factor and label it"); with
+    neither, neutral 1.0. Never no factor: that would leave the whole team unrated."""
+    vals = [(r, w) for r, w in ((prev, now) if same is not False else (now,)) if r]
+    if vals:
+        return sum(r[i] * w for r, w in vals) / sum(w for _, w in vals), None
+    if prev[0]:
+        return prev[0][i], 'last season\'s factor (a new ballpark without ten home and ten road games yet)'
+    return 1.0, 'neutral 1.0 (no park factor yet)'
+
+
+def same_parks(venue_now, prev_park, prev_venue=None):
+    """{Retrosheet team code: True = same main ballpark as last season, False = a different one, None = no record of
+    last season's park}. venue_now = this season's balldontlie venue per balldontlie abbreviation; prev_park = last
+    season's team_seasons park_name per team_id; prev_venue = last season's balldontlie venue per abbreviation, used
+    for a team whose park_name is blank (team_seasons 2026 has none). Unknown (None) borrows like True and is reported:
+    treating it as a move would leave the team without a park factor for its first weeks. Names compare by first word
+    ('Rate Field' vs 'Rate Field Chicago'...)."""
+    out = {}
+    for abbr, venue in (venue_now or {}).items():
+        t = BDL2RETRO.get(abbr, abbr)
+        prev = prev_park.get(t) or prev_park.get({'ANA': 'LAA'}.get(t, t))
+        if prev is None and prev_venue:
+            prev = _first_word(prev_venue.get(abbr))
+        out[t] = None if prev is None else prev == _first_word(venue)
+    return out
+
+
+def compute(cur, inputs_dir, params_path=DEFAULT_PARAMS, teams_csv=DEFAULT_TEAMS, y0=1871, current=2026, through=None, features_only=False, inputs=None, prev_venue=None):
     """current = the season whose fielding/baserunning inputs come from balldontlie (the season in progress, or the last
     one Retrosheet has not published yet). current=None computes every season from Retrosheet only, up to `through`
     (the 'final' recompute once Retrosheet publishes a season).
     inputs = {input file name: its loaded contents} to use instead of reading inputs_dir (the nightly update passes the
     current season's inputs built in memory and the small static ones from war/static/); a name missing from it is an
-    error, never a silent fallback to the folder."""
+    error, never a silent fallback to the folder.
+    prev_venue = last season's balldontlie venue per team abbreviation, for teams with no park name in team_seasons
+    (see same_parks)."""
     if current is None and through is None:
         raise ValueError('give current (a balldontlie season) or through (the last Retrosheet season)')
     y1 = current or through
@@ -80,11 +113,9 @@ def compute(cur, inputs_dir, params_path=DEFAULT_PARAMS, teams_csv=DEFAULT_TEAMS
     # the current season borrows last season's factor only when the team's main ballpark is the same
     cur.execute('SELECT team_id, park_name FROM team_seasons WHERE year = %s', ((current or 0) - 1,))
     prev_park = {t: _first_word(p) for t, p in cur.fetchall()}
-    same_park = {}
-    for abbr, venue in (B26.get('VENUE') or {}).items():
-        t = BDL2RETRO.get(abbr, abbr)
-        prev = prev_park.get(t) or prev_park.get({'ANA': 'LAA'}.get(t, t))
-        same_park[t] = prev is not None and prev == _first_word(venue)
+    same_park = same_parks(B26.get('VENUE'), prev_park, prev_venue)
+    PARK_NOTE = {t: 'no record of last season\'s ballpark: borrowed it as if unchanged' for t, v in same_park.items()
+                 if v is None and t != 'UNK'}
     _pc = {}
 
     def park(y, t, i):                       # i = 0 batting factor, 1 pitching factor
@@ -92,14 +123,17 @@ def compute(cur, inputs_dir, params_path=DEFAULT_PARAMS, teams_csv=DEFAULT_TEAMS
         if (y, t, i) in _pc:
             return _pc[(y, t, i)]
         if current and y == current:
-            ys = [current - 1, current] if same_park.get(t, True) else [current]
+            fy = lambda yy: (one_year(yy, t, True), A[(yy, t)]['hg']) if (yy, t) in A else (None, 0)
+            v, note = current_park(i, same_park.get(t, True), fy(current), fy(current - 1))
+            if note:
+                PARK_NOTE[t] = note
         else:
             ys = [yy for yy in (y - 1, y, y + 1) if yy == y or (parkset(yy, t) is not None and parkset(yy, t) == parkset(y, t))]
-        vals = [(one_year(yy, t, True), A[(yy, t)]['hg']) for yy in ys if (yy, t) in A]
-        vals = [(r, w) for r, w in vals if r]
-        v = sum(r[i] * w for r, w in vals) / sum(w for _, w in vals) if vals else None
-        if v is None:
-            v = LAHPF.get((y, t), (None, None))[i]          # before our play-by-play park factors: Lahman BPF/PPF
+            vals = [(one_year(yy, t, True), A[(yy, t)]['hg']) for yy in ys if (yy, t) in A]
+            vals = [(r, w) for r, w in vals if r]
+            v = sum(r[i] * w for r, w in vals) / sum(w for _, w in vals) if vals else None
+            if v is None:
+                v = LAHPF.get((y, t), (None, None))[i]          # before our play-by-play park factors: Lahman BPF/PPF
         _pc[(y, t, i)] = v
         return v
 
@@ -437,7 +471,7 @@ def compute(cur, inputs_dir, params_path=DEFAULT_PARAMS, teams_csv=DEFAULT_TEAMS
         def pfac(kk):
             if kk[0] < 1953: return 1.0
             t_ = 'ANA' if (current and kk[0] == current and kk[1] == 'LAA') else kk[1]     # Retrosheet's code for the Angels
-            borrow = not (current and kk[0] == current) or same_park.get(t_, True)      # only for the same main ballpark
+            borrow = not (current and kk[0] == current) or same_park.get(t_, True) is not False   # same main ballpark
             for yy in ((kk[0], kk[0] - 1) if borrow else (kk[0],)):
                 v = TDR.get((yy, t_))
                 if v and v[2]: return v[3] / v[2]
@@ -731,4 +765,5 @@ def compute(cur, inputs_dir, params_path=DEFAULT_PARAMS, teams_csv=DEFAULT_TEAMS
                 if v['IP'] > 0 and c_[1]: v['waa'] -= c_[0] / c_[1] * v['IP']
     for v in PIT.values():
         v['war'] = v['waa'] + v['rep']
-    return dict(hit=HIT, pit=PIT, skipped=SKIP, empty=EMPTY, lahman_stints=LAH_ST, params=PRM['version'], current=current, through=y1)
+    return dict(hit=HIT, pit=PIT, skipped=SKIP, empty=EMPTY, lahman_stints=LAH_ST, params=PRM['version'], current=current, through=y1,
+                park_notes=dict(PARK_NOTE))

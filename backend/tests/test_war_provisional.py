@@ -143,7 +143,9 @@ print('the checks')
 with eng.begin() as c2:
     c2.execute(PlayerSeason.__table__.insert().values(player_id=1, year=S, team='NYA', league='AL', PA=1000))
     c2.execute(PitcherSeason.__table__.insert().values(player_id=3, year=S, team='NYA', league='AL', IP=150.0))
-    c2.execute(BattingGameLog.__table__.insert().values(player_id=1, game_id='g1', game_date=dt.date(2027, 5, 1), season=S))
+    for i in range(100):
+        c2.execute(BattingGameLog.__table__.insert().values(player_id=1, game_id=f'g{i}', game_date=dt.date(2027, 5, 1),
+                                                            season=S, team_score=3))
 
 
 def H(pa, src='balldontlie', pitcher=False):
@@ -151,49 +153,73 @@ def H(pa, src='balldontlie', pitcher=False):
 
 
 RES = {'hit': {(1, S): H(600), (4, S): H(400)}, 'pit': {(3, S): {'IP': 150.0, 'relief_ip_share': 0.5, 'gmli': 1.2}},
-       'skipped': []}
-DIAG = {'finals': 100, 'stored': 100, 'missing': 0, 'span_games': 99, 'pa_rows': 1000, 'pa_mapped': 995,
-        'newest_final_et': '2027-05-01'}
+       'skipped': [], 'park_notes': {}}
+DIAG = {'finals': 100, 'stored': 100, 'missing': 0, 'span_games': 99, 'no_lineups_or_pa': 0, 'pa_rows': 1000,
+        'pa_mapped': 995, 'pa_in_span_games': 990, 'games_with_pa_and_plays': 100, 'newest_final_et': '2027-05-01'}
 ROWS = [row(1, 'hit', 3.0), row(4, 'hit', 0.5), row(3, 'pit', 2.0)]
 OLD = {(r['player_id'], r['role']): r for r in ROWS}
 
 
-def run_check(res=RES, diag=DIAG, rows=ROWS, old=OLD, same_code=True):
+def run_check(res=RES, diag=DIAG, rows=ROWS, old=OLD, same_code=True, accept=False):
     c = psycopg2.connect(DSN); cur = c.cursor()
     try:
-        return pv.check(res, rows, diag, cur, S, old, same_code, None)
+        return pv.check(res, rows, diag, cur, S, old, same_code, None, accept)
     finally:
         c.close()
 
 
+refused = lambda r, word: any(word in x for x in r[0])
 ref, warn, m = run_check()
 check('a normal night passes', ref == [], ref)
-check('and reports its measures', m['fielding_balldontlie_share'] == 1.0 and m['pa_rated_share'] == 1.0 and m['inputs_through'] == '2027-05-01', m)
+check('and reports its measures', m['fielding_balldontlie_share'] == 1.0 and m['pa_rated_share'] == 1.0
+      and m['inputs_through'] == '2027-05-01' and m['finals_vs_gamelog_games'] == [100, 100], m)
 r2 = copy.deepcopy(RES); r2['hit'][(1, S)]['fielding_source'] = None
-check('refuses when the fielding inputs didn\'t arrive (no balldontlie fielding)', any('fielding_balldontlie' in x for x in run_check(res=r2)[0]))
+check('refuses when the fielding inputs didn\'t arrive (no balldontlie fielding)', refused(run_check(res=r2), 'fielding'))
 r3 = copy.deepcopy(RES); r3['pit'][(3, S)]['gmli'] = None
-check('refuses when the leverage inputs didn\'t arrive', any('relief_ip_with_leverage' in x for x in run_check(res=r3)[0]))
-check('refuses when our game logs are behind the play-by-play',
-      any('game logs end' in x for x in run_check(diag=dict(DIAG, newest_final_et='2027-05-04'))[0]))
-check('allows game logs one day behind', run_check(diag=dict(DIAG, newest_final_et='2027-05-02'))[0] == [])
-check('refuses when too few games give fielding spans', any('span_games' in x for x in run_check(diag=dict(DIAG, span_games=90))[0]))
-check('refuses when too many plate appearances can\'t be mapped to players', any('pa_mapped' in x for x in run_check(diag=dict(DIAG, pa_mapped=900))[0]))
-check('refuses when too many finals are missing', any('missing_finals' in x for x in run_check(diag=dict(DIAG, missing=5))[0]))
+check('refuses when the leverage inputs didn\'t arrive', refused(run_check(res=r3), 'leverage'))
+check('refuses when our game logs are behind the download', refused(run_check(diag=dict(DIAG, newest_final_et='2027-05-04')), 'game logs end'))
+check('refuses when the download is behind our game logs', refused(run_check(diag=dict(DIAG, newest_final_et='2027-04-28')), 'download ends'))
+check('allows a one-day difference either way', run_check(diag=dict(DIAG, newest_final_et='2027-05-02'))[0] == []
+      and run_check(diag=dict(DIAG, newest_final_et='2027-04-30'))[0] == [])
+check('refuses when games with lineups give no fielding positions (beyond 10)', refused(run_check(diag=dict(DIAG, span_games=85)), 'fielding positions'))
+check('refuses when too many plate appearances can\'t be mapped to players', refused(run_check(diag=dict(DIAG, pa_rows=12000, pa_mapped=11000)), 'balldontlie id'))
+check('refuses when too many finals are missing (beyond 15)', refused(run_check(diag=dict(DIAG, finals=120, missing=20)), 'not downloaded'))
+check('...but one missing game is a warning', run_check(diag=dict(DIAG, missing=1))[0] == [] and any('not downloaded' in w for w in run_check(diag=dict(DIAG, missing=1))[1]))
+check('refuses when the download and our game logs disagree on the number of games', refused(run_check(diag=dict(DIAG, finals=140, stored=140)), 'game logs'))
 r4 = copy.deepcopy(RES); del r4['hit'][(4, S)]
-check('refuses when too much playing time is unrated', any('pa_rated' in x for x in run_check(res=r4)[0]))
+check('refuses when too much playing time is unrated', refused(run_check(res=r4), 'plate appearances are not rated'))
 jump = [dict(ROWS[0], war=6.0)] + ROWS[1:]
-check('refuses a 3-WAR jump in one night with the same code', any('moved' in x for x in run_check(rows=jump)[0]))
-check('...but not after a code change (reported instead)', run_check(rows=jump, same_code=False)[0] == [])
-check('refuses a non-finite value', any('non-finite' in x or 'not finite' in x for x in
-                                      run_check(rows=[dict(ROWS[0], runs_per_win=float('nan'))] + ROWS[1:])[0]))
-check('refuses WAR beyond ±15', any('beyond' in x for x in run_check(rows=[dict(ROWS[0], war=16.0)] + ROWS[1:], same_code=False)[0]))
+check('refuses a 3-WAR jump in one night with the same code', refused(run_check(rows=jump), 'moved'))
+check('...but not after a code change', run_check(rows=jump, same_code=False)[0] == [])
+check('...and not with accept_change (reported instead)', run_check(rows=jump, accept=True)[0] == []
+      and any('accept_change' in w for w in run_check(rows=jump, accept=True)[1]))
+newbig = ROWS + [row(8, 'hit', 2.4)]
+check('refuses a player with no row last night appearing at 2.4 WAR (wrong-id copies)', refused(run_check(rows=newbig), 'no row last night'))
+check('a new player at a small WAR is fine', run_check(rows=ROWS + [row(8, 'hit', 0.2)])[0] == [])
+check('refuses a non-finite value', refused(run_check(rows=[dict(ROWS[0], runs_per_win=float('nan'))] + ROWS[1:]), 'finite'))
+check('refuses WAR beyond ±15', refused(run_check(rows=[dict(ROWS[0], war=16.0)] + ROWS[1:], same_code=False), 'beyond'))
 many_old = {(i, 'hit'): row(i, 'hit', 1.0) for i in range(100, 130)}
 many_old.update(OLD)
-check('refuses when stored rows would disappear (more than 10, or 1%)', any('disappear' in x for x in run_check(old=many_old)[0]))
-r5 = copy.deepcopy(RES); r5['skipped'] = [(7, S, 'pit', 'no team or league recorded')]
+check('refuses when stored rows would disappear (more than 10, or 1%)', refused(run_check(old=many_old), 'disappear'))
+r5 = copy.deepcopy(RES); r5['skipped'] = [(7, S, 'pit', 'no team or league recorded')]; r5['park_notes'] = {'ATH': 'last season\'s factor'}
 ref, warn, m = run_check(res=r5)
-check('an unrated player is listed, not refused (Isaac 2026-11-25)', ref == [] and any('unrated' in x for x in warn), (ref, warn))
+check('an unrated player and a park fallback are listed, not refused (Isaac 2026-11-25)',
+      ref == [] and any('unrated' in x for x in warn) and any('park factor for ATH' in x for x in warn), (ref, warn))
 
+print('the season\'s first nights')
+# Opening Day 2026: 12 games, 10 of them with no lineups from balldontlie; the hitters of those games get no fielding
+od = dict(DIAG, finals=12, stored=12, span_games=2, no_lineups_or_pa=10, pa_rows=900, pa_mapped=890,
+          pa_in_span_games=150, games_with_pa_and_plays=12)
+r6 = copy.deepcopy(RES); r6['hit'] = {(1, S): H(100), (4, S): H(500, src=None)}
+c3 = psycopg2.connect(DSN); c3.autocommit = True; cur3 = c3.cursor()
+cur3.execute("DELETE FROM batting_gamelogs WHERE game_id NOT IN (SELECT game_id FROM batting_gamelogs ORDER BY game_id LIMIT 12)")
+cur3.execute('UPDATE player_seasons SET "PA" = 600 WHERE year = %s', (S,))
+ref, warn, m = run_check(res=r6, diag=od, old={})
+check('Opening Day with ten lineup-less games is written, with warnings (a refusal would blank every career)',
+      ref == [] and any('no lineups' in w for w in warn), (ref, warn))
+check('...a fielding step that produced nothing is still refused on Opening Day',
+      refused(run_check(res=dict(r6, hit={(1, S): H(100, src=None), (4, S): H(500, src=None)}), diag=od, old={}), 'fielding'))
+c3.close()
 print('one run at a time')
 holder = psycopg2.connect(DSN); holder.autocommit = True
 holder.cursor().execute('SELECT pg_advisory_lock(%s)', (pv.LOCK_KEY,))
@@ -202,6 +228,17 @@ check('a second run stops at once while the lock is held', rep['status'] == 'loc
 holder.close()
 rep = pv.run(S, 'dry_run', tempfile.mkdtemp(), DSN, client=None, now=dt.datetime(2027, 12, 2, 15, tzinfo=dt.timezone.utc))
 check('in the offseason months it stops before any request or database work', rep['status'] == 'offseason', rep)
+import json as _json
+root = tempfile.mkdtemp()
+os.makedirs(os.path.join(root, f'bdl{S}'))
+od_games = [{'id': i, 'date': '2027-03-26T23:00:00.000Z', 'status': 'STATUS_SCHEDULED', 'season_type': 'regular',
+             'home_team': {'id': i, 'abbreviation': f'T{i}'}, 'away_team': {'id': 100 + i, 'abbreviation': f'U{i}'}}
+            for i in range(1, 16)]
+_json.dump(od_games, open(os.path.join(root, f'bdl{S}', 'games.json'), 'w'))
+rep = pv.run(S, 'dry_run', root, DSN, client=None, now=dt.datetime(2027, 3, 26, 20, tzinfo=dt.timezone.utc))
+check('Opening Day before the first final: nothing to do, not a refusal', rep['status'] == 'no_games_yet', rep)
+check('a \'locked\' run doesn\'t overwrite the saved report', pv.save_report(root, {'status': 'locked'}) and
+      not os.path.exists(os.path.join(root, 'reports', 'latest.json')))
 
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

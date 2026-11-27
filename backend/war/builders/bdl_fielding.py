@@ -96,7 +96,8 @@ def build(G, PA, ST, SP, B2P, season, log=print):
     li = sum(v[0] for v in run.values()); la_ = sum(v[1] for v in run.values()); lc = sum(v[2] for v in run.values())
     for c, (inn, att, cs) in run.items():
         F = X[(c, season)][2]; F['inn'] = inn; F['n'] += inn
-        F['catt'] = att - inn * la_ / li; F['ccs'] = cs - att * lc / la_
+        # league rates need at least one steal attempt so far (a one-game opening night may have none)
+        F['catt'] = att - inn * la_ / li if li else 0.0; F['ccs'] = cs - att * lc / la_ if la_ else 0.0
     log('players', len(X), 'catchers', len(run), 'league attempts', la_, 'CS', lc)
     return {k: {p: dict(v) for p, v in m.items()} for k, m in X.items()}
 

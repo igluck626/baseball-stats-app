@@ -11,6 +11,10 @@ files):
   lgstr     league strength (lgstr.pkl) for seasons after the last Retrosheet season (computed from our database); a
             season not in the file counts as 0, meaning no AL/NL adjustment (for 2026 that moves any player by at most
             0.005 WAR)
+  venues    each team's main ballpark (balldontlie's name) in the balldontlie season after the last Retrosheet season
+            (bdlYY.pkl's VENUE, the All-Star Game's 'UNK' left out): the next season compares its own venues with these
+            to decide which teams stayed in the same park and may borrow last season's park factor (team_seasons has
+            no 2026 park names). A re-export keeps the seasons already in the file.
 
 Rebuild the file (after Retrosheet publishes a season and the input files are rebuilt):
     <backend python> -m war.static_inputs export --inputs ~/baseballstats-tools/scripts/war
@@ -23,7 +27,7 @@ import pickle
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PATH = os.path.join(HERE, 'static', 'current_season.json')
-SOURCES = ('bat_raw.pkl', 'tder_raw.pkl', 'li_raw.pkl', 'lgstr.pkl')
+SOURCES = ('bat_raw.pkl', 'tder_raw.pkl', 'li_raw.pkl', 'lgstr.pkl')          # plus bdlYY.pkl, YY = the season after
 
 
 def export(inputs_dir, path=PATH):
@@ -33,14 +37,23 @@ def export(inputs_dir, path=PATH):
     tder = {k: v for k, v in pk('tder_raw.pkl').items() if k[0] == last}
     if max(k[0] for k in pk('tder_raw.pkl')) != last:
         raise ValueError('bat_raw and tder_raw end in different seasons')
+    nxt = last + 1
+    bdl = f'bdl{nxt % 100:02d}.pkl'
+    venues = {t: v for t, v in pk(bdl)['VENUE'].items() if t != 'UNK'} if os.path.exists(os.path.join(inputs_dir, bdl)) else {}
+    try:                                   # keep the venues already in the file: re-exporting after Retrosheet publishes
+        kept = json.load(open(path)).get('venues', {})        # a season must not drop the season the nightly compares with
+    except (OSError, ValueError):
+        kept = {}
     doc = {
         '_about': 'Static inputs for the nightly current-season WAR; see war/static_inputs.py. Do not edit by hand.',
         'retrosheet_through': last,
-        'source_sha256': {n: hashlib.sha256(open(os.path.join(inputs_dir, n), 'rb').read()).hexdigest() for n in SOURCES},
+        'source_sha256': {n: hashlib.sha256(open(os.path.join(inputs_dir, n), 'rb').read()).hexdigest()
+                          for n in SOURCES + ((bdl,) if venues else ())},
         'lw': lw[last],
         'tder': {f'{y}|{t}': list(v) for (y, t), v in sorted(tder.items())},
         'li_table': {'|'.join(map(str, k)): v for k, v in sorted(pk('li_raw.pkl')['TABLE'].items())},
         'lgstr': {f'{y}|{L}': v for (y, L), v in sorted(pk('lgstr.pkl').items()) if y > last},
+        'venues': dict(sorted({**kept, **({str(nxt): dict(sorted(venues.items()))} if venues else {})}.items())),
     }
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, 'w') as f:
@@ -64,6 +77,11 @@ def load(path=PATH):
     }
 
 
+def prev_venue(season, path=PATH):
+    """{balldontlie abbreviation: venue} for the season before `season`, or None when the file doesn't have it."""
+    return json.load(open(path)).get('venues', {}).get(str(season - 1))
+
+
 if __name__ == '__main__':
     ap = argparse.ArgumentParser(description='Write war/static/current_season.json from the input files')
     ap.add_argument('command', choices=('export',))
@@ -71,4 +89,4 @@ if __name__ == '__main__':
     a = ap.parse_args()
     d = export(a.inputs)
     print(f"{PATH}: retrosheet_through {d['retrosheet_through']}, tder {len(d['tder'])}, li_table {len(d['li_table'])}, "
-          f"lgstr {len(d['lgstr'])}, {os.path.getsize(PATH) // 1024} KB")
+          f"lgstr {len(d['lgstr'])}, venues {sum(map(len, d['venues'].values()))}, {os.path.getsize(PATH) // 1024} KB")

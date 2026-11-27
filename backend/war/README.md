@@ -150,6 +150,15 @@ reports what it would do). It reads the small static inputs in `static/current_s
 `python -m war.static_inputs export`; see `static_inputs.py` for what's in it and why nothing else is needed), not the
 input files. On 2026 it reproduces the stored rows (`dry_run` reports "unchanged").
 
+Before Retrosheet publishes last season, park factors borrow it from our own game logs (`parks.build`: matches
+Retrosheet's 2025 factors within 0.001), and "same ballpark as last season" compares balldontlie's venue names (the
+static file keeps 2026's), since team_seasons has no 2026 park names. Team-defense park factors (`tder`) have no such
+fallback: two seasons past Retrosheet (2027) they are 1.0 until it publishes.
+
+The server runs it after the nightly and after each catch-up (`WAR_NIGHTLY` = off | dry_run | write, default off),
+saves each report under `WAR_STORE/reports` (the /data volume), and serves the last one at `GET /war/nightly-status`,
+which `.github/workflows/war-nightly-freshness.yml` checks twice a day.
+
 ```bash
 <backend python> -m war.provisional --season 2026 --root <store folder> --no-download --force --mode dry_run
 ```

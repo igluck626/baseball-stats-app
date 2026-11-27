@@ -50,6 +50,8 @@ check('run values = bat_raw LW for the last Retrosheet season', S_['bat_raw.pkl'
 check('team defense park factors = tder_raw for that season', S_['tder_raw.pkl'] == {k: v for k, v in pk('tder_raw.pkl').items() if k[0] == last})
 check('leverage table = li_raw TABLE', S_['li_raw.pkl']['TABLE'] == pk('li_raw.pkl')['TABLE'])
 check('league strength = lgstr after that season', S_['lgstr.pkl'] == {k: v for k, v in pk('lgstr.pkl').items() if k[0] > last})
+v = pk(f'bdl{(last + 1) % 100:02d}.pkl')['VENUE']
+check('venues = the next season\'s bdl VENUE, less the All-Star Game', si.prev_venue(last + 2) == {t: x for t, x in v.items() if t != 'UNK'})
 
 print('compute for 2026: static file vs the whole input folder')
 from war.compute import compute  # noqa: E402

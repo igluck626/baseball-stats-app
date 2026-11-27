@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import secrets
+import subprocess
 import threading
 import time
 import traceback
@@ -476,6 +477,90 @@ _catchup_lock = threading.Lock()
 # <2min. 30min is generous enough for transient slowness without
 # letting a SIGKILL'd worker block subsequent runs.
 _CATCHUP_STALE_AFTER = datetime.timedelta(minutes=30)
+
+
+# Nightly provisional WAR (backend/war/provisional.py): the current season's war_seasons rows, recomputed after the
+# nightly and after each catch-up. It runs as a SEPARATE PROCESS (its ~1 GB and its CPU never sit in the API process),
+# in its own thread so the nightly/catch-up finish and report as before. WAR_NIGHTLY: off (default) | dry_run | write.
+# One run at a time: the flag below in this process, and a Postgres advisory lock inside the run itself. Its report is
+# saved under WAR_STORE/reports (the /data volume), so GET /war/nightly-status survives a restart.
+_WAR_STORE = os.environ.get("WAR_STORE", "/data/war")
+_WAR_NIGHTLY_TIMEOUT_S = 45 * 60
+_war_nightly_lock = threading.Lock()
+_war_nightly_state: dict = {"running": False, "reason": None, "last_status": None, "last_finished": None}
+
+
+def _war_nightly_mode() -> str:
+    m = (os.environ.get("WAR_NIGHTLY") or "off").strip().lower()
+    return m if m in ("off", "dry_run", "write") else "off"
+
+
+def _run_war_nightly(reason: str, mode: str | None = None, extra: list[str] | None = None) -> dict:
+    """Run war.provisional once in a subprocess and return its report. Never raises."""
+    mode = mode or _war_nightly_mode()
+    if mode == "off":
+        log.info(f"[war-nightly] {reason}: WAR_NIGHTLY is off")
+        return {"status": "off"}
+    with _war_nightly_lock:
+        if _war_nightly_state["running"]:
+            log.info(f"[war-nightly] {reason}: already running ({_war_nightly_state['reason']})")
+            return {"status": "already_running"}
+        _war_nightly_state.update(running=True, reason=reason)
+    backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cmd = [sys.executable, "-m", "war.provisional", "--mode", mode, "--root", _WAR_STORE] + (extra or [])
+    t0 = time.time()
+    try:
+        proc = subprocess.run(cmd, cwd=backend_dir, capture_output=True, text=True, timeout=_WAR_NIGHTLY_TIMEOUT_S)
+        last = (proc.stdout.strip().splitlines() or [""])[-1]
+        try:
+            rep = json.loads(last)
+        except ValueError:
+            rep = {"status": "error", "error": f"no report (exit {proc.returncode}): {proc.stderr[-1500:]}"}
+    except subprocess.TimeoutExpired:
+        rep = {"status": "error", "error": f"timed out after {_WAR_NIGHTLY_TIMEOUT_S}s"}
+    except Exception as exc:  # noqa: BLE001
+        rep = {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
+    finally:
+        with _war_nightly_lock:
+            _war_nightly_state["running"] = False
+    status = rep.get("status")
+    if status == "error" and "finished" not in rep:
+        # the subprocess died without saving a report (timeout, out of memory, crash): save this one, so the status
+        # endpoint and monitoring see the failure instead of the previous night's result
+        try:
+            d = os.path.join(_WAR_STORE, "reports")
+            os.makedirs(d, exist_ok=True)
+            tmp = os.path.join(d, ".latest.json.tmp")
+            with open(tmp, "w") as fh:
+                json.dump(dict(rep, reason=reason, mode=mode, finished=datetime.datetime.utcnow().isoformat() + "Z"), fh)
+            os.replace(tmp, os.path.join(d, "latest.json"))
+        except OSError as exc:
+            log.error(f"[war-nightly] could not save the error report: {exc}")
+    with _war_nightly_lock:
+        _war_nightly_state.update(last_status=status, last_finished=datetime.datetime.utcnow().isoformat() + "Z")
+    msg = (f"[war-nightly] {reason}: {status} mode={mode} season={rep.get('season')} "
+           f"inputs_through={(rep.get('measures') or {}).get('inputs_through')} changes={rep.get('changes')} "
+           f"warnings={len(rep.get('warnings') or [])} {time.time() - t0:.0f}s")
+    if status in ("refused", "error"):
+        log.error(msg + f" refusals={rep.get('refusals')} error={rep.get('error')}")
+    else:
+        log.info(msg)
+    for w in rep.get("warnings") or []:
+        log.warning(f"[war-nightly] {w}")
+    if status == "written":
+        _cache.clear()                     # cached payloads may carry the season's old WAR
+    return rep
+
+
+def _start_war_nightly(reason: str, upstream_error: str | None = None) -> None:
+    if _war_nightly_mode() == "off":
+        return
+    if upstream_error:
+        # the nightly/catch-up itself failed: its season rows may be half-updated, so don't rate them tonight (the
+        # WAR monitor flags the missing run if this persists)
+        log.error(f"[war-nightly] {reason}: skipped, the {reason} failed: {str(upstream_error)[:200]}")
+        return
+    threading.Thread(target=_run_war_nightly, args=(reason,), name=f"war-nightly-{reason}", daemon=True).start()
 
 
 def _nightly_phase(
@@ -954,6 +1039,8 @@ def _run_nightly_update() -> None:
             _nightly_state["phase"]    = None
             _nightly_state["last_run"] = datetime.datetime.utcnow().isoformat() + "Z"
         log.info(f"[nightly] thread exit pid={pid} tid={tid} state={_nightly_state}")
+        # Provisional WAR for the current season, now that the season rows and game logs are settled.
+        _start_war_nightly("nightly", _nightly_state.get("error"))
 
 
 def _run_catchup_update() -> None:
@@ -987,6 +1074,8 @@ def _run_catchup_update() -> None:
             _catchup_state["phase"]   = None
             _catchup_state["last_run"] = datetime.datetime.utcnow().isoformat() + "Z"
         log.info(f"[catchup] thread exit pid={pid} tid={tid} state={_catchup_state}")
+        # And again after each catch-up, so late West Coast games count the same day.
+        _start_war_nightly("catchup", _catchup_state.get("error"))
 
 
 # ---------------------------------------------------------------------------
@@ -20717,6 +20806,69 @@ def reset_nightly_update():
         _nightly_state["error"] = "manual reset"
     log.warning(f"[nightly] manual reset, prior state: {prior}")
     return {"status": "reset", "prior_state": prior}
+
+
+@app.get("/war/nightly-status")
+def war_nightly_status():
+    """The last nightly provisional-WAR run (war/provisional.py), from its saved report: for monitoring. `inputs_through`
+    is the newest game it counted (the table isn't rewritten on a night with nothing new, so that, not a write time,
+    is the freshness signal)."""
+    try:
+        with open(os.path.join(_WAR_STORE, "reports", "latest.json")) as f:
+            rep = json.load(f)
+    except (OSError, ValueError):
+        rep = None
+    m = (rep or {}).get("measures") or {}
+    with _war_nightly_lock:
+        live = dict(_war_nightly_state)
+    return {
+        "mode": _war_nightly_mode(),
+        "running": live["running"],
+        "last": None if rep is None else {
+            "status": rep.get("status"), "season": rep.get("season"), "finished": rep.get("finished"),
+            "window": rep.get("window"), "version": rep.get("version"), "run_id": rep.get("run_id"),
+            "inputs_through": m.get("inputs_through"), "gamelogs_through": m.get("gamelogs_through"),
+            "rows": m.get("rows"), "changes": rep.get("changes"), "refusals": rep.get("refusals"),
+            "warnings": len(rep.get("warnings") or []),
+            # the error's kind only: a database error's text can carry the host and user name
+            "error": (str(rep["error"]).split(":")[0][:80] if rep.get("error") else None),
+        },
+        # this server process's own last run (lost on restart; the saved report above is not)
+        "server_last": {"status": live["last_status"], "finished": live["last_finished"], "reason": live["reason"]},
+    }
+
+
+@app.post("/admin/war-nightly")
+def start_war_nightly(payload: dict = Body(default={})):
+    """Run the provisional-WAR step now, in the background (GET /war/nightly-status for the result).
+    Body (all optional): {"mode": "write"} writes, and only when WAR_NIGHTLY is 'write' and for the current season;
+    anything else is a dry run. Rehearsal options: {"season": 2026, "force": true, "no_download": true}; after checking a
+    big night-to-night change is a genuine correction: {"mode": "write", "accept_change": true}."""
+    write = payload.get("mode") == "write" and _war_nightly_mode() == "write"
+    mode = "write" if write else "dry_run"
+    extra: list[str] = []
+    season = payload.get("season")
+    if season is not None:
+        try:
+            season = int(season)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="season must be a year")
+        if not 1871 <= season <= 2100:
+            raise HTTPException(status_code=400, detail="season must be a year")
+        if write and season != datetime.datetime.now(datetime.timezone.utc).year:
+            raise HTTPException(status_code=400, detail="a write is only for the current season")
+        extra += ["--season", str(season)]
+    if payload.get("force"):
+        extra.append("--force")
+    if payload.get("no_download"):
+        extra.append("--no-download")
+    if write and payload.get("accept_change"):
+        extra.append("--accept-change")
+    with _war_nightly_lock:
+        if _war_nightly_state["running"]:
+            return {"status": "already_running", "reason": _war_nightly_state["reason"]}
+    threading.Thread(target=_run_war_nightly, args=("admin", mode, extra), name="war-nightly-admin", daemon=True).start()
+    return {"status": "started", "mode": mode, "args": extra}
 
 
 @app.post("/admin/catchup-update")

@@ -3,7 +3,10 @@ factors, inning-pitched correction, other-parks corrector, own-pitchers iteratio
 
 Ported unchanged in arithmetic from the tools script that produced our OPS+/ERA+ park factors (plus/dry3.py), so WAR and
 OPS+/ERA+ use the same parks. Seasons up to 2025 come from team_game_results (Retrosheet game logs); the current season is
-rebuilt from batting_gamelogs.
+rebuilt from batting_gamelogs, and so is the season before it while Retrosheet hasn't published that one yet (in 2027,
+2026 comes from our game logs, so the current season can borrow last season's factor from Opening Day instead of
+waiting for ten home and ten road games). gamelog_years forces the game-log route for given seasons (a check of it on
+a season Retrosheet has, tests/test_war_parks_fallback.py).
 
 build(cur, teams_csv) -> (A, one_year)
   A[(year, team)]      per team-season home/road aggregates, including 'parks' (park id → home games) and 'hg'
@@ -16,7 +19,7 @@ BDL2RETRO = {'CHC': 'CHN', 'CHW': 'CHA', 'KC': 'KCA', 'LAD': 'LAN', 'NYM': 'NYN'
              'SD': 'SDN', 'SF': 'SFN', 'STL': 'SLN', 'TB': 'TBA', 'WSH': 'WAS', 'LAA': 'ANA'}
 
 
-def build(cur, teams_csv, y0=1898, current=2026):
+def build(cur, teams_csv, y0=1898, current=2026, gamelog_years=None):
     def q(sql, *a):
         cur.execute(sql, a)
         return cur.fetchall()
@@ -26,25 +29,32 @@ def build(cur, teams_csv, y0=1898, current=2026):
               'LEFT JOIN retro_game_info g ON g.game_id = t.game_id '
               'WHERE t.played AND t.forfeit IS NULL AND t.home_score IS NOT NULL AND t.season BETWEEN %s AND %s',
               y0 - 1, current - 1)
-    glc = q('SELECT game_id, home_away, opponent, team_score, opp_score FROM batting_gamelogs WHERE season = %s '
-            'AND team_score IS NOT NULL GROUP BY 1, 2, 3, 4, 5', current)
-    tsc = q('SELECT team_id, league FROM team_seasons WHERE year = %s', current)
-
-    # current-season games from the game logs: an away side's opponent is the home team and vice versa
-    sides = defaultdict(dict)
-    for gid, ha, opp, ts, os_ in glc:
-        sides[gid][ha] = (BDL2RETRO.get(opp, opp), ts, os_)
-    for gid, s in sides.items():
-        if 'H' in s and 'A' in s:
-            games.append((current, s['A'][0], s['H'][0], s['H'][1], s['H'][2], None))
+    have = {g[0] for g in games}
+    if gamelog_years is None:
+        gamelog_years = [current] + ([current - 1] if current - 1 not in have else [])
+    else:
+        games = [g for g in games if g[0] not in gamelog_years]
+    tsc = {}
+    for yy in gamelog_years:
+        glc = q('SELECT game_id, home_away, opponent, team_score, opp_score FROM batting_gamelogs WHERE season = %s '
+                'AND team_score IS NOT NULL GROUP BY 1, 2, 3, 4, 5', yy)
+        tsc[yy] = q('SELECT team_id, league FROM team_seasons WHERE year = %s', yy)
+        # games from the game logs: an away side's opponent is the home team and vice versa
+        sides = defaultdict(dict)
+        for gid, ha, opp, ts, os_ in glc:
+            sides[gid][ha] = (BDL2RETRO.get(opp, opp), ts, os_)
+        for gid, s in sides.items():
+            if 'H' in s and 'A' in s:
+                games.append((yy, s['A'][0], s['H'][0], s['H'][1], s['H'][2], None))
 
     team_lg = {}
     for r in csv.DictReader(open(teams_csv, encoding='utf-8-sig')):
         y = int(r['yearID'])
         if y0 - 1 <= y <= current - 1:
             team_lg[(y, r['teamIDretro'])] = r['lgID']
-    for t, L in tsc:
-        team_lg[(current, 'ANA' if t == 'LAA' else t)] = L
+    for yy, rows in tsc.items():
+        for t, L in rows:
+            team_lg[(yy, 'ANA' if t == 'LAA' else t)] = L
     votes = defaultdict(Counter)
     for r in bat:
         if r[2] and r[3]:

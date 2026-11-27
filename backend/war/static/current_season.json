@@ -5401,6 +5401,7 @@
 "retrosheet_through": 2025,
 "source_sha256": {
 "bat_raw.pkl": "18ec329dc714780eb1d450479b0dc41f8239a17411ba0d38d703117ba0ac05c5",
+"bdl26.pkl": "26c25c673f1649c106c66b5b984a93bfb9a3cf67d1f121bb8a3260cfdc64c1c6",
 "lgstr.pkl": "4f1439fb87606ae18ad277f61e7c03bbc84f300ec4e57c6d9982dd10289611ec",
 "li_raw.pkl": "2c4bbcf43ae561f2b42740d5d61e72fd45ddd31a4f07aa81968f44bc53f6741c",
 "tder_raw.pkl": "286160de30aefcc14cacb60a164635b5d11518ae35f1c49d094044bbc3edd047"
@@ -5586,5 +5587,39 @@
 1205.558589687726,
 1208.6727951864711
 ]
+},
+"venues": {
+"2026": {
+"ARI": "Chase Field",
+"ATL": "Truist Park",
+"BAL": "Oriole Park at Camden Yards",
+"BOS": "Fenway Park",
+"CHC": "Wrigley Field",
+"CHW": "Rate Field",
+"CIN": "Great American Ball Park",
+"CLE": "Progressive Field",
+"COL": "Coors Field",
+"DET": "Comerica Park",
+"HOU": "Daikin Park",
+"KC": "Kauffman Stadium",
+"LAA": "Angel Stadium",
+"LAD": "Dodger Stadium",
+"MIA": "loanDepot park",
+"MIL": "American Family Field",
+"MIN": "Target Field",
+"NYM": "Citi Field",
+"NYY": "Yankee Stadium",
+"OAK": "Sutter Health Park",
+"PHI": "Citizens Bank Park",
+"PIT": "PNC Park",
+"SD": "Petco Park",
+"SEA": "T-Mobile Park",
+"SF": "Oracle Park",
+"STL": "Busch Stadium",
+"TB": "Tropicana Field",
+"TEX": "Globe Life Field",
+"TOR": "Rogers Centre",
+"WSH": "Nationals Park"
+}
 }
 }

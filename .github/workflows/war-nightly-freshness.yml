@@ -1,0 +1,95 @@
+# Is the nightly provisional WAR (backend/war/provisional.py) still running, and did its last run succeed?
+#
+# Reads GET /war/nightly-status, which comes from the run's report saved on the /data volume (it survives restarts;
+# the API's in-memory state doesn't). A failed scheduled run is the alert: GitHub emails the repository owner.
+#
+# Fails when, with WAR_NIGHTLY on (dry_run or write):
+#   • the last run was refused or errored (nothing was written; the report says why), or
+#   • during the season, the last run finished more than MAX_AGE_HOURS ago (the nightly or its WAR step stopped), or
+#   • during the season, the newest game it counted (inputs_through) is more than MAX_INPUT_DAYS old.
+#   • April to September, the last run has no season window (the games list came back empty or cut short).
+# The table is not rewritten on a night with nothing new, so a write time would raise false alarms; these don't.
+name: WAR nightly freshness
+
+on:
+  schedule:
+    # After the 15:00 UTC nightly and the 19:00 UTC catch-up, each followed by the WAR step (~10 min). Off the hour.
+    - cron: '41 16 * * *'
+    - cron: '41 20 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  STATUS_URL: 'https://baseball-stats-app-production-0ef1.up.railway.app/war/nightly-status'
+  # One missed nightly plus the catch-up's slack.
+  MAX_AGE_HOURS: '26'
+  # The All-Star break leaves up to four days without a regular-season game.
+  MAX_INPUT_DAYS: '5'
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Read the last run
+        id: check
+        run: |
+          set -euo pipefail
+          curl -sS --max-time 30 --retry 3 --retry-delay 5 "$STATUS_URL" -o status.json
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import datetime, json, os
+          s = json.load(open("status.json"))
+          last = s.get("last") or {}
+          now = datetime.datetime.now(datetime.timezone.utc)
+          problems = []
+          if s.get("mode") == "off":
+              status = "off"
+          elif not last:
+              status, problems = "stale", ["no run has been reported"]
+          else:
+              if last.get("status") in ("refused", "error"):
+                  problems.append(f"last run {last['status']}: {last.get('refusals') or last.get('error')}")
+              window = last.get("window") or [None, None]
+              today = (now - datetime.timedelta(hours=5)).date()          # near enough to Eastern for a day test
+              if 4 <= today.month <= 9 and not (window[0] and window[1]):
+                  # mid-season with no season dates: the games list came back empty or cut short
+                  problems.append(f"no season window in {today:%B} (last run {last.get('status')})")
+              in_season = bool(window[0] and window[1]) and \
+                  datetime.date.fromisoformat(window[0]) <= today <= datetime.date.fromisoformat(window[1]) + datetime.timedelta(days=3)
+              if in_season:
+                  fin = datetime.datetime.fromisoformat(last["finished"].replace("Z", "+00:00"))
+                  age = (now - fin).total_seconds() / 3600
+                  if age > float(os.environ["MAX_AGE_HOURS"]):
+                      problems.append(f"last run finished {age:.1f}h ago")
+                  thru = last.get("inputs_through")
+                  if not thru or (today - datetime.date.fromisoformat(thru)).days > int(os.environ["MAX_INPUT_DAYS"]):
+                      problems.append(f"newest game counted is {thru}")
+              status = "failing" if problems else "ok"
+          print(f"status={status}")
+          print(f"run_status={last.get('status')}")
+          print(f"finished={last.get('finished')}")
+          print(f"inputs_through={last.get('inputs_through')}")
+          print(f"mode={s.get('mode')}")
+          print("problems=" + ("; ".join(problems) or "none").replace("\n", " "))
+          PY
+
+      - name: Report
+        run: |
+          {
+            echo "### WAR nightly"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| mode | ${{ steps.check.outputs.mode }} |"
+            echo "| last run | ${{ steps.check.outputs.run_status }} at \`${{ steps.check.outputs.finished }}\` |"
+            echo "| newest game counted | ${{ steps.check.outputs.inputs_through }} |"
+            echo "| problems | ${{ steps.check.outputs.problems }} |"
+            echo "| status | **${{ steps.check.outputs.status }}** |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail when the WAR nightly is stale or refused
+        if: steps.check.outputs.status != 'ok' && steps.check.outputs.status != 'off'
+        run: |
+          echo "::error::WAR nightly: ${{ steps.check.outputs.problems }}"
+          exit 1

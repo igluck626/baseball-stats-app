@@ -17,9 +17,10 @@ and, for the last two, it wasn't fetched or tried in the last `min_age_h` hours 
 repeat the night's work).
 A game with any of its four feeds empty is saved but marked incomplete (2026's twelve Opening Day games on March 26-27
 still had no lineups on 2026-11-25), and is fetched again each night while it was played in the last `incomplete_days`
-days; after that it is used as it is and stays listed in the report. A response is never saved
-over a file that has more of the four feeds filled. sync() stops at `max_requests` and reports what it left for the next
-run. It never touches a database.
+days; after that it is used as it is and stays listed in the report. A response is never saved over a file that has
+more of the four feeds filled, or with a feed 10% shorter than the file's (a cut-short answer). A game whose fetch
+fails waits FAIL_BACKOFF_H hours before the next try; a games list with clearly fewer finals than last time is refused.
+sync() stops at `max_requests` and reports what it left for the next run. It never touches a database.
 
 load() trims each row to what the builders read (BUILDER_*), so a season fits in about half the memory; the files keep
 more (every non-pitch play, every stat-line column) for later uses.
@@ -39,6 +40,8 @@ import urllib.parse
 import urllib.request
 
 BASE = 'https://api.balldontlie.io/mlb/v1/'
+FAIL_BACKOFF_H = 6        # a game whose fetch failed isn't asked again for this long
+SHRINK = 0.9              # a re-download with a feed under 90% of the stored rows is a cut-short answer: not used
 
 # --- what a game file keeps ------------------------------------------------------------------------------------------
 LINEUP_KEYS = ('id', 'batting_order', 'position', 'is_probable_pitcher', 'team_id')
@@ -260,7 +263,9 @@ class Client:
         while True:
             p = dict(params, per_page=100, **({'cursor': cursor} if cursor else {}))
             d = self.get(path, p)
-            rows += d.get('data') or []
+            if not isinstance(d, dict) or not isinstance(d.get('data'), list):
+                raise ValueError(f'balldontlie {path}: a response without a data list')
+            rows += d['data']
             cursor = (d.get('meta') or {}).get('next_cursor')
             if not cursor:
                 return rows
@@ -302,13 +307,28 @@ def sync(root, season, client, now=None, refetch_days=3, min_age_h=18, incomplet
     sdir = season_dir(root, season)
     os.makedirs(os.path.join(sdir, 'games'), exist_ok=True)
     games = client.all_pages('games', {'seasons[]': season})
-    _write_atomic(os.path.join(sdir, 'games.json'), games)
+    gpath = os.path.join(sdir, 'games.json')
+    try:
+        before = sum(map(is_regular_final, json.load(open(gpath))))
+    except (OSError, ValueError):
+        before = 0
+    now_n = sum(map(is_regular_final, games))
+    if now_n < before - max(5, 0.01 * before):          # a cut-short list must not replace a full one
+        raise RuntimeError(f'balldontlie listed {now_n} regular-season finals, {before} last time: not using it')
+    _write_atomic(gpath, games)
     idx = load_index(sdir)
+    fpath = os.path.join(sdir, 'failures.json')
+    try:
+        fails = {int(k): v for k, v in json.load(open(fpath)).items()}
+    except (OSError, ValueError):
+        fails = {}
+    retry_after = (now - dt.timedelta(hours=FAIL_BACKOFF_H)).isoformat()
     new, changed, recent = plan(games, idx, now, refetch_days, min_age_h, incomplete_days)
     rep = {'season': season, 'listed': len(games), 'finals': sum(map(is_regular_final, games)),
            'new': len(new), 'changed': len(changed), 'refetch': len(recent), 'saved': [], 'kept': [],
            'failed': [], 'left': [], 'capped': False}
-    todo = new + changed + recent
+    todo = [g for g in new + changed + recent if fails.get(g['id'], '') < retry_after]
+    rep['backing_off'] = len(new + changed + recent) - len(todo)
     for i, g in enumerate(todo):
         gid = g['id']
         try:
@@ -319,9 +339,15 @@ def sync(root, season, client, now=None, refetch_days=3, min_age_h=18, incomplet
             break
         except Exception as e:                                    # one game's failure doesn't stop the rest
             rep['failed'].append((gid, f'{type(e).__name__}: {e}'))
+            fails[gid] = now.isoformat()                          # and isn't asked again for FAIL_BACKOFF_H hours
+            _write_atomic(fpath, {str(k): v for k, v in fails.items()})
             continue
+        if fails.pop(gid, None):
+            _write_atomic(fpath, {str(k): v for k, v in fails.items()})
         n = {'lineups': len(lu), 'pa': len(pa), 'stats': len(st), 'plays': len(pl)}
-        if gid in idx and filled(idx[gid]['n']) > filled(n):       # never replace fuller data with emptier
+        old_n = idx[gid]['n'] if gid in idx else {}
+        shrank = [k for k in FEEDS if old_n.get(k) and n[k] < SHRINK * old_n[k]]
+        if gid in idx and (filled(old_n) > filled(n) or shrank):   # never replace fuller data with emptier
             idx[gid]['tried_at'] = now.isoformat()                 # but don't ask again before min_age_h
             save_index(sdir, idx)
             rep['kept'].append((gid, n))

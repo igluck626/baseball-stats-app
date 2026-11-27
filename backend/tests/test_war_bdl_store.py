@@ -8,6 +8,8 @@
     over a file with more of its feeds filled
   • the All-Star Game (filed by balldontlie as a regular-season final between two 'Unknown' teams) is left out
   • the request cap stops the run cleanly, says which games were left, and the next run picks them up
+  • a cut-short answer (no data list, a shorter feed, a games list with far fewer finals) never replaces good data, and
+    a game whose fetch keeps failing waits 6 hours between tries
   • the cut-down game file keeps every field the WAR builders read (the full-season check that the builders give
     identical results from it is a separate local run on the 1.5 GB download; see the commit message)
 
@@ -220,6 +222,44 @@ check('played 05-01, so on 05-17 it is past the 7-day window: not fetched again,
       30 not in fetched(f) and r['incomplete_finals'] == [(30, {'lineups': 0})], (fetched(f), r['incomplete_finals']))
 G4 = G5
 
+print('cut-short answers and repeated failures')
+class NoData(Fake):
+    def __call__(self, req, timeout):
+        if '/plays' in req.full_url and 'game_id=12' in req.full_url:
+            return io.BytesIO(json.dumps({'meta': {}}).encode())         # a 200 with no data list
+        return super().__call__(req, timeout)
+G6 = G4 + [game(40, '2027-05-17')]
+f = NoData(G6 + [game(12, '2027-05-17')])
+before12 = bs.read_game(sdir, 12)
+r = bs.sync(root, 2027, client(f), now=NOW + dt.timedelta(days=8), log=lambda s: None)
+check('a response without a data list is a failure, not an empty feed', 12 in [g for g, _ in r['failed']], r['failed'])
+f = Fake(G6)
+f.feeds[13] = dict(feeds(13), plays=feeds(13)['plays'][:3])           # game 13 re-fetched with plays cut short
+idx13 = bs.load_index(sdir)[13]['n']['plays']
+r = bs.sync(root, 2027, client(f), now=NOW + dt.timedelta(days=8, hours=1), log=lambda s: None, refetch_days=30)
+check('a re-download with a feed 10% shorter than the file is not used', 13 in [g for g, _ in r['kept']]
+      and bs.load_index(sdir)[13]['n']['plays'] == idx13, (r['kept'], idx13))
+f = Fake(G6)
+f.fail[('stats', 41)] = [404]
+r = bs.sync(root, 2027, client(f), now=NOW + dt.timedelta(days=9), log=lambda s: None, refetch_days=0)
+G7 = G6 + [game(41, '2027-05-18')]
+f = Fake(G7); f.fail[('stats', 41)] = [404, 404]
+r = bs.sync(root, 2027, client(f), now=NOW + dt.timedelta(days=9), log=lambda s: None, refetch_days=0)
+f = Fake(G7)
+r = bs.sync(root, 2027, client(f), now=NOW + dt.timedelta(days=9, hours=2), log=lambda s: None, refetch_days=0)
+check('a game whose fetch failed waits 6 hours before the next try', 41 not in fetched(f) and r['backing_off'] >= 1,
+      (fetched(f), r.get('backing_off')))
+r = bs.sync(root, 2027, client(Fake(G7)), now=NOW + dt.timedelta(days=9, hours=7), log=lambda s: None, refetch_days=0)
+check('...and is fetched after it', 41 in r['saved'], r['saved'])
+try:
+    bs.sync(root, 2027, client(Fake([g for g in G7 if g['id'] > 20])), now=NOW + dt.timedelta(days=10), log=lambda s: None)
+    check('a games list with far fewer finals than last time is refused', False, 'accepted')
+except RuntimeError as e:
+    check('a games list with far fewer finals than last time is refused', 'not using it' in str(e), str(e))
+check('...and the saved list is kept', sum(map(bs.is_regular_final, json.load(open(os.path.join(sdir, 'games.json'))))) ==
+      sum(map(bs.is_regular_final, G7)))
+G4 = G7
+
 print('reading the store')
 Gl, LU, PA, ST, PL, missing = bs.load(root, 2027)
 check('G holds regular-season finals only', sorted(Gl) == sorted(g['id'] for g in G4 if bs.is_regular_final(g)))
@@ -237,7 +277,7 @@ os.remove(os.path.join(sdir, 'index.json'))
 idx = bs.load_index(sdir)
 check('the index is rebuilt from the game files when lost', sorted(idx) == sorted(Gl), sorted(idx))
 f = Fake(G4)
-r = bs.sync(root, 2027, client(f), now=NOW + dt.timedelta(days=7, hours=2), log=lambda s: None)
+r = bs.sync(root, 2027, client(f), now=NOW + dt.timedelta(days=10, hours=1), log=lambda s: None, refetch_days=0)
 check('and a rebuilt index fetches nothing extra', fetched(f) == [], fetched(f))
 
 print(f"\n{sum(results)}/{len(results)} passed")
